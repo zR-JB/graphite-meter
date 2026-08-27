@@ -1,14 +1,9 @@
-// Capped/static presentation work is capped at 30fps: the sample feed is far
-// slower than the display refresh, so a higher rate only costs raster work. A moving hero gauge
-// is the sole exception; it may use native frames to ease an already-derived
-// target, never to publish new measurement evidence.
-export const PRESENTATION_MAX_FPS = 30;
-export const FRAME_MS = 1000 / PRESENTATION_MAX_FPS;
-
-/** Draws one frame; returns true while still animating, which keeps the clock
- *  running without a further invalidation. */
+// A moving hero gauge is the sole exception; it may use native frames to ease
+// an already-derived target, never to publish new measurement evidence.
+const PRESENTATION_MAX_FPS = 30;
+const FRAME_MS = 1000 / PRESENTATION_MAX_FPS;
+/** Draws one frame; true keeps the clock running without another invalidation. */
 type Render = (now: number) => boolean;
-
 interface Task {
   render: Render;
   nativeAnimation: boolean;
@@ -17,7 +12,6 @@ interface Task {
   visible: boolean;
   unobserve(): void;
 }
-
 export interface PresentationEnvironment {
   hidden(): boolean;
   now(): number;
@@ -28,17 +22,14 @@ export interface PresentationEnvironment {
   observe(element: Element, visible: (value: boolean) => void): () => void;
   onVisibilityChange(callback: () => void): () => void;
 }
-
 export interface PresentationHandle {
   invalidate(): void;
   destroy(): void;
 }
-
-export interface PresentationOptions {
+interface PresentationOptions {
   /** Use native animation frames only while this task's render reports motion. */
   nativeAnimation?: boolean;
 }
-
 /** One visibility-aware frame clock shared by every canvas instrument. */
 export class PresentationScheduler {
   #tasks = new Set<Task>();
@@ -46,13 +37,11 @@ export class PresentationScheduler {
   #timer = 0;
   #lastFrame = -Infinity;
   #environment: PresentationEnvironment;
-
   constructor(environment = browserEnvironment()) {
     this.#environment = environment;
     // The scheduler outlives every task, so the unsubscribe is never needed.
     environment.onVisibilityChange(this.#onVisibility);
   }
-
   register(
     element: Element,
     render: Render,
@@ -86,7 +75,6 @@ export class PresentationScheduler {
       },
     };
   }
-
   #onVisibility = (): void => {
     if (this.#environment.hidden()) {
       this.#cancel();
@@ -95,19 +83,10 @@ export class PresentationScheduler {
     for (const task of this.#tasks) task.dirty = true;
     this.#request();
   };
-
   #request(): void {
     if (this.#raf || this.#timer || this.#environment.hidden()) return;
-    let pending = false;
-    let nativeAnimation = false;
-    for (const task of this.#tasks) {
-      if (task.visible && (task.dirty || task.active)) {
-        pending = true;
-        nativeAnimation ||= task.nativeAnimation && task.active;
-      }
-    }
-    if (!pending) return;
-    if (nativeAnimation) {
+    if (!this.#hasPending()) return;
+    if (this.#hasNativeAnimation()) {
       this.#raf = this.#environment.requestFrame(this.#frame);
       return;
     }
@@ -125,7 +104,6 @@ export class PresentationScheduler {
       this.#raf = this.#environment.requestFrame(this.#frame);
     }
   }
-
   #frame = (now: number): void => {
     this.#raf = 0;
     const cappedFrameDue = now - this.#lastFrame >= FRAME_MS - 1;
@@ -144,25 +122,24 @@ export class PresentationScheduler {
     }
     this.#request();
   };
-
   #hasNativeAnimation(): boolean {
     for (const task of this.#tasks) {
       if (task.visible && task.nativeAnimation && task.active) return true;
     }
     return false;
   }
-
+  #hasPending(): boolean {
+    for (const task of this.#tasks)
+      if (task.visible && (task.dirty || task.active)) return true;
+    return false;
+  }
   #cancelIfIdle(): void {
     if (this.#environment.hidden()) {
       this.#cancel();
       return;
     }
-    for (const task of this.#tasks) {
-      if (task.visible && (task.dirty || task.active)) return;
-    }
-    this.#cancel();
+    if (!this.#hasPending()) this.#cancel();
   }
-
   #cancel(): void {
     if (this.#raf) this.#environment.cancelFrame(this.#raf);
     if (this.#timer) this.#environment.clearTimer(this.#timer);
@@ -170,7 +147,6 @@ export class PresentationScheduler {
     this.#timer = 0;
   }
 }
-
 function browserEnvironment(): PresentationEnvironment {
   return {
     hidden: () => typeof document !== "undefined" && document.hidden,
@@ -197,5 +173,4 @@ function browserEnvironment(): PresentationEnvironment {
     },
   };
 }
-
 export const presentation = new PresentationScheduler();

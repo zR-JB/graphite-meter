@@ -1,8 +1,5 @@
 package auth
 
-// handlers.go is the login surface: the server-rendered login page and the
-// password, session-info, and logout handlers mounted behind Enforce.
-
 import (
 	"encoding/json/v2"
 	"net/http"
@@ -13,21 +10,22 @@ import (
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	csrf := randomToken(32)
-	setSessionCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute))
+	setCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute), true, http.SameSiteStrictMode)
+	password, oidc := authModes(s.cfg.Mode)
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,
-		Password:  s.cfg.Mode == "password" || s.cfg.Mode == "hybrid",
-		OIDC:      s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid",
+		Password:  password,
+		OIDC:      oidc,
 		OIDCReady: s.oidc != nil && s.oidc.ready(), Provider: s.cfg.OIDCProviderName,
 		Notice: string(parseNotice(r.URL.Query().Get("error"))), Status: parseStatus(r.URL.Query().Get("reason")),
 		Challenge: challengeOrEmpty(r.URL.Query().Get("challenge")),
 	}
-	renderLogin(w, s.loginTemplate, data)
+	renderLogin(w, loginTemplate, data)
 }
 
 func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
-	if s.cfg.Mode != "password" && s.cfg.Mode != "hybrid" {
+	if password, _ := authModes(s.cfg.Mode); !password {
 		http.NotFound(w, r)
 		return
 	}
@@ -61,8 +59,8 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.rotateSuppliedSession(r, sess)
-	setSessionCookie(w, sessionCookie, raw, sess.expires)
-	setCSRFCookie(w, sess.csrf, sess.expires)
+	setCookie(w, sessionCookie, raw, sess.expires, true, http.SameSiteStrictMode)
+	setCookie(w, csrfCookie, sess.csrf, sess.expires, false, http.SameSiteStrictMode)
 	s.counters.local.Add(1)
 	clearCookie(w, loginCookie)
 	dest := "/"
@@ -72,10 +70,6 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dest, http.StatusSeeOther)
 }
 
-// loginRejected is the single exit for a failed sign-in: it logs the reason,
-// charges it to a counter, and returns the visitor to the login page carrying
-// only the safe subset of that reason. Credential outcomes are indistinguishable
-// in the response.
 func (s *Service) loginRejected(w http.ResponseWriter, r *http.Request, why reason) {
 	s.debugln("login rejected reason=" + string(why))
 	s.countReason(why)
@@ -110,8 +104,8 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	p, ok := PrincipalFromContext(r.Context())
-	if !ok || p.session == nil || r.Header.Get("Origin") != s.public.String() || !constantEqual(p.session.csrf, r.FormValue("csrf")) {
+	p, ok := s.sessionFormPrincipal(r)
+	if !ok {
 		forbidden(w)
 		return
 	}

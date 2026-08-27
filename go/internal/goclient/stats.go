@@ -7,18 +7,12 @@ import (
 	"time"
 )
 
-// laneGroup runs one direction's per-stream transfer lanes under a context the
-// caller can cancel independently of the run.
 type laneGroup struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	// errs is buffered per lane so a failing lane never blocks on a reader.
-	errs chan error
+	errs   chan error
 }
 
-// startLanes spawns `streams` lanes of body, staggered so their congestion
-// windows don't ramp in lockstep. The count is the direction's own: the two
-// differ under an automatic multiplexed policy.
 func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int) error) *laneGroup {
 	laneCtx, cancel := context.WithCancel(ctx)
 	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
@@ -39,8 +33,6 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 	return g
 }
 
-// waitStart blocks until the warmup gate opens; a lane failure meanwhile stops
-// the group and is reported instead.
 func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}) error {
 	select {
 	case <-ctx.Done():
@@ -53,7 +45,6 @@ func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}) error 
 	}
 }
 
-// stop cancels the lanes and joins them.
 func (g *laneGroup) stop() {
 	g.cancel()
 	g.wg.Wait()
@@ -61,21 +52,13 @@ func (g *laneGroup) stop() {
 
 const rateSampleInterval = 100 * time.Millisecond
 
-// rateLoop folds a rate source into rateStats on a steady cadence until the
-// measurement window closes, a lane fails, or ctx ends.
 type rateLoop struct {
-	// duration bounds the window with its own timer; zero leaves ctx as the
-	// only bound.
-	duration time.Duration
-	// cancelEndsWindow reports ctx cancellation as the normal end of the
-	// measurement, for callers whose ctx carries the window as its deadline.
+	duration         time.Duration
 	cancelEndsWindow bool
 	laneErr          <-chan error
 	stageErr         <-chan error
-	// sample folds one tick of the rate source into stats and emits it.
-	sample func(now time.Time, stats *rateStats)
-	// window records the measured byte and time totals at the end of the run.
-	window func(stats *rateStats)
+	sample           func(now time.Time, stats *rateStats)
+	window           func(stats *rateStats)
 }
 
 func (l rateLoop) run(ctx context.Context) (rateStats, error) {
@@ -87,23 +70,23 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 		deadline = timer.C
 	}
 	var stats rateStats
+	finish := func(err error, canceled bool) (rateStats, error) {
+		l.window(&stats)
+		if err == nil || canceled && l.cancelEndsWindow {
+			return stats, nil
+		}
+		return stats, err
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			l.window(&stats)
-			if l.cancelEndsWindow {
-				return stats, nil
-			}
-			return stats, ctx.Err()
+			return finish(ctx.Err(), true)
 		case <-deadline:
-			l.window(&stats)
-			return stats, nil
+			return finish(nil, false)
 		case err := <-l.laneErr:
-			l.window(&stats)
-			return stats, err
+			return finish(err, false)
 		case err := <-l.stageErr:
-			l.window(&stats)
-			return stats, err
+			return finish(err, false)
 		case now := <-ticker:
 			l.sample(now, &stats)
 		}

@@ -1,9 +1,5 @@
-// Browser throughput benchmark. Run with `just bench-throughput`; never in ci.
-//
-// Findings and their interpretation belong in docs/BENCHMARKS.md; this writes
-// the raw rows they are computed from. Cells run in a fresh permutation each
-// repeat round, so drift across a session inflates spread rather than biasing
-// one cell.
+// Browser throughput benchmark (`just bench-throughput`); findings belong in docs/BENCHMARKS.md.
+// It writes raw rows from fresh cell permutations, so session drift inflates spread rather than biasing one cell.
 import { test, expect, origins, harnessOrigin } from "./fixtures";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import type { CellSpec, CellResult } from "./harness";
@@ -18,8 +14,7 @@ import {
   MEASURE_MS,
 } from "./matrix";
 
-/** Only origins the harness can actually reach are measured; the rest are
- *  recorded as invalid rather than left as a blank the reader must interpret. */
+/** Reachable origins are measured; others are recorded invalid instead of left blank. */
 const enabled = (process.env.GM_BENCH_ORIGINS ?? "h1-clear").split(",");
 const active = Object.fromEntries(
   Object.entries(origins).filter(([name]) => enabled.includes(name)),
@@ -49,8 +44,7 @@ if (cellFilter && selectedCells.length === 0)
     `GM_BENCH_FILTER ${JSON.stringify(filterSource)} matched no benchmark cells`,
   );
 
-/** Appended as each run completes. A failing test restarts the worker and
- *  resets module state, so anything held only in memory is lost with it. */
+/** Append each completed run because a failing test restarts the worker and loses module state. */
 function record(
   project: string,
   cell: string,
@@ -60,8 +54,7 @@ function record(
   mkdirSync(DIR, { recursive: true });
   appendFileSync(
     `${DIR}/${project}.ndjson`,
-    // 2 dropped the per-row `tuning` table: with the tuning surface gone every
-    // row runs the shipped constants, so the column carried no information.
+    // Schema 2 dropped the per-row tuning table because every row uses shipped constants.
     JSON.stringify({
       schemaVersion: 2,
       project,
@@ -95,8 +88,7 @@ test.describe("matrix", () => {
           measureMs: MEASURE_MS,
         });
         record("chromium", cell.id, cell.group, result);
-        // A run that carried nothing is the engine stalling, which is a fact
-        // about the engine. Only a lane reporting an error is a broken cell.
+        // Zero bytes indicates engine stalling; only a lane error makes the cell broken.
         expect(result.errors).toEqual([]);
       });
     }

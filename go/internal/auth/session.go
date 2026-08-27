@@ -1,9 +1,5 @@
 package auth
 
-// session.go owns the memory-only session store: tokens are 256-bit CSPRNG
-// values kept only as SHA-256 hashes, every store is bounded and swept, and
-// deleting a session cancels its context so in-flight requests unwind.
-
 import (
 	"context"
 	"crypto/rand"
@@ -12,7 +8,6 @@ import (
 	"errors"
 	"maps"
 	"net/http"
-	"slices"
 	"time"
 )
 
@@ -27,9 +22,7 @@ const (
 )
 
 type session struct {
-	hash [32]byte
-	// id names this login to the rest of the server. Not the hash: that is the
-	// lookup key for the credential itself.
+	hash                    [32]byte
 	id                      string
 	subject, name, provider string
 	expires, created        time.Time
@@ -51,17 +44,18 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
-	var own []*session
+	var oldest *session
+	count := 0
 	for x := range maps.Values(s.sessions) {
 		if x.subject == subject {
-			own = append(own, x)
+			count++
+			if oldest == nil || x.created.Before(oldest.created) {
+				oldest = x
+			}
 		}
 	}
-	slices.SortFunc(own, func(a, b *session) int {
-		return a.created.Compare(b.created)
-	})
-	if len(own) >= maxSubjectSessions {
-		s.deleteSessionLocked(own[0])
+	if count >= maxSubjectSessions {
+		s.deleteSessionLocked(oldest)
 	}
 	if len(s.sessions) >= maxSessions {
 		cancel()
@@ -72,8 +66,6 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	return raw, sess, nil
 }
 
-// deleteSessionLocked revokes a session together with everything derived from
-// it: its native-client grants and any pending browser approvals.
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
 	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ struct{}) bool {
@@ -88,31 +80,21 @@ func (s *Service) deleteSessionLocked(sess *session) {
 	sess.cancel()
 }
 
-// deleteSubjectSessionsLocked revokes every session belonging to subject, each
-// with its grants and pending approvals, and reports how many. This is "sign
-// out everywhere": it reaches sessions the caller holds no token for, which a
-// single-session logout cannot. Victims are collected first, not mid-range.
 func (s *Service) deleteSubjectSessionsLocked(subject string) int {
-	var victims []*session
+	count := 0
 	for sess := range maps.Values(s.sessions) {
 		if sess.subject == subject {
-			victims = append(victims, sess)
+			s.deleteSessionLocked(sess)
+			count++
 		}
 	}
-	for _, sess := range victims {
-		s.deleteSessionLocked(sess)
-	}
-	return len(victims)
+	return count
 }
 
-// revokeSessionHash deletes the session keyed by h unless it is absent or is
-// keep. A fresh sign-in calls it to rotate out the session it replaces, grants
-// included, so re-authenticating in a browser cannot leave the prior session
-// live and unreachable for the rest of its lifetime.
 func (s *Service) revokeSessionHash(h [32]byte, keep *session) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if sess, ok := s.sessions[h]; ok && sess != keep {
+	if sess := s.sessions[h]; sess != nil && sess != keep {
 		s.deleteSessionLocked(sess)
 	}
 }
@@ -126,9 +108,6 @@ func (s *Service) expireLocked(now time.Time) {
 }
 
 func (s *Service) sweep(ctx context.Context) {
-	// Faster than the shortest thing it reaps: a CONNECT token lives 30 s and
-	// occupies its session's cap until swept, so a minute would let dead tokens
-	// crowd out live ones for a client that dials often.
 	t := time.Tick(wtTokenLifetime)
 	for {
 		select {
@@ -143,30 +122,14 @@ func (s *Service) sweep(ctx context.Context) {
 	}
 }
 
-// randomToken is n CSPRNG bytes, base64url. crypto/rand.Read never returns an
-// error; it crashes the program rather than handing back weak bytes.
 func randomToken(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
-}
-
-// setCSRFCookie is deliberately readable by the client: the SPA mirrors it into
-// the X-CSRF-Token header for the double-submit check. HttpOnly is therefore
-// omitted. The token is not a bearer secret; the session cookie beside it is
-// HttpOnly.
-func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, SameSite: http.SameSiteStrictMode})
-}
-
-// setTransactionCookie is Lax rather than Strict because the OIDC callback
-// arrives as a cross-site navigation from the identity provider.
-func setTransactionCookie(w http.ResponseWriter, value string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: transactionCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+func setCookie(w http.ResponseWriter, name, value string, expires time.Time, httpOnly bool, sameSite http.SameSite) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: httpOnly, SameSite: sameSite})
 }
 
 func clearTransactionCookie(w http.ResponseWriter) {

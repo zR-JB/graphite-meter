@@ -1,26 +1,11 @@
-/* ============================================================
- * Runner engine wiring: the integration seam for a backend swap
- * The single integration seam. The shared RunnerCore owns the
- * engine logic; only the backend (sample source) is swapped here.
- * Going live touches ONLY this file.
- *
- * Named `.svelte.ts` so the `$state.snapshot` rune compiles; it
- * passes a frozen, non-reactive config into the engine.
- * ============================================================ */
-
 import type {
   ConnectionRole,
   InfraInfo,
   LiveRunConfig,
   NetworkRunner,
-  RunnerAnomaly,
   RunnerEvent,
 } from "./contract";
 import { RunnerCore } from "./core";
-// DummyBackend is referenced only inside the `__GM_ALLOW_DUMMY__` branch in
-// getRunner(). With that token folded to `false` (GM_CLIENT_ALLOW_DUMMY=0),
-// Rollup deletes the branch and tree-shakes the whole module out, but only
-// while dummy.ts stays free of top-level side effects.
 import { DummyBackend } from "./dummy";
 import {
   PreflightUnavailableError,
@@ -28,8 +13,6 @@ import {
   TransportUnavailableError,
 } from "./RealRunner";
 import { store } from "../state/store.svelte";
-import { setDebugLogging } from "../debug";
-import { BUILD } from "../buildenv";
 import {
   requireSessionCoverage,
   liveScheduleFitsSession,
@@ -65,7 +48,6 @@ let lastDraftRoleKeys: Record<ConnectionRole, string> = {
   throughput: "",
   latency: "",
 };
-let pendingValidation = false;
 let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 let validationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -125,13 +107,6 @@ function scheduleValidation(): void {
   if (!booted || store.isRunning || validationHidden()) return;
   const dueAt = validationDue();
   const delay = Math.max(0, dueAt - Date.now());
-  if (delay === 0) {
-    validationTimer = setTimeout(() => {
-      validationTimer = null;
-      serviceValidation();
-    }, 0);
-    return;
-  }
   validationTimer = setTimeout(() => {
     validationTimer = null;
     serviceValidation();
@@ -139,7 +114,6 @@ function scheduleValidation(): void {
 }
 
 function requestValidation(): void {
-  pendingValidation = true;
   validationDueAt = Date.now();
   scheduleValidation();
 }
@@ -150,18 +124,15 @@ function serviceValidation(): void {
     return;
   }
   if (validating.length) return;
-  const due = validationDue() <= Date.now();
-  if (!pendingValidation && !due) {
+  if (validationDue() > Date.now()) {
     scheduleValidation();
     return;
   }
-  pendingValidation = false;
   validationDueAt = 0;
   queueMicrotask(
     () =>
       void validateConnections(true).catch(() => {
-        // The validation state is the user-facing result; expected probe
-        // failures are recorded there and consumed at this UI boundary.
+        // Validation state carries expected probe failures to the UI.
       }),
   );
 }
@@ -174,28 +145,18 @@ export function cancelPendingStart() {
   pendingStartSeq++;
   pendingStartAbort.abort();
   pendingStartAbort = null;
-  // Cancellation is not a runner failure: leave the phase idle and clear any
-  // stale transient error from the preparation attempt.
   store.startError = "";
   updatePreparation("idle");
 }
 
-// Mirror the persisted dev toggle into the main-thread debug logger, live.
-// Workers are separate module graphs: they get the value in their `start`
-// message, so this governs only the main-thread core/RealRunner logs.
 if (typeof window !== "undefined") {
   $effect.root(() => {
-    $effect(() => setDebugLogging(store.debugLogging));
     $effect(() => {
-      // Read every reactive dependency ahead of the `booted` guard: `booted` is
-      // a plain variable, so an early return loses the effect's subscriptions.
       const changed = CONNECTION_ROLES.filter(
         (role) =>
           connectionDraftRoleKey(store.config, role) !==
           lastDraftRoleKeys[role],
       );
-      // Every role with something to learn from a probe, not only the ones the
-      // draft moved: a role left unverified by an earlier failure is still owed one.
       const needed = CONNECTION_ROLES.filter((role) =>
         roleNeedsValidation(
           store.config,
@@ -207,8 +168,6 @@ if (typeof window !== "undefined") {
       const running = store.isRunning;
       if (!booted) return;
       if (changed.length) {
-        // Only a latency path that both moved and needs re-checking invalidates
-        // its samples. A stage toggle must not blank the sparkline.
         if (changed.includes("latency") && needed.includes("latency"))
           store.idleLatency = [];
         for (const role of changed)
@@ -229,45 +188,13 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Which sample source the app is wired to. `dummy` synthesizes samples for
- *  development; `real` talks to the live Go backend. */
-type EngineKind = "dummy" | "real";
-
-const ENGINE_STORAGE_KEY = "gm.engine";
-
-/** Resolve the engine: a `?engine=real|dummy` URL param wins (and is persisted
- *  for subsequent reloads), else the last persisted choice, else the build's
- *  configured default (`GM_CLIENT_ENGINE`, "real" unless overridden). */
-function resolveEngine(): EngineKind {
-  if (typeof window !== "undefined") {
-    const param = new URLSearchParams(window.location.search).get("engine");
-    if (param === "real" || param === "dummy") {
-      try {
-        window.localStorage.setItem(ENGINE_STORAGE_KEY, param);
-      } catch {
-        /* private mode or storage disabled: fall through to the param value */
-      }
-      return param;
-    }
-    try {
-      const saved = window.localStorage.getItem(ENGINE_STORAGE_KEY);
-      if (saved === "real" || saved === "dummy") return saved;
-    } catch {
-      /* storage unavailable: use the default */
-    }
-  }
-  return BUILD.defaultEngine;
-}
-
 export function getRunner(): NetworkRunner {
-  // Gated on the raw `__GM_ALLOW_DUMMY__` literal so a prod build folds it away.
-  // A real-only bundle then ignores any persisted or `?engine=` "dummy".
   if (!runner) {
-    if (__GM_ALLOW_DUMMY__ && resolveEngine() === "dummy") {
-      runner = new RunnerCore(new DummyBackend({ profile: "fiber" }));
-    } else {
-      runner = new RunnerCore(new RealBackend());
-    }
+    const dummy =
+      __GM_ALLOW_DUMMY__ &&
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("engine") === "dummy";
+    runner = new RunnerCore(dummy ? new DummyBackend() : new RealBackend());
   }
   return runner;
 }
@@ -351,7 +278,6 @@ export async function validateConnections(
   if (!force && preparedIsFresh(key)) return prepared!.info;
   lastValidationAttemptAt = Date.now();
   validationDueAt = 0;
-  pendingValidation = false;
   if (validating.length) markValidation(validating, "stale");
   validationAbort?.abort();
   const roles = validationRoles(
@@ -460,8 +386,6 @@ function ingestRunnerEvent(event: RunnerEvent) {
     event.transition.to === "connecting" &&
     pendingStartAbort
   ) {
-    // RunnerCore now owns cancellation. Do not leave the preparation
-    // controller looking live while the button has become Abort.
     pendingStartAbort = null;
   }
   if (
@@ -492,12 +416,9 @@ function ingestRunnerEvent(event: RunnerEvent) {
   store.ingest(event);
   if (
     event.type === "phase" &&
-    (event.transition.to === "complete" ||
-      event.transition.to === "aborted" ||
-      event.transition.to === "error")
-  ) {
+    ["complete", "aborted", "error"].includes(event.transition.to)
+  )
     scheduleValidation();
-  }
 }
 
 function refreshAfterTransition() {
@@ -523,20 +444,11 @@ function refreshAfterOffline() {
   connectivityOnline = false;
   prepared = null;
   markValidation(CONNECTION_ROLES, "stale", "Connection changed; check again.");
-  // The in-flight probe is already the check for this edge. Let its result
-  // establish the normal freshness or bounded-failure deadline instead of
-  // queuing a second immediate probe from the keepalive signal.
   if (!validating.length) requestValidation();
 }
 
-// A hidden tab does no background work: the keepalive's ping socket and worker
-// stop so the browser can park the page. A run keeps going, since hiding the
-// tab mid-measurement must not disturb it. Returning re-arms the keepalive and
-// re-checks a stale cached probe.
 function refreshAfterVisibility() {
   const hidden = document.visibilityState === "hidden";
-  // Safe during a run: the keepalive is already stopped for its duration, and
-  // the flag decides whether it comes back when the run ends.
   runner?.setBackgroundActivity?.(!hidden);
   if (hidden) {
     clearValidationTimer();
@@ -557,24 +469,17 @@ export async function bootRunner() {
   window.addEventListener("online", refreshAfterTransition);
   window.addEventListener("offline", refreshAfterOffline);
   document.addEventListener("visibilitychange", refreshAfterVisibility);
-  // A tab opened in the background gets no visibilitychange, so seed the flag
-  // from the current state instead of assuming the page is visible.
   refreshAfterVisibility();
   if (validationHidden()) requestValidation();
   else await validateConnections().catch(() => {});
 }
 
 export function toggleRun() {
-  // Runner state wins during the narrow start handoff: RunnerCore emits
-  // `connecting` synchronously, while its start promise may still be settling.
-  // In that window the control is an Abort action, not preparation Cancel.
   if (store.isRunning) {
     cancelPendingStart();
     getRunner().abort();
     return;
   }
-  // Preparation has an explicit Cancel action. It must not be conflated with
-  // the runner's abort path because the visible phase is still idle.
   if (pendingStartAbort) {
     cancelPendingStart();
     return;
@@ -589,7 +494,6 @@ export function toggleRun() {
   const current = () =>
     pendingStartSeq === startSeq && !startAbort.signal.aborted;
   const start = async () => {
-    store.preparation = { ...store.preparation, status: "authenticating" };
     const budget = await requireSessionCoverage(
       buildSegments(cfg).totalMs + SESSION_RUN_MARGIN_MS,
       startAbort.signal,
@@ -619,9 +523,6 @@ export function toggleRun() {
         updatePreparation("failed");
         return;
       }
-      // A preflight failure happens before RunnerCore emits `connecting`.
-      // Keep the runner phase idle; the path cards and this transient message
-      // carry the failure without manufacturing a measurement error result.
       store.startError = connectionFailureMessage(cause);
       updatePreparation("failed");
     })
@@ -637,12 +538,6 @@ export function hasPendingStart(): boolean {
   return pendingStartAbort !== null;
 }
 
-/**
- * Return to the fresh, blank idle view, matching a page reload's starting state
- * (persisted settings are untouched). Aborts any in-flight run first, which is
- * synchronous, so the reset that follows sticks; then clears samples, result,
- * and phase back to idle.
- */
 export function returnToStart() {
   cancelPendingStart();
   if (store.isRunning) getRunner().abort();
@@ -650,11 +545,6 @@ export function returnToStart() {
   requestValidation();
 }
 
-/**
- * Push the live enabled-stage set into the running engine so a mid-run
- * future-stage toggle actually shortens the run. No-op when idle or
- * when the active engine doesn't support live reconfigure.
- */
 export function applyLiveRunConfig() {
   if (!store.isRunning) return;
   const config = $state.snapshot(store.config);
@@ -690,15 +580,6 @@ export function applyLiveRunConfig() {
     store.activeConfig = { ...store.activeConfig, ...live };
 }
 
-/**
- * Pass a live dev anomaly through to the active engine. Optional on
- * the contract, so this is a no-op when the engine doesn't implement it or
- * when nothing is running (the runner itself guards on its tick timer).
- */
-export function injectAnomaly(a: RunnerAnomaly) {
-  getRunner().injectAnomaly?.(a);
-}
-
 export function teardownRunner() {
   booted = false;
   cancelPendingStart();
@@ -706,7 +587,6 @@ export function teardownRunner() {
   runner?.dispose?.();
   runner = null;
   prepared = null;
-  pendingValidation = false;
   validating = [];
   validationAbort?.abort();
   validationAbort = null;
@@ -720,10 +600,6 @@ export function teardownRunner() {
   unsubscribe?.();
   unsubscribe = null;
   store.reset();
-  // Server-scoped evidence, cleared with the server binding rather than in
-  // `store.reset()`: a run resets the store but keeps talking to the same
-  // server, and several surfaces read `store.infra` without the connection
-  // presentation's generation gate.
   store.transportDiscovery = null;
   store.infra = null;
 }

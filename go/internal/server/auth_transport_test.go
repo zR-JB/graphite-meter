@@ -21,9 +21,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// authenticatedStack brings up the three real transports behind one auth
-// service, the way Run wires them: the UI listener carries the login surface,
-// the measurement listeners carry nothing but measurement routes.
+// authenticatedStack brings up the three real transports behind one auth service, the way Run wires them.
 type authenticatedStack struct {
 	authn                        *auth.Service
 	origin, h2URL, h3URL         string
@@ -34,8 +32,7 @@ type authenticatedStack struct {
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	// One already-reserved port for the UDP listener and its TCP Alt-Svc
-	// companion, so assembly never releases and races to rebind it.
+	// One already-reserved port for the UDP listener and its TCP Alt-Svc companion.
 	sockets := newTestListenerSockets(t)
 	cfg.Native.H3 = sockets.reserveH3()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -70,9 +67,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 
-	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here: the
-	// browser CONNECT path hangs entirely on the auth.Listener{WebTransport:
-	// true} it passes to Enforce, and a mirrored construction pins nothing.
+	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here.
 	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, sockets: sockets,
 		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
 	if err := build.assembleH3(); err != nil {
@@ -111,8 +106,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	return s
 }
 
-// signIn performs the real password login over the UI listener and keeps the
-// session and CSRF cookies it issues.
+// signIn performs the real password login over the UI listener and keeps the session and CSRF cookies it issues.
 func (s *authenticatedStack) signIn(t *testing.T) {
 	t.Helper()
 	page, err := s.uiClient.Get(s.origin + "/login")
@@ -161,8 +155,7 @@ func (s *authenticatedStack) signIn(t *testing.T) {
 	}
 }
 
-// grant walks the native-client approval flow to a bearer token, the same way
-// the TUI does: challenge, browser approval, exchange.
+// grant walks the native-client approval flow to a bearer token, the same way the TUI does: challenge.
 func (s *authenticatedStack) grant(t *testing.T) string {
 	t.Helper()
 	raw := make([]byte, 32)
@@ -220,9 +213,46 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	return out.Token
 }
 
-// The positive path over the real transports. Every other test in this package
-// asserts a 403, so a nil r.TLS on the HTTP/3 handler or a dropped bearer path
-// satisfies them all while no authenticated request works.
+func authenticatedDownload(t *testing.T, client *http.Client, base, origin string, cookie *http.Cookie, bearer string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, base+"/download?bytes=1", nil)
+	if cookie != nil {
+		req.AddCookie(cookie)
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(body) != 1 {
+		t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
+	}
+}
+
+func assertUnauthenticatedDownload(t *testing.T, client *http.Client, base string) {
+	t.Helper()
+	res, err := client.Get(base + "/download?bytes=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", res.StatusCode)
+	}
+	if res.Header.Get("Graphite-Meter-Auth") != "required" {
+		t.Fatalf("missing auth marker: %v", res.Header)
+	}
+}
+
+// The positive path over the real transports.
 func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
@@ -237,32 +267,11 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 		{"http3", s.h3Client, s.h3URL},
 	} {
 		t.Run(tc.name+"/session-cookie", func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, tc.base+"/download?bytes=1", nil)
-			req.AddCookie(s.session)
-			req.Header.Set("Origin", s.origin)
-			res, err := tc.client.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
-			}
+			authenticatedDownload(t, tc.client, tc.base, s.origin, s.session, "")
 		})
 
 		t.Run(tc.name+"/bearer-grant", func(t *testing.T) {
-			req, _ := http.NewRequest(http.MethodGet, tc.base+"/download?bytes=1", nil)
-			req.Header.Set("Authorization", "Bearer "+bearer)
-			res, err := tc.client.Do(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			body, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusOK || len(body) != 1 {
-				t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
-			}
+			authenticatedDownload(t, tc.client, tc.base, "", nil, bearer)
 		})
 	}
 }
@@ -296,8 +305,7 @@ func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
 	}
 }
 
-// A bearer grant authorizes measurement and nothing else: it must not reach
-// the session surface or the approval routes that minted it.
+// A bearer grant authorizes measurement and nothing else: it must not reach the session surface or the approval routes.
 func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
@@ -328,18 +336,7 @@ func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
 		{"http3", s.h3Client, s.h3URL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			res, err := tc.client.Get(tc.base + "/download?bytes=1")
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-			if res.StatusCode != http.StatusForbidden {
-				t.Fatalf("status=%d, want 403", res.StatusCode)
-			}
-			if res.Header.Get("Graphite-Meter-Auth") != "required" {
-				t.Fatalf("missing auth marker: %v", res.Header)
-			}
+			assertUnauthenticatedDownload(t, tc.client, tc.base)
 		})
 	}
 }

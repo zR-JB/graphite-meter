@@ -1,5 +1,3 @@
-// Command graphite-meter serves the embedded Svelte client on H1 and shared
-// measurement endpoints on configured H1/H2/H3 listeners.
 package main
 
 import (
@@ -51,8 +49,6 @@ func isVersionCommand(arg string) bool {
 	return arg == "version" || arg == "--version"
 }
 
-// parseConfig loads the base configuration, applies the command-line flags in
-// args, and validates the result. Flag errors and the -h usage go to usage.
 func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -70,9 +66,6 @@ func parseConfig(name string, args []string, usage io.Writer) (config.Config, er
 	return cfg, nil
 }
 
-// hashPassword reads a password twice from stdin, without echo when stdin is a
-// terminal, requires the two entries to match, and writes the Argon2id PHC hash
-// to out. Interactive cues go to prompts.
 func hashPassword(stdin *os.File, out, prompts io.Writer) error {
 	in := bufio.NewReader(stdin)
 	fmt.Fprint(prompts, "Password: ")

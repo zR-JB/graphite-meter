@@ -31,6 +31,13 @@ const result = (overrides: Partial<RunResult>): RunResult => ({
   ...overrides,
 });
 
+const arc = (
+  phase: "download" | "upload" | "bidirectional",
+  label: string,
+  bytesPerSec: number,
+  dashed = false,
+) => ({ phase, label, bytesPerSec, dashed });
+
 test("terminal gauge enumerates every complete throughput phase", () => {
   expect(
     resultGaugeArcs(
@@ -41,14 +48,9 @@ test("terminal gauge enumerates every complete throughput phase", () => {
       }),
     ),
   ).toEqual([
-    {
-      phase: "bidirectional",
-      label: "Bidirectional",
-      bytesPerSec: 70,
-      dashed: false,
-    },
-    { phase: "upload", label: "Upload", bytesPerSec: 20, dashed: false },
-    { phase: "download", label: "Download", bytesPerSec: 10, dashed: false },
+    arc("bidirectional", "Bidirectional", 70),
+    arc("upload", "Upload", 20),
+    arc("download", "Download", 10),
   ]);
 });
 
@@ -57,14 +59,7 @@ test("one-sided bidirectional evidence stays partial", () => {
     resultGaugeArcs(
       result({ bidirectional: { down: throughput(30), up: null } }),
     ),
-  ).toEqual([
-    {
-      phase: "bidirectional",
-      label: "Bidirectional download",
-      bytesPerSec: 30,
-      dashed: true,
-    },
-  ]);
+  ).toEqual([arc("bidirectional", "Bidirectional download", 30, true)]);
 });
 
 test("terminal gauge skips unavailable stages in every combination", () => {
@@ -88,47 +83,28 @@ test("terminal gauge skips unavailable stages in every combination", () => {
     ),
   ).toEqual([]);
   expect(resultGaugeArcs(result({ download: throughput(10) }))).toEqual([
-    { phase: "download", label: "Download", bytesPerSec: 10, dashed: false },
+    arc("download", "Download", 10),
   ]);
   expect(resultGaugeArcs(result({ upload: throughput(20) }))).toEqual([
-    { phase: "upload", label: "Upload", bytesPerSec: 20, dashed: false },
+    arc("upload", "Upload", 20),
   ]);
   expect(
     resultGaugeArcs(
       result({ bidirectional: { down: throughput(30), up: throughput(40) } }),
     ),
-  ).toEqual([
-    {
-      phase: "bidirectional",
-      label: "Bidirectional",
-      bytesPerSec: 70,
-      dashed: false,
-    },
-  ]);
+  ).toEqual([arc("bidirectional", "Bidirectional", 70)]);
   expect(
     resultGaugeArcs(
       result({ bidirectional: { down: null, up: throughput(40) } }),
     ),
-  ).toEqual([
-    {
-      phase: "bidirectional",
-      label: "Bidirectional upload",
-      bytesPerSec: 40,
-      dashed: true,
-    },
-  ]);
+  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, true)]);
 });
 
 test("layer ordering paints highest throughput first and preserves ties", () => {
   const layers = sortResultGaugeArcs([
-    { phase: "download", label: "Download", bytesPerSec: 20, dashed: false },
-    { phase: "upload", label: "Upload", bytesPerSec: 80, dashed: false },
-    {
-      phase: "bidirectional",
-      label: "Bidirectional upload",
-      bytesPerSec: 80,
-      dashed: true,
-    },
+    arc("download", "Download", 20),
+    arc("upload", "Upload", 80),
+    arc("bidirectional", "Bidirectional upload", 80, true),
   ]);
   expect(layers.map((arc) => arc.phase)).toEqual([
     "upload",
@@ -151,11 +127,6 @@ test("partial result styling remains dashed without marker geometry", () => {
     result({ bidirectional: { down: throughput(30), up: null } }),
   );
   expect(arcs).toEqual([
-    {
-      phase: "bidirectional",
-      label: "Bidirectional download",
-      bytesPerSec: 30,
-      dashed: true,
-    },
+    arc("bidirectional", "Bidirectional download", 30, true),
   ]);
 });

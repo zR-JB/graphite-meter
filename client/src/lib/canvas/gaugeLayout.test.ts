@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { gaugeLayout } from "./gaugeLayout";
 
+const radius = (
+  layout: ReturnType<typeof gaugeLayout>,
+  point: { x: number; y: number },
+) => Math.hypot(point.x - layout.center.x, point.y - layout.center.y);
+
 test("gauge layout keeps canvas arc and DOM tick anchors in one CSS-pixel model", () => {
   const layout = gaugeLayout(480, 260, 5);
   expect(layout.center).toEqual({ x: 240, y: 130 });
@@ -24,22 +29,18 @@ test("gauge layout keeps canvas arc and DOM tick anchors in one CSS-pixel model"
 
 test("flank labels keep more clearance than the aligned top label", () => {
   const layout = gaugeLayout(480, 260, 5);
-  const distance = (point: { x: number; y: number }) =>
-    Math.hypot(point.x - layout.center.x, point.y - layout.center.y);
 
-  expect(distance(layout.labelPoints[1]!)).toBeGreaterThan(
-    distance(layout.labelPoints[2]!) + 4,
+  expect(radius(layout, layout.labelPoints[1]!)).toBeGreaterThan(
+    radius(layout, layout.labelPoints[2]!) + 4,
   );
-  expect(distance(layout.labelPoints[3]!)).toBeGreaterThan(
-    distance(layout.labelPoints[2]!) + 4,
+  expect(radius(layout, layout.labelPoints[3]!)).toBeGreaterThan(
+    radius(layout, layout.labelPoints[2]!) + 4,
   );
 });
 
 test("gauge labels preserve symmetric optical radial tiers", () => {
   const layout = gaugeLayout(480, 260, 5);
-  const distance = (point: { x: number; y: number }) =>
-    Math.hypot(point.x - layout.center.x, point.y - layout.center.y);
-  const radii = layout.labelPoints.map(distance);
+  const radii = layout.labelPoints.map((point) => radius(layout, point));
 
   expect(radii[1]).toBeCloseTo(radii[3], 8);
   expect(radii[0]).toBeCloseTo(radii[4], 8);

@@ -4,7 +4,6 @@ import App from "./App.svelte";
 import { STORAGE_KEY } from "./lib/state/persistence";
 
 // The inline theme script in index.html gets the first frame right.
-// This bundle loads after first paint, so it only covers that script going missing.
 (function applyThemePrePaint() {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);

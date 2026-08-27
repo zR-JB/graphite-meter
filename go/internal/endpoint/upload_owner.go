@@ -8,10 +8,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// ClientKey is the stable per-client key both upload ownership and admission
-// accounting bucket by: the authenticated subject when present, else the
-// client's IPv4 address or IPv6 /64. A single IPv6 allocation routinely covers
-// 2^64 addresses, so the /64 is the meaningful unit.
+// ClientKey keys upload ownership and admission by subject, IPv4 address, or IPv6 /64.
 func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
 		return "principal:" + p.Subject
@@ -26,11 +23,7 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	return addr.String()
 }
 
-// SessionKey buckets the per-client session budget. A login is the unit, not a
-// subject: one device's held sessions must not starve the same user's others.
-// The login branch is pinned by TestSessionKeyUsesTheLoginNotTheSubject in
-// internal/auth: only that package can build a principal with a non-empty
-// LoginID, so no test here or in server catches the branch going away.
+// SessionKey buckets the per-client session budget.
 func SessionKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {
 		return "login:" + p.LoginID()
@@ -38,50 +31,47 @@ func SessionKey(r *http.Request, trusted []netip.Prefix) string {
 	return ClientKey(r, trusted)
 }
 
-// uploadAccessMessage is the reason a refused upload reports, over HTTP as the
-// status text and over a stream as an error record.
-func uploadAccessMessage(access uploadAccess) string {
-	switch access {
-	case uploadAccessInvalid:
-		return "unknown upload id"
-	case uploadAccessGlobalFull:
-		return "upload capacity exhausted"
-	case uploadAccessClientFull:
-		return "client upload capacity exhausted"
-	case uploadAccessOwnerMismatch:
-		return "upload id belongs to another client"
+func optionalPrefixes(values [][]netip.Prefix) []netip.Prefix {
+	if len(values) != 0 {
+		return values[0]
 	}
-	return ""
+	return nil
 }
 
-// uploadAccessCode is the stable machine-readable companion to the refusal
-// text. Browser recovery may rotate an upload id only for invalid; every other
-// code is a refusal of the current measurement, not a stale session.
-func uploadAccessCode(access uploadAccess) string {
-	switch access {
-	case uploadAccessInvalid:
-		return "invalid"
-	case uploadAccessGlobalFull:
-		return "globalFull"
-	case uploadAccessClientFull:
-		return "clientFull"
-	case uploadAccessOwnerMismatch:
-		return "ownerMismatch"
-	}
-	return ""
+type uploadAccessInfo struct {
+	message string
+	code    string
+	status  int
+	retry   bool
 }
 
-// uploadRefusalError preserves the classified refusal across transports that
-// do not have an HTTP status line. The WebTransport handler converts it into a
-// structured progress record before it resets the rejected byte stream.
+var uploadAccessInfos = [...]uploadAccessInfo{
+	uploadAccessOK:            {},
+	uploadAccessInvalid:       {message: "unknown upload id", code: "invalid", status: http.StatusBadRequest},
+	uploadAccessGlobalFull:    {message: "upload capacity exhausted", code: "globalFull", status: http.StatusServiceUnavailable, retry: true},
+	uploadAccessClientFull:    {message: "client upload capacity exhausted", code: "clientFull", status: http.StatusTooManyRequests, retry: true},
+	uploadAccessOwnerMismatch: {message: "upload id belongs to another client", code: "ownerMismatch", status: http.StatusForbidden},
+}
+
+func (access uploadAccess) info() uploadAccessInfo {
+	if int(access) < len(uploadAccessInfos) {
+		return uploadAccessInfos[access]
+	}
+	return uploadAccessInfo{}
+}
+
+func uploadAccessMessage(access uploadAccess) string { return access.info().message }
+
+func uploadAccessCode(access uploadAccess) string { return access.info().code }
+
+// uploadRefusalError preserves the classified refusal across transports that do not have an HTTP status line.
 type uploadRefusalError struct{ access uploadAccess }
 
 func (e *uploadRefusalError) Error() string {
 	return "upload refused: " + uploadAccessMessage(e.access)
 }
 
-// sessionOwner reads the client key from an HTTP request, or from the session
-// that owns a WebTransport stream, which carries no request of its own.
+// sessionOwner reads the client key from an HTTP request, or from the session that owns a WebTransport stream.
 func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
 	if _, r, ok := s.HTTP(); ok {
 		return ClientKey(r, trusted)
@@ -93,24 +83,14 @@ func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
 }
 
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
-	if code := uploadAccessCode(access); code != "" {
-		w.Header().Set("X-Graphite-Upload-Refusal", code)
-	}
-	switch access {
-	case uploadAccessInvalid:
-		http.Error(w, uploadAccessMessage(access), http.StatusBadRequest)
-	case uploadAccessGlobalFull:
-		w.Header().Set("Retry-After", "1")
-		http.Error(w, uploadAccessMessage(access), http.StatusServiceUnavailable)
-	case uploadAccessClientFull:
-		w.Header().Set("Retry-After", "1")
-		http.Error(w, uploadAccessMessage(access), http.StatusTooManyRequests)
-	case uploadAccessOwnerMismatch:
-		http.Error(w, uploadAccessMessage(access), http.StatusForbidden)
-	default:
-		// Every refusal must map to a status. One that reaches here would
-		// otherwise write nothing at all, and Handle's nil return would let the
-		// client read a bare 200 with an empty body as a completed upload.
+	info := access.info()
+	if info.code == "" {
 		http.Error(w, "upload refused", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("X-Graphite-Upload-Refusal", info.code)
+	if info.retry {
+		w.Header().Set("Retry-After", "1")
+	}
+	http.Error(w, info.message, info.status)
 }

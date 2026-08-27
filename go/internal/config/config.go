@@ -18,8 +18,7 @@ import (
 // EngineVersion is the server build version, stamped at link time.
 var EngineVersion = "0.0.0-dev"
 
-// Native endpoint names, as accepted by GM_ADVERTISED_NATIVE_ENDPOINTS and
-// reported in preflight.
+// Native endpoint names, as accepted by GM_ADVERTISED_NATIVE_ENDPOINTS and reported in preflight.
 const (
 	NativeH1Clear = "http1-clear"
 	NativeH1TLS   = "http1-tls"
@@ -27,28 +26,24 @@ const (
 	NativeH3      = "http3"
 )
 
-// NativeListeners holds the listen address of each native endpoint; an empty
-// address disables that endpoint.
+// NativeListeners holds the listen address of each native endpoint; an empty address disables that endpoint.
 type NativeListeners struct {
 	H1, H1TLS, H2, H3 string
 }
 
-// NativeOrigins holds the externally reachable origin advertised for each
-// native listener.
+// NativeOrigins holds the externally reachable origin advertised for each native listener.
 type NativeOrigins struct {
 	H1, H1TLS, H2, H3 string
 }
 
-// PublicOrigins holds proxied origins advertised for both measurement kinds,
-// for throughput only, or for latency only.
+// PublicOrigins holds proxied origins advertised for both measurement kinds, for throughput only, or for latency only.
 type PublicOrigins struct {
 	Both, Throughput, Latency []string
 }
 
 // AuthConfig holds the authentication settings read from GM_AUTH_*.
 type AuthConfig struct {
-	// Explicit is true when the operator sets any GM_AUTH_* variable other than
-	// the mode, even to its default value.
+	// Explicit is true when the operator sets any GM_AUTH_* variable other than the mode, even to its default value.
 	Explicit          bool
 	Mode              string
 	PublicURL         string
@@ -84,15 +79,6 @@ type Config struct {
 	Auth                                      AuthConfig
 }
 
-// Default returns the configuration used when nothing is set in the
-// environment: one cleartext HTTP/1.1 listener, with every enabled native
-// endpoint advertised. MaxActiveSessions is a ceiling on how much of the
-// measurement pool sessions may occupy, a quarter of it: a session route holds
-// its slot for MaxSessionDuration rather than MaxOperationDuration, so the slot
-// is slow to come back, and the request-shaped routes must not end up queued
-// behind sessions that hold theirs for hours. It reserves nothing in return --
-// a pool filled by request-shaped routes refuses sessions with the session
-// budget untouched.
 func Default() Config {
 	return Config{
 		Native:           NativeListeners{H1: ":7246"},
@@ -107,8 +93,6 @@ func Default() Config {
 	}
 }
 
-// Load returns the default configuration with every GM_* environment override
-// applied. It does not validate the result; call [Config.Validate] for that.
 func Load() (Config, error) {
 	c := Default()
 	for _, env := range []struct {
@@ -197,16 +181,10 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// marksAuthExplicit reports whether the named variable counts as configuring
-// authentication. GM_AUTH_MODE is excluded: setting it is how one asks for a
-// mode, including "off".
 func marksAuthExplicit(name string) bool {
 	return strings.HasPrefix(name, "GM_AUTH_") && name != "GM_AUTH_MODE"
 }
 
-// isDefaultRoute reports whether prefix covers every address. Trusting one lets
-// any caller spoof X-Real-IP for a fresh rate-limit budget, or assert
-// X-Forwarded-Proto=https over cleartext.
 func isDefaultRoute(prefix netip.Prefix) bool {
 	return prefix.Bits() == 0
 }
@@ -221,9 +199,6 @@ func splitList(raw string) []string {
 	return out
 }
 
-// ParseAdvertisedNative parses a GM_ADVERTISED_NATIVE_ENDPOINTS value into the
-// set of native endpoint names it selects. The aliases "all" and "none" (and an
-// empty value) stand for every endpoint and no endpoint.
 func ParseAdvertisedNative(raw string) (map[string]bool, error) {
 	set := map[string]bool{}
 	switch strings.TrimSpace(raw) {
@@ -260,8 +235,7 @@ func (c Config) nativeEnabled(name string) bool {
 	return false
 }
 
-// NativeAdvertised reports whether the named native endpoint is both enabled
-// and selected for advertisement.
+// NativeAdvertised reports whether the named native endpoint is both enabled and selected for advertisement.
 func (c Config) NativeAdvertised(name string) bool {
 	return c.nativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
 }
@@ -293,9 +267,6 @@ func envInt(name string, fallback int) (int, error) {
 	return n, nil
 }
 
-// validOrigin reports whether value is a bare origin: scheme and host only,
-// with no path, credentials, query, or fragment. An empty scheme accepts either
-// http or https; allowSelf additionally permits the literal "self".
 func validOrigin(value, scheme string, allowSelf bool) bool {
 	if allowSelf && value == "self" {
 		return true
@@ -405,9 +376,6 @@ func (c Config) validatePublicOrigins() error {
 	return nil
 }
 
-// validateNoNativePublicOriginClash rejects an origin advertised both as a
-// deterministic native endpoint and as a negotiated public one, and a native
-// origin advertised under two protocols.
 func (c Config) validateNoNativePublicOriginClash() error {
 	deterministic := map[string]string{}
 	for _, endpoint := range []struct{ name, origin, protocol string }{{NativeH1Clear, c.NativePublic.H1, "http1"}, {NativeH1TLS, c.NativePublic.H1TLS, "http1"}, {NativeH2, c.NativePublic.H2, "http2"}, {NativeH3, c.NativePublic.H3, "http3"}} {
@@ -456,8 +424,6 @@ func (c Config) validateAuth() error {
 	return c.validateAdvertisedAuthOrigins(publicURL)
 }
 
-// configured reports whether any auth setting is present, so mode=off can
-// reject a half-configured deployment rather than ignore it.
 func (a AuthConfig) configured() bool {
 	return a.Explicit || a.PublicURL != "" || a.PasswordHash != "" || a.PasswordHashFile != "" ||
 		a.OIDCIssuer != "" || a.OIDCClientID != "" || a.OIDCClientSecret != "" || a.OIDCSecretFile != "" ||
@@ -519,8 +485,7 @@ func (a AuthConfig) oidcComplete() bool {
 		(a.OIDCClientSecret != "" || a.OIDCSecretFile != "") && len(a.OIDCAllowedGroups) != 0
 }
 
-// validOIDCIssuer accepts as the issuer only a bare HTTPS origin or path, with
-// no credentials, query, or fragment.
+// validOIDCIssuer accepts as the issuer only a bare HTTPS origin or path, with no credentials, query, or fragment.
 func validOIDCIssuer(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" &&
@@ -542,8 +507,6 @@ func (a AuthConfig) validateProviderName(wantsOIDC bool) error {
 	return nil
 }
 
-// validateAdvertisedAuthOrigins enforces that, with auth on, no clear HTTP/1.1
-// is advertised and every advertised origin is HTTPS on the canonical hostname.
 func (c Config) validateAdvertisedAuthOrigins(publicURL *url.URL) error {
 	if c.NativeAdvertised(NativeH1Clear) {
 		return fmt.Errorf("clear HTTP/1.1 cannot be advertised when authentication is enabled")

@@ -4,12 +4,12 @@ import {
   latencyScaleForReading,
 } from "../runner/latencyScale";
 
-export interface GaugeLatencyPresentation {
+interface GaugeLatencyPresentation {
   rttMs: number;
   scaleMs: number;
 }
 
-export interface GaugeLatencyState {
+interface GaugeLatencyState {
   phase: Phase;
   liveRttMs: number;
   liveScaleMs: number;
@@ -17,27 +17,18 @@ export interface GaugeLatencyState {
   completedRttMs: number | null;
 }
 
-/** Resolve the gauge's latency value and domain as one presentation decision.
- * Live buckets use the shared recent controller. A pre-bucket fallback derives
- * a domain from that fallback, while a terminal value uses the same full-run
- * history as the terminal chart. */
+/* Resolve the gauge's latency value and domain as one presentation decision. */
 export function gaugeLatencyPresentation(
   state: GaugeLatencyState,
 ): GaugeLatencyPresentation {
-  if (state.phase === "complete" && state.completedRttMs != null) {
-    const hasMeasuredMedian = state.history.some(
-      (bucket) => bucket.medianRttMs != null,
-    );
-    return {
-      rttMs: state.completedRttMs,
-      scaleMs: hasMeasuredMedian
-        ? latencyScaleForHistory(state.history)
-        : latencyScaleForReading(state.completedRttMs),
-    };
-  }
-
   const hasMeasuredLatencyBucket =
     state.phase === "latency" && state.history.at(-1)?.phase === "latency";
+  if (state.phase === "complete" && state.completedRttMs != null) {
+    const scale = state.history.some((bucket) => bucket.medianRttMs != null)
+      ? latencyScaleForHistory(state.history)
+      : latencyScaleForReading(state.completedRttMs);
+    return { rttMs: state.completedRttMs, scaleMs: scale };
+  }
   return {
     rttMs: state.liveRttMs,
     scaleMs: hasMeasuredLatencyBucket

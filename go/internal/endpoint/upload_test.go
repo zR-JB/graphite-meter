@@ -45,9 +45,6 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 	}
 }
 
-// TestUploadAggregatesByID checks that a POST carrying a server-minted ?id= adds
-// its drained bytes to the shared per-id aggregate (the server-authoritative count
-// the /upload/progress bus reports) and accrues active measurement time.
 func TestUploadAggregatesByID(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -79,7 +76,6 @@ func TestUploadAggregatesByID(t *testing.T) {
 	}
 }
 
-// TestUploadForgedIDDoesNotAggregate checks that an unauthenticated id creates no state.
 func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 	store := NewUploadStore()
 	mux := http.NewServeMux()
@@ -101,8 +97,6 @@ func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 	}
 }
 
-// TestUploadStopsOnReadError checks a mid-stream read failure (the client
-// aborting a streaming upload) returns cleanly without echoing.
 func TestUploadStopsOnReadError(t *testing.T) {
 	s := &uploadSession{
 		fakeSession: &fakeSession{ctx: t.Context()},
@@ -113,10 +107,6 @@ func TestUploadStopsOnReadError(t *testing.T) {
 	}
 }
 
-// TestUploadAbortKeepsPartialAggregateAndDecrementsPosts checks a mid-stream
-// abort on an id'd upload: already-drained bytes are kept, never rolled back,
-// and posts is decremented via defer on the error path too. The lane-count
-// invariant holds whether Handle returns via EOF or via error.
 func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -140,8 +130,6 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	}
 }
 
-// TestUploadOverCapIDIsRejected ensures a saturated authoritative aggregate
-// store never degrades into a plausible client-counted upload result.
 func TestUploadOverCapIDIsRejected(t *testing.T) {
 	store := NewUploadStore()
 	for i := range maxLiveUploads {
@@ -171,10 +159,6 @@ func TestUploadOverCapIDIsRejected(t *testing.T) {
 	}
 }
 
-// TestUploadEmptyBodyIDCreatesZeroByteAggregate checks a zero-byte POST for an
-// id'd upload still creates an aggregate: the POST itself is the first touch.
-// It reports zero bytes, since a zero-length read never reaches
-// discardSink.Write and so never calls recordChunk.
 func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -202,10 +186,7 @@ func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 	}
 }
 
-// A stream carries no status line, so a refused WebTransport upload lane can
-// only be reported through Handle's return value: its caller resets the stream
-// on it. Returning nil would leave the peer parked on flow control, sending
-// bytes nothing counts, with no refusal it can act on.
+// A stream carries no status line, so a refused WebTransport upload lane can only be reported through Handle's return.
 func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 	store := NewUploadStore()
 	for i := range maxLiveUploads {
@@ -214,8 +195,7 @@ func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 		}
 	}
 	id := store.Mint()
-	// A non-HTTP session with no ClientOwner, so the refusal path cannot fall
-	// back to writing a status.
+	// A non-HTTP session with no ClientOwner, so the refusal path cannot fall back to writing a status.
 	s := &uploadSession{
 		fakeSession: &fakeSession{ctx: t.Context(), query: "id=" + id},
 		src:         bytes.NewReader(make([]byte, 4096)),
@@ -234,8 +214,7 @@ func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 	}
 }
 
-// deadlineRecorder is a ResponseWriter that records what
-// http.NewResponseController(w).SetReadDeadline was handed.
+// deadlineRecorder is a ResponseWriter that records what http.NewResponseController(w).SetReadDeadline was handed.
 type deadlineRecorder struct {
 	http.ResponseWriter
 	read time.Time
@@ -247,9 +226,7 @@ func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-// A POST body that stops arriving mid-upload holds a goroutine and a 256 KiB
-// drain buffer. The streaming server sets no global ReadTimeout, so this
-// per-request deadline is the only bound on a half-open lane.
+// A POST body that stops arriving mid-upload holds a goroutine and a 256 KiB drain buffer.
 func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
 	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(make([]byte, 4096)))
@@ -267,9 +244,6 @@ func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	}
 }
 
-// TestDiscardSinkHasNoReaderFrom guards the buffer-control invariant: if
-// discardSink implemented io.ReaderFrom, io.CopyBuffer would bypass our large
-// pooled buffer for io.Discard's small internal one.
 func TestDiscardSinkHasNoReaderFrom(t *testing.T) {
 	if _, ok := io.Writer(discardSink{}).(io.ReaderFrom); ok {
 		t.Error("discardSink must not implement io.ReaderFrom")
@@ -297,8 +271,7 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 
 /* ---- test doubles ---- */
 
-// uploadSession reuses the download test's fakeSession (same package) and only
-// overrides the upload source.
+// uploadSession reuses the download test's fakeSession (same package) and only overrides the upload source.
 type uploadSession struct {
 	*fakeSession
 	src io.Reader
@@ -306,8 +279,7 @@ type uploadSession struct {
 
 func (u *uploadSession) OpenUploadSource() (io.Reader, error) { return u.src, nil }
 
-// errReader yields `remaining` zero bytes then a non-EOF error, simulating a
-// connection dropped mid-upload.
+// errReader yields `remaining` zero bytes then a non-EOF error, simulating a connection dropped mid-upload.
 type errReader struct{ remaining int }
 
 func (r *errReader) Read(p []byte) (int, error) {

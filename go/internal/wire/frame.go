@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// Frame is a parsed message-bus frame (api/wire.md). It is a flat union: only
-// the fields relevant to Op are meaningful. Decode/Encode are byte-exact against
-// the cross-language corpus api/wire.testvectors.txt.
+// Frame is a parsed message-bus frame (api/wire.md).
 type Frame struct {
 	Op string // one of the Op* keyword constants (opcodes.go)
 	ID uint32 // PING / PONG: client-owned monotonic id, echoed verbatim
@@ -18,20 +16,16 @@ type Frame struct {
 	Text  string // ERR: human detail
 }
 
-// timeField is the keyword that prefixes the nanos arg inside a PONG frame:
-// PONG,<id>;TIME,<nanos>. It is a sub-field of PONG, not a standalone opcode.
+// timeField is the keyword that prefixes the nanos arg inside a PONG frame: PONG,<id>;TIME,<nanos>.
 const timeField = "TIME"
 
-// Decode error codes: the <code> token a receiver echoes back as ERR,<code>,…
-// when it rejects a frame. Stable, cross-language.
+// Decode error codes: the <code> token a receiver echoes back as ERR,<code>,… when it rejects a frame.
 const (
 	ErrBadOp   = "bad_op"   // unknown opcode keyword
 	ErrBadArgs = "bad_args" // opcode known, args missing/malformed
 )
 
-// DecodeError is returned by Decode for a malformed frame. Code is the stable
-// token the ping endpoint copies into ERR,<code>,<text>; the bus is never torn
-// down for a single bad frame.
+// DecodeError is returned by Decode for a malformed frame.
 type DecodeError struct {
 	Code string
 	Text string
@@ -42,9 +36,7 @@ func (e *DecodeError) Error() string { return e.Code + ": " + e.Text }
 func badOp(text string) error   { return &DecodeError{Code: ErrBadOp, Text: text} }
 func badArgs(text string) error { return &DecodeError{Code: ErrBadArgs, Text: text} }
 
-// Decode parses one on-wire message into a Frame by slicing on ','. An unknown
-// opcode yields ErrBadOp; a known opcode with missing or malformed args yields
-// ErrBadArgs. Both are *DecodeError.
+// Decode parses one on-wire message into a Frame by slicing on ','.
 func Decode(msg string) (Frame, error) {
 	op, rest := cut(msg, ',')
 
@@ -96,7 +88,7 @@ func Decode(msg string) (Frame, error) {
 	}
 }
 
-// Encode renders a Frame to its exact on-wire string. An unknown Op yields "".
+// Encode renders a Frame to its exact on-wire string.
 func Encode(f Frame) string {
 	switch f.Op {
 	case OpREADY:
@@ -116,8 +108,7 @@ func Encode(f Frame) string {
 	}
 }
 
-// cut splits s at the first occurrence of sep into (before, after). When sep is
-// absent, before is the whole string and after is empty.
+// cut splits s at the first occurrence of sep into (before, after).
 func cut(s string, sep byte) (before, after string) {
 	if before, after, found := strings.Cut(s, string(sep)); found {
 		return before, after

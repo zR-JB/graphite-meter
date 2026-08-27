@@ -13,7 +13,7 @@ import {
 import { describeTarget } from "./targetPresentation";
 import { webTransportGap } from "./transports";
 
-export interface TransportOptionView {
+interface TransportOptionView {
   disabled: boolean;
   detail: string;
 }
@@ -21,9 +21,7 @@ export interface TransportOptionView {
 const NOT_ADVERTISED = "Not offered in /preflight.";
 const DISCOVERY_PENDING = "Checking server transports…";
 
-/** Why an advertised card cannot be driven here. "Unsupported" alone sends a
- *  reader on an http page hunting for a browser they already run, so each
- *  reason names its own remedy. */
+/* Why an advertised card cannot be driven here. */
 function noBrowserWebTransport(): string {
   return webTransportGap() === "insecure-page"
     ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address."
@@ -42,8 +40,7 @@ function automaticDetail(
   return `Selects ${target.origin} because it ${reason}.`;
 }
 
-/** Describes an origin through whichever mechanism the selection named, or its
- *  first when the state rules the whole origin out. */
+/* Describes an origin through whichever mechanism the selection named, or its first when the state rules the. */
 function advertisedDetail(
   entry: DiscoveredTarget<
     FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget
@@ -63,8 +60,7 @@ function advertisedDetail(
   return describeTarget(discovery, named).advertisedDetail;
 }
 
-/** A mechanism this browser has no API for is offered by the server but cannot
- *  be driven here. */
+/** A mechanism this browser has no API for is offered by the server but cannot be driven here. */
 function needsMissingWebTransport(kind: string): boolean {
   return (
     (kind === "webtransport" || kind === "webtransport-datagram") &&
@@ -78,8 +74,7 @@ export function throughputOptionView(
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "current" || selection === "auto") {
-    // Resolve exactly what the runner resolves, so the automatic card never
-    // offers the session path a WebTransport-less browser would refuse.
+    // Resolve exactly what the runner resolves, so the automatic card never offers the session path a.
     const runnable = typeof WebTransport !== "undefined";
     const target = selectThroughputTarget(discovery, selection, runnable);
     if (target)
@@ -87,8 +82,7 @@ export function throughputOptionView(
         disabled: false,
         detail: automaticDetail(target, discovery, "throughput"),
       };
-    // Automatic's last resort is a session origin: say which of the two reasons
-    // left the card unresolved rather than blaming the server for both.
+    // Automatic's last resort is a session origin: say which of the two reasons left the card unresolved rather than.
     const refused =
       !runnable && selectThroughputTarget(discovery, selection, true);
     return {
@@ -115,8 +109,7 @@ export function latencyOptionView(
   selection: string,
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
-  // Resolve exactly what the runner resolves, so a card never offers a bus the
-  // run would refuse.
+  // Resolve exactly what the runner resolves, so a card never offers a bus the run would refuse.
   const runnable = typeof WebTransport !== "undefined";
   if (selection === "auto") {
     const target = selectLatencyTarget(discovery, selection, runnable);
@@ -125,10 +118,7 @@ export function latencyOptionView(
         disabled: false,
         detail: automaticDetail(target, discovery, "latency"),
       };
-    // An h3-only deployment advertises a datagram bus and no WebSocket, so
-    // blaming the server here tells a browser without the API that nothing was
-    // offered. Re-resolve with the gate open to tell the two apart. Passed
-    // explicitly: the two selectors default it opposite ways.
+    // An h3-only deployment advertises a datagram bus and no WebSocket, so blaming the server here tells a browser.
     const refused =
       !runnable && selectLatencyTarget(discovery, selection, true);
     return {
@@ -146,8 +136,7 @@ export function latencyOptionView(
     };
   const found = locateTarget(discovery.latency, selection);
   const entry = found?.entry ?? discovery.latency[selection];
-  // A bus the server offers but this browser cannot drive says so, rather than
-  // reading as something the server failed to advertise.
+  // A bus the server offers but this browser cannot drive says so, rather than reading as something the server failed.
   const blocked = found
     ? needsMissingWebTransport(found.target.transport)
     : !runnable && entry?.targets.every((t) => t.transport === "webtransport");

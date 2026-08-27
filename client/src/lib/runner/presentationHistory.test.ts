@@ -5,7 +5,6 @@ import {
   compactLatencyHistory,
   compactThroughputHistory,
 } from "./presentationHistory";
-
 test("long throughput history stays bounded across the complete timeline", () => {
   const history: ThroughputSample[] = [];
   for (let i = 0; i < 20_000; i++) {
@@ -30,7 +29,6 @@ test("long throughput history stays bounded across the complete timeline", () =>
     new Set([1, 2]),
   );
 });
-
 test("throughput rebuild keeps real lane extrema and phase boundaries", () => {
   const history: ThroughputSample[] = [];
   const add = (
@@ -54,7 +52,6 @@ test("throughput rebuild keeps real lane extrema and phase boundaries", () => {
     add(1_000 + i * 10, "bidirectional", "up", i === 60 ? 800 : i, 2);
   }
   for (let i = 0; i < 100; i++) add(2_000 + i * 10, "upload", "up", i, 3);
-
   expect(compactThroughputHistory(history, 4_000_000, 40)).toBe(true);
   expect(history.length).toBeLessThanOrEqual(40);
   expect(history.every((sample) => Number.isInteger(sample.bytesPerSec))).toBe(
@@ -71,7 +68,6 @@ test("throughput rebuild keeps real lane extrema and phase boundaries", () => {
   expect(history[0].t).toBe(0);
   expect(history.at(-1)?.t).toBe(2_990);
 });
-
 test("latency compaction preserves totals, endpoints, maximum, and jitter", () => {
   const history: LatencyBucket[] = Array.from({ length: 400 }, (_, i) => ({
     t: i * 200 + 100,

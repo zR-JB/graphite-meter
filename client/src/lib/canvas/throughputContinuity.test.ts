@@ -3,20 +3,18 @@ import type { ThroughputSample } from "../runner/contract";
 import { interpolateConnectedAt } from "./hoverInterp";
 import { throughputSamplesContinuous } from "./throughputContinuity";
 
-function sample(
+const sample = (
   t: number,
   continuityId: number,
   bytesPerSec = 1_000,
-): ThroughputSample {
-  return {
-    t,
-    bytesPerSec,
-    bytesCumulative: t,
-    dir: "up",
-    phase: "upload",
-    continuityId,
-  };
-}
+): ThroughputSample => ({
+  t,
+  bytesPerSec,
+  bytesCumulative: t,
+  dir: "up",
+  phase: "upload",
+  continuityId,
+});
 
 test("an irregular authoritative throughput gap remains continuous", () => {
   const samples = [sample(100, 4, 1_000), sample(800, 4, 2_000)];

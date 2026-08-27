@@ -1,36 +1,33 @@
-import { expect, test, type Page } from "./webview";
-
-async function configureShortDownload(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await expect(
-    settings.getByText("Ready", { exact: true }).first(),
-  ).toBeVisible();
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "0"],
-    ["Download ms", "900"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-}
-
+import {
+  abortButton,
+  againButton,
+  expect,
+  expectNear,
+  expectVisible,
+  openApp,
+  openSettings,
+  prepareApp,
+  startTest,
+  test,
+} from "./webview";
 function parseElapsed(text: string): number {
   const match = text.match(/elapsed\s+([0-9]+(?:\.[0-9]+)?)s/);
   return match ? Number(match[1]) : 0;
 }
-
+type Geometry = Record<string, { top: number; height: number }>;
+function expectSameGeometry(reference: Geometry, ...samples: Geometry[]) {
+  for (const sample of samples)
+    for (const selector of Object.keys(reference)) {
+      expectNear(sample[selector].top, reference[selector].top);
+      expectNear(sample[selector].height, reference[selector].height);
+    }
+}
 test("terminal stage switches select the next run without erasing retained status", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
-
+  await prepareApp(page, "short");
+  await startTest(page);
+  await expectVisible(againButton(page), 5_000);
   const terminalCards = await page.evaluate(() => {
     const rail = document.querySelector(".stage-head");
     const cards = document.querySelector(".result-cards");
@@ -56,11 +53,9 @@ test("terminal stage switches select the next run without erasing retained statu
   expect(
     Math.abs(terminalCards.cardsCenter - terminalCards.panelCenter),
   ).toBeLessThanOrEqual(1);
-
   const download = page.getByRole("switch", { name: "Download stage" });
   await expect(download).toHaveAttribute("aria-checked", "true");
   await expect(download).toHaveClass(/seg--complete/);
-
   const geometry = () =>
     page.evaluate(() =>
       Object.assign(
@@ -87,75 +82,43 @@ test("terminal stage switches select the next run without erasing retained statu
       ),
     );
   const beforeToggle = await geometry();
-
   await download.click();
   await expect(download).toHaveAttribute("aria-checked", "false");
   await expect(download).toHaveClass(/seg--disabled/);
   await expect(download).toContainText("skipped");
   const disabledGeometry = await geometry();
-
   await download.click();
   await expect(download).toHaveAttribute("aria-checked", "true");
   await expect(download).toHaveClass(/seg--complete/);
   const restoredGeometry = await geometry();
-  for (const selector of [
-    ".stage-head",
-    ".gauge-panel .stage",
-    ".run-slot",
-    ".chart",
-  ]) {
-    expect(
-      Math.abs(disabledGeometry[selector].top - beforeToggle[selector].top),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(
-        disabledGeometry[selector].height - beforeToggle[selector].height,
-      ),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(restoredGeometry[selector].top - beforeToggle[selector].top),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(
-        restoredGeometry[selector].height - beforeToggle[selector].height,
-      ),
-    ).toBeLessThanOrEqual(1);
-  }
+  expectSameGeometry(beforeToggle, disabledGeometry, restoredGeometry);
 });
-
 test("elapsed time freezes on abort and restarts on the next run", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
+  await prepareApp(page, "short");
   const status = page.locator("footer.status");
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
+  await startTest(page);
+  await expectVisible(againButton(page), 5_000);
   await expect
     .poll(async () => parseElapsed((await status.textContent()) ?? ""))
     .toBeGreaterThan(0);
-
-  await page.getByRole("button", { name: "Run the test again" }).click();
-  const abort = page.getByRole("button", { name: "Abort test" });
-  await expect(abort).toBeVisible({ timeout: 5_000 });
+  await againButton(page).click();
+  const abort = abortButton(page);
+  await expectVisible(abort, 5_000);
   await expect
     .poll(async () => parseElapsed((await status.textContent()) ?? ""), {
       timeout: 2_000,
     })
     .toBeGreaterThan(0.3);
-
   await abort.click();
   await expect(status).toContainText("Aborted");
   const abortedElapsed = parseElapsed((await status.textContent()) ?? "");
   expect(abortedElapsed).toBeGreaterThan(0);
   await page.waitForTimeout(400);
   expect(parseElapsed((await status.textContent()) ?? "")).toBe(abortedElapsed);
-
-  await page.getByRole("button", { name: "Run the test again" }).click();
-  await expect(abort).toBeVisible({ timeout: 5_000 });
+  await againButton(page).click();
+  await expectVisible(abort, 5_000);
   expect(parseElapsed((await status.textContent()) ?? "")).toBeLessThan(
     abortedElapsed,
   );
@@ -165,62 +128,41 @@ test("elapsed time freezes on abort and restarts on the next run", async ({
     })
     .toBeGreaterThan(0);
 });
-
 test("stage switches preserve the at-least-one measured-stage guard", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
+  await openApp(page);
   const latency = page.getByRole("switch", { name: "Latency stage" });
   const download = page.getByRole("switch", { name: "Download stage" });
   const upload = page.getByRole("switch", { name: "Upload stage" });
-
   await latency.click();
   await download.click();
   await expect(upload).toHaveAttribute("aria-checked", "true");
   await upload.click();
   await expect(upload).toHaveAttribute("aria-checked", "true");
 });
-
 test("bidirectional stays a Settings-only optional stage", async ({ page }) => {
-  await page.goto("/?engine=dummy");
+  await openApp(page);
   const bidi = page.getByRole("switch", { name: /Bidirectional stage/ });
   await expect(bidi).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
+  const settings = await openSettings(page);
   const include = settings.getByLabel("Include concurrent download + upload");
-  // Switch keeps its native checkbox visually hidden; activate its visible
-  // label, which is the pointer path users take and still updates the
-  // labelled checkbox for keyboard/screen-reader semantics.
   await settings
     .locator("label.switch", {
       hasText: "Include concurrent download + upload",
     })
     .click();
   await expect(include).toBeChecked();
-  await expect(bidi).toBeVisible();
-
+  await expectVisible(bidi);
   await bidi.click();
   await expect(bidi).toHaveCount(0);
   await expect(include).not.toBeChecked();
 });
-
 test("future-stage selection changes immediately during an active run", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "1800"],
-    ["Download ms", "900"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await prepareApp(page, "long-latency");
+  await startTest(page);
   const download = page.getByRole("switch", { name: "Download stage" });
   await expect(download).toBeEnabled();
   await download.click();
@@ -229,30 +171,15 @@ test("future-stage selection changes immediately during an active run", async ({
   await download.click();
   await expect(download).toHaveAttribute("aria-checked", "true");
   await expect(download).toHaveClass(/seg--pending/);
-
   await page.getByRole("button", { name: "Abort test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible();
+  await expectVisible(againButton(page));
   await expect(download).toHaveAttribute("aria-checked", "true");
 });
-
 test("warmup is owned by one stage while future stages remain toggleable", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "1200"],
-    ["Latency ms", "500"],
-    ["Download ms", "500"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await prepareApp(page, "warmup");
+  await startTest(page);
   await expect(page.locator("#console")).toHaveAttribute(
     "data-phase",
     "warmup",
@@ -265,23 +192,11 @@ test("warmup is owned by one stage while future stages remain toggleable", async
     page.getByRole("switch", { name: "Upload stage" }),
   ).toBeEnabled();
 });
-
 test("three live result chips remain below the phase rail", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "250"],
-    ["Download ms", "250"],
-    ["Upload ms", "1400"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await prepareApp(page, "live-chips");
+  await startTest(page);
   await expect(page.locator(".result-chip")).toHaveCount(3, {
     timeout: 5_000,
   });

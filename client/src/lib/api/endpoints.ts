@@ -1,7 +1,4 @@
-/* Targets are preflight endpoints made addressable: wire fields plus the
- * absolute origin, the transport that reaches it, and route paths. Preflight
- * advertises origins and transports only, so routes come from the client's own
- * table in runner/real/backendPure.ts. */
+/* Targets are preflight endpoints made addressable: wire fields plus the absolute origin, the transport that. */
 
 import type { LatencyEndpoint, ThroughputEndpoint } from "./preflight";
 
@@ -24,9 +21,7 @@ export interface FetchThroughputTarget extends Omit<
   };
 }
 
-/** WebTransport throughput rides HTTP/3 sessions, as raw streams or as the
- *  experimental datagram flood, separately advertised paths. Upload ids are
- *  still minted and finalized over HTTP, so those routes come along. */
+/* WebTransport throughput rides HTTP/3 sessions, as raw streams or as the experimental datagram flood, separately. */
 export interface WebTransportThroughputTarget extends Omit<
   ThroughputEndpoint,
   "baseUrl" | "transport" | "protocol"
@@ -61,7 +56,7 @@ export interface WebSocketLatencyTarget extends Omit<
   routes: { probe: string; ping: string };
 }
 
-export interface WebTransportLatencyTarget extends Omit<
+interface WebTransportLatencyTarget extends Omit<
   LatencyEndpoint,
   "baseUrl" | "transport"
 > {

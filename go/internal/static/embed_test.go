@@ -10,9 +10,7 @@ import (
 	"testing/fstest"
 )
 
-// testFS is a small in-memory dist fixture: one known asset, one index.html,
-// enough to exercise handlerFor's routing without depending on any real
-// committed dist content.
+// testFS is a small in-memory dist fixture for handlerFor routing.
 func testFS() fstest.MapFS {
 	return fstest.MapFS{
 		"index.html":             {Data: []byte("index page")},
@@ -21,8 +19,7 @@ func testFS() fstest.MapFS {
 	}
 }
 
-// noRedirectClient rejects every redirect, so a redirect loop fails the test
-// instead of hanging until the client's redirect cap trips.
+// noRedirectClient rejects redirects so a redirect loop fails immediately.
 func noRedirectClient() *http.Client {
 	return &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -31,158 +28,54 @@ func noRedirectClient() *http.Client {
 	}
 }
 
-func get(t *testing.T, srv *httptest.Server, path string) (int, string) {
+func handlerResponse(t *testing.T, fs fstest.MapFS, client *http.Client, path string) (int, string) {
 	t.Helper()
-	resp, err := http.Get(srv.URL + path)
+	if fs == nil {
+		fs = testFS()
+	}
+	srv := httptest.NewServer(handlerFor(fs))
+	defer srv.Close()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Get(srv.URL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		t.Fatalf("read body for %s: %v", path, err)
+		t.Fatalf("read body: %v", err)
 	}
 	return resp.StatusCode, string(body)
 }
 
-func TestHandlerServesKnownAsset(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	status, body := get(t, srv, "/assets/app.js")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200", status)
-	}
-	if !strings.Contains(body, "console.log('app')") {
-		t.Fatalf("body = %q, want the asset content", body)
-	}
-}
-
-func TestHandlerRootServesIndex(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	status, body := get(t, srv, "/")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200", status)
-	}
-	if !strings.Contains(body, "index page") {
-		t.Fatalf("body = %q, want index.html content", body)
-	}
-}
-
-func TestHandlerSPAFallbackForExtensionlessRoute(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	// /results isn't in the fixture and has no extension: client-side
-	// routing, so it must fall back to index.html rather than 404.
-	status, body := get(t, srv, "/results")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (SPA fallback)", status)
-	}
-	if !strings.Contains(body, "index page") {
-		t.Fatalf("body = %q, want index.html content", body)
-	}
-}
-
-func TestHandlerMissingAssetWithExtensionIs404(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	// An extensioned path missing from the fixture must 404. Serving HTML for
-	// a requested script hides a stale build.
-	status, _ := get(t, srv, "/assets/missing.js")
-	if status != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", status)
-	}
-}
-
-func TestHandlerServesNestedAssetPath(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	status, body := get(t, srv, "/assets/sub/dir/file.js")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200", status)
-	}
-	if !strings.Contains(body, "console.log('nested')") {
-		t.Fatalf("body = %q, want the nested asset content", body)
-	}
-}
-
-func TestHandlerCleansPathTraversal(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	// path.Clean collapses "/assets/../index.html" to "/index.html", so the fs
-	// lookup only ever sees paths inside the fs root.
-	status, body := get(t, srv, "/assets/../index.html")
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200", status)
-	}
-	if !strings.Contains(body, "index page") {
-		t.Fatalf("body = %q, want index.html content", body)
-	}
-}
-
-func TestHandlerDeepPathTraversalFallsBackToIndex(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	// ".." segments walking above the fs root collapse under path.Clean to a
-	// path outside the fixture, landing on the SPA fallback, not an escape.
-	resp, err := noRedirectClient().Get(srv.URL + "/../../../etc/passwd")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)
-	}
-	if !strings.Contains(string(body), "index page") {
-		t.Fatalf("body = %q, want index.html content, not filesystem escape", body)
-	}
-}
-
-func TestHandlerSPAFallbackForTrailingSlashRouteDoesNotRedirectLoop(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(testFS()))
-	defer srv.Close()
-
-	// FileServer redirects a path ending in "/" to "./", the same path, so this
-	// route loops if the SPA fallback ever delegates to http.FileServer.
-	resp, err := noRedirectClient().Get(srv.URL + "/settings/")
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (SPA fallback)", resp.StatusCode)
-	}
-	if !strings.Contains(string(body), "index page") {
-		t.Fatalf("body = %q, want index.html content", body)
-	}
-}
-
-func TestHandlerEmptyFSFallsBackTo404(t *testing.T) {
-	srv := httptest.NewServer(handlerFor(fstest.MapFS{}))
-	defer srv.Close()
-
-	// No index.html at all: root can't open, has no extension, so the SPA
-	// fallback itself 404s instead of looping or panicking.
-	status, _ := get(t, srv, "/")
-	if status != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", status)
+func TestHandlerRoutes(t *testing.T) {
+	for _, test := range []struct {
+		name, path, wantBody string
+		fs                   fstest.MapFS
+		client               *http.Client
+		wantStatus           int
+	}{
+		{name: "serves known asset", path: "/assets/app.js", wantStatus: http.StatusOK, wantBody: "console.log('app')"},
+		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "SPA fallback for extensionless route", path: "/results", wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "missing asset with extension is 404", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
+		{name: "serves nested asset path", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "console.log('nested')"},
+		{name: "cleans path traversal", path: "/assets/../index.html", wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "deep path traversal falls back to index", path: "/../../../etc/passwd", client: noRedirectClient(), wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "SPA trailing slash fallback does not redirect loop", path: "/settings/", client: noRedirectClient(), wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "empty FS falls back to 404", fs: fstest.MapFS{}, path: "/", wantStatus: http.StatusNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			status, body := handlerResponse(t, test.fs, test.client, test.path)
+			if status != test.wantStatus {
+				t.Fatalf("status = %d, want %d", status, test.wantStatus)
+			}
+			if test.wantBody != "" && !strings.Contains(string(body), test.wantBody) {
+				t.Fatalf("body = %q, want %q", body, test.wantBody)
+			}
+		})
 	}
 }
 
@@ -212,8 +105,7 @@ func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
 }
 
 func TestScriptCSPHash(t *testing.T) {
-	// The exact inline pre-paint script the client build emits. Its digest is
-	// what a browser computes for the CSP 'sha256-...' source.
+	// The exact inline pre-paint script the client build emits.
 	const inline = `try{e=localStorage.getItem("graphite-meter:v1"),t=e?JSON.parse(e).theme:null,r=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark",document.documentElement.setAttribute("data-theme",r)}catch(c){}var e,t,r;`
 	html := []byte(`<!doctype html><head><style>x</style> <script>` + inline +
 		`</script> <script type="module" src="/assets/app.js"></script></head>`)
@@ -223,8 +115,7 @@ func TestScriptCSPHash(t *testing.T) {
 }
 
 func TestScriptCSPHashHandlesNoInlineScript(t *testing.T) {
-	// The tracked placeholder carries no inline script; the hash is then empty
-	// and the caller omits script-src rather than pinning nothing.
+	// The tracked placeholder has no inline script, so the caller omits script-src.
 	if got := scriptCSPHash([]byte(`<html><body>no scripts</body></html>`)); got != "" {
 		t.Fatalf("scriptCSPHash without an inline script = %q, want empty", got)
 	}

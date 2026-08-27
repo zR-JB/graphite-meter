@@ -1,44 +1,12 @@
 import { expect, test } from "bun:test";
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
-import {
-  classifyTransportDiscovery,
-  ROUTES,
-  targetOfKind,
-} from "./backendPure";
+import type { FetchThroughputTarget } from "../../api/endpoints";
+import { classifyTransportDiscovery, targetOfKind } from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
-
-const routes = {
-  probe: ROUTES.probe,
-  download: ROUTES.download,
-  upload: ROUTES.upload,
-  uploadSession: ROUTES.uploadSession,
-  uploadProgress: ROUTES.uploadProgress,
-};
-const transfer = (
-  id: string,
-  origin: string,
-  protocol: FetchThroughputTarget["protocol"],
-  tls: boolean,
-): FetchThroughputTarget => ({
-  id,
-  origin,
-  protocol,
-  tls,
-  transport: "fetch-stream",
-  routes,
-});
-const latency = (id: string, origin: string, tls: boolean): LatencyTarget => ({
-  id,
-  origin,
-  protocol: "http1",
-  tls,
-  transport: "websocket",
-  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-});
+import { testLatency, testTransfer } from "../test-helpers.test";
 
 test("status copy distinguishes missing, blocked, and trusted loopback targets", () => {
   const blocked = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://meter.example:7246", "http1", false)],
+    [testTransfer("http1-clear", "http://meter.example:7246", "http1", false)],
     [],
     "https://ui.example",
     true,
@@ -53,7 +21,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     "Not offered in /preflight.",
   );
   const loopback = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://localhost:7246", "http1", false)],
+    [testTransfer("http1-clear", "http://localhost:7246", "http1", false)],
     [],
     "https://localhost:7247",
     true,
@@ -66,8 +34,8 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
 
 test("dynamic cards report exact resolution or remain unresolved", () => {
   const catalog = classifyTransportDiscovery(
-    [transfer("http2", "https://meter", "http2", true)],
-    [latency("ws-http1-tls", "https://meter:7247", true)],
+    [testTransfer("http2", "https://meter", "http2", true)],
+    [testLatency("ws-http1-tls", "https://meter:7247", true)],
     "https://meter",
     true,
     "h2",
@@ -89,9 +57,7 @@ const NO_API =
 const INSECURE_PAGE =
   "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address.";
 
-/** Runs body with the page declaring itself insecure, which is what a browser
- *  that has the API does on an http:// page. bun's environment declares no
- *  secure context at all, so the flag is added and removed rather than set. */
+/* Runs body with the page declaring itself insecure, which is what a browser that has the API does on an http://. */
 function onAnInsecurePage(body: () => void) {
   const had = "isSecureContext" in globalThis;
   const previous = globalThis.isSecureContext;
@@ -112,11 +78,10 @@ function onAnInsecurePage(body: () => void) {
 }
 
 test("WebTransport options disable in a browser without the API", () => {
-  // bun's test environment has no WebTransport global, which is the case
-  // these views must catch before a probe fails on it.
+  // bun's test environment has no WebTransport global, which is the case these views must catch before a probe fails.
   const catalog = classifyTransportDiscovery(
     [
-      transfer("http3", "https://meter:7249", "http3", true),
+      testTransfer("http3", "https://meter:7249", "http3", true),
       {
         baseUrl: "https://meter:7249",
         transport: "webtransport" as const,
@@ -135,9 +100,7 @@ test("WebTransport options disable in a browser without the API", () => {
   expect(wtLatency.disabled).toBe(true);
   expect(wtLatency.detail).toBe(NO_API);
 
-  // Same missing global, different cause and different remedy: a page served
-  // over http is withheld the API a browser does have. Answering "unsupported"
-  // there sends the reader shopping for a browser they are already running.
+  // Same missing global, different cause and different remedy: a page served over http is withheld the API a browser.
   onAnInsecurePage(() => {
     expect(throughputOptionView(catalog, "https://meter:7249::wt").detail).toBe(
       INSECURE_PAGE,
@@ -148,9 +111,7 @@ test("WebTransport options disable in a browser without the API", () => {
   });
 });
 
-// The automatic card resolves through the same selector the runner does, whose
-// last resort is a WebTransport-only origin. Offering that as enabled promises a
-// path every run would refuse, and leaves no other card to switch to.
+// The automatic card resolves through the same selector the runner does, whose last resort is a WebTransport-only.
 test("the automatic throughput card refuses a WebTransport-only origin", () => {
   const catalog = classifyTransportDiscovery(
     [
@@ -173,11 +134,10 @@ test("the automatic throughput card refuses a WebTransport-only origin", () => {
   );
 });
 
-// Nothing else advertised: the automatic card is unresolved for its own reason,
-// not for a missing browser API.
+// Nothing else advertised: the automatic card is unresolved for its own reason, not for a missing browser API.
 test("an unresolved automatic throughput card still names its own reason", () => {
   const catalog = classifyTransportDiscovery(
-    [transfer("http2", "https://a.example", "http2", true)],
+    [testTransfer("http2", "https://a.example", "http2", true)],
     [],
     "https://ui.example",
     true,
@@ -193,8 +153,8 @@ test("an unresolved automatic throughput card still names its own reason", () =>
 
 test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
   const direct = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://meter:7246", "http1", false)],
-    [latency("ws-http1-clear", "http://meter:7246", false)],
+    [testTransfer("http1-clear", "http://meter:7246", "http1", false)],
+    [testLatency("ws-http1-clear", "http://meter:7246", false)],
     "http://meter:7246",
     false,
   );
@@ -206,8 +166,8 @@ test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () =
   );
 
   const negotiated = classifyTransportDiscovery(
-    [transfer("proxy", "https://meter", "negotiated", true)],
-    [latency("proxy", "https://meter", true)],
+    [testTransfer("proxy", "https://meter", "negotiated", true)],
+    [testLatency("proxy", "https://meter", true)],
     "https://meter",
     true,
   );
@@ -219,16 +179,14 @@ test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () =
   );
 });
 
-// An unrecognised mechanism is unvalidated JSON from a newer server. Renaming
-// it to fetch-stream would let it claim the origin and hide the target that
-// actually serves it, so classification skips it instead.
+// An unrecognised mechanism is unvalidated JSON from a newer server.
 test("an unknown transport is skipped, not renamed", () => {
   const unknown = {
     baseUrl: "https://meter.example",
     protocol: "http1",
     transport: "webtransport-v2",
   } as unknown as FetchThroughputTarget;
-  const real = transfer("", "https://meter.example", "http3", true);
+  const real = testTransfer("", "https://meter.example", "http3", true);
   const discovery = classifyTransportDiscovery(
     [unknown, real],
     [{ baseUrl: "https://meter.example", transport: "quic-ping" } as never],
@@ -241,9 +199,7 @@ test("an unknown transport is skipped, not renamed", () => {
   expect(discovery.latency["https://meter.example"].targets).toEqual([]);
 });
 
-// An h3-only deployment advertises a datagram bus and no WebSocket. Telling a
-// browser without the API that the server offered nothing sends the reader
-// after the wrong problem — the same split the explicit cards already make.
+// Telling a browser without the API that the server offered nothing sends the reader after the wrong problem — the.
 test("the automatic latency card names the browser gap, not the server", () => {
   const catalog = classifyTransportDiscovery(
     [],

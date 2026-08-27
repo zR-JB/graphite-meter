@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -23,12 +24,9 @@ import (
 )
 
 const (
-	// maxOIDCTransactions bounds in-flight authorization requests overall.
-	maxOIDCTransactions = 256
-	// maxClientOIDCTransactions bounds them per client address budget.
+	maxOIDCTransactions       = 256
 	maxClientOIDCTransactions = 8
-	// oidcTransactionLifetime bounds how long one authorization request stands.
-	oidcTransactionLifetime = 10 * time.Minute
+	oidcTransactionLifetime   = 10 * time.Minute
 )
 
 type oidcTransaction struct {
@@ -41,12 +39,8 @@ type oidcTransaction struct {
 	idVerifier             *oidc.IDTokenVerifier
 	oauth                  oauth2.Config
 	responseIssuer         bool
-	// prior is the session hash the caller held when the flow began. The
-	// callback is cross-site and never carries the Strict session cookie, so
-	// the prior session is captured here at /auth/oidc/start (which is
-	// same-site) and rotated out when the new session is issued.
-	prior    [32]byte
-	hasPrior bool
+	prior                  [32]byte
+	hasPrior               bool
 }
 
 type oidcState struct {
@@ -117,8 +111,6 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 		UserInfo       string `json:"userinfo_endpoint"`
 		JWKS           string `json:"jwks_uri"`
 	}
-	// Optional metadata: one mistyped field must not cost the whole document.
-	// The endpoints it carries are validated below either way.
 	_ = p.Claims(&meta)
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
@@ -268,7 +260,9 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		o.mu.Unlock()
 		s.counters.capacity.Add(1)
 		if global {
-			s.noteCeiling("oidc-transaction", now)
+			s.mu.Lock()
+			s.noteCeilingLocked("oidc-transaction", now)
+			s.mu.Unlock()
 		}
 		s.oidcLoginFailure(w, r, reasonTransactionCapacity)
 		return
@@ -285,42 +279,23 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	tx.responseIssuer = o.responseIssuer
 	o.tx[key] = tx
 	o.mu.Unlock()
-	setTransactionCookie(w, browser, tx.expires)
+	setCookie(w, transactionCookie, browser, tx.expires, true, http.SameSiteLaxMode)
 	location := oauthCfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce))
 	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
 func exactlyOne(q url.Values, key string) (string, bool) {
 	v, ok := q[key]
-	return first(v), ok && len(v) == 1 && v[0] != ""
+	if !ok || len(v) != 1 || v[0] == "" {
+		return "", false
+	}
+	return v[0], true
 }
 
-// validAuthCode holds an incoming authorization code to RFC 6749's grammar,
-// code = 1*VSCHAR (printable ASCII 0x20-0x7E). A compliant provider never issues
-// a code outside this range, so the check cannot reject a real one. It keeps
-// out-of-grammar bytes from reaching the provider's token endpoint even
-// percent-encoded, and fails a malformed callback before the one-time
-// transaction is consumed. Length is left unbounded: the spec leaves code size
-// undefined and the client must not assume a bound.
 func validAuthCode(v string) bool {
-	if v == "" {
-		return false
-	}
-	for i := range len(v) {
-		if v[i] < 0x20 || v[i] > 0x7e {
-			return false
-		}
-	}
-	return true
-}
-func first(v []string) string {
-	if len(v) == 0 {
-		return ""
-	}
-	return v[0]
+	return v != "" && !strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r > 0x7e })
 }
 
-// oidcIDClaims are the ID-token claims the callback reads directly.
 type oidcIDClaims struct {
 	Nonce    string `json:"nonce"`
 	Name     string `json:"name"`
@@ -350,8 +325,6 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	s.completeOIDCSignIn(w, r, tx, idToken, name)
 }
 
-// carryCLIChallenge forwards a well-formed CLI challenge onto r.URL. It runs
-// ahead of the fallible checks, so a later failure's /login redirect carries it.
 func carryCLIChallenge(r *http.Request, challenge string) {
 	if !validChallenge(challenge) {
 		return
@@ -361,9 +334,6 @@ func carryCLIChallenge(r *http.Request, challenge string) {
 	r.URL.RawQuery = values.Encode()
 }
 
-// resolveOIDCTransaction validates the callback parameters and consumes the
-// one-time transaction, returning it plus the authorization code. It writes the
-// failure response and returns ok=false on any mismatch.
 func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, bool) {
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
@@ -395,13 +365,11 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 		s.oidcLoginFailure(w, r, reasonTransactionReplay)
 		return oidcTransaction{}, "", false
 	}
-	iss := first(q["iss"])
+	iss, _ := exactlyOne(q, "iss")
 	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
 		s.oidcLoginFailure(w, r, reasonResponseIssuer)
 		return oidcTransaction{}, "", false
 	}
-	// The transaction caps above free on use, so they bound concurrency. This
-	// bounds the volume of outbound requests to the identity provider.
 	if !s.allowExchange(r) {
 		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
 		return oidcTransaction{}, "", false
@@ -409,8 +377,6 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 	return tx, code, true
 }
 
-// exchangeAndVerifyToken swaps the code for tokens and verifies the ID token
-// signature, nonce, and access-token hash. why is "" on success.
 func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction, code string) (*oauth2.Token, *oidc.IDToken, oidcIDClaims, reason) {
 	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
@@ -436,8 +402,6 @@ func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction
 	return token, idToken, idClaims, ""
 }
 
-// authorizeOIDCUser fetches UserInfo, confirms the subject matches, enforces the
-// group allowlist, and derives the display name. why is "" on success.
 func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, token *oauth2.Token, idToken *oidc.IDToken, idClaims oidcIDClaims) (string, reason) {
 	userInfo, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil || userInfo.Subject != idToken.Subject {
@@ -461,8 +425,6 @@ func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, tok
 	return safeDisplayName(name), ""
 }
 
-// completeOIDCSignIn mints the session, rotates any prior one, and hands off to
-// the same-site interstitial.
 func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx oidcTransaction, idToken *oidc.IDToken, name string) {
 	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName)
 	if err != nil {
@@ -472,17 +434,13 @@ func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx 
 	if tx.hasPrior {
 		s.revokeSessionHash(tx.prior, sess)
 	}
-	setSessionCookie(w, sessionCookie, raw, sess.expires)
-	setCSRFCookie(w, sess.csrf, sess.expires)
+	setCookie(w, sessionCookie, raw, sess.expires, true, http.SameSiteStrictMode)
+	setCookie(w, csrfCookie, sess.csrf, sess.expires, false, http.SameSiteStrictMode)
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
 	s.writeSignedInInterstitial(w, tx.cliChallenge)
 }
 
-// writeSignedInInterstitial completes the first hop of an OIDC sign-in. The
-// callback is the tail of a provider-initiated navigation, so it is cross-site:
-// a redirect from here travels without the SameSite=Strict session cookie just
-// set. A rendered page makes the next hop same-site, and the cookie rides along.
 func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge string) {
 	if !validChallenge(challenge) {
 		challenge = ""
@@ -491,35 +449,31 @@ func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge str
 	_ = continueTemplate.Execute(w, map[string]any{"Styles": authStyles, "Challenge": challenge})
 }
 
-// oidcLoginFailure charges the OIDC failure counter and then takes the shared
-// login-rejection exit, so an OIDC failure is logged, counted, and phrased by
-// exactly the same mechanism as a password failure.
 func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, why reason) {
 	s.counters.oidcFailure.Add(1)
 	s.loginRejected(w, r, why)
 }
 
 func validSubject(v string) bool {
-	if len(v) == 0 || len(v) > 256 {
-		return false
-	}
-	return !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
+	return len(v) > 0 && len(v) <= 256 && !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
 }
 func safeDisplayName(v string) string {
-	var b strings.Builder
-	for _, r := range v {
+	v = strings.Map(func(r rune) rune {
 		if r < ' ' || r == 0x7f {
-			continue
+			return -1
 		}
-		if b.Len()+len(string(r)) > 256 {
-			break
+		return r
+	}, v)
+	if len(v) > 256 {
+		v = v[:256]
+		for !utf8.ValidString(v) {
+			v = v[:len(v)-1]
 		}
-		b.WriteRune(r)
 	}
-	if b.Len() == 0 {
+	if v == "" {
 		return "OIDC user"
 	}
-	return b.String()
+	return v
 }
 
 func allowedGroup(actual, allowed []string) bool {

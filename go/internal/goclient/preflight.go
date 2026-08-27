@@ -2,7 +2,6 @@ package goclient
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -18,38 +17,17 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	if err != nil {
 		return wire.Preflight{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return wire.Preflight{}, err
-	}
-	req.Header.Set("Cache-Control", "no-store")
-	res, err := hc.Do(req)
-	if err != nil {
-		return wire.Preflight{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		if err := authResponseError(res); err != nil {
-			return wire.Preflight{}, err
-		}
-		return wire.Preflight{}, fmt.Errorf("preflight returned HTTP %d", res.StatusCode)
-	}
 	var pf wire.Preflight
-	if err := json.UnmarshalRead(res.Body, &pf); err != nil {
-		return wire.Preflight{}, err
-	}
-	baseOrigin, err := url.Parse(res.Request.URL.String())
+	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, http.Header{"Cache-Control": {"no-store"}}, &pf, httpStatusError("preflight"))
 	if err != nil {
 		return wire.Preflight{}, err
 	}
+	baseOrigin := response.Request.URL.Clone()
 	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
 	resolveSelfOrigins(&pf, baseOrigin.String())
 	return pf, nil
 }
 
-// resolveSelfOrigins replaces the wire's "." self placeholder with the origin
-// the preflight request resolves to, redirects included. A server behind a
-// reverse proxy cannot know its own public origin.
 func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 	for i := range pf.Capabilities.ThroughputTargets {
 		if pf.Capabilities.ThroughputTargets[i].Origin == "." {
@@ -63,7 +41,6 @@ func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 	}
 }
 
-// The advertised transport survives normalization; only the origin is resolved.
 func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
 	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultThroughputRoutes()
 }
@@ -71,58 +48,17 @@ func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
 	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultLatencyRoutes()
 }
 
-func getProbe(ctx context.Context, hc *http.Client, target *wire.ThroughputTarget) (wire.Probe, string, error) {
-	u, err := httpEndpoint(target.Origin, target.Routes.Probe)
+func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPrefix string) (wire.Probe, string, error) {
+	u, err := httpEndpoint(origin, path)
 	if err != nil {
 		return wire.Probe{}, "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return wire.Probe{}, "", err
-	}
-	res, err := hc.Do(req)
-	if err != nil {
-		return wire.Probe{}, "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		if err := authResponseError(res); err != nil {
-			return wire.Probe{}, "", err
-		}
-		return wire.Probe{}, "", fmt.Errorf("probe returned HTTP %d", res.StatusCode)
 	}
 	var p wire.Probe
-	if err := json.UnmarshalRead(res.Body, &p); err != nil {
+	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, nil, &p, httpStatusError(statusPrefix))
+	if err != nil {
 		return wire.Probe{}, "", err
 	}
-	return p, res.Proto, nil
-}
-
-func getLatencyProbe(ctx context.Context, hc *http.Client, target *wire.LatencyTarget) (wire.Probe, error) {
-	u, err := httpEndpoint(target.Origin, target.Routes.Probe)
-	if err != nil {
-		return wire.Probe{}, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return wire.Probe{}, err
-	}
-	res, err := hc.Do(req)
-	if err != nil {
-		return wire.Probe{}, err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		if err := authResponseError(res); err != nil {
-			return wire.Probe{}, err
-		}
-		return wire.Probe{}, fmt.Errorf("latency probe returned HTTP %d", res.StatusCode)
-	}
-	var p wire.Probe
-	if err := json.UnmarshalRead(res.Body, &p); err != nil {
-		return wire.Probe{}, err
-	}
-	return p, nil
+	return p, response.Proto, nil
 }
 
 func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.LatencyTarget) error {
@@ -156,6 +92,21 @@ func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.L
 
 func httpEndpoint(base, path string) (string, error) {
 	return url.JoinPath(strings.TrimRight(base, "/"), path)
+}
+
+func endpointWithQuery(base string, query url.Values) (string, error) {
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
+	}
+	values := u.Query()
+	for key, list := range query {
+		if len(list) > 0 {
+			values.Set(key, list[0])
+		}
+	}
+	u.RawQuery = values.Encode()
+	return u.String(), nil
 }
 
 func wsEndpoint(base, path string) (string, error) {

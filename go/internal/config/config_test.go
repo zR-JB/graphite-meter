@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// clearConfigEnv makes the listener, origin, and proxy variables absent, so Load
-// sees the operator's environment as empty.
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{"GM_H1_ADDR", "GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR", "GM_TLS_CERT", "GM_TLS_KEY", "GM_H1_PUBLIC_ORIGIN", "GM_H1_TLS_PUBLIC_ORIGIN", "GM_H2_PUBLIC_ORIGIN", "GM_H3_PUBLIC_ORIGIN", "GM_ADVERTISED_NATIVE_ENDPOINTS", "GM_PUBLIC_ORIGINS", "GM_PUBLIC_THROUGHPUT_ORIGINS", "GM_PUBLIC_LATENCY_ORIGINS", "GM_SERVER_NAME", "GM_SERVER_LOCATION", "GM_VERBOSE", "GM_TRUSTED_PROXIES"} {
@@ -16,9 +14,6 @@ func clearConfigEnv(t *testing.T) {
 	}
 }
 
-// unsetEnv makes key absent for the duration of the test. Load distinguishes an
-// absent variable from an empty one, so t.Setenv registers the restore and
-// os.Unsetenv clears the value. Unsetenv cannot fail for a name t.Setenv accepts.
 func unsetEnv(t *testing.T, key string) {
 	t.Helper()
 	t.Setenv(key, "")
@@ -165,8 +160,6 @@ func TestTrustedProxiesMasksHostBits(t *testing.T) {
 	}
 }
 
-// The WebTransport session routes hold their slots for MaxSessionDuration, so
-// they get a bounded share of the measurement pool rather than the whole of it.
 func TestValidateBoundsTheSessionBudget(t *testing.T) {
 	if c := Default(); c.MaxActiveSessions != 64 || c.MaxActiveSessions*4 != c.MaxActiveMeasurements {
 		t.Fatalf("MaxActiveSessions = %d of %d, want a quarter of the pool", c.MaxActiveSessions, c.MaxActiveMeasurements)
@@ -188,8 +181,6 @@ func TestValidateBoundsTheSessionBudget(t *testing.T) {
 			}
 		})
 	}
-	// A client budget equal to the whole session budget is the boundary, not an
-	// error: one client may fill it, it just may not exceed it.
 	c := Default()
 	c.MaxActiveSessions, c.MaxSessionsPerClient = 8, 8
 	if err := c.Validate(); err != nil {
@@ -212,9 +203,6 @@ func TestLoadReadsTheSessionBudgetFromTheEnvironment(t *testing.T) {
 	}
 }
 
-// Both session limits are held above zero by the same loop the measurement and
-// connection limits use. The relational checks cannot stand in for it: they all
-// pass when the two numbers are zero together.
 func TestValidateRejectsNonPositiveSessionLimits(t *testing.T) {
 	for _, tc := range []struct {
 		name, want                        string
@@ -236,8 +224,6 @@ func TestValidateRejectsNonPositiveSessionLimits(t *testing.T) {
 	}
 }
 
-// A client's session budget is a share of its measurement budget, not an
-// extension of it: sessions and requests draw on the same per-client pool.
 func TestValidateHoldsTheClientSessionBudgetInsideTheClientPool(t *testing.T) {
 	c := Default()
 	c.MaxSessionsPerClient = c.MaxActiveMeasurementsPerClient + 1
@@ -255,8 +241,7 @@ func TestValidateRequiresASessionToOutlastAnOperation(t *testing.T) {
 	}
 }
 
-// Both documented duration variables, pinned by name: the loop that reads them
-// is the only thing making them work.
+// Both documented duration variables, pinned by name: the loop that reads them is the only thing making them work.
 func TestLoadReadsTheDurationsFromTheEnvironment(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GM_MAX_OPERATION_DURATION", "90s")
@@ -273,8 +258,6 @@ func TestLoadReadsTheDurationsFromTheEnvironment(t *testing.T) {
 	}
 }
 
-// A session route holds its admission slot for this long, so the default is a
-// capacity number and belongs beside the two session counts.
 func TestDefaultSessionDurationIsTwoHours(t *testing.T) {
 	if c := Default(); c.MaxSessionDuration != 2*time.Hour {
 		t.Fatalf("MaxSessionDuration = %v, want 2h", c.MaxSessionDuration)

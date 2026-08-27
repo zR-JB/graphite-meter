@@ -1,9 +1,5 @@
 package auth
 
-// wrap.go is the enforcement boundary: nothing reaches a wrapped handler
-// without a Principal, except the enumerated public auth routes and the
-// headers-only CORS preflight.
-
 import (
 	"context"
 	"crypto/sha256"
@@ -14,19 +10,12 @@ import (
 	"time"
 )
 
-// Listener describes what a wrapped listener is allowed to serve. UI listeners
-// carry the login surface; measurement-only listeners refuse it outright.
-// WebTransport marks the listener that mounts the session routes: only there
-// does a CONNECT reach a handler, so only there is its single-use token spent.
 type Listener struct{ UI, WebTransport bool }
 
 type principalKey struct{}
 
 var errSessionEnded = errors.New("authentication session ended")
 
-// Principal is the authenticated identity attached to a request context.
-// Bearer principals come from a native-client grant and may only reach
-// measurement routes.
 type Principal struct {
 	Subject, Name, Provider string
 	Expires                 time.Time
@@ -34,8 +23,10 @@ type Principal struct {
 	Bearer                  bool
 }
 
-// LoginID names the session this principal authenticated with, empty when it has
-// none. One subject holds several: a phone and a desktop are different logins.
+func sessionPrincipal(sess *session, provider string, bearer bool) Principal {
+	return Principal{Subject: sess.subject, Name: sess.name, Provider: provider, Expires: sess.expires, session: sess, Bearer: bearer}
+}
+
 func (p Principal) LoginID() string {
 	if p.session == nil {
 		return ""
@@ -43,10 +34,6 @@ func (p Principal) LoginID() string {
 	return p.session.id
 }
 
-// Enforce applies the authentication boundary to next. It is installed outermost
-// on every listener, so admission accounting, body reads, and WebSocket upgrades
-// all happen behind it. Its call sites stay enumerated rather than looped: they
-// are the enforcement audit.
 func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	if !s.Enabled() {
 		return next
@@ -89,10 +76,6 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	})
 }
 
-// serveAuthenticated serves a request that needs a principal, downstream of
-// Enforce's routing, preflight, and public-route guards. It demands TLS,
-// authenticates, confines bearer grants to measurement routes, binds the
-// principal and its session cancellation, then enforces the cross-origin rules.
 func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
 	if !t.Secure {
 		s.writeAuthRequired(w, r, listener)
@@ -122,21 +105,17 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 	next.ServeHTTP(w, r)
 }
 
-// isPublicAuthRoute enumerates the routes reachable without a principal. Every
-// other path on a wrapped listener requires one.
 func (s *Service) isPublicAuthRoute(method, path string) bool {
 	if method == http.MethodGet && (path == "/login" || path == "/auth/cli") || method == http.MethodPost && path == "/auth/cli/token" {
 		return true
 	}
-	if (s.cfg.Mode == "password" || s.cfg.Mode == "hybrid") && method == http.MethodPost && path == "/auth/password" {
+	password, oidc := authModes(s.cfg.Mode)
+	if password && method == http.MethodPost && path == "/auth/password" {
 		return true
 	}
-	return (s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid") && (method == http.MethodPost && path == "/auth/oidc/start" || method == http.MethodGet && path == "/auth/oidc/callback")
+	return oidc && (method == http.MethodPost && path == "/auth/oidc/start" || method == http.MethodGet && path == "/auth/oidc/callback")
 }
 
-// isMeasurementRoute enumerates the paths the boundary treats as measurement
-// traffic: the routes pinned by api/routes.txt plus the discovery endpoint,
-// which no route table carries. routes_test.go asserts the enumeration.
 func isMeasurementRoute(path string) bool {
 	switch path {
 	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping",
@@ -146,10 +125,6 @@ func isMeasurementRoute(path string) bool {
 	return false
 }
 
-// rotateSuppliedSession revokes the session named by the request's own session
-// cookie, if it still keys a live one, as part of issuing sess. The password
-// login POST is same-site, so the browser attaches that cookie. The OIDC
-// callback is cross-site and does not (see oidcTransaction.prior).
 func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		s.revokeSessionHash(sha256.Sum256([]byte(c.Value)), sess)
@@ -175,12 +150,9 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 		}
 		return Principal{}, false
 	}
-	return Principal{Subject: sess.subject, Name: sess.name, Provider: sess.provider, Expires: sess.expires, session: sess}, true
+	return sessionPrincipal(sess, sess.provider, false), true
 }
 
-// authenticateNonAmbient authenticates from the Authorization grant alone. A
-// browser never attaches one on its own, so this is the half of authenticate
-// that the ambient-credential origin rules do not have to cover.
 func (s *Service) authenticateNonAmbient(r *http.Request) (Principal, bool) {
 	raw := r.Header.Get("Authorization")
 	if !strings.HasPrefix(raw, "Bearer ") {
@@ -200,13 +172,11 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 	defer s.mu.Unlock()
 	sess := s.grants[h]
 	if sess != nil && now.Before(sess.expires) && sess.ctx.Err() == nil {
-		return Principal{Subject: sess.subject, Name: sess.name, Provider: "cli", Expires: sess.expires, session: sess, Bearer: true}, true
+		return sessionPrincipal(sess, "cli", true), true
 	}
 	return Principal{}, false
 }
 
-// writeAuthRequired answers an unauthenticated request with the marker headers the
-// browser and native clients key off, redirecting only the UI root.
 func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
 	securityHeaders(w.Header())
 	if s.public != nil && r.Header.Get("Origin") == s.public.String() {
@@ -235,15 +205,17 @@ func forbidden(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusForbidden)
 }
 
-// PrincipalFromContext returns the principal Enforce bound to ctx. It reports
-// false on a request that never passed the boundary.
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
 }
 
-// SessionEnded reports whether ctx carries the cancellation cause set when the
-// principal's session is revoked or expires mid-request.
+func (s *Service) sessionFormPrincipal(r *http.Request) (Principal, bool) {
+	p, ok := PrincipalFromContext(r.Context())
+	return p, ok && p.session != nil &&
+		r.Header.Get("Origin") == s.public.String() && constantEqual(p.session.csrf, r.FormValue("csrf"))
+}
+
 func SessionEnded(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), errSessionEnded)
 }

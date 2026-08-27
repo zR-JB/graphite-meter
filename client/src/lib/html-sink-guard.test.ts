@@ -2,13 +2,9 @@ import { test, expect } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// Svelte's {@html expr} bypasses auto-escaping. A server- or user-derived
-// string reaching one is XSS. App pages carry a permissive script-src; only
-// the login surface is hash-pinned. That XSS reads the CSRF token, mints a
-// measurement grant, and forges same-origin requests: account compromise.
+// That XSS reads the CSRF token, mints a measurement grant, and forges same-origin requests: account compromise.
 
-// Expressions vetted as build-time SVG markup. An entry asserts the value never
-// carries anything from the network.
+// Expressions vetted as build-time SVG markup. An entry asserts the value never carries anything from the network.
 const ALLOWED = new Set([
   "ICON.bidirectional",
   "ICON.bolt",
@@ -19,8 +15,7 @@ const ALLOWED = new Set([
   "ICON.settings",
   "ICON.upload",
   "THEME_ICON[store.theme]",
-  // Loop variables holding ICON.* only: StageTrack s.icon from the static
-  // STAGES table, ResultCards c.icon from its static card table.
+  // Loop variables holding ICON.* only: StageTrack s.icon from the static STAGES table, ResultCards c.icon from its.
   "s.icon",
   "c.icon",
 ]);

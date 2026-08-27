@@ -39,7 +39,6 @@ class FakeEnvironment implements PresentationEnvironment {
     this.#visibility.add(callback);
     return () => this.#visibility.delete(callback);
   };
-
   get pending() {
     return this.#frames.size + this.#timers.size;
   }
@@ -62,7 +61,6 @@ class FakeEnvironment implements PresentationEnvironment {
     this.hiddenState = hidden;
     for (const callback of this.#visibility) callback();
   }
-
   setVisible(element: Element, visible: boolean) {
     this.#intersections.get(element)?.(visible);
   }

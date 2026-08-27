@@ -11,8 +11,7 @@ import (
 	"testing"
 )
 
-// addGrant attaches a bearer grant to sess so tests can assert it is revoked
-// together with the session.
+// addGrant attaches a bearer grant to sess so tests can assert it is revoked together with the session.
 func addGrant(s *Service, sess *session, token string) [32]byte {
 	h := sha256.Sum256([]byte(token))
 	s.mu.Lock()

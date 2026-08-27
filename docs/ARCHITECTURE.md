@@ -424,15 +424,17 @@ boundaries. Dev-tooling builds add diagnostics and dummy-backend anomaly control
 ### The Endpoint info drawer
 
 The drawer shows server identity, advertised capabilities, selected paths, readiness, protocol
-evidence, and pre-test RTT. Addresses, origins, routes, generation, stream policy, runner details,
-and compensation assumptions live in its expandable, copyable diagnostic report.
+evidence, and pre-test RTT. Addresses, origins, routes, generation, stream policy, and runner details
+live in its expandable, copyable diagnostic report. Wire-rate cards explain their automatic protocol
+and preflight assumptions in the result tooltip; no profile or expert compensation settings are
+persisted or reported.
 
 ### Web Workers
 
 | Worker                      | Role                                                                                                                                                                      |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                                     |
-| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload. Its local completion metadata may drive a bounded live visual hint, never upload accounting.             |
+| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload. Its local completion metadata may drive a bounded live visual hint, never upload accounting.            |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                                            |
 | `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss/timestamp algorithm off the main thread; batched outcomes retain their individual observation times. |
 | `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.                 |

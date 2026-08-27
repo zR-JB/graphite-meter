@@ -1,57 +1,27 @@
 import { expect, test } from "bun:test";
 import { decode, encode } from "../real/wire";
-import { PingScheduler, type PingSchedulerClock } from "./pingScheduler";
-
-class ControlledClock implements PingSchedulerClock {
-  time = 0;
-  #nextId = 0;
-  #timers = new Map<number, { at: number; callback: () => void }>();
-
-  now(): number {
-    return this.time;
-  }
-
-  setTimeout(callback: () => void, delayMs: number): number {
-    const id = this.#nextId++;
-    this.#timers.set(id, { at: this.time + delayMs, callback });
-    return id;
-  }
-
-  clearTimeout(timer: unknown): void {
-    this.#timers.delete(timer as number);
-  }
-
-  advance(ms: number): void {
-    const end = this.time + ms;
-    for (;;) {
-      const next = [...this.#timers.entries()]
-        .filter(([, timer]) => timer.at <= end)
-        .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
-      if (!next) break;
-      this.time = next[1].at;
-      this.#timers.delete(next[0]);
-      next[1].callback();
-    }
-    this.time = end;
-  }
-}
+import { createPingScheduler, type PingSchedulerClock } from "./pingScheduler";
+import { testClock } from "./test-helpers.test";
 
 class FakeWebSocket {
   sent: { at: number; frame: string }[] = [];
-  constructor(private readonly clock: ControlledClock) {}
+  constructor(private readonly clock: PingSchedulerClock) {}
   send(frame: string): void {
     this.sent.push({ at: this.clock.now(), frame });
   }
 }
 
-function harness(intervalMs: number, maxInFlight = 16) {
-  const clock = new ControlledClock();
+function makeHarness(
+  pacing: Parameters<typeof createPingScheduler>[0],
+  maxInFlight: number,
+) {
+  const clock = testClock() satisfies PingSchedulerClock;
   const socket = new FakeWebSocket(clock);
   const pending = new Set<number>();
   let id = 0;
   let reports = 0;
-  const scheduler = new PingScheduler(
-    { kind: "fixed", intervalMs },
+  const scheduler = createPingScheduler(
+    pacing,
     () => {
       if (pending.size >= maxInFlight) return false;
       pending.add(id);
@@ -75,28 +45,16 @@ function harness(intervalMs: number, maxInFlight = 16) {
   };
 }
 
+function harness(intervalMs: number, maxInFlight = 16) {
+  return makeHarness({ kind: "fixed", intervalMs }, maxInFlight);
+}
+
 function replyHarness(backupDelayMs: () => number, maxInFlight = 4) {
-  const clock = new ControlledClock();
-  const socket = new FakeWebSocket(clock);
-  const pending = new Set<number>();
-  let id = 0;
-  const scheduler = new PingScheduler(
-    { kind: "reply-driven", backupDelayMs },
-    () => {
-      if (pending.size >= maxInFlight) return false;
-      pending.add(id);
-      socket.send(encode({ op: "PING", id: id++ }));
-      return true;
-    },
-    clock,
-  );
+  const h = makeHarness({ kind: "reply-driven", backupDelayMs }, maxInFlight);
   return {
-    clock,
-    socket,
-    scheduler,
-    pending,
+    ...h,
     pong(id: number) {
-      if (pending.delete(id)) scheduler.complete();
+      if (h.pending.delete(id)) h.scheduler.complete();
     },
   };
 }

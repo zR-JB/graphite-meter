@@ -4,7 +4,7 @@ export interface PingSchedulerClock {
   clearTimeout(timer: unknown): void;
 }
 
-export type PingPacing =
+type PingPacing =
   | { kind: "fixed"; intervalMs: number }
   | { kind: "reply-driven"; backupDelayMs: () => number };
 
@@ -14,99 +14,88 @@ const systemClock: PingSchedulerClock = {
   clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
 };
 
-/** Drives either a fixed start-to-start cadence or a reply-driven chain with a
- * bounded backup pacer. */
-export class PingScheduler {
-  #lastSendAt: number | null = null;
-  #timer: unknown = null;
-  #running = false;
+/** Drives either a fixed start-to-start cadence or a reply-driven chain with a bounded backup pacer. */
+export interface PingScheduler {
+  start(): void;
+  stop(): void;
+  reset(): void;
+  restartNow(): void;
+  setInterval(intervalMs: number): void;
+  complete(): void;
+}
 
-  constructor(
-    private pacing: PingPacing,
-    private readonly send: (now: number) => boolean,
-    private readonly clock: PingSchedulerClock = systemClock,
-  ) {}
+export function createPingScheduler(
+  initialPacing: PingPacing,
+  send: (now: number) => boolean,
+  clock: PingSchedulerClock = systemClock,
+): PingScheduler {
+  let pacing = initialPacing;
+  let lastSendAt: number | null = null;
+  let timer: unknown = null;
+  let running = false;
 
-  start(): void {
-    this.#running = true;
-    this.#trySend();
-  }
-
-  stop(): void {
-    this.#running = false;
-    if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
-    this.#timer = null;
-  }
-
-  reset(): void {
-    this.stop();
-    this.#lastSendAt = null;
-  }
-
-  /** Re-anchor a running cadence at an explicit lifecycle boundary and attempt
-   * one send immediately. Fixed measurement phases use this so warmup timer
-   * alignment cannot postpone their first eligible ping by a full interval. */
-  restartNow(): void {
-    if (!this.#running) return;
-    if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
-    this.#timer = null;
-    this.#lastSendAt = null;
-    this.#trySend();
-  }
-
-  /** Change cadence without resetting the last-send boundary or sending a
-   * catch-up ping. */
-  setInterval(intervalMs: number): void {
-    this.pacing = { kind: "fixed", intervalMs };
-    if (this.#running) this.#trySend();
-  }
-
-  /** Marks the in-flight PING complete. Reply-driven mode continues
-   * immediately; fixed mode sends only when its boundary is already due. */
-  complete(): void {
-    if (!this.#running) return;
-    if (this.pacing.kind === "reply-driven") {
-      this.#sendAndArm(this.pacing.backupDelayMs);
-      return;
-    }
-    this.#trySend();
-  }
-
-  #trySend(): void {
-    if (!this.#running) return;
-    if (this.pacing.kind === "reply-driven") {
-      this.#sendAndArm(this.pacing.backupDelayMs);
-      return;
-    }
-    const now = this.clock.now();
-    const dueAt =
-      this.#lastSendAt === null
-        ? now
-        : this.#lastSendAt + this.pacing.intervalMs;
-    if (now < dueAt) {
-      this.#arm(dueAt - now);
-      return;
-    }
-    if (this.send(now)) {
-      this.#lastSendAt = now;
-      this.#arm(this.pacing.intervalMs);
-    }
-  }
-
-  #sendAndArm(backupDelayMs: () => number): void {
-    if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
-    this.#timer = null;
-    const now = this.clock.now();
-    if (!this.send(now)) return;
-    this.#lastSendAt = now;
-    this.#arm(backupDelayMs());
-  }
-
-  #arm(delayMs: number): void {
-    if (this.#timer !== null) this.clock.clearTimeout(this.#timer);
-    this.#timer = this.clock.setTimeout(() => {
-      this.#timer = null;
-      this.#trySend();
+  const arm = (delayMs: number): void => {
+    if (timer !== null) clock.clearTimeout(timer);
+    timer = clock.setTimeout(() => {
+      timer = null;
+      trySend();
     }, delayMs);
+  };
+  const sendAndArm = (backupDelayMs: () => number): void => {
+    if (timer !== null) clock.clearTimeout(timer);
+    timer = null;
+    const now = clock.now();
+    if (!send(now)) return;
+    lastSendAt = now;
+    arm(backupDelayMs());
+  };
+  function trySend(): void {
+    if (!running) return;
+    if (pacing.kind === "reply-driven") {
+      sendAndArm(pacing.backupDelayMs);
+      return;
+    }
+    const now = clock.now();
+    const dueAt = lastSendAt === null ? now : lastSendAt + pacing.intervalMs;
+    if (now < dueAt) {
+      arm(dueAt - now);
+      return;
+    }
+    if (send(now)) {
+      lastSendAt = now;
+      arm(pacing.intervalMs);
+    }
   }
+
+  return {
+    start(): void {
+      running = true;
+      trySend();
+    },
+    stop(): void {
+      running = false;
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+    },
+    reset(): void {
+      this.stop();
+      lastSendAt = null;
+    },
+    restartNow(): void {
+      if (!running) return;
+      if (timer !== null) clock.clearTimeout(timer);
+      timer = null;
+      lastSendAt = null;
+      trySend();
+    },
+    setInterval(intervalMs: number): void {
+      pacing = { kind: "fixed", intervalMs };
+      if (running) trySend();
+    },
+    complete(): void {
+      if (!running) return;
+      if (pacing.kind === "reply-driven") sendAndArm(pacing.backupDelayMs);
+      else trySend();
+    },
+  };
 }

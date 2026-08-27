@@ -15,13 +15,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// liveWTSession is a session sentinel that reports itself usable. It stands in
-// for a dialled session so the lane state machine can be driven with no server:
-// only a QUIC handshake produces the embedded value, and nothing below reads it.
 func liveWTSession(t *testing.T) *wtSession { return &wtSession{lifetime: t.Context()} }
 
-// deadWTSession is the state a session is in once it is gone: a lane that finds
-// one has to have it replaced before it can carry anything.
 func deadWTSession() *wtSession { return &wtSession{} }
 
 func webTransportCatalog() wire.Preflight {
@@ -37,8 +32,6 @@ func webTransportCatalog() wire.Preflight {
 	}}
 }
 
-// TestAutomaticSelectionPreference pins the order: throughput prefers fetch
-// streams, latency prefers the datagram bus, whose loss is real packet loss.
 func TestAutomaticSelectionPreference(t *testing.T) {
 	pf := webTransportCatalog()
 	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: "auto", LatencyTarget: "auto", LatencyTransport: "auto"}
@@ -60,8 +53,7 @@ func TestAutomaticSelectionPreference(t *testing.T) {
 	}
 }
 
-// TestExplicitTransportSelectionIsHonoured keeps a named transport from silently
-// resolving to another one.
+// TestExplicitTransportSelectionIsHonoured keeps a named transport from silently resolving to another one.
 func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
 	pf := webTransportCatalog()
 	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: wire.TransportFetchStream, LatencyTarget: "auto", LatencyTransport: wire.TransportWebSocket}
@@ -95,13 +87,6 @@ func TestConnectionSummaryNamesWebTransport(t *testing.T) {
 	}
 }
 
-// TestRunWTLaneSurfacesAPersistentRedialFailure covers the shape a server at
-// its session ceiling produces: the stage's session hits the server's session
-// duration bound partway through the window, and every replacement is refused
-// for the rest of it. The lane stops moving bytes and the measured window's
-// clock does not stop with it, so a lane that reports this as a clean stop hands
-// the stage a rate that is the truth times the share of the window the session
-// was up -- published as a successful measurement.
 func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	t.Parallel()
 	var dials atomic.Int64
@@ -113,8 +98,6 @@ func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 		},
 	}
 
-	// The lane runs longer than one backoff before it fails, so the fast-failure
-	// ceiling cannot be what ends it: the redial bound is the only thing left.
 	ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
 	defer cancel()
 	started := time.Now()
@@ -138,13 +121,6 @@ func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	}
 }
 
-// TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession covers the shape a
-// lane hits when the session stays up and only this lane's streams keep dying:
-// the session is never worth replacing, so the redial bound never applies, and
-// every failure outlasts the backoff, so the fast-failure ceiling never applies
-// either. The lane carries nothing for the whole window while the window's clock
-// runs, which is a failed stage rather than a slow one -- reporting it as a stop
-// publishes zero bytes over the full window as a successful measurement.
 func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 	t.Parallel()
 	var dials, entries atomic.Int64
@@ -156,8 +132,7 @@ func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 		},
 	}
 
-	// Each failure outlasts wtRedialBackoff, which is what keeps it out of the
-	// fast-failure count.
+	// Each failure outlasts wtRedialBackoff, which is what keeps it out of the fast-failure count.
 	const failure = wtRedialBackoff + 20*time.Millisecond
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
@@ -182,28 +157,15 @@ func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
 	}
 }
 
-// TestRunWTLaneFastFailureCeiling pins both halves of the retry policy: how many
-// back-to-back instant failures a lane absorbs before it reports one, and that a
-// lane which carried bytes before it failed resets the bound. The live-session
-// rows pin the other half -- one lane's stream error is that lane's to retry,
-// and re-dialling the shared session for it stops every sibling lane
-// mid-transfer.
 func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	t.Parallel()
-	// The rows below are written against the constant, so they pin the shape of
-	// the policy and not its size. The size is a policy of its own: a lane that
-	// gives up on the first instant failure fails a stage on one refused stream,
-	// and one that absorbs a long run of them spends the window retrying.
 	if wtLaneMaxFastFailures != 5 {
 		t.Fatalf("wtLaneMaxFastFailures = %d, want 5", wtLaneMaxFastFailures)
 	}
-	// slowFailure outlasts one backoff, exercising the time-window half rather
-	// than the fast-failure count. Progress is an independent explicit outcome.
 	const slowFailure = wtRedialBackoff + 20*time.Millisecond
 	cases := []struct {
 		name string
-		// failures is how many lane entries fail before one blocks until the
-		// stage ends.
+		// failures is how many lane entries fail before one blocks until the stage ends.
 		failures    int
 		pause       time.Duration
 		progress    bool
@@ -234,18 +196,11 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 			wantErr: true, wantEntries: int64(wtLaneMaxFastFailures), wantDials: 0,
 		},
 		{
-			// The lane fails twice slowly and then runs past wtLaneProgressWindow,
-			// which is what "survives" has to mean: a run long enough that the
-			// stage was measuring over it. Failing for less than that window is
-			// absorbed, and the session is still never re-dialled for it.
 			name:     "a live session survives a lane that fails slowly and then runs",
 			failures: 2, pause: slowFailure, alive: true, budget: 3 * time.Second,
 			wantErr: false, wantEntries: 3, wantDials: 0,
 		},
 		{
-			// The same lane that never gets that run. Each failure outlasts the
-			// backoff, so the fast-failure count never sees it, and the session
-			// stays alive, so the redial bound never sees it either.
 			name:     "a lane failing slowly for the whole window is reported",
 			failures: 16, pause: slowFailure, alive: true, budget: 6 * time.Second,
 			wantErr: true, wantEntries: -1, wantDials: 0,
@@ -300,9 +255,6 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	}
 }
 
-// TestWTStageSessionDedupesConcurrentRedials covers what every lane on a session
-// does the moment it dies: they all race here holding the same generation, and
-// only the first may dial. The rest adopt what it produced.
 func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
 	var dials atomic.Int64
 	host := &wtStageSession{
@@ -341,9 +293,6 @@ func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
 	}
 }
 
-// TestWTStageSessionCloseIsFinal keeps a stage that has been torn down from
-// opening a fresh session behind itself: the host's close is the end of the
-// stage, and a lane still unwinding must not dial past it.
 func TestWTStageSessionCloseIsFinal(t *testing.T) {
 	sess := deadWTSession()
 	var dials atomic.Int64
@@ -367,10 +316,6 @@ func TestWTStageSessionCloseIsFinal(t *testing.T) {
 	}
 }
 
-// TestWTStageSessionClosesASessionWhoseEstablishFailed covers the leak a
-// half-built session is: it dialled, so it holds a QUIC connection and a transport,
-// and the establish step is what rejected it. It has to be released before the
-// next attempt, and the next attempt has to be paced.
 func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	t.Parallel()
 	const failures = 2
@@ -441,9 +386,6 @@ func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) 
 	}
 }
 
-// TestRunWTLaneReportsACancelledStageAsAStop pins the other half of the redial
-// contract: a stage the caller cancelled, or one whose own window ended, is a
-// clean stop and not a failed measurement.
 func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 	host := &wtStageSession{
 		sess: liveWTSession(t),
@@ -474,16 +416,8 @@ func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 	}
 }
 
-// wtUnreachableOrigin is a port nothing listens on, so a WebTransport dial to it
-// fails the way a UDP-blocked path does, without a server.
 const wtUnreachableOrigin = "https://127.0.0.1:1"
 
-// TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable covers what
-// automatic selection actually does when several fetch origins are advertised:
-// it cannot choose between them, falls through to WebTransport, and a blocked
-// UDP path then answers with a QUIC dial error that says nothing about the
-// choice the operator has to make. The refusal that is actionable is the fetch
-// one, and it is the one that has to reach the caller.
 func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T) {
 	wt := testTransfer("wt", wtUnreachableOrigin, "http3", true)
 	wt.Transport = wire.TransportWebTransport
@@ -509,9 +443,6 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 	}
 }
 
-// TestPrepareRejectsAnUnknownTransport keeps a mistyped transport from reading
-// as a missing endpoint. "auto target unavailable over webscoket" names the typo
-// only to a reader who already knows the spelling.
 func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 	cases := []struct {
 		name string
@@ -524,8 +455,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			cfg := c.cfg(DefaultConfig())
-			// An unreachable base URL proves the check runs before discovery: a
-			// typo is answerable without a server.
+			// An unreachable base URL proves the check runs before discovery: a typo is answerable without a server.
 			cfg.BaseURL = wtUnreachableOrigin
 			_, err := Prepare(t.Context(), cfg)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
@@ -535,9 +465,6 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 	}
 }
 
-// A lane invocation's age is not evidence that it transferred. In particular,
-// an accept/open/write can block for a whole progress window and then fail
-// without carrying one byte; repeating that schedule must not reset the bound.
 func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 	t.Parallel()
 	host := &wtStageSession{sess: liveWTSession(t)}

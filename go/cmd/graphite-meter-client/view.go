@@ -31,16 +31,10 @@ func (m model) View() string {
 	return shellStyle.Render(b.String())
 }
 
-// innerWidth is the content width inside the shell margin. Bars and columns
-// grow with the terminal, down to a floor under which no layout stays legible.
 func (m model) innerWidth() int {
 	return max(m.width-4, 40)
 }
 
-// fitLine truncates one rendered line to w cells, ANSI-aware, so panel content
-// never wraps: a cramped terminal loses a line's tail, not its layout. A line
-// already within width returns untouched, skipping lipgloss's render pipeline
-// for the common case.
 func fitLine(s string, w int) string {
 	if lipgloss.Width(s) <= w {
 		return s
@@ -48,9 +42,6 @@ func fitLine(s string, w int) string {
 	return lipgloss.NewStyle().MaxWidth(w).Render(s)
 }
 
-// fitBlock applies fitLine to every line of a panel body. It walks the block
-// without allocating a line slice and returns the input unchanged when nothing
-// overflows, so the common in-width case allocates nothing.
 func fitBlock(s string, w int) string {
 	var b strings.Builder
 	changed := false
@@ -98,23 +89,13 @@ func (m model) header(w int) string {
 }
 
 const (
-	// panelBorderWidth is the column pair a panel's rounded border draws
-	// outside its lipgloss width.
+	// panelBorderWidth is the column pair a panel's rounded border draws outside its lipgloss width.
 	panelBorderWidth = 2
 	// gutterWidth separates two side-by-side panels.
-	gutterWidth = 2
-	// twoColumnMin is the narrowest w where two panels stay readable side by
-	// side; below it the caller stacks them, taller but whole. Sized from the
-	// connection path row — marker, label column, longest path summary,
-	// position and origin — against the 12/20 share below. Longer rows (the
-	// resolved stream policy) give up their trailing note rather than push
-	// every terminal under ~119 columns into a stack.
+	gutterWidth  = 2
 	twoColumnMin = 115
 )
 
-// splitColumns sizes panel content so a rendered pair, or one stacked panel,
-// spans exactly w columns. The left panel takes the larger share: it holds the
-// labelled rows, where the right panel holds short readings.
 func splitColumns(w int) (leftW, rightW int, twoCol bool) {
 	if w < twoColumnMin {
 		return w - panelBorderWidth, w - panelBorderWidth, false
@@ -128,8 +109,7 @@ func (m model) configView(w int) string {
 	var b strings.Builder
 	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
-	// An outstanding approval is what the screen is waiting on, so it goes
-	// above the sections it is blocking.
+	// An outstanding approval is what the screen is waiting on, so it goes above the sections it is blocking.
 	if auth := m.authView(); auth != nil {
 		b.WriteString(panelStyle.Width(w - 2).Render(fitBlock(strings.Join(auth, "\n"), w-6)))
 		b.WriteString("\n\n")
@@ -165,8 +145,7 @@ func (m model) tabBar(w int) string {
 	if lipgloss.Width(line) < w {
 		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
 	}
-	// Clipping the trailing tabs holds the shell block at w. A longer line pads
-	// every other line past the terminal.
+	// Clipping the trailing tabs holds the shell block at w. A longer line pads every other line past the terminal.
 	return fitLine(line, w)
 }
 
@@ -187,13 +166,8 @@ func (m model) sectionView(w int) string {
 	}
 }
 
-// serverURLColumn is the width the URL column holds, so a preset's note starts
-// where the row above it does. A longer URL pushes its own note right rather
-// than wrapping the row.
 const serverURLColumn = 21
 
-// serversView is one row per server: the mark, the name, the URL, and what the
-// entry is, all on the line the selection highlights.
 func (m model) serversView(w int) string {
 	lines := []string{accentStyle.Render("Server Selection")}
 	active := activePreset(m.cfg.BaseURL)
@@ -244,9 +218,6 @@ func (m model) timingView(w int) string {
 }
 
 func (m model) networkView(w int) string {
-	// A WebTransport session resolves its own lane count, so this ceiling is not
-	// read on that transport. The row is dimmed rather than dropped: it applies
-	// again the moment the transport changes, and a moving row loses the reader.
 	autoMax := valueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "per direction")
 	if m.cfg.ThroughputTransport == wire.TransportWebTransport {
 		autoMax = inertValueLine("Auto H1 max", fmt.Sprintf("%d", m.cfg.TransferStreams.AutomaticMax), "unused over WebTransport")
@@ -256,8 +227,7 @@ func (m model) networkView(w int) string {
 	rows[rowThroughputProtocol] = m.throughputProtocolRow()
 	rows[rowLatencyPath] = pathRow("Latency path", m.cfg.LatencyTarget, m.cfg.LatencyTransport, m.latencyPaths())
 	rows[rowAutoStreams] = autoMax
-	// The value already spells out what automatic resolves to, so the note only
-	// has to say what to type to get it back.
+	// The value already spells out what automatic resolves to, so the note only has to say what to type to get it back.
 	rows[rowStreams] = valueLine("Streams", m.cfg.TransferStreams.Label(m.cfg.ThroughputProtocol, m.cfg.ThroughputTransport), "0 = auto")
 	rows[rowSkipTLS] = toggleLine("Skip TLS verify", m.cfg.InsecureSkipTLSVerify, "unsafe")
 	rows[rowReset] = warnStyle.Render("Reset to defaults")
@@ -270,11 +240,6 @@ func (m model) networkView(w int) string {
 	return m.listWithTitle("Connections", rows, w)
 }
 
-// throughputProtocolRow offers the HTTP version only where the selected path
-// leaves one open. A path advertised as HTTP/3 will not answer HTTP/1.1 because
-// a row says so, so on those it reports what the path serves and goes inert.
-// Dimmed rather than dropped, as Auto H1 max is: it applies again the moment
-// the path changes, and a moving row loses the reader.
 func (m model) throughputProtocolRow() string {
 	if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
 		return inertValueLine("HTTP version", protocolChoiceLabel(t.Protocol), "fixed by this path")
@@ -297,8 +262,7 @@ func (m model) runMenuView(w int) string {
 	return m.listWithTitle("Start", []string{label}, w)
 }
 
-// editError trails the edited field with the reason its last commit fails, so
-// the answer sits where the eye already is.
+// editError trails the edited field with the reason its last commit fails, so the answer sits where the eye already is.
 func (m model) editError() string {
 	if m.edit.err == "" {
 		return ""
@@ -314,10 +278,6 @@ func (m model) listWithTitle(title string, rows []string, w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// menuLine draws one row, highlighted when it is the selected one. The content
-// is cut to the panel first: a highlight styled at a set width wraps whatever
-// overflows onto a second line, which would break the row alignment the
-// selection marker relies on.
 func (m model) menuLine(i int, s string, w int) string {
 	if i != m.row {
 		return "  " + s
@@ -331,8 +291,6 @@ func (m model) planView() string {
 		pending = "Not checked"
 	}
 	throughput, latency, observed := pending, pending, ""
-	// A pending check keeps the figures of the last verified one, dimmed:
-	// blanking them on every keypress made cycling an endpoint flicker.
 	value := valueStyle
 	if p := m.prepared; p != nil {
 		throughput, latency, observed = p.ThroughputSummary(), p.LatencySummary(), p.Probe.ProtocolNegotiated
@@ -386,10 +344,6 @@ func (m model) checkGlyph(state checkState) string {
 	}
 }
 
-// authView is the browser approval wait: the code the approval page asks the
-// operator to match, where that page lives, and how much of the polling window
-// is left. The browser opens on a keypress, so the code can be read first, and
-// the panel is full width because the URL is long and worth copying by hand.
 func (m model) authView() []string {
 	if m.auth == nil {
 		return nil
@@ -399,8 +353,6 @@ func (m model) authView() []string {
 	if m.authOpened {
 		prompt = "Approve this client in the browser"
 	}
-	// The code sits in a bordered box, so what stands beside it is centered
-	// against the box rather than concatenated onto the box's top line.
 	code := lipgloss.JoinHorizontal(lipgloss.Center,
 		labelStyle.Render("Match this code")+" ",
 		codeStyle.Render(m.auth.Code),
@@ -452,9 +404,6 @@ func (m model) summaryView(w int) string {
 		field("Target", valueStyle.Render(server)),
 		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
-		// Both paths are named the way the selector that offered them and the
-		// readiness panel that verified them name them, so a WebTransport run
-		// does not report itself as the HTTP/1.1 its origin also serves.
 		field("Throughput", m.runPath(m.throughputTransport, m.throughputProtocol, m.target)),
 		field("Latency", m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)),
 		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
@@ -467,10 +416,6 @@ func (m model) summaryView(w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// runPath is one committed path on the run screen, in the vocabulary the
-// configure screen uses, trailed by the origin carrying it. A run that has not
-// announced its preflight yet has no path to name, and says so rather than
-// rendering a summary out of three empty fields.
 func (m model) runPath(transport, protocol, target string) string {
 	if target == "" {
 		return mutedStyle.Render("--")
@@ -479,9 +424,6 @@ func (m model) runPath(transport, protocol, target string) string {
 	return valueStyle.Render(summary) + mutedStyle.Render("  "+shortOrigin(m.cfg.BaseURL, target))
 }
 
-// timelineView is the run's stage timeline. A measuring stage runs for exactly
-// its configured duration, so its bar is determinate. The warmup window is
-// never reported, so warmup counts up under an indeterminate spinner.
 func (m model) timelineView(w int) []string {
 	if len(m.stages) == 0 {
 		return nil
@@ -524,15 +466,10 @@ func (m model) liveView(w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// rateScale is the live bars' denominator: the larger session peak across both
-// directions. Peaks only grow, so the scale is stable within a run.
 func (m model) rateScale() float64 {
 	return max(m.peaks[goclient.Down], m.peaks[goclient.Up])
 }
 
-// resultsView is the finished stages. Every throughput row is measured before
-// any is drawn, so one bar width serves them all and the figures beside them
-// are never cut by a row that happens to carry a longer note.
 func (m model) resultsView(w int) string {
 	lines := []string{accentStyle.Render("Results")}
 
@@ -581,9 +518,6 @@ func (m model) resultsView(w int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// finalReport is what the process prints once the alt screen is torn down,
-// which takes everything the TUI drew with it. The ASCII profile keeps the
-// surviving scrollback plain text.
 func (m model) finalReport() string {
 	if !m.complete || len(m.results) == 0 {
 		return ""
@@ -592,21 +526,18 @@ func (m model) finalReport() string {
 	return m.resultsView(m.innerWidth())
 }
 
-// isLatencyResult reports whether a result carries latency percentiles rather
-// than throughput figures.
+// isLatencyResult reports whether a result carries latency percentiles rather than throughput figures.
 func isLatencyResult(r goclient.Result) bool {
 	return r.Latency.Count > 0 || r.Stage == "latency"
 }
 
-// helpView is the footer. The model is the key map it renders, so the listing
-// follows whichever screen is on show.
+// helpView is the footer. The model is the key map it renders, so the listing follows whichever screen is on show.
 func (m model) helpView() string {
 	m.help.Width = m.innerWidth()
 	return m.help.View(m)
 }
 
-// newHelp is the footer renderer, dressed in this program's styles rather than
-// the bubble's defaults.
+// newHelp is the footer renderer, dressed in this program's styles rather than the bubble's defaults.
 func newHelp() help.Model {
 	h := help.New()
 	h.Styles.ShortKey, h.Styles.FullKey = labelStyle, labelStyle

@@ -1,21 +1,16 @@
-export interface SheetDragOptions {
+interface SheetDragOptions {
   enabled: boolean;
   backdrop?: HTMLElement;
   onDismiss: () => void;
 }
-
 interface DismissInput {
   distance: number;
   height: number;
   velocity: number;
   releasedAfterMs: number;
 }
-
-export type SheetGestureIntent = "pending" | "drag" | "scroll";
-
+type SheetGestureIntent = "pending" | "drag" | "scroll";
 // Stays "pending" inside a 10px slop radius so a tap never nudges the sheet.
-// A pull that is upward, mostly horizontal, or from a scrolled body belongs to
-// the content underneath.
 export function sheetGestureIntent(
   deltaX: number,
   deltaY: number,
@@ -26,9 +21,7 @@ export function sheetGestureIntent(
     return "scroll";
   return "drag";
 }
-
-// A flick counts only while the finger still moves at release. The
-// releasedAfterMs bound rejects a fast drag that ends in a pause.
+// A flick counts only while the finger still moves at release.
 export function shouldDismissSheet({
   distance,
   height,
@@ -40,9 +33,7 @@ export function shouldDismissSheet({
     distance >= 96 && velocity >= 0.85 && releasedAfterMs <= 80;
   return farEnough || recentFlick;
 }
-
-// Reference counted: several sheets can be mounted at once. The first to close
-// must not restore the page while another still holds it.
+// Reference counted: several sheets can be mounted at once.
 let pageLockCount = 0;
 let pageBeforeLock:
   | {
@@ -51,9 +42,7 @@ let pageBeforeLock:
       rootOverscroll: string;
     }
   | undefined;
-
-// iOS keeps scrolling the page behind a sheet under `overflow: hidden`. The
-// body is pinned with `position: fixed` and offset to fake the scroll position.
+// iOS keeps scrolling the page behind a sheet under `overflow: hidden`.
 function lockPage() {
   pageLockCount++;
   if (pageLockCount !== 1) return;
@@ -74,7 +63,6 @@ function lockPage() {
     overscrollBehavior: "none",
   });
 }
-
 function unlockPage() {
   if (!pageLockCount || --pageLockCount) return;
   const saved = pageBeforeLock;
@@ -84,7 +72,6 @@ function unlockPage() {
   document.documentElement.style.overscrollBehavior = saved.rootOverscroll;
   window.scrollTo(0, saved.scrollY);
 }
-
 export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   let opts = options;
   let pageLocked = false;
@@ -101,21 +88,17 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
         scroller?: HTMLElement;
       }
     | undefined;
-
   const reducedMotion = () =>
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
   // Only portrait phones present this panel as a draggable bottom sheet.
   const isBottomSheetLayout = () =>
     window.matchMedia("(max-width: 759px) and (orientation: portrait)").matches;
-
   function setPageLocked(locked: boolean) {
     if (locked === pageLocked) return;
     pageLocked = locked;
     if (locked) lockPage();
     else unlockPage();
   }
-
   function reset() {
     window.clearTimeout(resetTimer);
     node.style.transition = "";
@@ -125,7 +108,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       opts.backdrop.style.opacity = "";
     }
   }
-
   function animate(offset: number, transition: boolean) {
     const motion =
       transition && !reducedMotion()
@@ -139,7 +121,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       opts.backdrop.style.opacity = String(1 - progress);
     }
   }
-
   function onStart(event: TouchEvent) {
     if (!opts.enabled || event.touches.length !== 1 || !isBottomSheetLayout())
       return;
@@ -159,7 +140,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       scroller: scroller ?? undefined,
     };
   }
-
   function onMove(event: TouchEvent) {
     if (!gesture) return;
     const touch = [...event.touches].find(
@@ -168,7 +148,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     if (!touch) return;
     const deltaX = touch.clientX - gesture.startX;
     const deltaY = touch.clientY - gesture.startY;
-
     if (!gesture.dragging) {
       const intent = sheetGestureIntent(
         deltaX,
@@ -182,18 +161,15 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       }
       gesture.dragging = true;
     }
-
     event.preventDefault();
     const elapsed = Math.max(1, event.timeStamp - gesture.lastAt);
     const instantVelocity = (touch.clientY - gesture.lastY) / elapsed;
-    // Smoothed: a single frame's delta is noisy enough to read a steady drag
-    // as a flick.
+    // Smoothed: a single frame's delta is noisy enough to read a steady drag as a flick.
     gesture.velocity = gesture.velocity * 0.65 + instantVelocity * 0.35;
     gesture.lastY = touch.clientY;
     gesture.lastAt = event.timeStamp;
     animate(Math.max(0, deltaY), false);
   }
-
   function onEnd(event: TouchEvent) {
     if (!gesture) return;
     const touch = [...event.changedTouches].find(
@@ -210,19 +186,16 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       releasedAfterMs: event.timeStamp - gesture.lastAt,
     });
     gesture = undefined;
-
     if (event.type === "touchcancel" || !dismiss) {
       if (reducedMotion()) {
         reset();
         return;
       }
       animate(0, true);
-      // Inline styles come off once the --dur-slide transition finishes. An
-      // earlier reset snaps the sheet instead of gliding it.
+      // Inline styles come off once the --dur-slide transition finishes.
       resetTimer = window.setTimeout(reset, 200);
       return;
     }
-
     if (reducedMotion()) {
       opts.onDismiss();
       reset();
@@ -235,15 +208,17 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       reset();
     }, 180);
   }
-
-  node.addEventListener("touchstart", onStart, { passive: true });
-  // Non-passive: a committed drag calls preventDefault to suppress the browser
-  // scroll and pull-to-refresh.
-  node.addEventListener("touchmove", onMove, { passive: false });
-  node.addEventListener("touchend", onEnd, { passive: true });
-  node.addEventListener("touchcancel", onEnd, { passive: true });
+  const listeners = [
+    ["touchstart", onStart],
+    ["touchmove", onMove],
+    ["touchend", onEnd],
+    ["touchcancel", onEnd],
+  ] as const;
+  for (const [type, listener] of listeners)
+    node.addEventListener(type, listener as EventListener, {
+      passive: type !== "touchmove",
+    });
   setPageLocked(opts.enabled);
-
   return {
     update(next: SheetDragOptions) {
       opts = next;
@@ -254,10 +229,8 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
       }
     },
     destroy() {
-      node.removeEventListener("touchstart", onStart);
-      node.removeEventListener("touchmove", onMove);
-      node.removeEventListener("touchend", onEnd);
-      node.removeEventListener("touchcancel", onEnd);
+      for (const [type, listener] of listeners)
+        node.removeEventListener(type, listener as EventListener);
       setPageLocked(false);
       reset();
     },

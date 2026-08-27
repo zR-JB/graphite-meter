@@ -14,9 +14,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// laneRetryPause paces a transfer lane's reopen after a fault, reporting false
-// once the stage ends. Every reconnect path shares this cadence so a hard-down
-// server cannot be hot-retried by every lane at once.
 func laneRetryPause(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
@@ -26,13 +23,6 @@ func laneRetryPause(ctx context.Context) bool {
 	}
 }
 
-// windowCarriedBytes refuses a window that moved nothing. A lane that never
-// errors but never transfers -- a stream the server accepts and never writes on
-// -- leaves the byte total at zero while the window's clock runs to its end, and
-// publishing that hands the caller 0 B/s as a measurement rather than a failure.
-// ctx must be the stage's own, not the window's: a window bounded by its own
-// deadline would otherwise read as a cancellation. A stage the caller cancelled
-// is a stop and reports nothing.
 func windowCarriedBytes(ctx context.Context, stage string, dir Direction, stats rateStats) error {
 	if ctx.Err() != nil || stats.total > 0 {
 		return nil
@@ -44,8 +34,6 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	var total atomic.Uint64
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
-		// One session hosts every lane, re-dialed when it outlives the server's
-		// session bound; each lane opens its own stream on the live session.
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
 			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
 		}, nil)
@@ -86,24 +74,20 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64) error {
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
-		u, err := url.Parse(base)
+		u, err := endpointWithQuery(base, url.Values{
+			"bytes": {strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10)},
+			"lane":  {strconv.Itoa(lane)},
+			"cb":    {strconv.FormatInt(time.Now().UnixNano(), 10)},
+		})
 		if err != nil {
 			return err
 		}
-		q := u.Query()
-		q.Set("bytes", strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10))
-		q.Set("lane", strconv.Itoa(lane))
-		q.Set("cb", strconv.FormatInt(time.Now().UnixNano(), 10))
-		u.RawQuery = q.Encode()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return err
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			// A refused dial must not spin: pace the reopen like every other
-			// reconnect path, so a dead server costs a retry cadence rather
-			// than a core per lane.
 			if !laneRetryPause(ctx) {
 				return nil
 			}
@@ -120,9 +104,6 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 				total.Add(uint64(n))
 			}
 			if readErr != nil {
-				// A stream dropped mid-body reopens like any finished request:
-				// the gap is a measured pause, not a stage failure. A drop
-				// before EOF is a fault, so the reopen is paced.
 				_ = res.Body.Close()
 				if !errors.Is(readErr, io.EOF) && !laneRetryPause(ctx) {
 					return nil
@@ -138,8 +119,6 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 	return nil
 }
 
-// sampleLocalRates measures from the bytes the lanes have read locally; ctx
-// carries the measurement window as its deadline.
 func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, laneErr <-chan error) (rateStats, error) {
 	baseline := total.Load()
 	lastN := baseline

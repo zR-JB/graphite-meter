@@ -38,8 +38,6 @@ func TestCyclingBodyWrapsDeterministically(t *testing.T) {
 }
 
 func TestCyclingBodyStopsAtLimit(t *testing.T) {
-	// limit exercises the known-Content-Length path: the body emits exactly
-	// `limit` bytes (wrapping the block) and then reports io.EOF.
 	b := &cyclingBody{ctx: t.Context(), block: []byte{1, 2, 3}, limit: 7}
 	var got []byte
 	buf := make([]byte, 4)
@@ -121,10 +119,6 @@ func TestMintUploadID(t *testing.T) {
 	})
 }
 
-// TestUploadLaneDrainsBytes checks uploadLane streams its cycling body until
-// cancelled. The stream is endless by design, since the caller stops it when
-// the stage's window closes, so the test waits for a byte threshold instead of
-// a final total, then confirms the lane joins promptly.
 func TestUploadLaneDrainsBytes(t *testing.T) {
 	var served atomic.Uint64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,10 +175,6 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 	}
 }
 
-// newAbruptCloseUploadServer reads a little of each request's body then aborts
-// the handler, dropping the connection without a response. It simulates a
-// server that vanishes mid-transfer rather than one that responds cleanly or
-// is merely slow.
 func newAbruptCloseUploadServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 8*1024)
@@ -193,9 +183,6 @@ func newAbruptCloseUploadServer() *httptest.Server {
 	}))
 }
 
-// TestUploadLaneSurvivesAbruptConnectionDrop checks that a lane whose every
-// request is abruptly dropped mid-transfer keeps retrying without panicking
-// or hanging, and still joins promptly once cancelled.
 func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	srv := newAbruptCloseUploadServer()
 	defer srv.Close()
@@ -251,8 +238,6 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 	})
 }
 
-// newFakeUploadServer wires the session, upload sink, and throughput-bound
-// NDJSON progress stream used by measureUpload.
 func newFakeUploadServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var served atomic.Uint64
@@ -307,12 +292,6 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	}
 }
 
-// newStalledUploadServer accepts the POSTs and reports a feed whose active time
-// advances while the byte total stays at zero: the upload window is measured
-// from the server's aggregate, so an aggregate that never advances is a window
-// that carried nothing, with no lane failing to say so. The sink drains the
-// body rather than ignoring it because a handler parked on an unread body never
-// learns the client aborted, and httptest.Server.Close would wait on it.
 func newStalledUploadServer() *httptest.Server {
 	started := time.Now()
 	mux := http.NewServeMux()
@@ -347,9 +326,6 @@ func newStalledUploadServer() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// TestMeasureUploadRefusesAWindowThatCarriedNoBytes is the upload half of the
-// empty-window guard: the server's counters advance in time but not in bytes,
-// so no lane fails and the window would otherwise publish 0 B/s.
 func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	srv := newStalledUploadServer()
 	defer srv.Close()
@@ -372,10 +348,6 @@ func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	}
 }
 
-// TestMeasureUploadCancelledEmptyWindowIsACleanStop pins the cancellation side:
-// the sampler already reports the caller's cancellation as context.Canceled,
-// which runTransferStage treats as a stop, and the empty-window guard must not
-// replace it with a measurement failure.
 func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	srv := newStalledUploadServer()
 	defer srv.Close()
@@ -399,11 +371,6 @@ func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	}
 }
 
-// TestUploadProgressHoldsTheForwardPairAcrossFeeds covers the interleaving two
-// readers of one aggregate produce: the live feed publishes the terminal
-// `complete` record, then the superseded feed lands a record it had already
-// buffered. The server repeats the byte total on `complete`, so the two carry
-// equal bytes and only the active time separates them.
 func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	live, liveWriter := io.Pipe()
 	go func() {
@@ -439,11 +406,6 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	}
 }
 
-// TestSampleServerUploadWindowHoldsTheHighestPair checks the final window is
-// priced off the highest pair the loop saw rather than whatever counters()
-// happens to hold. A shorter active time over the same bytes inflates the rate,
-// and one below the baseline drops the window entirely. The stale pair is
-// stored past advance() so the window is tested on its own.
 func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
 	const baselineN = uint64(1000)
 	const baselineT = uint64(time.Second)
@@ -484,9 +446,6 @@ func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
 	}
 }
 
-// newWaitNextProgress builds a progress channel whose own context decides when
-// the report is over, which is what waitNext reads: an individual feed ending
-// only means a replacement session is about to re-attach.
 func newWaitNextProgress(t *testing.T) (*uploadProgress, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(t.Context())
 	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1), errs: make(chan error, 1)}, cancel
@@ -532,12 +491,6 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		}
 	})
 
-	// The last record and the end of the report can land together: the feed
-	// publishes its count and closes, and the waiter is woken by the close with
-	// the edge already consumed. It has to answer from what it can see rather
-	// than from which channel woke it. Storing the count before the call instead
-	// would leave waitNext's own loop condition to answer, and the branch that
-	// resolves the race would never run.
 	t.Run("final update", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			progress, cancel := newWaitNextProgress(t)
@@ -552,8 +505,6 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		})
 	})
 
-	// A feed replaced mid-stage closes its own reader. Treating that as the end
-	// of the report would fail the stage on every session rollover.
 	t.Run("feed replaced", func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
@@ -576,17 +527,10 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 }
 
-// Two readers drain the same aggregate at once: the HTTP re-attach and a
-// replacement session's re-attached stream. Under a check followed by a store,
-// the older of two interleaved records lands last and walks the
-// server-authoritative counter backwards, or splits a byte total from the
-// active time it was measured over. Both under-report the final window.
 func TestUploadProgressCounterHoldsUnderConcurrentFeeds(t *testing.T) {
 	p := &uploadProgress{ready: make(chan error, 1), changed: make(chan struct{}, 1)}
 	const feeds, records = 4, 4000
 
-	// Every record pairs a byte total with an equal nanosecond stamp, so an
-	// observer can see both a regression and a torn pair.
 	stop := make(chan struct{})
 	fault := make(chan string, 1)
 	watching := make(chan struct{})
@@ -641,8 +585,7 @@ func TestUploadProgressCounterHoldsUnderConcurrentFeeds(t *testing.T) {
 	}
 }
 
-// closeRecorder is a feed body that reports whether the reader that adopted it
-// released it.
+// closeRecorder is a feed body that reports whether the reader that adopted it released it.
 type closeRecorder struct {
 	io.Reader
 	closed atomic.Bool
@@ -653,13 +596,6 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-// TestReattachUploadProgressResumesTheSameAggregate covers the server's request
-// bound arriving mid-stage: the NDJSON feed ends after a few records and the
-// client has to open another GET onto the same aggregate. The counter is the
-// server's, so it has to carry across the seam rather than restart the
-// measurement baseline, and the reopen has to be paced -- a feed that ends the
-// moment it opens is as down as one that refuses, and every other reconnect path
-// in this client answers that with a backoff rather than a spin.
 func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	const recordsPerFeed = 3
 	const window = 1500 * time.Millisecond
@@ -696,17 +632,11 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	if carried, _ := p.counters(); carried <= recordsPerFeed {
 		t.Errorf("the counter stopped at %d, want it past %d: one feed cannot carry the stage, and the reattach resumes the same aggregate", carried, recordsPerFeed)
 	}
-	// One GET per backoff interval, plus the first: anything near the hundreds an
-	// unpaced loop would issue is the regression.
 	if paced := int64(window/wtRedialBackoff) + 2; gets.Load() > paced {
 		t.Errorf("issued %d progress GETs in %v, want at most %d: the reopen is not paced", gets.Load(), window, paced)
 	}
 }
 
-// TestAttachRefusesAReaderAfterClose covers the reader a replacement session
-// installs just after the stage ended. close() has run its one-shot cancel and
-// already joined the last reader, so one installed behind it is never joined and
-// its records reach a counter nothing is reading.
 func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	progress, cancel := newWaitNextProgress(t)
 	before := progress.currentDone()
@@ -726,9 +656,6 @@ func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	}
 }
 
-// Losing the authoritative feed after one positive record cannot turn that
-// prefix into the result for the whole requested window. Reattachment gets a
-// bounded chance; permanent refusal is a stage error.
 func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 	progress, cancel := newWaitNextProgress(t)
 	defer cancel()
@@ -763,10 +690,6 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 	}
 }
 
-// A feed that dies before its first record leaves nothing to advance the
-// counter: waitNext watches this channel's cancellation and p.changed alone,
-// and the stage context carries no deadline. Reattach giving up must therefore
-// cancel, or measureUpload blocks for the life of the process.
 func TestUploadProgressWaitNextEndsWhenTheFeedDiesForGood(t *testing.T) {
 	ctx := t.Context()
 	readCtx, readCancel := context.WithCancel(ctx)

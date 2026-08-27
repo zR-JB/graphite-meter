@@ -1,5 +1,4 @@
-/* Streams server-authoritative upload snapshots from the selected throughput
- * target. Empty NDJSON lines are liveness heartbeats, never measurements. */
+/* Streams server-authoritative upload snapshots from the selected throughput target. */
 
 import { nextBackoff } from "./backoff";
 import {
@@ -149,9 +148,7 @@ async function readEvents(body: ReadableStream<Uint8Array>): Promise<void> {
   if (end === "fatal") stopped = true;
 }
 
-/** Handle `stop`: ask the server to close the upload session. When the DELETE
- *  lands, the stream itself delivers the final `complete` frame and tears down
- *  there; when it does not, tear down locally so nothing keeps reconnecting. */
+/* Handle `stop`: ask the server to close the upload session. */
 async function finish(): Promise<void> {
   if (stopped || finishing) return;
   finishing = true;

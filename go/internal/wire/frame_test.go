@@ -10,8 +10,7 @@ import (
 
 const corpusPath = "../../../api/wire.testvectors.txt"
 
-// vector is one row of api/wire.testvectors.txt: a direction, an input, and the
-// expected output. See the file header for the format.
+// vector is one row of api/wire.testvectors.txt: a direction, an input, and the expected output.
 type vector struct {
 	line     int
 	dir      string // "encode" | "decode"
@@ -19,8 +18,7 @@ type vector struct {
 	expected string
 }
 
-// loadCorpus parses the shared wire corpus, skipping comment/blank lines. This
-// is the same fixture the TS codec asserts against (client wire.test.ts).
+// loadCorpus parses the shared wire corpus, skipping comment/blank lines.
 func loadCorpus(t *testing.T) []vector {
 	t.Helper()
 	f, err := os.Open(corpusPath)
@@ -62,9 +60,6 @@ func loadCorpus(t *testing.T) []vector {
 	return vectors
 }
 
-// TestCodecMatchesCorpus is the byte-exact conformance check both languages run
-// against the same file. decode rows assert the parsed frame's canonical render
-// (or its rejection code); encode rows assert the on-wire output is byte-exact.
 func TestCodecMatchesCorpus(t *testing.T) {
 	for _, v := range loadCorpus(t) {
 		switch v.dir {
@@ -96,9 +91,7 @@ func TestCodecMatchesCorpus(t *testing.T) {
 	}
 }
 
-// render produces the canonical "op=…;k=v;…" form the decode rows pin. It mirrors
-// the corpus expected column and belongs to the test: the codec emits on-wire
-// frames only.
+// render produces the canonical "op=…;k=v;…" form the decode rows pin.
 func render(f Frame) string {
 	switch f.Op {
 	case OpREADY:
@@ -118,8 +111,7 @@ func render(f Frame) string {
 	}
 }
 
-// parseCanonical turns an "op=…;k=v;…" spec (the encode rows' input column) into
-// a Frame to feed Encode.
+// parseCanonical turns an "op=…;k=v;…" spec (the encode rows' input column) into a Frame to feed Encode.
 func parseCanonical(t *testing.T, line int, spec string) Frame {
 	t.Helper()
 	var f Frame

@@ -1,18 +1,10 @@
-// Package auth implements Graphite Meter's optional authentication boundary,
-// split one auditable claim per file: wrap.go (no principal, no entry),
-// trust.go (what a request proves), session.go (bounded, hashed, revocable),
-// headers.go, ratelimit.go, reasons.go, handlers.go, oidc.go, password.go,
-// cli.go. This file is wiring. The boundary is in-process because a
-// forward-auth proxy sits in the measured data path, has no equivalent in
-// front of a QUIC listener, and cannot issue one credential coherent across
-// the six measurement origins and the native client's bearer grant.
+// Package auth implements the authentication boundary.
 package auth
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -29,9 +21,6 @@ import (
 
 type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial, replayExpiry, throttled, logout, cliApproval, capacity atomic.Uint64 }
 
-// Service owns every piece of authentication state, in memory only. Every store
-// below is bounded and swept, each cap named where it is enforced. Every bound
-// trades availability for a store an anonymous caller cannot grow.
 type Service struct {
 	cfg            config.AuthConfig
 	public         *url.URL
@@ -48,28 +37,20 @@ type Service struct {
 	ceilingLogged  map[string]time.Time
 	approvals      map[string]*cliApproval
 	oidc           *oidcState
-	loginTemplate  *template.Template
 	now            func() time.Time
 	verbose        bool
 	counters       authCounters
-	// connectSrc is the space-joined cross-origin measurement targets appended
-	// to the application CSP's connect-src (which always allows 'self'). Empty
-	// when every target is same-origin. Set once at startup.
-	connectSrc string
+	connectSrc     string
 }
 
-// SetConnectOrigins records the distinct cross-origin measurement targets the
-// server advertises, so the authenticated CSP's connect-src admits exactly
-// them. The set comes from /preflight, so the policy cannot omit an origin the
-// client is told to use. Same-origin ('self') is always allowed and unlisted.
+func authModes(mode string) (password, oidc bool) {
+	return mode == "password" || mode == "hybrid", mode == "oidc" || mode == "hybrid"
+}
+
 func (s *Service) SetConnectOrigins(origins []string) {
 	s.connectSrc = strings.Join(origins, " ")
 }
 
-// New builds the authentication service for cfg. In "off" mode it returns a
-// service that wires nothing; otherwise it loads and validates the configured
-// credentials, performs OIDC discovery, and starts the sweeper and the security
-// log, all bound to ctx.
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
 	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, wtTokens: map[[32]byte]wtToken{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
@@ -80,7 +61,8 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Mode == "password" || cfg.Mode == "hybrid" {
+	password, oidc := authModes(cfg.Mode)
+	if password {
 		s.passwordHash, err = readSecret(cfg.PasswordHash, cfg.PasswordHashFile, 4096)
 		if err != nil {
 			return nil, fmt.Errorf("password hash: %w", err)
@@ -90,14 +72,13 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		}
 		s.debugln("local password hash loaded and validated")
 	}
-	s.loginTemplate = loginTemplate
-	if cfg.Mode == "oidc" || cfg.Mode == "hybrid" {
+	if oidc {
 		secret, e := readSecret(cfg.OIDCClientSecret, cfg.OIDCSecretFile, 16*1024)
 		if e != nil {
 			return nil, fmt.Errorf("OIDC client secret: %w", e)
 		}
 		s.oidc = newOIDCState(cfg, secret, s.verbose)
-		if cfg.Mode == "oidc" {
+		if !password {
 			discovery, err := s.oidc.discover(ctx, s.public)
 			if err != nil {
 				return nil, fmt.Errorf("OIDC discovery: %w", err)
@@ -146,8 +127,7 @@ func readSecret(inline, file string, limit int64) (string, error) {
 // Enabled reports whether the authentication boundary is in force.
 func (s *Service) Enabled() bool { return s.cfg.Mode != "off" }
 
-// PublicOrigin is the canonical origin the boundary accepts, or "" when
-// authentication is off.
+// PublicOrigin is the canonical origin the boundary accepts, or "" when authentication is off.
 func (s *Service) PublicOrigin() string {
 	if s.public == nil {
 		return ""
@@ -155,8 +135,6 @@ func (s *Service) PublicOrigin() string {
 	return s.public.String()
 }
 
-// Mount installs the auth routes. Every route it registers still passes
-// through Enforce; Mount only decides which paths exist at all.
 func (s *Service) Mount(mux *http.ServeMux) {
 	if !s.Enabled() {
 		mux.HandleFunc("/login", http.NotFound)
@@ -164,10 +142,11 @@ func (s *Service) Mount(mux *http.ServeMux) {
 		return
 	}
 	mux.HandleFunc("GET /login", s.loginPage)
-	if s.cfg.Mode == "password" || s.cfg.Mode == "hybrid" {
+	password, oidc := authModes(s.cfg.Mode)
+	if password {
 		mux.HandleFunc("POST /auth/password", s.passwordLogin)
 	}
-	if s.cfg.Mode == "oidc" || s.cfg.Mode == "hybrid" {
+	if oidc {
 		mux.HandleFunc("POST /auth/oidc/start", s.oidcStart)
 		mux.HandleFunc("GET /auth/oidc/callback", s.oidcCallback)
 	}
@@ -180,8 +159,6 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("/auth/", http.NotFound)
 }
 
-// runSecurityLog emits a one-line delta of the auth counters each minute, and
-// stays silent while every counter holds still.
 func (s *Service) runSecurityLog(ctx context.Context) {
 	t := time.Tick(time.Minute)
 	var last [10]uint64

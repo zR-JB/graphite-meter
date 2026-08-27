@@ -1,5 +1,5 @@
 # Quadlet .container unit — build-from-source variant (developers / custom
-# builds, e.g. with the dummy engine or dev tools compiled in). The image is
+# builds, e.g. with the dummy engine compiled in). The image is
 # produced by the sibling graphite-meter.build unit (Image=*.build → builds
 # first, then runs). For a normal deployment use graphite-meter.container,
 # which pulls the published image instead. Install: see ./README.md.

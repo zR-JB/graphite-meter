@@ -1,7 +1,4 @@
-/* A browser WebTransport CONNECT can send neither cookies nor headers, so an
- * authenticated dial first mints a single-use token over HTTP and carries it
- * in the session URL. Minting happens in the worker, immediately before each
- * dial, because the token expires in seconds and reconnects re-dial. */
+/* Minting happens in the worker, immediately before each dial, because the token expires in seconds and. */
 import {
   authenticationRequired,
   redirectForCredentials,
@@ -17,28 +14,17 @@ export interface WtMint {
 /** A mint that outlives the dial it feeds only parks a token server-side. */
 const MINT_TIMEOUT_MS = 3000;
 
-/** How long an unspent token stays reusable when nothing reports spending it:
- *  one establish budget and the re-dial that follows it, which is the span in
- *  which a second mint can only be the retry of a dial that never landed. */
+/* How long an unspent token stays reusable when nothing reports spending it: one establish budget and the re-dial. */
 const REUSE_WINDOW_MS = ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS;
 
-export interface WtToken {
+interface WtToken {
   /** "" when minting failed or is not configured. */
   token: string;
   /** The refusal carried the auth marker, so the login session is gone. */
   authRequired: boolean;
 }
 
-/** The token last minted for a URL, held for the retries of the dial it feeds.
- *
- *  INVARIANT: a token is spent by a CONNECT the server accepted, and nothing
- *  else. A dial that fails before that leaves it valid, and minting per attempt
- *  would fill the session's cap of eight, which every stage and tab of that
- *  login draws on. Reuse ends at the first of spendWtToken, the lifetime the
- *  server reported, and REUSE_WINDOW_MS.
- *
- *  Realm state, so it spans only one worker's dials — which is why every dial
- *  path must report its spend for the invariant to hold anywhere. */
+/* INVARIANT: a token is spent by a CONNECT the server accepted, and nothing else. */
 interface MintedToken {
   url: string;
   token: string;
@@ -48,8 +34,7 @@ interface MintedToken {
 
 let held: MintedToken | null = null;
 
-/** Report that a CONNECT carrying this token reached the server: it is spent,
- *  and the next dial has to mint its own. */
+/** Report that a CONNECT carrying this token reached the server: it is spent, and the next dial has to mint its own. */
 export function spendWtToken(token: string): void {
   if (held?.token === token) held = null;
 }
@@ -64,9 +49,7 @@ function reusableToken(url: string): string {
   return held.token;
 }
 
-/** Hold a freshly minted token. The server's expiry becomes a duration at the
- *  moment it arrives rather than staying an instant, so a client clock offset
- *  from the server's cannot stretch the lifetime it stands for. */
+/* Hold a freshly minted token. */
 function hold(url: string, token: string, expires: unknown): void {
   const lifetimeMs = typeof expires === "number" ? expires - Date.now() : 0;
   held = {
@@ -77,8 +60,7 @@ function hold(url: string, token: string, expires: unknown): void {
   };
 }
 
-/** Mint one CONNECT token. The refusal classifies itself, so a caller needs no
- *  second request to tell an expired session from an unreachable server. */
+/* Mint one CONNECT token. */
 export async function mintWtToken(
   mint?: WtMint,
   signal?: AbortSignal,
@@ -94,9 +76,7 @@ export async function mintWtToken(
       cache: "no-store",
       headers: mint.headers,
       credentials: mint.credentials,
-      // A hop that 302s a credentialed mint to a login page answers 200 with no
-      // token: refusing the redirect classifies it instead of failing on the
-      // body, which reads as an unreachable server and reconnects forever.
+      // A hop that 302s a credentialed mint to a login page answers 200 with no token: refusing the redirect.
       redirect: redirectForCredentials(mint.credentials),
       signal: signal
         ? AbortSignal.any([signal, controller.signal])

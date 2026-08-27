@@ -1,12 +1,11 @@
 import type { PreparationState } from "../state/store.svelte";
 
-export interface PreparationFailurePresentation {
+interface PreparationFailurePresentation {
   headline: string;
   detail: string;
 }
 
-/** Keep preflight failures readable without exposing transport diagnostics in
- * the primary gauge message. Technical details remain available elsewhere. */
+/* Keep preflight failures readable without exposing transport diagnostics in the primary gauge message. */
 export function preparationFailurePresentation(
   preparation: Pick<PreparationState, "status" | "throughput" | "latency">,
   startError: string,

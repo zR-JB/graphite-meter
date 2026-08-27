@@ -7,15 +7,9 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// startMono is the process-start reference for the monotonic TIME stamp echoed
-// in PONG. time.Since reads the monotonic clock, so the value never jumps with
-// wall-clock changes. It serves diagnostics and skew only.
 var startMono = time.Now()
 
-// Ping is the WebSocket latency bus (/ws/ping), a stateless echo. Each PING,<id>
-// gets PONG,<id>;TIME,<nanos> with the id copied verbatim and no per-ping state:
-// no map, no allocation, nothing server-side to overflow. The client measures
-// RTT; the server only mirrors the id and stamps a monotonic ns.
+// Ping is the WebSocket latency bus (/ws/ping), a stateless echo.
 type Ping struct{}
 
 // NewPing builds the latency endpoint.
@@ -24,9 +18,6 @@ func NewPing() *Ping { return &Ping{} }
 func (p *Ping) ID() string { return "latency" }
 
 // Handle runs the echo loop on the session's message bus: Recv → decode → reply.
-// A read error ends the loop quietly: a client disconnect is normal, not a
-// server error. One malformed frame is answered with ERR,<code>,<text> and the
-// bus stays up.
 func (p *Ping) Handle(s transport.Session) error {
 	bus, ok := s.Bus()
 	if !ok {
@@ -41,8 +32,6 @@ func (p *Ping) Handle(s transport.Session) error {
 
 		f, derr := wire.Decode(msg)
 		if derr != nil {
-			// Non-fatal: echo the rejection and keep serving. Never tear down the
-			// bus for one bad frame.
 			if de, ok := derr.(*wire.DecodeError); ok {
 				if sendErr := bus.Send(wire.Encode(wire.Frame{Op: wire.OpERR, Code: de.Code, Text: de.Text})); sendErr != nil {
 					return nil
@@ -53,21 +42,17 @@ func (p *Ping) Handle(s transport.Session) error {
 
 		switch f.Op {
 		case wire.OpPING:
-			pong := wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Since(startMono).Nanoseconds())} //nosec G115 -- elapsed since start is non-negative
+			pong := wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Since(startMono).Nanoseconds())} //nosec G115
 			if err := bus.Send(wire.Encode(pong)); err != nil {
 				return nil // conn gone mid-reply, nothing to report
 			}
 		case wire.OpHI:
-			// Optional warmup hello: acknowledge it so the client primes the bus
-			// without polluting stats.
 			if err := bus.Send(wire.Encode(wire.Frame{Op: wire.OpREADY})); err != nil {
 				return nil
 			}
 		case wire.OpBYE:
 			return nil // graceful client-initiated close
 		default:
-			// A valid but unexpected opcode on the ping bus (e.g. a server→client
-			// frame echoed back): ignore it, per the "ignore and continue" rule.
 		}
 	}
 }

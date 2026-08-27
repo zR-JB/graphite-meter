@@ -1,12 +1,10 @@
 import type { LatencyBucket } from "./contract";
 import { percentile } from "./stats";
 
-export const LATENCY_SCALE_WINDOW_MS = 6_000;
-export const LATENCY_SCALE_HEADROOM = 1.25;
+const LATENCY_SCALE_WINDOW_MS = 6_000;
+const LATENCY_SCALE_HEADROOM = 1.25;
 export const LATENCY_SCALE_SHRINK_DWELL_MS = 2_000;
-export const LATENCY_SCALE_LADDER_MS = [
-  20, 40, 100, 200, 400, 1_000, 2_000, 4_000,
-];
+const LATENCY_SCALE_LADDER_MS = [20, 40, 100, 200, 400, 1_000, 2_000, 4_000];
 
 function niceAbove(value: number): number {
   const exponent = 10 ** Math.floor(Math.log10(Math.max(1, value)));
@@ -35,11 +33,7 @@ export function latencyScaleForReading(rttMs: number): number {
   return scaleForMedians([rttMs]);
 }
 
-/** Robust latency domain for a complete set of presentation buckets. Unlike
- * the live controller this has no recency or dwell state: terminal charts show
- * the whole run, so their domain must be derived from that same whole run.
- * Isolated tails remain clipping markers rather than flattening the primary
- * median line. */
+/* Robust latency domain for a complete set of presentation buckets. */
 export function latencyScaleForHistory(
   buckets: readonly LatencyBucket[],
 ): number {
@@ -51,9 +45,7 @@ export function latencyScaleForHistory(
   return scaleForMedians(medians);
 }
 
-/** True when any visible part of a latency bucket exceeds the shared domain.
- *  A one-ping bucket has max === median, so the median must be checked on its
- *  own rather than treating clipping as a tail-only condition. */
+/* True when any visible part of a latency bucket exceeds the shared domain. */
 export function latencyBucketExceedsScale(
   bucket: LatencyBucket,
   scaleMs: number,

@@ -40,10 +40,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
-// The automatic multiplexed counts are per direction and per protocol, the same
-// table the browser resolves in client/src/lib/runner/real/streamPolicy.ts. h3
-// upload runs one lane: it loses 9.3% going from 1 to 4 lanes under loss, so
-// the three lanes both directions once shared contradicted the measurement.
 func TestTransferStreamPolicyPerDirection(t *testing.T) {
 	auto := TransferStreamPolicy{AutomaticMax: 6}
 	for _, c := range []struct {
@@ -60,9 +56,6 @@ func TestTransferStreamPolicyPerDirection(t *testing.T) {
 			t.Errorf("automatic %s %s streams = %d, want %d", c.protocol, c.dir, got, c.want)
 		}
 	}
-	// Both spellings resolve: a run screen holds the negotiated evidence, and a
-	// label reading "Automatic" where the lanes differ per direction reports
-	// nothing at all.
 	for _, c := range []struct {
 		protocol, transport, want string
 	}{
@@ -78,8 +71,6 @@ func TestTransferStreamPolicyPerDirection(t *testing.T) {
 			t.Errorf("%s label = %q, want %q", c.protocol, got, c.want)
 		}
 	}
-	// The stage resolves both directions from one policy, so what the label
-	// reports and what the lanes open cannot drift apart.
 	for _, c := range []struct {
 		protocol, transport string
 		want                streamCounts
@@ -117,8 +108,7 @@ func TestTransferStreamPolicy(t *testing.T) {
 	if got := forced.Label("http3", wire.TransportWebTransport); got != "Forced · 9 per direction" {
 		t.Errorf("forced webtransport label = %q", got)
 	}
-	// The session carries one continuous lane per direction, not the three a
-	// negotiated HTTP/3 fetch path opens.
+	// The session carries one continuous lane per direction, not the three a negotiated HTTP/3 fetch path opens.
 	session := TransferStreamPolicy{AutomaticMax: 6}
 	if got := session.Label("http3", wire.TransportWebTransport); got != "Automatic · 1 continuous stream per direction" {
 		t.Errorf("automatic webtransport label = %q", got)
@@ -128,10 +118,6 @@ func TestTransferStreamPolicy(t *testing.T) {
 	}
 }
 
-// The ping bus is the only traffic this client puts on a WebTransport session
-// carrying latency, so a cadence past the server's idle bound has the bus reaped
-// between pings. The knob is bound against the published contract value rather
-// than a number picked client-side, so the two cannot disagree.
 func TestValidatePingInterval(t *testing.T) {
 	if MaxPingInterval*2 != wire.WTIdleBound {
 		t.Errorf("MaxPingInterval = %v, want half of the %v idle bound", MaxPingInterval, wire.WTIdleBound)
@@ -158,8 +144,6 @@ func TestValidatePingInterval(t *testing.T) {
 	}
 }
 
-// newWTLatencyServer advertises a WebTransport latency bus and nothing else, so
-// selection resolves to the transport the idle bound belongs to.
 func newWTLatencyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -190,10 +174,6 @@ func TestPrepareRejectsAPingIntervalPastTheIdleBound(t *testing.T) {
 	}
 }
 
-// The idle bound is the WebTransport bus's own: the server reaps a datagram bus
-// it has heard nothing from, and this client's pings are the only traffic on it.
-// The WebSocket bus has no idle timer at all, so a wide cadence over it is a
-// legal configuration and refusing it names a constraint that cannot apply.
 func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 	srv := newLatencyOnlyServer(t)
 	defer srv.Close()
@@ -205,9 +185,6 @@ func TestPrepareAcceptsAWideCadenceOverTheWebSocketBus(t *testing.T) {
 	}
 }
 
-// Automatic selection may prefer an advertised datagram bus and then discover
-// that UDP cannot reach it. The cadence belongs to the bus Prepare finally
-// commits to, so a WebSocket fallback must retain its wider valid cadence.
 func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -389,9 +366,6 @@ func TestPreparedConnectionFreshnessAndLabels(t *testing.T) {
 		t.Fatal("preparation survived a target change")
 	}
 
-	// ValidatePingInterval runs in Prepare only, so a preparation that survived
-	// a cadence change would let RunPrepared use one the server's idle bound
-	// reaps the bus at.
 	cfg = DefaultConfig()
 	cfg.PingInterval = MaxPingInterval + time.Second
 	if prepared.FreshFor(cfg) {

@@ -1,7 +1,6 @@
-// Presentation-only live-rate easing. It accepts already-selected visual
-// targets and never retains measurement observations or publishes results.
+// It accepts already-selected visual targets and never retains measurement observations or publishes results.
 
-export const LIVE_RATE_SMOOTH_TAU_MS = 100;
+const LIVE_RATE_SMOOTH_TAU_MS = 100;
 export const LIVE_RATE_STALE_DELAY_MS = 250;
 export const LIVE_RATE_DECAY_HORIZON_MS = 5_000;
 
@@ -11,7 +10,7 @@ export interface LiveRateValues {
   up: number;
 }
 
-export interface LiveRateTarget {
+interface LiveRateTarget {
   key: keyof LiveRateValues;
   target: number;
   /** Advances for every raw visual target observation, even at the same rate. */
@@ -29,7 +28,7 @@ interface LiveRateState {
   lastStepAt: number;
 }
 
-export interface LiveRateFrame {
+interface LiveRateFrame {
   value: number;
   active: boolean;
 }

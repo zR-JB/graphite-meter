@@ -8,8 +8,8 @@
 # Reserved for a future Go->Rust server swap:
 ARG SERVER_IMPL=go
 ARG BUN_VERSION=1.4.0
-# Stamped into the server EngineVersion. Manual builds use the same default
-# for the client bundle; release and prerelease builds pass both values.
+# Stamped into the server EngineVersion and client bundle; release and
+# prerelease builds pass both values.
 ARG VERSION=0.1.0
 ARG CLIENT_VERSION=0.1.0
 
@@ -17,12 +17,10 @@ ARG CLIENT_VERSION=0.1.0
 # Stage: client — build the Svelte app with bun.
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:${BUN_VERSION} AS client
-# Build-time client config (override with --build-arg). Defaults = production:
-# real-only engine, dev tooling stripped. ARG must be promoted to ENV so it
-# reaches `bun run build`'s process.env, where vite.config.ts reads it.
-ARG GM_CLIENT_ENGINE=real
+# Build-time client config (override with --build-arg). Defaults to a
+# real-only production bundle. ARG must be promoted
+# to ENV so it reaches `bun run build`'s process.env.
 ARG GM_CLIENT_ALLOW_DUMMY=0
-ARG GM_CLIENT_DEV_TOOLS=0
 ARG GM_CLIENT_BUILD_PROFILE=prod
 ARG GM_CLIENT_REVISION=source
 # Keep standalone/local Docker builds self-validating. CI sets this to 0 only
@@ -30,9 +28,7 @@ ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
 ARG VERSION
 ARG CLIENT_VERSION
-ENV GM_CLIENT_ENGINE=$GM_CLIENT_ENGINE \
-    GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
-    GM_CLIENT_DEV_TOOLS=$GM_CLIENT_DEV_TOOLS \
+ENV GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
     GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
     VERSION=$CLIENT_VERSION

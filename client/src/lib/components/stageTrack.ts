@@ -1,5 +1,4 @@
-// StageTrack projects the shared stage presentation into rail styling. It does
-// not infer result/failure status itself.
+// StageTrack projects the shared stage presentation into rail styling. It does not infer result/failure status itself.
 import type { Phase, TransportRole } from "../runner/contract";
 import type {
   StagePresentation,
@@ -7,19 +6,15 @@ import type {
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
 
-export type SegState = StagePresentationStatus | "warmup";
+type SegState = StagePresentationStatus | "warmup";
 
 export interface Segment {
   state: SegState;
   fill: number;
 }
 
-/**
- * Selection belongs to the editable next-run configuration; execution belongs
- * to the retained run. Keeping both in this model prevents a terminal rail
- * toggle from rewriting the status of evidence that was already collected.
- */
-export interface StageTrackModel extends Segment {
+/* Selection belongs to the editable next-run configuration; execution belongs to the retained run. */
+interface StageTrackModel extends Segment {
   selected: boolean;
   tag: string | null;
   locked: boolean;
@@ -39,45 +34,28 @@ export function stageTrackModel(input: {
   execution: StagePresentation;
 }): StageTrackModel {
   const { selected, locked, execution } = input;
-  if (!selected) {
-    return {
-      selected,
-      locked,
-      execution,
-      state: "disabled",
-      fill: 0,
-      tag: "skipped",
-    };
-  }
-
-  // A stage enabled after a terminal run was not part of that execution. It is
-  // selected for the next run, but has no historical result to project.
-  if (execution.status === "disabled") {
-    return {
-      selected,
-      locked,
-      execution,
-      state: "pending",
-      fill: 0,
-      tag: "next run",
-    };
-  }
-
-  const segment = segmentState(execution);
+  const segment = !selected
+    ? { state: "disabled" as const, fill: 0 }
+    : execution.status === "disabled"
+      ? { state: "pending" as const, fill: 0 }
+      : segmentState(execution);
+  const tag = !selected
+    ? "skipped"
+    : execution.status === "disabled"
+      ? "next run"
+      : execution.status === "partial" || execution.status === "failed"
+        ? execution.status
+        : null;
   return {
     selected,
     locked,
     execution,
     ...segment,
-    tag:
-      execution.status === "partial" || execution.status === "failed"
-        ? execution.status
-        : null,
+    tag,
   };
 }
 
-// Why a locked segment cannot be toggled, or null when it can. canToggle is
-// store.canToggleStage(stage); status comes from the central presentation model.
+// Why a locked segment cannot be toggled, or null when it can.
 export function lockReason(
   canToggle: boolean,
   phase: Phase,

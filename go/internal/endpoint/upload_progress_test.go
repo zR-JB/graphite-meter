@@ -12,9 +12,7 @@ import (
 	"time"
 )
 
-// progressRecorder is a flushable, race-safe ResponseWriter: the handler under
-// test streams from its own goroutine while the test reads the body, and wrote
-// wakes the reader instead of making it poll.
+// progressRecorder is a flushable, race-safe ResponseWriter.
 type progressRecorder struct {
 	mu     sync.Mutex
 	header http.Header
@@ -37,8 +35,7 @@ func (r *progressRecorder) Write(p []byte) (int, error) {
 }
 func (r *progressRecorder) Flush() { r.notify() }
 
-// notify is a non-blocking nudge: waitProgressText re-reads the body after every
-// wake, so a coalesced signal loses nothing.
+// notify is a non-blocking nudge: waitProgressText re-reads the body after every wake.
 func (r *progressRecorder) notify() {
 	select {
 	case r.wrote <- struct{}{}:
@@ -103,8 +100,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 		t.Fatal("progress GET did not terminate after explicit finalization")
 	}
 
-	// Completion is replayable until the aggregate TTL expires, so a dropped
-	// terminal response cannot strand a reconnecting client.
+	// Completion is replayable until the aggregate TTL expires.
 	replay := httptest.NewRecorder()
 	h.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
 	if want := `"type":"complete","bytes":4096`; !strings.Contains(replay.Body.String(), want) {
@@ -123,9 +119,7 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	}
 }
 
-// A reconnecting client re-dials long before its dead transport's idle timeout
-// releases the old feed, so the newest feed takes the aggregate over and the
-// stale holder terminates.
+// A reconnecting client re-dials long before its dead transport's idle timeout releases the old feed.
 func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -156,11 +150,7 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	<-done2
 }
 
-// A superseded feed shares the terminal wait with the live one. A single-token
-// nudge would wake only one of them, so the feed that lost the race would never
-// emit its complete record. The broadcast is asserted on the channels
-// themselves: goroutines racing a lane count would return on their first read of
-// posts and never reach the wait at all.
+// A superseded feed shares the terminal wait with the live one.
 func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
 	var agg uploadAgg
 	a, b := agg.postsWaiter(), agg.postsWaiter()
@@ -180,8 +170,7 @@ func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
 	}
 }
 
-// A superseded feed must abandon the terminal wait rather than sit on it until
-// its transport dies.
+// A superseded feed must abandon the terminal wait rather than sit on it until its transport dies.
 func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
 	agg.changePosts(1)
@@ -199,9 +188,7 @@ func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	}
 }
 
-// The feed ticks every 100 ms whether or not bytes moved. Without the
-// de-duplication a stalled upload emits an identical record ten times a second
-// for the whole stall, and the client cannot tell a repeat from real progress.
+// The feed ticks every 100 ms whether or not bytes moved.
 func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
 	agg.recordChunk(monoNanos(), 4096)
@@ -222,17 +209,14 @@ func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the feed emitted no progress record for a counter that moved")
 	}
-	// The counter does not move again, so no further record is owed however many
-	// ticks pass.
+	// The counter does not move again, so no further record is owed however many ticks pass.
 	time.Sleep(5 * uploadProgressTick)
 	if n := records.Load(); n != 1 {
 		t.Fatalf("%d progress records for one unchanged byte count, want 1: a stalled upload floods the feed every %v", n, uploadProgressTick)
 	}
 }
 
-// The refusals the WebTransport progress stream now carries as error records are
-// the same ones the HTTP feed answers with. Each status is the client's cue:
-// retry after a moment, give up, or treat the id as bad.
+// The refusals the WebTransport progress stream now carries as error records are the same ones the HTTP feed answers.
 func TestUploadProgressRefusalResponses(t *testing.T) {
 	t.Run("client cap is a retryable 429", func(t *testing.T) {
 		store := NewUploadStore()
@@ -288,16 +272,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		}
 	})
 
-	// Only GET streams and only DELETE finalizes. Anything else must be refused
-	// on the method alone, before any code that can block, or the request parks
-	// on a feed its method never asked for.
-	//
-	// The context is cancelled BEFORE the call, which is what makes this an
-	// ordering assertion rather than a timing one: the method check runs ahead of
-	// everything that observes the context, so a dead context cannot change the
-	// answer. Were the check ever moved after the streaming setup, the request
-	// would reach runProgress, return on the already-closed done channel, and
-	// answer 200 -- failing here immediately instead of hanging or flaking.
+	// Only GET streams and only DELETE finalizes.
 	t.Run("any other method is a 405", func(t *testing.T) {
 		store := NewUploadStore()
 		ctx, cancel := context.WithCancel(t.Context())

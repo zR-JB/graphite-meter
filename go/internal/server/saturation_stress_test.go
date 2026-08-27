@@ -1,7 +1,6 @@
 //go:build stress && unix
 
-// The CPU column reads getrusage, so this harness is Unix-only; `just stress`
-// is a measurement tool, never part of ci.
+// The CPU column reads getrusage, so this harness is Unix-only; `just stress` is a measurement tool, never part of ci.
 
 package server
 
@@ -23,19 +22,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// TestSaturationEnvelope is the repeatable loopback stress harness behind
-// `just stress`. It boots one server and measures what an idle-cadence
-// observer's RTT does while N loader clients saturate the transfer paths, over
-// kernel TCP (fetch) and userspace QUIC (WebTransport), plus a CPU-constrained
-// pass. Server and clients share the process, so the CPU column is the whole
-// measurement stack; on loopback that is exactly the contention under study.
 func TestSaturationEnvelope(t *testing.T) {
-	// The harness studies measurement contamination, not admission refusal, and
-	// every client shares 127.0.0.1: lift the caps out of the way.
-	// Every cap, not merely most: MaxSessionsPerClient left at its default of 16
-	// while every loopback loader shares one client key made wt-load-8-redialing
-	// -- which churns a session per loader against a 5 s bound -- a measurement
-	// of admission refusal with 8 slots of slack rather than one of contention.
+	// The harness studies measurement contamination, not admission refusal, and every client shares 127.0.0.1.
 	liftCaps := func(c *config.Config) {
 		c.MaxActiveMeasurements, c.MaxActiveMeasurementsPerClient = 4096, 4096
 		c.MaxActiveSessions, c.MaxSessionsPerClient = 4096, 4096
@@ -47,9 +35,7 @@ func TestSaturationEnvelope(t *testing.T) {
 	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
 	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s", "cpu")
 
-	// A second server whose sessions die every few seconds, so one scenario
-	// drives the redial and progress-handover paths under the same contention
-	// the harness measures rather than against an idle server.
+	// A second server whose sessions die every few seconds, so one scenario drives the redial and progress-handover paths.
 	_, redialBase := wtTestOrigins(t, func(c *config.Config) {
 		liftCaps(c)
 		// The session bound may not sit below the request bound, so both drop.
@@ -68,10 +54,7 @@ func TestSaturationEnvelope(t *testing.T) {
 		if mix.base != "" {
 			loadBase = mix.base
 		}
-		// A loader that gave up leaves the row reading as a measured result on a
-		// server under load, when in truth nothing was loading it. The envelope
-		// in docs/BENCHMARKS.md is taken from these rows, so a dead loader has
-		// to be visible rather than silent.
+		// A loader that gave up leaves the row reading as a measured result on a server under load.
 		var downBytes, upBytes, spamPings, loaderExits atomic.Uint64
 		var wg sync.WaitGroup
 		for i := range mix.loaders {
@@ -97,8 +80,7 @@ func TestSaturationEnvelope(t *testing.T) {
 				}
 			})
 		}
-		// Let the loaders' congestion windows ramp before observing. The two
-		// observers run inside the same sustained load window.
+		// Let the loaders' congestion windows ramp before observing.
 		time.Sleep(1500 * time.Millisecond)
 		for _, bus := range []struct{ transport, label string }{{"websocket", "ws"}, {"webtransport", "wt"}} {
 			cpu0, wall0 := cpuNow()
@@ -113,9 +95,7 @@ func TestSaturationEnvelope(t *testing.T) {
 				t.Errorf("%s/%s: observer collected no samples", name, bus.label)
 				continue
 			}
-			// Without this the row prints as a measurement taken under load
-			// when the load had in fact given up, and that number is what
-			// docs/BENCHMARKS.md publishes.
+			// Without this the row prints as a measurement taken under load when the load had in fact given up.
 			if exits := loaderExits.Load(); exits > 0 {
 				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names", name, bus.label, exits)
 			}
@@ -133,8 +113,7 @@ func TestSaturationEnvelope(t *testing.T) {
 		run(fmt.Sprintf("fetch-load-%d", n), loadMix{loaders: n, transport: "fetch-stream"})
 	}
 	run("wt-load-8", loadMix{loaders: 8, transport: "webtransport"})
-	// Same load against the short-bound server: goodput here is what survives
-	// a session kill every 5 s.
+	// Same load against the short-bound server: goodput here is what survives a session kill every 5 s.
 	run("wt-load-8-redialing", loadMix{loaders: 8, transport: "webtransport", base: redialBase})
 	run("ws-spam-16", loadMix{spammers: 16})
 	run("ws-spam-64", loadMix{spammers: 64})
@@ -144,8 +123,7 @@ func TestSaturationEnvelope(t *testing.T) {
 	run("fetch-load-8-2cores", loadMix{loaders: 8, transport: "fetch-stream", procs: 2})
 }
 
-// loadMix is one scenario's background load: bulk transfer loaders, reply-driven
-// ping spammers, and an optional GOMAXPROCS ceiling.
+// loadMix is one scenario's background load: bulk transfer loaders, reply-driven ping spammers.
 type loadMix struct {
 	loaders   int
 	transport string
@@ -156,13 +134,10 @@ type loadMix struct {
 	base string
 }
 
-// observe runs one latency-only client over the named bus and returns its raw
-// RTT samples and loss ratio.
+// observe runs one latency-only client over the named bus and returns its raw RTT samples and loss ratio.
 func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	t.Helper()
-	cfg := goclient.DefaultConfig()
-	cfg.BaseURL = base
-	cfg.InsecureSkipTLSVerify = true
+	cfg := stressClientConfig(base)
 	cfg.LatencyTransport = bus
 	cfg.Stages = goclient.StageSet{Latency: true}
 	cfg.Warmup = 200 * time.Millisecond
@@ -192,13 +167,10 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	return rtts, float64(lost) / float64(total)
 }
 
-// loaderRun drives one continuous transfer client until ctx ends, counting the
-// bytes it moves. Odd loaders upload, even ones download.
+// loaderRun drives one continuous transfer client until ctx ends, counting the bytes it moves.
 func loaderRun(ctx context.Context, base, transport string, upload bool, bytes, exits *atomic.Uint64) {
-	cfg := goclient.DefaultConfig()
-	cfg.BaseURL = base
+	cfg := stressClientConfig(base)
 	cfg.ThroughputTransport = transport
-	cfg.InsecureSkipTLSVerify = true
 	cfg.Stages = goclient.StageSet{Download: !upload, Upload: upload}
 	cfg.Warmup = 100 * time.Millisecond
 	cfg.DownloadDuration = time.Hour
@@ -220,8 +192,14 @@ func loaderRun(ctx context.Context, base, transport string, upload bool, bytes, 
 	}
 }
 
-// wsPingSpam runs one reply-driven chain over a WebSocket: a new PING the
-// moment the PONG lands, the heaviest per-client cadence the bus allows.
+func stressClientConfig(base string) goclient.Config {
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = base
+	cfg.InsecureSkipTLSVerify = true
+	return cfg
+}
+
+// wsPingSpam runs one reply-driven chain over a WebSocket: a new PING the moment the PONG lands.
 func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	conn, _, err := websocket.Dial(ctx, url, nil)
 	if err != nil {
@@ -229,27 +207,15 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	}
 	defer conn.CloseNow()
 	var id uint32
-	send := func() error {
-		id++
-		return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
-	}
-	if err := send(); err != nil {
-		return err
-	}
-	for ctx.Err() == nil {
-		_, msg, err := conn.Read(ctx)
-		if err != nil {
-			return nil
-		}
-		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
-			continue
-		}
-		pings.Add(1)
-		if err := send(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return pingSpam(ctx, pings,
+		func() error {
+			id++
+			return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+		},
+		func(ctx context.Context) (string, error) {
+			_, msg, err := conn.Read(ctx)
+			return string(msg), err
+		})
 }
 
 // wtPingSpam is the same chain over session datagrams.
@@ -262,19 +228,27 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 	}
 	defer sess.CloseWithError(0, "")
 	var id uint32
-	send := func() error {
-		id++
-		return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
-	}
+	return pingSpam(ctx, pings,
+		func() error {
+			id++
+			return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+		},
+		func(ctx context.Context) (string, error) {
+			msg, err := sess.ReceiveDatagram(ctx)
+			return string(msg), err
+		})
+}
+
+func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error, receive func(context.Context) (string, error)) error {
 	if err := send(); err != nil {
 		return err
 	}
 	for ctx.Err() == nil {
-		msg, err := sess.ReceiveDatagram(ctx)
+		msg, err := receive(ctx)
 		if err != nil {
 			return nil
 		}
-		if f, err := wire.Decode(string(msg)); err != nil || f.Op != wire.OpPONG {
+		if f, err := wire.Decode(msg); err != nil || f.Op != wire.OpPONG {
 			continue
 		}
 		pings.Add(1)

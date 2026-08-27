@@ -2,10 +2,6 @@ package main
 
 import "github.com/charmbracelet/lipgloss"
 
-// tone is one design token: its hex from client/src/app.css plus the 256- and
-// 16-color stand-ins a poorer terminal falls back to. The stand-ins are chosen
-// to hold both the token's hue and its WCAG AA contrast, which the nearest
-// entry by distance does not always do.
 type tone struct{ hex, x256, ansi string }
 
 func adaptive(dark, light tone) lipgloss.CompleteAdaptiveColor {
@@ -15,9 +11,6 @@ func adaptive(dark, light tone) lipgloss.CompleteAdaptiveColor {
 	}
 }
 
-// palette is the CARBON token set the web client is built from
-// (client/src/app.css), which owns these values. Teal is the only accent;
-// ok/warn/err carry status meaning and nothing else.
 type palette struct {
 	text        lipgloss.CompleteAdaptiveColor
 	textMuted   lipgloss.CompleteAdaptiveColor
@@ -31,9 +24,6 @@ type palette struct {
 	err         lipgloss.CompleteAdaptiveColor
 }
 
-// carbon carries the dark tokens for a dark terminal and the [data-theme=light]
-// tokens for a light one. border is the web's translucent --border-strong
-// flattened onto --canvas, since a terminal cell has no alpha.
 var carbon = palette{
 	text:        adaptive(tone{"#d9dce0", "253", "15"}, tone{"#26272a", "235", "0"}),
 	textMuted:   adaptive(tone{"#9ba2aa", "247", "7"}, tone{"#454a4d", "239", "8"}),
@@ -47,8 +37,6 @@ var carbon = palette{
 	err:         adaptive(tone{"#d89393", "174", "9"}, tone{"#a04a4a", "95", "1"}),
 }
 
-// Chips carry the inverse text tone, so the light-teal chip of a dark terminal
-// reads dark-on-light and the dark-teal chip of a light one reads light-on-dark.
 var (
 	shellStyle      = lipgloss.NewStyle().Margin(1, shellMargin)
 	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brand).Padding(0, 1)

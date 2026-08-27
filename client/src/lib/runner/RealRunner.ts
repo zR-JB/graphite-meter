@@ -1,6 +1,4 @@
-// Real measurement backend: negotiates browser transports, drives the transfer
-// lanes and the latency/upload-progress channels, and pushes only measured wire
-// samples into RunnerCore.
+// Real measurement backend: negotiates browser transports, drives the transfer lanes and the latency/upload-progress.
 import type {
   RunnerConfig,
   InfraInfo,
@@ -22,7 +20,6 @@ import type {
 } from "../api/endpoints";
 import type { Preflight } from "../api/preflight";
 import type { Probe } from "../api/probe";
-import { debugEnabled } from "../debug";
 import { BUILD } from "../buildenv";
 import {
   authenticatedFetch,
@@ -72,13 +69,10 @@ import { UploadPresentationBridge } from "./uploadPresentationBridge";
 
 export { PreflightUnavailableError, TransportUnavailableError };
 
-/** Enough for the server to open a lane and write it, small enough that the
- *  check costs nothing measurable. */
+/** Enough for the server to open a lane and write it, small enough that the check costs nothing measurable. */
 const WT_VERIFY_BYTES = 16 * 1024;
 
-/** What `GET {path}/probe` proves about one role's path. Widens the generated
- *  `Probe` shape's protocol field, which an InfraInfo carried over from an
- *  earlier probe also has to fit. */
+/* Widens `Probe`'s protocol field to fit `InfraInfo` carried over from an earlier probe. */
 interface PathEvidence {
   clientIp: string;
   clientIpVersion: 4 | 6;
@@ -103,34 +97,25 @@ export class RealBackend implements RunnerBackend {
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
   #probeInfo: InfraInfo | null = null;
-  /** Monotonic probe epoch. A probe can be superseded by a newer one while its
-   *  awaits are pending, and the role bindings are backend-wide: the older body
-   *  must not write state the newer one already committed. */
+  /* Monotonic probe epoch. */
   #probeEpoch = 0;
 
-  /* ---- transfer stage state ----
-   *  Bidirectional primes BOTH directions on the SAME stage, calling
-   *  #primeTransfer once per activity.transfer entry, so this is keyed by
-   *  FlowDirection. A standalone download/upload stage fills exactly one entry. */
+  /* Transfer stage state: bidirectional primes both directions on the same stage. */
   /** One lane pool + its bookkeeping, per active transfer direction. */
   #lanes: Partial<Record<FlowDirection, TransferDirection>> = {};
-  /** True from the stage's first #primeTransfer to #teardownTransfer. Both
-   *  directions are primed and torn down together. */
+  /* Active from the stage's first #primeTransfer through #teardownTransfer. */
   #transferActive = false;
   /** The activity whose transfer connections are currently alive. */
   #transferActivity: PhaseActivity | null = null;
-  /** Invalidates asynchronous teardown continuations when a later run or
-   * transfer stage takes ownership of the shared lane/feed fields. */
+  /* Invalidates teardown continuations when a later run or stage owns the shared lane/feed fields. */
   #transferGeneration = 0;
-  /** A server may invalidate one upload id once; a second invalidation belongs
-   * to the runner's expiry, not an unbounded mint loop. */
+  /* A second upload-id invalidation belongs to runner expiry, not an unbounded mint loop. */
   #uploadRotationUsed = false;
   #uploadRotationInFlight = false;
   /** A local-only visual bridge over irregular authoritative upload delivery. */
   #uploadPresentation = new UploadPresentationBridge();
   #uploadPresentationTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The STAGE-level stalled flag reported to the host, deduped so stall/resume
-   *  fire once per edge. #reconcileStall or the idle ping channel latches it. */
+  /* The STAGE-level stalled flag reported to the host, deduped so stall/resume fire once per edge. */
   #stalled = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
@@ -156,7 +141,7 @@ export class RealBackend implements RunnerBackend {
       this.#lanes.up?.setStalled(stalled, detail, cause),
   });
 
-  /** What every transfer direction of the stage is given. */
+  /** Provides each transfer direction with stage-level host callbacks. */
   #directionHost: DirectionHost = {
     host: () => this.#host!,
     sampleProvesStageLiveness: () => !this.#stalled,
@@ -173,9 +158,7 @@ export class RealBackend implements RunnerBackend {
     discardTransfer: () => this.#discardTransfer(),
   };
 
-  /** The stage-owned ping channel. Its stall/resume reach the core ONLY for the
-   *  idle latency stage; during a transfer stage the byte lanes drive link
-   *  health, so loaded-latency reconnects pass silently. */
+  /* Its stall/resume reach the core ONLY for the idle latency stage; during a transfer stage the byte lanes drive. */
   #latency = new LatencyChannel({
     host: () => this.#host!,
     target: () => this.#latencyTarget,
@@ -197,8 +180,7 @@ export class RealBackend implements RunnerBackend {
     },
   });
 
-  /** The connectivity/preflight keepalive. Never runs at the same time as
-   *  #latency: stopped in onRunStart, restarted on run end. */
+  /* Never runs at the same time as #latency: stopped in onRunStart, restarted on run end. */
   #idle = new IdleKeepalive({
     host: () => this.#host!,
     throughputTarget: () => this.#throughputTarget,
@@ -206,10 +188,7 @@ export class RealBackend implements RunnerBackend {
   });
 
   #disposed = false;
-  /** False while the page is hidden: the idle keepalive stays stopped so the
-   *  browser can park the tab, and a probe that ran while hidden parks it again
-   *  on its way out. A run overrides it, since starting one is a deliberate
-   *  foreground act. */
+  /* False while hidden; the idle keepalive stays stopped so the browser can park the tab. */
   #background = true;
 
   attach(host: CoreHost): void {
@@ -217,12 +196,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-  /**
-   * Same-origin `GET /preflight`, then the per-role path probes. Resolves
-   * `InfraInfo`: client address, server identity, negotiated protocols, engine
-   * version, pre-test ping. Emits pre-test `latency` samples (negative `t`) for
-   * the sparkline. Throws, which engine.svelte.ts maps to `preflight-failed`.
-   */
+  /* Resolves `InfraInfo`: client address, server identity, negotiated protocols, engine version, pre-test ping. */
   async probe(
     config: RunnerConfig,
     signal?: AbortSignal,
@@ -231,14 +205,7 @@ export class RealBackend implements RunnerBackend {
     try {
       return await this.#runProbe(config, signal, role);
     } finally {
-      // The probe starts the keepalive for its RTTs and leaves it up to drive
-      // the connectivity pill. On a hidden page it must not stay: Chromium
-      // throttles a hidden page's worker timers to roughly once a minute after
-      // five minutes, well outside the server's idle bound, so the bus would be
-      // reaped and reconnected on a loop nobody is watching. Parking it here
-      // keeps the tab parkable whichever event started the probe (an `online`
-      // edge, or boot in a background tab); setBackgroundActivity brings the
-      // keepalive back when the page is visible again.
+      // On a hidden page it must not stay: Chromium throttles a hidden page's worker timers to roughly once a minute.
       if (!this.#background) this.#idle.stop();
     }
   }
@@ -257,8 +224,7 @@ export class RealBackend implements RunnerBackend {
     this.#discoveryProtocol = undefined;
 
     const { pf, discovery } = await this.#fetchDiscovery(epoch, signal);
-    // Carrying a role over is only sound while the server advertises the same
-    // targets it did last time.
+    // Carrying a role over is only sound while the server advertises the same targets it did last time.
     if (previous?.discoveryGeneration !== pf.generation) role = undefined;
 
     const selected = this.#selectThroughputRole(
@@ -304,8 +270,7 @@ export class RealBackend implements RunnerBackend {
       signal,
     );
 
-    // Keepalive RTTs supply the pre-test ping median: RTT is client-measured,
-    // the server sends 0. A ping failure must not fail preflight.
+    // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
     const probeRtts =
       needsLatency && role !== "throughput"
         ? await this.#idle.collectRtts(signal)
@@ -322,20 +287,13 @@ export class RealBackend implements RunnerBackend {
     return info;
   }
 
-  /** Stop a superseded probe at its next await boundary, so it cannot write a
-   *  role binding or #probeInfo over what a newer probe already committed.
-   *  Reads as an abort, which is what supersession is to the older caller. */
+  /* Reads as an abort, which is what supersession is to the older caller. */
   #assertCurrentProbe(epoch: number): void {
     if (epoch !== this.#probeEpoch)
       throw new DOMException("probe superseded", "AbortError");
   }
 
-  /** Resolve the discovery document this run selects its roles from, and emit
-   *  it. Records the origin and negotiated protocol the page itself reached.
-   *  Nothing outside the fetch runs before the epoch assert: the two fields are
-   *  backend-wide, and a superseded emit re-opens the validation loop the newer
-   *  probe just closed (engine.svelte.ts reacts to a generation change by
-   *  clearing the prepared selection and marking both roles stale). */
+  /* Records the origin and negotiated protocol the page itself reached. */
   async #fetchDiscovery(
     epoch: number,
     signal?: AbortSignal,
@@ -344,8 +302,7 @@ export class RealBackend implements RunnerBackend {
     let origin: string;
     let nextHopProtocol: string | undefined;
     try {
-      // A logical server may restart with different public targets while the
-      // SPA remains open, so every run resolves a fresh discovery document.
+      // A logical server may restart with different targets while the SPA remains open, so each run resolves discovery.
       const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
       const res = await authenticatedFetch(`/preflight${ident}`, {
         method: "GET",
@@ -355,8 +312,7 @@ export class RealBackend implements RunnerBackend {
       if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
       pf = (await res.json()) as Preflight;
       origin = new URL(res.url, location.href).origin;
-      // Resource Timing exposes nextHopProtocol cross-origin only when the
-      // response carries Timing-Allow-Origin.
+      // Resource Timing exposes nextHopProtocol cross-origin only when the response carries Timing-Allow-Origin.
       nextHopProtocol = (
         performance.getEntriesByName(res.url, "resource").at(-1) as
           PerformanceResourceTiming | undefined
@@ -385,9 +341,7 @@ export class RealBackend implements RunnerBackend {
     return { pf, discovery };
   }
 
-  /** Bind the throughput role and return the fetch view of it. A session target
-   *  is held separately: the fetch view is still what a fallback carries bytes
-   *  over, so it is the one the path probe proves. */
+  /* A session target is separate; the fetch view carries fallback bytes and proves the path. */
   #selectThroughputRole(
     config: RunnerConfig,
     discovery: TransportDiscovery,
@@ -396,11 +350,7 @@ export class RealBackend implements RunnerBackend {
     role?: ConnectionRole,
   ): FetchThroughputTarget {
     const selection = config.transports.throughputTarget;
-    // Unfiltered on purpose, which is why this parameter defaults on where
-    // `selectLatencyTarget`'s defaults off: resolving first and refusing below
-    // names the mechanism. Passing the browser's real capability here — the
-    // symmetry the two calls in #selectLatencyRole invite — would return null
-    // for a WebTransport-only origin and degrade that to "target unavailable".
+    // Resolve throughput before support checks; latency selection defaults to the browser's capability filter.
     const advertisedTarget = selectThroughputTarget(discovery, selection, true);
     if (!advertisedTarget)
       throw new TransportUnavailableError(`${selection} target unavailable`, {
@@ -433,21 +383,14 @@ export class RealBackend implements RunnerBackend {
     return selected;
   }
 
-  /** Bind the latency role, and report whether this run needs one at all: the
-   *  latency stage, or a transfer stage measuring loaded latency. A
-   *  throughput-role probe reuses what the latency role committed to, the way
-   *  it reuses that role's /probe evidence. */
+  /* Bind the latency role and report whether the run needs it for latency or transfer stages. */
   #selectLatencyRole(
     config: RunnerConfig,
     discovery: TransportDiscovery,
     previous: InfraInfo | null,
     role?: ConnectionRole,
   ): boolean {
-    // A throughput-role probe does not run #verifyLatencyChannel, so it must
-    // not re-select either: the check may have degraded off the transport the
-    // selector prefers, and re-running the selector would rebind the run to a
-    // bus already proven dead. The caller clears `role` unless the generation
-    // still matches, so a carried id names a target this discovery advertises.
+    // Reuse the committed latency target; this probe does not verify it and must not undo an earlier fallback.
     const committed =
       role === "throughput" && previous?.selectedLatencyTarget
         ? selectLatencyTarget(
@@ -478,10 +421,7 @@ export class RealBackend implements RunnerBackend {
     return needsLatency;
   }
 
-  /** `GET {path}/probe` over the fetch view, which proves the path and the
-   *  protocol the browser negotiated on it. Narrows `selected.protocol` to what
-   *  the first hop reports. A latency-role probe reuses the throughput role's
-   *  evidence instead of re-running the request. */
+  /* `GET {path}/probe` over the fetch view, which proves the path and the protocol the browser negotiated on it. */
   async #probeThroughputPath(
     selected: FetchThroughputTarget,
     previous: InfraInfo | null,
@@ -497,9 +437,7 @@ export class RealBackend implements RunnerBackend {
             clientIpVersion: previous.clientIpVersion,
             clientIpSource: previous.clientIpSource,
             protocolNegotiated: previous.protocolNegotiated,
-            // Occupancy is the throughput probe's, and a latency-only recheck
-            // learns nothing new about it. Dropped, the endpoint panel's slots
-            // row silently disappears on every such recheck.
+            // Occupancy belongs to the throughput probe; a latency-only recheck learns nothing new.
             load: previous.serverLoad,
           }
         : null;
@@ -552,9 +490,7 @@ export class RealBackend implements RunnerBackend {
       } finally {
         if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
-      // The fetch view is what a fallback would carry bytes over, so its
-      // protocol is proven even when a session is committed. A mismatch fails
-      // the role only when nothing else can carry them.
+      // The fetch view carries fallback bytes, so its protocol is proven even when a session is committed.
       const fetchProtocolProven = browserProtocolMatchesTarget(
         selected,
         firstHopProtocol,
@@ -564,8 +500,7 @@ export class RealBackend implements RunnerBackend {
           `${selected.protocol} transport unavailable`,
           { role: "throughput" },
         );
-      // An unproven protocol would otherwise pick the stream policy of one the
-      // browser never negotiated.
+      // An unproven protocol would otherwise pick the stream policy of one the browser never negotiated.
       if (selected.protocol === "negotiated" || !fetchProtocolProven)
         selected.protocol =
           protocolFromNextHop(firstHopProtocol) ?? "negotiated";
@@ -577,9 +512,7 @@ export class RealBackend implements RunnerBackend {
     return { pathProbe, firstHopProtocol };
   }
 
-  /** `GET {path}/probe` on the latency target's own path, which may resolve a
-   *  different client address from the throughput one. A throughput-role probe
-   *  carries the last latency evidence over. */
+  /* Probe the latency target's path; it may resolve a different client address than throughput. */
   async #probeLatencyPath(
     previous: InfraInfo | null,
     role: ConnectionRole | undefined,
@@ -617,9 +550,7 @@ export class RealBackend implements RunnerBackend {
     return latencyPathProbe;
   }
 
-  /** Decide whether the run carries bytes over a session or over fetch. A
-   *  latency-role probe reuses what the throughput role committed to, the way
-   *  it reuses that role's /probe evidence and negotiated protocol. */
+  /* Decide whether the run carries bytes over a session or over fetch. */
   async #commitThroughputTransport(
     config: RunnerConfig,
     pf: Preflight,
@@ -638,14 +569,12 @@ export class RealBackend implements RunnerBackend {
       return;
     }
     if (!this.#wtThroughputTarget) return;
-    // An advertised WebTransport target still needs UDP to reach the server,
-    // so the run commits to what a dial proves.
+    // An advertised WebTransport target still needs UDP to reach the server, so the run commits to what a dial proves.
     const verdict = await this.#verifyWtThroughput(signal);
-    // The dial is the longest await in the probe, so a newer probe may have
-    // bound its own targets by now; degrading here would degrade that one.
+    // The dial is the longest await; assert the epoch before mutating this probe's backend state.
     this.#assertCurrentProbe(epoch);
     if (verdict.ok) return;
-    // An explicit selection fails its role loudly; automatic degrades.
+    // An explicit selection fails for its role; automatic selection degrades.
     const selection = config.transports.throughputTarget;
     if (selection !== "auto" && selection !== "current")
       throw new TransportUnavailableError(verdict.detail, {
@@ -697,8 +626,7 @@ export class RealBackend implements RunnerBackend {
     };
   }
 
-  /** What this engine can drive, per role: WebSocket and WebTransport pings,
-   *  fetch-stream and WebTransport transfer. Each engine reports its own. */
+  /* What this engine can drive, per role: WebSocket and WebTransport pings, fetch-stream and WebTransport transfer. */
   describe(): EngineInfo {
     return {
       name: "real",
@@ -706,8 +634,7 @@ export class RealBackend implements RunnerBackend {
       latencyTransports: transportRunnable("webtransport")
         ? ["webtransport", "websocket"]
         : ["websocket"],
-      // Preference order, which for throughput leads with fetch: streams over
-      // TCP still win raw rate, so a session is the explicit choice.
+      // Throughput preference leads with fetch: TCP streams usually win raw rate, so sessions require explicit choice.
       throughputTransports: transportRunnable("webtransport")
         ? ["fetch-stream", "webtransport", "webtransport-datagram"]
         : ["fetch-stream"],
@@ -715,14 +642,8 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= LIFECYCLE (core → backend) ================= */
-  /**
-   * A run is starting. Opens a fresh AbortController so onAbort can cancel
-   * everything, and resets per-run state. Transfer connections open per stage,
-   * in onStageBegin.
-   */
   onRunStart(config: RunnerConfig): void {
-    // Pause the idle keepalive: the stage-owned ping channel owns latency for
-    // the run, and #closeAll restarts it on completion or abort.
+    // Pause idle keepalive; the stage-owned ping channel owns latency, and #closeAll restarts it afterward.
     this.#idle.stop();
     this.#streamPolicy = { ...config.transferStreams };
     this.#abort = new AbortController();
@@ -733,17 +654,15 @@ export class RealBackend implements RunnerBackend {
     this.#uploadRotationUsed = false;
     this.#uploadRotationInFlight = false;
     this.#stalled = false;
-    // Unique-per-run cache-buster off the monotonic clock, not wall time; the
-    // stream index is appended per worker.
+    // Unique-per-run cache-buster off the monotonic clock, not wall time; the stream index is appended per worker.
     this.#cbSeed = `r${Math.round(performance.now())}`;
   }
 
   onStageBegin(activity: PhaseActivity): void | Promise<void> {
     const preparations: Promise<void>[] = [];
     // The ping channel is ALWAYS a latency-role transport on its OWN socket.
-    // Negotiate it first, so #activeTransport ends as the lanes' transfer kind.
     if (needsPings(activity)) {
-      const pingKind = this.#committedKind("latency");
+      const pingKind = this.#latencyTarget?.transport ?? null;
       if (pingKind) {
         this.#latency.prime(pingKind, activity.stage === "latency");
       } else if (activity.stage === "latency") {
@@ -759,7 +678,11 @@ export class RealBackend implements RunnerBackend {
     if (activity.transfer.length > 0) {
       this.#transferGeneration++;
       this.#transferActivity = activity;
-      const kind = this.#committedKind(activity.stage);
+      const kind =
+        activity.stage === "latency"
+          ? (this.#latencyTarget?.transport ?? null)
+          : (this.#wtThroughputTarget?.transport ??
+            (this.#throughputTarget ? "fetch-stream" : null));
       if (!kind) {
         this.#host!.failStage(
           activity.stage,
@@ -778,12 +701,7 @@ export class RealBackend implements RunnerBackend {
       return Promise.all(preparations).then(() => undefined);
   }
 
-  /**
-   * The stage's warmup window has elapsed and its connections are warm. Push
-   * real samples on the SAME connections; reopening them discards the warmup.
-   * Fires immediately after onStageBegin when warmupMs <= 0. `underLoad` marks
-   * pings taken while the stage moves bytes (bufferbloat).
-   */
+  /* `underLoad` marks pings taken while the stage moves bytes (bufferbloat). */
   onStageMeasure(activity: PhaseActivity): void {
     const underLoad = activity.transfer.length > 0;
     // A direction missing here failed to prime, and has nothing to measure.
@@ -791,24 +709,18 @@ export class RealBackend implements RunnerBackend {
     if (needsPings(activity)) this.#latency.measure(underLoad);
   }
 
-  /** A measured stage is over. Drains its authoritative boundary sample so the
-   *  core reduces a complete result, then releases its connections. */
   onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {
     if (!flush) {
       this.#discardTransfer();
       this.#latency.teardown();
-      // The stall belonged to the stage that just ended. Latched past it, it
-      // gates sampleProvesStageLiveness for every later stage, whose bytes then
-      // never refresh the core's watchdog: a healthy stage runs to the max-stall
-      // timeout and its measurement is discarded.
+      // Reset the stage stall latch; otherwise later healthy bytes cannot refresh the core watchdog.
       this.#stalled = false;
       this.#transferActivity = null;
       return;
     }
     const generation = this.#transferGeneration;
     return this.#teardownTransfer(generation).then((released) => {
-      // Abort/new-run teardown may have handed these shared fields to a newer
-      // lifecycle while this stage waited for its terminal upload record.
+      // Ignore completion if abort or a new run took ownership while this stage awaited its terminal record.
       if (!released || generation !== this.#transferGeneration) return;
       this.#latency.teardown();
       this.#stalled = false;
@@ -841,9 +753,7 @@ export class RealBackend implements RunnerBackend {
     this.#uploadRotationInFlight = true;
     this.#clearUploadPresentation();
     try {
-      // The old feed and every session-lane callback become inert before the
-      // old lanes are detached. A replacement can therefore never inherit an
-      // old counter or a queued relay.
+      // The old feed and every session-lane callback become inert before the old lanes are detached.
       this.#uploadProgress.invalidateGeneration();
       this.#lanes.up?.discard();
       await this.#uploadProgress.teardown(false);
@@ -856,10 +766,9 @@ export class RealBackend implements RunnerBackend {
       this.#uploadProgress.beginRecoveryGap();
       await this.#primeTransfer(kind, "up", activity);
       if (request.signal.aborted) return;
-      const replacement = this.#liveLane("up");
-      if (!replacement) return;
-      // The replacement remains recovering until a positive authoritative
-      // counter flips this edge back to healthy.
+      const replacement = this.#lanes.up as TransferDirection | undefined;
+      if (!this.#transferActive || !replacement) return;
+      // The replacement remains recovering until a positive authoritative counter flips this edge back to healthy.
       replacement.setStalled(true, "awaiting replacement upload progress");
       replacement.measure();
     } finally {
@@ -867,14 +776,11 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** The user aborted. Cancel in-flight fetches/streams and close sockets. The
-   *  core flips to "aborted" and emits the transition; do not emit here. */
   onAbort(): void {
     this.#closeAll();
   }
 
-  /** Token mint the WebTransport workers call before each dial. Minting is a
-   *  measurement mutation, so it carries the CSRF header and credentials. */
+  /* Token mint the WebTransport workers call before each dial. */
   #wtMint(origin: string, route: string): SessionLaneOptions["mint"] {
     if (!authEnabled) return undefined;
     return {
@@ -884,10 +790,7 @@ export class RealBackend implements RunnerBackend {
     };
   }
 
-  /** Dial a session and read a lane under one deadline. A handshake only proves
-   *  the path reaches the server; the run's first act is opening a stream, so
-   *  the check does that too rather than reporting a path its first request
-   *  would fail on. */
+  /* A handshake proves reachability; opening a stream and reading a byte proves the selected transfer path. */
   async #verifyWtThroughput(
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; detail: string }> {
@@ -906,9 +809,7 @@ export class RealBackend implements RunnerBackend {
             headers: csrfHeader(),
           },
         );
-        // A refused mint is not a transport verdict: without the token the
-        // dial would fail for a reason that says nothing about UDP, so it is
-        // reported as itself rather than as an unreachable transport.
+        // A refused mint is not a transport verdict: without its token, dial failure says nothing about UDP.
         if (!minted.ok)
           return {
             ok: false,
@@ -923,8 +824,7 @@ export class RealBackend implements RunnerBackend {
       void session.closed.catch(() => {});
       const close = (): void => session.close();
       signal?.addEventListener("abort", close, { once: true });
-      // One deadline covers the handshake and the lane: what the run needs is
-      // bytes arriving, not a session that established and then served nothing.
+      // One deadline covers handshake and lane: the run needs bytes, not a session that serves nothing.
       const deadline = setTimeout(close, ESTABLISH_BUDGET_MS);
       try {
         await session.ready;
@@ -939,19 +839,14 @@ export class RealBackend implements RunnerBackend {
       } finally {
         clearTimeout(deadline);
         signal?.removeEventListener("abort", close);
-        // Every exit path releases the session. A lane that never opens throws
-        // between `ready` and the first byte, and an established session held
-        // to GC keeps its server admission slot; probe() re-dials on every
-        // draft change, visibility return and run start.
+        // Every exit closes the session; otherwise a GC-retained session keeps its server admission slot.
         close();
       }
       return { ok: true, detail: "" };
     } catch (cause) {
-      // A superseded probe reports no verdict: every other await here throws on
-      // abort, and the caller writes backend-wide role state after this returns.
+      // A superseded probe reports no verdict; aborts must not write backend-wide state.
       if (signal?.aborted) throw cause;
-      // A session that came up and then carried nothing is a different fault
-      // from one that never reached the server, and reads as one.
+      // A session that came up and then carried nothing is a different fault from one that never reached the server.
       return {
         ok: false,
         detail: established
@@ -962,9 +857,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= TRANSPORT NEGOTIATION ================= */
-  /** Prove the selected ping bus answers. An advertised WebTransport target
-   *  still needs UDP to reach the server, so a failure reselects the WebSocket
-   *  target once before the run commits. */
+  /* An advertised WebTransport target still needs UDP to reach the server, so a failure reselects the WebSocket. */
   async #verifyLatencyChannel(
     discovery: TransportDiscovery,
     config: RunnerConfig,
@@ -992,55 +885,32 @@ export class RealBackend implements RunnerBackend {
     await this.#idle.verifyReady(signal);
   }
 
-  /** The kind this role committed to at probe time, or null when nothing
-   *  resolved. Selection happened there; a stage only reads the outcome. */
-  #committedKind(role: TransportRole): TransportKind | null {
-    if (role === "latency") return this.#latencyTarget?.transport ?? null;
-    if (this.#wtThroughputTarget) return this.#wtThroughputTarget.transport;
-    return this.#throughputTarget ? "fetch-stream" : null;
-  }
-
   /* ================= PRIME (warmup window): open, don't measure ================= */
-  /** Resolve one direction's transfer streams from the frozen protocol target
-   *  and the run's automatic/forced policy. */
-  #streamCount(activity: PhaseActivity, dir: FlowDirection): number {
-    if (!this.#throughputTarget)
-      throw new Error("transfer target not resolved");
-    return transferStreamCount({
-      protocol: this.#throughputTarget.protocol,
+  /* Open `dir` streams over `kind`: GET download bytes or streamed POST upload bytes, then prime the path. */
+  #primeTransfer(
+    kind: TransportKind,
+    dir: FlowDirection,
+    activity: PhaseActivity,
+  ): void | Promise<void> {
+    // A session kind is returned only with a resolved session target, so it always finds one here.
+    const wt = ridesSession(kind) ? this.#wtThroughputTarget : null;
+
+    // Each stage names a direction once; a duplicate call for the same direction is a bug.
+    if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
+
+    const cfg = this.#host!.config!;
+    const base = this.#throughputTarget!.origin;
+    const streams = transferStreamCount({
+      protocol: this.#throughputTarget!.protocol,
       policy: this.#streamPolicy,
       transfer: activity.transfer,
       dir,
       needsPing: needsPings(activity),
       webTransport: this.#wtThroughputTarget !== null,
     });
-  }
-
-  /** Open the resolved transfer stream(s) for `dir` over `kind` (`GET
-   *  {path}/download?bytes=N` for "down", a streamed `POST {path}/upload` body
-   *  for "up") and run priming bytes to warm the path (TCP congestion window /
-   *  BBR / TLS), pushing NOTHING into the core. The measure step reuses them. */
-  #primeTransfer(
-    kind: TransportKind,
-    dir: FlowDirection,
-    activity: PhaseActivity,
-  ): void | Promise<void> {
-    // #committedKind returns a session kind only with a session target
-    // resolved, so a session-borne kind always finds one here.
-    const wt = ridesSession(kind) ? this.#wtThroughputTarget : null;
-
-    // A stage names each direction once (bidirectional calls this twice, one per
-    // direction): a duplicate call for the SAME direction is a real bug.
-    if (this.#lanes[dir]) throw new Error(`duplicate ${dir} prime`);
-
-    const cfg = this.#host!.config!;
-    const base = this.#throughputTarget!.origin;
-    const streams = this.#streamCount(activity, dir);
-    // A WebTransport session is one worker whichever way it is measured: it
-    // opens `streams` lanes internally and reports them as one.
+    // A WebTransport session uses one worker; it opens `streams` lanes internally.
     const laneCount = wt ? 1 : streams;
-    // Experimental: the download worker requests adaptive chunks itself, so omit the
-    // baked-in ?bytes= and let it append &bytes=N per fetch (see download-worker.ts).
+    // Adaptive download chunks are requested by the worker, so it appends `&bytes=N` itself.
     const chunkDownload = dir === "down" && cfg.experimentalChunkedDownload;
 
     const direction: TransferDirection = new TransferDirection({
@@ -1049,18 +919,15 @@ export class RealBackend implements RunnerBackend {
       laneCount,
       warmupMs: cfg.duration.warmupMs,
       host: this.#directionHost,
-      // Replaced by the session factory when this direction rides one.
+      // The session factory replaces this lane when the direction rides a session.
       lane: (i, events) =>
         fetchLane(
           {
             dir,
             url: direction.streamUrls[i],
             lanes: laneCount,
-            index: i,
-            debug: debugEnabled(),
             credentials: authEnabled ? "include" : "same-origin",
-            // CSRF on the upload POST only: on the download GET it makes a
-            // cross-port transfer CORS-preflighted, costing a round trip.
+            // CSRF is needed on upload POST; adding it to download GET triggers a cross-port CORS preflight.
             headers: dir === "up" ? csrfHeader() : {},
             chunk: chunkDownload,
           },
@@ -1070,8 +937,7 @@ export class RealBackend implements RunnerBackend {
     this.#lanes[dir] = direction;
     this.#transferActive = true;
 
-    // Download streams the body down (?bytes=N sizes it); upload streams a
-    // generated body up until the stage stops, keyed by a per-stage id.
+    // Download streams the body down (?bytes=N sizes it); upload streams a generated body up until the stage stops.
     const spec: LaneUrlSpec = {
       dir,
       base,
@@ -1106,20 +972,10 @@ export class RealBackend implements RunnerBackend {
       return;
     }
     direction.spawn(Array.from({ length: laneCount }, (_, i) => url(i)));
-    // Workers start immediately, warming the TCP cwnd. Warmup download progress
-    // carries seq=0 and is ignored, so no warmup bytes bleed into measurement.
+    // Warmup download progress carries seq=0 and is ignored, so no warmup bytes bleed into measurement.
   }
 
-  /** The live lane for `dir`, or null once a teardown or abort released it.
-   *  Re-read after every await, so a released lane never spawns workers no one
-   *  owns. */
-  #liveLane(dir: FlowDirection): TransferDirection | null {
-    const lane = this.#lanes[dir];
-    return this.#transferActive && lane ? lane : null;
-  }
-
-  /** Mint the upload session id, establish the progress meter on it, then open
-   *  the POST lanes or the session's upload lanes against that id. */
+  /* Mint the upload session ID, establish its meter, then open POST or session upload lanes. */
   async #primeUploadTransfer(
     dir: FlowDirection,
     base: string,
@@ -1132,12 +988,10 @@ export class RealBackend implements RunnerBackend {
     try {
       id = await this.#mintUploadSession(base);
     } catch {
-      if (!this.#liveLane(dir)) return; // aborted or torn down mid-request
-      // The direction's measured-byte watchdog reports this as a stall once
-      // measuring begins. Its terminal decision belongs to the runner.
+      if (!this.#transferActive || !this.#lanes[dir]) return;
       return;
     }
-    const uploadLane = this.#liveLane(dir);
+    const uploadLane = this.#transferActive ? this.#lanes[dir] : undefined;
     if (!uploadLane) return;
     if (wt) {
       const progressUrl = `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`;
@@ -1165,17 +1019,15 @@ export class RealBackend implements RunnerBackend {
         }).catch(() => {});
       });
       uploadLane.setUploadGeneration(this.#uploadProgress.generation);
-      // The session worker reads the feed before its lanes write, so the
-      // counter is already running when bytes start.
+      // The session worker reads the feed before its lanes write, so the counter is already running when bytes start.
       uploadLane.newLane = (_i, events) => sessionLane(sessionOpts, events);
       uploadLane.spawn([sessionOpts.url]);
       await feed;
       return;
     }
-    // The progress stream is the authoritative upload meter. Establish it ahead
-    // of the POST workers, so forced H1 lanes cannot take every connection slot.
+    // The progress stream is the authoritative upload meter.
     if (!(await this.#uploadProgress.prime(uploadLane.stage, id))) return;
-    const progressLane = this.#liveLane(dir);
+    const progressLane = this.#transferActive ? this.#lanes[dir] : undefined;
     if (!progressLane) return;
     progressLane.setUploadGeneration(this.#uploadProgress.generation);
     progressLane.spawn(Array.from({ length: laneCount }, (_, i) => url(i, id)));
@@ -1184,8 +1036,7 @@ export class RealBackend implements RunnerBackend {
   async #mintUploadSession(base: string): Promise<string> {
     const path =
       this.#throughputTarget?.routes.uploadSession ?? ROUTES.uploadSession;
-    // Own deadline + the run's abort: fetch must reject within the timeout even
-    // when the request hangs, so the stage skips instead of max-stalling.
+    // Own the deadline and run abort so a hanging fetch rejects and the stage skips instead of max-stalling.
     const ctl = new AbortController();
     const onRunAbort = (): void => ctl.abort();
     this.#abort?.signal.addEventListener("abort", onRunAbort, { once: true });
@@ -1212,8 +1063,7 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Combine the directions into the STAGE-level flag. Every required lane must
-   *  be healthy: one direction moving cannot validate its stalled sibling. */
+  /* Combine the directions into the STAGE-level flag. */
   #reconcileStall(
     detail?: string,
     recoveryCause?: RecoveryCause,
@@ -1238,13 +1088,10 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-  /** Stop every POST lane, wait for the server's terminal upload count, then
-   *  release the stage state. */
+  /** Stop every POST lane, wait for the server's terminal upload count, then release the stage state. */
   async #teardownTransfer(generation: number): Promise<boolean> {
     this.#clearUploadPresentation();
-    // A graceful WT stop finalizes in the worker; the progress teardown then
-    // has nothing left to wait on. For fetch, BYE must follow the POST lanes,
-    // so the server's final count includes everything they drained.
+    // A graceful WT stop finalizes in the worker; the progress teardown then has nothing left to wait on.
     await Promise.all(Object.values(this.#lanes).map((d) => d!.stop()));
     if (generation !== this.#transferGeneration) return false;
     await this.#uploadProgress.teardown(true);
@@ -1257,7 +1104,6 @@ export class RealBackend implements RunnerBackend {
 
   #discardTransfer(): void {
     // Any outstanding graceful teardown now belongs to an older lifecycle.
-    // It may still finish its local lanes, but must not alter a new run.
     this.#transferGeneration++;
     this.#clearUploadPresentation();
     for (const direction of Object.values(this.#lanes)) direction!.discard();
@@ -1268,6 +1114,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   #closeAll(): void {
+    this.#idle.stop();
     this.#discardTransfer();
     this.#latency.teardown();
     this.#stalled = false;
@@ -1276,13 +1123,11 @@ export class RealBackend implements RunnerBackend {
       this.#abort = null;
     }
     this.#activeTransport = null;
-    // Resume the idle keepalive so the connectivity pill stays live instead of
-    // freezing at its last-known state until the next probe or run.
+    // Resume idle keepalive so connectivity stays live instead of freezing until the next probe or run.
     if (!this.#disposed && this.#background) this.#idle.start();
   }
 
-  /** Emit only a temporary target for the gauge and compact live card. This
-   * path never reaches RunnerCore, so it cannot change measurements or charts. */
+  /* Emit only a temporary target for the gauge and compact live card. */
   #emitUploadPresentation(): void {
     const healthy =
       this.#transferActive &&
@@ -1321,9 +1166,7 @@ export class RealBackend implements RunnerBackend {
     this.#host?.emit({ type: "uploadPresentation", bytesPerSec: null });
   }
 
-  /** Suspend the idle keepalive while the page is hidden. Stopping it closes
-   *  the ping socket and its worker, which is what lets the browser park the
-   *  tab; resuming re-probes, so the pill reports a fresh edge. */
+  /* Suspend the idle keepalive while the page is hidden. */
   setBackgroundActivity(enabled: boolean): void {
     if (this.#background === enabled) return;
     this.#background = enabled;
@@ -1334,11 +1177,6 @@ export class RealBackend implements RunnerBackend {
 
   dispose(): void {
     this.#disposed = true;
-    this.#idle.stop();
-    this.#discardTransfer();
-    this.#latency.teardown();
-    this.#abort?.abort();
-    this.#abort = null;
-    this.#activeTransport = null;
+    this.#closeAll();
   }
 }

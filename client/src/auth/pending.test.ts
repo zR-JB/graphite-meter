@@ -2,8 +2,7 @@ import { test, expect } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// pending.js is a plain script inlined into the auth pages and pinned by
-// digest, so it exports nothing: evaluate the source to reach the classifier.
+// pending.js is a plain script inlined into the auth pages and pinned by digest, so it exports nothing: evaluate the.
 type Landing = { redirected: boolean; url: string };
 type Classifier = (response: Landing, here: { pathname: string }) => boolean;
 

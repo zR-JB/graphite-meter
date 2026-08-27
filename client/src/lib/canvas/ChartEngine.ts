@@ -1,12 +1,8 @@
-// Dual-axis timeseries. It redraws only for data, camera, theme, size, or hover
-// invalidations; the shared presentation scheduler owns the frame clock.
-
 import type {
   Phase,
   ThroughputSample,
   LatencyBucket,
 } from "../runner/contract";
-import type { CanvasEngine } from "./contract";
 import { sharedThroughputScale } from "../format";
 import {
   latencyBucketExceedsScale,
@@ -28,18 +24,16 @@ import {
 } from "./chartLayout";
 import { canvasPixelRatio } from "./canvasResolution";
 import { traceSmoothLine } from "./smoothPath";
-
 const CHART_TIME_CAMERA_TAU_MS = 120;
 const CHART_TIME_CAMERA_EPSILON_MS = 4;
 const LATENCY_GLYPH_ENTER_MS = 90;
+const LATENCY_ANIMATION_WINDOW = 32;
 export interface ChartData {
   throughput: ThroughputSample[];
   latency: LatencyBucket[];
-  /** Increments when latency history changes anywhere except a pure tail
-   *  append, invalidating incremental chart indexes. */
+  /** Increments when non-tail latency history changes, invalidating incremental indexes. */
   latencyRevision: number;
-  /** False when latency is disabled: the latency line and right axis are
-   *  suppressed. */
+  /** False when latency is disabled: the latency line and right axis are suppressed. */
   latencyEnabled: boolean;
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
@@ -48,8 +42,7 @@ export interface ChartData {
   timelineT: number;
   /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
-  /** Throughput Y-axis ceiling (bytes/s), dwell-filtered and tiered upstream.
-   *  Identical to store.displayScaleBytesPerSec so the gauge dial matches. */
+  /** Dwell-filtered throughput ceiling shared with the gauge dial. */
   scaleBytesPerSec: number;
   /** Shared robust latency ceiling, identical to the gauge. */
   latencyScaleMs: number;
@@ -58,12 +51,10 @@ export interface ChartData {
     Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
   >;
 }
-
 export interface HoverInfo {
   x: number; // clamped css px within plot
   t: number; // ms
-  /** Single-lane rate during download/upload. Null during bidirectional and
-   *  outside the throughput data. */
+  /** Single-lane rate during download/upload. Null during bidirectional and outside the throughput data. */
   bytesPerSec: number | null;
   /** Bidirectional's two concurrent lanes; null outside that phase. */
   downBytesPerSec: number | null;
@@ -75,7 +66,6 @@ export interface HoverInfo {
   lossCount: number;
   latencyOverflow: boolean;
 }
-
 /** Per-lane finalized result overlay drawn in result mode. */
 interface PhaseStat {
   t0: number;
@@ -83,15 +73,21 @@ interface PhaseStat {
   bytesPerSec: number;
   stroke: string;
 }
-
 interface PhaseSpan {
   phase: Phase;
   t0: number;
   t1: number; // Infinity while open
 }
-
 type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
-
+const THROUGHPUT_LANES = [
+  { samples: "download", area: "download" },
+  { samples: "upload", area: "upload" },
+  { samples: "bidiDown", area: "download" },
+  { samples: "bidiUp", area: "upload" },
+] as const satisfies ReadonlyArray<{
+  samples: ThroughputLane;
+  area: "download" | "upload";
+}>;
 export interface ChartPresentation {
   layout: ChartLayout;
   latencyEnabled: boolean;
@@ -104,12 +100,10 @@ export interface ChartPresentation {
     y: number;
   }>;
 }
-
 export type ChartLabelPhase = Extract<
   Phase,
   "warmup" | "latency" | "download" | "upload" | "bidirectional"
 >;
-
 function isChartLabelPhase(phase: Phase): phase is ChartLabelPhase {
   return (
     phase === "warmup" ||
@@ -119,7 +113,6 @@ function isChartLabelPhase(phase: Phase): phase is ChartLabelPhase {
     phase === "bidirectional"
   );
 }
-
 interface ThemeColors {
   download: string;
   downloadRgb: { r: number; g: number; b: number };
@@ -134,7 +127,6 @@ interface ThemeColors {
   textSoft: string;
   brand: string;
 }
-
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const h = hex.replace("#", "").trim();
   const full =
@@ -147,8 +139,19 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const n = parseInt(full || "888888", 16);
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
-
-export class ChartEngine implements CanvasEngine {
+function fillCircle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  color: string,
+): void {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+export class ChartEngine {
   #get: () => ChartData;
   #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #canvas: HTMLCanvasElement | null = null;
@@ -156,12 +159,13 @@ export class ChartEngine implements CanvasEngine {
   #scene: HTMLCanvasElement | null = null;
   #sceneCtx: CanvasRenderingContext2D | null = null;
   #sceneDirty = true;
+  #sceneTMax = 0;
+  #latencyAnimating = new Set<LatencyBucket>();
+  #dirty = true;
   #presentation: PresentationHandle | null = null;
-
   #dpr = 1;
   #w = 0;
   #h = 0;
-
   #vp: ChartViewport = {
     tMin: 0,
     tMax: 4000,
@@ -177,7 +181,6 @@ export class ChartEngine implements CanvasEngine {
   #reducedMotion = false;
   #motionQuery: MediaQueryList | null = null;
   #onMotionChange: ((event: MediaQueryListEvent) => void) | null = null;
-
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -200,7 +203,6 @@ export class ChartEngine implements CanvasEngine {
   #latencyIndex = new LatencyPhaseIndex();
   #latencyGlyphStartedAt = new WeakMap<LatencyBucket, number>();
   #latencyGlyphActive = false;
-
   #colors: ThemeColors = {
     download: "#6db0b8",
     downloadRgb: { r: 109, g: 176, b: 184 },
@@ -215,7 +217,6 @@ export class ChartEngine implements CanvasEngine {
     textSoft: "#6a717a",
     brand: "#6db0b8",
   };
-
   constructor(
     get: () => ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
@@ -223,7 +224,6 @@ export class ChartEngine implements CanvasEngine {
     this.#get = get;
     this.#onPresentation = onPresentation ?? null;
   }
-
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
     this.#ctx = canvas.getContext("2d");
@@ -239,12 +239,11 @@ export class ChartEngine implements CanvasEngine {
     this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
-
   wake(): void {
     this.#sceneDirty = true;
+    this.#dirty = true;
     this.#presentation?.invalidate();
   }
-
   destroy(): void {
     if (this.#motionQuery && this.#onMotionChange)
       this.#motionQuery.removeEventListener("change", this.#onMotionChange);
@@ -257,8 +256,8 @@ export class ChartEngine implements CanvasEngine {
     this.#scene = null;
     this.#sceneCtx = null;
     this.#spans = [];
+    this.#latencyAnimating.clear();
   }
-
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
     this.#dpr = canvasPixelRatio();
@@ -276,12 +275,10 @@ export class ChartEngine implements CanvasEngine {
     this.#resolveColors();
     this.wake();
   }
-
   setHover(x: number | null): void {
     this.#hoverX = x;
     this.#presentation?.invalidate();
   }
-
   hoverInfo(): HoverInfo | null {
     if (this.#hoverX == null) return null;
     const plotW = this.#layout.plot.right - this.#layout.plot.left;
@@ -321,7 +318,7 @@ export class ChartEngine implements CanvasEngine {
     );
     const latencyGlyph = data.latencyEnabled
       ? nearestLatencyGlyph(this.#latencyIndex.values(), x, (bucketT) =>
-          this.#x(bucketT),
+          this.#layout.x(bucketT),
         )
       : null;
     const latencyBucket = latencyGlyph?.bucket ?? null;
@@ -343,7 +340,6 @@ export class ChartEngine implements CanvasEngine {
     };
     return hasHoverMeasurements(info) ? info : null;
   }
-
   #resolveColors(): void {
     const cs = getComputedStyle(document.documentElement);
     const g = (v: string, fb: string) => cs.getPropertyValue(v).trim() || fb;
@@ -365,11 +361,9 @@ export class ChartEngine implements CanvasEngine {
     };
     this.#invalidateGradients();
   }
-
   #invalidateGradients(): void {
     this.#gradH = -1;
   }
-
   #areaGrad(
     ctx: CanvasRenderingContext2D,
     phase: "download" | "upload",
@@ -392,12 +386,11 @@ export class ChartEngine implements CanvasEngine {
     }
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
-
   render = (now: number): boolean => {
-    const dataDirty = this.#sceneDirty;
-    if (dataDirty) {
+    const dirty = this.#dirty;
+    if (dirty) {
       this.#update();
-      this.#sceneDirty = false;
+      this.#dirty = false;
     }
     const previousDisplayTMax = this.#displayTMax;
     const cameraMoving = this.#stepCamera(now);
@@ -408,19 +401,24 @@ export class ChartEngine implements CanvasEngine {
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
       this.#publishPresentation(d);
     }
-    if (dataDirty || cameraMoving || this.#latencyGlyphActive) {
-      this.#latencyGlyphActive = this.#drawScene(now);
+    if (this.#sceneDirty) {
+      this.#rebuildScene(now);
+      this.#sceneDirty = false;
     }
-    this.#compose();
+    const wasLatencyAnimating = this.#latencyGlyphActive;
+    this.#latencyGlyphActive = this.#compose(now);
+    // Fold entering glyphs into the cache once their animation completes.
+    if (wasLatencyAnimating && !this.#latencyGlyphActive) {
+      this.#rebuildScene(now);
+      this.#sceneDirty = false;
+    }
     return cameraMoving || this.#latencyGlyphActive;
   };
-
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
     const b = d.latency.length ? d.latency[d.latency.length - 1].t : 0;
     return Math.max(a, b);
   }
-
   #resetRunState(): void {
     this.#spans = [];
     this.#lastPhase = null;
@@ -435,20 +433,19 @@ export class ChartEngine implements CanvasEngine {
     for (const lane of Object.values(this.#throughputByLane)) lane.length = 0;
     this.#latencyIndex.clear();
     this.#latencyGlyphStartedAt = new WeakMap();
+    this.#latencyAnimating.clear();
     this.#latencyGlyphActive = false;
+    this.#sceneTMax = 0;
+    this.#sceneDirty = true;
   }
-
   #update(): void {
     const d = this.#get();
-
     if (d.runSeq !== this.#runSeq) {
       this.#runSeq = d.runSeq;
       this.#resetRunState();
     }
     this.#indexData(d);
-
-    // Sample timestamps cannot mark a sample-free warmup, so the runner's
-    // boundary is the phase clock.
+    // Sample timestamps cannot mark a sample-free warmup, so the runner's boundary is the phase clock.
     if (d.phase !== this.#lastPhase) {
       const phaseStart =
         d.phase === "complete" || d.phase === "error"
@@ -459,31 +456,24 @@ export class ChartEngine implements CanvasEngine {
       this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
     }
-
     const latest = this.#latestT(d);
     const complete =
       d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
     this.#result = complete;
-
     const tMin = 0;
     const targetTMax = complete
       ? Math.max(latest * 1.02, 1_000)
       : Math.max(Math.max(latest, d.timelineT) + 2_000, 4_000);
-
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
       d.scaleBytesPerSec !== sharedThroughputScale(0) ||
       d.throughput.length > 0;
-
     const rttMin = 0;
-    // The shared controller is intentionally recent while measuring. Terminal
-    // mode expands the X axis to the full run, so resolve its Y domain from the
-    // same full history instead of applying the last live window retroactively.
+    // Terminal mode resolves its Y domain from full history rather than the recent live controller.
     const rttMax = complete
       ? latencyScaleForHistory(d.latency)
       : d.latencyScaleMs;
-
     this.#targetTMax = targetTMax;
     if (!this.#cameraInitialized) {
       this.#displayTMax = this.#targetTMax;
@@ -499,7 +489,6 @@ export class ChartEngine implements CanvasEngine {
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#publishPresentation(d);
   }
-
   #stepCamera(now: number): boolean {
     if (!this.#cameraInitialized) {
       this.#displayTMax = this.#targetTMax;
@@ -507,7 +496,6 @@ export class ChartEngine implements CanvasEngine {
       this.#lastCameraAt = now;
       return false;
     }
-
     if (this.#reducedMotion) {
       const changed =
         Math.abs(this.#targetTMax - this.#displayTMax) >
@@ -516,47 +504,30 @@ export class ChartEngine implements CanvasEngine {
       this.#lastCameraAt = now;
       return changed;
     }
-
     const delta = this.#targetTMax - this.#displayTMax;
     if (Math.abs(delta) <= CHART_TIME_CAMERA_EPSILON_MS) {
       this.#displayTMax = this.#targetTMax;
       this.#lastCameraAt = now;
       return false;
     }
-
     const dt =
       this.#lastCameraAt > 0
         ? Math.max(0, Math.min(100, now - this.#lastCameraAt))
         : 0;
     this.#lastCameraAt = now;
-
     const alpha = dt > 0 ? 1 - Math.exp(-dt / CHART_TIME_CAMERA_TAU_MS) : 1;
-
     this.#displayTMax += delta * alpha;
     return true;
   }
-
-  /* Coordinate maps. */
-  #x(t: number): number {
-    return this.#layout.x(t);
-  }
-  #yL(bytesPerSec: number): number {
-    return this.#layout.throughputY(bytesPerSec);
-  }
-  #yR(rtt: number): number {
-    return this.#layout.latencyY(rtt);
-  }
-
   #publishPresentation(data: ChartData): void {
     if (!this.#onPresentation) return;
     const { plot } = this.#layout;
     let warmupLabelled = false;
     const phaseLabels = this.#result
       ? this.#spans.flatMap((span) => {
-          const x0 = Math.max(plot.left, this.#x(span.t0));
-          const x1 = Math.min(
-            plot.right,
-            this.#x(span.t1 === Infinity ? this.#vp.tMax : span.t1),
+          const { x0, x1 } = this.#clipSpan(
+            span.t0,
+            span.t1 === Infinity ? this.#vp.tMax : span.t1,
           );
           const width = x1 - x0 - 2;
           const repeatWarmup = span.phase === "warmup" && warmupLabelled;
@@ -568,10 +539,9 @@ export class ChartEngine implements CanvasEngine {
       : [];
     const phaseStats = this.#result
       ? this.#phaseStats(data.throughput).flatMap((stat) => {
-          const x0 = Math.max(plot.left, this.#x(stat.t0));
-          const x1 = Math.min(plot.right, this.#x(stat.t1));
+          const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
           if (x1 <= x0) return [];
-          const y = this.#yL(stat.bytesPerSec);
+          const y = this.#layout.throughputY(stat.bytesPerSec);
           return [
             {
               bytesPerSec: stat.bytesPerSec,
@@ -590,43 +560,60 @@ export class ChartEngine implements CanvasEngine {
       phaseStats,
     });
   }
-
-  #drawScene(now: number): boolean {
+  #rebuildScene(now: number): void {
     const ctx = this.#sceneCtx;
-    if (!ctx) return false;
+    if (!ctx || !this.#scene) return;
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
-
-    this.#drawGrid(ctx);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
-    const latencyAnimating = d.latencyEnabled
-      ? this.#drawLatency(ctx, d.latency, now)
-      : false;
+    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency, now, false);
+    else this.#latencyAnimating.clear();
+    this.#sceneTMax = this.#vp.tMax;
+  }
+  #compose(now: number): boolean {
+    const ctx = this.#ctx;
+    const scene = this.#scene;
+    if (!ctx || !scene) return false;
+    const d = this.#get();
+    ctx.clearRect(0, 0, this.#w, this.#h);
+    this.#drawGrid(ctx);
+    const { plot } = this.#layout;
+    const plotWidth = plot.right - plot.left;
+    const plotHeight = plot.bottom - plot.top;
+    if (this.#sceneTMax > 0 && this.#vp.tMax > 0) {
+      const scale = this.#sceneTMax / this.#vp.tMax;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(plot.left, plot.top, plotWidth, plotHeight);
+      ctx.clip();
+      ctx.drawImage(
+        scene,
+        plot.left * this.#dpr,
+        plot.top * this.#dpr,
+        plotWidth * this.#dpr,
+        plotHeight * this.#dpr,
+        plot.left,
+        plot.top,
+        plotWidth * scale,
+        plotHeight,
+      );
+      ctx.restore();
+    }
     this.#drawPhases(ctx);
+    const latencyAnimating = d.latencyEnabled
+      ? this.#drawActiveLatency(ctx, now)
+      : false;
+    this.#drawHover(ctx);
     return latencyAnimating;
   }
-
-  #compose(): void {
-    const ctx = this.#ctx;
-    if (!ctx || !this.#scene) return;
-    ctx.clearRect(0, 0, this.#w, this.#h);
-    ctx.drawImage(
-      this.#scene,
-      0,
-      0,
-      this.#scene.width,
-      this.#scene.height,
-      0,
-      0,
-      this.#w,
-      this.#h,
-    );
-    this.#drawHover(ctx);
+  #clipSpan(t0: number, t1: number): { x0: number; x1: number } {
+    const { left, right } = this.#layout.plot;
+    return {
+      x0: Math.max(left, this.#layout.x(t0)),
+      x1: Math.min(right, this.#layout.x(t1)),
+    };
   }
-
-  /** Ribbon colour, null when the phase shows none. Warmup uses the
-   *  muted body-text grey so it recedes behind the lane colours. */
   #phaseColor(phase: Phase): string | null {
     if (phase === "warmup") return this.#colors.textSoft;
     if (phase === "latency") return this.#colors.signal;
@@ -635,17 +622,14 @@ export class ChartEngine implements CanvasEngine {
     if (phase === "bidirectional") return this.#colors.bidirectional;
     return null;
   }
-
   #drawPhaseStats(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
   ): void {
     for (const stat of this.#phaseStats(all)) {
-      const x0 = Math.max(this.#layout.plot.left, this.#x(stat.t0));
-      const x1 = Math.min(this.#layout.plot.right, this.#x(stat.t1));
+      const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
       if (x1 <= x0) continue;
-      const yResult = this.#yL(stat.bytesPerSec);
-
+      const yResult = this.#layout.throughputY(stat.bytesPerSec);
       ctx.save();
       ctx.strokeStyle = stat.stroke;
       ctx.globalAlpha = 0.8;
@@ -658,51 +642,53 @@ export class ChartEngine implements CanvasEngine {
       ctx.restore();
     }
   }
-
   #phaseStats(all: ThroughputSample[]): PhaseStat[] {
     const out: PhaseStat[] = [];
-    for (const phase of ["download", "upload"] as const) {
-      const seg = all.filter((s) => s.phase === phase);
-      const bytesPerSec = this.#get().resultRates[phase];
-      if (seg.length < 2 || bytesPerSec == null) continue;
-      out.push({
-        t0: seg[0].t,
-        t1: seg[seg.length - 1].t,
-        bytesPerSec,
-        stroke:
-          phase === "download" ? this.#colors.download : this.#colors.upload,
-      });
-    }
-    for (const dir of ["down", "up"] as const) {
+    const groups = [
+      { key: "download", phase: "download", stroke: this.#colors.download },
+      { key: "upload", phase: "upload", stroke: this.#colors.upload },
+      {
+        key: "bidiDown",
+        phase: "bidirectional",
+        dir: "down",
+        stroke: this.#colors.download,
+      },
+      {
+        key: "bidiUp",
+        phase: "bidirectional",
+        dir: "up",
+        stroke: this.#colors.upload,
+      },
+    ] as const;
+    for (const group of groups) {
       const seg = all.filter(
-        (s) => s.phase === "bidirectional" && s.dir === dir,
+        (sample) =>
+          sample.phase === group.phase &&
+          (group.phase !== "bidirectional" || sample.dir === group.dir),
       );
-      const bytesPerSec =
-        this.#get().resultRates[dir === "down" ? "bidiDown" : "bidiUp"];
+      const { key, stroke } = group;
+      const bytesPerSec = this.#get().resultRates[key];
       if (seg.length < 2 || bytesPerSec == null) continue;
       out.push({
         t0: seg[0].t,
         t1: seg[seg.length - 1].t,
         bytesPerSec,
-        stroke: dir === "down" ? this.#colors.download : this.#colors.upload,
+        stroke,
       });
     }
     return out;
   }
-
   #drawPhases(ctx: CanvasRenderingContext2D): void {
     const ry = this.#layout.phaseRailY;
     for (const s of this.#spans) {
       const color = this.#phaseColor(s.phase);
       if (!color) continue;
-      const x0 = Math.max(this.#layout.plot.left, this.#x(s.t0));
-      const x1 = Math.min(
-        this.#layout.plot.right,
-        this.#x(s.t1 === Infinity ? this.#vp.tMax : s.t1),
+      const { x0, x1 } = this.#clipSpan(
+        s.t0,
+        s.t1 === Infinity ? this.#vp.tMax : s.t1,
       );
       const w = x1 - x0 - 2;
       if (w < 3) continue;
-
       ctx.globalAlpha = 0.85;
       ctx.fillStyle = color;
       ctx.beginPath();
@@ -711,38 +697,28 @@ export class ChartEngine implements CanvasEngine {
     }
     ctx.globalAlpha = 1;
   }
-
   #drawGrid(ctx: CanvasRenderingContext2D): void {
     const { plot } = this.#layout;
-
     ctx.lineWidth = 1;
     ctx.strokeStyle = this.#colors.grid;
-    ctx.globalAlpha = 0.55;
-    ctx.beginPath();
-    for (const tick of this.#layout.timeMinorTicks) {
-      ctx.moveTo(tick.x, plot.top);
-      ctx.lineTo(tick.x, plot.bottom);
+    for (const [alpha, ticks, lines] of [
+      [0.55, this.#layout.timeMinorTicks, this.#layout.horizontalMinorLines],
+      [1, this.#layout.timeMajorTicks, this.#layout.horizontalMajorLines],
+    ] as const) {
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      for (const tick of ticks) {
+        ctx.moveTo(tick.x, plot.top);
+        ctx.lineTo(tick.x, plot.bottom);
+      }
+      for (const y of lines) {
+        ctx.moveTo(plot.left, y);
+        ctx.lineTo(plot.right, y);
+      }
+      ctx.stroke();
     }
-    for (const y of this.#layout.horizontalMinorLines) {
-      ctx.moveTo(plot.left, y);
-      ctx.lineTo(plot.right, y);
-    }
-    ctx.stroke();
     ctx.globalAlpha = 1;
-
-    ctx.strokeStyle = this.#colors.grid;
-    ctx.beginPath();
-    for (const tick of this.#layout.timeMajorTicks) {
-      ctx.moveTo(tick.x, plot.top);
-      ctx.lineTo(tick.x, plot.bottom);
-    }
-    for (const y of this.#layout.horizontalMajorLines) {
-      ctx.moveTo(plot.left, y);
-      ctx.lineTo(plot.right, y);
-    }
-    ctx.stroke();
   }
-
   #indexData(data: ChartData): void {
     const all = data.throughput;
     if (
@@ -765,22 +741,8 @@ export class ChartEngine implements CanvasEngine {
     }
     this.#indexedThroughput = all.length;
     this.#lastIndexedThroughput = all.at(-1);
-
     this.#latencyIndex.update(data.latency, data.latencyRevision);
   }
-
-  #throughputLanes(): {
-    samples: ThroughputSample[];
-    area: "download" | "upload";
-  }[] {
-    return [
-      { samples: this.#throughputByLane.download, area: "download" },
-      { samples: this.#throughputByLane.upload, area: "upload" },
-      { samples: this.#throughputByLane.bidiDown, area: "download" },
-      { samples: this.#throughputByLane.bidiUp, area: "upload" },
-    ];
-  }
-
   #drawThroughput(
     ctx: CanvasRenderingContext2D,
     all: ThroughputSample[],
@@ -789,55 +751,63 @@ export class ChartEngine implements CanvasEngine {
     const bot = this.#layout.plot.bottom;
     const tMin = this.#vp.tMin;
     const tMax = this.#vp.tMax;
-    for (const lane of this.#throughputLanes()) {
+    for (const lane of THROUGHPUT_LANES) {
       const stroke =
         lane.area === "download" ? this.#colors.download : this.#colors.upload;
-      const segments: { x: number; y: number }[][] = [];
       let pts: { x: number; y: number }[] = [];
       let previous: ThroughputSample | null = null;
-      const lo = Math.max(0, lowerBoundAt(lane.samples, tMin) - 1);
-      const hi = Math.min(
-        lane.samples.length,
-        lowerBoundAt(lane.samples, tMax) + 1,
-      );
+      const samples = this.#throughputByLane[lane.samples];
+      const lo = Math.max(0, lowerBoundAt(samples, tMin) - 1);
+      const hi = Math.min(samples.length, lowerBoundAt(samples, tMax) + 1);
       for (let i = lo; i < hi; i++) {
-        const s = lane.samples[i];
+        const s = samples[i];
         if (previous && !throughputSamplesContinuous(previous, s)) {
-          if (pts.length) segments.push(pts);
+          this.#drawThroughputSegment(ctx, pts, lane.area, stroke, bot);
           pts = [];
         }
-        pts.push({ x: this.#x(s.t), y: this.#yL(s.bytesPerSec) });
+        pts.push({
+          x: this.#layout.x(s.t),
+          y: this.#layout.throughputY(s.bytesPerSec),
+        });
         previous = s;
       }
-      if (pts.length) segments.push(pts);
-      for (const segment of segments) {
-        if (segment.length < 2) continue;
-        ctx.fillStyle = this.#areaGrad(ctx, lane.area);
-        ctx.beginPath();
-        ctx.moveTo(segment[0].x, bot);
-        ctx.lineTo(segment[0].x, segment[0].y);
-        traceSmoothLine(ctx, segment);
-        ctx.lineTo(segment.at(-1)!.x, bot);
-        ctx.closePath();
-        ctx.fill();
-
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = 1.75;
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        ctx.beginPath();
-        ctx.moveTo(segment[0].x, segment[0].y);
-        traceSmoothLine(ctx, segment);
-        ctx.stroke();
-      }
+      this.#drawThroughputSegment(ctx, pts, lane.area, stroke, bot);
     }
   }
-
+  #drawThroughputSegment(
+    ctx: CanvasRenderingContext2D,
+    segment: ReadonlyArray<{ x: number; y: number }>,
+    area: "download" | "upload",
+    stroke: string,
+    bottom: number,
+  ): void {
+    if (segment.length < 2) return;
+    const first = segment[0];
+    const last = segment[segment.length - 1];
+    ctx.fillStyle = this.#areaGrad(ctx, area);
+    ctx.beginPath();
+    ctx.moveTo(first.x, bottom);
+    ctx.lineTo(first.x, first.y);
+    traceSmoothLine(ctx, segment);
+    ctx.lineTo(last.x, bottom);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1.75;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(first.x, first.y);
+    traceSmoothLine(ctx, segment);
+    ctx.stroke();
+  }
   #drawLatency(
     ctx: CanvasRenderingContext2D,
     all: LatencyBucket[],
     now: number,
+    drawAnimating: boolean,
   ): boolean {
+    this.#latencyAnimating.clear();
     if (!all.length) return false;
     ctx.lineWidth = 1;
     let animating = false;
@@ -845,77 +815,110 @@ export class ChartEngine implements CanvasEngine {
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
     for (let i = lo; i < hi; i++) {
       const s = all[i];
-      const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
-      let alpha = 1;
-      let radiusScale = 1;
-      if (!this.#result) {
+      let p = 1;
+      const animate = !this.#result && i >= hi - LATENCY_ANIMATION_WINDOW;
+      if (animate) {
         let startedAt = this.#latencyGlyphStartedAt.get(s);
         if (startedAt == null) {
           startedAt = now;
           this.#latencyGlyphStartedAt.set(s, now);
         }
-        const p = Math.min(
+        p = Math.min(
           1,
           Math.max(0, (now - startedAt) / LATENCY_GLYPH_ENTER_MS),
         );
-        const eased = 1 - (1 - p) * (1 - p);
-        alpha = 0.65 + 0.35 * eased;
-        radiusScale = 0.85 + 0.15 * eased;
-        animating ||= p < 1;
-      }
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      if (s.medianRttMs != null) {
-        const x = this.#x(s.t);
-        const overflow = latencyBucketExceedsScale(s, this.#vp.rttMax);
-        const clippedMedian = s.medianRttMs >= this.#vp.rttMax;
-        const overflowGlyph = overflow
-          ? latencyOverflowGlyph(this.#layout.plot.top)
-          : null;
-        const medianY =
-          clippedMedian && overflowGlyph
-            ? overflowGlyph.dot.y
-            : this.#yR(s.medianRttMs);
-        const spike = s.maxRttMs ?? s.p95RttMs;
-        if (spike != null && spike > s.medianRttMs && !clippedMedian) {
-          ctx.strokeStyle = color;
-          ctx.beginPath();
-          ctx.moveTo(x, medianY);
-          ctx.lineTo(x, this.#yR(spike));
-          ctx.stroke();
+        if (p < 1) {
+          this.#latencyAnimating.add(s);
+          animating = true;
         }
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(x, medianY, 2.25 * radiusScale, 0, Math.PI * 2);
-        ctx.fill();
-        if (overflowGlyph) {
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.moveTo(x, overflowGlyph.arrow.tipY);
-          ctx.lineTo(
-            x - overflowGlyph.arrow.halfWidth,
-            overflowGlyph.arrow.baseY,
-          );
-          ctx.lineTo(
-            x + overflowGlyph.arrow.halfWidth,
-            overflowGlyph.arrow.baseY,
-          );
-          ctx.closePath();
-          ctx.fill();
-        }
+      } else if (!this.#latencyGlyphStartedAt.has(s)) {
+        // Long histories should appear settled; only the recent tail enters.
+        this.#latencyGlyphStartedAt.set(s, now - LATENCY_GLYPH_ENTER_MS);
       }
-      if (s.lossCount > 0) {
-        const x = this.#x(s.t);
-        ctx.fillStyle = this.#colors.err;
-        ctx.beginPath();
-        ctx.roundRect(x - 2.5, this.#layout.plot.bottom - 7, 5, 7, 1.5);
-        ctx.fill();
-      }
-      ctx.restore();
+      if (p < 1 && !drawAnimating) continue;
+      this.#drawLatencyBucket(ctx, s, p);
     }
     return animating;
   }
-
+  #drawActiveLatency(ctx: CanvasRenderingContext2D, now: number): boolean {
+    if (this.#result) return false;
+    ctx.lineWidth = 1;
+    let animating = false;
+    for (const s of this.#latencyAnimating) {
+      const startedAt = this.#latencyGlyphStartedAt.get(s);
+      if (startedAt == null) {
+        this.#latencyAnimating.delete(s);
+        continue;
+      }
+      const p = Math.min(
+        1,
+        Math.max(0, (now - startedAt) / LATENCY_GLYPH_ENTER_MS),
+      );
+      if (p >= 1) {
+        this.#latencyAnimating.delete(s);
+        continue;
+      }
+      animating = true;
+      this.#drawLatencyBucket(ctx, s, p);
+    }
+    return animating;
+  }
+  #drawLatencyBucket(
+    ctx: CanvasRenderingContext2D,
+    s: LatencyBucket,
+    p: number,
+  ): void {
+    const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
+    const eased = 1 - (1 - p) * (1 - p);
+    const alpha = 0.65 + 0.35 * eased;
+    const radiusScale = 0.85 + 0.15 * eased;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (s.medianRttMs != null) {
+      const x = this.#layout.x(s.t);
+      const overflow = latencyBucketExceedsScale(s, this.#vp.rttMax);
+      const clippedMedian = s.medianRttMs >= this.#vp.rttMax;
+      const overflowGlyph = overflow
+        ? latencyOverflowGlyph(this.#layout.plot.top)
+        : null;
+      const medianY =
+        clippedMedian && overflowGlyph
+          ? overflowGlyph.dot.y
+          : this.#layout.latencyY(s.medianRttMs);
+      const spike = s.maxRttMs ?? s.p95RttMs;
+      if (spike != null && spike > s.medianRttMs && !clippedMedian) {
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, medianY);
+        ctx.lineTo(x, this.#layout.latencyY(spike));
+        ctx.stroke();
+      }
+      fillCircle(ctx, x, medianY, 2.25 * radiusScale, color);
+      if (overflowGlyph) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, overflowGlyph.arrow.tipY);
+        ctx.lineTo(
+          x - overflowGlyph.arrow.halfWidth,
+          overflowGlyph.arrow.baseY,
+        );
+        ctx.lineTo(
+          x + overflowGlyph.arrow.halfWidth,
+          overflowGlyph.arrow.baseY,
+        );
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    if (s.lossCount > 0) {
+      const x = this.#layout.x(s.t);
+      ctx.fillStyle = this.#colors.err;
+      ctx.beginPath();
+      ctx.roundRect(x - 2.5, this.#layout.plot.bottom - 7, 5, 7, 1.5);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
   #drawHover(ctx: CanvasRenderingContext2D): void {
     if (this.#hoverX == null) return;
     const x = Math.max(
@@ -930,35 +933,43 @@ export class ChartEngine implements CanvasEngine {
     ctx.moveTo(gx, top);
     ctx.lineTo(gx, bot);
     ctx.stroke();
-
     const info = this.hoverInfo();
     if (!info) return;
-    const dot = (y: number, color: string): void => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-    };
     // Dots ride the interpolated value (matches the chip + the drawn line).
     if (info.bytesPerSec != null)
-      dot(this.#yL(info.bytesPerSec), this.#colors.brand);
+      fillCircle(
+        ctx,
+        x,
+        this.#layout.throughputY(info.bytesPerSec),
+        2.5,
+        this.#colors.brand,
+      );
     // Bidirectional: one dot per lane, tinted to match its drawn line.
     if (info.downBytesPerSec != null)
-      dot(this.#yL(info.downBytesPerSec), this.#colors.download);
+      fillCircle(
+        ctx,
+        x,
+        this.#layout.throughputY(info.downBytesPerSec),
+        2.5,
+        this.#colors.download,
+      );
     if (info.upBytesPerSec != null)
-      dot(this.#yL(info.upBytesPerSec), this.#colors.upload);
+      fillCircle(
+        ctx,
+        x,
+        this.#layout.throughputY(info.upBytesPerSec),
+        2.5,
+        this.#colors.upload,
+      );
     if (info.rtt != null && info.latencyX != null) {
-      ctx.fillStyle = this.#colors.warn;
-      ctx.beginPath();
       const overflowGlyph = info.latencyOverflow
         ? latencyOverflowGlyph(this.#layout.plot.top)
         : null;
       const latencyY =
         overflowGlyph && info.rtt >= this.#vp.rttMax
           ? overflowGlyph.dot.y
-          : this.#yR(info.rtt);
-      ctx.arc(info.latencyX, latencyY, 2.5, 0, Math.PI * 2);
-      ctx.fill();
+          : this.#layout.latencyY(info.rtt);
+      fillCircle(ctx, info.latencyX, latencyY, 2.5, this.#colors.warn);
     }
   }
 }

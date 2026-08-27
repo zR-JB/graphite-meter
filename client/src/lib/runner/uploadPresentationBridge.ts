@@ -1,13 +1,10 @@
-/** Presentation-only policy for an irregular authoritative upload feed. It has
- * no access to accumulators, charts, control buckets, or result reduction. */
+/* Presentation-only policy for an irregular authoritative upload feed. */
 export const UPLOAD_PRESENTATION_HINT_MAX_AGE_MS = 250;
-/** A worker targets 500 ms POSTs. Keep each independently observed lane long
- * enough to form one aggregate, but never indefinitely retain a dead lane. */
-export const UPLOAD_PRESENTATION_LANE_MAX_AGE_MS = 750;
-/** Active fallback converges back to authority instead of snapping off when a
- * valid activation hint ages out between POST completions. */
+/* A worker targets 500 ms POSTs. */
+const UPLOAD_PRESENTATION_LANE_MAX_AGE_MS = 750;
+/* Active fallback converges back to authority instead of snapping off when a valid activation hint ages out. */
 export const UPLOAD_PRESENTATION_SETTLE_MS = 500;
-export const UPLOAD_PRESENTATION_SETTLE_CADENCE_MS = 50;
+const UPLOAD_PRESENTATION_SETTLE_CADENCE_MS = 50;
 
 interface LaneHint {
   rate: number;
@@ -30,14 +27,12 @@ export class UploadPresentationBridge {
     this.#arrivals.push(now);
     if (this.#arrivals.length > 5) this.#arrivals.shift();
     this.#lastRate = rate;
-    // An advancing server checkpoint is immediately authoritative again. It
-    // also invalidates local work that could belong to the previous gap.
+    // An advancing server checkpoint is immediately authoritative again.
     this.#lanes.clear();
     this.#active = null;
   }
 
-  /** Record one locally timed POST completion by lane. This is deliberately
-   * not byte accounting: it only supplies a candidate visual target. */
+  /* Record one locally timed POST completion by lane. */
   hint(lane: number, bytes: number, elapsedMs: number, now: number): void {
     if (lane < 0 || bytes <= 0 || elapsedMs <= 0) return;
     this.#lanes.set(lane, {
@@ -70,8 +65,7 @@ export class UploadPresentationBridge {
       return null;
     }
     const progress = afterFreshness / UPLOAD_PRESENTATION_SETTLE_MS;
-    // Smoothstep has no slope discontinuity at either end and cannot overshoot
-    // the bounded local target or the current authoritative target.
+    // Smoothstep has no slope discontinuity at either end and cannot overshoot the bounded local target or the.
     const eased = progress * progress * (3 - 2 * progress);
     return active.rate + (this.#lastRate - active.rate) * eased;
   }
@@ -110,8 +104,7 @@ export class UploadPresentationBridge {
       latestAt = Math.max(latestAt, hint.at);
       count++;
     }
-    // Do not multiply one lane by the configured count: uneven backpressure is
-    // exactly why every expected lane must provide an independent observation.
+    // Do not multiply one lane by the configured count: uneven backpressure is exactly why every expected lane must.
     return count === expectedLanes && rate > 0 ? { rate, latestAt } : null;
   }
 

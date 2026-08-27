@@ -1,5 +1,4 @@
-// Shared runner contract: phases, config, events, result shapes, and backend
-// interfaces used by both the UI and measurement engines.
+// Shared runner contract for phases, config, events, results, and backend interfaces.
 
 import type {
   FetchThroughputTarget,
@@ -8,10 +7,7 @@ import type {
 } from "../api/endpoints";
 
 /* ---------- Lifecycle ---------- */
-/* Phase sequence, all stages on. Each enabled stage is preceded by its own
- * `warmup`, omitted when the stage is off or `duration.warmupMs <= 0`:
- *   idle → connecting → warmup → latency → warmup → download → warmup → upload → complete
- * See the stage lifecycle & warmup contract at the end of this file. */
+/* Phase sequence, all stages on. */
 export type Phase =
   | "idle"
   | "connecting"
@@ -24,9 +20,7 @@ export type Phase =
   | "aborted"
   | "error";
 
-/** Which way bytes flow for a throughput sample. Travels WITH the sample so the
- *  core never infers direction from the phase: one `bidirectional` phase then
- *  carries concurrent down+up samples unambiguously. */
+/* Which way bytes flow for a throughput sample. */
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
@@ -34,20 +28,13 @@ export type ConnectionRole = "throughput" | "latency";
 export type ThroughputTargetSelection = string;
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
-/* ---------- Phase activity descriptor (core → backend) ----------
- *  What a stage exercises, resolved ONCE by the scheduler from `RunnerConfig`
- *  and handed to the backend on every stage lifecycle hook (core.ts). A stage's
- *  warmup and its measured window carry the SAME activity object, so the warmup
- *  primes exactly the connections the measurement reuses. */
+/* Warmup and measurement share one activity object, so preparation primes the connections measurement reuses. */
 export interface PhaseActivity {
   /** The measured stage this activity belongs to. */
   stage: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
   /** Byte lanes to open: `[]` (latency-only), `["down"]`, `["up"]`, or both. */
   transfer: FlowDirection[];
-  /** Run concurrent pings during the measured window (loaded latency /
-   *  bufferbloat). Always false for the latency stage (which measures IDLE
-   *  latency); for transfer stages it folds in the "skip loaded latency when the
-   *  latency stage is off" config rule, resolved by the scheduler. */
+  /** Concurrent pings during transfer stages provide loaded-latency evidence. */
   loadedLatency: boolean;
 }
 
@@ -57,43 +44,17 @@ export type ConnectivityState =
   | "unstable" // significant loss
   | "offline";
 
-/* ---------- Overhead compensation ----------
- * Estimates forward-direction physical link occupancy from application bytes. */
+/* Automatic wire estimates ---------- Forward-direction physical link occupancy from application bytes. */
 
-/** Path the transfer takes: picks which overheads physically apply. Driven by
- *  the UI "Connection profile" preset. Loopback has no link layer, a tunnel adds
- *  outer encapsulation (see applyConnectionProfile in compensation.ts). */
-export type ConnectionProfile = "lan" | "loopback" | "tunnel" | "custom";
-
-/** Browser-facing wire transport, detected from Resource Timing or overridden. */
+/** Browser-facing wire transport, detected from Resource Timing and security. */
 export type CompensationTransport =
   | "http1-clear" // HTTP/1.1, no TLS
   | "https-tls" // HTTP/1.1 over TLS
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
-export type CompensationTransportSetting = "auto" | CompensationTransport;
-export type CompensationIPVersionSetting = "auto" | 4 | 6;
-
-export interface OverheadCompensationConfig {
-  /** Physical first-hop preset. The browser-facing HTTP transport is detected. */
-  profile: ConnectionProfile;
-  transport: CompensationTransportSetting;
-  params: {
-    mtuBytes: number;
-    ipVersion: CompensationIPVersionSetting;
-    vlanTagged: boolean; // 802.1Q tag adds 4B per frame
-    tcpOptionsMinBytes: number;
-    tcpOptionsMaxBytes: number;
-    encapsulationBytes: number;
-    quicConnIdMinBytes: number;
-    quicConnIdMaxBytes: number;
-  };
-}
-
 /* ---------- Adaptive duration ---------- */
-/** Confidence-based early phase exit. `enabled: false` runs every phase for its
- *  full configured duration. */
+/** Confidence-based early exit; disabled adaptive mode runs each phase for its full configured duration. */
 export interface AdaptiveDurationConfig {
   enabled: boolean;
   minCoverageRatio: number; // require ≥ this fraction of nominal duration first
@@ -108,8 +69,7 @@ export interface AdaptiveDurationConfig {
 /** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
 export type StabilityBand = "low" | "medium" | "high";
 
-/** Live stability snapshot for a measured phase: the single signal the pip,
- *  revocable early-finish confirmation, and result selection all read. */
+/* Live stability snapshot drives the pip, revocable early-finish confirmation, and adaptive completion. */
 export interface StabilitySnapshot {
   phase: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
   score: number; // stability score 0..1 (adaptive.ts)
@@ -125,20 +85,16 @@ export interface TransferStreamPolicy {
 
 /* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
-  /** Enabled measured stages. `bidirectional` (concurrent down+up) defaults
-   *  off; when on it runs after upload with its own warmup. */
+  /** Enabled measured stages. */
   stages: {
     latency: boolean;
     download: boolean;
     upload: boolean;
     bidirectional: boolean;
   };
-  /** When the latency stage is off, also skip the under-load latency pings
-   *  taken during download/upload, so latency is fully off: no measurement, no
-   *  profile, no chart line. */
+  /** Skip transfer-stage latency pings when the standalone latency stage is off. */
   skipLoadedLatencyWhenStageOff: boolean;
-  /** Per-phase wall-time budgets. A stage at its boundary waits for an active
-   *  connection or fails at max-stall; warmup is unmeasured priming. */
+  /** Per-phase wall-time budgets; warmup is unmeasured priming. */
   duration: {
     warmupMs: number;
     latencyMs: number;
@@ -151,20 +107,15 @@ export interface RunnerConfig {
   /** PING wire cadence during transfer stages, including warmup. */
   loadedPingCadence: PingCadence;
   transferStreams: TransferStreamPolicy;
-  /** Experimental: request adaptively-sized download chunks instead of one long
-   *  stream per lane (A/B ramp responsiveness on real lines). Default off. */
+  /** Experimental adaptive download chunks instead of one long stream per lane. */
   experimentalChunkedDownload: boolean;
-  /** Lists the WebTransport datagram card in the picker. Filters that list and
-   *  nothing else: the transport is a peer everywhere else, and a selected card
-   *  stays listed and runnable with this off. */
+  /** Lists the WebTransport datagram card; selection remains independent of this filter. */
   experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
     throughputTarget: ThroughputTargetSelection;
     latencyTarget: "auto" | string;
   };
-  /** Wire-rate estimation. */
-  compensation: OverheadCompensationConfig;
   /** Confidence-based early exit. */
   adaptive: AdaptiveDurationConfig;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */
@@ -172,9 +123,7 @@ export interface RunnerConfig {
 }
 
 /* ---------- Raw samples emitted DURING a run ---------- */
-/** One authoritative in-run latency outcome in the window realm's monotonic
- * coordinate. The worker/channel boundary must translate its clock before the
- * outcome reaches RunnerCore. */
+/** Authoritative in-run latency outcome in the window realm's monotonic clock domain. */
 export interface LatencyObservation {
   rttMs: number;
   lost: boolean;
@@ -185,10 +134,7 @@ export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
   bytesPerSec: number; // smoothed live rate; exact results use private byte/time observations
   bytesCumulative: number;
-  dir: FlowDirection; // which way these bytes flowed (down in download, up in upload, either in bidirectional)
-  // The phase that produced this sample, stamped at ingest. Travels WITH the
-  // sample (like `dir`) so consumers attribute it by tag, never re-deriving the
-  // phase from timestamps. The single source of truth for sample→phase.
+  dir: FlowDirection; // Direction travels with each sample; consumers do not infer it from the phase.
   phase: Extract<Phase, "download" | "upload" | "bidirectional">;
   /** Lines with different ids are intentionally discontinuous. */
   continuityId: number;
@@ -208,10 +154,7 @@ export interface LatencyBucket {
   rttDeltaCount: number;
   pingCount: number;
   lossCount: number;
-  underLoad: boolean; // true if captured during dl/ul (bufferbloat)
-  // The phase that produced this ping (like ThroughputSample.phase). Pre-test
-  // probe pings carry "idle"; in-run pings carry their measured phase. Lets the
-  // LatencyProfile bucket lanes by tag, never by re-derived time windows.
+  underLoad: boolean; // True when captured during transfer load; phase carries the producer tag.
   phase: Phase;
   continuityId: number;
 }
@@ -227,8 +170,7 @@ export interface PhaseTransition {
 export interface RunResult {
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
-  /** The bidirectional phase's two concurrent lanes, or null when the stage is
-   *  off. Each lane reuses the same throughput reducer as download/upload. */
+  /** The bidirectional phase's concurrent lanes, or null when that stage is off. */
   bidirectional: {
     down: ThroughputResult | null;
     up: ThroughputResult | null;
@@ -242,10 +184,8 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** How a headline is derived. Throughput uses its final contiguous stable
- *  plateau when adaptive completion is enabled; otherwise it uses the full
- *  measured phase. Latency retains its adaptive arm-to-end median window. */
-export type ResultMethod = "stable-window" | "full-average";
+/** Throughput uses a stable plateau when adaptive completion is enabled, otherwise the full measured phase. */
+type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {
   meanBytesPerSec: number; // == reportedBytesPerSec, the headline value
@@ -285,10 +225,7 @@ export interface BufferbloatGrade {
 }
 
 /* ---------- Structured termination ---------- */
-/** Why a run ends abnormally. `user-abort` is the `"aborted"` phase instead, a
- *  deliberate stop; every other reason rides the `error` event below. Browser
- *  honesty: a server-initiated close and a network-level drop both surface as a
- *  generic fetch TypeError, so they collapse into `connection-lost`. */
+/* `user-abort` is the `"aborted"` phase instead, a deliberate stop; every other reason rides the `error` event. */
 export type TerminationReason =
   | "user-abort"
   | "preflight-failed" // the handshake never reaches, or a server rejects it
@@ -299,25 +236,17 @@ export type TerminationReason =
   | "transport-unavailable"; // every negotiated transport failed to establish
 
 /* ---------- Transport negotiation ---------- */
-/** The connection method a backend may negotiate for a phase's I/O. A real
- *  engine tries these in preference order; each can fail to establish, and a
- *  failure of one is non-fatal as long as another succeeds. */
+/* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =
   "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
 
-/** The stage a transport is negotiated for. A backend negotiates once, at stage
- *  begin: the warmup primes it and the measured window reuses it, so there is no
- *  separate priming `warmup` role. Mirrors schedule's StagePhase, re-declared
- *  because contract.ts is the leaf types module and imports no schedule. */
+/* A backend negotiates once, at stage begin: the warmup primes it and the measured window reuses it, so there is. */
 export type TransportRole = Extract<
   Phase,
   "latency" | "download" | "upload" | "bidirectional"
 >;
 
-/** A stage that cannot run: the server lacks the capability, no transport can be
- *  negotiated, or the connection never establishes. NON-terminal, so the run
- *  continues with the remaining stages and the UI explains the gap in that
- *  stage's instrument (gauge for transfers, profile for latency). */
+/* A stage that cannot run: the server lacks the capability, no transport can be negotiated, or the connection. */
 export interface StageFailure {
   stage: TransportRole;
   /** The affected lane when a bidirectional stage keeps its other result. */
@@ -336,10 +265,7 @@ export type RecoveryCause =
   | "protocol-refusal";
 
 /* ---------- Transient link health ---------- */
-/** A NON-terminal stall: the link is quiet mid-phase and the runner starts a
- * bounded recovery lifecycle. Elapsed time continues, so the gap affects
- * throughput; expiry finalizes the affected stage rather than racing a
- * transport-owned timer. */
+/* A NON-terminal stall: the link is quiet mid-phase and the runner starts a bounded recovery lifecycle. */
 export interface StallInfo {
   reason: TerminationReason;
   transport?: TransportKind; // the connection that dropped, when known
@@ -350,9 +276,7 @@ export interface StallInfo {
   direction?: FlowDirection;
 }
 
-/** A structured run failure, carried on the `error` event. Distinguishing a
- *  failure from a user abort (the `"aborted"` phase) and from a clean finish is
- *  the runner→webapp half of the lifecycle contract. */
+/* Distinguishing a failure from a user abort (the `"aborted"` phase) and from a clean finish is the runner→webapp. */
 export interface RunnerError {
   /** Failure category; `user-abort` is the `"aborted"` phase instead. */
   reason: Exclude<TerminationReason, "user-abort">;
@@ -360,8 +284,7 @@ export interface RunnerError {
   message: string;
   /** The phase the run is in at the failure. */
   phase: Phase;
-  /** Best-effort results from stages that already finished, so the UI can still
-   *  show measured work. */
+  /** Best-effort results from stages that already finished, so the UI can still show measured work. */
   partial?: {
     download: ThroughputResult | null;
     upload: ThroughputResult | null;
@@ -375,22 +298,15 @@ export interface RunnerError {
   cause?: unknown;
 }
 
-/* ---------- Engine identity & capabilities ----------
- *  Static self-description of a runner backend. Capabilities live on the
- *  ENGINE: one engine drives many transports, and the user picks per role from
- *  these lists. The Endpoint info panel renders them. */
+/* Engine identity & capabilities ---------- Static self-description of a runner backend. */
 export interface EngineInfo {
   /** Engine id, e.g. "real" | "dummy". */
   name: string;
-  /** Per-engine version. Both built-ins report the client build version because
-   *  both ship with it; a separately shipped engine reports its own. */
+  /* Per-engine version. */
   version: string;
-  /** Transports this engine can drive for latency probing, preference order.
-   *  A message bus: websocket, or webtransport datagrams. */
+  /* Transports this engine can drive for latency probing, preference order. */
   latencyTransports: TransportKind[];
-  /** Transports this engine can drive for throughput transfer, preference
-   *  order. Byte lanes: fetch streams over h1.1/h2/h3, or webtransport streams.
-   *  Websocket is never a throughput transport. */
+  /* Transports this engine can drive for throughput transfer, preference order. */
   throughputTransports: TransportKind[];
 }
 
@@ -417,18 +333,14 @@ export interface InfraInfo {
   /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
   firstHopProtocol?: string;
   firstHopSecure?: boolean;
-  /** Measurement occupancy the server reported at probe time. Concurrent tests
-   *  contend for bandwidth and CPU, so a busy server means results may be
-   *  affected. */
+  /* Measurement occupancy the server reported at probe time. */
   serverLoad?: { active: number; max: number };
 }
 
-export type TransportDiscoveryState =
+type TransportDiscoveryState =
   "advertised" | "browser-blocked" | "not-advertised";
 
-/** One origin and every mechanism it advertises, in picker order. A proxy
- *  serving TCP and UDP on one hostname appears once per mechanism, so a client
- *  that cannot reach UDP still resolves the others. */
+/* One origin and every mechanism it advertises, in picker order. */
 export interface DiscoveredTarget<T> {
   state: TransportDiscoveryState;
   targets: T[];
@@ -440,8 +352,7 @@ export type DiscoveredThroughput = DiscoveredTarget<
 
 export type DiscoveredLatency = DiscoveredTarget<LatencyTarget>;
 
-/** Server-advertised transports classified against the page that uses them.
- * Emitted as soon as /preflight completes, ahead of selection and probing. */
+/* Server-advertised transports classified against the page that uses them. */
 export interface TransportDiscovery {
   generation: string;
   engineVersion: string;
@@ -460,16 +371,12 @@ export type RunnerEvent =
   | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
-  /** A short-lived upload-only visual target. It is deliberately separate from
-   * throughput samples: it never enters history, hover, control, or results. */
+  /* A short-lived upload-only visual target. */
   | { type: "uploadPresentation"; bytesPerSec: number | null }
   | { type: "latency"; sample: LatencyBucket }
-  // Reserved seam: a backend MAY push an explicit connectivity state. The store
-  // otherwise derives `effectiveConnectivity` from loss/jitter/measuring, so
-  // this is an optional override for an engine with a better signal.
+  // Reserved seam: a backend MAY push an explicit connectivity state.
   | { type: "connectivity"; state: ConnectivityState }
-  // Progress within the active wall-time budget. `measuring` is false while
-  // delivery is stalled; the grind-to-zero presentation keys off this flag.
+  // Progress within the active wall-time budget.
   | {
       type: "progress";
       phase: Phase;
@@ -478,21 +385,12 @@ export type RunnerEvent =
       phaseBudgetMs: number;
       measuring: boolean; // false while delivery is stalled
     }
-  | { type: "stability"; snapshot: StabilitySnapshot } // live measurement stability
-  // Transient link health (NON-terminal): the run continues, hoping to
-  // reconnect. Time still contributes to effective throughput. These drive the
-  // UI's grind-to-zero + "connection lost" message.
+  | { type: "stability"; snapshot: StabilitySnapshot } // live stability; stalls report link health separately.
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
-  // Transport negotiation telemetry: which connection method a phase is trying,
-  // and whether it is negotiating / established / failed. The core re-emits it
-  // verbatim; the store records it.
-  // A stage is skipped because it cannot run (see StageFailure). The rest of
-  // the run continues; the UI surfaces the reason in the stage's instrument.
+  // Transport negotiation telemetry: which connection method a phase is trying, and whether it is negotiating /.
   | { type: "stageSkipped"; failure: StageFailure }
-  // Per-stage final result, emitted the instant each measured phase ends, so a
-  // finished stage shows its real result while later stages still run. Stages
-  // are independent: each carries its own headline/method/band.
+  // Per-stage final result, emitted the instant each measured phase ends, so a finished stage shows its real result.
   | {
       type: "stageResult";
       stage: "download" | "upload";
@@ -500,28 +398,10 @@ export type RunnerEvent =
     }
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
   | { type: "complete"; result: RunResult }
-  // Abnormal end (user-abort is the "aborted" phase). Structured so the UI can
-  // tell preflight-unreachable from a mid-run drop and surface any partial
-  // results. See RunnerError.
+  // Abnormal end (user-abort is the "aborted" phase).
   | { type: "error"; error: RunnerError };
 
-/* ---------- Runtime anomaly injection: Developer panel ---------- */
-/** A live, dev-only perturbation fired into a *running* engine. Unlike the
- *  construction-time `DummyOptions.anomalies` (phase fractions), these fire
- *  relative to the current moment in the active phase. The Settings Developer
- *  panel triggers them via `injectAnomaly` in engine.svelte.ts. */
-export type RunnerAnomaly =
-  | { kind: "latency-spike"; magnitude?: number; durationMs?: number } // rtt ×magnitude
-  | { kind: "packet-loss"; magnitude?: number; durationMs?: number } // loss probability
-  | { kind: "throughput-drop"; magnitude?: number; durationMs?: number } // bytesPerSec ×(1−magnitude)
-  // A full connection drop (dead air): the backend host.stall()s immediately
-  // and host.resume()s durationMs later. Makes the stall/grind-to-zero scenario
-  // visually testable with the dummy.
-  | { kind: "connection-drop"; durationMs?: number };
-
-/** Settings the core can safely apply mid-run. Connection and worker
- * construction stay as built; these only reshape the remaining timeline or its
- * completion rule. */
+/* Connection and worker construction stay as built; these reshape only the remaining timeline or completion rule. */
 export type LiveRunConfig = Pick<
   RunnerConfig,
   "stages" | "duration" | "adaptive"
@@ -529,17 +409,12 @@ export type LiveRunConfig = Pick<
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
-  /** Verify the selected target, then run. Emits `connecting` immediately so
-   *  asynchronous path verification is visible and cancellable. `prepared` is
-   *  the InfraInfo an earlier probe() already resolved; omitting it makes start
-   *  probe itself. The app always has one (validateConnections runs first), so
-   *  the internal probe serves a caller holding this interface alone. */
+  /* Verify the selected target, then run. */
   start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
   abort(): void;
   /** Permanently stop background activity owned by this runner. */
   dispose?(): void;
-  /** Suspend or resume the idle keepalive. A hidden tab suspends it so the
-   *  browser can park the page; a run is never affected. */
+  /* A hidden tab suspends it so the browser can park the page; a run is never affected. */
   setBackgroundActivity?(enabled: boolean): void;
   /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
   probe(
@@ -552,14 +427,7 @@ export interface NetworkRunner {
   on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
   /** Apply settings that are safe to change during a run. */
   reconfigure?(config: LiveRunConfig): void;
-  /** OPTIONAL: fire a live anomaly into an in-flight run. Optional so a minimal
-   *  real engine need not implement it. */
-  injectAnomaly?(a: RunnerAnomaly): void;
   readonly phase: Phase;
 }
 
-/* ---------- Stage lifecycle & warmup contract ----------
- *  Connections belong to the STAGE, not the phase label: `RunnerBackend` in
- *  core.ts drives begin/measure/end once per stage. One `duration.warmupMs`
- *  window precedes every stage, reaching the UI as the generic `"warmup"` phase,
- *  and it starts only once asynchronous preparation resolves. */
+/* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

@@ -17,8 +17,7 @@ test("a download lane carries its size and a per-lane cache buster", () => {
   );
 });
 
-// The chunked worker appends its own adaptive size, so a baked-in one would be
-// overridden by a second bytes parameter.
+// The chunked worker appends its own adaptive size, so a baked-in one would be overridden by a second bytes parameter.
 test("a chunked download lane omits the size", () => {
   expect(laneUrl({ ...fetchSpec, chunkDownload: true }, 0)).toBe(
     "http://meter.test:7246/download?cb=r42-0",
@@ -33,8 +32,7 @@ test("an upload lane carries the minted id only once it exists", () => {
   );
 });
 
-// A session upload is one URL for the whole session, so it takes no lane index
-// and no cache buster: the id is what the server keys the aggregate on.
+// A session upload is one URL for the whole session, so it takes no lane index and no cache buster: the id is what.
 test("a session upload is keyed by id, and datagram mode is a flag on it", () => {
   const session = {
     origin: "https://meter.test",

@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -86,39 +87,31 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 	}
 }
 
-func TestRequestAdmissionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, 10*time.Millisecond, time.Hour)
+func assertAdmissionLifetime(t *testing.T, path string, requestLifetime, sessionLifetime time.Duration) {
+	t.Helper()
+	a := newRequestAdmission(1, 1, 1, 4, requestLifetime, sessionLifetime)
 	done := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()
 		close(done)
 	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
 	select {
 	case <-done:
 	default:
-		t.Fatal("handler did not observe lifetime deadline")
+		t.Fatalf("handler did not observe %s lifetime deadline", path)
 	}
+}
+
+func TestRequestAdmissionLifetime(t *testing.T) {
+	assertAdmissionLifetime(t, "/", 10*time.Millisecond, time.Hour)
 }
 
 func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, time.Minute, 10*time.Millisecond)
-	done := make(chan struct{})
-	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		close(done)
-	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/wt/download", nil))
-	select {
-	case <-done:
-	default:
-		t.Fatal("session route did not observe the session deadline")
-	}
+	assertAdmissionLifetime(t, "/wt/download", time.Minute, 10*time.Millisecond)
 }
 
-// Session routes carry their own per-client budget, since one holds a slot for
-// a whole test rather than a request. The bound is configurable: a deployment
-// behind CGNAT collapses many users onto one address.
+// Session routes carry their own per-client budget, since one holds a slot for a whole test rather than a request.
 func TestRequestAdmissionBoundsSessionsPerClient(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 2, time.Minute, time.Hour)
 	first, status := a.acquire("client", "session")
@@ -145,13 +138,9 @@ func TestRequestAdmissionBoundsSessionsPerClient(t *testing.T) {
 	second()
 }
 
-// Session routes carry their own share of the global pool as well as their own
-// per-client bucket. A session's slot is held for the session bound, so without
-// the global share a few clients' sessions occupy the pool for hours and every
-// request-shaped route is refused behind them.
+// Session routes carry their own share of the global pool as well as their own per-client bucket.
 func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
-	// Room for ten measurements and ten sessions per client, but only two
-	// sessions overall: nothing per-client is what refuses the third.
+	// Room for ten measurements and ten sessions per client, but only two sessions overall.
 	a := newRequestAdmission(10, 10, 2, 10, time.Minute, time.Hour)
 	first, status := a.acquire("client-a", "login-a")
 	if status != 0 {
@@ -164,8 +153,7 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
 		t.Fatalf("session past the session budget = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	// The property the single global counter lost: the pool still admits the
-	// request-shaped routes while every session slot is taken.
+	// The property the single global counter lost: the pool still admits the request-shaped routes while every session.
 	for _, key := range []string{"client-c", "client-d"} {
 		release, status := a.acquire(key, "")
 		if status != 0 {
@@ -180,18 +168,13 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	}
 	release()
 	second()
-	// The refusal came from the session budget with the pool half empty, so it
-	// is counted there: the pool's own counter must stay clean, or an operator
-	// raising GM_MAX_ACTIVE_MEASUREMENTS would change nothing.
+	// The refusal came from the session budget with the pool half empty, so it is counted there.
 	if stats := a.stats(); stats.active != 0 || stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
 		t.Fatalf("stats = %+v, want no active measurements and 1 session-budget rejection", stats)
 	}
 }
 
-// The session budget caps what sessions may occupy and reserves nothing for
-// them, which is what the documentation now claims. The ping buses are
-// deliberately request-shaped, so enough of them fill the pool and every session
-// is refused with the session budget untouched.
+// The session budget caps what sessions may occupy and reserves nothing for them.
 func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
 	sessionKeyFor := func(path, login string) string {
 		if isSessionRoute(path) {
@@ -219,12 +202,7 @@ func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
 	}
 }
 
-// A full pool and a full session budget both answer 503 and are raised with
-// different knobs, so an operator reading one counter learns that something is
-// refusing but not which bound to move. Sessions hold their slots for the
-// session bound rather than the request bound, so the session budget is the one
-// that stays full -- and it was the number nothing reported: 64 sessions live
-// against 20 measurements read as "plenty of room".
+// A full pool and a full session budget both answer 503 and are raised with different knobs.
 func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	// Room for four measurements but only one session.
 	a := newRequestAdmission(4, 4, 1, 4, time.Minute, time.Hour)
@@ -244,9 +222,7 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 		t.Errorf("stats = %+v, want the session budget reported as 1 of 1 occupied", stats)
 	}
 
-	// Fill the rest of the pool with request-shaped routes and prove the other
-	// counter is the one that moves. The pool is checked first, so a refusal
-	// once it is full is a pool refusal whatever route asked.
+	// Fill the rest of the pool with request-shaped routes and prove the other counter is the one that moves.
 	for i := range 3 {
 		release, status := a.acquire("client-c", "")
 		if status != 0 {
@@ -265,13 +241,9 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	}
 }
 
-// The session budget is per login, not per person. A budget keyed by subject is
-// shared by every tab, browser and device, so sessions held on a phone decide
-// whether a desktop can run a test at all.
+// The session budget is per login, not per person.
 func TestSessionBudgetIsPerLogin(t *testing.T) {
-	// Equal request and session limits are valid. Filling one login's session
-	// bucket must consume neither another login's bucket nor the subject-keyed
-	// request bucket.
+	// Equal request and session limits are valid.
 	a := newRequestAdmission(100, 1, 100, 1, time.Minute, time.Hour)
 	first, status := a.acquire("client", "login:phone")
 	if status != 0 {
@@ -293,10 +265,7 @@ func TestSessionBudgetIsPerLogin(t *testing.T) {
 	request()
 }
 
-// A principal with no login falls back to the address, so public mode keeps the
-// per-client budget it had before logins existed. The other half of the pair,
-// the login branch, is TestSessionKeyUsesTheLoginNotTheSubject in internal/auth:
-// only that package can build a principal with a non-empty LoginID.
+// A principal with no login falls back to the address, so public mode keeps the per-client budget it had before logins.
 func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
 	r.RemoteAddr = "192.0.2.7:1234"
@@ -305,8 +274,7 @@ func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
 	}
 }
 
-// The two ping buses are one thing under two mechanisms: neither holds a test,
-// so neither takes the session bound or the session budget.
+// The two ping buses are one thing under two mechanisms: neither holds a test.
 func TestPingBusesShareTheRequestBound(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 1, time.Minute, time.Hour)
 	for _, path := range []string{routePing, routeWTPing} {
@@ -327,8 +295,7 @@ func TestPingBusesShareTheRequestBound(t *testing.T) {
 	}
 }
 
-// deadlineRecordingWriter counts the socket deadlines wrap arms through
-// http.NewResponseController, which finds these methods on the writer itself.
+// deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
 type deadlineRecordingWriter struct {
 	*httptest.ResponseRecorder
 	armed int
@@ -337,12 +304,7 @@ type deadlineRecordingWriter struct {
 func (w *deadlineRecordingWriter) SetReadDeadline(time.Time) error  { w.armed++; return nil }
 func (w *deadlineRecordingWriter) SetWriteDeadline(time.Time) error { w.armed++; return nil }
 
-// A socket deadline bounds a request; it tears a channel down mid-stream. The
-// two ping buses hold a channel open without being session routes -- neither
-// holds a test, so both keep the request bound and the request bucket -- and a
-// deadline armed on one would cut the bus rather than closing it, and on a
-// session route would land on the very stream carrying the closing capsule.
-// Those routes are bounded by their context alone.
+// A socket deadline bounds a request; it tears a channel down mid-stream.
 func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
 	armedFor := func(path string) int {
@@ -356,9 +318,7 @@ func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
 			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request", path, got)
 		}
 	}
-	// The control: a request-shaped route still gets its deadlines, so the
-	// exemption is a property of these routes and not of wrap having stopped
-	// arming deadlines at all.
+	// The control: a request-shaped route still gets its deadlines.
 	for _, path := range []string{routeDownload, routeUpload} {
 		if got := armedFor(path); got == 0 {
 			t.Errorf("%s armed no socket deadline, want one: an unbounded transfer that stops reading its context has nothing else to stop it", path)
@@ -401,7 +361,7 @@ func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
 		ping:      deadlineEndpoint{},
 		admission: newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour),
 	}
-	srv := httptest.NewServer(listenerMux(t.Context(), e, muxTopology{latency: true}))
+	srv := httptest.NewServer(listenerMuxConfigured(t.Context(), e, muxTopology{latency: true}, static.Handler(), nil))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()

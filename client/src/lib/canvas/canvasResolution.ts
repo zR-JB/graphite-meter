@@ -1,7 +1,6 @@
 const BASE_PIXEL_RATIO_MAX = 2;
 const PINCH_PIXEL_RATIO_MAX = 4;
 const PINCH_PIXEL_RATIO_STEP = 0.5;
-
 export function canvasPixelRatio(
   devicePixelRatio = window.devicePixelRatio || 1,
   viewportScale = window.visualViewport?.scale ?? 1,
@@ -14,7 +13,6 @@ export function canvasPixelRatio(
     PINCH_PIXEL_RATIO_MAX,
   );
 }
-
 export function watchCanvasPixelRatio(onChange: () => void): () => void {
   const viewport = window.visualViewport;
   if (!viewport) return () => {};

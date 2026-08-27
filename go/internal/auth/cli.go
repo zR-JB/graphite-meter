@@ -18,9 +18,6 @@ const (
 	approvalLifetime    = 2 * time.Minute
 )
 
-// cliApproval is one pending browser approval of a native-client grant: a
-// verification code shown on both sides, bound to the approving session, valid
-// for approvalLifetime and never persisted.
 type cliApproval struct {
 	code     string
 	session  *session
@@ -33,9 +30,6 @@ func validChallenge(v string) bool {
 	return err == nil && len(b) == 32 && len(v) <= 64
 }
 
-// challengeOrEmpty admits a well-formed CLI challenge at the request boundary
-// and collapses anything else to the no-challenge case, so only conforming
-// values ride through templates, redirects, and the OIDC transaction store.
 func challengeOrEmpty(v string) string {
 	if validChallenge(v) {
 		return v
@@ -95,8 +89,8 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	p, ok := PrincipalFromContext(r.Context())
-	if !ok || p.session == nil || p.Bearer || r.Header.Get("Origin") != s.public.String() || !constantEqual(p.session.csrf, r.FormValue("csrf")) {
+	p, ok := s.sessionFormPrincipal(r)
+	if !ok || p.Bearer {
 		forbidden(w)
 		return
 	}
@@ -136,8 +130,6 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grant := randomToken(32)
-	// The approval is consumed only once a grant exists: an RNG failure must not
-	// cost the operator a second browser confirmation.
 	delete(s.approvals, challenge)
 	h := sha256.Sum256([]byte(grant))
 	sess := approval.session

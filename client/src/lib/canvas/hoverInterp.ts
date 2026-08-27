@@ -1,27 +1,4 @@
-// Time-indexed sample lookup for the chart's hover readout. Both helpers
-// assume the array is sorted ascending by `t`, which the runner guarantees.
-
-/** Linearly interpolated value at time `t`, or null when `t` falls outside the
- *  sample range: callers render nothing rather than extrapolating. */
-export function interpolateAt<T extends { t: number }>(
-  samples: T[],
-  t: number,
-  pick: (s: T) => number,
-): number | null {
-  if (!samples.length) return null;
-  const insertion = lowerBoundAt(samples, t);
-  const left = insertion - 1;
-  const right = insertion;
-  if (right < samples.length && samples[right].t === t)
-    return pick(samples[right]);
-  if (left < 0 || right >= samples.length) return null;
-  const a = samples[left];
-  const b = samples[right];
-  // `|| 1` keeps the weight finite if two samples share a timestamp.
-  const weight = (t - a.t) / (b.t - a.t || 1);
-  return pick(a) * (1 - weight) + pick(b) * weight;
-}
-
+// Hover lookup assumes the runner supplies samples sorted by ascending `t`.
 /** Linear lookup that refuses to cross an intentional series break. */
 export function interpolateConnectedAt<T extends { t: number }>(
   samples: T[],
@@ -39,7 +16,6 @@ export function interpolateConnectedAt<T extends { t: number }>(
   const weight = (t - left.t) / (right.t - left.t || 1);
   return pick(left) * (1 - weight) + pick(right) * weight;
 }
-
 /** Index of the first sample at or after `t` (binary search). */
 export function lowerBoundAt<T extends { t: number }>(
   samples: T[],
@@ -54,9 +30,7 @@ export function lowerBoundAt<T extends { t: number }>(
   }
   return lo;
 }
-
-/** A hover is meaningful when either transport rates or an observed latency
- *  bucket exist. Loss-only buckets have no RTT value but retain ping evidence. */
+/** A hover needs a rate or latency bucket; loss-only buckets retain ping evidence without an RTT. */
 export function hasHoverMeasurements(info: {
   bytesPerSec: number | null;
   downBytesPerSec: number | null;

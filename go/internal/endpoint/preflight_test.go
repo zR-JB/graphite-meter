@@ -14,8 +14,7 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
 	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
-	// Four fetch-stream targets plus the stream and datagram WebTransport views
-	// of the HTTP/3 one.
+	// The preflight includes fetch, WebTransport stream, and WebTransport datagram targets.
 	if len(pf.Capabilities.ThroughputTargets) != 6 || len(pf.Capabilities.LatencyTargets) != 3 {
 		t.Fatalf("capabilities = %+v, want 6 throughput and 3 latency targets", pf.Capabilities)
 	}
@@ -36,8 +35,7 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	}
 }
 
-// A CONNECT authenticates with a minted token, so auth does not hide the
-// WebTransport targets.
+// A CONNECT authenticates with a minted token, so auth does not hide the WebTransport targets.
 func TestPreflightAdvertisesWebTransportUnderAuth(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H3 = ":7249"

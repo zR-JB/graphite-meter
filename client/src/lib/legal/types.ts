@@ -8,7 +8,7 @@ export interface LegalComponent {
   modified: boolean;
 }
 
-export interface LegalProject {
+interface LegalProject {
   schemaVersion: number;
   name: string;
   copyrightHolder: string;

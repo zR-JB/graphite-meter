@@ -26,9 +26,6 @@ func proxiedService(t *testing.T) *Service {
 	return s
 }
 
-// clearRequest is a cleartext request as it arrives on the H1 listener: no
-// TLS, so everything the boundary believes about it comes from the peer
-// address and the forwarded headers.
 func clearRequest(method, path, remote string) *http.Request {
 	r := httptest.NewRequest(method, "http://meter.example"+path, nil)
 	r.Host = "meter.example"
@@ -36,10 +33,6 @@ func clearRequest(method, path, remote string) *http.Request {
 	return r
 }
 
-// REVERSE_PROXY.md is built on exactly this boundary: forwarded headers are
-// evidence only from a peer inside GM_TRUSTED_PROXIES. An outsider that
-// reaches the cleartext listener directly and claims the proxy's headers must
-// gain nothing.
 func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 	s := proxiedService(t)
 	for _, tc := range []struct {
@@ -110,8 +103,7 @@ func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 				t.Fatalf("requestTrust = %+v, want {Secure:%t Canonical:%t}", got, tc.wantSecure, tc.wantCanonical)
 			}
 
-			// The same request through the whole boundary: an untrusted claim
-			// must not reach the login surface either.
+			// The same request through the whole boundary: an untrusted claim must not reach the login surface either.
 			mux := http.NewServeMux()
 			s.Mount(mux)
 			rr := httptest.NewRecorder()
@@ -124,9 +116,6 @@ func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 	}
 }
 
-// A trusted proxy that forwards a client address must be the only source of
-// one. Ambiguous or absent evidence has to fail closed, or an attempt budget
-// can be charged to an address the attacker chose.
 func TestAuthClientAddressFailsClosedBehindATrustedProxy(t *testing.T) {
 	s := proxiedService(t)
 	for _, tc := range []struct {
@@ -165,9 +154,6 @@ func TestAuthClientAddressFailsClosedBehindATrustedProxy(t *testing.T) {
 	}
 }
 
-// The cookie names carry the __Host- prefix, which browsers enforce only when
-// the attributes match. A regression in the setters would otherwise pass every
-// other test in this package while silently dropping the prefix's guarantees.
 func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("local-operator", "Local operator", "local")
@@ -186,11 +172,8 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	}{
 		sessionCookie: {httpOnly: true, sameSite: http.SameSiteStrictMode},
 		loginCookie:   {httpOnly: true, sameSite: http.SameSiteStrictMode},
-		// The SPA mirrors this one into X-CSRF-Token, so it is readable by
-		// design; it carries no authority on its own.
-		csrfCookie: {httpOnly: false, sameSite: http.SameSiteStrictMode},
-		// The OIDC callback is a cross-site navigation, so this one must be
-		// Lax or the transaction cannot be matched on return.
+		// The SPA mirrors this one into X-CSRF-Token, so it is readable by design; it carries no authority on its own.
+		csrfCookie:        {httpOnly: false, sameSite: http.SameSiteStrictMode},
 		transactionCookie: {httpOnly: true, sameSite: http.SameSiteLaxMode},
 	}
 	seen := map[string]bool{}
@@ -237,10 +220,6 @@ func TestClearedCookiesKeepTheHostPrefixAttributes(t *testing.T) {
 	}
 }
 
-// The whole password path, end to end through Mount and Enforce: the login
-// page issues a form token, the form exchanges it for a session, and the
-// session then reaches an authenticated route. Any one of those breaking is
-// invisible to the negative tests, which all assert 403.
 func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	s := testService(t)
 	mux := http.NewServeMux()
@@ -308,8 +287,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 		t.Fatalf("session info = %s", rr.Body.String())
 	}
 
-	// And a measurement POST with the mirrored CSRF header must pass, while
-	// the same request without it must not.
+	// And a measurement POST with the mirrored CSRF header must pass, while the same request without it must not.
 	for _, tc := range []struct {
 		name   string
 		header string

@@ -20,8 +20,7 @@ const (
 	ProtoWebTransport Proto = "webtransport"
 )
 
-// ErrUnsupported is returned by Session methods that the concrete transport
-// does not provide (e.g. OpenDownloadSink on a message-bus session).
+// ErrUnsupported is returned by Session methods that the concrete transport does not provide (e.g.
 var ErrUnsupported = errors.New("transport: operation not supported on this session")
 
 // MessageBus is the message-delimited channel used by api/wire.md.
@@ -45,7 +44,6 @@ type Session interface {
 	// OpenUploadSource yields the byte source to drain and count.
 	OpenUploadSource() (io.Reader, error)
 
-	// Bus yields the control-message channel, when the session has one: the
-	// WebSocket bus, and a WebTransport session's datagram bus.
+	// Bus yields the control-message channel, when the session has one: the WebSocket bus.
 	Bus() (MessageBus, bool)
 }

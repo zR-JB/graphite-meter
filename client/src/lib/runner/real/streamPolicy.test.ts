@@ -19,8 +19,6 @@ const stage = (
 const download = [stage("download", ["down"])];
 const bidirectional = [stage("bidirectional", ["down", "up"])];
 
-// One multiplexed download stream already runs at the connection rate. Upload
-// splits by protocol: h2 wants lanes, h3 measures higher on one.
 test("automatic multiplexed streams follow the per-protocol table", () => {
   const base = {
     policy: auto,
@@ -43,26 +41,25 @@ test("automatic H1 reserves control connections and splits bidirectional capacit
     transfer: ["down", "up"],
     needsPing: true,
   } as const;
-  expect(transferStreamCount({ ...base, dir: "down" })).toBe(2);
-  expect(transferStreamCount({ ...base, dir: "up" })).toBe(2);
-  expect(
-    transferStreamCount({
-      protocol: "http1",
-      policy: auto,
-      transfer: ["down"],
-      dir: "down",
-      needsPing: true,
-    }),
-  ).toBe(BROWSER_CONNECTION_BUDGET - 1);
-  expect(
-    transferStreamCount({
-      protocol: "http1",
-      policy: { mode: "auto", count: 1 },
-      transfer: ["down"],
-      dir: "down",
-      needsPing: false,
-    }),
-  ).toBe(1);
+  for (const [input, expected] of [
+    [{ ...base, dir: "down" }, 2],
+    [{ ...base, dir: "up" }, 2],
+    [
+      { ...base, transfer: ["down"], dir: "down" },
+      BROWSER_CONNECTION_BUDGET - 1,
+    ],
+    [
+      {
+        ...base,
+        policy: { mode: "auto", count: 1 },
+        transfer: ["down"],
+        dir: "down",
+        needsPing: false,
+      },
+      1,
+    ],
+  ] as const)
+    expect(transferStreamCount(input)).toBe(expected);
 });
 
 test("unobserved negotiated HTTP uses the H1-safe connection budget", () => {
@@ -99,27 +96,25 @@ test("forced policy is exact per direction and ignores protocol and browser budg
 });
 
 test("stream diagnostics distinguish automatic and forced policy", () => {
-  expect(describeTransferStreams(auto, bidirectional, "http2")).toBe(
-    "Automatic · 1 download / 4 upload",
-  );
-  expect(describeTransferStreams(auto, bidirectional, "http3")).toBe(
-    "Automatic · 1 download / 1 upload",
-  );
-  expect(
-    describeTransferStreams(
+  for (const [policy, stages, protocol, expected] of [
+    [auto, bidirectional, "http2", "Automatic · 1 download / 4 upload"],
+    [auto, bidirectional, "http3", "Automatic · 1 download / 1 upload"],
+    [
       { mode: "forced", count: 9 },
       bidirectional,
       "http3",
-    ),
-  ).toBe("Forced · 9 per direction");
-  expect(
-    describeTransferStreams({ mode: "auto", count: 3 }, download, "http1"),
-  ).toBe("Automatic · up to 3 per direction");
+      "Forced · 9 per direction",
+    ],
+    [
+      { mode: "auto", count: 3 },
+      download,
+      "http1",
+      "Automatic · up to 3 per direction",
+    ],
+  ] as const)
+    expect(describeTransferStreams(policy, stages, protocol)).toBe(expected);
 });
 
-// The endpoint panel and the copyable report show this string while the lanes
-// come from transferStreamCount, so a stage that splits the H1 budget must not
-// be described with the count a download-only stage would get.
 test("the automatic H1 description reports the count its stages resolve", () => {
   const policy = { mode: "auto", count: 4 } as const;
   for (const protocol of ["http1", "negotiated"] as const) {
@@ -134,7 +129,6 @@ test("the automatic H1 description reports the count its stages resolve", () => 
     expect(describeTransferStreams(policy, bidirectional, protocol)).toBe(
       `Automatic · up to ${count} per direction`,
     );
-    // A download-only run keeps the wider count: only the split is narrower.
     expect(describeTransferStreams(policy, download, protocol)).toBe(
       "Automatic · up to 4 per direction",
     );
@@ -142,15 +136,15 @@ test("the automatic H1 description reports the count its stages resolve", () => 
 });
 
 test("stream counts are clamped to a usable range", () => {
-  expect(normalizeStreamCount(Number.NaN)).toBe(1);
-  expect(normalizeStreamCount(0)).toBe(1);
-  expect(normalizeStreamCount(2.4)).toBe(2);
-  expect(normalizeStreamCount(999)).toBe(128);
+  for (const [value, expected] of [
+    [Number.NaN, 1],
+    [0, 1],
+    [2.4, 2],
+    [999, 128],
+  ] as const)
+    expect(normalizeStreamCount(value)).toBe(expected);
 });
 
-// A WebTransport session delivers at most WT_MAX_LANES per direction, so a
-// higher forced count must be reported as what the transport carries. Claiming
-// a lane count the session never opened misdescribes the measurement.
 test("a forced count above the session cap is clamped and said so", () => {
   const policy = { mode: "forced" as const, count: 128 };
   expect(
@@ -169,7 +163,6 @@ test("a forced count above the session cap is clamped and said so", () => {
     `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
   );
 
-  // Below the cap it is exact, and fetch lanes are untouched.
   const modest = { mode: "forced" as const, count: 4 };
   expect(
     describeTransferStreams(modest, download, "http3", "webtransport"),
@@ -178,7 +171,6 @@ test("a forced count above the session cap is clamped and said so", () => {
     describeTransferStreams(policy, download, "http3", "fetch-stream"),
   ).toBe("Forced · 128 per direction");
 
-  // A datagram run opens no lanes at all, so no lane count describes it.
   expect(
     describeTransferStreams(policy, download, "http3", "webtransport-datagram"),
   ).toBe("Datagram flood · no lanes");

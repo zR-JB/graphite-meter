@@ -1,39 +1,23 @@
 import { test, expect, mock } from "bun:test";
 import type { LaneEvents } from "./byteLane";
+import { TestWorker } from "./test-helpers.test";
 
 // One fake worker per spawn, capturing what the session owner attaches to it.
-const spawned: FakeWorker[] = [];
+const spawned: TestWorker[] = [];
 
-class FakeWorker {
-  onmessage: ((e: MessageEvent) => void) | null = null;
-  onerror: ((e: ErrorEvent) => void) | null = null;
-  posted: unknown[] = [];
-  terminated = false;
-  postMessage(msg: unknown): void {
-    this.posted.push(msg);
-  }
-  terminate(): void {
-    this.terminated = true;
-  }
-  /** Deliver a worker message the way the real worker would. */
-  emit(data: unknown): void {
-    this.onmessage?.({ data } as MessageEvent);
-  }
-}
-
-function spawn(): FakeWorker {
-  const worker = new FakeWorker();
+function spawn(): TestWorker {
+  const worker = new TestWorker();
   spawned.push(worker);
   return worker;
 }
 
-// byteLane.ts imports the fetch-lane factories and stopWorker too, so the mock
-// has to cover them: a partial factory fails to link when this file runs alone.
+// byteLane.ts imports every worker factory, so the mock has to cover them.
 mock.module("./workerPool", () => ({
   wtTransferWorker: spawn,
   downloadWorker: spawn,
   uploadWorker: spawn,
-  stopWorker: (worker: FakeWorker) => worker.terminate(),
+  uploadProgressWorker: () => new Worker("", { type: "module" }),
+  pingWorker: () => new Worker("", { type: "module" }),
 }));
 
 const { fetchLane, sessionLane } = await import("./byteLane");
@@ -59,9 +43,7 @@ function session(onProgress: LaneEvents["onProgress"] = () => {}) {
   return { lane, errors, worker: spawned[0] };
 }
 
-// A dying session reaches every lane reader, the accept loop and the close
-// promise. Reporting each would cost the caller a retry per reader and can
-// exhaust the early-fail budget on a link that is merely flapping.
+// A dying session reaches every lane reader, the accept loop and the close promise.
 test("one session death reports one error however many readers see it", () => {
   const { errors, worker } = session();
   worker.emit({ type: "established" });
@@ -84,14 +66,13 @@ test("a restart reports the next generation's first failure", () => {
   expect(errors).toEqual(["first death", "second death"]);
 });
 
-// discard() terminates the worker, but messages already queued would still be
-// dispatched to a handler that no longer speaks for this lane.
+// discard() terminates the worker, but messages already queued would still be dispatched to a handler that no longer.
 test("a discarded worker stops reaching its owner", () => {
   const { lane, errors, worker } = session();
   lane.discard();
   worker.emit({ type: "error", recoverable: true, detail: "late error" });
 
-  expect(worker.terminated).toBe(true);
+  expect(worker.terminated).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
 
@@ -117,10 +98,8 @@ test("an upload worker's local completion metadata stays on the alive seam", () 
       url: "https://meter/upload",
       dir: "up",
       lanes: 1,
-      index: 0,
       credentials: "same-origin",
       chunk: false,
-      debug: false,
     },
     {
       onProgress: () => {

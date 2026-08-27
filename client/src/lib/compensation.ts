@@ -1,9 +1,7 @@
-// Converts application goodput into forward-direction physical link occupancy.
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type {
   CompensationTransport,
-  ConnectionProfile,
-  OverheadCompensationConfig,
+  TransportKind,
   ThroughputResult,
 } from "./runner/contract";
 import {
@@ -12,17 +10,11 @@ import {
   normalizeHttpProtocol,
 } from "./runner/protocol";
 
-export type CompensationConfidence = "high" | "medium" | "low";
-export type CompensationPhase = "download" | "upload";
+type CompensationConfidence = "high" | "medium" | "low";
+type CompensationPhase = "download" | "upload";
 
-export interface CompensationFactor {
-  key:
-    | "application-framing"
-    | "tls-records"
-    | "ethernet"
-    | "ip"
-    | "transport"
-    | "encapsulation";
+interface CompensationFactor {
+  key: "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
   label: string;
   contributionPct: number;
 }
@@ -36,18 +28,18 @@ export interface CompensationEstimate {
   confidence: CompensationConfidence;
   factors: CompensationFactor[];
   /** Provenance for the exact assumptions that produced this estimate. */
-  profile: ConnectionProfile;
+  path: "ethernet" | "loopback";
   transport: CompensationTransport;
-  transportSource: "detected" | "override" | "fallback";
+  transportSource: "detected" | "fallback";
+  framing:
+    "http3-data" | "webtransport-stream" | "webtransport-datagram" | null;
   mtuBytes: number;
   ipVersion: 4 | 6;
-  ipVersionSource: "detected" | "override" | "fallback";
+  ipVersionSource: "detected" | "fallback";
   available: boolean;
 }
 
-/** Combine independently modeled directions without re-estimating their
- * canonical goodput. This keeps bidirectional wire occupancy equal to the sum
- * of its lanes even when their measured rates differ. */
+/* This keeps bidirectional wire occupancy equal to the sum of its lanes even when their measured rates differ. */
 export function combineCompensationEstimates(
   estimates: readonly CompensationEstimate[],
 ): CompensationEstimate {
@@ -91,9 +83,10 @@ export function combineCompensationEstimates(
       measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
     confidence,
     factors: combineFactors(active, measuredBytesPerSec),
-    profile: representative?.profile ?? "lan",
+    path: representative?.path ?? "ethernet",
     transport: representative?.transport ?? "http1-clear",
     transportSource: representative?.transportSource ?? "fallback",
+    framing: representative?.framing ?? null,
     mtuBytes: representative?.mtuBytes ?? 1_500,
     ipVersion: representative?.ipVersion ?? 4,
     ipVersionSource: representative?.ipVersionSource ?? "fallback",
@@ -123,7 +116,6 @@ function combineFactors(
 
 const WIRE = {
   ethernetBytes: 38, // 14 MAC + 4 FCS + 8 preamble/SFD + 12 inter-frame gap
-  vlanBytes: 4,
   ipv4Bytes: 20,
   ipv6Bytes: 40,
   tcpBytes: 20,
@@ -145,99 +137,75 @@ export function transportFromProtocol(
   return compensationTransportFromProtocol(protocol, secure);
 }
 
-export function applyConnectionProfile(
-  profile: ConnectionProfile,
-): Pick<OverheadCompensationConfig, "profile" | "params"> {
-  const tunnel = profile === "tunnel";
-  const loopback = profile === "loopback";
-  return {
-    profile,
-    params: {
-      mtuBytes: loopback ? 65_536 : tunnel ? 1_420 : 1_500,
-      ipVersion: 4,
-      vlanTagged: false,
-      tcpOptionsMinBytes: 0,
-      tcpOptionsMaxBytes: 12,
-      encapsulationBytes: tunnel ? 60 : 0,
-      quicConnIdMinBytes: 0,
-      quicConnIdMaxBytes: 20,
-    },
-  };
-}
-
 export function estimateResultCompensation(
   result: ThroughputResult | null,
   phase: CompensationPhase,
-  config: OverheadCompensationConfig,
   detectedProtocol?: string,
   detectedSecure?: boolean,
   detectedIPVersion?: 4 | 6,
+  detectedClientIP?: string,
+  selectedTransport?: TransportKind,
 ): CompensationEstimate {
   return estimateLiveCompensation(
     result?.meanBytesPerSec ?? 0,
-    config,
     phase,
     detectedProtocol,
     detectedSecure,
     detectedIPVersion,
+    detectedClientIP,
+    selectedTransport,
   );
 }
 
 export function estimateLiveCompensation(
   bytesPerSec: number,
-  config: OverheadCompensationConfig,
   _phase: CompensationPhase,
   detectedProtocol?: string,
   detectedSecure?: boolean,
   detectedIPVersion?: 4 | 6,
+  detectedClientIP?: string,
+  selectedTransport?: TransportKind,
 ): CompensationEstimate {
   const secure =
     detectedSecure ??
     (typeof location !== "undefined" && location.protocol === "https:");
-  const transport =
-    config.transport === "auto"
-      ? transportFromProtocol(detectedProtocol, secure)
-      : config.transport;
-  const raw = config.params;
-  const params = {
-    ...raw,
-    ipVersion:
-      raw.ipVersion === "auto" ? (detectedIPVersion ?? 4) : raw.ipVersion,
-    mtuBytes: clamp(raw.mtuBytes, 576, 65_536),
-    tcpOptionsMinBytes: clamp(raw.tcpOptionsMinBytes, 0, 40),
-    tcpOptionsMaxBytes: clamp(raw.tcpOptionsMaxBytes, 0, 40),
-    encapsulationBytes: clamp(raw.encapsulationBytes, 0, 256),
-    quicConnIdMinBytes: clamp(raw.quicConnIdMinBytes, 0, 20),
-    quicConnIdMaxBytes: clamp(raw.quicConnIdMaxBytes, 0, 20),
-  };
-  const ip = params.ipVersion === 6 ? WIRE.ipv6Bytes : WIRE.ipv4Bytes;
-  const ethernet =
-    WIRE.ethernetBytes + (params.vlanTagged ? WIRE.vlanBytes : 0);
-  const tunnel = Math.max(0, params.encapsulationBytes);
+  const webTransport =
+    selectedTransport === "webtransport" ||
+    selectedTransport === "webtransport-datagram";
+  const transport = webTransport
+    ? "http3-quic"
+    : transportFromProtocol(detectedProtocol, secure);
+  // Conservative defaults: 1500 B Ethernet, preflight IP family, standard options, no unknown VLAN/tunnel.
+  const mtuBytes = 1_500;
+  const ipVersion = detectedIPVersion ?? 4;
+  const ip = ipVersion === 6 ? WIRE.ipv6Bytes : WIRE.ipv4Bytes;
+  const ethernet = WIRE.ethernetBytes;
   const factors: CompensationFactor[] = [];
-  const ipVersionSource =
-    raw.ipVersion !== "auto"
-      ? "override"
-      : detectedIPVersion
-        ? "detected"
-        : "fallback";
+  const ipVersionSource = detectedIPVersion ? "detected" : "fallback";
   const detectedTransport = normalizeHttpProtocol(detectedProtocol);
   const transportSource =
-    config.transport !== "auto"
-      ? "override"
-      : detectedTransport && detectedTransport !== "negotiated"
-        ? "detected"
-        : "fallback";
-  if (bytesPerSec <= 0 || config.profile === "loopback")
+    webTransport || (detectedTransport && detectedTransport !== "negotiated")
+      ? "detected"
+      : "fallback";
+  const framing = webTransport
+    ? selectedTransport === "webtransport-datagram"
+      ? "webtransport-datagram"
+      : "webtransport-stream"
+    : transport === "http3-quic"
+      ? "http3-data"
+      : null;
+  const loopback = isLoopbackAddress(detectedClientIP);
+  if (bytesPerSec <= 0 || loopback)
     return identity(
       bytesPerSec,
       transport,
-      config.profile,
-      params.mtuBytes,
-      params.ipVersion,
+      loopback ? "loopback" : "ethernet",
+      mtuBytes,
+      ipVersion,
       ipVersionSource,
       transportSource,
-      config.profile !== "loopback",
+      framing,
+      !loopback,
     );
 
   let application = 1;
@@ -247,10 +215,27 @@ export function estimateLiveCompensation(
       factor("application-framing", "HTTP/2 DATA frames", application * ratio),
     );
     application *= 1 + ratio;
-  } else if (transport === "http3-quic") {
+  } else if (transport === "http3-quic" && framing === "http3-data") {
     const ratio = WIRE.http3Frame / WIRE.http3Payload;
     factors.push(
       factor("application-framing", "HTTP/3 DATA frames", application * ratio),
+    );
+    application *= 1 + ratio;
+  }
+
+  if (
+    framing === "webtransport-stream" ||
+    framing === "webtransport-datagram"
+  ) {
+    const ratio = WIRE.http3Frame / WIRE.http3Payload;
+    factors.push(
+      factor(
+        "application-framing",
+        framing === "webtransport-stream"
+          ? "WebTransport QUIC stream frames"
+          : "WebTransport QUIC datagrams",
+        application * ratio,
+      ),
     );
     application *= 1 + ratio;
   }
@@ -269,43 +254,28 @@ export function estimateLiveCompensation(
   if (transport === "http3-quic") {
     const link = (cid: number, pn: number): number => {
       const quic = 1 + cid + pn + WIRE.quicAeadTag;
-      const payload = Math.max(1, params.mtuBytes - ip - WIRE.udpBytes - quic);
-      return (params.mtuBytes + tunnel + ethernet) / payload;
+      const payload = Math.max(1, mtuBytes - ip - WIRE.udpBytes - quic);
+      return (mtuBytes + ethernet) / payload;
     };
-    const minCid = Math.min(
-      params.quicConnIdMinBytes,
-      params.quicConnIdMaxBytes,
-    );
-    const maxCid = Math.max(
-      params.quicConnIdMinBytes,
-      params.quicConnIdMaxBytes,
-    );
+    const minCid = 0;
+    const maxCid = 20;
     low = link(minCid, 1);
-    const centralCid = clamp(8, minCid, maxCid);
+    const centralCid = 8;
     const centralQuic =
       1 + centralCid + WIRE.quicPacketNumberTypical + WIRE.quicAeadTag;
-    centralPayload = Math.max(
-      1,
-      params.mtuBytes - ip - WIRE.udpBytes - centralQuic,
-    );
+    centralPayload = Math.max(1, mtuBytes - ip - WIRE.udpBytes - centralQuic);
     centralTransport = WIRE.udpBytes + centralQuic;
     central = link(centralCid, WIRE.quicPacketNumberTypical);
     high = link(maxCid, 4);
   } else {
     const link = (options: number): number => {
-      const payload = Math.max(
-        1,
-        params.mtuBytes - ip - WIRE.tcpBytes - options,
-      );
-      return (params.mtuBytes + tunnel + ethernet) / payload;
+      const payload = Math.max(1, mtuBytes - ip - WIRE.tcpBytes - options);
+      return (mtuBytes + ethernet) / payload;
     };
-    const minOptions = Math.max(
-      0,
-      Math.min(params.tcpOptionsMinBytes, params.tcpOptionsMaxBytes),
-    );
-    const maxOptions = Math.max(minOptions, params.tcpOptionsMaxBytes);
+    const minOptions = 0;
+    const maxOptions = 12;
     centralTransport = WIRE.tcpBytes + maxOptions;
-    centralPayload = Math.max(1, params.mtuBytes - ip - centralTransport);
+    centralPayload = Math.max(1, mtuBytes - ip - centralTransport);
     low = link(minOptions);
     central = link(maxOptions);
     high = central;
@@ -317,13 +287,12 @@ export function estimateLiveCompensation(
     bytes: number,
   ) => factors.push(factor(key, label, application * (bytes / centralPayload)));
   layer("ethernet", "Ethernet", ethernet);
-  layer("ip", params.ipVersion === 6 ? "IPv6" : "IPv4", ip);
+  layer("ip", ipVersion === 6 ? "IPv6" : "IPv4", ip);
   layer(
     "transport",
     transport === "http3-quic" ? "UDP + QUIC" : "TCP + options",
     centralTransport,
   );
-  if (tunnel > 0) layer("encapsulation", "Tunnel encapsulation", tunnel);
 
   low *= application;
   central *= application;
@@ -336,11 +305,12 @@ export function estimateLiveCompensation(
     totalMultiplier: central,
     confidence: low === high ? "high" : "medium",
     factors,
-    profile: config.profile,
+    path: "ethernet",
     transport,
     transportSource,
-    mtuBytes: params.mtuBytes,
-    ipVersion: params.ipVersion,
+    framing,
+    mtuBytes,
+    ipVersion,
     ipVersionSource,
     available: true,
   };
@@ -357,11 +327,12 @@ function factor(
 function identity(
   bytesPerSec: number,
   transport: CompensationTransport,
-  profile: ConnectionProfile,
+  path: "ethernet" | "loopback",
   mtuBytes: number,
   ipVersion: 4 | 6,
   ipVersionSource: CompensationEstimate["ipVersionSource"],
   transportSource: CompensationEstimate["transportSource"],
+  framing: CompensationEstimate["framing"],
   available = true,
 ): CompensationEstimate {
   return {
@@ -372,9 +343,10 @@ function identity(
     totalMultiplier: 1,
     confidence: "high",
     factors: [],
-    profile,
+    path,
     transport,
     transportSource,
+    framing,
     mtuBytes,
     ipVersion,
     ipVersionSource,
@@ -385,20 +357,12 @@ function identity(
 export function compensationTooltip(estimate: CompensationEstimate): string {
   if (!estimate.available)
     return "Wire n/a\nLoopback · No physical-link estimate applies";
-  const profile =
-    estimate.profile === "lan"
-      ? "Local Ethernet"
-      : estimate.profile === "tunnel"
-        ? "Tunnel"
-        : estimate.profile;
+  const path = estimate.path === "ethernet" ? "Local Ethernet" : "Loopback";
   const sourceLabel = (source: CompensationEstimate["transportSource"]) =>
-    source === "override"
-      ? "configured"
-      : source === "fallback"
-        ? "assumed"
-        : "detected";
+    source === "fallback" ? "assumed" : "detected";
   return [
-    `${profile} · ${compensationTransportLabel(estimate.transport)} · ${sourceLabel(estimate.transportSource)}`,
+    `${path} · ${compensationTransportLabel(estimate.transport)} · assumed`,
+    `Transport ${sourceLabel(estimate.transportSource)}`,
     `IPv${estimate.ipVersion} ${sourceLabel(estimate.ipVersionSource)} · MTU ${estimate.mtuBytes} B`,
     ...estimate.factors
       .filter((factor) => factor.contributionPct > 0)
@@ -409,6 +373,11 @@ export function compensationTooltip(estimate: CompensationEstimate): string {
   ].join("\n");
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
+function isLoopbackAddress(address?: string): boolean {
+  if (!address) return false;
+  const value = address
+    .replace(/^\[|\]$/g, "")
+    .split("%")[0]
+    .toLowerCase();
+  return value === "::1" || /^127(?:\.\d{1,3}){3}$/.test(value);
 }

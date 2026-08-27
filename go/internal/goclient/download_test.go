@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-// newCountingDownloadServer serves the "bytes" query param's worth of data on
-// the first request, then hangs on every later request until the client's
-// context is cancelled. A test sees exactly one completed transfer, then
-// forces cancellation.
 func newCountingDownloadServer(size int) *httptest.Server {
 	var reqs atomic.Int32
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,8 +59,6 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	}
 }
 
-// newBytesEchoDownloadServer serves exactly the requested "bytes" query param
-// on every request, matching the real /download endpoint's contract.
 func newBytesEchoDownloadServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
@@ -115,9 +109,6 @@ func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
 	}
 }
 
-// TestMeasureDownloadContextCancelStopsEarly checks that cancelling
-// mid-measurement returns well under the configured elapsed window, and that
-// the lane goroutines are joined (no hang) rather than left running.
 func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	srv := newBytesEchoDownloadServer()
 	defer srv.Close()
@@ -134,8 +125,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	done := make(chan struct{})
 	begin := time.Now()
 	go func() {
-		// The window is long (5s), so a hang trips the test's own deadline well
-		// under the stage's configured window.
+		// The window is long (5s), so a hang trips the test's own deadline well under the stage's configured window.
 		_, _ = r.measureDownload(ctx, "download", 5*time.Second, start)
 		close(done)
 	}()
@@ -150,10 +140,6 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	}
 }
 
-// newAbruptCloseDownloadServer sends headers plus partial bytes over chunked
-// encoding, then aborts the handler mid-response: the connection drops
-// without a clean terminating chunk, unlike a normal completed transfer or a
-// context-cancelled one. requests counts how often a lane reopened.
 func newAbruptCloseDownloadServer(partial int, requests *atomic.Int64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests != nil {
@@ -167,12 +153,6 @@ func newAbruptCloseDownloadServer(partial int, requests *atomic.Int64) *httptest
 	}))
 }
 
-// TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace checks that a server
-// closing the connection mid-response (rather than a clean EOF) makes
-// downloadLane reopen and keep counting delivered bytes, so a stage outliving
-// the server's request bound continues — but at a retry cadence, since a
-// hard-down server would otherwise be hot-retried by every lane at once. The
-// lane must still return promptly once the stage ends.
 func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	const partial = 64 * 1024
 	const window = 1500 * time.Millisecond
@@ -201,18 +181,12 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	if got := total.Load(); got < 2*partial {
 		t.Errorf("total = %d, want at least %d (the lane must reopen after the drop)", got, 2*partial)
 	}
-	// One request per backoff interval, plus the first: anything near the
-	// thousands an unpaced loop would issue is the regression.
 	if paced := int64(window/wtRedialBackoff) + 2; requests.Load() > paced {
 		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced",
 			requests.Load(), time.Since(start), paced)
 	}
 }
 
-// newSilentDownloadServer answers 200 with its headers flushed and then writes
-// nothing until the request ends: the lane neither fails nor carries a byte,
-// the shape a WebTransport session that accepts a stream and never writes on it
-// takes over fetch.
 func newSilentDownloadServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/octet-stream")
@@ -222,9 +196,6 @@ func newSilentDownloadServer() *httptest.Server {
 	}))
 }
 
-// TestMeasureDownloadRefusesAWindowThatCarriedNoBytes covers the stage half of
-// the empty-window defect: a lane that never errors leaves the window's error
-// nil, and without the guard the stage publishes 0 B/s as a measurement.
 func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	srv := newSilentDownloadServer()
 	defer srv.Close()
@@ -246,9 +217,6 @@ func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	}
 }
 
-// TestMeasureDownloadCancelledEmptyWindowIsACleanStop pins the other side of
-// the guard: the caller cancelling the stage is a stop, not a measurement that
-// failed, and an empty window under cancellation must stay silent.
 func TestMeasureDownloadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	srv := newSilentDownloadServer()
 	defer srv.Close()

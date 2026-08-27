@@ -1,29 +1,25 @@
-/**
- * Canonical live-throughput presentation from exact byte/time observations.
- * The estimator owns presentation and regime detection only. Final reduction
- * and stability consume the same observations independently.
- */
+/* Canonical live-throughput presentation from exact byte/time observations. */
 
 export const PRESENTATION_MIN_WINDOW_MS = 800;
-export const PRESENTATION_WINDOW_FRACTION = 0.85;
-export const REGIME_FAST_WINDOW_MS = 750;
-export const REGIME_BASELINE_READY_MS = 2_000;
-export const REGIME_DOWNSHIFT_ENTER_RATIO = 0.75;
-export const REGIME_DOWNSHIFT_CANCEL_RATIO = 0.85;
+const PRESENTATION_WINDOW_FRACTION = 0.85;
+const REGIME_FAST_WINDOW_MS = 750;
+const REGIME_BASELINE_READY_MS = 2_000;
+const REGIME_DOWNSHIFT_ENTER_RATIO = 0.75;
+const REGIME_DOWNSHIFT_CANCEL_RATIO = 0.85;
 export const REGIME_DOWNSHIFT_CONFIRM_MS = 750;
-export const REGIME_UPSHIFT_ENTER_RATIO = 1.2;
-export const REGIME_UPSHIFT_CANCEL_RATIO = 1.1;
+const REGIME_UPSHIFT_ENTER_RATIO = 1.2;
+const REGIME_UPSHIFT_CANCEL_RATIO = 1.1;
 export const REGIME_UPSHIFT_CONFIRM_MS = 500;
 export const STALL_PRESENTATION_MS = 800;
 
-export interface RateObservation {
+interface RateObservation {
   bytes: number;
   durationMs: number;
 }
 
-export type RegimeCandidateKind = "down" | "up";
+type RegimeCandidateKind = "down" | "up";
 
-export interface RateEstimate {
+interface RateEstimate {
   presentedBytesPerSec: number;
   fastBytesPerSec: number;
   evidenceMs: number;

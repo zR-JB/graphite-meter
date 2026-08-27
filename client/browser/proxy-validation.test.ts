@@ -1,5 +1,4 @@
-import { expect, test } from "./webview";
-
+import { expect, openApp, test } from "./webview";
 test("proxy discovery does not restart its own validation", async ({
   page,
 }) => {
@@ -20,7 +19,6 @@ test("proxy discovery does not restart its own validation", async ({
       }),
     );
   });
-
   let preflights = 0;
   let probes = 0;
   await page.route("**/preflight?*", async (route) => {
@@ -48,8 +46,7 @@ test("proxy discovery does not restart its own validation", async ({
       },
     });
   });
-
-  await page.goto("/?engine=real");
+  await openApp(page, "real");
   await expect.poll(() => probes).toBe(1);
   await page.waitForTimeout(500);
   expect(preflights).toBe(1);

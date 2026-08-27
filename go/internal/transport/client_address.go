@@ -25,10 +25,7 @@ type ClientAddress struct {
 	Source  ClientIPSource
 }
 
-// ResolveClientAddress attributes a request to a client IP. Proxy headers count
-// only when the socket peer is itself trusted, so a client-supplied prefix
-// cannot spoof its own address. A malformed or obfuscated chain falls back to
-// the socket peer rather than guessing.
+// ResolveClientAddress attributes a request to a client IP.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress {
 	peer, ok := parseAddress(r.RemoteAddr)
 	if !ok {
@@ -46,9 +43,7 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress
 	return clientAddress(firstUntrustedHop(peer, chain, trusted), ClientIPForwarded)
 }
 
-// firstUntrustedHop walks the chain right to left starting at peer and returns
-// the first entry outside trusted. An all-trusted chain yields its leftmost
-// entry.
+// firstUntrustedHop walks the chain right to left starting at peer and returns the first entry outside trusted.
 func firstUntrustedHop(peer netip.Addr, chain []netip.Addr, trusted []netip.Prefix) netip.Addr {
 	current := peer
 	for i := len(chain) - 1; i >= 0 && contains(trusted, current); i-- {
@@ -65,12 +60,7 @@ func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
 	return ClientAddress{Addr: addr, Version: version, Source: source}
 }
 
-// forwardedChain returns the proxy chain in client-to-proxy order. One header
-// wins outright: a malformed one is never rescued by another that a nearer hop
-// may write. X-Real-IP is consulted first because it is the header the trusted
-// proxy is configured to overwrite from its own peer (docs/REVERSE_PROXY.md);
-// ranking a client-settable Forwarded above it would let a failed strip
-// upstream override the one value the proxy actually vouches for.
+// forwardedChain returns the proxy chain in client-to-proxy order.
 func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 	if raw := h.Get("X-Real-IP"); raw != "" {
 		addr, ok := parseAddress(raw)
@@ -120,10 +110,7 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 	return nil, false
 }
 
-// parseAddress accepts the address forms proxies emit: bare, RFC 7239 quoted,
-// bracketed IPv6, and host:port. RFC 7239 obfuscated identifiers ("_secret")
-// and "unknown" name no host, so they are rejected and the caller falls back
-// rather than treating them as a client.
+// parseAddress accepts the address forms proxies emit: bare, RFC 7239 quoted, bracketed IPv6, and host:port.
 func parseAddress(raw string) (netip.Addr, bool) {
 	raw = strings.TrimSpace(raw)
 	if len(raw) >= 2 && raw[0] == '"' {
@@ -154,9 +141,7 @@ func contains(prefixes []netip.Prefix, addr netip.Addr) bool {
 	return slices.ContainsFunc(prefixes, func(prefix netip.Prefix) bool { return prefix.Contains(addr) })
 }
 
-// splitQuoted splits on separator outside RFC 7239 quoted-strings, reporting
-// false for an unterminated quote or trailing escape so a truncated header is
-// rejected instead of parsed as something shorter.
+// splitQuoted splits on separator outside RFC 7239 quoted-strings.
 func splitQuoted(raw string, separator byte) ([]string, bool) {
 	var parts []string
 	start, quoted, escaped := 0, false, false

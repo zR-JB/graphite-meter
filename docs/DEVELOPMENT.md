@@ -29,9 +29,8 @@ just prod         # same local workflow with the production client profile
 Open `http://localhost:7246`. `just dev` and `just prod` are the two "do everything" entrypoints
 and are deliberately symmetric: each builds the Svelte client in its own profile, stages it into
 `go/internal/static/dist` (picked up by `//go:embed`), and `go run`s the server — only the profile
-differs. `just dev` includes the dummy runner (`?engine=dummy`) and the Developer settings tab by
-default; `just prod` builds a real-only, dev-tooling-stripped, version-stamped run instead (see
-below).
+differs. `just dev` includes the dummy runner (`?engine=dummy`) by default; `just prod` builds a
+real-only, version-stamped run instead (see below).
 
 Both commands are local source runs. Use `just dev` while developing UI behavior, `just prod` to
 exercise the real production browser bundle, and `just ci` to run the local validation used by CI.
@@ -145,7 +144,6 @@ transaction has started, prefer GitHub's **Re-run failed jobs** so the run retai
 its original immutable source; if a trust recheck refuses the rerun, start a
 fresh request.
 
-
 ## Exceptional maintenance
 
 ```sh
@@ -184,20 +182,19 @@ four unloaded requests or two loaded requests before pausing. Pending-window sat
 than the cadence may reduce them, but recovery must not produce early sends or catch-up bursts.
 Pre-test probes and the idle connectivity keepalive are intentionally outside both controls.
 
-`just prod` and `just client-build-prod` accept the `GM_CLIENT_*` knobs inline to produce a
-configurable build instead of the real-only default, e.g.:
+`just prod` and `just client-build-prod` accept the `GM_CLIENT_ALLOW_DUMMY` knob inline to produce
+a configurable build instead of the real-only default, e.g.:
 
 ```sh
-just prod allow_dummy=1 dev_tools=1
+just prod allow_dummy=1
 ```
 
 ## Build-time feature flags
 
-The dummy engine and the entire Developer tab are compiled out of production builds, not just
-hidden — `client/vite.config.ts` reads `GM_CLIENT_*` env vars and injects them via Vite's `define`
-as raw literal tokens (not strings), which is what lets Rollup constant-fold the relevant
-`if (...)` branches and tree-shake the dead code entirely rather than leaving it reachable behind
-a runtime flag.
+The dummy engine is compiled out of production builds, not just hidden — `client/vite.config.ts`
+reads the `GM_CLIENT_ALLOW_DUMMY` env var and injects it via Vite's `define` as a raw literal token
+(not a string), which lets Rollup constant-fold the relevant `if (...)` branch and tree-shake the
+dead code entirely rather than leaving it reachable behind a runtime flag.
 
 Vite remains the browser bundler because Svelte's supported non-SvelteKit toolchain is
 `@sveltejs/vite-plugin-svelte`, which handles `.svelte` files and Svelte-aware diagnostics. Bun is
@@ -227,15 +224,13 @@ Staticcheck is pinned to `2026.2.1`, which supports Go 1.27 export data and lang
 Repository tool installation runs from inside `go/` so analyzers are compiled with the same exact
 Go toolchain as the application.
 
-| Variable                | Values           | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does                                                                                                                                                                                                                                                              |
-| ----------------------- | ---------------- | ------------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GM_CLIENT_ENGINE`      | `real` / `dummy` | `real`                                | `real`                                  | Default runner when more than one is compiled in.                                                                                                                                                                                                                         |
-| `GM_CLIENT_ALLOW_DUMMY` | `0` / `1`        | `1`                                   | `0`                                     | Compile in the dummy runner and the Developer-tab anomaly-injection cards.                                                                                                                                                                                                |
-| `GM_CLIENT_DEV_TOOLS`   | `0` / `1`        | `1`                                   | `0`                                     | Compile in the whole Developer settings tab (including debug logging).                                                                                                                                                                                                    |
-| `GM_CLIENT_BUILD_PROFILE` | string         | `dev`                                 | `prod`                                  | Build profile shown in the footer and diagnostics. |
-| `GM_CLIENT_REVISION`      | string         | `source`                              | git short hash                          | Source revision shown for untagged builds and written to `dist/version.json`. |
-| `VERSION`                 | string         | unset                                 | unset unless releasing                  | Validated release version. Untagged builds keep `version.json.version` null. |
-| `GM_CLIENT_VALIDATE`    | `0` / `1`        | image build arg only                  | image build arg only                    | `1` runs `bun run build` (type check + bundle) inside the Dockerfile; `0` runs `build:bundle` alone. CI smoke and release image builds pass `0` because the same commit already passed the client check/test job.                                                         |
+| Variable                  | Values    | `just dev`/`client-build-dev` default | `just prod`/`client-build-prod` default | What it does                                                                                                                                                                                                      |
+| ------------------------- | --------- | ------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GM_CLIENT_ALLOW_DUMMY`   | `0` / `1` | `1`                                   | `0`                                     | Compile in the dummy runner for browser fixtures and UI development.                                                                                                                                              |
+| `GM_CLIENT_BUILD_PROFILE` | string    | `dev`                                 | `prod`                                  | Build profile shown in the footer and diagnostics.                                                                                                                                                                |
+| `GM_CLIENT_REVISION`      | string    | `source`                              | git short hash                          | Source revision shown for untagged builds and written to `dist/version.json`.                                                                                                                                     |
+| `VERSION`                 | string    | unset                                 | unset unless releasing                  | Validated release version. Untagged builds keep `version.json.version` null.                                                                                                                                      |
+| `GM_CLIENT_VALIDATE`      | `0` / `1` | image build arg only                  | image build arg only                    | `1` runs `bun run build` (type check + bundle) inside the Dockerfile; `0` runs `build:bundle` alone. CI smoke and release image builds pass `0` because the same commit already passed the client check/test job. |
 
 At runtime, when the dummy runner is compiled in, `?engine=dummy` on the URL (or a previously
 persisted choice in `localStorage`) switches to it; this check itself compiles away in a
@@ -332,8 +327,8 @@ podman run -d --name gm --replace -p 7246:7246 graphite-meter:latest
 `container/Dockerfile` stages:
 
 1. **`client`** (`oven/bun:1.4.0`) — installs client deps, builds the Svelte app. Build args
-   `GM_CLIENT_ENGINE`/`GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_DEV_TOOLS`/`GM_CLIENT_BUILD_PROFILE` default
-   to production values (`real`/`0`/`0`/`prod`) and are promoted to env vars so `bun run build`'s
+   `GM_CLIENT_ALLOW_DUMMY`/`GM_CLIENT_BUILD_PROFILE` default to production
+   values (`0`/`prod`) and are promoted to env vars so `bun run build`'s
    `process.env` (read by `vite.config.ts`) sees them.
 2. **`server`** (`golang:1.27.0`) — `go mod download`, copies `go/` and `api/` (the schema
    conformance test references `api/` by relative path), embeds the client build from stage 1,
@@ -346,7 +341,7 @@ To bake a configurable (non-prod-default) image, pass `--build-arg` for any clie
 
 ```sh
 podman build -f container/Dockerfile -t graphite-meter:dev \
-  --build-arg GM_CLIENT_ALLOW_DUMMY=1 --build-arg GM_CLIENT_DEV_TOOLS=1 .
+  --build-arg GM_CLIENT_ALLOW_DUMMY=1 .
 ```
 
 The direct Dockerfile and source Compose defaults stamp `0.1.0` into both the server and

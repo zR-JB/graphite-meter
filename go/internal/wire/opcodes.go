@@ -1,9 +1,6 @@
 package wire
 
-// Opcode keyword table, the Go half of the cross-language pin. The TS half is
-// client/src/lib/runner/real/wire.ts. These literal strings are normative and
-// MUST match every language's implementation. Frames are message-delimited
-// ASCII: one logical message per WS frame or WT datagram, sliced on ','.
+// Opcode keyword table, the Go half of the cross-language pin.
 const (
 	OpHI    = "HI"    // C→S  optional hello on bus open: HI,<proto>
 	OpREADY = "READY" // S→C  bus is up; client may begin the ping chain

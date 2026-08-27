@@ -15,8 +15,7 @@ export interface Cell {
 
 type Origins = Record<string, string>;
 
-/** Lane counts, the sweep that bounds how many are useful. Upload stops at 8:
- *  beyond that the per-lane pool falls below a useful POST size. */
+/** Lane sweep bounds useful counts; upload stops at 8 because smaller POST pools add no value. */
 const DOWN_LANES = [1, 2, 4, 6, 8, 12, 16];
 const UP_LANES = [1, 2, 3, 4, 6, 8];
 
@@ -52,8 +51,7 @@ export function buildCells(origins: Origins): Cell[] {
   };
 
   for (const [name, origin] of Object.entries(origins)) {
-    // h1 clear carries the full sweep; the others only need enough points to
-    // place their curve against it.
+    // h1 clear carries the full sweep; other origins need only enough points for comparison.
     const full = name === "h1-clear";
     laneSweep(
       origin,
@@ -65,8 +63,7 @@ export function buildCells(origins: Origins): Cell[] {
     );
     // WebTransport rides h3 only, and a datagram flood opens no lanes at all.
     if (name !== "h3") continue;
-    // These ride the h3 origin, and an upload cell mints its id over it before
-    // the session is dialed, so they need the same upgrade the fetch cells do.
+    // These use the h3 origin and mint upload IDs there, so they need the fetch cells' upgrade.
     laneSweep(origin, "wt", "webtransport", [1, 2, 4, 8, 16], [1, 2, 4], true);
     laneSweep(origin, "wtdg", "webtransport-datagram", [1], [1], true);
   }
@@ -112,13 +109,11 @@ export interface Summary {
   /** Spread within one run, over its rate buckets. High means it oscillated. */
   cv: number;
   maxTickMs: number;
-  /** Runs whose page stalled. Those measure the engine giving up, not the link,
-   *  so they are counted rather than averaged in silently. */
+  /** Runs whose page stalled; they measure the engine giving up, not the link. */
   stalled: number;
 }
 
-/** A tick this late means the page could not keep up, so the run is not a
- *  measurement of the path. */
+/** A late tick means the page could not keep up, so the run does not measure the path. */
 export const STALL_TICK_MS = 600;
 
 export function summarise(runs: CellResult[]): Summary {

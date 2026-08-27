@@ -4,25 +4,12 @@ import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 
-// --- Build-time client configuration (see src/lib/buildenv.ts) -------------
-// Driven by GM_CLIENT_* env vars (the justfile `prod` recipe / `docker build
-// --build-arg` set them). Read from process.env here and injected via Vite
-// `define` as RAW literal tokens: that literal substitution is what lets
-// Rollup constant-fold + tree-shake the dummy runner and Developer tooling out
-// of a production bundle. (`.env` / import.meta.env yields the *string*
-// "false", which is truthy and defeats the tree-shaking.)
-//
-// Dev defaults (no env set): real engine, dummy + dev tools included, "dev"
-// label.
+// Build-time GM_CLIENT_* literals enable tree-shaking for optional browser fixtures.
 const env = process.env;
-
-const defaultEngine: "real" | "dummy" =
-  env.GM_CLIENT_ENGINE === "dummy" ? "dummy" : "real";
 
 // Boolean knobs default ON; only an explicit "0"/"false" turns them off.
 const off = (v: string | undefined) => v === "0" || v === "false";
 const allowDummy = !off(env.GM_CLIENT_ALLOW_DUMMY);
-const devTools = !off(env.GM_CLIENT_DEV_TOOLS);
 
 const buildProfile = env.GM_CLIENT_BUILD_PROFILE ?? "dev";
 const releaseVersion = env.VERSION || null;
@@ -56,10 +43,7 @@ const versionFile = (): Plugin => ({
   },
 });
 
-// The legal pipeline must describe code that is actually emitted, not every
-// package installed for tests or build tooling. When requested, Rollup's
-// emitted chunk module maps are written as a sorted, deterministic list. The
-// scan build uses a temporary outDir, so it cannot disturb normal dist output.
+// The legal scan records sorted emitted-chunk modules in a temporary outDir, excluding test/build-only dependencies.
 const legalScan = (): Plugin => ({
   name: "gm-legal-scan",
   generateBundle(_options, bundle) {
@@ -115,11 +99,7 @@ async function minifyInlineBlock(
   return (await result.outputs[0].text()).trim();
 }
 
-// index.html isn't run through Rollup, so Vite never minifies it (comments,
-// indentation, and the inline pre-paint <script>/<style> all ship as-authored).
-// Runs post-injection (order: "post") so it also compacts the asset tags Vite
-// writes in. Inline JS/CSS get real minification via Bun; the rest is
-// comment stripping + collapsing whitespace between tags.
+// Post-injection minification compacts index.html and Vite asset tags while preserving inline block bodies.
 const minifyHtml = (): Plugin => ({
   name: "gm-minify-html",
   apply: "build",
@@ -141,8 +121,7 @@ const minifyHtml = (): Plugin => ({
         },
       );
 
-      // Placeholder swap keeps comment-stripping/whitespace-collapsing below
-      // from reaching into the already-minified script/style bodies.
+      // Placeholders keep comment stripping and whitespace collapsing out of minified script/style bodies.
       const blocks: string[] = [];
       const withPlaceholders = withMinifiedBlocks.replace(
         /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi,
@@ -178,9 +157,7 @@ export default defineConfig({
     outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
   },
   define: {
-    __GM_DEFAULT_ENGINE__: JSON.stringify(defaultEngine), // "real" | "dummy"
-    __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy), // bare true | false
-    __GM_DEV_TOOLS__: JSON.stringify(devTools), // bare true | false
+    __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy),
     __GM_BUILD_PROFILE__: JSON.stringify(buildProfile),
     __GM_RELEASE_VERSION__: JSON.stringify(releaseVersion),
     __GM_SOURCE_REVISION__: JSON.stringify(sourceRevision),

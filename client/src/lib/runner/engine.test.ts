@@ -1,18 +1,14 @@
-// engine.svelte.ts is a rune module: bun runs TypeScript but not the Svelte
-// compiler, so the module is compiled on load here. It is imported with `window`
-// absent so neither its own nor store.svelte.ts's top-level `$effect.root` block
-// runs; bootRunner() needs no reactive root, only the DOM seams it touches.
 import { test, expect } from "bun:test";
 import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
 import { RunnerCore } from "./core";
-import type { InfraInfo } from "./contract";
+import type { InfraInfo, RunnerConfig } from "./contract";
 import {
   PreflightUnavailableError,
   TransportUnavailableError,
 } from "./real/transportError";
 import { CONNECTION_FRESH_MS } from "./connectionModel";
-
+import { TEST_BUILD_TOKENS } from "./test-helpers.test";
 plugin({
   name: "svelte-runes",
   setup(build) {
@@ -29,19 +25,66 @@ plugin({
     });
   },
 });
-
-const BUILD_TOKENS = {
-  __GM_DEFAULT_ENGINE__: "real",
-  __GM_ALLOW_DUMMY__: false,
-  __GM_DEV_TOOLS__: false,
-  __GM_BUILD_PROFILE__: "test",
-  __GM_RELEASE_VERSION__: null,
-  __GM_SOURCE_REVISION__: "test-revision",
-  __GM_BUILD_IDENTITY__: "test test-revision",
-  __GM_CLIENT_VERSION__: "0.0.0-test",
-};
-
-/** Install a global, returning the callback that puts the previous one back. */
+function stubBuildGlobals(): () => void {
+  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
+  return () => {
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  };
+}
+function stubEngineGlobals(): () => void {
+  const restoreBuild = stubBuildGlobals();
+  const restoreWindow = stubGlobal("window", undefined);
+  return () => {
+    restoreWindow();
+    restoreBuild();
+  };
+}
+async function yieldUntil(done: () => boolean, turns = 10): Promise<void> {
+  for (let turn = 0; turn < turns && !done(); turn++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+async function withBootRunner(
+  run: (engine: typeof import("./engine.svelte")) => Promise<void>,
+  setup: () => () => void = () => stubBootEnvironment("visible"),
+): Promise<void> {
+  const restoreGlobals = stubEngineGlobals();
+  const engine = await import("./engine.svelte");
+  const restoreEnvironment = setup();
+  try {
+    await engine.bootRunner();
+    await run(engine);
+  } finally {
+    engine.teardownRunner();
+    restoreEnvironment();
+    restoreGlobals();
+  }
+}
+async function checkPreparation(
+  stages: RunnerConfig["stages"],
+  checked: "throughput" | "latency",
+): Promise<void> {
+  await withBootRunner(async ({ cancelPendingStart, toggleRun }) => {
+    const { store } = await import("../state/store.svelte");
+    const restoreFetch = stubGlobal(
+      "fetch",
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>(() => void init),
+    );
+    const previousConfig = JSON.parse(JSON.stringify(store.config));
+    store.config.stages = stages;
+    store.config.skipLoadedLatencyWhenStageOff = true;
+    store.reset();
+    toggleRun();
+    await yieldUntil(() => store.preparation[checked] === "checking");
+    const other = checked === "throughput" ? "latency" : "throughput";
+    expect(store.preparation[checked]).toBe("checking");
+    expect(store.preparation[other]).toBe("disabled");
+    cancelPendingStart();
+    store.config = previousConfig;
+    restoreFetch();
+  });
+}
 function stubGlobal(key: string, value: unknown): () => void {
   const previous = Object.getOwnPropertyDescriptor(globalThis, key);
   Object.defineProperty(globalThis, key, {
@@ -54,8 +97,6 @@ function stubGlobal(key: string, value: unknown): () => void {
     else Reflect.deleteProperty(globalThis, key);
   };
 }
-
-/** The DOM surface bootRunner touches, plus the visibility it reports. */
 function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
   const restores = [
     stubGlobal("window", {
@@ -67,36 +108,40 @@ function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
       addEventListener() {},
       removeEventListener() {},
     }),
-    // The boot probe is not under test; a refused preflight ends it at once.
     stubGlobal("fetch", () => Promise.reject(new Error("no network"))),
   ];
   return () => {
     for (const restore of restores.reverse()) restore();
   };
 }
-
+function eventTarget() {
+  const listeners = new Map<string, () => void>();
+  return {
+    addEventListener(type: string, listener: () => void) {
+      listeners.set(type, listener);
+    },
+    removeEventListener(type: string) {
+      listeners.delete(type);
+    },
+    emit(type: string) {
+      listeners.get(type)?.();
+    },
+  };
+}
 function stubEventBootEnvironment(
   visibility: "hidden" | "visible",
   online: boolean,
 ) {
-  const windowListeners = new Map<string, () => void>();
-  const documentListeners = new Map<string, () => void>();
+  const windowListeners = eventTarget();
+  const documentListeners = eventTarget();
   const documentState = {
     visibilityState: visibility,
-    addEventListener(type: string, listener: () => void) {
-      documentListeners.set(type, listener);
-    },
-    removeEventListener(type: string) {
-      documentListeners.delete(type);
-    },
+    addEventListener: documentListeners.addEventListener,
+    removeEventListener: documentListeners.removeEventListener,
   };
   const windowValue = {
-    addEventListener(type: string, listener: () => void) {
-      windowListeners.set(type, listener);
-    },
-    removeEventListener(type: string) {
-      windowListeners.delete(type);
-    },
+    addEventListener: windowListeners.addEventListener,
+    removeEventListener: windowListeners.removeEventListener,
   };
   const restores = [
     stubGlobal("window", windowValue),
@@ -105,23 +150,20 @@ function stubEventBootEnvironment(
   ];
   return {
     emit(type: string) {
-      windowListeners.get(type)?.();
+      windowListeners.emit(type);
     },
     setVisibility(next: "hidden" | "visible") {
       documentState.visibilityState = next;
-      documentListeners.get("visibilitychange")?.();
+      documentListeners.emit("visibilitychange");
     },
     restore() {
       for (const restore of restores.reverse()) restore();
     },
   };
 }
-
 async function settleValidation(): Promise<void> {
-  for (let turn = 0; turn < 10; turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  await yieldUntil(() => false);
 }
-
 function stubValidationTimers() {
   const realNow = Date.now;
   const realSetTimeout = globalThis.setTimeout;
@@ -159,11 +201,38 @@ function stubValidationTimers() {
     },
   };
 }
-
 async function settleMicrotasks(): Promise<void> {
   for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
-
+type ValidationContext = {
+  engine: typeof import("./engine.svelte");
+  environment: ReturnType<typeof stubEventBootEnvironment>;
+  probeCalls: () => number;
+};
+async function withValidationRunner(
+  probe: () => Promise<InfraInfo>,
+  run: (context: ValidationContext) => Promise<void>,
+): Promise<void> {
+  const restoreGlobals = stubEngineGlobals();
+  const { RealBackend } = await import("./RealRunner");
+  const originalProbe = RealBackend.prototype.probe;
+  let calls = 0;
+  RealBackend.prototype.probe = async function () {
+    calls++;
+    return probe();
+  };
+  const environment = stubEventBootEnvironment("visible", true);
+  const engine = await import("./engine.svelte");
+  try {
+    await engine.bootRunner();
+    await run({ engine, environment, probeCalls: () => calls });
+  } finally {
+    engine.teardownRunner();
+    RealBackend.prototype.probe = originalProbe;
+    environment.restore();
+    restoreGlobals();
+  }
+}
 const PROBE_EVIDENCE: InfraInfo = {
   clientIp: "203.0.113.7",
   clientIpVersion: 4,
@@ -175,49 +244,16 @@ const PROBE_EVIDENCE: InfraInfo = {
   protocolNegotiated: "h2",
   serverLoad: { active: 3, max: 4 },
 };
-
-// `store.infra` is the last probe's evidence: server identity, occupancy, and
-// the pre-test ping. Four surfaces read it ungated by the connection
-// presentation — the drawer's Server node and Location rows (via the
-// `transportDiscovery?.server ?? infra?.server` fallback), its Server load row,
-// the gauge's latency scale floor, and `store.liveRtt` — so evidence that
-// outlives its session is rendered as if current.
-//
-// It is server-scoped, not run-scoped. `toggleRun()` calls `store.reset()` at the
-// start of every run and re-probes only when the prepared probe went stale, so
-// clearing it per run would blank those rows between runs against the same
-// server. Teardown is where the server binding itself ends, which is why
-// `transportDiscovery` is cleared there and not in `reset()`; the probe
-// evidence is its peer and belongs beside it.
 test("teardown clears the probe evidence; a run reset keeps it", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  // Imported with `window` absent, so neither top-level `$effect.root` block runs.
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  try {
-    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+  await withBootRunner(async ({ teardownRunner }) => {
     const { store } = await import("../state/store.svelte");
-
-    const restore = stubBootEnvironment("visible");
-    await bootRunner();
     store.ingest({ type: "infra", info: PROBE_EVIDENCE });
-
-    // A run starts by resetting the store; the endpoint drawer must survive it.
     store.reset();
     expect(store.infra).toEqual(PROBE_EVIDENCE);
-
     teardownRunner();
-    restore();
     expect(store.infra).toBeNull();
-  } finally {
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+  });
 });
-
 test("store reset clears a transient start error", async () => {
   const { store } = await import("../state/store.svelte");
   store.startError = "This test would outlast the session.";
@@ -230,19 +266,9 @@ test("store reset clears a transient start error", async () => {
   expect(store.startError).toBe("");
   expect(store.preparation.status).toBe("idle");
 });
-
 test("an explicit second start click cancels a pending preflight", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  try {
-    const { bootRunner, hasPendingStart, teardownRunner, toggleRun } =
-      await import("./engine.svelte");
+  await withBootRunner(async ({ hasPendingStart, toggleRun }) => {
     const { store } = await import("../state/store.svelte");
-    const restoreEnvironment = stubBootEnvironment("visible");
-    await bootRunner();
     let pendingSignal: AbortSignal | undefined;
     const restorePendingFetch = stubGlobal(
       "fetch",
@@ -252,12 +278,10 @@ test("an explicit second start click cancels a pending preflight", async () => {
       },
     );
     store.reset();
-
     toggleRun();
     expect(hasPendingStart()).toBe(true);
     expect(store.preparing).toBe(true);
-    for (let turn = 0; turn < 10 && !pendingSignal; turn++)
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldUntil(() => pendingSignal !== undefined);
     toggleRun();
     expect(hasPendingStart()).toBe(false);
     expect(store.preparing).toBe(false);
@@ -266,50 +290,25 @@ test("an explicit second start click cancels a pending preflight", async () => {
     expect(store.startError).toBe("");
     expect(store.preparation.status).toBe("idle");
     restorePendingFetch();
-    teardownRunner();
-    restoreEnvironment();
-  } finally {
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
-});
-
-test("a preflight failure stays idle instead of manufacturing a run error", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
   });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  try {
-    const { bootRunner, teardownRunner, toggleRun } =
-      await import("./engine.svelte");
+});
+test("a preflight failure stays idle instead of manufacturing a run error", async () => {
+  await withBootRunner(async ({ toggleRun }) => {
     const { store } = await import("../state/store.svelte");
-    const restoreEnvironment = stubBootEnvironment("visible");
-    await bootRunner();
     const restoreFetch = stubGlobal("fetch", () =>
       Promise.reject(new Error("offline")),
     );
     store.reset();
     toggleRun();
-    for (let turn = 0; turn < 10 && store.preparing; turn++)
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldUntil(() => !store.preparing);
     expect(store.phase).toBe("idle");
     expect(store.startError).toBe("Connection check failed");
     expect(store.preparation.status).toBe("failed");
     restoreFetch();
-    teardownRunner();
-    restoreEnvironment();
-  } finally {
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+  });
 });
-
 test("connection failures use safe presentation copy", async () => {
   const { connectionFailureMessage } = await import("./engine.svelte");
-
   expect(
     connectionFailureMessage(
       new PreflightUnavailableError("preflight unavailable", {
@@ -347,130 +346,42 @@ test("connection failures use safe presentation copy", async () => {
     ),
   ).toBe("Connection check failed");
 });
-
 test("preparation names a disabled throughput path for latency-only runs", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  try {
-    const { bootRunner, cancelPendingStart, teardownRunner, toggleRun } =
-      await import("./engine.svelte");
-    const { store } = await import("../state/store.svelte");
-    const restoreEnvironment = stubBootEnvironment("visible");
-    await bootRunner();
-    const restoreFetch = stubGlobal(
-      "fetch",
-      (_input: RequestInfo | URL, init?: RequestInit) =>
-        new Promise<Response>(() => {
-          void init;
-        }),
-    );
-    const previousConfig = JSON.parse(JSON.stringify(store.config));
-    store.config.stages = {
+  await checkPreparation(
+    {
       latency: true,
       download: false,
       upload: false,
       bidirectional: false,
-    };
-    store.config.skipLoadedLatencyWhenStageOff = true;
-    store.reset();
-    toggleRun();
-    for (
-      let turn = 0;
-      turn < 10 && store.preparation.latency !== "checking";
-      turn++
-    )
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(store.preparation.throughput).toBe("disabled");
-    expect(store.preparation.latency).toBe("checking");
-    cancelPendingStart();
-    store.config = previousConfig;
-    restoreFetch();
-    teardownRunner();
-    restoreEnvironment();
-  } finally {
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+    },
+    "latency",
+  );
 });
-
 test("transfer-only preparation keeps throughput checking and latency disabled", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  try {
-    const { bootRunner, cancelPendingStart, teardownRunner, toggleRun } =
-      await import("./engine.svelte");
-    const { store } = await import("../state/store.svelte");
-    const restoreEnvironment = stubBootEnvironment("visible");
-    await bootRunner();
-    const restoreFetch = stubGlobal(
-      "fetch",
-      (_input: RequestInfo | URL, init?: RequestInit) =>
-        new Promise<Response>(() => {
-          void init;
-        }),
-    );
-    const previousConfig = JSON.parse(JSON.stringify(store.config));
-    store.config.stages = {
+  await checkPreparation(
+    {
       latency: false,
       download: true,
       upload: false,
       bidirectional: false,
-    };
-    store.config.skipLoadedLatencyWhenStageOff = true;
-    store.reset();
-    toggleRun();
-    for (
-      let turn = 0;
-      turn < 10 && store.preparation.throughput !== "checking";
-      turn++
-    )
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(store.preparation.throughput).toBe("checking");
-    expect(store.preparation.latency).toBe("disabled");
-    cancelPendingStart();
-    store.config = previousConfig;
-    restoreFetch();
-    teardownRunner();
-    restoreEnvironment();
-  } finally {
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+    },
+    "throughput",
+  );
 });
-
-// A tab opened in the background never fires visibilitychange, so without a seed
-// at boot the runner keeps its default "foreground" flag and the keepalive stays
-// up in a hidden tab, where Chromium throttles its worker timers past the
-// server's idle bound and the connectivity pill latches offline.
 test("bootRunner seeds background activity from the live visibilityState", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
+  const restoreGlobals = stubEngineGlobals();
   const realSetBackground = RunnerCore.prototype.setBackgroundActivity;
   const seeded: boolean[] = [];
   RunnerCore.prototype.setBackgroundActivity = function (enabled: boolean) {
     seeded.push(enabled);
   };
-  // Imported with `window` absent, so neither top-level `$effect.root` block runs.
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
   try {
     const { bootRunner, teardownRunner } = await import("./engine.svelte");
-
     let restore = stubBootEnvironment("hidden");
     await bootRunner();
     teardownRunner();
     restore();
     expect(seeded).toEqual([false]);
-
     restore = stubBootEnvironment("visible");
     await bootRunner();
     teardownRunner();
@@ -478,219 +389,142 @@ test("bootRunner seeds background activity from the live visibilityState", async
     expect(seeded).toEqual([false, true]);
   } finally {
     RunnerCore.prototype.setBackgroundActivity = realSetBackground;
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
+    restoreGlobals();
   }
 });
-
 test("connectivity validation coalesces offline edges and recovers online", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  const { RealBackend } = await import("./RealRunner");
-  const originalProbe = RealBackend.prototype.probe;
-  let probeCalls = 0;
   let offline = false;
   let releaseOffline: (() => void) | undefined;
-  RealBackend.prototype.probe = async function () {
-    probeCalls++;
-    if (offline) {
-      await new Promise<void>((resolve) => {
-        releaseOffline = () => resolve();
-      });
-      throw new Error("server unavailable");
-    }
-    return PROBE_EVIDENCE;
-  };
-  const environment = stubEventBootEnvironment("visible", true);
-  let teardownRunner: (() => void) | undefined;
-  try {
-    const {
-      bootRunner,
-      getRunner,
-      teardownRunner: teardown,
-    } = await import("./engine.svelte");
-    teardownRunner = teardown;
-    const { store } = await import("../state/store.svelte");
-    await bootRunner();
-    expect(probeCalls).toBe(1);
-    expect(store.connectionValidation.throughput.state).toBe("verified");
-    expect(store.connectionValidation.latency.state).toBe("verified");
-
-    offline = true;
-    const runner = getRunner() as RunnerCore;
-    runner.emit({ type: "connectivity", state: "offline" });
-    for (let turn = 0; turn < 10 && probeCalls < 2; turn++)
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    runner.emit({ type: "connectivity", state: "offline" });
-    releaseOffline?.();
-    await settleValidation();
-    expect(probeCalls).toBe(2);
-    expect(store.connectionValidation.throughput.state).toBe("failed");
-    expect(store.connectionValidation.latency.state).toBe("failed");
-
-    offline = false;
-    runner.emit({ type: "connectivity", state: "connected" });
-    await settleValidation();
-    expect(probeCalls).toBe(3);
-    expect(store.connectionValidation.throughput.state).toBe("verified");
-    expect(store.connectionValidation.latency.state).toBe("verified");
-  } finally {
-    teardownRunner?.();
-    RealBackend.prototype.probe = originalProbe;
-    environment.restore();
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+  await withValidationRunner(
+    async () => {
+      if (offline) {
+        await new Promise<void>((resolve) => {
+          releaseOffline = () => resolve();
+        });
+        throw new Error("server unavailable");
+      }
+      return PROBE_EVIDENCE;
+    },
+    async ({ engine, probeCalls }) => {
+      const { getRunner } = engine;
+      const { store } = await import("../state/store.svelte");
+      expect(probeCalls()).toBe(1);
+      expect(store.connectionValidation.throughput.state).toBe("verified");
+      expect(store.connectionValidation.latency.state).toBe("verified");
+      offline = true;
+      const runner = getRunner() as RunnerCore;
+      runner.emit({ type: "connectivity", state: "offline" });
+      await yieldUntil(() => probeCalls() >= 2);
+      runner.emit({ type: "connectivity", state: "offline" });
+      releaseOffline?.();
+      await settleValidation();
+      expect(probeCalls()).toBe(2);
+      expect(store.connectionValidation.throughput.state).toBe("failed");
+      expect(store.connectionValidation.latency.state).toBe("failed");
+      offline = false;
+      runner.emit({ type: "connectivity", state: "connected" });
+      await settleValidation();
+      expect(probeCalls()).toBe(3);
+      expect(store.connectionValidation.throughput.state).toBe("verified");
+      expect(store.connectionValidation.latency.state).toBe("verified");
+    },
+  );
 });
-
 test("window connectivity listeners share failure and recovery scheduling", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  const { RealBackend } = await import("./RealRunner");
-  const originalProbe = RealBackend.prototype.probe;
-  let probeCalls = 0;
   let offline = false;
-  RealBackend.prototype.probe = async function () {
-    probeCalls++;
-    if (offline) throw new Error("server unavailable");
-    return PROBE_EVIDENCE;
-  };
-  const environment = stubEventBootEnvironment("visible", true);
-  let teardownRunner: (() => void) | undefined;
-  try {
-    const { bootRunner, teardownRunner: teardown } =
-      await import("./engine.svelte");
-    teardownRunner = teardown;
-    const { store } = await import("../state/store.svelte");
-    await bootRunner();
-    offline = true;
-    environment.emit("offline");
-    environment.emit("offline");
-    await settleValidation();
-    expect(probeCalls).toBe(2);
-    expect(store.connectionValidation.throughput.state).toBe("failed");
-
-    offline = false;
-    environment.emit("online");
-    await settleValidation();
-    expect(probeCalls).toBe(3);
-    expect(store.connectionValidation.throughput.state).toBe("verified");
-  } finally {
-    teardownRunner?.();
-    RealBackend.prototype.probe = originalProbe;
-    environment.restore();
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
+  await withValidationRunner(
+    async () => {
+      if (offline) throw new Error("server unavailable");
+      return PROBE_EVIDENCE;
+    },
+    async ({ engine, environment, probeCalls }) => {
+      const { store } = await import("../state/store.svelte");
+      offline = true;
+      environment.emit("offline");
+      environment.emit("offline");
+      await settleValidation();
+      expect(probeCalls()).toBe(2);
+      expect(store.connectionValidation.throughput.state).toBe("failed");
+      offline = false;
+      environment.emit("online");
+      await settleValidation();
+      expect(probeCalls()).toBe(3);
+      expect(store.connectionValidation.throughput.state).toBe("verified");
+      void engine;
+    },
+  );
 });
-
 test("validation scheduler refreshes, backs off, defers hidden work, and tears down", async () => {
-  Object.assign(globalThis as typeof globalThis & Record<string, unknown>, {
-    ...BUILD_TOKENS,
-  });
-  const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
-  const { RealBackend } = await import("./RealRunner");
-  const originalProbe = RealBackend.prototype.probe;
-  let probeCalls = 0;
   let offline = false;
-  RealBackend.prototype.probe = async function () {
-    probeCalls++;
-    if (offline) throw new Error("server unavailable");
-    return PROBE_EVIDENCE;
-  };
-  const environment = stubEventBootEnvironment("visible", true);
   const timers = stubValidationTimers();
-  let teardownRunner: (() => void) | undefined;
   try {
-    const {
-      bootRunner,
-      getRunner,
-      teardownRunner: teardown,
-    } = await import("./engine.svelte");
-    teardownRunner = teardown;
-    await bootRunner();
-    expect(probeCalls).toBe(1);
-    expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
-
-    timers.advance(CONNECTION_FRESH_MS);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(2);
-
-    offline = true;
-    (getRunner() as RunnerCore).emit({
-      type: "connectivity",
-      state: "offline",
-    });
-    timers.advance(0);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(3);
-    expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
-
-    timers.advance(CONNECTION_FRESH_MS - 1);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(3);
-    offline = false;
-    timers.advance(1);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(4);
-
-    timers.advance(CONNECTION_FRESH_MS - 1);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(4);
-    environment.setVisibility("hidden");
-    expect(timers.size()).toBe(0);
-    timers.advance(2);
-    environment.setVisibility("visible");
-    expect(probeCalls).toBe(4);
-    timers.advance(0);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(5);
-
-    const runner = getRunner() as RunnerCore;
-    runner.emit({
-      type: "phase",
-      transition: { from: "idle", to: "download", stage: "download", t: 0 },
-    });
-    timers.advance(CONNECTION_FRESH_MS * 2);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(5);
-    runner.emit({
-      type: "phase",
-      transition: {
-        from: "download",
-        to: "complete",
-        stage: null,
-        t: CONNECTION_FRESH_MS * 2,
+    await withValidationRunner(
+      async () => {
+        if (offline) throw new Error("server unavailable");
+        return PROBE_EVIDENCE;
       },
-    });
-    timers.advance(0);
-    await settleMicrotasks();
-    expect(probeCalls).toBe(6);
-
-    teardownRunner?.();
-    teardownRunner = undefined;
-    expect(timers.size()).toBe(0);
+      async ({ engine, environment, probeCalls }) => {
+        const { getRunner } = engine;
+        expect(probeCalls()).toBe(1);
+        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+        timers.advance(CONNECTION_FRESH_MS);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(2);
+        offline = true;
+        (getRunner() as RunnerCore).emit({
+          type: "connectivity",
+          state: "offline",
+        });
+        timers.advance(0);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(3);
+        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+        timers.advance(CONNECTION_FRESH_MS - 1);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(3);
+        offline = false;
+        timers.advance(1);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(4);
+        timers.advance(CONNECTION_FRESH_MS - 1);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(4);
+        environment.setVisibility("hidden");
+        expect(timers.size()).toBe(0);
+        timers.advance(2);
+        environment.setVisibility("visible");
+        expect(probeCalls()).toBe(4);
+        timers.advance(0);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(5);
+        const runner = getRunner() as RunnerCore;
+        runner.emit({
+          type: "phase",
+          transition: { from: "idle", to: "download", stage: "download", t: 0 },
+        });
+        timers.advance(CONNECTION_FRESH_MS * 2);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(5);
+        runner.emit({
+          type: "phase",
+          transition: {
+            from: "download",
+            to: "complete",
+            stage: null,
+            t: CONNECTION_FRESH_MS * 2,
+          },
+        });
+        timers.advance(0);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(6);
+        engine.teardownRunner();
+        expect(timers.size()).toBe(0);
+      },
+    );
   } finally {
-    teardownRunner?.();
-    RealBackend.prototype.probe = originalProbe;
     timers.restore();
-    environment.restore();
-    restoreWindow();
-    for (const key of Object.keys(BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
   }
 });
-
 test("a rerun stamps a fresh start epoch from every terminal phase", async () => {
   const { store } = await import("../state/store.svelte");
   for (const from of ["complete", "aborted", "error"] as const) {

@@ -1,5 +1,16 @@
-import { expect, test } from "./webview";
-
+import {
+  configureSettings,
+  expect,
+  expectNear,
+  expectVisible,
+  openApp,
+  openSettings,
+  resultCards,
+  startTest,
+  test,
+  waitForCompletion,
+  type Page,
+} from "./webview";
 function persistedConfig(latency: boolean) {
   return JSON.stringify({
     config: {
@@ -12,15 +23,14 @@ function persistedConfig(latency: boolean) {
     },
   });
 }
-
-async function gaugeBox(page: import("./webview").Page, latency: boolean) {
+async function gaugeBox(page: Page, latency: boolean) {
   await page.evaluate(
     (value) => localStorage.setItem("graphite-meter:v1", value),
     persistedConfig(latency),
   );
   await page.reload();
   const stage = page.locator(".gauge-panel .stage");
-  await expect(stage).toBeVisible();
+  await expectVisible(stage);
   return stage.evaluate((element) => {
     const box = element.getBoundingClientRect();
     const canvas = element.querySelector("canvas");
@@ -32,7 +42,6 @@ async function gaugeBox(page: import("./webview").Page, latency: boolean) {
     };
   });
 }
-
 for (const viewport of [
   { width: 390, height: 640 },
   { width: 390, height: 844 },
@@ -40,40 +49,19 @@ for (const viewport of [
   test(`mobile gauge geometry is invariant with latency at ${viewport.height}px`, async ({
     page,
   }) => {
-    await page.setViewportSize(viewport);
-    await page.goto("/?engine=dummy");
+    await openApp(page, "dummy", viewport);
     const withLatency = await gaugeBox(page, true);
     const withoutLatency = await gaugeBox(page, false);
-
-    expect(
-      Math.abs(withLatency.width - withoutLatency.width),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(withLatency.height - withoutLatency.height),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(withLatency.canvasWidth - withoutLatency.canvasWidth),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(withLatency.canvasHeight - withoutLatency.canvasHeight),
-    ).toBeLessThanOrEqual(1);
+    expectNear(withLatency.width, withoutLatency.width);
+    expectNear(withLatency.height, withoutLatency.height);
+    expectNear(withLatency.canvasWidth, withoutLatency.canvasWidth);
+    expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
   });
 }
-
 test("gauge tick labels use shared optical anchors", async ({ page }) => {
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "1600"],
-    ["Download ms", "0"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await openApp(page);
+  await configureSettings(page, "latency-only");
+  await startTest(page);
   await expect(page.locator("#console")).toHaveAttribute(
     "data-phase",
     "latency",
@@ -92,12 +80,10 @@ test("gauge tick labels use shared optical anchors", async ({ page }) => {
     { x: "end", y: "start" },
   ]);
 });
-
 test("a short landscape phone keeps anchored chrome and scrollable flyouts", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 844, height: 390 });
-  await page.goto("/?engine=dummy");
+  await openApp(page, "dummy", { width: 844, height: 390 });
   const scrollability = await page.evaluate(() => ({
     viewportWidth: window.innerWidth,
     contentWidth: document.documentElement.scrollWidth,
@@ -124,9 +110,7 @@ test("a short landscape phone keeps anchored chrome and scrollable flyouts", asy
   expect(scrollability.contentWidth).toBeLessThanOrEqual(
     scrollability.viewportWidth + 1,
   );
-
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const panel = page.locator('[aria-label="Settings"]');
+  const panel = await openSettings(page);
   const panelSurface = await panel.evaluate((element) => {
     const box = element.getBoundingClientRect();
     const body = element.querySelector(".panel-body");
@@ -147,14 +131,11 @@ test("a short landscape phone keeps anchored chrome and scrollable flyouts", asy
   expect(panelSurface.sheetHandle).toBe("none");
   expect(panelSurface.bodyOverflow).toBe("auto");
 });
-
 test("a portrait tablet keeps settings in a contained side flyout", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 768, height: 1024 });
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-
+  await openApp(page, "dummy", { width: 768, height: 1024 });
+  await openSettings(page);
   const panelSurface = await page
     .locator('[aria-label="Settings"]')
     .evaluate((element) => {
@@ -174,16 +155,12 @@ test("a portrait tablet keeps settings in a contained side flyout", async ({
   expect(panelSurface.bottom).toBeLessThanOrEqual(panelSurface.statusTop! + 1);
   expect(panelSurface.sheetHandle).toBe("none");
 });
-
 test("an open phone panel changes from sheet to side flyout on rotation", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const panel = page.locator('[aria-label="Settings"]');
-  await expect(panel.locator(".sheet-handle")).toBeVisible();
-
+  await openApp(page, "dummy", { width: 390, height: 844 });
+  const panel = await openSettings(page);
+  await expectVisible(panel.locator(".sheet-handle"));
   await page.setViewportSize({ width: 844, height: 390 });
   await expect(panel.locator(".sheet-handle")).toBeHidden();
   const surface = () =>
@@ -211,24 +188,11 @@ test("an open phone panel changes from sheet to side flyout on rotation", async 
   expect(rotated.bottom).toBeLessThanOrEqual(rotated.statusTop! + 1);
   expect(rotated.bodyOverflow).toBe("auto");
 });
-
-async function configureThreeStageRun(page: import("./webview").Page) {
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "900"],
-    ["Download ms", "900"],
-    // Keep the third compact row visible long enough to observe it in both
-    // engines before the final cards replace the strip.
-    ["Upload ms", "3200"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
+async function configureThreeStageRun(page: Page) {
+  const settings = await configureSettings(page, "three-stage");
   await settings.getByRole("button", { name: "Close Settings" }).click();
 }
-
-async function expectStageFits(page: import("./webview").Page) {
+async function expectStageFits(page: Page) {
   const stage = await page
     .locator("#console > section.stage")
     .evaluate((element) => ({
@@ -237,24 +201,18 @@ async function expectStageFits(page: import("./webview").Page) {
     }));
   expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
 }
-
 test("a windowed desktop fits compact and final cards without token scrolling", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 1024, height: 768 });
-  await page.goto("/?engine=dummy");
+  await openApp(page, "dummy", { width: 1024, height: 768 });
   await configureThreeStageRun(page);
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-
+  await startTest(page);
   await expect(page.locator(".result-chip")).toHaveCount(3, {
     timeout: 10_000,
   });
   await expectStageFits(page);
-
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator(".result-card")).toHaveCount(3);
+  await waitForCompletion(page, 10_000);
+  await expect(resultCards(page)).toHaveCount(3);
   await expect(page.locator(".metric-wrap .gauge-value")).toHaveCount(0);
   const terminalResults = page.locator(".metric-wrap .terminal-result");
   await expect(terminalResults).toHaveCount(2);
@@ -289,11 +247,8 @@ test("a windowed desktop fits compact and final cards without token scrolling", 
   ).toBeLessThanOrEqual(1);
   await expectStageFits(page);
 });
-
 for (const viewport of [
   { width: 1024, height: 640 },
-  // A common windowed-desktop height: browser chrome must not create a
-  // token stage scrollbar that disappears only in fullscreen.
   { width: 1024, height: 700 },
   { width: 1024, height: 768 },
   { width: 1200, height: 800 },
@@ -303,17 +258,12 @@ for (const viewport of [
   test(`desktop gauge fits the stage at ${viewport.width}x${viewport.height}`, async ({
     page,
   }) => {
-    await page.setViewportSize(viewport);
-    await page.goto("/?engine=dummy");
+    await openApp(page, "dummy", viewport);
     const withLatency = await gaugeBox(page, true);
     const withoutLatency = await gaugeBox(page, false);
     expect(withoutLatency.width).toBeGreaterThan(withLatency.width * 1.5);
-    expect(
-      Math.abs(withLatency.height - withoutLatency.height),
-    ).toBeLessThanOrEqual(1);
-    expect(
-      Math.abs(withLatency.canvasHeight - withoutLatency.canvasHeight),
-    ).toBeLessThanOrEqual(1);
+    expectNear(withLatency.height, withoutLatency.height);
+    expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
     const stage = await page
       .locator("#console > section.stage")
       .evaluate((element) => ({

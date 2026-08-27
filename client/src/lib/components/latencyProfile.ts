@@ -1,6 +1,4 @@
-// Pure geometry, formatting, and hover-selection logic behind
-// LatencyProfile.svelte. Positions are relative to the chart's value domain,
-// passed in so this module never touches the rune store.
+// Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtMs } from "../format";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -23,22 +21,19 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
   current: "Latest",
 };
 
-// The chart's value range; min is the left edge, span its width in the metric's
-// own units (niceDomain's {min, span}).
-export interface Domain {
+// The chart's value range; min is the left edge, span its width in the metric's own units (niceDomain's {min, span}).
+interface Domain {
   min: number;
   span: number;
 }
 
-// Position of a value as a 0 to 100% offset along the track, clamped at both
-// ends.
+// Position of a value as a 0 to 100% offset along the track, clamped at both ends.
 export function pos(value: number | null, domain: Domain): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
 
-// Width of a min/max band as a percentage, never thinner than a hairline so a
-// flat distribution still shows.
+// Width of a min/max band as a percentage, never thinner than a hairline so a flat distribution still shows.
 export function rangeWidth(
   min: number | null,
   max: number | null,
@@ -71,6 +66,12 @@ export function metricLabel(lane: LatencyLane, metric: MetricKey): string {
   return METRIC_LABELS[metric];
 }
 
+function centerLabel(lane: LatencyLane): string {
+  return lane.center == null
+    ? ""
+    : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
+}
+
 // The present metrics in label order, dropping any the lane has not measured.
 export function entries(
   lane: LatencyLane,
@@ -95,23 +96,18 @@ export function nearestMetric(
   }, null);
 }
 
-// Secondary line under the hovered metric: the band it belongs to, or the
-// lane's center as a fallback anchor.
+// Secondary line under the hovered metric: the band it belongs to, or the lane's center as a fallback anchor.
 export function hoverContext(lane: LatencyLane, metric: MetricKey): string {
   if (metric === "p10" || metric === "p90") {
     if (lane.p10 == null || lane.p90 == null) return "";
     return `P10–P90 ${fmtMs(lane.p10)} – ${fmtMs(lane.p90)}`;
   }
   if (metric === "current") {
-    return lane.center == null
-      ? ""
-      : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
+    return centerLabel(lane);
   }
   if (metric === "center") {
     if (lane.min == null || lane.max == null) return "";
     return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
   }
-  return lane.center == null
-    ? ""
-    : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
+  return centerLabel(lane);
 }

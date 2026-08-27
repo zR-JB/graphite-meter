@@ -17,10 +17,6 @@ var (
 	authPendingHash  = cspHash(authPendingJS)
 )
 
-// page parses an auth page with the "theme" and "pending" templates its markup
-// includes. Scripts arrive as template.JS because html/template emits those
-// byte for byte, while its JS lexer drops comments from literal script text.
-// The served bytes must match the digests authThemeHash and authPendingHash pin.
 func page(name, text string) *template.Template {
 	scripts := template.FuncMap{
 		"themeJS":   func() template.JS { return template.JS(authThemeJS) },
@@ -31,8 +27,6 @@ func page(name, text string) *template.Template {
 	return template.Must(set.New(name).Parse(text))
 }
 
-// cspHash is the digest form a CSP 'sha256-…' source expects: base64 of the
-// raw sha256 over the element's exact text content.
 func cspHash(asset string) string {
 	sum := sha256.Sum256([]byte(asset))
 	return base64.StdEncoding.EncodeToString(sum[:])

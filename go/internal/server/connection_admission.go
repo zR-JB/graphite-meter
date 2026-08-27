@@ -26,13 +26,8 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 	return &connectionAdmission{byClient: make(map[string]int), globalMax: globalMax, clientMax: clientMax, trusted: trusted}
 }
 
-// exemptKey opts an address out of the per-client connection limit.
 const exemptKey = ""
 
-// socketKey buckets a socket address per client. IPv6 groups by /64 because a
-// single subscriber routinely holds a whole prefix. A trusted proxy address
-// maps to exemptKey: every proxied connection shares that one address, so a
-// per-client count caps the whole deployment.
 func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	addrPort, err := netip.ParseAddrPort(addr.String())
 	if err != nil {
@@ -83,7 +78,7 @@ func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
 func (a *connectionAdmission) stats() admissionStats {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return admissionStats{a.active, a.peak, a.rejectedGlobal, a.rejectedClient}
+	return admissionStats{active: a.active, peak: a.peak, rejectedGlobal: a.rejectedGlobal, rejectedClient: a.rejectedClient}
 }
 
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
@@ -108,8 +103,6 @@ func (l admittedListener) Accept() (net.Conn, error) {
 		}
 		release, ok := l.admission.acquire(conn.RemoteAddr())
 		if !ok {
-			// A refused connection is dropped without a reply. A close failure
-			// on an abandoned socket has no recovery.
 			_ = conn.Close()
 			continue
 		}
@@ -120,11 +113,10 @@ func (l admittedListener) Accept() (net.Conn, error) {
 type admittedConn struct {
 	net.Conn
 	release func()
-	once    sync.Once
 }
 
 func (c *admittedConn) Close() error {
 	err := c.Conn.Close()
-	c.once.Do(c.release)
+	c.release()
 	return err
 }

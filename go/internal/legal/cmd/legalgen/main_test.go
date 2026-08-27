@@ -8,12 +8,47 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
 )
+
+type tarGzArchive struct {
+	names    []string
+	contents map[string]string
+}
+
+func readTarGz(t *testing.T, path string) tarGzArchive {
+	t.Helper()
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	reader, err := gzip.NewReader(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	tarReader := tar.NewReader(reader)
+	archive := tarGzArchive{contents: make(map[string]string)}
+	for {
+		header, readErr := tarReader.Next()
+		if errors.Is(readErr, io.EOF) {
+			return archive
+		}
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		archive.names = append(archive.names, header.Name)
+		data, err := io.ReadAll(tarReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		archive.contents[header.Name] = string(data)
+	}
+}
 
 func TestPackageRootHandlesScopedNPMModules(t *testing.T) {
 	root := t.TempDir()
@@ -192,35 +227,8 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 	if string(one) != string(two) {
 		t.Fatal("third-party source archive is not deterministic")
 	}
-	file, err := os.Open(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	reader, err := gzip.NewReader(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	tarReader := tar.NewReader(reader)
-	names := make([]string, 0)
-	contents := map[string]string{}
-	for {
-		header, readErr := tarReader.Next()
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		names = append(names, header.Name)
-		data, err := io.ReadAll(tarReader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		contents[header.Name] = string(data)
-	}
-	joined := strings.Join(names, "\n")
+	archive := readTarGz(t, first)
+	joined := strings.Join(archive.names, "\n")
 	if strings.Contains(joined, "/project/") || strings.Contains(joined, "/LICENSE") {
 		t.Fatal("project source was duplicated into third-party source archive")
 	}
@@ -238,7 +246,7 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 			t.Fatalf("archive does not contain %s", want)
 		}
 	}
-	readme := contents[root+"/README.txt"]
+	readme := archive.contents[root+"/README.txt"]
 	if !strings.Contains(readme, "Source code (tar.gz)") || !strings.Contains(readme, project.Repository) {
 		t.Fatalf("third-party source README does not explain the split source offer: %q", readme)
 	}
@@ -247,10 +255,6 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 func TestThirdPartySourceBundleHelpers(t *testing.T) {
 	if got := safeName("github.com/example/pkg@v1"); got != "github.com_example_pkg_at_v1" {
 		t.Fatalf("safeName = %q", got)
-	}
-	files := legalFilePaths([]legal.LegalFile{{Name: "LICENSE"}, {Name: "NOTICE"}})
-	if strings.Join(files, ",") != "LICENSE,NOTICE" {
-		t.Fatalf("legalFilePaths = %v", files)
 	}
 	if _, err := moduleDirectory(t.TempDir(), "missing/module", "v0.0.0"); err == nil {
 		t.Fatal("missing module unexpectedly resolved")
@@ -283,27 +287,10 @@ func TestThirdPartySourceBundleIncludesBrowserComponent(t *testing.T) {
 	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, out); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Open(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	reader, err := gzip.NewReader(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	tarReader := tar.NewReader(reader)
+	archive := readTarGz(t, out)
 	found := false
-	for {
-		header, readErr := tarReader.Next()
-		if errors.Is(readErr, io.EOF) {
-			break
-		}
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if strings.HasSuffix(header.Name, "/third_party/npm/svelte_at_5.56.8/LICENSE.md") {
+	for _, name := range archive.names {
+		if strings.HasSuffix(name, "/third_party/npm/svelte_at_5.56.8/LICENSE.md") {
 			found = true
 		}
 	}
@@ -343,9 +330,6 @@ func TestLegalGeneratorFormattingHelpers(t *testing.T) {
 	})
 	if len(components) != 2 || components[0].Name != "a" || components[1].Name != "b" {
 		t.Fatalf("component ordering/deduplication mismatch: %#v", components)
-	}
-	if yesNo(true) != "yes" || yesNo(false) != "no" || !slices.Contains([]string{"tui"}, "tui") {
-		t.Fatal("formatting helper mismatch")
 	}
 	notice := notices([]legal.Component{{
 		Name: "demo", Version: "1", Source: "https://example.invalid",
@@ -407,15 +391,17 @@ func TestReviewedLegalFilesResolveBunIsolatedDependencySibling(t *testing.T) {
 }
 
 func TestReviewedSelectionBecomesAuthoritativeAfterValidation(t *testing.T) {
-	components := []legal.Component{{
+	scopes := []componentScope{{name: "tui", components: []legal.Component{{
 		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT OR GPL-3.0",
-	}}
+	}}}}
 	reviews := []legal.Review{{
 		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT",
 	}}
-	got := applyReviewedSelections(components, reviews)
-	if got[0].SelectedLicenseExpression != "MIT" {
-		t.Fatalf("selected license = %q, want reviewed MIT", got[0].SelectedLicenseExpression)
+	if err := prepareScopes(scopes, reviews, "review-template"); err != nil {
+		t.Fatal(err)
+	}
+	if scopes[0].components[0].SelectedLicenseExpression != "MIT" {
+		t.Fatalf("selected license = %q, want reviewed MIT", scopes[0].components[0].SelectedLicenseExpression)
 	}
 }
 
@@ -524,6 +510,46 @@ func TestProvenanceHashesLocalArtifacts(t *testing.T) {
 	}
 }
 
+func TestServerBrowserProvenanceFlowsIntoContainer(t *testing.T) {
+	repo := t.TempDir()
+	legalPath := filepath.Join(repo, "manual", "LICENSE")
+	text := []byte("MIT License\n")
+	if err := os.MkdirAll(filepath.Dir(legalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legalPath, text, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := legal.Provenance{
+		Ecosystem: "font", Name: "Example Font", Version: "1", Upstream: "https://example.invalid/font",
+		LicenseExpression: "MIT", ArtifactScopes: []string{"server/browser"}, ReviewNotes: "reviewed",
+		LocalLegalFiles:     []legal.LegalFile{{Name: "manual/LICENSE", SHA256: legal.SHA256(text)}},
+		CorrespondingSource: "third_party/manual/example-font",
+	}
+	server := mustAddProvenance(t, repo, nil, []legal.Provenance{entry}, "server/browser")
+	container := mustAddProvenance(t, repo, append([]legal.Component(nil), server...), []legal.Provenance{entry}, "container")
+	if len(container) != 1 || container[0].Name != entry.Name {
+		t.Fatalf("container lost server/browser provenance: %#v", container)
+	}
+	archivePath := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", server, nil, container, []legal.Provenance{entry}, archivePath); err != nil {
+		t.Fatal(err)
+	}
+	archive := readTarGz(t, archivePath)
+	if !strings.Contains(archive.contents["graphite-meter_development_third-party-source/LEGAL_INVENTORY.json"], entry.Name) {
+		t.Fatal("container archive inventory omitted server/browser provenance")
+	}
+}
+
+func mustAddProvenance(t *testing.T, repo string, components []legal.Component, entries []legal.Provenance, scope string) []legal.Component {
+	t.Helper()
+	result, err := addProvenance(repo, components, entries, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
 func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "vendor", "foo", "LICENSE")
@@ -579,27 +605,10 @@ func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
 	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", nil, nil, nil, nil, out); err != nil {
 		t.Fatal(err)
 	}
-	file, err := os.Open(out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	reader, err := gzip.NewReader(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-	tarReader := tar.NewReader(reader)
-	for {
-		header, readErr := tarReader.Next()
-		if errors.Is(readErr, io.EOF) {
-			return
-		}
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		if strings.Contains(header.Name, "cover.out") {
-			t.Fatalf("project build artifact leaked into third-party source archive: %s", header.Name)
+	archive := readTarGz(t, out)
+	for _, name := range archive.names {
+		if strings.Contains(name, "cover.out") {
+			t.Fatalf("project build artifact leaked into third-party source archive: %s", name)
 		}
 	}
 }

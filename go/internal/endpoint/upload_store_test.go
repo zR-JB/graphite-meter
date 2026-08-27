@@ -9,6 +9,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
+	agg, access := s.getOrCreateFor(id, "")
+	return agg, access == uploadAccessOK
+}
+
 func TestUploadStoreRejectsForgedID(t *testing.T) {
 	s := NewUploadStore()
 	if agg, ok := s.getOrCreate("never-minted"); ok || agg != nil {
@@ -54,8 +59,6 @@ func TestUploadStoreRejectsTamperedAndExpiredID(t *testing.T) {
 	}
 }
 
-// TestUploadStoreCreateIsIdempotent checks that POST and WS (or repeated lanes)
-// carrying the same minted id all resolve to ONE aggregate, and that counting works.
 func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
@@ -83,8 +86,6 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestUploadStoreCapRejectsCreate fills the store to the live cap and checks the
-// next create is refused (bounding the map under a minted-id flood).
 func TestUploadStoreCapRejectsCreate(t *testing.T) {
 	s := NewUploadStore()
 	for i := range maxLiveUploads {
@@ -141,14 +142,11 @@ func TestUploadStoreSweepReleasesOwnerCapacity(t *testing.T) {
 	}
 }
 
-// TestUploadStoreSweepReapsIdle ages an aggregate past the TTL and checks the
-// sweeper deletes it and decrements the live count.
 func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	s := NewUploadStore()
 	idleID := s.Mint()
 	a, _ := s.getOrCreate(idleID)
-	// Backdate the last touch well past the TTL (arithmetic is on the monotonic
-	// clock, so this holds regardless of how long the process has been up).
+	// Backdate the last touch well past the TTL (arithmetic is on the monotonic clock.
 	a.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
 
 	freshID := s.Mint()
@@ -169,12 +167,7 @@ func TestUploadStoreSweepReapsIdle(t *testing.T) {
 	}
 }
 
-// A WebTransport session that goes quiet is closed at the published idle bound,
-// and api/wire.md promises the client may re-dial the same upload id and keep
-// its counters. The aggregate must therefore outlive that silence: the progress
-// feed deliberately never touches it, so an idle-bound-long stall leaves the
-// aggregate looking exactly this old. Reaping it turns the reconnect into a
-// fresh zero-byte aggregate that reports only the post-reconnect bytes.
+// A WebTransport session that goes quiet is closed at the published idle bound.
 func TestUploadStoreKeepsAggregateAcrossAWebTransportIdleBound(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
@@ -201,9 +194,6 @@ func TestUploadStoreKeepsAggregateAcrossAWebTransportIdleBound(t *testing.T) {
 }
 
 // The aggregate TTL and the transport's idle bound must never be re-equalised.
-// watchSession samples at bound/2 and cancels on the second quiet tick, so a
-// stall is detected up to 1.5 bounds after the last byte -- and the client still
-// has to notice the close and dial again before the aggregate may be reaped.
 func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
 	if uploadIDTTL <= wire.WTIdleBound {
 		t.Fatalf("uploadIDTTL = %v, want strictly greater than the WebTransport idle bound %v", uploadIDTTL, wire.WTIdleBound)
@@ -230,10 +220,7 @@ func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
 	}
 }
 
-// A superseded feed's deferred release runs after a newer feed already took the
-// claim. Clearing the claim regardless would leave the live feed unregistered:
-// a third feed would find no holder to supersede, and the second would keep
-// streaming alongside it for the rest of the upload.
+// A superseded feed's deferred release runs after a newer feed already took the claim.
 func TestReleaseProgressLeavesALaterClaimAlone(t *testing.T) {
 	var agg uploadAgg
 	first := agg.claimProgress()
@@ -257,7 +244,6 @@ func TestReleaseProgressLeavesALaterClaimAlone(t *testing.T) {
 	}
 }
 
-// TestUploadStoreMint checks minted ids are unique, authenticated, and opaque.
 func TestUploadStoreMint(t *testing.T) {
 	s := NewUploadStore()
 	seen := make(map[string]bool)
@@ -279,9 +265,6 @@ func TestUploadStoreMint(t *testing.T) {
 	}
 }
 
-// TestUploadAggElapsedTimeIncludesStalls checks that TIME is wall time since the
-// first byte, including a long transfer stall. Synthetic timestamps keep it
-// deterministic.
 func TestUploadAggElapsedTimeIncludesStalls(t *testing.T) {
 	var a uploadAgg
 	const ms = int64(time.Millisecond)
@@ -309,8 +292,6 @@ func TestUploadAggElapsedTimeIncludesStalls(t *testing.T) {
 	}
 }
 
-// TestUploadAggElapsedTimeConcurrent checks race-safe first-byte anchoring and
-// exact accounting across the parallel lanes used by a real upload.
 func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	var a uploadAgg
 	const lanes, perLane = 8, 500
@@ -332,7 +313,6 @@ func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	}
 }
 
-// TestUploadStoreDeleteIdempotent checks a double delete never double-decrements live.
 func TestUploadStoreDeleteIdempotent(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
@@ -345,10 +325,6 @@ func TestUploadStoreDeleteIdempotent(t *testing.T) {
 	}
 }
 
-// TestUploadStoreSweepBoundary checks the idle-cutoff comparison at the TTL
-// edge: an aggregate touched just inside the TTL survives, one just past it is
-// reaped. An exact-nanosecond tie is racy and unasserted, since sweep's own
-// monoNanos() advances between statements. A margin pins the same comparison.
 func TestUploadStoreSweepBoundary(t *testing.T) {
 	s := NewUploadStore()
 	const ttl = 200 * time.Millisecond
@@ -373,9 +349,6 @@ func TestUploadStoreSweepBoundary(t *testing.T) {
 	}
 }
 
-// TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace checks the live cap is
-// rechecked on every first-touch create rather than latched permanently:
-// freeing a slot (delete or sweep) lets a new id through again.
 func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 	s := NewUploadStore()
 	ids := make([]string, maxLiveUploads)
@@ -400,10 +373,6 @@ func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 	}
 }
 
-// TestUploadStoreConcurrentGetAndSweep races get/getOrCreate against a sweeper
-// reaping a mix of expired and fresh aggregates, the shape of real traffic
-// hitting the store while RunSweeper ticks. It checks race-safety (run with
-// -race) and that `live` never desyncs from the actual shard contents.
 func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	s := NewUploadStore()
 	const n = 200
@@ -413,8 +382,7 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 		ids[i] = id
 		agg, _ := s.getOrCreate(id)
 		if i%2 == 0 {
-			// Half start already past the TTL so sweep can reap them
-			// immediately while readers are still hammering the store.
+			// Half start already past the TTL so sweep can reap them immediately while readers are still hammering the store.
 			agg.lastTouchMono.Store(monoNanos() - int64(time.Second))
 		}
 	}
@@ -464,8 +432,6 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	}
 }
 
-// TestUploadAggFirstChunkAnchorNeverMoves checks that later lanes cannot move
-// the elapsed clock's first-byte anchor, while every chunk still counts.
 func TestUploadAggFirstChunkAnchorNeverMoves(t *testing.T) {
 	var a uploadAgg
 	a.recordChunk(1000, 100)

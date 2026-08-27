@@ -26,8 +26,7 @@ jobs:
       contents: read
       packages: write
     env:
-      # Skopeo v1.22.2; the digest/version runtime contract is verified in ci.yml.
-      SKOPEO_IMAGE: quay.io/skopeo/stable@sha256:11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65
+      SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2-immutable@sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad
     steps:
       - id: order
         name: Determine safe alias promotions from published releases
@@ -96,8 +95,13 @@ jobs:
               export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
 
               printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
-              source="docker://$IMAGE:$VERSION"
-              source_digest=$(skopeo inspect --format "{{.Digest}}" "$source")
+              source_tag="docker://$IMAGE:$VERSION"
+              source_digest=$(skopeo inspect --format "{{.Digest}}" "$source_tag")
+              if ! printf '%s\n' "$source_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+                echo "source tag returned an invalid digest: $source_digest" >&2
+                exit 1
+              fi
+              source="docker://$IMAGE@$source_digest"
 
               promote() {
                 alias=$1

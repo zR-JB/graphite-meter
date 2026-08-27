@@ -1,22 +1,17 @@
-// Svelte tooltip action plus the shared jargon dictionary for metric labels
-// and settings controls.
+// Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
-
-export interface TooltipOptions {
+interface TooltipOptions {
   text: string;
   placement?: "top" | "bottom";
   disabled?: boolean;
   // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
   instant?: boolean;
 }
-
 type TooltipParam = string | TooltipOptions;
-
 let uid = 0;
 const STYLE_ID = "gm-tooltip-styles";
 const HOVER_DELAY_MS = 350;
 const TOUCH_DISMISS_MS = 4000;
-
 function ensureStyles() {
   if (typeof document === "undefined") return;
   if (document.getElementById(STYLE_ID)) return;
@@ -58,11 +53,9 @@ function ensureStyles() {
   `;
   document.head.appendChild(style);
 }
-
 function normalize(param: TooltipParam): TooltipOptions {
   return typeof param === "string" ? { text: param } : param;
 }
-
 export function tooltip(node: HTMLElement, param: TooltipParam) {
   ensureStyles();
   let opts = normalize(param);
@@ -72,14 +65,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let touchOpen = false;
   let autoDismissTimer = 0;
   let hoverTimer = 0;
-
   // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
   }
-
-  // Centred on the anchor, flipped to the opposite side when the requested one
-  // overflows the viewport, then clamped inside the margin.
+  // Centred on the anchor, flipped to the opposite side when the requested one overflows the viewport, then clamped.
   function place() {
     if (!bubble) return;
     const anchor = node.getBoundingClientRect();
@@ -101,7 +91,6 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     bubble.style.top = `${Math.max(margin, top)}px`;
     bubble.style.left = `${left}px`;
   }
-
   function show() {
     if (opts.disabled || bubble || !opts.text) return;
     bubble = document.createElement("div");
@@ -110,30 +99,22 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     bubble.setAttribute("role", "tooltip");
     bubble.textContent = opts.text;
     document.body.appendChild(bubble);
-
     prevDescribedBy = node.getAttribute("aria-describedby");
     node.setAttribute(
       "aria-describedby",
       prevDescribedBy ? `${prevDescribedBy} ${id}` : id,
     );
-
     place();
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
-    window.addEventListener("blur", hide);
-    document.addEventListener("visibilitychange", onVisibilityDismiss);
-    // Capture phase: scroll does not bubble, and a fixed bubble drifts from
-    // its anchor inside a scrolling container.
-    document.addEventListener("scroll", hide, true);
-    document.addEventListener("pointerdown", onDocumentPointerDown, true);
+    for (const [target, type, listener, capture] of dismissListeners)
+      target.addEventListener(type, listener as EventListener, capture);
   }
-
   function clearHoverTimer() {
     if (hoverTimer) {
       clearTimeout(hoverTimer);
       hoverTimer = 0;
     }
   }
-
   function onDocumentPointerDown(event: PointerEvent) {
     const target = event.target as Node | null;
     if (target && (node.contains(target) || bubble?.contains(target))) return;
@@ -142,7 +123,6 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function onVisibilityDismiss() {
     if (document.visibilityState !== "visible") hide();
   }
-
   function hide() {
     clearHoverTimer();
     if (autoDismissTimer) {
@@ -156,18 +136,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     else node.setAttribute("aria-describedby", prevDescribedBy);
     prevDescribedBy = null;
     touchOpen = false;
-    window.removeEventListener("blur", hide);
-    document.removeEventListener("visibilitychange", onVisibilityDismiss);
-    document.removeEventListener("scroll", hide, true);
-    document.removeEventListener("pointerdown", onDocumentPointerDown, true);
+    for (const [target, type, listener, capture] of dismissListeners)
+      target.removeEventListener(type, listener as EventListener, capture);
   }
-
   function onKeydown(event: KeyboardEvent) {
     if (event.key === "Escape" && bubble) {
       hide();
     }
   }
-
   function onPointerEnter(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
     if (opts.instant) {
@@ -193,9 +169,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function onBlur() {
     hide();
   }
-
-  // A tap on a control runs the control, so only inert jargon shows a tip on
-  // touch. Without hover, only the timer closes it.
+  // A tap on a control runs the control, so only inert jargon shows a tip on touch.
   function onPointerUp(event: PointerEvent) {
     if (event.pointerType !== "touch") return;
     if (touchOpen) {
@@ -208,25 +182,31 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     touchOpen = true;
     autoDismissTimer = window.setTimeout(hide, TOUCH_DISMISS_MS);
   }
-
   function onPointerDown(event: PointerEvent) {
     if (event.pointerType !== "touch") hide();
   }
-
   function onClick() {
     if (touchOpen) return;
     hide();
   }
-
-  node.addEventListener("pointerdown", onPointerDown);
-  node.addEventListener("pointerenter", onPointerEnter);
-  node.addEventListener("pointerleave", onPointerLeave);
-  node.addEventListener("focus", onFocus);
-  node.addEventListener("blur", onBlur);
-  node.addEventListener("pointerup", onPointerUp);
-  node.addEventListener("keydown", onKeydown);
-  node.addEventListener("click", onClick);
-
+  const dismissListeners = [
+    [window, "blur", hide, false],
+    [document, "visibilitychange", onVisibilityDismiss, false],
+    [document, "scroll", hide, true],
+    [document, "pointerdown", onDocumentPointerDown, true],
+  ] as const;
+  const nodeListeners = [
+    ["pointerdown", onPointerDown],
+    ["pointerenter", onPointerEnter],
+    ["pointerleave", onPointerLeave],
+    ["focus", onFocus],
+    ["blur", onBlur],
+    ["pointerup", onPointerUp],
+    ["keydown", onKeydown],
+    ["click", onClick],
+  ] as const;
+  for (const [type, listener] of nodeListeners)
+    node.addEventListener(type, listener as EventListener);
   return {
     update(next: TooltipParam) {
       opts = normalize(next);
@@ -240,18 +220,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     },
     destroy() {
       hide();
-      node.removeEventListener("pointerdown", onPointerDown);
-      node.removeEventListener("pointerenter", onPointerEnter);
-      node.removeEventListener("pointerleave", onPointerLeave);
-      node.removeEventListener("focus", onFocus);
-      node.removeEventListener("blur", onBlur);
-      node.removeEventListener("pointerup", onPointerUp);
-      node.removeEventListener("keydown", onKeydown);
-      node.removeEventListener("click", onClick);
+      for (const [type, listener] of nodeListeners)
+        node.removeEventListener(type, listener as EventListener);
     },
   };
 }
-
 export const JARGON = {
   bufferbloat:
     "Bufferbloat: extra delay that piles up when your connection is busy. A grade of A means it stays responsive under load; D or F means calls and games may lag during big downloads.",
@@ -269,11 +242,7 @@ export const JARGON = {
     "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
   ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",
   overheadCompensation:
-    "Wire estimation adds only forward-path protocol bytes: Ethernet, IP, transport, TLS/QUIC, HTTP framing, and an explicitly configured tunnel. It never guesses from stability, loss, browser cost, or ramp-up.",
-  compProfile:
-    "Connection profile selects the physical first hop. Local Ethernet uses a 1500-byte MTU, loopback has no physical wire, and the tunnel preset uses a 1420-byte inner MTU with 60 bytes of encapsulation.",
-  compTransport:
-    "Automatic reads the browser-facing protocol from Resource Timing, so HTTPS and a reverse proxy are handled at the correct hop. Expert overrides are available for testing unusual HTTP/QUIC paths.",
+    "Wire estimation adds only forward-path protocol bytes: Ethernet, IP, transport, TLS/QUIC, and HTTP framing. It uses negotiated protocol and authoritative preflight IP evidence, with conservative defaults when either is unavailable. It never guesses from stability, loss, browser cost, or ramp-up.",
   unitBits:
     "Bits per second — Mbit/s, Gbit/s. How internet plans are sold, so this is what you compare against your contract.",
   unitBytes:

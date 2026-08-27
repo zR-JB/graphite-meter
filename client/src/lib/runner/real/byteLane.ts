@@ -1,13 +1,7 @@
-// One seam for the byte lanes. A transfer direction drives lanes through this
-// interface and never learns which transport is underneath.
+// One seam for the byte lanes.
 import type { FlowDirection, RecoveryCause } from "../contract";
 import type { ProgressEvent } from "../workers/progressFeed";
-import {
-  downloadWorker,
-  stopWorker,
-  uploadWorker,
-  wtTransferWorker,
-} from "./workerPool";
+import { downloadWorker, uploadWorker, wtTransferWorker } from "./workerPool";
 import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -37,15 +31,13 @@ export interface ByteLane {
   discard(): void;
 }
 
-export interface FetchLaneOptions {
+interface FetchLaneOptions {
   dir: FlowDirection;
   url: string;
   lanes: number;
-  index: number;
   headers?: Record<string, string>;
   credentials: RequestCredentials;
   chunk: boolean;
-  debug: boolean;
 }
 
 export interface SessionLaneOptions {
@@ -78,8 +70,37 @@ type WorkerMsg =
   | { type: "auth-required" }
   | { type: "stopped" };
 
-/** One fetch request per lane: the worker script owns its own retries within
- *  one request, and a dropped lane is restarted by the caller. */
+function dispatchWorkerMessage(
+  msg: WorkerMsg,
+  events: LaneEvents,
+  onError: LaneEvents["onError"] = events.onError,
+  onEstablished: () => void = () => {},
+): void {
+  switch (msg.type) {
+    case "established":
+      onEstablished();
+      break;
+    case "progress":
+      events.onProgress(msg.bytes, msg.elapsedMs, msg.seq);
+      break;
+    case "alive":
+      events.onAlive(msg.bytes, msg.elapsedMs);
+      break;
+    case "error":
+      onError(msg.recoverable, msg.detail, msg.cause);
+      break;
+    case "upload-progress":
+      events.onUploadProgress(msg.msg);
+      break;
+    case "auth-required":
+      events.onAuthRequired();
+      break;
+    case "stopped":
+      break;
+  }
+}
+
+/* One fetch request per lane: the worker script owns its own retries within one request, and a dropped lane is. */
 export function fetchLane(
   opts: FetchLaneOptions,
   events: LaneEvents,
@@ -89,30 +110,13 @@ export function fetchLane(
     start(): void {
       const w = opts.dir === "down" ? downloadWorker() : uploadWorker();
       w.onmessage = (e: MessageEvent<WorkerMsg>): void => {
-        const msg = e.data;
-        switch (msg.type) {
-          case "progress":
-            events.onProgress(msg.bytes, msg.elapsedMs, msg.seq);
-            break;
-          case "alive":
-            events.onAlive(msg.bytes, msg.elapsedMs);
-            break;
-          case "error":
-            events.onError(msg.recoverable, msg.detail, msg.cause);
-            break;
-          case "auth-required":
-            events.onAuthRequired();
-            break;
-        }
+        dispatchWorkerMessage(e.data, events);
       };
       w.onerror = (e: ErrorEvent): void =>
         events.onError(true, e.message || "worker error");
-      // `debug`/`id` only drive the worker's own verbose per-stream logging.
       w.postMessage({
         type: "start",
         url: opts.url,
-        debug: opts.debug,
-        id: opts.index,
         streams: opts.lanes,
         credentials: opts.credentials,
         headers: opts.headers,
@@ -124,7 +128,7 @@ export function fetchLane(
       worker?.postMessage({ type: "measure", seq });
     },
     stop(): Promise<void> {
-      if (worker) stopWorker(worker);
+      worker?.terminate();
       worker = null;
       return Promise.resolve();
     },
@@ -135,16 +139,14 @@ export function fetchLane(
   };
 }
 
-/** One worker owns a whole WebTransport session: its streams cannot be split
- *  across workers the way fetch lanes are, so the session is one lane here. */
+/* One worker owns a whole WebTransport session: its streams cannot be split across workers the way fetch lanes. */
 export function sessionLane(
   opts: SessionLaneOptions,
   events: LaneEvents,
 ): ByteLane {
   let worker: Worker | null = null;
   let established = false;
-  // One session death reaches every lane reader, the accept loop and the close
-  // promise, so only the first failure of a generation is reported.
+  // One session death reaches every lane reader, the accept loop and the close promise, so only the first failure of.
   let failed = false;
   let establishTimer: ReturnType<typeof setTimeout> | null = null;
   let stopAck: (() => void) | null = null;
@@ -162,35 +164,17 @@ export function sessionLane(
     failed = true;
     events.onError(recoverable, detail, cause);
   };
-  // Messages already queued would otherwise still deliver, past the point this
-  // lane speaks for them.
+  // Messages already queued would otherwise still deliver, past the point this lane speaks for them.
   const detach = (w: Worker): void => {
     w.onmessage = null;
     w.onerror = null;
   };
 
   const onMessage = (msg: WorkerMsg): void => {
-    switch (msg.type) {
-      case "established":
-        established = true;
-        clearEstablishTimer();
-        break;
-      case "progress":
-        events.onProgress(msg.bytes, msg.elapsedMs, msg.seq);
-        break;
-      case "alive":
-        events.onAlive();
-        break;
-      case "error":
-        fail(msg.recoverable, msg.detail, msg.cause);
-        break;
-      case "upload-progress":
-        events.onUploadProgress(msg.msg);
-        break;
-      case "auth-required":
-        events.onAuthRequired();
-        break;
-    }
+    dispatchWorkerMessage(msg, events, fail, () => {
+      established = true;
+      clearEstablishTimer();
+    });
   };
 
   return {

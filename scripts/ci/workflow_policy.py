@@ -16,6 +16,10 @@ import sys
 from typing import NoReturn
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+EXPECTED_SKOPEO_IMAGE = (
+    "quay.io/containers/skopeo:v1.22.2-immutable@"
+    "sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad"
+)
 USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(\S+)\s*(?:#.*)?$")
 LOCAL_ACTION = re.compile(r"^\./[A-Za-z0-9_./-]+$")
 PINNED_ACTION = re.compile(
@@ -84,18 +88,19 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must declare packages: write")
         if '-e IMAGE="$image"' not in text:
             fail(f"{name} must pass IMAGE explicitly to the Skopeo container")
-        if "@sha256:11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65" not in text:
-            fail(f"{name} must pin the Skopeo container by digest")
+        if text.count('"$SKOPEO_IMAGE" -ec') != 1:
+            fail(f"{name} must execute Skopeo through the exact \"$SKOPEO_IMAGE\" runtime")
         if not re.search(
             r"(?m)^    env:\n"
-            r"      # Skopeo v1\.22\.2; the digest/version runtime contract is verified in ci\.yml\.\n"
-            r"      SKOPEO_IMAGE: quay\.io/skopeo/stable@sha256:[0-9a-f]{64}$",
+            r"      SKOPEO_IMAGE: " + re.escape(EXPECTED_SKOPEO_IMAGE) + r"$",
             text,
         ):
             fail(
-                f"{name} must document and declare its digest-pinned SKOPEO_IMAGE "
+                f"{name} must declare its digest-pinned SKOPEO_IMAGE "
                 "in the job env mapping"
             )
+        if "SKOPEO_VERSION" in text or "skopeo --version" in text:
+            fail(f"{name} must not declare or parse SKOPEO_VERSION")
 
     oci = (workflows / "_publish-oci.yml").read_text(encoding="utf-8")
     if "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}" not in oci:
@@ -176,19 +181,33 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
 
 
 def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
-    """Require every Skopeo consumer to use one digest/version contract without a pin DB."""
-    images: set[str] = set()
-    versions: set[str] = set()
-    image_re = re.compile(r"quay\.io/skopeo/stable@sha256:[0-9a-f]{64}")
-    version_re = re.compile(r"(?m)^\s*SKOPEO_VERSION:\s*([^\s#]+)\s*$")
-    for path in sorted((root / ".github" / "workflows").glob("*.yml")):
+    """Require every Skopeo consumer to use the exact immutable image contract."""
+    consumers = (
+        "ci.yml",
+        "release.yml",
+        "prerelease-publish.yml",
+        "_publish-oci.yml",
+        "_promote-oci.yml",
+    )
+    workflows = root / ".github" / "workflows"
+    for name in consumers:
+        path = workflows / name
         text = path.read_text(encoding="utf-8")
-        images.update(image_re.findall(text))
-        versions.update(version_re.findall(text))
-    if len(images) != 1:
-        fail(f"Skopeo consumers must share exactly one digest-pinned image; got {sorted(images)}")
-    if len(versions) != 1:
-        fail(f"Skopeo verification must share exactly one declared version; got {sorted(versions)}")
+        images = [
+            line.split(":", 1)[1].strip()
+            for line in text.splitlines()
+            if line.lstrip().startswith("SKOPEO_IMAGE:")
+        ]
+        verifier = name in ("ci.yml", "release.yml", "prerelease-publish.yml")
+        expected_images = [EXPECTED_SKOPEO_IMAGE]
+        if verifier:
+            expected_images.append("${{ env.SKOPEO_IMAGE }}")
+        if images != expected_images:
+            fail(f"{name} has a non-exact SKOPEO_IMAGE assignment")
+        if verifier and "SKOPEO_VERSION: 1.22.2" not in text:
+            fail(f"{name} is missing the exact SKOPEO_VERSION declaration")
+        if not verifier and "SKOPEO_VERSION" in text:
+            fail(f"{name} must not declare SKOPEO_VERSION")
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     if "python3 scripts/ci/verify_oci.py --check-skopeo" not in ci:
         fail("CI release checks must execute the pinned Skopeo runtime contract")

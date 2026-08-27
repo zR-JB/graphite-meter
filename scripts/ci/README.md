@@ -129,7 +129,7 @@ an explicit benign daemon flag, which replaces its default
 `security.insecure`/`network.host` entitlements; this build needs neither.
 Verification requires an OCI v1 index with exactly one runnable `linux/amd64` and `linux/arm64`
 manifest plus exactly one correctly linked BuildKit attestation manifest for each
-runnable digest, then forces the pinned Skopeo container to copy `--all` into its
+runnable digest, then forces the pinned immutable Skopeo container to copy `--all` into its
 own ephemeral filesystem so every referenced manifest/blob must be readable. The
 archive is the verifier container's only host bind mount, it is read-only, and
 local verification runs with container networking disabled. This avoids both
@@ -153,8 +153,8 @@ packages may execute. The local checker only enforces the zero-maintenance
 property that every external `uses:` reference is an immutable 40-character
 commit SHA, plus the pipeline-specific trust boundaries.
 
-The ordinary release-package CI job also executes the exact digest-pinned Skopeo
-container's `--version` contract through the same typed parser used by OCI
+The ordinary release-package CI job also executes the exact digest-pinned immutable
+Skopeo container's `--version` contract through the same typed parser used by OCI
 verification, so a CLI output/digest-version mismatch is caught on a workflow PR
 instead of at first publication.
 

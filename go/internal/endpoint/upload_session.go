@@ -7,9 +7,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// UploadSession mints the short-lived upload correlation token during the upload
-// warmup phase. The token is then echoed as ?id= by POST /upload lanes and the
-// /upload/progress progress stream for this upload stage only.
+// UploadSession mints the short-lived upload correlation token.
 type UploadSession struct {
 	store *UploadStore
 }
@@ -18,9 +16,7 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
-// NewUploadSession builds the token-minting endpoint. A nil store leaves the
-// route mounted but answering 503, so a client gets a clear refusal rather than
-// a 404 it would misread as an old server.
+// NewUploadSession builds the token-minting endpoint.
 func NewUploadSession(store *UploadStore) *UploadSession {
 	return &UploadSession{store: store}
 }

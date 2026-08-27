@@ -12,10 +12,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-// This file owns the run lifecycle: the tea.Cmd producers that talk to the
-// goclient off the UI goroutine, the handlers for the messages they return,
-// and the application of a running measurement's events onto the model.
-
 type stageState int
 
 const (
@@ -26,10 +22,6 @@ const (
 	stageStopped
 )
 
-// stageProgress is one row of the run screen's timeline. duration is the
-// configured measurement window, which the engine holds to exactly. The engine
-// stretches warmup to the measured RTT and never reports that window, so a
-// warming stage is timed by elapsed alone.
 type stageProgress struct {
 	name     string
 	duration time.Duration
@@ -68,8 +60,6 @@ func beginAuthorization(seq int, cfg goclient.Config, authURL string) tea.Cmd {
 	}
 }
 
-// authWait is how long a browser approval may stay outstanding, and the
-// deadline the configure screen counts down against.
 const authWait = 2 * time.Minute
 
 func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
@@ -81,16 +71,8 @@ func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 	}
 }
 
-// prepareDebounce is the quiet period a configuration change waits out before
-// the connection is checked again. Cycling an endpoint row changes the
-// configuration on every press, and without the pause each press would tear
-// down the checklist and open a connection the next press invalidates.
 const prepareDebounce = 350 * time.Millisecond
 
-// reprepare puts the checklist back to the start and schedules a fresh check.
-// The last verified connection is kept for the readiness panel to show while
-// the new one is unproven, so a burst of keypresses moves the values it edits
-// and nothing else.
 func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	m.prepareSeq++
 	m.prepareStatus = "checking"
@@ -102,9 +84,6 @@ func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, tick, m.spin.Tick)
 }
 
-// handlePrepareDue opens the connection the last configuration change asked
-// for. A newer change has already bumped the sequence, so only the final change
-// of a burst reaches the network.
 func (m model) handlePrepareDue(msg prepareDueMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
@@ -139,8 +118,7 @@ func waitDone(seq int, done <-chan error) tea.Cmd {
 	}
 }
 
-// handleTick advances the spinner and glides the displayed rates toward the
-// latest samples, once per animation frame.
+// handleTick advances the spinner and glides the displayed rates toward the latest samples, once per animation frame.
 func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if !m.animating() {
 		return m, nil
@@ -349,10 +327,6 @@ func (m *model) apply(e goclient.Event) {
 			m.throughputTransport = e.ThroughputTransport
 			m.latencyTransport = e.LatencyTransport
 			m.latencyProtocol = e.LatencyProtocol
-			// The negotiated version is not repeated here: the Throughput row
-			// below names the whole committed path, in the words the configure
-			// screen used to offer it, and the raw evidence spelling ("h3")
-			// beside it was the one place the run screen contradicted itself.
 			m.server = fmt.Sprintf("%s %s [%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message)
 			m.status = "connected"
 		}
@@ -385,8 +359,6 @@ func (m *model) apply(e goclient.Event) {
 	}
 }
 
-// enterStage moves a timeline row into the phase the engine just announced.
-// The engine names exactly two, so anything else leaves the row where it is.
 func (m *model) enterStage(e goclient.Event) {
 	var state stageState
 	switch e.Message {
@@ -404,9 +376,6 @@ func (m *model) enterStage(e goclient.Event) {
 	}
 }
 
-// finishStage closes a timeline row. A stage emits results only once every
-// lane stops, so the first result proves the window closed and the rest land
-// on a row already done.
 func (m *model) finishStage(stage string) {
 	for i := range m.stages {
 		if m.stages[i].name == stage && m.stages[i].state != stagePending {
@@ -415,8 +384,6 @@ func (m *model) finishStage(stage string) {
 	}
 }
 
-// stopStages marks whichever stage is mid-flight when a run ends early, so a
-// canceled or failed run leaves no row spinning forever.
 func (m *model) stopStages() {
 	for i := range m.stages {
 		if s := m.stages[i].state; s == stageWarmup || s == stageMeasuring {

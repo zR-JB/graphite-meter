@@ -257,7 +257,7 @@
       class="ghost-btn icon-btn"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — setup, endpoint, developer (S)"}
+      use:tooltip={"Settings — test and display (S)"}
       onclick={() => (settingsOpen = !settingsOpen)}
       >{@html ICON.settings}</button
     >

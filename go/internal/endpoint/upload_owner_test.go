@@ -13,16 +13,13 @@ import (
 
 const refusalPinPath = "../../../api/uploadrefusals.txt"
 
-// pinnedRefusal is one row of api/uploadrefusals.txt: the text a refused upload
-// reports and the HTTP status it is sent with.
+// pinnedRefusal is one row of api/uploadrefusals.txt: the text a refused upload reports and the HTTP status it is sent.
 type pinnedRefusal struct {
 	message string
 	status  int
 }
 
-// loadRefusalPin parses api/uploadrefusals.txt into name → refusal, skipping
-// comment/blank lines. This is the same fixture the TypeScript progress feed
-// asserts its fatal-detail strings against.
+// loadRefusalPin parses api/uploadrefusals.txt into name → refusal, skipping comment/blank lines.
 func loadRefusalPin(t *testing.T) map[string]pinnedRefusal {
 	t.Helper()
 	f, err := os.Open(refusalPinPath)
@@ -59,16 +56,10 @@ func loadRefusalPin(t *testing.T) map[string]pinnedRefusal {
 	return pinned
 }
 
-// TestUploadRefusalsMatchPin is the byte-exact check both languages run against
-// the same file. The message is not a diagnostic: a refused WebTransport lane
-// gets no status line, so this exact text is the only thing the client can
-// recognise the fatal by. Rewording it in Go alone would leave both suites green
-// while the client stopped acting on the refusal.
 func TestUploadRefusalsMatchPin(t *testing.T) {
 	pinned := loadRefusalPin(t)
 
-	// Every refusal Go can produce, named as the pin names it. uploadAccessOK is
-	// not a refusal and is asserted separately below.
+	// Every refusal Go can produce, named as the pin names it.
 	refusals := map[string]uploadAccess{
 		"invalid":       uploadAccessInvalid,
 		"globalFull":    uploadAccessGlobalFull,
@@ -106,8 +97,7 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 	}
 }
 
-// A success carries no refusal text, so an accepted upload can never be mistaken
-// for a refused one by a client matching on the message.
+// A success carries no refusal text, so an accepted upload can never be mistaken for a refused one by a client.
 func TestUploadAccessOKCarriesNoMessage(t *testing.T) {
 	if got := uploadAccessMessage(uploadAccessOK); got != "" {
 		t.Errorf("uploadAccessMessage(uploadAccessOK) = %q, want empty", got)
@@ -117,10 +107,7 @@ func TestUploadAccessOKCarriesNoMessage(t *testing.T) {
 	}
 }
 
-// writeUploadAccessError must never fall through silently. Without a default
-// arm a future uploadAccess value writes no status and no body, Handle returns
-// nil, and the client reads a 200 with an empty body as a successful upload
-// reporting zero bytes.
+// writeUploadAccessError must never fall through silently.
 func TestWriteUploadAccessErrorFailsLoudlyOnAnUnknownAccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writeUploadAccessError(rec, uploadAccess(200))

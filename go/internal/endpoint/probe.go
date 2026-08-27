@@ -8,21 +8,17 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// LoadFunc reports the server's measurement occupancy: active wrapped
-// handlers and the configured ceiling.
+// LoadFunc reports the server's measurement occupancy: active wrapped handlers and the configured ceiling.
 type LoadFunc func() (active, max int)
 
-// Probe returns evidence for the actual selected connection. bootstrapPort is
-// non-empty only on the H3 TCP bootstrap listener.
+// Probe returns evidence for the actual selected connection.
 type Probe struct {
 	cfg           *config.Config
 	bootstrapPort string
 	load          LoadFunc
 }
 
-// NewProbe builds the probe endpoint. bootstrapPort must be set only on the H3
-// TCP bootstrap listener, whose answers advertise the QUIC port via Alt-Svc.
-// load may be nil, omitting the occupancy field.
+// NewProbe builds the probe endpoint. bootstrapPort must be set only on the H3 TCP bootstrap listener.
 func NewProbe(cfg *config.Config, bootstrapPort string, load LoadFunc) *Probe {
 	return &Probe{cfg: cfg, bootstrapPort: bootstrapPort, load: load}
 }
@@ -34,8 +30,6 @@ func (p *Probe) Handle(s transport.Session) error {
 	if !ok {
 		return transport.ErrUnsupported
 	}
-	// Alt-Svc points the browser at the QUIC port; closing the h1 connection
-	// stops it from reusing this socket and so lets the h3 race actually happen.
 	if p.bootstrapPort != "" && s.Proto() == transport.ProtoH1 {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")

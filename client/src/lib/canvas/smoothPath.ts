@@ -1,14 +1,12 @@
-export interface PathPoint {
+interface PathPoint {
   x: number;
   y: number;
 }
-
-export interface CurveSegment {
+interface CurveSegment {
   control1: PathPoint;
   control2: PathPoint;
   end: PathPoint;
 }
-
 export function monotoneCurve(
   points: ReadonlyArray<PathPoint>,
 ): CurveSegment[] {
@@ -20,7 +18,6 @@ export function monotoneCurve(
     spans.push(span);
     slopes.push(span > 0 ? (points[i + 1].y - points[i].y) / span : 0);
   }
-
   const tangents = [slopes[0]];
   for (let i = 1; i < points.length - 1; i++) {
     const before = slopes[i - 1];
@@ -37,7 +34,6 @@ export function monotoneCurve(
     );
   }
   tangents.push(slopes.at(-1)!);
-
   return points.slice(1).map((end, i) => {
     const start = points[i];
     const third = spans[i] / 3;
@@ -54,7 +50,6 @@ export function monotoneCurve(
     };
   });
 }
-
 export function traceSmoothLine(
   ctx: CanvasRenderingContext2D,
   points: ReadonlyArray<PathPoint>,
