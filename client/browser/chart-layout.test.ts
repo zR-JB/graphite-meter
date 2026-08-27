@@ -1,11 +1,9 @@
-import { expect, test } from "./webview";
-
+import { expect, openApp, startTest, test } from "./webview";
 test("chart axes and time ticks are DOM labels anchored inside the canvas layout", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-
+  await openApp(page);
+  await startTest(page);
   const plot = page.locator(
     '[role="img"][aria-label="Throughput and latency over time"]',
   );
@@ -13,7 +11,6 @@ test("chart axes and time ticks are DOM labels anchored inside the canvas layout
     timeout: 5000,
   });
   await expect(plot.locator(".chart-labels .axis-label").first()).toBeVisible();
-
   const geometry = await plot.evaluate((element) => {
     const canvas = element.querySelector("canvas");
     const tick = element.querySelector(".time-label");
@@ -31,15 +28,13 @@ test("chart axes and time ticks are DOM labels anchored inside the canvas layout
   });
   expect(geometry).toEqual({ tickWithinCanvas: true, axisWithinCanvas: true });
 });
-
 test("pinch zoom raises canvas resolution without changing layout", async ({
   page,
   browserName,
   context,
 }) => {
   test.skip(browserName !== "chromium", "CDP page scale is Chromium-only");
-  await page.goto("/?engine=dummy");
-
+  await openApp(page);
   const ratios = () =>
     page.locator("canvas").evaluateAll((canvases) =>
       canvases.map((canvas) => ({
@@ -51,7 +46,6 @@ test("pinch zoom raises canvas resolution without changing layout", async ({
   const session = await context.newCDPSession(page);
   try {
     await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
-
     await expect
       .poll(async () => (await ratios()).every((canvas) => canvas.ratio > 1))
       .toBe(true);

@@ -1,46 +1,33 @@
-import { expect, test, type Page } from "./webview";
-
-async function configureShortDownload(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await expect(
-    settings.getByText("Ready", { exact: true }).first(),
-  ).toBeVisible();
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "0"],
-    ["Download ms", "900"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-}
-
+import {
+  expect,
+  expectVisible,
+  prepareApp,
+  openSettings,
+  resultCards,
+  startAndWait,
+  startTest,
+  test,
+  waitForCompletion,
+} from "./webview";
 test("default wire estimates stay out of live measurement and concise after completion", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
+  await prepareApp(page, "short");
   await expect(page.getByLabel("Show estimated wire rate")).toBeChecked();
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await startTest(page);
   await expect(page.locator(".gauge-value")).not.toHaveText("—");
   await expect(page.locator(".metric-wrap")).not.toContainText(/wire/i);
   await expect(page.locator(".result-chip")).not.toContainText(/wire/i);
   await expect(page.locator(".result-card .est")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
-  const estimate = page.locator(".result-card .est");
+  await waitForCompletion(page);
+  const estimate = resultCards(page).locator(".est");
   await expect(estimate).toContainText("wire +");
   await expect(estimate).not.toContainText("wire estimate");
 });
-
 test("a persisted opt-out hides only wire-estimate presentation", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
+  await prepareApp(page, "short");
   await page.getByText("Show estimated wire rate", { exact: true }).click();
   await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
   await expect
@@ -52,20 +39,16 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
     )
     .toBe(false);
   await page.reload();
-  await page.getByRole("button", { name: "Open settings" }).click();
+  await openSettings(page);
   await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
+  await startTest(page);
   await expect(page.locator(".gauge-value")).not.toHaveText("—");
   await expect(page.locator(".result-card .est")).toHaveCount(0);
 });
-
 test("bidirectional results use their combined lane estimate", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
-  const settings = page.locator('[aria-label="Settings"]');
+  const settings = await prepareApp(page, "short");
   await settings
     .locator("label.switch", {
       hasText: "Include concurrent download + upload",
@@ -73,30 +56,18 @@ test("bidirectional results use their combined lane estimate", async ({
     .click();
   await settings.getByLabel("Download ms").fill("0");
   await settings.getByLabel("Bidirectional ms").fill("900");
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
-  const card = page.locator(".result-card", { hasText: "Bi-dir" });
+  await startAndWait(page);
+  const card = resultCards(page).filter({ hasText: "Bi-dir" });
   await expect(card.locator(".est")).toContainText("wire +");
   await card.locator(".est-tag").hover();
   await expect(page.getByRole("tooltip")).toContainText("Total +");
 });
-
 test("result wire details work with mouse, keyboard, touch, and narrow viewports", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 360, height: 740 });
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
-  await page.getByRole("button", { name: "Open settings" }).click();
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
-
-  const tag = page.locator(".result-card .est-tag");
+  await prepareApp(page, "short", "dummy", { width: 360, height: 740 });
+  await startAndWait(page);
+  const tag = resultCards(page).locator(".est-tag");
   await expect(tag).toHaveCSS("text-decoration-line", "underline");
   await expect(tag).toHaveCSS("text-decoration-style", "dotted");
   await tag.hover();
@@ -111,37 +82,28 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   expect(box).not.toBeNull();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(360);
-
   await page.mouse.move(0, 0);
   await expect(tooltip).toHaveCount(0);
   await tag.focus();
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("tooltip")).toBeVisible();
+  await expectVisible(page.getByRole("tooltip"));
   await page.keyboard.press("Escape");
   await expect(page.getByRole("tooltip")).toHaveCount(0);
-
   await tag.dispatchEvent("pointerup", { pointerType: "touch" });
-  await expect(page.getByRole("tooltip")).toBeVisible();
+  await expectVisible(page.getByRole("tooltip"));
   await tag.dispatchEvent("pointerup", { pointerType: "touch" });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
-
 test("loopback explains why wire rate is unavailable", async ({ page }) => {
-  await page.goto("/?engine=dummy");
-  await configureShortDownload(page);
-  const settings = page.locator('[aria-label="Settings"]');
+  const settings = await prepareApp(page, "short");
   const advanced = settings.locator("summary", {
     hasText: "Customize the compensation model",
   });
   await advanced.click();
   await settings.getByLabel("Connection profile").selectOption("loopback");
-
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.getByRole("button", { name: "Run the test again" }),
-  ).toBeVisible({ timeout: 5_000 });
-  const estimate = page.locator(".result-card .est");
+  await startAndWait(page);
+  const estimate = resultCards(page).locator(".est");
   await expect(estimate).toContainText("wire n/a");
   await estimate.locator(".est-tag").hover();
   await expect(page.getByRole("tooltip")).toContainText(

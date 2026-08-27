@@ -1,5 +1,14 @@
-import { expect, test, type Page } from "./webview";
-
+import {
+  abortButton,
+  againButton,
+  configureSettings,
+  expect,
+  gaugeStage,
+  openApp,
+  startTest,
+  test,
+  type Page,
+} from "./webview";
 interface GaugeSnapshot {
   stageWidth: number;
   stageHeight: number;
@@ -11,7 +20,6 @@ interface GaugeSnapshot {
   expectedBackingHeight: number;
   opaquePixels: number;
 }
-
 async function snapshotGauge(page: Page): Promise<GaugeSnapshot> {
   return page.locator(".gauge-panel .stage").evaluate((stage) => {
     const canvas = stage.querySelector("canvas");
@@ -40,9 +48,8 @@ async function snapshotGauge(page: Page): Promise<GaugeSnapshot> {
     };
   });
 }
-
 async function expectCoherentGauge(page: Page): Promise<void> {
-  await expect(page.locator(".gauge-panel .stage canvas")).toBeVisible();
+  await expect(gaugeStage(page).locator("canvas")).toBeVisible();
   await page.waitForTimeout(80);
   const gauge = await snapshotGauge(page);
   expect(Math.abs(gauge.stageWidth - gauge.canvasWidth)).toBeLessThanOrEqual(2);
@@ -53,21 +60,6 @@ async function expectCoherentGauge(page: Page): Promise<void> {
   expect(gauge.backingHeight).toBe(gauge.expectedBackingHeight);
   expect(gauge.opaquePixels).toBeGreaterThan(0);
 }
-
-async function configureShortRun(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open settings" }).click();
-  const settings = page.locator('[aria-label="Settings"]');
-  await settings.getByRole("button", { name: "custom" }).click();
-  for (const [label, value] of [
-    ["Warmup ms", "0"],
-    ["Latency ms", "0"],
-    ["Download ms", "1800"],
-    ["Upload ms", "0"],
-  ] as const)
-    await settings.getByLabel(label).fill(value);
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-}
-
 for (const viewport of [
   { width: 1024, height: 768, label: "desktop" },
   { width: 390, height: 640, label: "mobile" },
@@ -77,44 +69,32 @@ for (const viewport of [
   }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.setViewportSize(viewport);
-    await page.goto("/?engine=dummy");
+    await openApp(page, "dummy", viewport);
     await expectCoherentGauge(page);
-
     await page.setViewportSize({
       width: viewport.width,
       height: viewport.height + 120,
     });
     await expectCoherentGauge(page);
-
-    await page.locator(".gauge-panel .stage").evaluate((stage) => {
+    await gaugeStage(page).evaluate((stage) => {
       stage.setAttribute("data-test-hidden", "true");
       (stage as HTMLElement).style.display = "none";
     });
     await page.waitForTimeout(80);
-    await page.locator(".gauge-panel .stage").evaluate((stage) => {
+    await gaugeStage(page).evaluate((stage) => {
       stage.removeAttribute("data-test-hidden");
       (stage as HTMLElement).style.removeProperty("display");
     });
     await expectCoherentGauge(page);
-
-    await configureShortRun(page);
-    await page.getByRole("button", { name: "Start the speed test" }).click();
-    await expect(
-      page.getByRole("button", { name: "Abort test" }),
-    ).toBeVisible();
+    await configureSettings(page, "lifecycle");
+    await startTest(page);
+    await expect(abortButton(page)).toBeVisible();
     await expectCoherentGauge(page);
-
-    await page.getByRole("button", { name: "Abort test" }).click();
-    await expect(
-      page.getByRole("button", { name: "Run the test again" }),
-    ).toBeVisible();
+    await abortButton(page).click();
+    await expect(againButton(page)).toBeVisible();
     await expectCoherentGauge(page);
-
-    await page.getByRole("button", { name: "Run the test again" }).click();
-    await expect(
-      page.getByRole("button", { name: "Abort test" }),
-    ).toBeVisible();
+    await againButton(page).click();
+    await expect(abortButton(page)).toBeVisible();
     await expectCoherentGauge(page);
     expect(errors).toEqual([]);
   });

@@ -7,7 +7,6 @@ import {
 import { mkdir } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { createChromeWebView } from "./chrome";
-
 type Name = string | RegExp;
 type Step =
   | { kind: "css"; value: string }
@@ -16,7 +15,6 @@ type Step =
   | { kind: "label"; text: Name }
   | { kind: "filter"; text?: Name; has?: Step[] }
   | { kind: "nth"; index: number };
-
 const artifacts = resolve(
   process.env.GM_WEBVIEW_ARTIFACTS ?? "test-results/webview",
 );
@@ -27,7 +25,6 @@ const localRoutes: Array<{
   pattern: string;
   handler: RouteHandler;
 }> = [];
-
 function staticServer() {
   if (server) return server;
   server = Bun.serve({
@@ -66,7 +63,6 @@ function staticServer() {
   });
   return server;
 }
-
 const unsafeScriptCharMap: Record<string, string> = {
   "<": "\\u003C",
   ">": "\\u003E",
@@ -74,14 +70,12 @@ const unsafeScriptCharMap: Record<string, string> = {
   "\u2028": "\\u2028",
   "\u2029": "\\u2029",
 };
-
 const serializedJSON = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
     item instanceof RegExp
       ? { __regexp: true, source: item.source, flags: item.flags }
       : item,
   );
-
 const encode = (value: unknown) => {
   const json = serializedJSON(value);
   if (json === undefined) return "undefined";
@@ -90,12 +84,10 @@ const encode = (value: unknown) => {
     (char) => unsafeScriptCharMap[char],
   );
 };
-
 const pageValue = (value: unknown) => {
   const json = serializedJSON(value);
   return json === undefined ? undefined : JSON.parse(json);
 };
-
 const resolver = String.raw`
 const revive = value => value && value.__regexp ? new RegExp(value.source, value.flags) : value;
 const match = (actual, wanted, exact = false) => {
@@ -110,8 +102,8 @@ const name = el => {
   return el.getAttribute("alt") || el.getAttribute("title") || el.textContent || "";
 };
 const role = el => el.getAttribute("role") || (/^H[1-6]$/.test(el.tagName) ? "heading" : "") || ({BUTTON:"button",A:"link",DIALOG:"dialog",SUMMARY:"button",SELECT:"combobox",TEXTAREA:"textbox"}[el.tagName]) || (el.tagName === "INPUT" ? ({checkbox:"checkbox",radio:"radio",range:"slider",button:"button",submit:"button"}[el.type] || "textbox") : "");
-const resolveSteps = steps => {
-  let nodes = [document];
+const resolveSteps = (steps, roots = [document]) => {
+  let nodes = roots;
   for (const step of steps) {
     if (step.kind === "css") nodes = nodes.flatMap(root => [...root.querySelectorAll(step.value)]);
     else if (step.kind === "role") nodes = nodes.flatMap(root => [...root.querySelectorAll("*")].filter(el => role(el) === step.role && (step.name === undefined || match(name(el), step.name, step.exact))));
@@ -122,60 +114,47 @@ const resolveSteps = steps => {
   }
   return nodes.filter(Boolean);
 };
-const resolveWithin = (root, steps) => {
-  const old = document.__gmRoot; document.__gmRoot = root;
-  let nodes = [root];
-  for (const step of steps) {
-    if (step.kind === "css") nodes = nodes.flatMap(scope => [...scope.querySelectorAll(step.value)]);
-    else if (step.kind === "role") nodes = nodes.flatMap(scope => [...scope.querySelectorAll("*")].filter(el => role(el) === step.role && (step.name === undefined || match(name(el), step.name, step.exact))));
-    else if (step.kind === "text") nodes = nodes.flatMap(scope => [...scope.querySelectorAll("*")].filter(el => match(el.textContent, step.text, step.exact)));
-    else if (step.kind === "label") nodes = nodes.flatMap(scope => [...scope.querySelectorAll("input,select,textarea,button")].filter(el => match(name(el), step.text)));
-    else if (step.kind === "filter") nodes = nodes.filter(el => (step.text === undefined || match(el.textContent, step.text)) && (!step.has || resolveWithin(el, step.has).length));
-    else if (step.kind === "nth") nodes = nodes.length ? [nodes.at(step.index)] : [];
-  }
-  document.__gmRoot = old; return nodes.filter(Boolean);
-};`;
-
+const resolveWithin = (root, steps) => resolveSteps(steps, [root]);`;
 export class Locator {
   constructor(
     readonly page: Page,
     readonly steps: Step[],
   ) {}
+  private add(step: Step) {
+    return new Locator(this.page, [...this.steps, step]);
+  }
   locator(value: string, options: { hasText?: Name; has?: Locator } = {}) {
-    let result = new Locator(this.page, [
-      ...this.steps,
-      { kind: "css", value },
-    ]);
+    let result = this.add({ kind: "css", value });
     if (options.hasText !== undefined || options.has)
       result = result.filter({ hasText: options.hasText, has: options.has });
     return result;
   }
   getByRole(role: string, options: { name?: Name; exact?: boolean } = {}) {
-    return new Locator(this.page, [
-      ...this.steps,
-      { kind: "role", role, name: options.name, exact: options.exact },
-    ]);
+    return this.add({
+      kind: "role",
+      role,
+      name: options.name,
+      exact: options.exact,
+    });
   }
   getByText(text: Name, options: { exact?: boolean } = {}) {
-    return new Locator(this.page, [
-      ...this.steps,
-      { kind: "text", text, exact: options.exact },
-    ]);
+    return this.add({ kind: "text", text, exact: options.exact });
   }
   getByLabel(text: Name) {
-    return new Locator(this.page, [...this.steps, { kind: "label", text }]);
+    return this.add({ kind: "label", text });
   }
   filter(options: { hasText?: Name; has?: Locator }) {
-    return new Locator(this.page, [
-      ...this.steps,
-      { kind: "filter", text: options.hasText, has: options.has?.steps },
-    ]);
+    return this.add({
+      kind: "filter",
+      text: options.hasText,
+      has: options.has?.steps,
+    });
   }
   first() {
-    return new Locator(this.page, [...this.steps, { kind: "nth", index: 0 }]);
+    return this.add({ kind: "nth", index: 0 });
   }
   nth(index: number) {
-    return new Locator(this.page, [...this.steps, { kind: "nth", index }]);
+    return this.add({ kind: "nth", index });
   }
   async evaluate<T>(
     fn: (element: any, arg?: any) => T,
@@ -302,7 +281,6 @@ export class Locator {
     );
   }
 }
-
 type RouteHandler = (route: LocalRoute) => void | Promise<void>;
 class LocalRoute {
   response: Response | undefined;
@@ -349,19 +327,25 @@ export class Page {
       this.console.push(`${type}: ${args.map(String).join(" ")}`),
     );
   }
+  private root(step: Step) {
+    return new Locator(this, [step]);
+  }
   locator(value: string, options: { hasText?: Name; has?: Locator } = {}) {
-    return new Locator(this, [{ kind: "css", value }]).filter(options);
+    return this.root({ kind: "css", value }).filter(options);
   }
   getByRole(role: string, options: { name?: Name; exact?: boolean } = {}) {
-    return new Locator(this, [
-      { kind: "role", role, name: options.name, exact: options.exact },
-    ]);
+    return this.root({
+      kind: "role",
+      role,
+      name: options.name,
+      exact: options.exact,
+    });
   }
   getByText(text: Name, options: { exact?: boolean } = {}) {
-    return new Locator(this, [{ kind: "text", text, exact: options.exact }]);
+    return this.root({ kind: "text", text, exact: options.exact });
   }
   getByLabel(text: Name) {
-    return new Locator(this, [{ kind: "label", text }]);
+    return this.root({ kind: "label", text });
   }
   private async init() {
     if (this.initialized) return;
@@ -425,9 +409,6 @@ export class Page {
     if (pattern.startsWith("**")) {
       localRoutes.push({ owner: this, pattern, handler });
     } else {
-      // Cross-origin routes in these tests only simulate an unreachable
-      // endpoint. CDP's URL blocker avoids Fetch.requestPaused re-entrancy
-      // while WebView is synchronously waiting on navigation or a click.
       void handler;
       this.blockedPatterns.push(pattern);
       await this.init();
@@ -520,7 +501,6 @@ export class Page {
     this.raw.close();
   }
 }
-
 function glob(pattern: string, url: string) {
   const escaped = pattern
     .split("**")
@@ -530,7 +510,6 @@ function glob(pattern: string, url: string) {
     .join(".*");
   return new RegExp(`^${escaped}$`).test(url);
 }
-
 function pressKey(view: Bun.WebView, chord: string) {
   const parts = chord.split("+");
   const key = parts.pop()!;
@@ -538,7 +517,6 @@ function pressKey(view: Bun.WebView, chord: string) {
     modifiers: parts as Bun.WebView.Modifier[],
   });
 }
-
 const retry = async <T>(
   check: () => Promise<T>,
   timeout = 5000,
@@ -632,7 +610,6 @@ function matchValue(actual: unknown, wanted: string | RegExp, exact: boolean) {
       ? text === wanted
       : text.includes(wanted);
 }
-
 function pollExpect(
   fn: () => unknown | Promise<unknown>,
   options?: { timeout?: number },
@@ -659,6 +636,122 @@ export const expect: any = Object.assign(
     actual instanceof Locator ? locatorExpect(actual) : bunExpect(actual),
   { poll: pollExpect },
 );
+export type Viewport = { width: number; height: number };
+export type SettingLabel =
+  "Warmup ms" | "Latency ms" | "Download ms" | "Upload ms" | "Bidirectional ms";
+export type SettingValues = Partial<Record<SettingLabel, string>>;
+export type SettingPreset =
+  | "short"
+  | "long-latency"
+  | "three-stage"
+  | "mobile-scroll"
+  | "active-presentation"
+  | "live-confidence"
+  | "warmup"
+  | "live-chips"
+  | "latency-only"
+  | "short-600"
+  | "lifecycle";
+const settingLabels: SettingLabel[] = [
+  "Warmup ms",
+  "Latency ms",
+  "Download ms",
+  "Upload ms",
+];
+const preset = (...values: string[]): SettingValues =>
+  Object.fromEntries(
+    settingLabels.map((label, index) => [label, values[index]]),
+  );
+const settingPresets: Record<SettingPreset, SettingValues> = {
+  short: preset("0", "0", "900", "0"),
+  "long-latency": preset("0", "1800", "900", "0"),
+  "three-stage": preset("0", "900", "900", "3200"),
+  "mobile-scroll": preset("0", "700", "700", "2600"),
+  "active-presentation": preset("0", "300", "300", "300"),
+  "live-confidence": preset("0", "0", "0", "0"),
+  warmup: preset("1200", "500", "500", "0"),
+  "live-chips": preset("0", "250", "250", "1400"),
+  "latency-only": preset("0", "1600", "0", "0"),
+  "short-600": preset("0", "0", "600", "0"),
+  lifecycle: preset("0", "0", "1800", "0"),
+};
+export const settingsPanel = (page: Page) =>
+  page.locator('[aria-label="Settings"]');
+export const startButton = (page: Page) =>
+  page.getByRole("button", { name: "Start the speed test" });
+export const abortButton = (page: Page) =>
+  page.getByRole("button", { name: "Abort test" });
+export const againButton = (page: Page) =>
+  page.getByRole("button", { name: "Run the test again" });
+export const resultCards = (page: Page) => page.locator(".result-card");
+export const gaugeStage = (page: Page) => page.locator(".gauge-panel .stage");
+export const endpointPanel = (page: Page) =>
+  page.locator('[aria-label="Endpoint info"]');
+export async function openApp(
+  page: Page,
+  engine: "dummy" | "real" = "dummy",
+  viewport?: Viewport,
+) {
+  if (viewport) await page.setViewportSize(viewport);
+  await page.goto(`/?engine=${engine}`);
+}
+export async function openSettings(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Open settings" }).click();
+  const panel = settingsPanel(page);
+  await expect(panel).toBeVisible();
+  return panel;
+}
+export async function openEndpointInfo(page: Page): Promise<Locator> {
+  await page.getByRole("button", { name: "Toggle endpoint info" }).click();
+  const panel = endpointPanel(page);
+  await expect(panel).toBeVisible();
+  return panel;
+}
+export async function configureSettings(
+  page: Page,
+  values: SettingValues | SettingPreset,
+): Promise<Locator> {
+  const panel = await openSettings(page);
+  await panel.getByRole("button", { name: "custom" }).click();
+  const selected = typeof values === "string" ? settingPresets[values] : values;
+  for (const [label, value] of Object.entries(selected))
+    if (value !== undefined) await panel.getByLabel(label).fill(value);
+  return panel;
+}
+export async function prepareApp(
+  page: Page,
+  values: SettingValues | SettingPreset,
+  engine: "dummy" | "real" = "dummy",
+  viewport?: Viewport,
+) {
+  await openApp(page, engine, viewport);
+  return configureSettings(page, values);
+}
+export async function startTest(page: Page) {
+  await startButton(page).click();
+}
+export async function waitForCompletion(page: Page, timeout = 5_000) {
+  await expect(againButton(page)).toBeVisible({ timeout });
+}
+export async function expectVisible(locator: Locator, timeout?: number) {
+  await expect(locator).toBeVisible(timeout === undefined ? {} : { timeout });
+}
+export async function expectNoHorizontalOverflow(locator: Locator) {
+  await expect
+    .poll(() =>
+      locator.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1,
+      ),
+    )
+    .toBe(true);
+}
+export function expectNear(actual: number, expected: number, tolerance = 1) {
+  expect(Math.abs(actual - expected)).toBeLessThanOrEqual(tolerance);
+}
+export async function startAndWait(page: Page, timeout = 5_000) {
+  await startTest(page);
+  await waitForCompletion(page, timeout);
+}
 type Fixtures = {
   page: Page;
   browserName: "chromium";
@@ -705,7 +798,6 @@ export const test: WebViewTest = Object.assign(
     info: () => ({ project: { name: "chromium" as const } }),
   },
 );
-
 export class AxeBuilder {
   private selector: string | undefined;
   constructor(private options: { page: Page }) {}
@@ -725,9 +817,6 @@ export class AxeBuilder {
     );
   }
 }
-
-// Every Page closes in its test's finally block. This synchronous exit hook is
-// the final shared-process guard, which WebView itself also performs at exit.
 process.on("exit", () => {
   server?.stop(true);
   Bun.WebView.closeAll();

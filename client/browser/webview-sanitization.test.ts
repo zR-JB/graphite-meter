@@ -1,9 +1,8 @@
-import { expect, test } from "./webview";
-
+import { expect, openApp, test } from "./webview";
 test("locator data remains data when embedded in WebView evaluation", async ({
   page,
 }) => {
-  await page.goto("/?engine=dummy");
+  await openApp(page);
   const hostile = `</script><script>globalThis.__gmInjected = true</script>`;
   const payload = `${hostile}\u2028\u2029`;
   await page.evaluate(
@@ -15,7 +14,6 @@ test("locator data remains data when embedded in WebView evaluation", async ({
     },
     [hostile, payload],
   );
-
   const button = page.getByRole("button", { name: hostile, exact: true });
   await expect(button).toHaveCount(1);
   expect(await button.getAttribute("data-payload")).toBe(payload);

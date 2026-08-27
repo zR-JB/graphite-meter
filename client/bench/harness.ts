@@ -1,9 +1,5 @@
-// Runs one benchmark cell: open the production lanes against a real server,
-// discard a warmup window, measure the next one, and report what moved.
-//
-// This file drives the lanes; it never reads or writes bytes itself. A copied
-// read loop would diverge from the shipped one with nothing to catch it, so
-// every byte here goes through real/byteLane.ts and the production workers.
+// Runs one benchmark cell against a real server, measuring production lanes after warmup.
+// This driver never reads or writes bytes itself; all traffic goes through production workers.
 import {
   fetchLane,
   sessionLane,
@@ -30,8 +26,7 @@ export interface CellSpec {
   lanes: number;
   warmupMs: number;
   measureMs: number;
-  /** Wait for the Alt-Svc upgrade before opening lanes. Chromium reaches h3 only
-   *  that way, and the TCP companion carries no transfer routes. */
+  /** Wait for Alt-Svc h3 upgrade before opening lanes; the TCP companion has no transfer routes. */
   bootstrapH3?: boolean;
 }
 
@@ -41,12 +36,9 @@ export interface CellResult {
   elapsedMs: number;
   /** Per-lane split, so an idle lane is visible rather than averaged away. */
   laneBytes: number[];
-  /** Rate samples across the window, each carrying the span it actually took:
-   *  a starved main thread delivers the tick late, and assuming BUCKET_MS then
-   *  reports a rate the run never reached. */
+  /** Rate samples carry actual spans so late ticks do not report an unattained rate. */
   buckets: { bytes: number; ms: number }[];
-  /** Longest gap between ticks. Well above BUCKET_MS means the page could not
-   *  keep up, which caps what any lane count can deliver. */
+  /** Longest tick gap; a value above BUCKET_MS indicates a page-stalled run. */
   maxTickMs: number;
   errors: string[];
 }
@@ -54,8 +46,7 @@ export interface CellResult {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-/** The server's running total is authoritative for upload. The first record of
- *  the measured window is the baseline, matching what the app counts. */
+/** The server total is authoritative for upload, with the window's first record as baseline. */
 class ServerTotal {
   #baseline = -1;
   bytes = 0;
@@ -75,8 +66,7 @@ class ServerTotal {
   }
 }
 
-/** Polls the bootstrap probe until the server reports the connection as h3.
- *  The server's own view is authoritative; nextHopProtocol is masked cross-origin. */
+/** Polls until the server reports h3; its view is authoritative when nextHopProtocol is masked. */
 async function bootstrapH3(origin: string): Promise<boolean> {
   const url = `${origin}${ROUTES.probe}`;
   for (let i = 0; i < 24; i++) {
@@ -99,8 +89,7 @@ async function mintUploadId(origin: string): Promise<string> {
   return ((await res.json()) as { uploadId: string }).uploadId;
 }
 
-/** The fetch upload feed, which the app opens before any POST lane so the
- *  server's counter is already running when bytes start. */
+/** Opens the fetch upload feed before POST lanes so the server counter runs before bytes start. */
 function openProgressFeed(
   origin: string,
   uploadId: string,
@@ -181,8 +170,7 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     },
   });
 
-  // Bootstrapping before the mint keeps every request of the cell on h3. A cell
-  // that never upgraded would measure the TCP companion, so it is an error.
+  // Bootstrap before minting so every cell request uses h3; otherwise it measures the TCP companion.
   if (spec.bootstrapH3 && !(await bootstrapH3(spec.origin)))
     errors.push("h3 bootstrap: never negotiated h3");
 
@@ -232,10 +220,8 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
             dir: spec.dir,
             url: laneUrl(urls, i, uploadId),
             lanes: spec.lanes,
-            index: i,
             credentials: "same-origin",
             chunk: urls.chunkDownload,
-            debug: false,
           },
           events(i),
         ),
@@ -245,8 +231,7 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
 
   await sleep(spec.warmupMs);
 
-  // The measure epoch is what separates warmup from measurement: a download
-  // report carrying the old seq is discarded by the worker's own accounting.
+  // The measure epoch separates warmup; workers discard download reports carrying its old sequence.
   clientBytes = 0;
   laneBytes.fill(0);
   measuring = true;
