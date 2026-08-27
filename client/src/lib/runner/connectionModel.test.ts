@@ -19,6 +19,7 @@ import {
 } from "./connectionModel";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 import { DEFAULT_CONFIG } from "../state/defaults";
+import { estimateLiveCompensation } from "../compensation";
 const throughput: FetchThroughputTarget = {
   id: "http2",
   origin: "https://meter.test",
@@ -210,6 +211,45 @@ test("verified negotiated throughput presents the observed browser protocol", ()
   const presented = present(cfg, discovery, validation, infra).throughput;
   expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
   expect(presented.observedProtocol).toBe("http2");
+});
+test("automatic wire evidence follows the selected WebTransport mechanism, not fetch timing", () => {
+  withWebTransport(() => {
+    const cfg = config();
+    const discovery = makeDiscovery({
+      throughput: [webTransportOnly],
+      latency: [],
+      pageOrigin: "https://ui.test",
+      pageProtocol: "http/1.1",
+    });
+    const validation = makeValidation({
+      throughput: { state: "verified", verifiedAt: 2 },
+    });
+    const infra = makeInfra(discovery, {
+      clientIp: "192.0.2.3",
+      protocolNegotiated: "h1",
+      firstHopProtocol: "http/1.1",
+      firstHopSecure: false,
+      selectedThroughputTarget: "https://wt.test",
+      selectedThroughputTransport: "webtransport",
+      selectedThroughputProtocol: "http3",
+    });
+    const connection = present(cfg, discovery, validation, infra).throughput;
+    const estimate = estimateLiveCompensation(
+      1_000_000,
+      "download",
+      connection.browserProtocol,
+      connection.target?.tls,
+      connection.clientIpVersion,
+      connection.clientIp,
+      connection.target?.transport,
+    );
+    expect(connection.target?.transport).toBe("webtransport");
+    expect(estimate.transport).toBe("http3-quic");
+    expect(estimate.framing).toBe("webtransport-stream");
+    expect(estimate.factors.map((factor) => factor.label)).not.toContain(
+      "HTTP/3 DATA frames",
+    );
+  });
 });
 test("old evidence never appears under a new selection or generation", () => {
   const cfg = config();

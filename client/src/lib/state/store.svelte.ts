@@ -347,11 +347,12 @@ class AppStore {
   ): CompensationEstimate {
     return estimateLiveCompensation(
       bytesPerSec,
-      this.config.compensation,
       phase,
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
       this.runConnections.throughput.clientIpVersion,
+      this.runConnections.throughput.clientIp,
+      this.runConnections.throughput.target?.transport,
     );
   }
 
@@ -362,10 +363,11 @@ class AppStore {
     return estimateResultCompensation(
       result,
       phase,
-      this.config.compensation,
       this.runConnections.throughput.browserProtocol,
       this.runConnections.throughput.target?.tls,
       this.runConnections.throughput.clientIpVersion,
+      this.runConnections.throughput.clientIp,
+      this.runConnections.throughput.target?.transport,
     );
   }
 

@@ -1,8 +1,4 @@
-import type {
-  CompensationTransport,
-  CompensationTransportSetting,
-  ProtocolTarget,
-} from "./contract";
+import type { CompensationTransport, ProtocolTarget } from "./contract";
 
 /* Canonicalize protocol identifiers from Resource Timing, Go net/http, and configured targets into one. */
 export function normalizeHttpProtocol(
@@ -47,9 +43,8 @@ export function compensationTransportFromProtocol(
 }
 
 export function compensationTransportLabel(
-  transport: CompensationTransportSetting,
+  transport: CompensationTransport,
 ): string {
-  if (transport === "auto") return "Automatic";
   if (transport === "http1-clear") return `${httpProtocolLabel("http1")} clear`;
   if (transport === "https-tls") return `${httpProtocolLabel("http1")} TLS`;
   if (transport === "http2") return httpProtocolLabel("http2");

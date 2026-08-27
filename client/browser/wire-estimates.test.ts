@@ -95,18 +95,3 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await tag.dispatchEvent("pointerup", { pointerType: "touch" });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
-test("loopback explains why wire rate is unavailable", async ({ page }) => {
-  const settings = await prepareApp(page, "short");
-  const advanced = settings.locator("summary", {
-    hasText: "Customize the compensation model",
-  });
-  await advanced.click();
-  await settings.getByLabel("Connection profile").selectOption("loopback");
-  await startAndWait(page);
-  const estimate = resultCards(page).locator(".est");
-  await expect(estimate).toContainText("wire n/a");
-  await estimate.locator(".est-tag").hover();
-  await expect(page.getByRole("tooltip")).toContainText(
-    "No physical-link estimate applies",
-  );
-});

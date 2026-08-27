@@ -146,24 +146,17 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   ).toBeUndefined();
 });
 
-test("obsolete compensation presets and factors cannot survive hydration", () => {
-  const compensation = loaded({
+test("obsolete compensation settings are discarded without hydration", () => {
+  const config = loaded({
     config: {
       compensation: {
         profile: "internet",
-        factors: { browserRuntime: true, lossRetransmission: true },
+        transport: "http3-quic",
+        params: { mtuBytes: 9000, ipVersion: 6 },
       },
     },
-  }).config.compensation;
-  expect(compensation.profile).toBe("lan");
-  expect("factors" in compensation).toBe(false);
-});
-
-test("legacy numeric IP family remains an expert override", () => {
-  expect(
-    loaded({ config: { compensation: { params: { ipVersion: 6 } } } }).config
-      .compensation.params.ipVersion,
-  ).toBe(6);
+  }).config;
+  expect(config).not.toHaveProperty("compensation");
 });
 
 test("savePersisted round-trips through loadPersisted", () => {

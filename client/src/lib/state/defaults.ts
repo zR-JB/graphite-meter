@@ -19,20 +19,6 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     throughputTarget: "auto",
     latencyTarget: "auto",
   },
-  compensation: {
-    profile: "lan",
-    transport: "auto",
-    params: {
-      mtuBytes: 1500,
-      ipVersion: "auto",
-      vlanTagged: false,
-      tcpOptionsMinBytes: 0,
-      tcpOptionsMaxBytes: 12,
-      encapsulationBytes: 0,
-      quicConnIdMinBytes: 0,
-      quicConnIdMaxBytes: 20,
-    },
-  },
   adaptive: {
     enabled: true,
     minCoverageRatio: 0.52,

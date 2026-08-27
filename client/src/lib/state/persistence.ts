@@ -8,14 +8,6 @@ export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 export type ThemePref = "dark" | "light" | "auto";
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
-const PROFILES = ["lan", "loopback", "tunnel", "custom"] as const;
-const COMPENSATION_TRANSPORTS = [
-  "auto",
-  "http1-clear",
-  "https-tls",
-  "http2",
-  "http3-quic",
-] as const;
 
 interface PersistedState {
   config: RunnerConfig;
@@ -147,15 +139,6 @@ export function loadPersisted(): PersistedState {
     merged.config.transferStreams.count = normalizeStreamCount(
       parsedConfig.parallelStreams,
     );
-  const parsedCompensation = object(parsedConfig?.compensation);
-  const parsedParams = object(parsedCompensation?.params);
-  const savedIPVersion = parsedParams?.ipVersion;
-  if (savedIPVersion === "auto" || savedIPVersion === 4 || savedIPVersion === 6)
-    merged.config.compensation.params.ipVersion = savedIPVersion;
-  if (!oneOf(merged.config.compensation.profile, PROFILES))
-    merged.config.compensation.profile = "lan";
-  if (!oneOf(merged.config.compensation.transport, COMPENSATION_TRANSPORTS))
-    merged.config.compensation.transport = "auto";
   if (
     merged.config.transports.throughputTarget === "current" ||
     /^(http[123]|http1-(clear|tls))$/.test(

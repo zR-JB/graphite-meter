@@ -44,36 +44,14 @@ export type ConnectivityState =
   | "unstable" // significant loss
   | "offline";
 
-/* Overhead compensation ---------- Estimates forward-direction physical link occupancy from application bytes. */
+/* Automatic wire estimates ---------- Forward-direction physical link occupancy from application bytes. */
 
-/* Path the transfer takes: picks which overheads physically apply. */
-export type ConnectionProfile = "lan" | "loopback" | "tunnel" | "custom";
-
-/** Browser-facing wire transport, detected from Resource Timing or overridden. */
+/** Browser-facing wire transport, detected from Resource Timing and security. */
 export type CompensationTransport =
   | "http1-clear" // HTTP/1.1, no TLS
   | "https-tls" // HTTP/1.1 over TLS
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
-
-export type CompensationTransportSetting = "auto" | CompensationTransport;
-type CompensationIPVersionSetting = "auto" | 4 | 6;
-
-export interface OverheadCompensationConfig {
-  /** Physical first-hop preset. The browser-facing HTTP transport is detected. */
-  profile: ConnectionProfile;
-  transport: CompensationTransportSetting;
-  params: {
-    mtuBytes: number;
-    ipVersion: CompensationIPVersionSetting;
-    vlanTagged: boolean; // 802.1Q tag adds 4B per frame
-    tcpOptionsMinBytes: number;
-    tcpOptionsMaxBytes: number;
-    encapsulationBytes: number;
-    quicConnIdMinBytes: number;
-    quicConnIdMaxBytes: number;
-  };
-}
 
 /* ---------- Adaptive duration ---------- */
 /** Confidence-based early exit; disabled adaptive mode runs each phase for its full configured duration. */
@@ -138,8 +116,6 @@ export interface RunnerConfig {
     throughputTarget: ThroughputTargetSelection;
     latencyTarget: "auto" | string;
   };
-  /** Wire-rate estimation. */
-  compensation: OverheadCompensationConfig;
   /** Confidence-based early exit. */
   adaptive: AdaptiveDurationConfig;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */

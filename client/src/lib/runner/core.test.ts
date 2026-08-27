@@ -161,10 +161,6 @@ function makeConfig(overrides: ConfigOverrides = {}): RunnerConfig {
       throughputTarget: "current",
       latencyTarget: "auto",
     },
-    compensation: {
-      ...base.compensation,
-      params: { ...base.compensation.params, ipVersion: 4 },
-    },
     adaptive: { ...adaptiveDefaults, ...overrides.adaptive },
   };
 }

@@ -101,7 +101,8 @@ export class DummyBackend implements RunnerBackend {
     if (!throughput || !latency)
       throw new Error("dummy target selection failed");
     return {
-      clientIp: "127.0.0.1",
+      // Fixture uses TEST-NET as a remote Ethernet path; loopback is unit-tested.
+      clientIp: "192.0.2.1",
       clientIpVersion: 4,
       clientIpSource: "socket",
       server: discovery.server,

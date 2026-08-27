@@ -12,7 +12,6 @@
   import { panelReadiness } from "../../runner/connectionModel";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
-  import CompensationEditor from "./CompensationEditor.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -368,7 +367,12 @@
     <p class="hint">
       Forward-direction Ethernet estimate from protocol bytes only.
     </p>
-    <CompensationEditor compensation={store.config.compensation} />
+    <p class="hint">
+      Uses the negotiated browser protocol and authoritative preflight IP family
+      when available. Otherwise it assumes a conservative 1500 B Ethernet path
+      with IPv4, standard TCP options, and no unknown tunnel or VLAN layers.
+      Loopback paths have no physical-wire estimate.
+    </p>
   </section>
 
   <h2 class="tier-label">Advanced</h2>

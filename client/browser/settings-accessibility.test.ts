@@ -17,12 +17,6 @@ test("settings expose live controls and lock run construction inputs", async ({
   const settings = await openSettings(page);
   await expectVisible(settings.getByText("Ready", { exact: true }).first());
   await expectVisible(settings.getByLabel("Maximum H1 streams per direction"));
-  const advanced = settings.locator("summary", {
-    hasText: "Customize the compensation model",
-  });
-  await advanced.focus();
-  await advanced.press("Enter");
-  await expectVisible(settings.getByLabel("Connection profile"));
   const accessibility = await new AxeBuilder({ page })
     .include('[aria-label="Settings"]')
     .analyze();

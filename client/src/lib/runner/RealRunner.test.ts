@@ -858,17 +858,6 @@ const probeConfig = (latency: boolean): RunnerConfig => ({
     uploadMs: 0,
     bidirectionalMs: 0,
   },
-  compensation: {
-    ...DEFAULT_CONFIG.compensation,
-    profile: "loopback",
-    params: {
-      ...DEFAULT_CONFIG.compensation.params,
-      mtuBytes: 65536,
-      ipVersion: "auto",
-      tcpOptionsMaxBytes: 0,
-      quicConnIdMaxBytes: 0,
-    },
-  },
   adaptive: {
     ...DEFAULT_CONFIG.adaptive,
     enabled: false,

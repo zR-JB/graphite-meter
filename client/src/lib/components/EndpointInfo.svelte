@@ -126,7 +126,6 @@
         latency: connections.latency,
         preTestPingMs: connections.latency.preTestPingMs,
         streams: transferStreams,
-        compensation: store.config.compensation,
       },
       null,
       2,
@@ -274,13 +273,6 @@
         <div>
           <dt>Streams</dt>
           <dd>{transferStreams}</dd>
-        </div>
-        <div>
-          <dt>Compensation</dt>
-          <dd>
-            {store.config.compensation.profile} · {store.config.compensation
-              .transport}
-          </dd>
         </div>
       </dl>
       <p class="diagnostic-note">

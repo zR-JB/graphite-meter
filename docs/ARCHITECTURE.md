@@ -424,8 +424,10 @@ boundaries. Dev-tooling builds add diagnostics and dummy-backend anomaly control
 ### The Endpoint info drawer
 
 The drawer shows server identity, advertised capabilities, selected paths, readiness, protocol
-evidence, and pre-test RTT. Addresses, origins, routes, generation, stream policy, runner details,
-and compensation assumptions live in its expandable, copyable diagnostic report.
+evidence, and pre-test RTT. Addresses, origins, routes, generation, stream policy, and runner details
+live in its expandable, copyable diagnostic report. Wire-rate cards explain their automatic protocol
+and preflight assumptions in the result tooltip; no profile or expert compensation settings are
+persisted or reported.
 
 ### Web Workers
 

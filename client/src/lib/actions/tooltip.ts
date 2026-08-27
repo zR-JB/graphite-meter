@@ -242,11 +242,7 @@ export const JARGON = {
     "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
   ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",
   overheadCompensation:
-    "Wire estimation adds only forward-path protocol bytes: Ethernet, IP, transport, TLS/QUIC, HTTP framing, and an explicitly configured tunnel. It never guesses from stability, loss, browser cost, or ramp-up.",
-  compProfile:
-    "Connection profile selects the physical first hop. Local Ethernet uses a 1500-byte MTU, loopback has no physical wire, and the tunnel preset uses a 1420-byte inner MTU with 60 bytes of encapsulation.",
-  compTransport:
-    "Automatic reads the browser-facing protocol from Resource Timing, so HTTPS and a reverse proxy are handled at the correct hop. Expert overrides are available for testing unusual HTTP/QUIC paths.",
+    "Wire estimation adds only forward-path protocol bytes: Ethernet, IP, transport, TLS/QUIC, and HTTP framing. It uses negotiated protocol and authoritative preflight IP evidence, with conservative defaults when either is unavailable. It never guesses from stability, loss, browser cost, or ramp-up.",
   unitBits:
     "Bits per second — Mbit/s, Gbit/s. How internet plans are sold, so this is what you compare against your contract.",
   unitBytes:
