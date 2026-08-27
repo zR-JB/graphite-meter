@@ -229,7 +229,9 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
       "Fetch streams · WebTransport streams · WebTransport datagrams",
     ),
   );
-  await expectVisible(endpoint.getByText("WebSocket", { exact: true }));
+  await expectVisible(
+    endpoint.getByText("WebSocket · WebTransport datagrams", { exact: true }),
+  );
   await expectVisible(endpoint.getByText("Fetch stream over HTTP/1.1 · clear"));
   const summary = endpoint.locator("summary", { hasText: "Diagnostics" });
   await summary.focus();

@@ -86,7 +86,8 @@ for (const viewport of [
       (stage as HTMLElement).style.removeProperty("display");
     });
     await expectCoherentGauge(page);
-    await configureSettings(page, "lifecycle");
+    const settings = await configureSettings(page, "lifecycle");
+    await settings.getByRole("button", { name: "Close Settings" }).click();
     await startTest(page);
     await expect(abortButton(page)).toBeVisible();
     await expectCoherentGauge(page);

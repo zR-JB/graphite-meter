@@ -65,7 +65,11 @@ test("bidirectional results use their combined lane estimate", async ({
 test("result wire details work with mouse, keyboard, touch, and narrow viewports", async ({
   page,
 }) => {
-  await prepareApp(page, "short", "dummy", { width: 360, height: 740 });
+  const settings = await prepareApp(page, "short", "dummy", {
+    width: 360,
+    height: 740,
+  });
+  await settings.getByRole("button", { name: "Close Settings" }).click();
   await startAndWait(page);
   const tag = resultCards(page).locator(".est-tag");
   await expect(tag).toHaveCSS("text-decoration-line", "underline");
