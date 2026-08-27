@@ -1,11 +1,11 @@
 import { test, expect } from "bun:test";
-import type { CoreHost } from "./core";
 import type { RunnerConfig } from "./contract";
 import type { RealBackend } from "./RealRunner";
 import {
   TEST_BUILD_TOKENS,
   TEST_WT_ORIGIN,
   TEST_WT_PREFLIGHT,
+  testHost,
   testWtConfig,
 } from "./test-helpers.test";
 const dials: string[] = [];
@@ -71,17 +71,7 @@ async function withProbeBackend(
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch;
     const backend = new RealBackend();
-    backend.attach({
-      config: probeConfig,
-      phase: "idle",
-      elapsed: 0,
-      emit() {},
-      push() {},
-      stall() {},
-      resume() {},
-      fail() {},
-      failStage() {},
-    } as unknown as CoreHost);
+    backend.attach(testHost(probeConfig));
     await body(backend);
   } finally {
     globalThis.fetch = realFetch;
@@ -91,6 +81,8 @@ async function withProbeBackend(
     else globals.WebTransport = realWebTransport;
     if (realLocation)
       Object.defineProperty(globalThis, "location", realLocation);
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
+      Reflect.deleteProperty(globals, key);
   }
 }
 const withFakeProbe = (

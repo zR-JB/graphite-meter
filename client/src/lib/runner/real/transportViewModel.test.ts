@@ -1,44 +1,12 @@
 import { expect, test } from "bun:test";
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
-import {
-  classifyTransportDiscovery,
-  ROUTES,
-  targetOfKind,
-} from "./backendPure";
+import type { FetchThroughputTarget } from "../../api/endpoints";
+import { classifyTransportDiscovery, targetOfKind } from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
-
-const routes = {
-  probe: ROUTES.probe,
-  download: ROUTES.download,
-  upload: ROUTES.upload,
-  uploadSession: ROUTES.uploadSession,
-  uploadProgress: ROUTES.uploadProgress,
-};
-const transfer = (
-  id: string,
-  origin: string,
-  protocol: FetchThroughputTarget["protocol"],
-  tls: boolean,
-): FetchThroughputTarget => ({
-  id,
-  origin,
-  protocol,
-  tls,
-  transport: "fetch-stream",
-  routes,
-});
-const latency = (id: string, origin: string, tls: boolean): LatencyTarget => ({
-  id,
-  origin,
-  protocol: "http1",
-  tls,
-  transport: "websocket",
-  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-});
+import { testLatency, testTransfer } from "../test-helpers.test";
 
 test("status copy distinguishes missing, blocked, and trusted loopback targets", () => {
   const blocked = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://meter.example:7246", "http1", false)],
+    [testTransfer("http1-clear", "http://meter.example:7246", "http1", false)],
     [],
     "https://ui.example",
     true,
@@ -53,7 +21,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     "Not offered in /preflight.",
   );
   const loopback = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://localhost:7246", "http1", false)],
+    [testTransfer("http1-clear", "http://localhost:7246", "http1", false)],
     [],
     "https://localhost:7247",
     true,
@@ -66,8 +34,8 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
 
 test("dynamic cards report exact resolution or remain unresolved", () => {
   const catalog = classifyTransportDiscovery(
-    [transfer("http2", "https://meter", "http2", true)],
-    [latency("ws-http1-tls", "https://meter:7247", true)],
+    [testTransfer("http2", "https://meter", "http2", true)],
+    [testLatency("ws-http1-tls", "https://meter:7247", true)],
     "https://meter",
     true,
     "h2",
@@ -113,7 +81,7 @@ test("WebTransport options disable in a browser without the API", () => {
   // bun's test environment has no WebTransport global, which is the case these views must catch before a probe fails.
   const catalog = classifyTransportDiscovery(
     [
-      transfer("http3", "https://meter:7249", "http3", true),
+      testTransfer("http3", "https://meter:7249", "http3", true),
       {
         baseUrl: "https://meter:7249",
         transport: "webtransport" as const,
@@ -169,7 +137,7 @@ test("the automatic throughput card refuses a WebTransport-only origin", () => {
 // Nothing else advertised: the automatic card is unresolved for its own reason, not for a missing browser API.
 test("an unresolved automatic throughput card still names its own reason", () => {
   const catalog = classifyTransportDiscovery(
-    [transfer("http2", "https://a.example", "http2", true)],
+    [testTransfer("http2", "https://a.example", "http2", true)],
     [],
     "https://ui.example",
     true,
@@ -185,8 +153,8 @@ test("an unresolved automatic throughput card still names its own reason", () =>
 
 test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () => {
   const direct = classifyTransportDiscovery(
-    [transfer("http1-clear", "http://meter:7246", "http1", false)],
-    [latency("ws-http1-clear", "http://meter:7246", false)],
+    [testTransfer("http1-clear", "http://meter:7246", "http1", false)],
+    [testLatency("ws-http1-clear", "http://meter:7246", false)],
     "http://meter:7246",
     false,
   );
@@ -198,8 +166,8 @@ test("endpoint copy distinguishes direct, negotiated, and WebSocket paths", () =
   );
 
   const negotiated = classifyTransportDiscovery(
-    [transfer("proxy", "https://meter", "negotiated", true)],
-    [latency("proxy", "https://meter", true)],
+    [testTransfer("proxy", "https://meter", "negotiated", true)],
+    [testLatency("proxy", "https://meter", true)],
     "https://meter",
     true,
   );
@@ -218,7 +186,7 @@ test("an unknown transport is skipped, not renamed", () => {
     protocol: "http1",
     transport: "webtransport-v2",
   } as unknown as FetchThroughputTarget;
-  const real = transfer("", "https://meter.example", "http3", true);
+  const real = testTransfer("", "https://meter.example", "http3", true);
   const discovery = classifyTransportDiscovery(
     [unknown, real],
     [{ baseUrl: "https://meter.example", transport: "quic-ping" } as never],

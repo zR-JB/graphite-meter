@@ -1,5 +1,4 @@
 import { test, expect } from "bun:test";
-import type { CoreHost } from "./core";
 import {
   httpToWs,
   needsPings,
@@ -24,34 +23,14 @@ import type {
   TransportDiscovery,
   TransportKind,
 } from "./contract";
-import type { FetchThroughputTarget } from "../api/endpoints";
 import { DEFAULT_CONFIG } from "../state/defaults";
+import { TEST_BUILD_TOKENS, testHost, testTransfer } from "./test-helpers.test";
 type ThroughputAdvertisement = Parameters<
   typeof classifyTransportDiscovery
 >[0][number];
 type LatencyAdvertisement = Parameters<
   typeof classifyTransportDiscovery
 >[1][number];
-const routes = {
-  probe: ROUTES.probe,
-  download: ROUTES.download,
-  upload: ROUTES.upload,
-  uploadSession: ROUTES.uploadSession,
-  uploadProgress: ROUTES.uploadProgress,
-};
-const transfer = (
-  id: string,
-  origin: string,
-  protocol: FetchThroughputTarget["protocol"],
-  tls: boolean,
-): FetchThroughputTarget => ({
-  id,
-  origin,
-  transport: "fetch-stream",
-  protocol,
-  tls,
-  routes,
-});
 const discovery = (
   throughput: ThroughputAdvertisement[],
   latency: LatencyAdvertisement[] = [],
@@ -273,9 +252,9 @@ test("a legacy latency target without a transport remains a WebSocket bus", () =
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
-  const h1 = transfer("http1-tls", "https://meter", "http1", true);
-  const h2 = transfer("http2", "https://meter", "http2", true);
-  const negotiated = transfer(
+  const h1 = testTransfer("http1-tls", "https://meter", "http1", true);
+  const h2 = testTransfer("http2", "https://meter", "http2", true);
+  const negotiated = testTransfer(
     "https://meter",
     "https://meter",
     "negotiated",
@@ -291,7 +270,7 @@ test("browser protocol verification is independent of server probe evidence", ()
 });
 
 test("idle target ownership includes protocol and public origin", () => {
-  const target = transfer("http2", "https://meter", "http2", true);
+  const target = testTransfer("http2", "https://meter", "http2", true);
   expect(throughputTargetKey(target)).toBe("http2\nhttps://meter");
   expect(
     throughputTargetKey({ ...target, origin: "https://other-meter" }),
@@ -300,7 +279,7 @@ test("idle target ownership includes protocol and public origin", () => {
 
 test("clear loopback targets stay usable from HTTPS", () => {
   for (const host of ["localhost", "meter.localhost", "127.42.0.9", "[::1]"]) {
-    const target = transfer(
+    const target = testTransfer(
       "http1-clear",
       `http://${host}:7246`,
       "http1",
@@ -531,7 +510,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     const discoveries: import("./contract").TransportDiscovery[] = [];
     const uploadBytes: number[] = [];
     const stalls: StallInfo[] = [];
-    const host = hostFor(config, {
+    const host = testHost(config, {
       emit(event) {
         if (event.type === "transportDiscovery")
           discoveries.push(event.discovery);
@@ -729,14 +708,6 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     restoreProbe();
   }
 });
-const BUILD_TOKENS = {
-  __GM_ALLOW_DUMMY__: false,
-  __GM_BUILD_PROFILE__: "test",
-  __GM_RELEASE_VERSION__: null,
-  __GM_SOURCE_REVISION__: "test-revision",
-  __GM_BUILD_IDENTITY__: "test test-revision",
-  __GM_CLIENT_VERSION__: "0.0.0-test",
-};
 const preflightDocument = {
   server: { name: "test" },
   engineVersion: "test",
@@ -778,7 +749,7 @@ function stubProbeEnvironment(
 ): () => void {
   const buildGlobals = globalThis as typeof globalThis &
     Record<string, unknown>;
-  Object.assign(buildGlobals, BUILD_TOKENS);
+  Object.assign(buildGlobals, TEST_BUILD_TOKENS);
   const realFetch = globalThis.fetch;
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
   const realEntries = performance.getEntriesByName.bind(performance);
@@ -802,7 +773,7 @@ function stubProbeEnvironment(
       Object.defineProperty(globalThis, "location", realLocation);
     else Reflect.deleteProperty(globalThis, "location");
     performance.getEntriesByName = realEntries;
-    for (const key of Object.keys(BUILD_TOKENS))
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
       Reflect.deleteProperty(buildGlobals, key);
   };
 }
@@ -869,28 +840,6 @@ const probeConfig = (latency: boolean): RunnerConfig => ({
     confirmationMs: 0,
   },
 });
-function hostFor(
-  config: RunnerConfig,
-  overrides: Partial<CoreHost> = {},
-): CoreHost {
-  return {
-    config,
-    phase: "idle",
-    elapsed: 0,
-    emit() {},
-    fail() {},
-    failStage() {},
-    ingestThroughput() {},
-    ingestLatency() {},
-    recordRecoveryGap() {},
-    recordRecoveryBytes() {},
-    presentationRate: () => 0,
-    stall() {},
-    resume() {},
-    ...overrides,
-  } as CoreHost;
-}
-
 test("a WebTransport-less browser is refused by mechanism, not by availability", async () => {
   const catalog = discovery(
     [wtAd("https://wt.meter.test")],
@@ -921,13 +870,14 @@ test("a WebTransport-less browser is refused by mechanism, not by availability",
   try {
     const { RealBackend } = await import("./RealRunner");
     const backend = new RealBackend();
-    backend.attach({ emit() {} } as unknown as CoreHost);
-    await expect(
-      backend.probe({
-        ...probeConfig(false),
-        transports: { throughputTarget: "auto", latencyTarget: "auto" },
-      }),
-    ).rejects.toThrow(/^webtransport is not supported by this client$/);
+    const config = {
+      ...probeConfig(false),
+      transports: { throughputTarget: "auto", latencyTarget: "auto" },
+    };
+    backend.attach(testHost(config));
+    await expect(backend.probe(config)).rejects.toThrow(
+      /^webtransport is not supported by this client$/,
+    );
   } finally {
     restore();
     if (realWebTransport)
@@ -952,12 +902,14 @@ test("a superseded probe does not publish its discovery", async () => {
     const { RealBackend } = await import("./RealRunner");
     const discoveries: TransportDiscovery[] = [];
     const backend = new RealBackend();
-    backend.attach({
-      emit(event) {
-        if (event.type === "transportDiscovery")
-          discoveries.push(event.discovery);
-      },
-    } as CoreHost);
+    backend.attach(
+      testHost(probeConfig(false), {
+        emit(event) {
+          if (event.type === "transportDiscovery")
+            discoveries.push(event.discovery);
+        },
+      }),
+    );
     const superseded = backend.probe(probeConfig(false));
     for (let turn = 0; turn < 20 && preflights < 1; turn++)
       await Promise.resolve();
@@ -984,11 +936,13 @@ test("a hidden page parks the keepalive its probe started, and gets it back on v
     const { RealBackend } = await import("./RealRunner");
     const connectivity: string[] = [];
     const backend = new RealBackend();
-    backend.attach({
-      emit(event) {
-        if (event.type === "connectivity") connectivity.push(event.state);
-      },
-    } as CoreHost);
+    backend.attach(
+      testHost(probeConfig(true), {
+        emit(event) {
+          if (event.type === "connectivity") connectivity.push(event.state);
+        },
+      }),
+    );
     backend.setBackgroundActivity(false); // the page is hidden; the keepalive supplies probe readiness and RTT.
     let settled = false;
     const probe = backend.probe(probeConfig(true)).finally(() => {
@@ -1047,7 +1001,7 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     config.stages.download = false;
     config.transports.throughputTarget = "https://meter.test";
     const backend = new RealBackend();
-    backend.attach(hostFor(config));
+    backend.attach(testHost(config));
     let settled = false;
     const degrading = backend.probe(config).then(
       (info) => {

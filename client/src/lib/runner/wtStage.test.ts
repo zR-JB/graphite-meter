@@ -1,10 +1,10 @@
 import { test, expect } from "bun:test";
-import type { CoreHost } from "./core";
 import type { PhaseActivity, RunnerConfig } from "./contract";
 import {
   TEST_BUILD_TOKENS,
   TEST_WT_ORIGIN,
   TEST_WT_PREFLIGHT,
+  testHost,
   testWtConfig,
 } from "./test-helpers.test";
 const WT_ORIGIN = TEST_WT_ORIGIN;
@@ -123,11 +123,7 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
     const config = baseConfig();
     const throughput: { dir: string; bytes: number }[] = [];
     const failures: string[] = [];
-    const host = {
-      config,
-      phase: "idle",
-      elapsed: 0,
-      emit() {},
+    const host = testHost(config, {
       fail(_reason: string, message: string) {
         failures.push(message);
       },
@@ -137,15 +133,7 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
       ingestThroughput(dir: string, _rate: number, bytes: number) {
         throughput.push({ dir, bytes });
       },
-      ingestLatency() {},
-      recordRecoveryGap() {},
-      recordRecoveryBytes() {},
-      presentationRate() {
-        return 0;
-      },
-      stall() {},
-      resume() {},
-    } as unknown as CoreHost;
+    });
     const backend = new RealBackend();
     backend.attach(host);
     const probe = backend.probe(config);

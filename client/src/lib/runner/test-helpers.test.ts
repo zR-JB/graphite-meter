@@ -1,5 +1,8 @@
 import { DEFAULT_CONFIG } from "../state/defaults";
+import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
+import type { CoreHost } from "./core";
 import type { RunnerConfig } from "./contract";
+import { ROUTES } from "./real/backendPure";
 
 export const TEST_BUILD_TOKENS = {
   __GM_ALLOW_DUMMY__: false,
@@ -9,6 +12,59 @@ export const TEST_BUILD_TOKENS = {
   __GM_BUILD_IDENTITY__: "test test-revision",
   __GM_CLIENT_VERSION__: "0.0.0-test",
 } as const;
+const testRoutes = {
+  probe: ROUTES.probe,
+  download: ROUTES.download,
+  upload: ROUTES.upload,
+  uploadSession: ROUTES.uploadSession,
+  uploadProgress: ROUTES.uploadProgress,
+};
+export const testTransfer = (
+  id: string,
+  origin: string,
+  protocol: FetchThroughputTarget["protocol"],
+  tls: boolean,
+): FetchThroughputTarget => ({
+  id,
+  origin,
+  transport: "fetch-stream",
+  protocol,
+  tls,
+  routes: testRoutes,
+});
+export const testLatency = (
+  id: string,
+  origin: string,
+  tls: boolean,
+): LatencyTarget => ({
+  id,
+  origin,
+  protocol: "http1",
+  tls,
+  transport: "websocket",
+  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+});
+export function testHost(
+  config: RunnerConfig,
+  overrides: Partial<CoreHost> = {},
+): CoreHost {
+  return {
+    config,
+    phase: "idle",
+    elapsed: 0,
+    emit() {},
+    fail() {},
+    failStage() {},
+    ingestThroughput() {},
+    ingestLatency() {},
+    recordRecoveryGap() {},
+    recordRecoveryBytes() {},
+    presentationRate: () => 0,
+    stall() {},
+    resume() {},
+    ...overrides,
+  };
+}
 export const TEST_WT_ORIGIN = "https://meter.test";
 export const TEST_WT_PREFLIGHT = {
   server: { name: "test" },
