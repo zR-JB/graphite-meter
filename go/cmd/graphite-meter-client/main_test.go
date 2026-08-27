@@ -69,11 +69,6 @@ func TestParsePing(t *testing.T) {
 	}
 }
 
-// A cadence past the datagram bus's idle bound produces one datagram and then
-// silence, which the server reaps: the flag is refused rather than left to churn
-// through a redial in every stage. The bound is that bus's alone, so a run
-// pinned to the WebSocket bus -- which has no idle timer -- takes the same
-// cadence rather than being refused for a constraint that cannot reach it.
 func TestParsePingBindsTheCadenceToTheSelectedBus(t *testing.T) {
 	got, err := parsePing("45s", wire.TransportWebTransport)
 	if err == nil {
@@ -91,8 +86,6 @@ func TestParsePingBindsTheCadenceToTheSelectedBus(t *testing.T) {
 	}
 }
 
-// A mistyped transport is a typo, and the answer is the list of names. Left to
-// the run it reads as an endpoint the server did not advertise.
 func TestFlagsRejectAnUnknownTransport(t *testing.T) {
 	cases := []struct {
 		name                string
@@ -104,8 +97,6 @@ func TestFlagsRejectAnUnknownTransport(t *testing.T) {
 		{"fetch stream", wire.TransportFetchStream, "auto", ""},
 		{"throughput typo", "webscoket", "auto", "-throughput-transport"},
 		{"latency typo", "auto", "websockets", "-latency-transport"},
-		// The datagram bus carries no transfer, but it is a name: the refusal
-		// that explains why comes from the run, not from the flag.
 		{"latency datagram is not a bus", "auto", wire.TransportWebTransportDatagram, "-latency-transport"},
 		{"throughput datagram passes the flag", wire.TransportWebTransportDatagram, "auto", ""},
 	}
@@ -151,60 +142,37 @@ func TestClamp(t *testing.T) {
 	}
 }
 
-func TestFmtRate(t *testing.T) {
+func TestFormatting(t *testing.T) {
 	cases := []struct {
-		bps  float64
+		name string
+		got  func() string
 		want string
 	}{
-		{0, "0 bit/s"},
-		{12.5, "100 bit/s"},
-		{125, "1.00 Kbit/s"},
-		{125000, "1.00 Mbit/s"},
-		{125000000, "1.00 Gbit/s"},
-		{125000000000, "1.00 Tbit/s"},
-		{125000000000000, "1000.00 Tbit/s"}, // caps at the last unit rather than inventing one
+		{"rate zero", func() string { return fmtRate(0) }, "0 bit/s"},
+		{"rate bits", func() string { return fmtRate(12.5) }, "100 bit/s"},
+		{"rate kilo", func() string { return fmtRate(125) }, "1.00 Kbit/s"},
+		{"rate mega", func() string { return fmtRate(125000) }, "1.00 Mbit/s"},
+		{"rate giga", func() string { return fmtRate(125000000) }, "1.00 Gbit/s"},
+		{"rate tera", func() string { return fmtRate(125000000000) }, "1.00 Tbit/s"},
+		{"rate caps at tera", func() string { return fmtRate(125000000000000) }, "1000.00 Tbit/s"},
+		{"bytes zero", func() string { return fmtBytes(0) }, "0 B"},
+		{"bytes raw", func() string { return fmtBytes(500) }, "500 B"},
+		{"bytes kilo", func() string { return fmtBytes(1000) }, "1.00 KB"},
+		{"bytes mega", func() string { return fmtBytes(1500000) }, "1.50 MB"},
+		{"bytes giga", func() string { return fmtBytes(1250000000) }, "1.25 GB"},
+		{"bytes caps at tera", func() string { return fmtBytes(1000000000000000) }, "1000.00 TB"},
+		{"milliseconds zero", func() string { return fmtMs(0) }, "--"},
+		{"milliseconds negative", func() string { return fmtMs(-time.Millisecond) }, "--"},
+		{"milliseconds fractional", func() string { return fmtMs(1500 * time.Microsecond) }, "1.50 ms"},
+		{"milliseconds seconds", func() string { return fmtMs(2 * time.Second) }, "2000.00 ms"},
+		{"milliseconds mixed", func() string { return fmtMs(3*time.Millisecond + 250*time.Microsecond) }, "3.25 ms"},
 	}
 	for _, c := range cases {
-		if got := fmtRate(c.bps); got != c.want {
-			t.Errorf("fmtRate(%v) = %q, want %q", c.bps, got, c.want)
-		}
-	}
-}
-
-func TestFmtBytes(t *testing.T) {
-	cases := []struct {
-		n    uint64
-		want string
-	}{
-		{0, "0 B"},
-		{500, "500 B"},
-		{1000, "1.00 KB"},
-		{1500000, "1.50 MB"},
-		{1250000000, "1.25 GB"},
-		{1000000000000000, "1000.00 TB"}, // caps at the last unit rather than inventing one
-	}
-	for _, c := range cases {
-		if got := fmtBytes(c.n); got != c.want {
-			t.Errorf("fmtBytes(%d) = %q, want %q", c.n, got, c.want)
-		}
-	}
-}
-
-func TestFmtMs(t *testing.T) {
-	cases := []struct {
-		d    time.Duration
-		want string
-	}{
-		{0, "--"},
-		{-time.Millisecond, "--"},
-		{1500 * time.Microsecond, "1.50 ms"},
-		{2 * time.Second, "2000.00 ms"},
-		{3*time.Millisecond + 250*time.Microsecond, "3.25 ms"},
-	}
-	for _, c := range cases {
-		if got := fmtMs(c.d); got != c.want {
-			t.Errorf("fmtMs(%v) = %q, want %q", c.d, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.got(); got != c.want {
+				t.Errorf("format = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 
@@ -286,8 +254,6 @@ func TestProtocolChoiceLabelNamesEveryVersionTheRowOffers(t *testing.T) {
 	}
 }
 
-// A pair the server never offered still has to render: it is what the next
-// check will be asked for, and blanking the row hides the reason it fails.
 func TestUnofferedPathLabelSpellsOutWhatWasAskedFor(t *testing.T) {
 	for _, c := range []struct{ target, transport, want string }{
 		{"auto", "auto", "Automatic"},
@@ -302,8 +268,6 @@ func TestUnofferedPathLabelSpellsOutWhatWasAskedFor(t *testing.T) {
 	}
 }
 
-// A launch reaches no server on its own. Picking one is what starts the check,
-// including re-picking the server the client already holds.
 func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	if cmd := m.Init(); cmd != nil {
@@ -318,12 +282,10 @@ func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
 		}
 	}
 
-	// The preset already holds the configured URL, so nothing changes but the
-	// check still runs.
+	// The preset already holds the configured URL, so nothing changes but the check still runs.
 	m.section, m.row = sectionServers, 0
 	m.cfg.BaseURL = serverPresets[0].url
-	updated, cmd := m.confirm()
-	m = updated.(model)
+	m, cmd := modelAndCmd(m.confirm())
 	if cmd == nil || m.prepareStatus != "checking" {
 		t.Fatalf("picking the current server left status %q with cmd %v", m.prepareStatus, cmd != nil)
 	}
@@ -331,8 +293,8 @@ func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
 	// So does applying the URL editor over an unchanged URL.
 	m.prepareStatus = statusIdle
 	m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
-	updated, cmd = m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if m = updated.(model); cmd == nil || m.prepareStatus != "checking" {
+	m, cmd = modelAndCmd(m.handleEditKey(tea.KeyMsg{Type: tea.KeyEnter}))
+	if cmd == nil || m.prepareStatus != "checking" {
 		t.Fatalf("reapplying the same URL left status %q with cmd %v", m.prepareStatus, cmd != nil)
 	}
 }
@@ -342,57 +304,45 @@ func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T)
 	m.prepareSeq = 2
 	m.prepareStatus = "checking"
 
-	updated, _ := m.Update(preparationMsg{seq: 1, err: errors.New("old")})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: 1, err: errors.New("old")}))
 	if m.prepareStatus != "checking" {
 		t.Fatalf("stale preparation changed status to %q", m.prepareStatus)
 	}
 
-	updated, _ = m.Update(preparationMsg{seq: 2, err: errors.New("unreachable")})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: 2, err: errors.New("unreachable")}))
 	if m.prepareStatus != "failed" || !strings.Contains(m.prepareError, "unreachable") {
 		t.Fatalf("failure state = %q %q", m.prepareStatus, m.prepareError)
 	}
 }
 
-// A preparation attempt runs detached from the model. Starting a new one
-// invalidates whatever an older attempt is still about to answer.
 func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	superseded := m.prepareSeq
 
-	updated, _ := m.handleKey(keyRunes("v"))
-	m = updated.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("v")))
 	if m.prepareSeq == superseded {
 		t.Fatalf("recheck kept the preparation sequence at %d", m.prepareSeq)
 	}
 
-	updated, _ = m.Update(preparationMsg{seq: superseded, connection: &goclient.PreparedConnection{}})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: superseded, connection: &goclient.PreparedConnection{}}))
 	if m.prepareStatus != "checking" || m.prepared != nil {
 		t.Fatalf("superseded preparation was adopted: status=%q prepared=%v", m.prepareStatus, m.prepared)
 	}
 
-	updated, _ = m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}}))
 	if m.prepareStatus != "ready" || m.prepared == nil {
 		t.Fatalf("current preparation was not adopted: status=%q prepared=%v", m.prepareStatus, m.prepared)
 	}
 }
 
-// Cycling an endpoint row edits the configuration on every press. Only the
-// last press of a burst may reach the network, and the readiness panel holds
-// the figures of the last verified connection until a new one lands.
 func TestEndpointCyclingChecksOnceAndHoldsTheLastFigures(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section, m.row = sectionConnections, rowThroughputProtocol
-	updated, _ := m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(preparationMsg{seq: m.prepareSeq, connection: &goclient.PreparedConnection{}}))
 
 	var due []prepareDueMsg
 	for range 3 {
-		next, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-		m = next.(model)
+		m, _ = modelAndCmd(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
 		due = append(due, prepareDueMsg{seq: m.prepareSeq})
 	}
 	if m.cfg.ThroughputProtocol != "http3" {
@@ -423,16 +373,14 @@ func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 		},
 	}}
 
-	updated, _ := m.Update(preparationMsg{
+	m, _ = modelAndCmd(m.Update(preparationMsg{
 		seq: m.prepareSeq,
 		err: &goclient.PreparationError{
 			Preflight: pf,
 			Err:       errors.New("multiple throughput endpoints available; select an origin"),
 		},
-	})
-	m = updated.(model)
-	updated, _ = m.activate()
-	m = updated.(model)
+	}))
+	m, _ = modelAndCmd(m.activate())
 	if got, want := m.cfg.ThroughputTarget, "https://one.example"; got != want {
 		t.Fatalf("selected throughput target = %q, want %q", got, want)
 	}
@@ -441,9 +389,6 @@ func TestPreparationFailureKeepsDiscoveredTargetsSelectable(t *testing.T) {
 	}
 }
 
-// One origin serving several mechanisms is several paths, and the same origin
-// spelled two ways is one. The cycle is what an operator walks, so it must
-// carry each real choice exactly once.
 func TestPathPickerOffersEachMechanismAndDeduplicatesOrigins(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
@@ -469,8 +414,7 @@ func TestPathPickerOffersEachMechanismAndDeduplicatesOrigins(t *testing.T) {
 		{"auto", "auto"},
 	}
 	for i, w := range want {
-		updated, _ := m.activate()
-		m = updated.(model)
+		m, _ = modelAndCmd(m.activate())
 		if m.cfg.ThroughputTarget != w.target || m.cfg.ThroughputTransport != w.transport {
 			t.Fatalf("throughput press %d = %q over %q, want %q over %q", i+1, m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, w.target, w.transport)
 		}
@@ -483,8 +427,7 @@ func TestPathPickerOffersEachMechanismAndDeduplicatesOrigins(t *testing.T) {
 		{"auto", "auto"},
 	}
 	for i, w := range wantLatency {
-		updated, _ := m.activate()
-		m = updated.(model)
+		m, _ = modelAndCmd(m.activate())
 		if m.cfg.LatencyTarget != w.target || m.cfg.LatencyTransport != w.transport {
 			t.Fatalf("latency press %d = %q over %q, want %q over %q", i+1, m.cfg.LatencyTarget, m.cfg.LatencyTransport, w.target, w.transport)
 		}
@@ -566,38 +509,29 @@ func keyPaste(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s), Paste: true}
 }
 
-func TestHandleKey_TabCyclesSections(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	order := []section{sectionRunSetup, sectionTiming, sectionConnections, sectionRun, sectionServers}
-	for _, want := range order {
-		next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyTab})
-		m = next.(model)
-		if m.section != want {
-			t.Fatalf("section after tab = %v, want %v", m.section, want)
-		}
-	}
-}
+func modelAndCmd(next tea.Model, cmd tea.Cmd) (model, tea.Cmd) { return next.(model), cmd }
 
-func TestHandleKey_ShiftTabCyclesSectionsBackward(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyShiftTab})
-	m = next.(model)
-	if m.section != sectionRun {
-		t.Errorf("section after shift+tab from sectionServers = %v, want sectionRun", m.section)
+func TestHandleKey_SectionNavigation(t *testing.T) {
+	cases := []struct {
+		name string
+		keys []tea.KeyMsg
+		want []section
+	}{
+		{"tab cycles", []tea.KeyMsg{{Type: tea.KeyTab}}, []section{sectionRunSetup, sectionTiming, sectionConnections, sectionRun, sectionServers}},
+		{"shift-tab", []tea.KeyMsg{{Type: tea.KeyShiftTab}}, []section{sectionRun}},
+		{"right", []tea.KeyMsg{{Type: tea.KeyRight}}, []section{sectionRunSetup}},
+		{"right then left", []tea.KeyMsg{{Type: tea.KeyRight}, {Type: tea.KeyLeft}}, []section{sectionRunSetup, sectionServers}},
 	}
-}
-
-func TestHandleKey_RightLeftCycleSections(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	m = next.(model)
-	if m.section != sectionRunSetup {
-		t.Errorf("section after right = %v, want sectionRunSetup", m.section)
-	}
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
-	m = next.(model)
-	if m.section != sectionServers {
-		t.Errorf("section after left = %v, want sectionServers", m.section)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			for i, want := range c.want {
+				m, _ = modelAndCmd(m.handleKey(c.keys[i%len(c.keys)]))
+				if m.section != want {
+					t.Errorf("section after %s = %v, want %v", c.name, m.section, want)
+				}
+			}
+		})
 	}
 }
 
@@ -606,33 +540,25 @@ func TestHandleKey_RowNavigationClamped(t *testing.T) {
 	m.section = sectionRunSetup // rowCount == 5, valid rows 0..4
 	m.row = 4
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
-	m = next.(model)
-	if m.row != 4 {
-		t.Errorf("row after down at max = %d, want clamped to 4", m.row)
+	steps := []struct {
+		name string
+		key  tea.KeyMsg
+		want int
+	}{
+		{"down at max", tea.KeyMsg{Type: tea.KeyDown}, 4},
+		{"up", tea.KeyMsg{Type: tea.KeyUp}, 3},
+		{"k", keyRunes("k"), 2},
+		{"j", keyRunes("j"), 3},
 	}
-
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
-	m = next.(model)
-	if m.row != 3 {
-		t.Errorf("row after up = %d, want 3", m.row)
-	}
-
-	next, _ = m.handleKey(keyRunes("k"))
-	m = next.(model)
-	if m.row != 2 {
-		t.Errorf("row after 'k' = %d, want 2", m.row)
-	}
-
-	next, _ = m.handleKey(keyRunes("j"))
-	m = next.(model)
-	if m.row != 3 {
-		t.Errorf("row after 'j' = %d, want 3", m.row)
+	for _, step := range steps {
+		m, _ = modelAndCmd(m.handleKey(step.key))
+		if m.row != step.want {
+			t.Errorf("row after %s = %d, want %d", step.name, m.row, step.want)
+		}
 	}
 
 	m.row = 0
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyUp}))
 	if m.row != 0 {
 		t.Errorf("row after up at min = %d, want clamped to 0", m.row)
 	}
@@ -654,15 +580,13 @@ func TestHandleKey_RowNavigationClampedAcrossSections(t *testing.T) {
 			m.section = c.section
 
 			m.row = 0
-			next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
-			m = next.(model)
+			m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyUp}))
 			if m.row != 0 {
 				t.Errorf("row after up at the first row = %d, want clamped to 0", m.row)
 			}
 
 			m.row = c.rows - 1
-			next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
-			m = next.(model)
+			m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyDown}))
 			if m.row != c.rows-1 {
 				t.Errorf("row after down at the last row = %d, want clamped to %d (no wraparound)", m.row, c.rows-1)
 			}
@@ -675,17 +599,14 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets) // the "Custom URL" row
 
-	next, _ := m.activate()
-	m = next.(model)
+	m, _ = modelAndCmd(m.activate())
 	if m.edit.kind != editURL {
 		t.Fatalf("edit.kind after starting an edit = %v, want editURL", m.edit.kind)
 	}
 	baseline := m.edit.input.Value()
 
-	next, _ = m.handleKey(keyRunes("x"))
-	m = next.(model)
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("x")))
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	if m.edit.kind != editNone {
 		t.Fatalf("edit.kind after cancel = %v, want editNone", m.edit.kind)
 	}
@@ -693,18 +614,14 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 		t.Errorf("BaseURL changed to %q after a cancelled edit, want unchanged %q", m.cfg.BaseURL, baseline)
 	}
 
-	// Re-entering the edit reflects the committed config, not the discarded
-	// "x" of a canceled attempt.
-	next, _ = m.activate()
-	m = next.(model)
+	// Re-entering the edit reflects the committed config, not the discarded "x" of a canceled attempt.
+	m, _ = modelAndCmd(m.activate())
 	if m.edit.input.Value() != baseline {
 		t.Errorf("edit value on re-entry = %q, want the unchanged BaseURL %q (not the cancelled edit)", m.edit.input.Value(), baseline)
 	}
 
-	next, _ = m.handleKey(keyRunes("9"))
-	m = next.(model)
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("9")))
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEnter}))
 	if m.edit.kind != editNone {
 		t.Errorf("edit.kind after commit = %v, want editNone", m.edit.kind)
 	}
@@ -737,8 +654,7 @@ func TestHandleKey_ConfigureIgnoresTheRunScreensKeys(t *testing.T) {
 	m.section = sectionTiming
 	m.row = 2
 	for _, msg := range []tea.KeyMsg{{Type: tea.KeyEsc}, keyRunes("m"), keyRunes("c")} {
-		next, cmd := m.handleKey(msg)
-		got := next.(model)
+		got, cmd := modelAndCmd(m.handleKey(msg))
 		if cmd != nil || got.section != sectionTiming || got.row != 2 || got.edit.kind != editNone {
 			t.Errorf("%q changed the configure screen: section=%v row=%d edit=%v", msg.String(), got.section, got.row, got.edit.kind)
 		}
@@ -753,9 +669,6 @@ func quitMsg(cmd tea.Cmd) bool {
 	return ok
 }
 
-// TestHandleKey_RoutesByScreenState pins which handler owns a key: an open
-// editor and the cancel prompt claim keys the screens below them also bind,
-// and quit outranks both.
 func TestHandleKey_RoutesByScreenState(t *testing.T) {
 	editing := func(m model) model {
 		m.edit = beginEdit(editURL, "url", "")
@@ -865,8 +778,8 @@ func TestHandleKey_RoutesByScreenState(t *testing.T) {
 			if c.setup != nil {
 				m = c.setup(m)
 			}
-			next, cmd := m.handleKey(c.key)
-			c.check(t, next.(model), cmd)
+			next, cmd := modelAndCmd(m.handleKey(c.key))
+			c.check(t, next, cmd)
 		})
 	}
 }
@@ -912,34 +825,35 @@ func TestHelpFooterListsEveryBindingTheScreenAccepts(t *testing.T) {
 	}
 }
 
-func TestActivate_ServerPreset(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.section = sectionServers
-	m.row = 0
-	m.cfg.BaseURL = "http://elsewhere.invalid:9999"
-
-	next, _ := m.activate()
-	m = next.(model)
-	if m.cfg.BaseURL != serverPresets[0].url {
-		t.Errorf("BaseURL after activating preset 0 = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
+func TestActivate_ServerCases(t *testing.T) {
+	cases := []struct {
+		name       string
+		row        int
+		baseURL    string
+		wantPreset bool
+	}{
+		{"ServerPreset", 0, "http://elsewhere.invalid:9999", true},
+		{"ServerCustomStartsEdit", len(serverPresets), "", false},
 	}
-	if !strings.Contains(m.notice, serverPresets[0].name) {
-		t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[0].name)
-	}
-}
-
-func TestActivate_ServerCustomStartsEdit(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.section = sectionServers
-	m.row = len(serverPresets)
-
-	next, _ := m.activate()
-	m = next.(model)
-	if m.edit.kind != editURL {
-		t.Errorf("edit.kind = %v, want editURL", m.edit.kind)
-	}
-	if m.edit.input.Value() != m.cfg.BaseURL {
-		t.Errorf("edit value = %q, want current BaseURL %q", m.edit.input.Value(), m.cfg.BaseURL)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			m.section, m.row = sectionServers, c.row
+			if c.baseURL != "" {
+				m.cfg.BaseURL = c.baseURL
+			}
+			m, _ = modelAndCmd(m.activate())
+			if c.wantPreset {
+				if m.cfg.BaseURL != serverPresets[0].url {
+					t.Errorf("BaseURL = %q, want %q", m.cfg.BaseURL, serverPresets[0].url)
+				}
+				if !strings.Contains(m.notice, serverPresets[0].name) {
+					t.Errorf("notice = %q, want mention of %q", m.notice, serverPresets[0].name)
+				}
+			} else if m.edit.kind != editURL || m.edit.input.Value() != m.cfg.BaseURL {
+				t.Errorf("custom edit = %+v value=%q, want URL editor for %q", m.edit, m.edit.input.Value(), m.cfg.BaseURL)
+			}
+		})
 	}
 }
 
@@ -958,8 +872,7 @@ func TestActivate_StagesToggle(t *testing.T) {
 	for row, get := range getters {
 		before := get(cfg)
 		m.row = row
-		next, _ := m.activate()
-		m = next.(model)
+		m, _ = modelAndCmd(m.activate())
 		if get(m.cfg) == before {
 			t.Errorf("row %d did not toggle: before=%v after=%v", row, before, get(m.cfg))
 		}
@@ -967,41 +880,39 @@ func TestActivate_StagesToggle(t *testing.T) {
 	}
 }
 
-func TestActivate_TimingStartsEdit(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.section = sectionTiming
-	fields := []string{"warmup", "latency", "download", "upload", "bidirectional", "ping"}
-	for row, field := range fields {
-		m.row = row
-		next, _ := m.activate()
-		mm := next.(model)
-		if mm.edit.kind != editDuration {
-			t.Errorf("row %d edit.kind = %v, want editDuration", row, mm.edit.kind)
-		}
-		if mm.edit.field != field {
-			t.Errorf("row %d edit.field = %q, want %q", row, mm.edit.field, field)
-		}
-		if mm.edit.input.Value() != m.durationValue(row) {
-			t.Errorf("row %d edit value = %q, want %q", row, mm.edit.input.Value(), m.durationValue(row))
-		}
+func TestActivate_EditorCases(t *testing.T) {
+	cases := []struct {
+		name      string
+		section   section
+		row       int
+		kind      editKind
+		field     string
+		wantValue func(model) string
+	}{
+		{"warmup duration", sectionTiming, 0, editDuration, "warmup", func(m model) string { return m.durationValue(0) }},
+		{"latency duration", sectionTiming, 1, editDuration, "latency", func(m model) string { return m.durationValue(1) }},
+		{"download duration", sectionTiming, 2, editDuration, "download", func(m model) string { return m.durationValue(2) }},
+		{"upload duration", sectionTiming, 3, editDuration, "upload", func(m model) string { return m.durationValue(3) }},
+		{"bidirectional duration", sectionTiming, 4, editDuration, "bidirectional", func(m model) string { return m.durationValue(4) }},
+		{"ping duration", sectionTiming, 5, editDuration, "ping", func(m model) string { return m.durationValue(5) }},
+		{"automatic streams", sectionConnections, rowAutoStreams, editInt, "auto-streams", nil},
+		{"forced streams", sectionConnections, rowStreams, editInt, "streams", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			m.section, m.row = c.section, c.row
+			edited, _ := modelAndCmd(m.activate())
+			if edited.edit.kind != c.kind || edited.edit.field != c.field {
+				t.Errorf("edit = %+v, want %v %q", edited.edit, c.kind, c.field)
+			}
+			if c.wantValue != nil && edited.edit.input.Value() != c.wantValue(m) {
+				t.Errorf("edit value = %q, want %q", edited.edit.input.Value(), c.wantValue(m))
+			}
+		})
 	}
 }
 
-func TestActivate_NetworkStreamSettingsStartTheirEditors(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.section = sectionConnections
-	for row, field := range map[int]string{rowAutoStreams: "auto-streams", rowStreams: "streams"} {
-		m.row = row
-		next, _ := m.activate()
-		edited := next.(model)
-		if edited.edit.kind != editInt || edited.edit.field != field {
-			t.Errorf("row %d edit = %+v, want editInt %q", row, edited.edit, field)
-		}
-	}
-}
-
-// A WebTransport session resolves its own lane count, so the automatic HTTP/1
-// ceiling says it is unused rather than reading like a setting that applies.
 func TestNetworkView_AutoH1MaxIsMarkedUnusedOverWebTransport(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.ThroughputTransport = wire.TransportFetchStream
@@ -1016,10 +927,6 @@ func TestNetworkView_AutoH1MaxIsMarkedUnusedOverWebTransport(t *testing.T) {
 	}
 }
 
-// TestNetworkViewEditorsRenderOnTheirOwnRows pins where an open editor draws:
-// on the row carrying the field it edits, and on no other. The cursor is put on
-// an unrelated row, so a view that drew the editor at the selection instead
-// would put the streams field over the throughput endpoint.
 func TestNetworkViewEditorsRenderOnTheirOwnRows(t *testing.T) {
 	cases := []struct{ field, label, other string }{
 		{"auto-streams", "Auto H1 max", "Streams"},
@@ -1050,10 +957,6 @@ func TestNetworkViewEditorsRenderOnTheirOwnRows(t *testing.T) {
 	}
 }
 
-// The HTTP version is a decision only where the path leaves one. On a path that
-// fixes it the row reports what is served and refuses to cycle, rather than
-// walking through versions the check would then have to refuse — and picking
-// such a path releases a version pinned while an earlier one was selected.
 func TestActivate_ThroughputProtocolFollowsTheSelectedPath(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionConnections
@@ -1064,87 +967,80 @@ func TestActivate_ThroughputProtocolFollowsTheSelectedPath(t *testing.T) {
 		},
 	}}
 
-	// Automatic leaves the version open, so the row still cycles.
-	m.row = rowThroughputProtocol
-	next, _ := m.activate()
-	m = next.(model)
-	if got := m.cfg.ThroughputProtocol; got != "http1" {
-		t.Fatalf("protocol under an automatic path = %q, want http1", got)
+	cases := []struct {
+		name, target, protocol string
+		row                    int
+		checkFixed             bool
+	}{
+		{"automatic protocol", "", "http1", rowThroughputProtocol, false},
+		{"fixed path", "https://fixed.example", "auto", rowThroughputPath, false},
+		{"fixed protocol", "", "auto", rowThroughputProtocol, true},
+		{"negotiated path", "", "", rowThroughputPath, false},
+		{"negotiated protocol", "", "http1", rowThroughputProtocol, false},
 	}
-
-	m.row = rowThroughputPath
-	next, _ = m.activate()
-	m = next.(model)
-	if got := m.cfg.ThroughputTarget; got != "https://fixed.example" {
-		t.Fatalf("first path = %q, want https://fixed.example", got)
-	}
-	if got := m.cfg.ThroughputProtocol; got != "auto" {
-		t.Fatalf("a path that fixes HTTP/3 left the pinned %q behind, want auto", got)
-	}
-
-	m.row = rowThroughputProtocol
-	next, _ = m.activate()
-	m = next.(model)
-	if got := m.cfg.ThroughputProtocol; got != "auto" {
-		t.Fatalf("the row cycled on a path that fixes its version: %q", got)
-	}
-	if !strings.Contains(m.notice, "HTTP/3") {
-		t.Errorf("refusal notice = %q, want it to name what the path serves", m.notice)
-	}
-	plain := ansiPattern.ReplaceAllString(m.networkView(120), "")
-	if !strings.Contains(plain, "fixed by this path") {
-		t.Errorf("the version row does not read as inert:\n%s", plain)
-	}
-
-	// A negotiated origin is the one case where the version is still a choice.
-	m.row = rowThroughputPath
-	next, _ = m.activate()
-	m = next.(model)
-	m.row = rowThroughputProtocol
-	next, _ = m.activate()
-	m = next.(model)
-	if got := m.cfg.ThroughputProtocol; got != "http1" {
-		t.Fatalf("protocol on a negotiated path = %q, want http1", got)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m.row = c.row
+			m, _ = modelAndCmd(m.activate())
+			if c.target != "" && m.cfg.ThroughputTarget != c.target {
+				t.Fatalf("target = %q, want %q", m.cfg.ThroughputTarget, c.target)
+			}
+			if c.protocol != "" && m.cfg.ThroughputProtocol != c.protocol {
+				t.Fatalf("protocol = %q, want %q", m.cfg.ThroughputProtocol, c.protocol)
+			}
+			if !c.checkFixed {
+				return
+			}
+			if !strings.Contains(m.notice, "HTTP/3") {
+				t.Errorf("refusal notice = %q, want it to name what the path serves", m.notice)
+			}
+			plain := ansiPattern.ReplaceAllString(m.networkView(120), "")
+			if !strings.Contains(plain, "fixed by this path") {
+				t.Errorf("the version row does not read as inert:\n%s", plain)
+			}
+		})
 	}
 }
 
-func TestActivate_NetworkTLSToggle(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.section = sectionConnections
-	m.row = rowSkipTLS
-	before := m.cfg.InsecureSkipTLSVerify
-	next, _ := m.activate()
-	m = next.(model)
-	if m.cfg.InsecureSkipTLSVerify == before {
-		t.Error("InsecureSkipTLSVerify was not toggled")
+func TestActivate_NetworkCases(t *testing.T) {
+	cases := []struct {
+		name  string
+		row   int
+		reset bool
+	}{
+		{"NetworkTLSToggle", rowSkipTLS, false},
+		{"NetworkReset", rowReset, true},
 	}
-}
-
-func TestActivate_NetworkReset(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.cfg.TransferStreams.Forced = 99
-	m.cfg.BaseURL = "http://changed.example"
-	m.section = sectionConnections
-	m.row = rowReset
-	next, _ := m.activate()
-	m = next.(model)
-	want := goclient.DefaultConfig()
-	if m.cfg != want {
-		t.Errorf("cfg after reset = %+v, want default %+v", m.cfg, want)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := newModel(goclient.DefaultConfig())
+			m.section, m.row = sectionConnections, c.row
+			before := m.cfg.InsecureSkipTLSVerify
+			if c.reset {
+				m.cfg.TransferStreams.Forced = 99
+				m.cfg.BaseURL = "http://changed.example"
+			}
+			m, _ = modelAndCmd(m.activate())
+			if c.reset {
+				if want := goclient.DefaultConfig(); m.cfg != want {
+					t.Errorf("cfg after reset = %+v, want default %+v", m.cfg, want)
+				}
+			} else if m.cfg.InsecureSkipTLSVerify == before {
+				t.Error("InsecureSkipTLSVerify was not toggled")
+			}
+		})
 	}
 }
 
 func TestAuthTokenResultIsBoundToCurrentServer(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.BaseURL = "https://new.example"
-	next, _ := m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://old.example"})
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://old.example"}))
 	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
 		t.Fatal("stale authorization result was retained")
 	}
 
-	next, _ = m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://new.example"})
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://new.example"}))
 	if m.cfg.AuthToken != "secret" || m.cfg.AuthOrigin != "https://new.example" {
 		t.Fatal("matching authorization result was not retained")
 	}
@@ -1166,22 +1062,18 @@ func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "url", "")
 
-	next, _ := m.handleKey(keyRunes("h"))
-	m = next.(model)
-	next, _ = m.handleKey(keyRunes("i"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("h")))
+	m, _ = modelAndCmd(m.handleKey(keyRunes("i")))
 	if m.edit.input.Value() != "hi" {
 		t.Fatalf("edit value after typing = %q, want %q", m.edit.input.Value(), "hi")
 	}
 
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace}))
 	if m.edit.input.Value() != "h" {
 		t.Fatalf("edit value after backspace = %q, want %q", m.edit.input.Value(), "h")
 	}
 
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	if m.edit.kind != editNone {
 		t.Errorf("edit.kind after esc = %v, want editNone", m.edit.kind)
 	}
@@ -1193,8 +1085,7 @@ func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 func TestHandleEditKey_BackspaceOnEmptyIsNoop(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "", "")
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace}))
 	if m.edit.input.Value() != "" {
 		t.Errorf("edit value after backspace on empty = %q, want empty", m.edit.input.Value())
 	}
@@ -1206,8 +1097,7 @@ func TestUpdate_PasteFillsTheURLField(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets) // the "Custom URL" row
 
-	next, _ := m.Update(keyPaste(url))
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(keyPaste(url)))
 	if m.edit.kind != editURL {
 		t.Fatalf("edit.kind after pasting on the selected Custom URL row = %v, want editURL", m.edit.kind)
 	}
@@ -1215,14 +1105,12 @@ func TestUpdate_PasteFillsTheURLField(t *testing.T) {
 		t.Fatalf("field after paste = %q, want %q", m.edit.input.Value(), url)
 	}
 
-	next, _ = m.Update(keyPaste("/base"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(keyPaste("/base")))
 	if want := url + "/base"; m.edit.input.Value() != want {
 		t.Fatalf("field after a second paste = %q, want %q", m.edit.input.Value(), want)
 	}
 
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
 	if want := url + "/base"; m.cfg.BaseURL != want {
 		t.Errorf("BaseURL after committing the pasted URL = %q, want %q", m.cfg.BaseURL, want)
 	}
@@ -1232,10 +1120,8 @@ func TestUpdate_PasteLandsAtTheCursorOfAnOpenField(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "url", "meter.example:7247")
 
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyHome})
-	m = next.(model)
-	next, _ = m.Update(keyPaste("https://"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(tea.KeyMsg{Type: tea.KeyHome}))
+	m, _ = modelAndCmd(m.Update(keyPaste("https://")))
 	if want := "https://meter.example:7247"; m.edit.input.Value() != want {
 		t.Errorf("field after pasting at the line start = %q, want %q", m.edit.input.Value(), want)
 	}
@@ -1246,11 +1132,8 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	m.section = sectionServers
 	m.row = len(serverPresets)
 
-	// Every printable rune seeds the editor, including r, v, j, k, and q,
-	// which bind elsewhere. A hostname may start with any of them.
 	for _, seed := range []string{"h", "r", "v", "j", "k", "q", "?"} {
-		next, _ := m.handleKey(keyRunes(seed))
-		edited := next.(model)
+		edited, _ := modelAndCmd(m.handleKey(keyRunes(seed)))
 		if edited.edit.kind != editURL || edited.edit.input.Value() != seed {
 			t.Errorf("typing %q on the Custom URL row gave kind=%v value=%q, want editURL seeded with it", seed, edited.edit.kind, edited.edit.input.Value())
 		}
@@ -1266,8 +1149,8 @@ func TestHandleKey_TypingOnTheCustomURLRow(t *testing.T) {
 	}
 
 	m.row = 0 // a preset row is not a text field
-	next, _ := m.handleKey(keyRunes("h"))
-	if kept := next.(model); kept.edit.kind != editNone {
+	next, _ := modelAndCmd(m.handleKey(keyRunes("h")))
+	if kept := next; kept.edit.kind != editNone {
 		t.Errorf("typing on a preset row started edit %v, want none", kept.edit.kind)
 	}
 }
@@ -1287,8 +1170,6 @@ func TestCommitEdit_RejectsANonURL(t *testing.T) {
 	}
 }
 
-// A typed URL is completed, never rewritten: a missing scheme is filled in and
-// a given one is left alone, ports included.
 func TestCommitEdit_URLIsTakenAsTyped(t *testing.T) {
 	cases := map[string]string{
 		"meter.example:7247":       "http://meter.example:7247",
@@ -1320,10 +1201,6 @@ func TestCommitEdit_BareNumberIsSeconds(t *testing.T) {
 	}
 }
 
-// The TUI states the cadence rule once, by asking goclient rather than by
-// carrying its own copy: a run pinned to the WebSocket bus, which has no idle
-// timer, takes a wide cadence, and one that can still land on the datagram bus
-// does not.
 func TestCommitEdit_PingBoundFollowsTheLatencyBus(t *testing.T) {
 	wide := (goclient.MaxPingInterval + 5*time.Second).String()
 
@@ -1356,20 +1233,20 @@ func TestUpdate_StaleRunMessagesAreDropped(t *testing.T) {
 	m.runSeq = 2
 	m.events = make(chan goclient.Event)
 
-	got, cmd := m.Update(eventsMsg{seq: 1, events: []goclient.Event{{Kind: goclient.EventStage, Stage: "download"}}})
-	mm := got.(model)
+	got, cmd := modelAndCmd(m.Update(eventsMsg{seq: 1, events: []goclient.Event{{Kind: goclient.EventStage, Stage: "download"}}}))
+	mm := got
 	if mm.stage != "" || cmd != nil {
 		t.Errorf("stale eventsMsg applied: stage=%q cmd=%v, want dropped", mm.stage, cmd)
 	}
 
-	got, _ = m.Update(doneMsg{seq: 1, err: errors.New("boom")})
-	mm = got.(model)
+	got, _ = modelAndCmd(m.Update(doneMsg{seq: 1, err: errors.New("boom")}))
+	mm = got
 	if mm.complete || mm.err != nil {
 		t.Errorf("stale doneMsg applied: complete=%v err=%v, want dropped", mm.complete, mm.err)
 	}
 
-	got, _ = m.Update(doneMsg{seq: 2, err: nil})
-	if mm = got.(model); !mm.complete {
+	got, _ = modelAndCmd(m.Update(doneMsg{seq: 2, err: nil}))
+	if mm = got; !mm.complete {
 		t.Error("current-run doneMsg was not applied")
 	}
 }
@@ -1378,16 +1255,13 @@ func TestHandleEditKey_CursorMovementAndRuneSafeDelete(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "url", "hé")
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace}))
 	if m.edit.input.Value() != "h" {
 		t.Fatalf("value after backspacing a multi-byte rune = %q, want %q", m.edit.input.Value(), "h")
 	}
 
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyHome})
-	m = next.(model)
-	next, _ = m.handleKey(keyRunes("x"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyHome}))
+	m, _ = modelAndCmd(m.handleKey(keyRunes("x")))
 	if m.edit.input.Value() != "xh" {
 		t.Errorf("value after typing at the line start = %q, want %q", m.edit.input.Value(), "xh")
 	}
@@ -1405,8 +1279,7 @@ func TestCommitEdit_RejectionKeepsTheFieldOpen(t *testing.T) {
 		t.Error("rejected edit has no inline error")
 	}
 
-	next, _ := m.handleKey(keyRunes("!"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("!")))
 	if m.edit.err != "" {
 		t.Errorf("inline error %q survived further typing", m.edit.err)
 	}
@@ -1524,29 +1397,25 @@ func TestCommitEdit_AutomaticStreams(t *testing.T) {
 	}
 }
 
-// A recheck costs a round trip, so a commit that leaves the configuration
-// identical starts none.
+// A recheck costs a round trip, so a commit that leaves the configuration identical starts none.
 func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	seq := m.prepareSeq
 
 	m.edit = beginEdit(editDuration, "download", "nope")
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEnter}))
 	if m.edit.kind != editDuration || m.prepareSeq != seq {
 		t.Fatalf("rejected commit: kind=%v seq=%d, want the field open and no recheck", m.edit.kind, m.prepareSeq)
 	}
 
 	m.edit = beginEdit(editDuration, "download", m.durationValue(2))
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEnter}))
 	if m.edit.kind != editNone || m.prepareSeq != seq {
 		t.Fatalf("commit of the current value: kind=%v seq=%d, want the field closed and no recheck", m.edit.kind, m.prepareSeq)
 	}
 
 	m.edit = beginEdit(editDuration, "download", "12s")
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEnter}))
 	if m.cfg.DownloadDuration != 12*time.Second {
 		t.Errorf("download duration = %v, want 12s", m.cfg.DownloadDuration)
 	}
@@ -1571,22 +1440,18 @@ func TestHandleKey_RunMode_CancelTakesTwoEscapes(t *testing.T) {
 	canceled := false
 	m.cancel = func() { canceled = true }
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	if !m.cancelPrompt || canceled {
 		t.Fatalf("first esc: cancelPrompt=%v canceled=%v, want a prompt and no cancel", m.cancelPrompt, canceled)
 	}
 
-	next, _ = m.handleKey(keyRunes("j"))
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(keyRunes("j")))
 	if m.cancelPrompt || canceled {
 		t.Fatalf("other key: cancelPrompt=%v canceled=%v, want the prompt dropped and the run kept", m.cancelPrompt, canceled)
 	}
 
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
-	next, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	if !canceled || m.status != "canceling" {
 		t.Errorf("second esc: canceled=%v status=%q, want the run canceled", canceled, m.status)
 	}
@@ -1597,8 +1462,7 @@ func TestHandleKey_RunMode_EscapeReturnsToSetupWhenComplete(t *testing.T) {
 	m.mode = modeRun
 	m.complete = true
 
-	next, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
-	m = next.(model)
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	if m.mode != modeConfigure || m.section != sectionRun || m.row != 0 {
 		t.Errorf("after esc on a complete run: mode=%v section=%v row=%d", m.mode, m.section, m.row)
 	}
@@ -1725,10 +1589,6 @@ func TestApply_Events(t *testing.T) {
 	}
 }
 
-// TestApply_DuplicateAndOutOfOrderEvents checks apply has no ordering guard:
-// a Result straggling in after Complete is still recorded, a duplicate
-// Complete/Error is a harmless no-op, and interleaved throughput samples for
-// both directions track independent rates and peaks.
 func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 
@@ -1737,8 +1597,6 @@ func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 		t.Fatal("expected complete after EventComplete")
 	}
 
-	// A Result arriving after Complete (e.g. a straggling loaded-latency
-	// sample) is still appended; apply doesn't gate on run state.
 	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "download"}})
 	if len(m.results) != 1 {
 		t.Errorf("late-arriving Result after Complete should still be recorded, got %d results", len(m.results))
@@ -1750,16 +1608,14 @@ func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 		t.Errorf("duplicate EventComplete changed state unexpectedly: complete=%v status=%q", m.complete, m.status)
 	}
 
-	// A late Error still overwrites status/err; apply has no "already done"
-	// guard against post-completion events.
+	// A late Error still overwrites status/err; apply has no "already done" guard against post-completion events.
 	boom := errors.New("late boom")
 	m.apply(goclient.Event{Kind: goclient.EventError, Err: boom})
 	if m.err != boom || m.status != "error" {
 		t.Errorf("late EventError not applied: err=%v status=%q", m.err, m.status)
 	}
 
-	// Interleaved throughput samples for both directions must not clobber
-	// each other's rate or peak.
+	// Interleaved throughput samples for both directions must not clobber each other's rate or peak.
 	m2 := newModel(goclient.DefaultConfig())
 	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
 	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 40}})
@@ -1790,11 +1646,11 @@ func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
 	m.events = events
 	m.complete = true
 
-	got, cmd := m.Update(eventsMsg{events: []goclient.Event{{
+	got, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{
 		Kind:   goclient.EventResult,
 		Stage:  "bidirectional",
 		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24},
-	}}})
+	}}}))
 	if cmd == nil {
 		t.Fatal("completed runs must keep waiting for buffered events")
 	}
@@ -1803,8 +1659,8 @@ func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
 	if msg == nil {
 		t.Fatal("waitEvent returned nil before draining the buffered upload result")
 	}
-	got, _ = got.Update(msg)
-	mm := got.(model)
+	got, _ = modelAndCmd(got.Update(msg))
+	mm := got
 
 	var sawDown, sawUp bool
 	for _, res := range mm.results {
@@ -1839,11 +1695,11 @@ func TestThroughputRateAndScale(t *testing.T) {
 
 func TestEventsMsgAppliesBatch(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	got, _ := m.Update(eventsMsg{events: []goclient.Event{
+	got, _ := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
 		{Kind: goclient.EventStage, Stage: "download"},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 1000}},
-	}})
-	mm := got.(model)
+	}}))
+	mm := got
 	if mm.stage != "download" || mm.rates[goclient.Down].BytesPerSec != 1000 {
 		t.Fatalf("batch was not applied atomically: stage=%q rates=%+v", mm.stage, mm.rates)
 	}
@@ -1859,8 +1715,7 @@ func TestResultsViewSharedScaleBars(t *testing.T) {
 	if !strings.Contains(out, "download") || !strings.Contains(out, "upload") {
 		t.Fatalf("results view missing stage rows:\n%s", out)
 	}
-	// Upload is half of download and shares the scale, so its bar must have fewer
-	// filled cells than download's.
+	// Upload is half of download and shares the scale, so its bar must have fewer filled cells than download's.
 	down := strings.Count(firstLineContaining(out, "download"), "█")
 	up := strings.Count(firstLineContaining(out, "upload"), "█")
 	if !(down > up && up > 0) {
@@ -1879,16 +1734,13 @@ func firstLineContaining(s, sub string) string {
 
 func TestUpdate_WindowSize(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	got, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
-	mm := got.(model)
+	got, _ := modelAndCmd(m.Update(tea.WindowSizeMsg{Width: 100, Height: 40}))
+	mm := got
 	if mm.width != 100 {
 		t.Errorf("width=%d, want 100", mm.width)
 	}
 }
 
-// TestUpdate_WindowSizeDuringRun checks a resize mid-run only updates the
-// layout dimensions, leaving the in-progress run's state (mode, stage,
-// status, results) untouched and producing no follow-up cmd.
 func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
@@ -1897,8 +1749,8 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 	m.results = []goclient.Result{{Stage: "latency"}}
 	m.events = make(chan goclient.Event)
 
-	got, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 45})
-	mm := got.(model)
+	got, cmd := modelAndCmd(m.Update(tea.WindowSizeMsg{Width: 120, Height: 45}))
+	mm := got
 	if mm.width != 120 {
 		t.Errorf("width=%d, want 120", mm.width)
 	}
@@ -1914,26 +1766,24 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 }
 
 func TestUpdate_DoneMsg(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	got, _ := m.Update(doneMsg{err: nil})
-	mm := got.(model)
-	if !mm.complete || mm.err != nil {
-		t.Errorf("done with no error: complete=%v err=%v", mm.complete, mm.err)
-	}
-
-	m = newModel(goclient.DefaultConfig())
 	boom := errors.New("boom")
-	got, _ = m.Update(doneMsg{err: boom})
-	mm = got.(model)
-	if !mm.complete || mm.err != boom || mm.status != "error" {
-		t.Errorf("done with error: complete=%v err=%v status=%q", mm.complete, mm.err, mm.status)
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus string
+		wantErr    error
+	}{
+		{"no error", nil, "", nil},
+		{"error", boom, "error", boom},
+		{"context canceled", errors.New("context canceled"), "canceled", nil},
 	}
-
-	m = newModel(goclient.DefaultConfig())
-	got, _ = m.Update(doneMsg{err: errors.New("context canceled")})
-	mm = got.(model)
-	if !mm.complete || mm.status != "canceled" || mm.err != nil {
-		t.Errorf("done canceled: complete=%v status=%q err=%v", mm.complete, mm.status, mm.err)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, _ := modelAndCmd(newModel(goclient.DefaultConfig()).Update(doneMsg{err: c.err}))
+			if !m.complete || m.status != c.wantStatus || m.err != c.wantErr {
+				t.Errorf("complete=%v status=%q err=%v, want complete/error=%v/%v and status %q", m.complete, m.status, m.err, true, c.wantErr, c.wantStatus)
+			}
+		})
 	}
 }
 
@@ -1942,11 +1792,11 @@ func TestUpdate_EventsMsg(t *testing.T) {
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
 
-	got, cmd := m.Update(eventsMsg{events: []goclient.Event{
+	got, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
 		{Kind: goclient.EventStage, Stage: "x"},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 42}},
-	}})
-	mm := got.(model)
+	}}))
+	mm := got
 	if mm.stage != "x" {
 		t.Errorf("stage = %q, want x", mm.stage)
 	}
@@ -1957,8 +1807,7 @@ func TestUpdate_EventsMsg(t *testing.T) {
 		t.Error("expected a non-nil cmd to keep waiting for more events")
 	}
 
-	got, cmd = mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventComplete}}})
-	mm = got.(model)
+	mm, cmd = modelAndCmd(mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventComplete}}}))
 	if !mm.complete {
 		t.Error("expected complete after EventComplete")
 	}
@@ -1999,13 +1848,11 @@ func BenchmarkUpdateEventBatch(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		next, _ := m.Update(events)
-		m = next.(model)
+		m, _ = modelAndCmd(m.Update(events))
 	}
 }
 
-// benchmarkView is a package-level sink, so the compiler cannot drop the View
-// call whose cost the benchmarks measure.
+// benchmarkView is a package-level sink, so the compiler cannot drop the View call whose cost the benchmarks measure.
 var benchmarkView string
 
 func BenchmarkViewConfigure(b *testing.B) {
@@ -2060,30 +1907,26 @@ func BenchmarkViewComplete(b *testing.B) {
 	}
 }
 
-// A browser approval stays outstanding for up to two minutes. If the operator
-// switches servers meanwhile, the detached poll must not be able to mark the
-// newer, healthy preparation as failed.
 func TestStaleAuthMessagesDoNotClobberNewerPreparation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.prepareSeq = 2
 	m.prepareStatus = "ready"
 
-	updated, _ := m.Update(authChallengeMsg{seq: 1, err: errors.New("stale challenge")})
-	m = updated.(model)
-	if m.prepareStatus != "ready" || m.prepareError != "" {
-		t.Fatalf("stale challenge error changed state to %q %q", m.prepareStatus, m.prepareError)
+	cases := []struct {
+		name string
+		msg  tea.Msg
+	}{
+		{"challenge error", authChallengeMsg{seq: 1, err: errors.New("stale challenge")}},
+		{"poll error", authTokenMsg{seq: 1, err: errors.New("stale poll")}},
+		{"grant", authTokenMsg{seq: 1, token: "grant", origin: "https://elsewhere.example"}},
 	}
-
-	updated, _ = m.Update(authTokenMsg{seq: 1, err: errors.New("stale poll")})
-	m = updated.(model)
-	if m.prepareStatus != "ready" || m.prepareError != "" {
-		t.Fatalf("stale poll error changed state to %q %q", m.prepareStatus, m.prepareError)
-	}
-
-	updated, _ = m.Update(authTokenMsg{seq: 1, token: "grant", origin: "https://elsewhere.example"})
-	m = updated.(model)
-	if m.cfg.AuthToken != "" {
-		t.Fatal("stale grant was adopted")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := modelAndCmd(m.Update(c.msg))
+			if got.prepareStatus != "ready" || got.prepareError != "" || got.cfg.AuthToken != "" {
+				t.Errorf("stale auth changed state: status=%q error=%q token=%q", got.prepareStatus, got.prepareError, got.cfg.AuthToken)
+			}
+		})
 	}
 }
 
@@ -2092,16 +1935,12 @@ func TestCurrentAuthMessagesStillPublishFailure(t *testing.T) {
 	m.prepareSeq = 2
 	m.prepareStatus = "authorizing"
 
-	updated, _ := m.Update(authTokenMsg{seq: 2, err: errors.New("browser approval timed out")})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: 2, err: errors.New("browser approval timed out")}))
 	if m.prepareStatus != "failed" || !strings.Contains(m.prepareError, "browser approval timed out") {
 		t.Fatalf("current poll failure = %q %q", m.prepareStatus, m.prepareError)
 	}
 }
 
-// TestAuthChallengeWaitsForTheOperator holds the two halves of the approval
-// prompt: the browser stays shut until a key asks for it, and the prompt lands
-// on the server selection, which is what asked the server for a grant.
 func TestAuthChallengeWaitsForTheOperator(t *testing.T) {
 	opened := 0
 	m := newModel(goclient.DefaultConfig())
@@ -2109,8 +1948,7 @@ func TestAuthChallengeWaitsForTheOperator(t *testing.T) {
 	m.section, m.row = sectionTiming, 3
 
 	pending := &goclient.PendingAuthorization{BrowserURL: "https://meter.example/auth/cli", Code: "ABCDE"}
-	updated, _ := m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending}))
 
 	if opened != 0 {
 		t.Fatalf("browser opened %d times before a keypress, want 0", opened)
@@ -2122,29 +1960,24 @@ func TestAuthChallengeWaitsForTheOperator(t *testing.T) {
 		t.Errorf("approval panel = %q, want the code on show", view)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
 	if opened != 1 || !m.authOpened {
 		t.Fatalf("enter opened the browser %d times (authOpened=%v), want once", opened, m.authOpened)
 	}
 
 	// With the page open, enter belongs to the selected row again.
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(tea.KeyMsg{Type: tea.KeyEnter}))
 	if opened != 1 {
 		t.Errorf("browser opened %d times, want no second launch", opened)
 	}
 }
 
-// A run that dies on a revoked grant restarts the approval, which belongs on
-// the server selection just as the first one did.
 func TestExpiredGrantReturnsToTheServerSelection(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
 	m.section, m.row = sectionConnections, 2
 
-	updated, _ := m.Update(doneMsg{seq: m.runSeq, err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}})
-	m = updated.(model)
+	m, _ = modelAndCmd(m.Update(doneMsg{seq: m.runSeq, err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}}))
 	if m.mode != modeConfigure || m.section != sectionServers {
 		t.Fatalf("expired grant left the screen at mode %d section %d", m.mode, m.section)
 	}
@@ -2160,9 +1993,6 @@ var (
 	selectionMarker = regexp.MustCompile(`│ +› `)
 )
 
-// TestView_DrawsOneSelectionPerScreen holds the configure screen's one piece of
-// positional state: whatever row the keyboard selects is the row the marker
-// lands on, at every width and in every section.
 func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 	for _, width := range []int{80, 120, 200} {
 		m := newModel(goclient.DefaultConfig())
@@ -2172,8 +2002,7 @@ func TestView_DrawsOneSelectionPerScreen(t *testing.T) {
 			for row := range m.rowCount() {
 				m.row = row
 				view := ansiPattern.ReplaceAllString(m.View(), "")
-				// The marker opens a panel body line; "‹1/2›" cycle positions sit
-				// further along the line.
+				// The marker opens a panel body line; "‹1/2›" cycle positions sit further along the line.
 				if got := len(selectionMarker.FindAllString(view, -1)); got != 1 {
 					t.Errorf("width %d section %d row %d: %d selection markers, want 1", width, sec, row, got)
 				}
@@ -2334,8 +2163,7 @@ func TestPreparationMessageRecordsHowFarItGot(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
 			c.msg.seq = m.prepareSeq
-			updated, _ := m.Update(c.msg)
-			m = updated.(model)
+			m, _ = modelAndCmd(m.Update(c.msg))
 			if m.prepareStep != c.wantStep || m.prepareStatus != c.wantStatus {
 				t.Fatalf("step/status = %v/%q, want %v/%q", m.prepareStep, m.prepareStatus, c.wantStep, c.wantStatus)
 			}
@@ -2374,8 +2202,6 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 		t.Fatalf("download = %v, want measuring", m.stages[1].state)
 	}
 
-	// Every result of a stage lands after its measurement window closed, so a
-	// second one leaves the row done rather than reopening it.
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download", Direction: goclient.Down}})
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download"}})
 	if m.stages[1].state != stageDone {
@@ -2464,8 +2290,7 @@ func TestEndOfRunStopsTheStageThatWasRunning(t *testing.T) {
 	m.stages[0].state = stageDone
 	m.stages[1].state = stageMeasuring
 
-	next, _ := m.Update(doneMsg{err: errors.New("context canceled")})
-	m = next.(model)
+	m, _ = modelAndCmd(m.Update(doneMsg{err: errors.New("context canceled")}))
 	if m.stages[0].state != stageDone || m.stages[1].state != stageStopped || m.stages[2].state != stagePending {
 		t.Errorf("timeline after a canceled run = %+v, want the running stage stopped only", m.stages)
 	}
@@ -2490,8 +2315,6 @@ func TestTimelineShowsElapsedAgainstTheConfiguredWindow(t *testing.T) {
 	}
 }
 
-// The engine stretches each warmup to the measured RTT and never reports the
-// window it settled on, so warmup may only count up.
 func TestTimelineWarmupCountsUpWithoutATotal(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.stages = plannedStages(m.cfg)
@@ -2629,11 +2452,6 @@ func TestRenderBarMovesInSubCellSteps(t *testing.T) {
 	}
 }
 
-// The two-column threshold is sized from the connection path row: it is the
-// widest row an operator has to read to know what a run will do, and a split
-// too narrow to hold it drops the origin first and the mechanism after. At the
-// threshold the row must still be whole, and below it the panels stack so every
-// row is.
 func TestConnectionPathRowSurvivesTheTwoColumnThreshold(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.BaseURL = "https://meter.example:7247"
@@ -2646,8 +2464,6 @@ func TestConnectionPathRowSurvivesTheTwoColumnThreshold(t *testing.T) {
 	}}
 	m.cfg.ThroughputTarget, m.cfg.ThroughputTransport = "https://meter.example:7249", wire.TransportWebTransport
 
-	// innerWidth is what splitColumns is given, and the shell's margin is what
-	// separates it from the terminal width the test has to set.
 	for _, width := range []int{twoColumnMin + shellMargin*2, twoColumnMin + shellMargin*2 - 1, 200} {
 		m.width = width
 		view := ansiPattern.ReplaceAllString(m.View(), "")
@@ -2659,10 +2475,6 @@ func TestConnectionPathRowSurvivesTheTwoColumnThreshold(t *testing.T) {
 	}
 }
 
-// A path row has to say what the choice under the cursor is. The origins a
-// server advertises usually differ by port alone, so what tells them apart is
-// the mechanism and the HTTP version each one carries — the same phrase the
-// readiness panel and the run screen use for the path they commit to.
 func TestPathRowNamesTheChoice(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.cfg.BaseURL = "https://meter.example:7247"
@@ -2686,8 +2498,6 @@ func TestPathRowNamesTheChoice(t *testing.T) {
 		}
 	}
 
-	// The session on the same host is a separate stop, named by its mechanism
-	// rather than reading as a second spelling of the origin beside it.
 	session := row("https://meter.example:7249", wire.TransportWebTransport)
 	for _, want := range []string{"WebTransport · HTTP/3 · TLS", "‹4/5›", ":7249"} {
 		if !strings.Contains(session, want) {
@@ -2711,8 +2521,6 @@ func TestPathRowNamesTheChoice(t *testing.T) {
 	}
 }
 
-// populatedRunModel is a run-screen model with live bars, a timeline, latency,
-// and results: the visually densest frame, exercising every fit path.
 func populatedRunModel(width int) model {
 	m := newModel(goclient.DefaultConfig())
 	m.mode = modeRun
@@ -2731,14 +2539,8 @@ func populatedRunModel(width int) model {
 	return m
 }
 
-// frameBound is the widest line View may draw at a terminal width. The
-// innerWidth floor of 40 plus the shell's 4-cell margin deliberately overflows
-// a terminal narrower than 44 cells.
 func frameBound(width int) int { return max(width, 44) }
 
-// TestRenderedFramesNeverExceedWidth is the guarantee behind the
-// fitLine/fitBlock render path: whatever the content, no drawn line is wider
-// than the frame, or the layout wraps and corrupts.
 func TestRenderedFramesNeverExceedWidth(t *testing.T) {
 	for _, width := range []int{40, 60, 80, 100, 140, 200} {
 		bound := frameBound(width)
@@ -2756,8 +2558,6 @@ func TestRenderedFramesNeverExceedWidth(t *testing.T) {
 	}
 }
 
-// TestRenderRunFrame checks the run screen carries its live readouts, and logs
-// the frame (ANSI included) for eyeballing: go test -run TestRenderRunFrame -v.
 func TestRenderRunFrame(t *testing.T) {
 	frame := populatedRunModel(100).View()
 	t.Log("\n" + frame)
@@ -2768,14 +2568,6 @@ func TestRenderRunFrame(t *testing.T) {
 	}
 }
 
-// The run screen holds the negotiated evidence ("h2"), which is what the stream
-// label has to resolve: an automatic multiplexed run opens a different number of
-// lanes per direction, so one number — or a bare "Automatic" — describes nothing.
-// The run screen names both committed paths in the vocabulary the selectors and
-// the readiness panel use. It used to name neither: the throughput line dropped
-// the mechanism entirely, and the latency line carried the HTTP/1.1 of the probe
-// that checked the origin — so a stage measured over the WebTransport bus
-// announced itself as an HTTP/1.1 run.
 func TestRunViewNamesTheCommittedPathsRatherThanTheProbes(t *testing.T) {
 	m := populatedRunModel(160)
 	m.target, m.latencyTarget = "https://meter.example:7249", "https://meter.example:7249"
@@ -2793,8 +2585,6 @@ func TestRunViewNamesTheCommittedPathsRatherThanTheProbes(t *testing.T) {
 		t.Errorf("run view drops the origin carrying the paths:\n%s", view)
 	}
 
-	// Before preflight lands there is no committed path, and three empty fields
-	// must not render as a path made of separators.
 	blank := newModel(goclient.DefaultConfig())
 	blank.mode, blank.width = modeRun, 160
 	if strings.Contains(ansiPattern.ReplaceAllString(blank.View(), ""), " ·  · ") {
