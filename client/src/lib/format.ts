@@ -45,8 +45,8 @@ export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
   return `${value.toFixed(tier ? 1 : 0)} ${units[tier]}`;
 }
 
-export type UnitBase = "base10" | "base2";
-export type UnitKind = "bits" | "bytes";
+type UnitBase = "base10" | "base2";
+type UnitKind = "bits" | "bytes";
 
 const SI_PREFIX = ["", "k", "M", "G", "T"];
 const IEC_PREFIX = ["", "Ki", "Mi", "Gi", "Ti"];
@@ -67,8 +67,7 @@ export function rateScaleIndex(
   base: UnitBase,
   headroom = 1,
 ): number {
-  // `headroom` delays prefix promotion. Values near the boundary stop flipping
-  // between 999 Mbit/s and 1.00 Gbit/s as samples jitter.
+// `headroom` delays prefix promotion.
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
   return Math.max(
@@ -98,8 +97,7 @@ export function rawRateFrom(
 }
 
 export function sharedThroughputScale(peakBytesPerSec: number): number {
-  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and
-  // bytes displays share one visual ceiling.
+  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and bytes displays share one visual ceiling.
   if (peakBytesPerSec <= 0) return 1.25e7;
   return ceil125(peakBytesPerSec * 8) / 8;
 }
@@ -126,7 +124,7 @@ export function niceStep(span: number): number {
   return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
 }
 
-export interface NiceDomain {
+interface NiceDomain {
   min: number;
   max: number;
   span: number;
@@ -141,8 +139,7 @@ export function niceDomain(
     clampMinZero?: boolean;
   } = {},
 ): NiceDomain {
-  // Widens around the observed range. The minimum span keeps a flat series
-  // off the chart edge.
+  // Widens around the observed range. The minimum span keeps a flat series off the chart edge.
   const {
     widen = 1.35,
     minSpanRatio = 0.16,

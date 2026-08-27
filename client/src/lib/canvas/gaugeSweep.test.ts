@@ -36,22 +36,13 @@ test("sweepTarget: download/upload/bidirectional normalize value/scale", () => {
 });
 
 test("sweepTarget: transfer value is clamped at the scale ceiling and floor", () => {
-  expect(
-    sweepTarget({
-      ...base,
-      phase: "download",
-      valueBytesPerSec: 5000,
-      scaleBytesPerSec: 1000,
-    }),
-  ).toBe(1);
-  expect(
-    sweepTarget({
-      ...base,
-      phase: "download",
-      valueBytesPerSec: -100,
-      scaleBytesPerSec: 1000,
-    }),
-  ).toBe(0);
+  for (const [valueBytesPerSec, expected] of [
+    [5000, 1],
+    [-100, 0],
+  ] as const)
+    expect(sweepTarget({ ...base, phase: "download", valueBytesPerSec })).toBe(
+      expected,
+    );
 });
 
 test("sweepTarget: a non-positive scale falls back to 1 (no divide-by-zero)", () => {
@@ -65,13 +56,19 @@ test("sweepTarget: a non-positive scale falls back to 1 (no divide-by-zero)", ()
   ).toBe(0.5);
 });
 
-test("sweepTarget: warmup holds a fixed indeterminate position", () => {
-  expect(sweepTarget({ ...base, phase: "warmup" })).toBe(0.3);
-});
-
-test("sweepTarget: connecting holds the same indeterminate position", () => {
-  expect(sweepTarget({ ...base, phase: "connecting" })).toBe(0.3);
-});
+for (const [name, phase, expected] of [
+  ["sweepTarget: warmup holds a fixed indeterminate position", "warmup", 0.3],
+  [
+    "sweepTarget: connecting holds the same indeterminate position",
+    "connecting",
+    0.3,
+  ],
+  ["sweepTarget: idle holds a fixed indeterminate position", "idle", 0.1],
+  ["sweepTarget: aborted holds a fixed low position", "aborted", 0.05],
+  ["sweepTarget: error holds a fixed low position", "error", 0.05],
+] as const) {
+  test(name, () => expect(sweepTarget({ ...base, phase })).toBe(expected));
+}
 
 test("sweepTarget: latency normalizes rtt/latencyScaleMs", () => {
   expect(
@@ -85,26 +82,19 @@ test("sweepTarget: latency scale <=0 falls back to 1", () => {
   ).toBe(0.5);
 });
 
-test("sweepTarget: idle holds a fixed indeterminate position", () => {
-  expect(sweepTarget({ ...base, phase: "idle" })).toBe(0.1);
-});
-
 test("sweepTarget: completed throughput remains normalized to the current scale", () => {
-  expect(
-    sweepTarget({
-      ...base,
-      phase: "complete",
-      valueBytesPerSec: 200,
-    }),
-  ).toBe(0.2);
-  expect(
-    sweepTarget({
-      ...base,
-      phase: "complete",
-      valueBytesPerSec: 200,
-      scaleBytesPerSec: 400,
-    }),
-  ).toBe(0.5);
+  for (const [valueBytesPerSec, scaleBytesPerSec, expected] of [
+    [200, 1000, 0.2],
+    [200, 400, 0.5],
+  ] as const)
+    expect(
+      sweepTarget({
+        ...base,
+        phase: "complete",
+        valueBytesPerSec,
+        scaleBytesPerSec,
+      }),
+    ).toBe(expected);
 });
 
 test("sweepTarget: completed latency uses the latency scale", () => {
@@ -118,14 +108,12 @@ test("sweepTarget: completed latency uses the latency scale", () => {
   ).toBe(0.25);
 });
 
-test("sweepTarget: aborted/error hold a fixed low position", () => {
-  expect(sweepTarget({ ...base, phase: "aborted" })).toBe(0.05);
-  expect(sweepTarget({ ...base, phase: "error" })).toBe(0.05);
-});
-
 test("angleForFraction: 0 and 1 land on the arc's endpoints", () => {
-  expect(angleForFraction(0, 1, 2)).toBe(1);
-  expect(angleForFraction(1, 1, 2)).toBe(3);
+  for (const [fraction, expected] of [
+    [0, 1],
+    [1, 3],
+  ] as const)
+    expect(angleForFraction(fraction, 1, 2)).toBe(expected);
 });
 
 test("angleForFraction: midpoint fraction lands halfway across the sweep", () => {

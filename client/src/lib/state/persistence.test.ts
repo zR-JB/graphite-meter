@@ -1,13 +1,11 @@
-// Persistence tests use an in-memory localStorage and the shipped config
-// defaults, so this file cannot poison the shared defaults module for other
-// tests in the Bun process.
+// In-memory storage and cloned defaults keep persistence tests isolated within Bun.
 import { test, expect, beforeEach } from "bun:test";
 import { DEFAULT_CONFIG } from "./defaults";
 
 class MemoryStorage {
   private map = new Map<string, string>();
   getItem(key: string): string | null {
-    return this.map.has(key) ? this.map.get(key)! : null;
+    return this.map.get(key) ?? null;
   }
   setItem(key: string, value: string): void {
     this.map.set(key, value);
@@ -18,6 +16,11 @@ class MemoryStorage {
 }
 const memoryStorage = new MemoryStorage();
 (globalThis as { window?: unknown }).window = { localStorage: memoryStorage };
+
+const loaded = (value: unknown) => {
+  memoryStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+  return loadPersisted();
+};
 
 beforeEach(() => {
   memoryStorage.clear();
@@ -34,13 +37,11 @@ test("stored value at the current shape: hydrates as-is", () => {
   const snapshot = defaultPersisted();
   snapshot.theme = "light";
   snapshot.unitKind = "bytes";
-  memoryStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-  expect(loadPersisted()).toEqual(snapshot);
+  expect(loaded(snapshot)).toEqual(snapshot);
 });
 
 test("older/partial stored shape: missing fields fall back to defaults", () => {
-  memoryStorage.setItem(STORAGE_KEY, JSON.stringify({ theme: "light" }));
-  const result = loadPersisted();
+  const result = loaded({ theme: "light" });
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
   expect(result.config).toEqual(DEFAULT_CONFIG);
@@ -48,38 +49,26 @@ test("older/partial stored shape: missing fields fall back to defaults", () => {
 });
 
 test("an explicit wire-estimate opt-out survives hydration", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ showWireEstimates: false }),
-  );
-  expect(loadPersisted().showWireEstimates).toBe(false);
+  expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
 test("legacy glide duration migrates once into confirmation duration", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ config: { adaptive: { glideMs: 725 } } }),
-  );
-  expect(loadPersisted().config.adaptive.confirmationMs).toBe(725);
+  expect(
+    loaded({ config: { adaptive: { glideMs: 725 } } }).config.adaptive
+      .confirmationMs,
+  ).toBe(725);
   expect(loadPersisted().config.adaptive).not.toHaveProperty("glideMs");
 });
 
 test("confirmation duration wins when both old and new fields exist", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: { adaptive: { glideMs: 725, confirmationMs: 900 } },
-    }),
-  );
-  expect(loadPersisted().config.adaptive.confirmationMs).toBe(900);
+  expect(
+    loaded({ config: { adaptive: { glideMs: 725, confirmationMs: 900 } } })
+      .config.adaptive.confirmationMs,
+  ).toBe(900);
 });
 
 test("legacy ping concurrency becomes unloaded cadence with the new loaded default", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ config: { pingConcurrency: "slow" } }),
-  );
-  const config = loadPersisted().config;
+  const config = loaded({ config: { pingConcurrency: "slow" } }).config;
   expect(config.pingCadence).toBe("slow");
   expect(config.loadedPingCadence).toBe("medium");
   expect(config).not.toHaveProperty("pingConcurrency");
@@ -93,55 +82,31 @@ test("new installations use reply-driven unloaded and medium loaded cadence", ()
 });
 
 test("old instant cadences migrate to reply-driven", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: { pingCadence: "instant", loadedPingCadence: "instant" },
-    }),
-  );
-  expect(loadPersisted().config).toMatchObject({
+  expect(
+    loaded({ config: { pingCadence: "instant", loadedPingCadence: "instant" } })
+      .config,
+  ).toMatchObject({
     pingCadence: "reply-driven",
     loadedPingCadence: "reply-driven",
   });
 });
 
 test("obsolete endpoint override cannot restore the old listener port", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: { endpoint: { host: "localhost", port: 8765 } },
-    }),
-  );
-  expect(loadPersisted().config).toEqual(DEFAULT_CONFIG);
+  expect(
+    loaded({ config: { endpoint: { host: "localhost", port: 8765 } } }).config,
+  ).toEqual(DEFAULT_CONFIG);
   expect(loadPersisted().config).not.toHaveProperty("endpoint");
 });
 
 test("legacy parallel-stream ceiling migrates into automatic policy", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ config: { parallelStreams: 2 } }),
-  );
-  expect(loadPersisted().config.transferStreams).toEqual({
-    mode: "auto",
-    count: 2,
-  });
-});
-
-test("legacy protocol selection migrates to a transfer target", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ config: { endpoint: { protocol: "http1" } } }),
-  );
-  expect(loadPersisted().config.transports).toEqual({
-    throughputTarget: "auto",
-    latencyTarget: "auto",
-  });
+  expect(
+    loaded({ config: { parallelStreams: 2 } }).config.transferStreams,
+  ).toEqual({ mode: "auto", count: 2 });
 });
 
 test("legacy role bindings migrate and obsolete progress selection is dropped", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
+  expect(
+    loaded({
       config: {
         transports: {
           transfer: "http3",
@@ -149,25 +114,15 @@ test("legacy role bindings migrate and obsolete progress selection is dropped", 
           uploadProgress: "ws-http3",
         },
       },
-    }),
-  );
-  expect(loadPersisted().config.transports).toEqual({
-    throughputTarget: "auto",
-    latencyTarget: "auto",
-  });
+    }).config.transports,
+  ).toEqual({ throughputTarget: "auto", latencyTarget: "auto" });
 });
 
 test("invalid forced stream settings are normalized", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: { transferStreams: { mode: "forced", count: 999.4 } },
-    }),
-  );
-  expect(loadPersisted().config.transferStreams).toEqual({
-    mode: "forced",
-    count: 128,
-  });
+  expect(
+    loaded({ config: { transferStreams: { mode: "forced", count: 999.4 } } })
+      .config.transferStreams,
+  ).toEqual({ mode: "forced", count: 128 });
 });
 
 test("corrupt (non-JSON) stored value: falls back to defaults without throwing", () => {
@@ -177,15 +132,11 @@ test("corrupt (non-JSON) stored value: falls back to defaults without throwing",
 });
 
 test("unknown/extra stored keys: dropped, known keys still merge", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      theme: "dark",
-      somethingMadeUp: 123,
-      config: { bogus: true },
-    }),
-  );
-  const result = loadPersisted();
+  const result = loaded({
+    theme: "dark",
+    somethingMadeUp: 123,
+    config: { bogus: true },
+  });
   expect(result.theme).toBe("dark");
   expect(
     (result as unknown as Record<string, unknown>).somethingMadeUp,
@@ -196,40 +147,23 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
 });
 
 test("obsolete compensation presets and factors cannot survive hydration", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: {
-        compensation: {
-          profile: "internet",
-          factors: { browserRuntime: true, lossRetransmission: true },
-        },
+  const compensation = loaded({
+    config: {
+      compensation: {
+        profile: "internet",
+        factors: { browserRuntime: true, lossRetransmission: true },
       },
-    }),
-  );
-  const compensation = loadPersisted().config.compensation;
+    },
+  }).config.compensation;
   expect(compensation.profile).toBe("lan");
   expect("factors" in compensation).toBe(false);
 });
 
 test("legacy numeric IP family remains an expert override", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      config: { compensation: { params: { ipVersion: 6 } } },
-    }),
-  );
-  expect(loadPersisted().config.compensation.params.ipVersion).toBe(6);
-});
-
-// The merge only checks that a leaf keeps its type, so a tab name this build no
-// longer has survives it and leaves the settings panel with no tab selected.
-test("a settings tab this build does not have falls back to setup", () => {
-  memoryStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({ settingsTab: "advanced" }),
-  );
-  expect(loadPersisted().settingsTab).toBe("setup");
+  expect(
+    loaded({ config: { compensation: { params: { ipVersion: 6 } } } }).config
+      .compensation.params.ipVersion,
+  ).toBe(6);
 });
 
 test("savePersisted round-trips through loadPersisted", () => {

@@ -1,13 +1,17 @@
 import type { RunResult } from "../runner/contract";
+import { bidirectionalResultPresentation } from "./bidirectionalResult";
 
 export type ResultArcPhase = "download" | "upload" | "bidirectional";
 
-export interface ResultGaugeArc {
+interface ResultGaugeArc {
   phase: ResultArcPhase;
   label: string;
   bytesPerSec: number;
   dashed: boolean;
 }
+
+const arcValue = (value: number): number =>
+  Number.isFinite(value) ? value : -Infinity;
 
 /** Highest throughput is painted first so lower values can layer over it. */
 export function sortResultGaugeArcs(
@@ -17,10 +21,8 @@ export function sortResultGaugeArcs(
     .map((arc, index) => ({ arc, index }))
     .sort(
       (a, b) =>
-        (Number.isFinite(b.arc.bytesPerSec) ? b.arc.bytesPerSec : -Infinity) -
-          (Number.isFinite(a.arc.bytesPerSec)
-            ? a.arc.bytesPerSec
-            : -Infinity) || a.index - b.index,
+        arcValue(b.arc.bytesPerSec) - arcValue(a.arc.bytesPerSec) ||
+        a.index - b.index,
     )
     .map(({ arc }) => arc);
 }
@@ -37,34 +39,34 @@ export function resultGaugeFillTarget(fractions: readonly number[]): number {
 export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
   if (!result) return [];
   const arcs: ResultGaugeArc[] = [];
-  if (result.download)
-    arcs.push({
-      phase: "download",
-      label: "Download",
-      bytesPerSec: result.download.reportedBytesPerSec,
-      dashed: false,
-    });
-  if (result.upload)
-    arcs.push({
-      phase: "upload",
-      label: "Upload",
-      bytesPerSec: result.upload.reportedBytesPerSec,
-      dashed: false,
-    });
-  const bidi = result.bidirectional;
-  if (bidi?.down && bidi.up)
-    arcs.push({
-      phase: "bidirectional",
-      label: "Bidirectional",
-      bytesPerSec: bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec,
-      dashed: false,
-    });
-  else if (bidi?.down || bidi?.up)
-    arcs.push({
-      phase: "bidirectional",
-      label: bidi.down ? "Bidirectional download" : "Bidirectional upload",
-      bytesPerSec: (bidi.down ?? bidi.up)!.reportedBytesPerSec,
-      dashed: true,
-    });
+  const add = (
+    phase: ResultArcPhase,
+    label: string,
+    bytesPerSec: number,
+    dashed = false,
+  ) => arcs.push({ phase, label, bytesPerSec, dashed });
+  for (const { phase, label } of [
+    { phase: "download", label: "Download" },
+    { phase: "upload", label: "Upload" },
+  ] as const) {
+    const value = result[phase];
+    if (value) add(phase, label, value.reportedBytesPerSec);
+  }
+  const bidi = bidirectionalResultPresentation(result.bidirectional);
+  if (bidi.combinedBytesPerSec != null) {
+    add("bidirectional", "Bidirectional", bidi.combinedBytesPerSec);
+  } else if (bidi.survivingDirection) {
+    const value = bidi[bidi.survivingDirection];
+    if (value) {
+      const direction =
+        bidi.survivingDirection === "down" ? "download" : "upload";
+      add(
+        "bidirectional",
+        `Bidirectional ${direction}`,
+        value.reportedBytesPerSec,
+        true,
+      );
+    }
+  }
   return sortResultGaugeArcs(arcs);
 }

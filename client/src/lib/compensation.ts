@@ -1,4 +1,3 @@
-// Converts application goodput into forward-direction physical link occupancy.
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type {
   CompensationTransport,
@@ -12,10 +11,10 @@ import {
   normalizeHttpProtocol,
 } from "./runner/protocol";
 
-export type CompensationConfidence = "high" | "medium" | "low";
-export type CompensationPhase = "download" | "upload";
+type CompensationConfidence = "high" | "medium" | "low";
+type CompensationPhase = "download" | "upload";
 
-export interface CompensationFactor {
+interface CompensationFactor {
   key:
     | "application-framing"
     | "tls-records"
@@ -45,9 +44,7 @@ export interface CompensationEstimate {
   available: boolean;
 }
 
-/** Combine independently modeled directions without re-estimating their
- * canonical goodput. This keeps bidirectional wire occupancy equal to the sum
- * of its lanes even when their measured rates differ. */
+/* This keeps bidirectional wire occupancy equal to the sum of its lanes even when their measured rates differ. */
 export function combineCompensationEstimates(
   estimates: readonly CompensationEstimate[],
 ): CompensationEstimate {

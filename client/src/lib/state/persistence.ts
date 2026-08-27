@@ -1,5 +1,3 @@
-// LocalStorage schema for user settings.
-// Load merges stale or partial blobs onto the current defaults.
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
 import { DEFAULT_CONFIG } from "./defaults";
@@ -10,18 +8,22 @@ export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 export type ThemePref = "dark" | "light" | "auto";
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
+const PROFILES = ["lan", "loopback", "tunnel", "custom"] as const;
+const COMPENSATION_TRANSPORTS = [
+  "auto",
+  "http1-clear",
+  "https-tls",
+  "http2",
+  "http3-quic",
+] as const;
 
-export type SettingsTab = "setup" | "developer";
-
-export interface PersistedState {
+interface PersistedState {
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
   dockWidth: { left: number; right: number };
-  settingsTab: SettingsTab;
-  debugLogging: boolean;
 }
 
 export function systemThemeDefault(): "dark" | "light" {
@@ -39,8 +41,6 @@ export function defaultPersisted(): PersistedState {
     theme: "auto",
     showWireEstimates: true,
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
-    settingsTab: "setup",
-    debugLogging: false,
   };
 }
 
@@ -48,24 +48,21 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// Persisted blobs may be stale, partial, or hand-edited.
-// Keys absent from the defaults and leaves of the wrong type fall back.
 function deepMergeOverDefaults<T>(base: T, source: unknown): T {
   if (!isPlainObject(base)) {
-    if (source === undefined) return base;
     if (Array.isArray(base))
       return (Array.isArray(source) ? source : base) as T;
-    return (typeof source === typeof base ? source : base) as T;
+    return source !== undefined && typeof source === typeof base
+      ? (source as T)
+      : base;
   }
   if (!isPlainObject(source)) return base;
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(base as Record<string, unknown>)) {
-    out[key] = deepMergeOverDefaults(
-      (base as Record<string, unknown>)[key],
-      source[key],
-    );
-  }
-  return out as T;
+  return Object.fromEntries(
+    Object.keys(base).map((key) => [
+      key,
+      deepMergeOverDefaults(base[key], source[key]),
+    ]),
+  ) as T;
 }
 
 function safeParse(raw: string | null): unknown {
@@ -79,12 +76,24 @@ function safeParse(raw: string | null): unknown {
 
 function coercePingCadence(value: unknown, fallback: PingCadence): PingCadence {
   if (value === "instant") return "reply-driven";
-  return value === "reply-driven" ||
-    value === "fast" ||
-    value === "medium" ||
-    value === "slow"
+  return oneOf(value, ["reply-driven", "fast", "medium", "slow"])
     ? value
     : fallback;
+}
+
+function object(value: unknown): Record<string, unknown> | null {
+  return isPlainObject(value) ? value : null;
+}
+
+function oneOf<T extends string>(
+  value: unknown,
+  values: readonly T[],
+): value is T {
+  return typeof value === "string" && values.includes(value as T);
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === "string");
 }
 
 export function loadPersisted(): PersistedState {
@@ -94,20 +103,14 @@ export function loadPersisted(): PersistedState {
   try {
     raw = window.localStorage.getItem(STORAGE_KEY);
   } catch {
-    // Storage access throws outright when site data is blocked.
     return defaults;
   }
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
 
-  // deepMergeOverDefaults walks only keys the current schema defines.
-  // Legacy spellings need explicit mapping below.
-  const parsedConfig = isPlainObject(parsed.config) ? parsed.config : null;
-  const parsedAdaptive = isPlainObject(parsedConfig?.adaptive)
-    ? parsedConfig.adaptive
-    : null;
-  // One-way schema migration: runtime code only knows confirmationMs.
+  const parsedConfig = object(parsed.config);
+  const parsedAdaptive = object(parsedConfig?.adaptive);
   if (
     parsedAdaptive?.confirmationMs === undefined &&
     typeof parsedAdaptive?.glideMs === "number"
@@ -127,57 +130,31 @@ export function loadPersisted(): PersistedState {
       legacyPingConcurrency,
       merged.config.pingCadence,
     );
-  const legacyTransports = isPlainObject(parsedConfig?.transports)
-    ? parsedConfig.transports
-    : null;
-  if (typeof legacyTransports?.throughputTarget === "string")
-    merged.config.transports.throughputTarget =
-      legacyTransports.throughputTarget;
-  else if (typeof legacyTransports?.transfer === "string")
-    merged.config.transports.throughputTarget = legacyTransports.transfer;
-  if (typeof legacyTransports?.latencyTarget === "string")
-    merged.config.transports.latencyTarget = legacyTransports.latencyTarget;
-  else if (typeof legacyTransports?.latency === "string")
-    merged.config.transports.latencyTarget = legacyTransports.latency;
-  const legacyEndpoint = isPlainObject(parsedConfig?.endpoint)
-    ? parsedConfig.endpoint
-    : null;
-  const legacyProtocol = legacyEndpoint?.protocol;
-  switch (legacyProtocol) {
-    case "current":
-    case "http2":
-    case "http3":
-      merged.config.transports.throughputTarget = legacyProtocol;
-      break;
-    case "http1":
-      merged.config.transports.throughputTarget = "http1-clear";
-      break;
-  }
+  const legacyTransports = object(parsedConfig?.transports);
+  const throughputTarget = firstString(
+    legacyTransports?.throughputTarget,
+    legacyTransports?.transfer,
+  );
+  const latencyTarget = firstString(
+    legacyTransports?.latencyTarget,
+    legacyTransports?.latency,
+  );
+  if (throughputTarget !== undefined)
+    merged.config.transports.throughputTarget = throughputTarget;
+  if (latencyTarget !== undefined)
+    merged.config.transports.latencyTarget = latencyTarget;
   if (typeof parsedConfig?.parallelStreams === "number")
     merged.config.transferStreams.count = normalizeStreamCount(
       parsedConfig.parallelStreams,
     );
-  const parsedCompensation = isPlainObject(parsedConfig?.compensation)
-    ? parsedConfig.compensation
-    : null;
-  const parsedParams = isPlainObject(parsedCompensation?.params)
-    ? parsedCompensation.params
-    : null;
-  // A numeric IP family is an explicit expert override and survives hydration.
+  const parsedCompensation = object(parsedConfig?.compensation);
+  const parsedParams = object(parsedCompensation?.params);
   const savedIPVersion = parsedParams?.ipVersion;
   if (savedIPVersion === "auto" || savedIPVersion === 4 || savedIPVersion === 6)
     merged.config.compensation.params.ipVersion = savedIPVersion;
-  if (
-    !["lan", "loopback", "tunnel", "custom"].includes(
-      merged.config.compensation.profile,
-    )
-  )
+  if (!oneOf(merged.config.compensation.profile, PROFILES))
     merged.config.compensation.profile = "lan";
-  if (
-    !["auto", "http1-clear", "https-tls", "http2", "http3-quic"].includes(
-      merged.config.compensation.transport,
-    )
-  )
+  if (!oneOf(merged.config.compensation.transport, COMPENSATION_TRANSPORTS))
     merged.config.compensation.transport = "auto";
   if (
     merged.config.transports.throughputTarget === "current" ||
@@ -188,13 +165,11 @@ export function loadPersisted(): PersistedState {
     merged.config.transports.throughputTarget = "auto";
   if (/^ws-http1-(clear|tls)$/.test(merged.config.transports.latencyTarget))
     merged.config.transports.latencyTarget = "auto";
-  if (!["auto", "forced"].includes(merged.config.transferStreams.mode))
+  if (!oneOf(merged.config.transferStreams.mode, ["auto", "forced"]))
     merged.config.transferStreams.mode = "auto";
   merged.config.transferStreams.count = normalizeStreamCount(
     merged.config.transferStreams.count,
   );
-  if (!["setup", "developer"].includes(merged.settingsTab))
-    merged.settingsTab = "setup";
   return merged;
 }
 
@@ -203,7 +178,5 @@ export function savePersisted(snapshot: PersistedState): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
-    // Blocked site data or a full quota must not break the session.
-    // Settings then do not survive a reload.
   }
 }

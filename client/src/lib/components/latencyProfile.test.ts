@@ -15,18 +15,9 @@ const DOMAIN = { min: 0, span: 100 };
 
 function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   return {
-    key: "latency",
-    min: 10,
-    max: 90,
-    p10: 20,
-    p90: 80,
-    center: 50,
-    centerKind: "average",
-    current: 55,
-    jitter: 5,
-    lossRatio: 0,
-    count: 100,
-    active: false,
+    key: "latency", min: 10, max: 90, p10: 20, p90: 80, center: 50,
+    centerKind: "average", current: 55, jitter: 5, lossRatio: 0,
+    count: 100, active: false,
     ...over,
   };
 }

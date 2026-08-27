@@ -1,5 +1,3 @@
-// App-wide reactive state for runner events, persisted settings, derived UI
-// metrics, stage guards, compensation, scale, and latency lanes.
 import type {
   RunnerEvent,
   Phase,
@@ -68,11 +66,11 @@ import {
   loadPersisted,
   savePersisted,
   systemThemeDefault,
+  DEFAULT_DOCK_WIDTH,
   type ThemePref,
-  type SettingsTab,
 } from "./persistence";
 
-export type PreparationStatus =
+type PreparationStatus =
   "idle" | "authenticating" | "checking" | "launching" | "failed";
 
 export interface PreparationState {
@@ -81,15 +79,23 @@ export interface PreparationState {
   latency: "checking" | "ready" | "failed" | "stale" | "disabled";
 }
 
+type StageResults = {
+  download: ThroughputResult | null;
+  upload: ThroughputResult | null;
+  latency: LatencyResult | null;
+};
+
+function emptyPreparation(): PreparationState {
+  return { status: "idle", throughput: "stale", latency: "stale" };
+}
+
+function emptyStageResults(): StageResults {
+  return { download: null, upload: null, latency: null };
+}
+
 const SCALE_DWELL_MS = 700;
 const LIVE_RATE_SAMPLE_LIMIT = 1_024;
 
-const MEASURED_STAGES = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const;
 export type StageKey = TransportRole;
 const TRANSFER_STAGES = ["download", "upload", "bidirectional"] as const;
 const TERMINAL_PHASES: readonly Phase[] = [
@@ -117,25 +123,21 @@ const MAX_IDLE_SAMPLES = 60;
 
 const UNIT_STEP_UP_HEADROOM = 1.2;
 
+type LiveStability = Record<
+  "latency" | "download" | "upload" | "bidirectional",
+  StabilitySnapshot | null
+>;
+
+function emptyStability(): LiveStability {
+  return { latency: null, download: null, upload: null, bidirectional: null };
+}
+
 class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
-  /**
-   * Preparation is deliberately separate from the runner phase. A probe or
-   * session check can be cancelled while the visible runner remains idle; the
-   * first `phase` event is the authority for a started measurement.
-   */
-  preparation = $state<PreparationState>({
-    status: "idle",
-    throughput: "stale",
-    latency: "stale",
-  });
-  /** True only for an active preparation transaction; failed/idle states are
-   * retained for diagnostics without masquerading as an in-flight start. */
+  preparation = $state<PreparationState>(emptyPreparation());
   preparing = $derived(
-    this.preparation.status === "authenticating" ||
-      this.preparation.status === "checking" ||
-      this.preparation.status === "launching",
+    this.preparation.status !== "idle" && this.preparation.status !== "failed",
   );
   throughput = $state<ThroughputSample[]>([]);
   throughputRevision = $state(0);
@@ -144,12 +146,9 @@ class AppStore {
   #throughputTargetSpanMs = 0;
   #sustainedPeakBytesPerSec = $state(0);
   bytesTransferred = $state(0);
-  /** Ephemeral upload visual target. Never contributes to history or results. */
   uploadPresentationBytesPerSec = $state<number | null>(null);
-  /** Visual-target freshness only; it carries no rate or measurement evidence. */
   presentationRateRevision = $state({ transfer: 0, down: 0, up: 0 });
   latency = $state<LatencyBucket[]>([]);
-  /** Changes only when latency history is no longer a pure tail append. */
   latencyRevision = $state(0);
   idleLatency = $state<LatencyBucket[]>([]);
 
@@ -161,12 +160,7 @@ class AppStore {
   phaseBudgetMs = $state(0);
   measuring = $state(true);
   stallInfo = $state<StallInfo | null>(null);
-  liveStability = $state<{
-    latency: StabilitySnapshot | null;
-    download: StabilitySnapshot | null;
-    upload: StabilitySnapshot | null;
-    bidirectional: StabilitySnapshot | null;
-  }>({ latency: null, download: null, upload: null, bidirectional: null });
+  liveStability = $state<LiveStability>(emptyStability());
   runSeq = $state(0);
 
   connectivity = $state<ConnectivityState>("connected");
@@ -174,11 +168,7 @@ class AppStore {
   transportDiscovery = $state<TransportDiscovery | null>(null);
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
-  stageResults = $state<{
-    download: ThroughputResult | null;
-    upload: ThroughputResult | null;
-    latency: LatencyResult | null;
-  }>({ download: null, upload: null, latency: null });
+  stageResults = $state<StageResults>(emptyStageResults());
   error = $state<RunnerError | null>(null);
   stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
@@ -208,64 +198,44 @@ class AppStore {
   theme = $state<ThemePref>("dark");
   showWireEstimates = $state(true);
   dockWidth = $state<{ left: number; right: number }>({
-    left: 400,
-    right: 400,
+    ...DEFAULT_DOCK_WIDTH,
   });
-  settingsTab = $state<SettingsTab>("setup");
-  debugLogging = $state(false);
   latencyScaleMs = $state(20);
 
   constructor() {
-    const persisted = loadPersisted();
-    this.config = persisted.config;
-    this.unitBase = persisted.unitBase;
-    this.unitKind = persisted.unitKind;
-    this.theme = persisted.theme;
-    this.showWireEstimates = persisted.showWireEstimates;
-    this.dockWidth = persisted.dockWidth;
-    this.settingsTab = persisted.settingsTab;
-    this.debugLogging = persisted.debugLogging;
+    Object.assign(this, loadPersisted());
   }
 
-  liveTransferBytesPerSec = $derived.by(() => {
-    // Bidirectional is displayed as aggregate throughput: latest down + latest up.
-    if (this.phase === "download" || this.phase === "upload") {
-      return latestOneWayThroughputForPhase(this.phase, this.liveThroughput);
-    }
-    if (this.phase === "bidirectional") {
-      const { down, up } = latestBidirectionalLanes(this.liveThroughput);
-      return down + up;
-    }
-    return 0;
-  });
+  liveBidirectional = $derived(
+    this.phase === "bidirectional"
+      ? latestBidirectionalLanes(this.liveThroughput)
+      : null,
+  );
 
-  liveBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
-    if (this.phase !== "bidirectional") return null;
-    return latestBidirectionalLanes(this.liveThroughput);
-  });
+  liveTransferBytesPerSec = $derived(
+    this.liveBidirectional
+      ? this.liveBidirectional.down + this.liveBidirectional.up
+      : this.phase === "download" || this.phase === "upload"
+        ? latestOneWayThroughputForPhase(this.phase, this.liveThroughput)
+        : 0,
+  );
 
-  visualTransferBytesPerSec = $derived.by(() => {
-    if (this.phase === "upload")
-      return this.uploadPresentationBytesPerSec ?? this.liveTransferBytesPerSec;
-    if (this.phase === "bidirectional") {
-      const { down, up } = latestBidirectionalLanes(this.liveThroughput);
-      return down + (this.uploadPresentationBytesPerSec ?? up);
-    }
-    return this.liveTransferBytesPerSec;
-  });
+  visualBidirectional = $derived(
+    this.liveBidirectional && {
+      down: this.liveBidirectional.down,
+      up: this.uploadPresentationBytesPerSec ?? this.liveBidirectional.up,
+    },
+  );
 
-  visualBidirectional = $derived.by<{ down: number; up: number } | null>(() => {
-    const lanes = this.liveBidirectional;
-    if (!lanes) return null;
-    return {
-      down: lanes.down,
-      up: this.uploadPresentationBytesPerSec ?? lanes.up,
-    };
-  });
+  visualTransferBytesPerSec = $derived(
+    this.phase === "upload"
+      ? (this.uploadPresentationBytesPerSec ?? this.liveTransferBytesPerSec)
+      : this.visualBidirectional
+        ? this.visualBidirectional.down + this.visualBidirectional.up
+        : this.liveTransferBytesPerSec,
+  );
 
   pulseLatency = $derived.by<LatencyBucket[]>(() => {
-    // While idle, the pulse reads the keepalive lane if available. During a run,
-    // it reads measured samples so loss/jitter reflect the active test.
     if (this.isRunning) return this.latency;
     return this.idleLatency.length ? this.idleLatency : this.latency;
   });
@@ -298,8 +268,6 @@ class AppStore {
   });
 
   effectiveConnectivity = $derived.by<ConnectivityState>(() => {
-    // A connection failure latches connectivity offline once.
-    // The keepalive that follows can clear it again.
     if (this.isRunning && !this.measuring) return "offline";
     if (this.connectivity === "offline") return "offline";
     if (this.rollingLossPct > 5) return "unstable";
@@ -319,7 +287,6 @@ class AppStore {
     TRANSFER_STAGES.flatMap((stage) => this.stageFailures[stage] ?? []),
   );
 
-  /** The sole result/failure/phase status for every configured instrument. */
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
     () => {
       const bidi =
@@ -350,12 +317,6 @@ class AppStore {
     },
   );
 
-  activeStages = $derived.by<StageKey[]>(() =>
-    MEASURED_STAGES.filter((stage) => this.config.stages[stage]),
-  );
-
-  // Mid-run toggles may only affect future stages. The current stage is already
-  // wired and past stages have produced results.
   canToggleStage(stage: StageKey): boolean {
     if (stage === "bidirectional")
       return canDisableBidirectionalPure(this.phaseStage, this.isRunning);
@@ -366,7 +327,9 @@ class AppStore {
     if (!this.canToggleStage(stage)) return false;
 
     const currentlyEnabled = this.config.stages[stage];
-    const enabledCount = this.activeStages.length;
+    const enabledCount = STAGE_ORDER.filter(
+      (stage) => this.config.stages[stage],
+    ).length;
 
     if (currentlyEnabled && enabledCount <= 1) return false;
 
@@ -406,8 +369,6 @@ class AppStore {
     );
   }
 
-  // The store remains bytes/sec-native. UI conversion happens at the edge via
-  // toUnit(), which keeps compensation and scale math in one raw domain.
   liveCompensation = $derived<CompensationEstimate>(
     this.#estimateLiveWire(
       this.phase === "download" || this.phase === "upload"
@@ -459,8 +420,6 @@ class AppStore {
   });
 
   #unitIndex = $derived.by(() => {
-    // The prefix follows the raw peak, not the rounded-up dial ceiling.
-    // Dial headroom alone must not flip readings to "0.xx".
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     const refBytesPerSec =
       typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
@@ -500,7 +459,6 @@ class AppStore {
         this.infra = event.info;
         break;
       case "phase": {
-        const startsRun = event.transition.to === "connecting";
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
           this.latencyScaleMs = this.#latencyScale.scaleMs;
@@ -517,8 +475,7 @@ class AppStore {
             latency: "ready",
           };
         }
-        // Stamp the wall-clock run start once, not on every warmup segment.
-        if (startsRun) this.startEpoch = Date.now();
+        if (event.transition.to === "connecting") this.startEpoch = Date.now();
         break;
       }
       case "progress":
@@ -528,7 +485,6 @@ class AppStore {
         this.measuring = event.measuring;
         break;
       case "stall":
-        // Store only the presentation latch; measurement logic stays in the core.
         this.measuring = false;
         this.stallInfo = event.info;
         break;
@@ -588,10 +544,8 @@ class AppStore {
           this.throughputRevision++;
         if (event.sample.phase === "bidirectional") {
           this.presentationRateRevision[event.sample.dir]++;
-          this.presentationRateRevision.transfer++;
-        } else {
-          this.presentationRateRevision.transfer++;
         }
+        this.presentationRateRevision.transfer++;
         break;
       case "uploadPresentation":
         this.uploadPresentationBytesPerSec = event.bytesPerSec;
@@ -626,18 +580,14 @@ class AppStore {
       case "error": {
         this.uploadPresentationBytesPerSec = null;
         this.error = event.error;
-        // A terminal error resolves any in-flight stall, so the idle/error view
-        // is not stuck in "measuring=false".
         this.#clearStall();
         if (CONNECTION_FAILURE_REASONS.has(event.error.reason)) {
           this.connectivity = "offline";
         }
         const partial = event.error.partial;
-        if (partial) {
-          if (partial.download) this.stageResults.download = partial.download;
-          if (partial.upload) this.stageResults.upload = partial.upload;
-          if (partial.latency) this.stageResults.latency = partial.latency;
-        }
+        if (partial?.download) this.stageResults.download = partial.download;
+        if (partial?.upload) this.stageResults.upload = partial.upload;
+        if (partial?.latency) this.stageResults.latency = partial.latency;
         this.phase = "error";
         break;
       }
@@ -650,43 +600,37 @@ class AppStore {
   }
 
   reset() {
-    this.startError = "";
-    this.preparation = {
-      status: "idle",
-      throughput: "stale",
-      latency: "stale",
-    };
-    this.throughput = [];
-    this.throughputRevision = 0;
-    this.liveThroughput = [];
+    Object.assign(this, {
+      startError: "",
+      preparation: emptyPreparation(),
+      throughput: [],
+      throughputRevision: 0,
+      liveThroughput: [],
+      bytesTransferred: 0,
+      latency: [],
+      phase: "idle" as const,
+      phaseStage: null,
+      phaseStartedAtMs: 0,
+      phaseFraction: 0,
+      phaseElapsedMs: 0,
+      phaseBudgetMs: 0,
+      measuring: true,
+      stallInfo: null,
+      liveStability: emptyStability(),
+      stageResults: emptyStageResults(),
+      stageFailures: {},
+      result: null,
+      error: null,
+      activeConfig: null,
+      activeConnections: null,
+      startEpoch: 0,
+    });
     this.#scaleThroughput = [];
     this.#throughputTargetSpanMs = buildSegments(this.config).totalMs;
     this.#sustainedPeakBytesPerSec = 0;
-    this.bytesTransferred = 0;
     this.#peakBytesPerSec = 0;
-    this.latency = [];
     this.#latencyScale.reset();
     this.latencyScaleMs = this.#latencyScale.scaleMs;
-    this.phase = "idle";
-    this.phaseStage = null;
-    this.phaseStartedAtMs = 0;
-    this.phaseFraction = 0;
-    this.phaseElapsedMs = 0;
-    this.phaseBudgetMs = 0;
-    this.#clearStall();
-    this.liveStability = {
-      latency: null,
-      download: null,
-      upload: null,
-      bidirectional: null,
-    };
-    this.stageResults = { download: null, upload: null, latency: null };
-    this.stageFailures = {};
-    this.result = null;
-    this.error = null;
-    this.activeConfig = null;
-    this.activeConnections = null;
-    this.startEpoch = 0;
     this.runSeq++;
   }
 
@@ -707,27 +651,27 @@ class AppStore {
 
   latencyLanes = $derived.by<LatencyLane[]>(() =>
     STAGE_ORDER.map((key) => {
-      // Bucket by the sample's stamped phase. Pre-test pings are phase "idle",
-      // so they never contaminate the measured latency lane.
       const laneSamples = this.latency.filter((s) =>
         key === "latency"
           ? s.phase === "latency"
           : s.underLoad && s.phase === key,
       );
-      const valid = laneSamples.filter((sample) => sample.medianRttMs != null);
-      const sorted = valid
-        .map((sample) => sample.medianRttMs!)
-        .sort((a, b) => a - b);
+      const valid = laneSamples.filter(
+        (sample) => sample.medianRttMs != null,
+      ) as (LatencyBucket & { medianRttMs: number })[];
       const weightedRtts = valid.map((sample) => ({
-        value: sample.medianRttMs!,
+        value: sample.medianRttMs,
         weight: sample.pingCount - sample.lossCount,
       }));
+      const sorted = weightedRtts
+        .map(({ value }) => value)
+        .sort((a, b) => a - b);
       const avg = weightedMean(weightedRtts);
       const reported =
         key === "latency" ? this.stageResults.latency?.reportedMs : null;
       const centerKind = reported != null ? "result" : "average";
       const jitter =
-        avg != null && valid.length >= 2
+        avg != null && weightedRtts.length >= 2
           ? weightedMeanAbsoluteDeviation(weightedRtts, avg)
           : null;
       const pingCount = laneSamples.reduce(
@@ -751,13 +695,13 @@ class AppStore {
         p90: quantile(sorted, 0.9),
         center: reported ?? avg,
         centerKind,
-        current: valid.at(-1)?.medianRttMs ?? null,
+        current: weightedRtts.at(-1)?.value ?? null,
         jitter,
         lossRatio,
         count: pingCount,
-        active:
-          this.stagePresentation[key].status === "active" ||
-          this.stagePresentation[key].status === "recovering",
+        active: ["active", "recovering"].includes(
+          this.stagePresentation[key].status,
+        ),
       };
     }),
   );
@@ -768,8 +712,6 @@ export const store = new AppStore();
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
-  // The inline boot script sets data-theme pre-paint.
-  // This effect tracks later changes, including live OS switches under "auto".
   let systemPrefersLight = $state(systemThemeDefault() === "light");
   if (window.matchMedia) {
     window
@@ -792,8 +734,6 @@ if (typeof window !== "undefined") {
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
-      // Touch every persisted field so any preference/config change schedules
-      // one debounced write of a plain snapshot.
       const snapshot = {
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
@@ -801,8 +741,6 @@ if (typeof window !== "undefined") {
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
         dockWidth: $state.snapshot(store.dockWidth),
-        settingsTab: store.settingsTab,
-        debugLogging: store.debugLogging,
       };
       clearTimeout(timer);
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);

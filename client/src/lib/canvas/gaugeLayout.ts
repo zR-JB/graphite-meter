@@ -1,18 +1,15 @@
 const ARC_START = Math.PI * 0.75;
 const ARC_SWEEP = Math.PI * 1.5;
 const MAJOR_TICK_COUNT = 9;
-
-export interface GaugePoint {
+interface GaugePoint {
   x: number;
   y: number;
 }
-
-export interface GaugeLabelLayout extends GaugePoint {
+interface GaugeLabelLayout extends GaugePoint {
   angle: number;
   anchorX: "start" | "center" | "end";
   anchorY: "start" | "center" | "end";
 }
-
 export interface GaugeLayout {
   width: number;
   height: number;
@@ -24,7 +21,6 @@ export interface GaugeLayout {
   majorTicks: ReadonlyArray<{ from: GaugePoint; to: GaugePoint }>;
   labelPoints: ReadonlyArray<GaugeLabelLayout>;
 }
-
 /** One CSS-pixel geometry model for the gauge canvas and DOM tick labels. */
 export function gaugeLayout(
   width: number,
@@ -65,9 +61,7 @@ export function gaugeLayout(
       return {
         ...point,
         angle,
-        // Labels on the outer flanks grow inward; labels above or below the
-        // arc grow away from it. The threshold leaves diagonal labels centered
-        // until their optical relationship is unambiguous.
+        // Labels on the outer flanks grow inward; labels above or below the arc grow away from it.
         anchorX:
           horizontal < -0.35 ? "start" : horizontal > 0.35 ? "end" : "center",
         anchorY:
@@ -75,7 +69,6 @@ export function gaugeLayout(
       };
     },
   );
-
   return {
     width: safeWidth,
     height: safeHeight,

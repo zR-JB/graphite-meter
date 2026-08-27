@@ -1,6 +1,3 @@
-// One truthful stage-status derivation shared by the instruments. A usable
-// result plus a failure is deliberately partial: the failure must not erase
-// evidence that the final reducer retained.
 import type { Phase, TransportRole } from "../runner/contract";
 
 export const STAGE_ORDER = [
@@ -23,14 +20,13 @@ export interface StagePresentation {
   stage: TransportRole;
   configured: boolean;
   status: StagePresentationStatus;
-  /** Current stage progress; terminal results are represented as full. */
   fill: number;
   warming: boolean;
   failure: boolean;
   hasUsableResult: boolean;
 }
 
-export interface StagePresentationInput {
+interface StagePresentationInput {
   configured: boolean;
   phase: Phase;
   phaseStage: TransportRole | null;
@@ -50,25 +46,20 @@ export function deriveStagePresentation(
     failure: input.hasFailure,
     hasUsableResult: input.hasUsableResult,
   };
-  if (!input.configured)
-    return { ...base, status: "disabled", fill: 0, warming: false };
-  if (input.hasFailure)
-    return {
-      ...base,
-      status: input.hasUsableResult ? "partial" : "failed",
-      fill: input.hasUsableResult ? 100 : 0,
-      warming: false,
-    };
-  if (input.hasUsableResult)
-    return { ...base, status: "complete", fill: 100, warming: false };
-  if (input.phaseStage === stage) {
-    const warming = input.phase === "warmup";
-    return {
-      ...base,
-      status: input.measuring ? "active" : "recovering",
-      fill: warming ? 0 : Math.round(input.phaseFraction * 200) / 2,
-      warming,
-    };
+  let status: StagePresentationStatus = "pending";
+  let fill = 0;
+  let warming = false;
+  if (!input.configured) status = "disabled";
+  else if (input.hasFailure) {
+    status = input.hasUsableResult ? "partial" : "failed";
+    fill = input.hasUsableResult ? 100 : 0;
+  } else if (input.hasUsableResult) {
+    status = "complete";
+    fill = 100;
+  } else if (input.phaseStage === stage) {
+    warming = input.phase === "warmup";
+    status = input.measuring ? "active" : "recovering";
+    fill = warming ? 0 : Math.round(input.phaseFraction * 200) / 2;
   }
-  return { ...base, status: "pending", fill: 0, warming: false };
+  return { ...base, status, fill, warming };
 }

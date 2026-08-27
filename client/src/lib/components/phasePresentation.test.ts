@@ -3,23 +3,21 @@ import { phaseKicker, phaseMessage } from "./phasePresentation";
 import type { Phase } from "../runner/contract";
 
 test("phaseKicker: one eyebrow per phase, idle falls back to Standby", () => {
-  expect(phaseKicker("connecting")).toBe("Connecting");
-  expect(phaseKicker("bidirectional")).toBe("Bidirectional");
-  expect(phaseKicker("error")).toBe("Error");
-  expect(phaseKicker("idle")).toBe("Standby");
+  for (const [phase, expected] of [
+    ["connecting", "Connecting"], ["bidirectional", "Bidirectional"], ["error", "Error"], ["idle", "Standby"],
+  ] as const)
+    expect(phaseKicker(phase)).toBe(expected);
 });
 
 test("phaseMessage: plain-language copy per phase", () => {
-  expect(phaseMessage("latency", null)).toBe("Measuring path latency");
-  expect(phaseMessage("bidirectional", null)).toBe("Sending + receiving");
-  expect(phaseMessage("aborted", null)).toBe("Sequence stopped");
-  expect(phaseMessage("idle", null)).toBe("Ready");
+  for (const [phase, expected] of [
+    ["latency", "Measuring path latency"], ["bidirectional", "Sending + receiving"], ["aborted", "Sequence stopped"], ["idle", "Ready"],
+  ] as const)
+    expect(phaseMessage(phase, null)).toBe(expected);
 });
 
 test("phaseMessage: error prefers the resolved reason label", () => {
-  expect(phaseMessage("error", "TLS handshake failed")).toBe(
-    "TLS handshake failed",
-  );
+  expect(phaseMessage("error", "TLS handshake failed")).toBe("TLS handshake failed");
   expect(phaseMessage("error", null)).toBe("Runner needs attention");
 });
 

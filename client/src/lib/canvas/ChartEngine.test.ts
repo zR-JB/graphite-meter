@@ -4,6 +4,7 @@ import {
   type ChartData,
   type ChartPresentation,
 } from "./ChartEngine";
+import type { LatencyBucket, ThroughputSample } from "../runner/contract";
 
 function data(overrides: Partial<ChartData> = {}): ChartData {
   return {
@@ -123,6 +124,128 @@ test("reduced motion snaps the camera to its target and parks", () => {
     expect(engine.render(116)).toBe(true);
     expect(published.layout.viewport.tMax).toBe(7_000);
     expect(engine.render(132)).toBe(false);
+    engine.destroy();
+  } finally {
+    Object.defineProperty(globalThis, "window", {
+      value: previousWindow,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, "document", {
+      value: previousDocument,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(globalThis, "getComputedStyle", {
+      value: previousGetComputedStyle,
+      configurable: true,
+      writable: true,
+    });
+  }
+});
+
+test("long history is cached across camera, hover, and glyph frames", () => {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = globals.window;
+  const previousDocument = globals.document;
+  const previousGetComputedStyle = globals.getComputedStyle;
+  const counts = { paths: 0 };
+  const context = new Proxy({} as CanvasRenderingContext2D, {
+    get: (_target, property) => {
+      if (property === "createLinearGradient")
+        return () => ({ addColorStop: () => {} });
+      if (property === "beginPath")
+        return () => {
+          counts.paths++;
+        };
+      return () => {};
+    },
+  });
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => context,
+    getBoundingClientRect: () => ({ width: 600, height: 240 }),
+  } as unknown as HTMLCanvasElement;
+  const media = {
+    matches: false,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  } as unknown as MediaQueryList;
+  const documentValue = {
+    documentElement: {},
+    createElement: () => ({ ...canvas }),
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  } as unknown as Document;
+  Object.assign(globalThis, {
+    window: { devicePixelRatio: 1, matchMedia: () => media },
+    document: documentValue,
+    getComputedStyle: () => ({ getPropertyValue: () => "" }),
+  });
+
+  const throughput: ThroughputSample[] = Array.from(
+    { length: 2_000 },
+    (_, index) => ({
+      t: index * 2,
+      bytesPerSec: 100_000 + (index % 5) * 100,
+      bytesCumulative: index * 200_000,
+      dir: "down",
+      phase: "download",
+      continuityId: 1,
+    }),
+  );
+  const latency: LatencyBucket[] = Array.from(
+    { length: 2_000 },
+    (_, index) => ({
+      t: index * 2,
+      startT: index * 2,
+      endT: index * 2 + 2,
+      medianRttMs: 20,
+      p95RttMs: 22,
+      maxRttMs: 24,
+      firstRttMs: 20,
+      lastRttMs: 20,
+      rttDeltaSumMs: 0,
+      rttDeltaCount: 0,
+      pingCount: 1,
+      lossCount: 0,
+      underLoad: false,
+      phase: "latency",
+      continuityId: 1,
+    }),
+  );
+  try {
+    let current = data({
+      throughput,
+      latency,
+      latencyEnabled: true,
+      timelineT: 4_000,
+    });
+    const engine = new ChartEngine(() => current);
+    engine.attach(canvas);
+    engine.render(0);
+
+    const initialPaths = counts.paths;
+    // Entering glyph work is bounded to the recent tail, not all 2,000 buckets.
+    for (let now = 16; now <= 64; now += 16) engine.render(now);
+    expect(counts.paths - initialPaths).toBeLessThan(500);
+    engine.render(200);
+
+    const beforeHover = counts.paths;
+    for (let index = 0; index < 20; index++) {
+      engine.setHover(50 + index * 20);
+      engine.render(70 + index);
+    }
+    expect(counts.paths - beforeHover).toBeLessThan(500);
+
+    // A camera change rebuilds once; subsequent easing frames only compose it.
+    current = { ...current, timelineT: 12_000 };
+    engine.wake();
+    engine.render(100);
+    const beforeCameraFrames = counts.paths;
+    for (let now = 116; now <= 420; now += 16) engine.render(now);
+    expect(counts.paths - beforeCameraFrames).toBeLessThan(1_000);
     engine.destroy();
   } finally {
     Object.defineProperty(globalThis, "window", {

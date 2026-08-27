@@ -35,22 +35,23 @@ function discovery(): TransportDiscovery {
 }
 
 test("occupancy reads as slots and cautions only past half", () => {
-  expect(serverLoadSummary({ active: 1, max: 2 })).toBe("1 of 2 slots");
-  expect(serverLoadSummary({ active: 3, max: 4 })).toBe(
-    "3 of 4 slots · server busy — results may be affected",
-  );
+  for (const [pool, expected] of [
+    [{ active: 1, max: 2 }, "1 of 2 slots"],
+    [
+      { active: 3, max: 4 },
+      "3 of 4 slots · server busy — results may be affected",
+    ],
+  ] as const)
+    expect(serverLoadSummary(pool)).toBe(expected);
 });
 
-// A server with no measurement slots configured is neither idle nor busy: the
-// ratio is not a number, so every comparison on it is false and the row would
-// sit at "0 of 0 slots" for the life of the drawer. The row is dropped instead.
+// A server with no measurement slots configured is neither idle nor busy: the ratio is not a number, so every.
 test("a server with no slots configured reports no occupancy", () => {
   expect(serverLoadSummary({ active: 0, max: 0 })).toBeNull();
   expect(serverLoadSummary(undefined)).toBeNull();
 });
 
-// An idle server still has occupancy to report: only a missing pool drops the
-// row, so the guard above cannot be widened into "hide it when nobody is here".
+// An idle server still has occupancy to report: only a missing pool drops the row, so the guard above cannot be.
 test("an idle server with a configured pool still reports its slots", () => {
   expect(serverLoadSummary({ active: 0, max: 4 })).toBe("0 of 4 slots");
 });
@@ -68,40 +69,33 @@ test("primary capabilities come from this server's discovery, not the runner", (
 });
 
 test("path evidence retains each protocol observation boundary", () => {
-  expect(pathEvidence("throughput", "h2", "http/1.1")).toBe(
-    "Browser observed HTTP/2 · Server observed HTTP/1.1",
-  );
-  expect(pathEvidence("throughput", undefined, "h3")).toBe(
-    "Server observed HTTP/3",
-  );
-  expect(pathEvidence("latency", "h2", "http/1.1")).toBe(
-    "Server observed HTTP/1.1",
-  );
-  expect(pathEvidence("latency")).toBe("Pending");
+  for (const [mode, browser, server, expected] of [
+    [
+      "throughput",
+      "h2",
+      "http/1.1",
+      "Browser observed HTTP/2 · Server observed HTTP/1.1",
+    ],
+    ["throughput", undefined, "h3", "Server observed HTTP/3"],
+    ["latency", "h2", "http/1.1", "Server observed HTTP/1.1"],
+    ["latency", undefined, undefined, "Pending"],
+  ] as const)
+    expect(pathEvidence(mode, browser, server)).toBe(expected);
 });
 
 test("endpoint path status describes verified paths by mode", () => {
-  expect(endpointPathStatus("verified", "live")).toEqual({
-    label: "Ready",
-    tone: "ready",
-  });
-  expect(endpointPathStatus("verified", "running")).toEqual({
-    label: "In use",
-    tone: "active",
-  });
-  expect(endpointPathStatus("verified", "result")).toEqual({
-    label: "Used",
-    tone: "used",
-  });
+  for (const [mode, expected] of [
+    ["live", { label: "Ready", tone: "ready" }],
+    ["running", { label: "In use", tone: "active" }],
+    ["result", { label: "Used", tone: "used" }],
+  ] as const)
+    expect(endpointPathStatus("verified", mode)).toEqual(expected);
 });
 
 test("endpoint path status keeps non-verified validation truthful", () => {
-  expect(endpointPathStatus("checking", "result")).toEqual({
-    label: "Checking",
-    tone: "checking",
-  });
-  expect(endpointPathStatus("failed", "running")).toEqual({
-    label: "Failed",
-    tone: "failed",
-  });
+  for (const [validation, mode, expected] of [
+    ["checking", "result", { label: "Checking", tone: "checking" }],
+    ["failed", "running", { label: "Failed", tone: "failed" }],
+  ] as const)
+    expect(endpointPathStatus(validation, mode)).toEqual(expected);
 });

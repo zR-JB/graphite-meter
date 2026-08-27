@@ -12,55 +12,37 @@ const base = {
 };
 
 test("stage presentation has one truthful result/failure classification", () => {
-  expect(
-    deriveStagePresentation("download", { ...base, configured: false }),
-  ).toMatchObject({ status: "disabled", fill: 0 });
-  expect(deriveStagePresentation("download", base)).toMatchObject({
-    status: "pending",
-  });
-  expect(
-    deriveStagePresentation("download", {
-      ...base,
-      hasUsableResult: true,
-    }),
-  ).toMatchObject({ status: "complete", fill: 100 });
-  expect(
-    deriveStagePresentation("download", {
-      ...base,
-      hasFailure: true,
-    }),
-  ).toMatchObject({ status: "failed", fill: 0 });
-  expect(
-    deriveStagePresentation("download", {
-      ...base,
-      hasUsableResult: true,
-      hasFailure: true,
-    }),
-  ).toMatchObject({ status: "partial", fill: 100 });
+  for (const [state, expected] of [
+    [{ configured: false }, { status: "disabled", fill: 0 }],
+    [{}, { status: "pending" }],
+    [{ hasUsableResult: true }, { status: "complete", fill: 100 }],
+    [{ hasFailure: true }, { status: "failed", fill: 0 }],
+    [
+      { hasUsableResult: true, hasFailure: true },
+      { status: "partial", fill: 100 },
+    ],
+  ] as const)
+    expect(
+      deriveStagePresentation("download", { ...base, ...state }),
+    ).toMatchObject(expected);
 });
 
 test("active and recovering stages retain their exact display progress", () => {
-  expect(
-    deriveStagePresentation("upload", {
-      ...base,
-      phase: "upload",
-      phaseStage: "upload",
-      phaseFraction: 0.243,
-    }),
-  ).toMatchObject({ status: "active", fill: 24.5, warming: false });
-  expect(
-    deriveStagePresentation("upload", {
-      ...base,
-      phase: "warmup",
-      phaseStage: "upload",
-    }),
-  ).toMatchObject({ status: "active", fill: 0, warming: true });
-  expect(
-    deriveStagePresentation("upload", {
-      ...base,
-      phase: "upload",
-      phaseStage: "upload",
-      measuring: false,
-    }),
-  ).toMatchObject({ status: "recovering", fill: 0 });
+  for (const [state, expected] of [
+    [
+      { phase: "upload", phaseStage: "upload", phaseFraction: 0.243 },
+      { status: "active", fill: 24.5, warming: false },
+    ],
+    [
+      { phase: "warmup", phaseStage: "upload" },
+      { status: "active", fill: 0, warming: true },
+    ],
+    [
+      { phase: "upload", phaseStage: "upload", measuring: false },
+      { status: "recovering", fill: 0 },
+    ],
+  ] as const)
+    expect(
+      deriveStagePresentation("upload", { ...base, ...state }),
+    ).toMatchObject(expected);
 });

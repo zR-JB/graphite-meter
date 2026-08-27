@@ -22,6 +22,11 @@ function bucket(endT: number, medianRttMs: number): LatencyBucket {
   };
 }
 
+const repeated = (count: number, start: number, median: number) =>
+  Array.from({ length: count }, (_, index) =>
+    bucket((index + start) * 200, median),
+  );
+
 test("pre-bucket fallback derives its scale from the displayed RTT", () => {
   expect(
     gaugeLatencyPresentation({
@@ -47,14 +52,7 @@ test("a live bucket keeps the shared recent scale", () => {
 });
 
 test("completed latency uses the full-history chart domain", () => {
-  const history = [
-    ...Array.from({ length: 100 }, (_, index) =>
-      bucket((index + 1) * 200, 600),
-    ),
-    ...Array.from({ length: 80 }, (_, index) =>
-      bucket((index + 101) * 200, 10),
-    ),
-  ];
+  const history = [...repeated(100, 1, 600), ...repeated(80, 101, 10)];
 
   expect(
     gaugeLatencyPresentation({
