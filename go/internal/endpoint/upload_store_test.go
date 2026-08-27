@@ -313,15 +313,14 @@ func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	}
 }
 
-func TestUploadStoreDeleteIdempotent(t *testing.T) {
+func TestUploadStoreSweepIsIdempotent(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
 	s.getOrCreate(id)
-	s.delete(id)
-	s.delete(id) // no-op
-	s.delete("never-existed")
+	s.sweep(0)
+	s.sweep(0) // no-op
 	if s.live.Load() != 0 {
-		t.Errorf("live = %d after idempotent deletes, want 0", s.live.Load())
+		t.Errorf("live = %d after idempotent sweeps, want 0", s.live.Load())
 	}
 }
 
@@ -349,14 +348,18 @@ func TestUploadStoreSweepBoundary(t *testing.T) {
 	}
 }
 
-func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
+func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 	s := NewUploadStore()
-	ids := make([]string, maxLiveUploads)
 	for i := range maxLiveUploads {
 		id := s.Mint()
-		ids[i] = id
-		if _, ok := s.getOrCreate(id); !ok {
+		agg, ok := s.getOrCreate(id)
+		if !ok {
 			t.Fatalf("create %d below the cap was refused", i)
+		}
+		if i == 0 {
+			agg.lastTouchMono.Store(0)
+		} else {
+			agg.lastTouchMono.Store(monoNanos() + int64(time.Hour))
 		}
 	}
 	blocked := s.Mint()
@@ -364,7 +367,7 @@ func TestUploadStoreCapAllowsCreateAfterDeleteFreesSpace(t *testing.T) {
 		t.Fatal("create at the cap unexpectedly succeeded")
 	}
 
-	s.delete(ids[0])
+	s.sweep(0)
 	if _, ok := s.getOrCreate(blocked); !ok {
 		t.Error("create after a delete freed a slot was still refused")
 	}

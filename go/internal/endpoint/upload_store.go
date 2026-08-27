@@ -267,16 +267,6 @@ func (s *UploadStore) get(id string) (*uploadAgg, bool) {
 	return agg, ok
 }
 
-func (s *UploadStore) delete(id string) {
-	sh := s.shard(id)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	if agg, ok := sh.m[id]; ok {
-		delete(sh.m, id)
-		s.expire(agg)
-	}
-}
-
 func (s *UploadStore) expire(agg *uploadAgg) {
 	close(agg.expired)
 	s.live.Add(-1)
