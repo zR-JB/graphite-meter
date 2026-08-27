@@ -92,7 +92,7 @@ const (
 	// panelBorderWidth is the column pair a panel's rounded border draws outside its lipgloss width.
 	panelBorderWidth = 2
 	// gutterWidth separates two side-by-side panels.
-	gutterWidth = 2
+	gutterWidth  = 2
 	twoColumnMin = 115
 )
 

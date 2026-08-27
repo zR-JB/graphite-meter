@@ -9,7 +9,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-	// loadSchema compiles the cross-language schema used by Go structs and golden documents.
+// loadSchema compiles the cross-language schema used by Go structs and golden documents.
 func loadSchema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
 	raw, err := os.ReadFile("../../../api/" + name + ".schema.json")

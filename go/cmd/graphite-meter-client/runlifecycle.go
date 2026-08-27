@@ -12,7 +12,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-
 type stageState int
 
 const (

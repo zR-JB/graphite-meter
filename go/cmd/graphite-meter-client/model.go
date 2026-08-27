@@ -183,14 +183,14 @@ type model struct {
 	mode  mode
 	width int
 
-	section section
-	row     int
-	edit    editState
-	notice  string
-	spin    spinner.Model
-	help    help.Model
+	section      section
+	row          int
+	edit         editState
+	notice       string
+	spin         spinner.Model
+	help         help.Model
 	cancelPrompt bool
-	now time.Time
+	now          time.Time
 
 	// runSeq stamps every message a run emits; a superseded run's messages carry an older sequence and are dropped.
 	runSeq int
@@ -199,13 +199,13 @@ type model struct {
 	cancel context.CancelFunc
 
 	displayRates map[goclient.Direction]float64
-	lostStreak int
+	lostStreak   int
 
-	stage                               string
-	status                              string
-	server                              string
-	target, latencyTarget               string
-	throughputProtocol, latencyProtocol string
+	stage                                 string
+	status                                string
+	server                                string
+	target, latencyTarget                 string
+	throughputProtocol, latencyProtocol   string
 	throughputTransport, latencyTransport string
 
 	err           error
@@ -218,7 +218,7 @@ type model struct {
 	prepareError  string
 	auth          *goclient.PendingAuthorization
 	authSince     time.Time
-	authOpened bool
+	authOpened    bool
 	// openApproval launches the browser. It is a field so a test can watch the call instead of opening a window.
 	openApproval func(*goclient.PendingAuthorization)
 
