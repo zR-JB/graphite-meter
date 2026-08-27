@@ -112,7 +112,12 @@ func loginAlerts(t *testing.T, s *Service, code string) []string {
 	rr := httptest.NewRecorder()
 	s.loginPage(rr, r)
 	var alerts []string
-	for _, part := range strings.Split(rr.Body.String(), `role="alert">`)[1:] {
+	first := true
+	for part := range strings.SplitSeq(rr.Body.String(), `role="alert">`) {
+		if first {
+			first = false
+			continue
+		}
 		alerts = append(alerts, strings.SplitN(part, "</p>", 2)[0])
 	}
 	return alerts

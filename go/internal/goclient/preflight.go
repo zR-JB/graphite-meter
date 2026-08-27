@@ -114,12 +114,11 @@ func wsEndpoint(base, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	switch {
-	case strings.HasPrefix(u, "https://"):
-		return "wss://" + strings.TrimPrefix(u, "https://"), nil
-	case strings.HasPrefix(u, "http://"):
-		return "ws://" + strings.TrimPrefix(u, "http://"), nil
-	default:
-		return u, nil
+	if host, ok := strings.CutPrefix(u, "https://"); ok {
+		return "wss://" + host, nil
 	}
+	if host, ok := strings.CutPrefix(u, "http://"); ok {
+		return "ws://" + host, nil
+	}
+	return u, nil
 }

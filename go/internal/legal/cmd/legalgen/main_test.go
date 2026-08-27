@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -527,7 +528,7 @@ func TestServerBrowserProvenanceFlowsIntoContainer(t *testing.T) {
 		CorrespondingSource: "third_party/manual/example-font",
 	}
 	server := mustAddProvenance(t, repo, nil, []legal.Provenance{entry}, "server/browser")
-	container := mustAddProvenance(t, repo, append([]legal.Component(nil), server...), []legal.Provenance{entry}, "container")
+	container := mustAddProvenance(t, repo, slices.Clone(server), []legal.Provenance{entry}, "container")
 	if len(container) != 1 || container[0].Name != entry.Name {
 		t.Fatalf("container lost server/browser provenance: %#v", container)
 	}

@@ -155,10 +155,11 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 
 func (s *Service) authenticateNonAmbient(r *http.Request) (Principal, bool) {
 	raw := r.Header.Get("Authorization")
-	if !strings.HasPrefix(raw, "Bearer ") {
+	raw, ok := strings.CutPrefix(raw, "Bearer ")
+	if !ok {
 		return Principal{}, false
 	}
-	return s.authenticateGrant(strings.TrimPrefix(raw, "Bearer "))
+	return s.authenticateGrant(raw)
 }
 
 func (s *Service) authenticateGrant(raw string) (Principal, bool) {
