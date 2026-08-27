@@ -86,9 +86,9 @@ doctor:
     expected_chrome=152.0.7977.54
     ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
     expected_skopeo=1.22.2
-    expected_skopeo_digest=sha256:11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65
+    expected_skopeo_digest=sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad
     ci_skopeo_versions=$(sed -n 's/^[[:space:]]*SKOPEO_VERSION:[[:space:]]*\([0-9][0-9.]*\)$/\1/p' .github/workflows/*.yml | sort -u)
-    ci_skopeo_digests=$(sed -n 's/.*quay.io\/skopeo\/stable@\(sha256:[0-9a-f]*\).*/\1/p' .github/workflows/*.yml | sort -u)
+    ci_skopeo_digests=$(sed -n 's/.*quay.io\/containers\/skopeo:v1.22.2-immutable@\(sha256:[0-9a-f]*\).*/\1/p' .github/workflows/*.yml | sort -u)
     docker_go=$(sed -n 's/^FROM docker.io\/library\/golang:\([^ ]*\) AS server$/\1/p' container/Dockerfile | head -1)
     docker_bun=$(sed -n 's/^ARG BUN_VERSION=//p' container/Dockerfile | head -1)
     echo "expected Go: ${expected_go:-missing}"

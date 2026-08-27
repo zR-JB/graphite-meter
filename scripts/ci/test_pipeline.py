@@ -1067,7 +1067,10 @@ class PipelineTests(unittest.TestCase):
 
         with patch.dict(
             "os.environ",
-            {"SKOPEO_IMAGE": "quay.io/skopeo/stable@sha256:" + "a" * 64, "SKOPEO_VERSION": "1.22.2"},
+            {
+                "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.2-immutable@sha256:" + "a" * 64,
+                "SKOPEO_VERSION": "1.22.2",
+            },
             clear=False,
         ), patch("verify_oci.select_engine", return_value="docker"), patch("verify_oci.run", side_effect=fake_run):
             engine, image = verify_skopeo_runtime()
@@ -1082,13 +1085,20 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/_promote-oci.yml"
         text = path.read_text().replace(
-            "11203e84159f6568c517c1765ee9a6de15685972c86bc1d27648ba7061486f65",
+            "ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad",
             "a" * 64,
             1,
         )
         path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "Skopeo consumers must share exactly one"):
+        with self.assertRaisesRegex(PolicyError, "non-exact SKOPEO_IMAGE assignment"):
             check_skopeo_contract_consistency(root)
+
+    def test_promotion_copies_from_inspected_digest_not_mutable_tag(self) -> None:
+        text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
+        self.assertEqual(text.count('source_digest=$(skopeo inspect --format "{{.Digest}}" "$source_tag")'), 1)
+        self.assertIn('source="docker://$IMAGE@$source_digest"', text)
+        self.assertIn('skopeo copy --all --preserve-digests "$source"', text)
+        self.assertNotIn('skopeo copy --all --preserve-digests "docker://$IMAGE:$VERSION"', text)
 
     def test_skopeo_version_parser_accepts_supported_output_shapes(self) -> None:
         self.assertEqual(parse_skopeo_version("skopeo version 1.22.2"), "1.22.2")
