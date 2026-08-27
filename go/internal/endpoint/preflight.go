@@ -71,11 +71,11 @@ func (p *Preflight) ConnectOrigins(host string) []string {
 }
 
 func websocketOrigin(target string) string {
-	switch {
-	case strings.HasPrefix(target, "https://"):
-		return "wss://" + strings.TrimPrefix(target, "https://")
-	case strings.HasPrefix(target, "http://"):
-		return "ws://" + strings.TrimPrefix(target, "http://")
+	if host, ok := strings.CutPrefix(target, "https://"); ok {
+		return "wss://" + host
+	}
+	if host, ok := strings.CutPrefix(target, "http://"); ok {
+		return "ws://" + host
 	}
 	return ""
 }
