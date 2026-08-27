@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 
@@ -257,10 +256,6 @@ func TestThirdPartySourceBundleHelpers(t *testing.T) {
 	if got := safeName("github.com/example/pkg@v1"); got != "github.com_example_pkg_at_v1" {
 		t.Fatalf("safeName = %q", got)
 	}
-	files := legalFilePaths([]legal.LegalFile{{Name: "LICENSE"}, {Name: "NOTICE"}})
-	if strings.Join(files, ",") != "LICENSE,NOTICE" {
-		t.Fatalf("legalFilePaths = %v", files)
-	}
 	if _, err := moduleDirectory(t.TempDir(), "missing/module", "v0.0.0"); err == nil {
 		t.Fatal("missing module unexpectedly resolved")
 	}
@@ -336,9 +331,6 @@ func TestLegalGeneratorFormattingHelpers(t *testing.T) {
 	if len(components) != 2 || components[0].Name != "a" || components[1].Name != "b" {
 		t.Fatalf("component ordering/deduplication mismatch: %#v", components)
 	}
-	if yesNo(true) != "yes" || yesNo(false) != "no" || !slices.Contains([]string{"tui"}, "tui") {
-		t.Fatal("formatting helper mismatch")
-	}
 	notice := notices([]legal.Component{{
 		Name: "demo", Version: "1", Source: "https://example.invalid",
 		SelectedLicenseExpression: "MIT",
@@ -399,15 +391,17 @@ func TestReviewedLegalFilesResolveBunIsolatedDependencySibling(t *testing.T) {
 }
 
 func TestReviewedSelectionBecomesAuthoritativeAfterValidation(t *testing.T) {
-	components := []legal.Component{{
+	scopes := []componentScope{{name: "tui", components: []legal.Component{{
 		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT OR GPL-3.0",
-	}}
+	}}}}
 	reviews := []legal.Review{{
 		Name: "example", Ecosystem: "npm", SelectedLicenseExpression: "MIT",
 	}}
-	got := applyReviewedSelections(components, reviews)
-	if got[0].SelectedLicenseExpression != "MIT" {
-		t.Fatalf("selected license = %q, want reviewed MIT", got[0].SelectedLicenseExpression)
+	if err := prepareScopes(scopes, reviews, "review-template"); err != nil {
+		t.Fatal(err)
+	}
+	if scopes[0].components[0].SelectedLicenseExpression != "MIT" {
+		t.Fatalf("selected license = %q, want reviewed MIT", scopes[0].components[0].SelectedLicenseExpression)
 	}
 }
 
@@ -514,6 +508,46 @@ func TestProvenanceHashesLocalArtifacts(t *testing.T) {
 	if _, err := addProvenance(repo, nil, []legal.Provenance{entry}, "server/browser"); err == nil || !strings.Contains(err.Error(), "local artifact hash changed") {
 		t.Fatalf("changed local artifact was accepted: %v", err)
 	}
+}
+
+func TestServerBrowserProvenanceFlowsIntoContainer(t *testing.T) {
+	repo := t.TempDir()
+	legalPath := filepath.Join(repo, "manual", "LICENSE")
+	text := []byte("MIT License\n")
+	if err := os.MkdirAll(filepath.Dir(legalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legalPath, text, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := legal.Provenance{
+		Ecosystem: "font", Name: "Example Font", Version: "1", Upstream: "https://example.invalid/font",
+		LicenseExpression: "MIT", ArtifactScopes: []string{"server/browser"}, ReviewNotes: "reviewed",
+		LocalLegalFiles:     []legal.LegalFile{{Name: "manual/LICENSE", SHA256: legal.SHA256(text)}},
+		CorrespondingSource: "third_party/manual/example-font",
+	}
+	server := mustAddProvenance(t, repo, nil, []legal.Provenance{entry}, "server/browser")
+	container := mustAddProvenance(t, repo, append([]legal.Component(nil), server...), []legal.Provenance{entry}, "container")
+	if len(container) != 1 || container[0].Name != entry.Name {
+		t.Fatalf("container lost server/browser provenance: %#v", container)
+	}
+	archivePath := filepath.Join(t.TempDir(), "source.tar.gz")
+	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", server, nil, container, []legal.Provenance{entry}, archivePath); err != nil {
+		t.Fatal(err)
+	}
+	archive := readTarGz(t, archivePath)
+	if !strings.Contains(archive.contents["graphite-meter_development_third-party-source/LEGAL_INVENTORY.json"], entry.Name) {
+		t.Fatal("container archive inventory omitted server/browser provenance")
+	}
+}
+
+func mustAddProvenance(t *testing.T, repo string, components []legal.Component, entries []legal.Provenance, scope string) []legal.Component {
+	t.Helper()
+	result, err := addProvenance(repo, components, entries, scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
 }
 
 func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
