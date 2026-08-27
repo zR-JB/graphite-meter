@@ -208,10 +208,10 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	}
 
 	seen := map[string]bool{}
-	if err := archiveComponentSources(tarWriter, repo, archiveRoot, slices.Concat(server, tui, container), "go", seen); err != nil {
+	if err := archiveComponentSources(tarWriter, repo, archiveRoot+"/third_party/go/", slices.Concat(server, tui, container), "go", seen); err != nil {
 		return err
 	}
-	if err := archiveComponentSources(tarWriter, repo, archiveRoot, server, "npm", seen); err != nil {
+	if err := archiveComponentSources(tarWriter, repo, archiveRoot+"/third_party/npm/", server, "npm", seen); err != nil {
 		return err
 	}
 	for _, entry := range provenance {
@@ -261,7 +261,7 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	return closeArchive()
 }
 
-func archiveComponentSources(writer *tar.Writer, repo, archiveRoot string, components []legal.Component, ecosystem string, seen map[string]bool) error {
+func archiveComponentSources(writer *tar.Writer, repo, destinationPrefix string, components []legal.Component, ecosystem string, seen map[string]bool) error {
 	for _, component := range components {
 		key := component.Name + "\x00" + component.Version
 		if component.Ecosystem != ecosystem || seen[key] || (ecosystem == "go" && component.Name == "Go standard library") {
@@ -281,7 +281,7 @@ func archiveComponentSources(writer *tar.Writer, repo, archiveRoot string, compo
 				return fmt.Errorf("browser source component %s: %w", component.Name, err)
 			}
 		}
-		destination := archiveRoot + "/third_party/" + ecosystem + "/" + safeName(component.Name+"@"+component.Version)
+		destination := destinationPrefix + safeName(component.Name+"@"+component.Version)
 		if err := addTree(writer, dir, destination); err != nil {
 			label := "browser"
 			if ecosystem == "go" {
