@@ -80,7 +80,7 @@ let lossFloorMs = 250;
 
 interface PendingPing {
   sentAt: number;
-/* Attribution is fixed at send time so a warmup PONG delivered after the measurement boundary cannot become. */
+  /* Attribution is fixed at send time so a warmup PONG delivered after the measurement boundary cannot become. */
   measured: boolean;
 }
 
@@ -197,7 +197,7 @@ function connectWebSocket(): void {
 async function connectWebTransport(): Promise<void> {
   const minted = await mintWtToken(mint);
   if (stopped) return;
-// An authenticated bus cannot dial without a token.
+  // An authenticated bus cannot dial without a token.
   if (checkAuthentication && mint && minted.token === "") {
     if (minted.authRequired) {
       post({ type: "auth-required" });
@@ -253,12 +253,12 @@ async function connectWebTransport(): Promise<void> {
     } catch {
       /* already closing */
     }
-// Some implementations leave `closed` pending with a black-holed handshake, so the deadline itself must drive the.
+    // Some implementations leave `closed` pending with a black-holed handshake, so the deadline itself must drive the.
     disconnect(String(err));
     return;
   }
   if (timer !== null) clearTimeout(timer);
-// `ready` fulfils on the CONNECT the server accepted, which is the moment it deleted the token.
+  // `ready` fulfils on the CONNECT the server accepted, which is the moment it deleted the token.
   spendWtToken(token);
   try {
     writer = wt.datagrams.writable.getWriter();
@@ -295,7 +295,7 @@ function onDisconnect(detail: string): void {
   if (stopped) return;
   link = null;
   scheduler?.stop();
-// Dropping them silently is correct: a connection gap is not per-packet loss, and the `stall` reports the gap.
+  // Dropping them silently is correct: a connection gap is not per-packet loss, and the `stall` reports the gap.
   pending.clear();
   scheduleReconnect(detail);
 }
@@ -345,7 +345,7 @@ function onFrame(data: unknown): void {
     return;
   }
 
-// A pong for an evicted ping still teaches the estimator, which is the only way it learns a fast to slow jump: lost.
+  // A pong for an evicted ping still teaches the estimator, which is the only way it learns a fast to slow jump: lost.
   const late = graveyard.get(frame.id);
   if (late !== undefined) {
     graveyard.delete(frame.id);
@@ -397,7 +397,7 @@ function sweep(): void {
       if (ping.measured) outbox.push(pingSample(now - ping.sentAt, true, now));
     }
   }
-// A timed-out request completes one chain step.
+  // A timed-out request completes one chain step.
   if (evicted && (!replyDriven || replyHeadEvicted)) scheduler?.complete();
 }
 

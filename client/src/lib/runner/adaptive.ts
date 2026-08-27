@@ -250,9 +250,9 @@ export function confidenceSampleFloor(
     statisticalMinimum = MIN_TRANSFER_CONFIDENCE_SAMPLES;
   } else {
     const intervalMs = fixedPingIntervalMs(input.latencyCadence);
-// Reply-driven pacing reflects the path itself rather than an intentional sampling delay.
+    // Reply-driven pacing reflects the path itself rather than an intentional sampling delay.
     if (intervalMs == null) return requested;
-// The worker re-anchors fixed cadence and attempts a measured send at the phase boundary, so fixed-capacity math.
+    // The worker re-anchors fixed cadence and attempts a measured send at the phase boundary, so fixed-capacity math.
     capacity = Math.min(
       Math.ceil(LATENCY_CONFIDENCE_WINDOW_MS / intervalMs),
       1 + Math.floor(candidateBudgetMs / intervalMs),

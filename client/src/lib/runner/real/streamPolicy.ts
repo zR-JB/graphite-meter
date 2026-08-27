@@ -49,7 +49,7 @@ export function normalizeStreamCount(count: number): number {
 }
 
 export function transferStreamCount(opts: TransferStreamOptions): number {
-// Forced means exact even above the browser's nominal H1 pool.
+  // Forced means exact even above the browser's nominal H1 pool.
   if (opts.policy.mode === "forced")
     return opts.webTransport
       ? Math.min(WT_MAX_LANES, normalizeStreamCount(opts.policy.count))
@@ -103,7 +103,7 @@ export function describeTransferStreams(
   protocol?: ProtocolTarget,
   transport?: TransportKind,
 ): string {
-// A datagram run opens no lanes in either direction; the transport's own send queue paces it, so a lane count would.
+  // A datagram run opens no lanes in either direction; the transport's own send queue paces it, so a lane count would.
   if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
   const webTransport = transport === "webtransport";
   if (policy.mode === "forced") {

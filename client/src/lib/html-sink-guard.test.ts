@@ -15,7 +15,7 @@ const ALLOWED = new Set([
   "ICON.settings",
   "ICON.upload",
   "THEME_ICON[store.theme]",
-// Loop variables holding ICON.* only: StageTrack s.icon from the static STAGES table, ResultCards c.icon from its.
+  // Loop variables holding ICON.* only: StageTrack s.icon from the static STAGES table, ResultCards c.icon from its.
   "s.icon",
   "c.icon",
 ]);

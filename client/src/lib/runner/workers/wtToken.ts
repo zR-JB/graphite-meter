@@ -76,7 +76,7 @@ export async function mintWtToken(
       cache: "no-store",
       headers: mint.headers,
       credentials: mint.credentials,
-// A hop that 302s a credentialed mint to a login page answers 200 with no token: refusing the redirect.
+      // A hop that 302s a credentialed mint to a login page answers 200 with no token: refusing the redirect.
       redirect: redirectForCredentials(mint.credentials),
       signal: signal
         ? AbortSignal.any([signal, controller.signal])

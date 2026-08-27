@@ -90,12 +90,12 @@ function postProgress(delta: ProgressDelta | null): void {
 async function run(url: string): Promise<void> {
   // Re-fetch until the measured window ends, even when one response reaches Content-Length.
   for (;;) {
-// Count the chunk and drop it.
+    // Count the chunk and drop it.
     const count = (n: number): void => {
       const now = performance.now();
       postProgress(progress.add(n, now));
     };
-// Chunked mode appends the adaptive size; long-stream mode uses the URL as-is (its ?bytes= is baked in by.
+    // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is (its ?bytes= is baked in by.
     const requestedBytes = nextBytes;
     const requestUrl = chunked ? `${url}&bytes=${requestedBytes}` : url;
     const fetchStart = performance.now();
@@ -127,7 +127,7 @@ async function run(url: string): Promise<void> {
         ));
       }
     } catch (err) {
-// A read that failed on an expired session is an auth failure, not a transport one, so the session is.
+      // A read that failed on an expired session is an auth failure, not a transport one, so the session is.
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(self.location.origin))

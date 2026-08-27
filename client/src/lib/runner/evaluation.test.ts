@@ -1,8 +1,11 @@
 import { test, expect } from "bun:test";
-import { MIN_PARTIAL_LATENCY_OUTCOMES, MIN_PARTIAL_TRANSFER_EVIDENCE_MS, RunAccumulator } from "./evaluation";
+import {
+  MIN_PARTIAL_LATENCY_OUTCOMES,
+  MIN_PARTIAL_TRANSFER_EVIDENCE_MS,
+  RunAccumulator,
+} from "./evaluation";
 import type { AdaptiveDurationConfig } from "./contract";
 import { DEFAULT_CONFIG } from "../state/defaults";
-
 const adaptive: AdaptiveDurationConfig = {
   enabled: true,
   minCoverageRatio: 0,
@@ -41,26 +44,65 @@ function adaptiveTrace(finalValues: readonly number[]): {
   add(finalValues);
   return { accum, samples };
 }
-function pushBidi(accum: RunAccumulator, direction: "down" | "up", value: number, score?: number, duration = 1, authoritative = false, observedAtMs?: number): void {
-  accum.pushThroughput("bidirectional", direction, value, value * duration, duration, authoritative, observedAtMs);
-  if (score !== undefined) accum.trackStableRun("bidirectional", score, adaptive);
+function pushBidi(
+  accum: RunAccumulator,
+  direction: "down" | "up",
+  value: number,
+  score?: number,
+  duration = 1,
+  authoritative = false,
+  observedAtMs?: number,
+): void {
+  accum.pushThroughput(
+    "bidirectional",
+    direction,
+    value,
+    value * duration,
+    duration,
+    authoritative,
+    observedAtMs,
+  );
+  if (score !== undefined)
+    accum.trackStableRun("bidirectional", score, adaptive);
 }
-function pushEqualBidi(accum: RunAccumulator, direction: "down" | "up", values: readonly number[], score?: number, duration = 1, authoritative = false): void {
-  for (const value of values) pushBidi(accum, direction, value, score, duration, authoritative);
+function pushEqualBidi(
+  accum: RunAccumulator,
+  direction: "down" | "up",
+  values: readonly number[],
+  score?: number,
+  duration = 1,
+  authoritative = false,
+): void {
+  for (const value of values)
+    pushBidi(accum, direction, value, score, duration, authoritative);
 }
-function pushBidiPairs(accum: RunAccumulator, downValues: readonly number[], upValue: number, upAuthoritative = false): void {
+function pushBidiPairs(
+  accum: RunAccumulator,
+  downValues: readonly number[],
+  upValue: number,
+  upAuthoritative = false,
+): void {
   for (const downValue of downValues) {
     pushBidi(accum, "down", downValue);
     pushBidi(accum, "up", upValue, undefined, 1, upAuthoritative);
   }
 }
-function descriptiveStability(rates: readonly number[], chunkMs: readonly number[]): number {
+function descriptiveStability(
+  rates: readonly number[],
+  chunkMs: readonly number[],
+): number {
   const accum = new RunAccumulator();
   accum.reset();
   let traceIndex = 0;
   for (const durationMs of chunkMs) {
     const rate = rates[traceIndex % rates.length];
-    accum.pushThroughput("download", "down", rate, (rate * durationMs) / 1_000, durationMs / 1_000);
+    accum.pushThroughput(
+      "download",
+      "down",
+      rate,
+      (rate * durationMs) / 1_000,
+      durationMs / 1_000,
+    );
     traceIndex++;
   }
   return accum.throughputResult("download", false).stabilityPct;
@@ -70,17 +112,19 @@ test("descriptive stability is invariant to callback chunking", () => {
   const wholeBuckets = Array(rates.length).fill(250);
   const splitCallbacks = Array(rates.length * 5).fill(50);
   const whole = descriptiveStability(rates, wholeBuckets);
-
   const split = new RunAccumulator();
   split.reset();
   for (const rate of rates) {
-    for (let i = 0; i < 5; i++) split.pushThroughput("download", "down", rate, rate * 0.05, 0.05);
+    for (let i = 0; i < 5; i++)
+      split.pushThroughput("download", "down", rate, rate * 0.05, 0.05);
   }
   expect(whole).toBeCloseTo(95, 8);
-  expect(split.throughputResult("download", false).stabilityPct).toBeCloseTo(whole, 8);
+  expect(split.throughputResult("download", false).stabilityPct).toBeCloseTo(
+    whole,
+    8,
+  );
   expect(splitCallbacks.length).toBeGreaterThan(wholeBuckets.length);
 });
-
 test.each([
   { cv: 5, rates: [950, 1050, 950, 1050, 1050, 950, 1050, 950], band: "high" },
   {
@@ -93,40 +137,63 @@ test.each([
     rates: [700, 1300, 700, 1300, 1300, 700, 1300, 700],
     band: "low",
   },
-])("descriptive stability reports approximately $cv% CV as the $band band", ({ rates, cv, band }) => {
-  const stabilityPct = descriptiveStability(rates, Array(rates.length).fill(250));
-  expect(stabilityPct).toBeCloseTo(100 - cv, 5);
-  const score = stabilityPct / 100;
-  const displayBand = score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
-  expect(displayBand).toBe(band);
-});
-test("adaptive throughput reports the final plateau after stability recovers", () => {
-  const { accum, samples } = adaptiveTrace(Array(100).fill(3000));
-
-  const result = accum.throughputResult("download", true);
-
-  expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(3000, 6);
-  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(samples), 6);
-  expect(result.meanBytesPerSec).not.toBeCloseTo(1000, 0);
-});
-test("an unstable ending falls back to the entire measurement phase", () => {
-  const { accum, samples } = adaptiveTrace([]);
-
-  const result = accum.throughputResult("download", true);
-
-  expect(result.method).toBe("full-average");
-  expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
-  expect(result.meanBytesPerSec).toBeCloseTo(result.fullAverageBytesPerSec, 6);
-});
-test("adaptive completion off always reports the entire measurement phase", () => {
-  const accum = fresh();
-  const samples = [...Array.from({ length: 60 }, (_, i) => 100 + i * (800 / 59)), ...Array(60).fill(1000)];
-  for (const value of samples) push(accum, value);
-  const result = accum.throughputResult("download", false);
-
-  expect(result.method).toBe("full-average");
-  expect(result.meanBytesPerSec).toBeCloseTo(mean(samples), 6);
+])(
+  "descriptive stability reports approximately $cv% CV as the $band band",
+  ({ rates, cv, band }) => {
+    const stabilityPct = descriptiveStability(
+      rates,
+      Array(rates.length).fill(250),
+    );
+    expect(stabilityPct).toBeCloseTo(100 - cv, 5);
+    const score = stabilityPct / 100;
+    const displayBand =
+      score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+    expect(displayBand).toBe(band);
+  },
+);
+test.each([
+  [
+    "adaptive throughput reports the final plateau after stability recovers",
+    Array(100).fill(3000),
+    true,
+    "stable-window",
+    3000,
+  ],
+  [
+    "an unstable ending falls back to the entire measurement phase",
+    [],
+    true,
+    "full-average",
+    undefined,
+  ],
+  [
+    "adaptive completion off always reports the entire measurement phase",
+    Array(60).fill(1000),
+    false,
+    "full-average",
+    undefined,
+  ],
+])("%s", (_label, finalValues, useAdaptive, method, expected) => {
+  const trace = useAdaptive
+    ? adaptiveTrace(finalValues)
+    : (() => {
+        const accum = fresh();
+        const samples = [
+          ...Array.from({ length: 60 }, (_, i) => 100 + i * (800 / 59)),
+          ...finalValues,
+        ];
+        for (const value of samples) push(accum, value);
+        return { accum, samples };
+      })();
+  const result = trace.accum.throughputResult("download", useAdaptive);
+  expect(result.method).toBe(method as typeof result.method);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(trace.samples), 6);
+  expect(result.meanBytesPerSec).toBeCloseTo(
+    expected ?? result.fullAverageBytesPerSec,
+    6,
+  );
+  if (expected !== undefined)
+    expect(result.meanBytesPerSec).not.toBeCloseTo(1000, 0);
 });
 test("stable evidence does not select a window unless early completion shortened the stage", () => {
   const accum = fresh();
@@ -138,43 +205,35 @@ test("stable evidence does not select a window unless early completion shortened
     accum.pushThroughput("download", "down", 1000, 1000, 1);
     accum.trackStableRun("download", 1, adaptive);
   }
-
   const result = accum.throughputResult("download", false);
-
   expect(result.method).toBe("full-average");
   expect(result.reportedBytesPerSec).toBeCloseTo(550, 6);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(550, 6);
 });
-
 test("transfer headline weights samples by represented time", () => {
   const accum = fresh();
   accum.pushThroughput("upload", "up", 100, 10, 0.1);
   accum.pushThroughput("upload", "up", 10, 10, 1);
-
   const result = accum.throughputResult("upload", false);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(20 / 1.1, 6);
   expect(result.fullAverageBytesPerSec).not.toBeCloseTo(55, 6);
 });
 test("the final stable plateau is also weighted by represented time", () => {
   const accum = fresh();
-
   accum.pushThroughput("download", "down", 1000, 100, 0.1);
   accum.trackStableRun("download", 0, adaptive);
   accum.pushThroughput("download", "down", 100, 100, 1);
   accum.trackStableRun("download", 1, adaptive);
-
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
   expect(result.meanBytesPerSec).toBeCloseTo(100, 6);
 });
 test("stability first established on the final one-way observation remains reducible", () => {
   const accum = fresh();
-
   accum.pushThroughput("upload", "up", 1000, 1000, 1);
   accum.trackStableRun("upload", 0, adaptive);
   accum.pushThroughput("upload", "up", 250, 500, 2, true);
   accum.trackStableRun("upload", 1, adaptive);
-
   const result = accum.throughputResult("upload", true);
   expect(result.method).toBe("stable-window");
   expect(result.meanBytesPerSec).toBeCloseTo(250, 6);
@@ -183,9 +242,7 @@ test("stability first established on the final one-way observation remains reduc
 });
 test("bidirectional: down and up lanes reduce independently", () => {
   const accum = fresh();
-
   pushBidiPairs(accum, Array(30).fill(500), 300, true);
-
   const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(500, 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(300, 6);
@@ -196,39 +253,43 @@ test("bidirectional: down and up lanes reduce independently", () => {
 });
 test("bidirectional: interleaved arrival order doesn't cross-contaminate the lanes", () => {
   const accum = fresh();
-
   const downs = [400, 420, 440, 460];
   const ups = [100, 120, 140, 160];
   for (let i = 0; i < downs.length; i++) {
     accum.pushThroughput("bidirectional", "up", ups[i], ups[i], 1);
     accum.pushThroughput("bidirectional", "down", downs[i], downs[i], 1);
   }
-
   const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
 });
 test("bidirectional confidence keeps an uneven trailing window aligned", () => {
   const accum = fresh();
-  for (let i = 0; i < 32; i++) accum.pushThroughput("bidirectional", "down", i, i * 0.25, 0.25);
-  for (let i = 0; i < 24; i++) accum.pushThroughput("bidirectional", "up", 100 + i, (100 + i) * 0.25, 0.25);
-
+  for (let i = 0; i < 32; i++)
+    accum.pushThroughput("bidirectional", "down", i, i * 0.25, 0.25);
+  for (let i = 0; i < 24; i++)
+    accum.pushThroughput(
+      "bidirectional",
+      "up",
+      100 + i,
+      (100 + i) * 0.25,
+      0.25,
+    );
   expect(accum.confidence("bidirectional").sampleCount).toBe(8);
 });
 test("bidirectional confidence rejects non-overlapping restarted lane windows", () => {
   const accum = fresh();
-  for (let i = 0; i < 40; i++) pushBidi(accum, "down", 1_000, undefined, 0.25, false, (i + 1) * 250);
-  for (let i = 0; i < 16; i++) pushBidi(accum, "up", 2_000, undefined, 0.25, false, (24 + i + 1) * 250);
+  for (let i = 0; i < 40; i++)
+    pushBidi(accum, "down", 1_000, undefined, 0.25, false, (i + 1) * 250);
+  for (let i = 0; i < 16; i++)
+    pushBidi(accum, "up", 2_000, undefined, 0.25, false, (24 + i + 1) * 250);
   expect(accum.confidence("bidirectional").sampleCount).toBe(16);
-
   pushBidi(accum, "up", 2_000, undefined, 0.25, false, 80 * 250 + 250);
   expect(accum.confidence("bidirectional").sampleCount).toBe(0);
 });
 test("bidirectional: one lane still empty (staggered start) reports the other correctly", () => {
   const accum = fresh();
-
   pushEqualBidi(accum, "down", Array(10).fill(700));
-
   const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(700, 6);
   expect(result.up.fullAverageBytesPerSec).toBe(0);
@@ -236,7 +297,6 @@ test("bidirectional: one lane still empty (staggered start) reports the other co
 });
 test("bidirectional final plateau aligns each interleaved lane to shared stability", () => {
   const accum = fresh();
-
   pushBidi(accum, "down", 100, 1);
   pushBidi(accum, "up", 50, 1);
   pushBidi(accum, "down", 100, 1);
@@ -247,7 +307,6 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
   pushBidi(accum, "up", 300, 1);
   pushBidi(accum, "down", 500, 1);
   pushBidi(accum, "up", 300, 1);
-
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");
   expect(result.up.method).toBe("stable-window");
@@ -256,7 +315,6 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
 });
 test("bidirectional stable evidence also requires actual early completion", () => {
   const accum = fresh();
-
   for (let i = 0; i < 4; i++) {
     pushBidi(accum, "down", 100, 0);
     pushBidi(accum, "up", 50, 0);
@@ -265,9 +323,7 @@ test("bidirectional stable evidence also requires actual early completion", () =
     pushBidi(accum, "down", 1000, 1);
     pushBidi(accum, "up", 500, 1);
   }
-
   const result = accum.bidirectionalResult(false);
-
   expect(result.down.method).toBe("full-average");
   expect(result.up.method).toBe("full-average");
   expect(result.down.reportedBytesPerSec).toBeCloseTo(550, 6);
@@ -275,12 +331,10 @@ test("bidirectional stable evidence also requires actual early completion", () =
 });
 test("final bidirectional observation preserves the opening evidence in both lanes", () => {
   const accum = fresh();
-
   pushBidi(accum, "down", 100, 0);
   pushBidi(accum, "up", 50, 0);
   pushBidi(accum, "down", 500, 0);
   pushBidi(accum, "up", 300, 1);
-
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");
   expect(result.up.method).toBe("stable-window");
@@ -291,7 +345,6 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
   const stable = fresh();
   pushBidiPairs(stable, Array(40).fill(500), 300);
   const stableScore = stable.confidence("bidirectional").score;
-
   const erratic = fresh();
   pushBidiPairs(
     erratic,
@@ -299,14 +352,18 @@ test("bidirectional: shared stability degrades when either lane alone turns erra
     300,
   );
   const erraticScore = erratic.confidence("bidirectional").score;
-
   expect(stableScore).toBeGreaterThan(erraticScore);
 });
 test("partial transfer keeps whole exact evidence only after its named floor", () => {
   const accum = fresh();
-  accum.pushThroughput("download", "down", 1_000, 700, (MIN_PARTIAL_TRANSFER_EVIDENCE_MS - 100) / 1_000);
+  accum.pushThroughput(
+    "download",
+    "down",
+    1_000,
+    700,
+    (MIN_PARTIAL_TRANSFER_EVIDENCE_MS - 100) / 1_000,
+  );
   expect(accum.partialThroughputResult("download")).toBeNull();
-
   accum.pushThroughput("download", "down", 1_000, 100, 0.1);
   const result = accum.partialThroughputResult("download");
   expect(result?.method).toBe("full-average");
@@ -318,7 +375,6 @@ test("a recovery gap reaches only the final byte/time reduction", () => {
   accum.pushThroughput("upload", "up", 1_000, 1_000, 1, true);
   const controlSamples = accum.confidence("upload").sampleCount;
   accum.recordRecoveryGap("upload", "up", 1);
-
   const result = accum.partialThroughputResult("upload");
   expect(result?.totalBytes).toBe(1_000);
   expect(result?.fullAverageBytesPerSec).toBe(500);
@@ -328,7 +384,6 @@ test("replacement checkpoint bytes enter only the exact final reduction", () => 
   const accum = fresh();
   accum.recordRecoveryGap("upload", "up", 1);
   accum.recordRecoveryBytes("upload", "up", 1_000);
-
   const result = accum.partialThroughputResult("upload");
   expect(result).not.toBeNull();
   expect(result?.totalBytes).toBe(1_000);
@@ -337,9 +392,9 @@ test("replacement checkpoint bytes enter only the exact final reduction", () => 
 });
 test("partial latency needs named outcome and success evidence floors", () => {
   const accum = fresh();
-  for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++) accum.pushLatency(20, false, i > 0, i * 100);
+  for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++)
+    accum.pushLatency(20, false, i > 0, i * 100);
   expect(accum.partialLatencyResult(DEFAULT_CONFIG, 0)).toBeNull();
-
   accum.pushLatency(21, false, false, 200);
   const result = accum.partialLatencyResult(DEFAULT_CONFIG, 0);
   expect(result?.method).toBe("full-average");
@@ -347,7 +402,8 @@ test("partial latency needs named outcome and success evidence floors", () => {
 });
 test("long latency runs bound confidence while retaining exact result evidence", () => {
   const accum = fresh();
-  for (let i = 0; i < 20_000; i++) accum.pushLatency(10 + (i % 5), false, i % 10 === 0, i * 250);
+  for (let i = 0; i < 20_000; i++)
+    accum.pushLatency(10 + (i % 5), false, i % 10 === 0, i * 250);
   expect(accum.confidence("latency").sampleCount).toBe(16);
   const result = accum.latencyResult(DEFAULT_CONFIG, 0);
   expect(result.packetLossPct).toBe(10);

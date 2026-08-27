@@ -110,7 +110,7 @@ function onAnInsecurePage(body: () => void) {
 }
 
 test("WebTransport options disable in a browser without the API", () => {
-// bun's test environment has no WebTransport global, which is the case these views must catch before a probe fails.
+  // bun's test environment has no WebTransport global, which is the case these views must catch before a probe fails.
   const catalog = classifyTransportDiscovery(
     [
       transfer("http3", "https://meter:7249", "http3", true),
@@ -132,7 +132,7 @@ test("WebTransport options disable in a browser without the API", () => {
   expect(wtLatency.disabled).toBe(true);
   expect(wtLatency.detail).toBe(NO_API);
 
-// Same missing global, different cause and different remedy: a page served over http is withheld the API a browser.
+  // Same missing global, different cause and different remedy: a page served over http is withheld the API a browser.
   onAnInsecurePage(() => {
     expect(throughputOptionView(catalog, "https://meter:7249::wt").detail).toBe(
       INSECURE_PAGE,

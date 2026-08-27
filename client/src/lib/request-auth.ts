@@ -37,7 +37,7 @@ export async function sessionAuthenticationRequired(
     });
     return authenticationRequired(response);
   } catch {
-// Transport failure, refused redirect, and timeout are not expiry evidence.
+    // Transport failure, refused redirect, and timeout are not expiry evidence.
     return false;
   } finally {
     clearTimeout(timeout);

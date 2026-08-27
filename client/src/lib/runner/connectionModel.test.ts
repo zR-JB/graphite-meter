@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import type { FetchThroughputTarget, WebSocketLatencyTarget } from "../api/endpoints";
+import type {
+  FetchThroughputTarget,
+  WebSocketLatencyTarget,
+} from "../api/endpoints";
 import type { InfraInfo, RunnerConfig, TransportDiscovery } from "./contract";
 import {
   roleNeedsValidation,
@@ -16,7 +19,6 @@ import {
 } from "./connectionModel";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 import { DEFAULT_CONFIG } from "../state/defaults";
-
 const throughput: FetchThroughputTarget = {
   id: "http2",
   origin: "https://meter.test",
@@ -76,13 +78,18 @@ type ValidationOverrides = {
   throughput?: Partial<ConnectionValidation["throughput"]>;
   latency?: Partial<ConnectionValidation["latency"]>;
 };
-function makeValidation(overrides: ValidationOverrides = {}): ConnectionValidation {
+function makeValidation(
+  overrides: ValidationOverrides = {},
+): ConnectionValidation {
   return {
     throughput: { selection: "auto", state: "stale", ...overrides.throughput },
     latency: { selection: "auto", state: "stale", ...overrides.latency },
   };
 }
-function makeInfra(discovery: TransportDiscovery = makeDiscovery(), overrides: Partial<InfraInfo> = {}): InfraInfo {
+function makeInfra(
+  discovery: TransportDiscovery = makeDiscovery(),
+  overrides: Partial<InfraInfo> = {},
+): InfraInfo {
   const { server, ...rest } = overrides;
   return {
     clientIp: "192.0.2.2",
@@ -96,7 +103,12 @@ function makeInfra(discovery: TransportDiscovery = makeDiscovery(), overrides: P
     ...rest,
   };
 }
-function present(cfg = config(), discovery = makeDiscovery(), validation = makeValidation(), infra: InfraInfo | null = makeInfra(discovery)) {
+function present(
+  cfg = config(),
+  discovery = makeDiscovery(),
+  validation = makeValidation(),
+  infra: InfraInfo | null = makeInfra(discovery),
+) {
   return presentConnections(cfg, discovery, validation, infra);
 }
 function degradedThroughput(protocol: "http2" | "http3") {
@@ -152,9 +164,7 @@ test("presentation keeps browser and server protocol boundaries distinct", () =>
     firstHopProtocol: "h2",
     latencyProtocolNegotiated: "http/1.1",
   });
-
   const model = present(cfg, discovery, validation, infra);
-
   expect(model.throughput.summary).toBe("Fetch stream · HTTP/2 · TLS");
   expect(model.throughput.browserProtocol).toBe("h2");
   expect(model.throughput.serverProtocol).toBe("http/1.1");
@@ -180,7 +190,9 @@ test("native H1 latency summary states its deterministic HTTP version", () => {
     protocolNegotiated: "http/1.1",
     latencyProtocolNegotiated: "http/1.1",
   });
-  expect(present(cfg, discovery, validation, infra).latency.summary).toBe("WebSocket · HTTP/1.1 · TLS");
+  expect(present(cfg, discovery, validation, infra).latency.summary).toBe(
+    "WebSocket · HTTP/1.1 · TLS",
+  );
 });
 test("verified negotiated throughput presents the observed browser protocol", () => {
   const cfg = config();
@@ -195,7 +207,6 @@ test("verified negotiated throughput presents the observed browser protocol", ()
     selectedThroughputProtocol: "http2",
     firstHopProtocol: "h2",
   });
-
   const presented = present(cfg, discovery, validation, infra).throughput;
   expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
   expect(presented.observedProtocol).toBe("http2");
@@ -212,9 +223,9 @@ test("old evidence never appears under a new selection or generation", () => {
     discoveryGeneration: "old",
     protocolNegotiated: "h2",
   });
-
-  expect(present(cfg, discovery, validation, infra).throughput.serverProtocol).toBeUndefined();
-  expect(present(cfg, discovery, validation, infra).latency.preTestPingMs).toBeUndefined();
+  const model = present(cfg, discovery, validation, infra);
+  expect(model.throughput.serverProtocol).toBeUndefined();
+  expect(model.latency.preTestPingMs).toBeUndefined();
 });
 test("connection cache key changes only for preparation inputs", () => {
   const a = config();
@@ -229,7 +240,9 @@ test("role cache keys isolate throughput from latency preparation", () => {
   const b = config();
   b.transports.throughputTarget = throughput.origin;
   expect(connectionRoleKey(a, "latency")).toBe(connectionRoleKey(b, "latency"));
-  expect(connectionRoleKey(a, "throughput")).not.toBe(connectionRoleKey(b, "throughput"));
+  expect(connectionRoleKey(a, "throughput")).not.toBe(
+    connectionRoleKey(b, "throughput"),
+  );
 });
 test("automatic and explicit selections share an identity when they resolve to the same target", () => {
   const automatic = config();
@@ -237,21 +250,24 @@ test("automatic and explicit selections share an identity when they resolve to t
   explicit.transports.throughputTarget = throughput.origin;
   explicit.transports.latencyTarget = latency.origin;
   const discovery = makeDiscovery();
-
-  expect(connectionRoleKey(automatic, "throughput", discovery)).toBe(connectionRoleKey(explicit, "throughput", discovery));
-  expect(connectionRoleKey(automatic, "latency", discovery)).toBe(connectionRoleKey(explicit, "latency", discovery));
-  expect(connectionKey(automatic, discovery)).toBe(connectionKey(explicit, discovery));
+  expect(connectionRoleKey(automatic, "throughput", discovery)).toBe(
+    connectionRoleKey(explicit, "throughput", discovery),
+  );
+  expect(connectionRoleKey(automatic, "latency", discovery)).toBe(
+    connectionRoleKey(explicit, "latency", discovery),
+  );
+  expect(connectionKey(automatic, discovery)).toBe(
+    connectionKey(explicit, discovery),
+  );
 });
 test("draft invalidation ignores discovery and observed protocol changes", () => {
   const cfg = config();
   const discovery = makeDiscovery();
   const roleKey = connectionDraftRoleKey(cfg, "throughput");
   const key = connectionDraftKey(cfg);
-
   discovery.throughput[throughput.origin].targets[0].protocol = "http2";
   expect(connectionDraftRoleKey(cfg, "throughput")).toBe(roleKey);
   expect(connectionDraftKey(cfg)).toBe(key);
-
   cfg.transports.throughputTarget = throughput.origin;
   expect(connectionDraftRoleKey(cfg, "throughput")).not.toBe(roleKey);
   expect(connectionDraftKey(cfg)).not.toBe(key);
@@ -266,7 +282,6 @@ test("probe failure and stale evidence remain retryable presentation states", ()
       message: "probe timed out",
     },
   });
-
   const model = present(cfg, makeDiscovery(), failed, null);
   expect(model.throughput.availability).toBe("advertised");
   expect(model.throughput.validation).toBe("failed");
@@ -290,11 +305,9 @@ test("a ::wt selection shares its origin's availability", () => {
     throughput: { selection: "https://meter.test::wt", state: "checking" },
     latency: { state: "checking" },
   });
-
   const model = present(cfg, discovery, validation, null);
   expect(model.throughput.availability).toBe("advertised");
   expect(model.throughput.target).toBeNull();
-
   withWebTransport(() => {
     const driveable = present(cfg, discovery, validation, null);
     expect(driveable.throughput.availability).toBe("advertised");
@@ -324,22 +337,27 @@ test("the panel names the latency bus the probe committed to, not the preferred 
       selectedLatencyTarget: throughput.origin,
       selectedLatencyTransport: "websocket",
     });
-
     const presented = present(cfg, discovery, validation, infra).latency;
     expect(presented.target?.transport).toBe("websocket");
     expect(presented.summary).toBe("WebSocket · TLS");
   });
 });
-test("a throughput role degraded off its session target presents the fetch view", () => {
-  const presented = degradedThroughput("http3");
+test.each([
+  [
+    "a throughput role degraded off its session target presents the fetch view",
+    "http3",
+    "Fetch stream · HTTP/3 · TLS",
+  ],
+  [
+    "a degraded throughput role names the protocol its fetch view negotiated",
+    "http2",
+    "Fetch stream · HTTP/2 · TLS",
+  ],
+])("%s", (_label, protocol, summary) => {
+  const presented = degradedThroughput(protocol as "http2" | "http3");
   expect(presented.target?.transport).toBe("fetch-stream");
-  expect(presented.summary).toBe("Fetch stream · HTTP/3 · TLS");
-});
-test("a degraded throughput role names the protocol its fetch view negotiated", () => {
-  const presented = degradedThroughput("http2");
-  expect(presented.target?.transport).toBe("fetch-stream");
-  expect(presented.observedProtocol).toBe("http2");
-  expect(presented.summary).toBe("Fetch stream · HTTP/2 · TLS");
+  if (protocol === "http2") expect(presented.observedProtocol).toBe("http2");
+  expect(presented.summary).toBe(summary);
 });
 test("the panel resolves no throughput path this browser cannot drive", () => {
   const cfg = config();
@@ -351,7 +369,6 @@ test("the panel resolves no throughput path this browser cannot drive", () => {
   const validation = makeValidation({
     throughput: { state: "checking" },
   });
-
   const presented = present(cfg, discovery, validation, null).throughput;
   expect(presented.target).toBeNull();
   expect(presented.availability).toBe("not-advertised");
@@ -364,15 +381,24 @@ test("validation retries only the changed role and carries an aborted stale role
     latency: { state: "verified" },
   });
   cfg.transports.throughputTarget = throughput.origin;
-  expect(validationRoles(cfg, validation, "throughput")).toEqual(["throughput"]);
-
+  expect(validationRoles(cfg, validation, "throughput")).toEqual([
+    "throughput",
+  ]);
   validation.throughput = { selection: throughput.origin, state: "stale" };
   cfg.transports.latencyTarget = latency.origin;
-  expect(validationRoles(cfg, validation, "latency")).toEqual(["latency", "throughput"]);
+  expect(validationRoles(cfg, validation, "latency")).toEqual([
+    "latency",
+    "throughput",
+  ]);
 });
 test("a generation refresh verifies every role checked by the broadened probe", () => {
-  expect(verifiedRolesForProbe(["latency"], "old", "new")).toEqual(["throughput", "latency"]);
-  expect(verifiedRolesForProbe(["latency"], "same", "same")).toEqual(["latency"]);
+  expect(verifiedRolesForProbe(["latency"], "old", "new")).toEqual([
+    "throughput",
+    "latency",
+  ]);
+  expect(verifiedRolesForProbe(["latency"], "same", "same")).toEqual([
+    "latency",
+  ]);
 });
 test("a stage toggle does not re-check a path that has not changed", () => {
   const cfg = config();
@@ -389,23 +415,23 @@ test("a stage toggle does not re-check a path that has not changed", () => {
       identity: connectionRoleKey(cfg, "latency", discovery),
     },
   });
-
   expect(roleNeedsValidation(cfg, verified, "latency", discovery)).toBe(false);
-  expect(roleNeedsValidation(cfg, verified, "throughput", discovery)).toBe(false);
-
+  expect(roleNeedsValidation(cfg, verified, "throughput", discovery)).toBe(
+    false,
+  );
   const off = config();
   off.stages.latency = false;
   off.stages.download = true;
   off.skipLoadedLatencyWhenStageOff = true;
   expect(roleNeedsValidation(off, verified, "latency", discovery)).toBe(false);
-
   const named = config();
   named.transports.latencyTarget = latency.origin;
-  expect(roleNeedsValidation(named, verified, "latency", discovery)).toBe(false);
+  expect(roleNeedsValidation(named, verified, "latency", discovery)).toBe(
+    false,
+  );
   const moved = config();
   moved.transports.latencyTarget = "https://elsewhere.test";
   expect(roleNeedsValidation(moved, verified, "latency", discovery)).toBe(true);
-
   const lost: ConnectionValidation = {
     ...verified,
     throughput: { selection: "auto", state: "stale" },
@@ -413,13 +439,17 @@ test("a stage toggle does not re-check a path that has not changed", () => {
   expect(roleNeedsValidation(cfg, lost, "throughput", discovery)).toBe(true);
 });
 test("the panel names a failure rather than reading as a check", () => {
-  const present = (throughput: ConnectionValidationState, latency: ConnectionValidationState) =>
+  const present = (
+    throughput: ConnectionValidationState,
+    latency: ConnectionValidationState,
+  ) =>
     ({
       throughput: { validation: throughput },
       latency: { validation: latency },
     }) as unknown as Parameters<typeof panelReadiness>[0];
-
-  expect(panelReadiness(present("verified", "verified"), true)).toBe("verified");
+  expect(panelReadiness(present("verified", "verified"), true)).toBe(
+    "verified",
+  );
   expect(panelReadiness(present("failed", "verified"), true)).toBe("failed");
   expect(panelReadiness(present("verified", "stale"), true)).toBe("stale");
   expect(panelReadiness(present("checking", "failed"), true)).toBe("failed");

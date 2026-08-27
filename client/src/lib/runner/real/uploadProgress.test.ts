@@ -1,4 +1,3 @@
-// Corners of the upload meter that the RealRunner and wtStage integration pins do not reach: a superseded external.
 import { test, expect, afterEach } from "bun:test";
 import type { CoreHost } from "../core";
 import type { FetchThroughputTarget } from "../../api/endpoints";
@@ -12,7 +11,6 @@ const realWorker = globalThis.Worker;
 afterEach(() => {
   globalThis.Worker = realWorker;
 });
-
 const target: FetchThroughputTarget = {
   id: "http://meter.test:7246",
   origin: "http://meter.test:7246",
@@ -27,7 +25,6 @@ const target: FetchThroughputTarget = {
     uploadProgress: "/upload/progress",
   },
 };
-
 function channelUnderTest(
   laneState: Partial<UploadProgressLane> = {},
   sampleProvesStageLiveness = true,
@@ -112,8 +109,9 @@ function channelUnderTest(
     recoveryBytes,
   };
 }
+const bytes = (channel: UploadProgressChannel, n: number, t: number): void =>
+  channel.accept({ type: "bytes", n, t: t * 1_000_000_000 });
 
-// Only one owner may act on an attach outcome, so a replaced or torn-down feed resolves "superseded" rather than.
 test("attachExternal: a replaced feed is superseded, not a stage failure", async () => {
   const { channel, failures } = channelUnderTest();
   const first = channel.attachExternal(() => {});
@@ -124,7 +122,6 @@ test("attachExternal: a replaced feed is superseded, not a stage failure", async
   expect(await second).toBe("superseded");
   expect(failures).toEqual([]);
 });
-
 test("an old upload generation cannot feed the replacement meter", async () => {
   const { channel, curve } = channelUnderTest({ measuring: true });
   const first = channel.attachExternal(() => {});
@@ -134,15 +131,13 @@ test("an old upload generation cannot feed the replacement meter", async () => {
   channel.accept({ type: "bytes", n: 9_999, t: 1_000_000_000 }, oldGeneration);
   expect(curve).toEqual([]);
 
-  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
-  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  bytes(channel, 100, 1);
+  bytes(channel, 250, 2);
   expect(curve).toEqual([150]);
   await channel.teardown(false);
   expect(await first).toBe("superseded");
   expect(await second).toBe("superseded");
 });
-
-// A refused feed ends the attach as surely as a ready record: left pending, the runner would receive both a recovery.
 test("accept: a refusal ends a pending external attach", async () => {
   const { channel, failures } = channelUnderTest({ measuring: true });
   const attached = channel.attachExternal(() => {});
@@ -157,7 +152,6 @@ test("accept: a refusal ends a pending external attach", async () => {
   expect(outcome).toBe("superseded");
   expect(failures).toEqual([]);
 });
-
 test("an explicit invalid upload id starts runner-owned recovery", () => {
   const { channel, failures, stalls } = channelUnderTest({ measuring: true });
 
@@ -172,7 +166,6 @@ test("an explicit invalid upload id starts runner-owned recovery", () => {
     { detail: "unknown upload id", cause: "unknown-upload-id" },
   ]);
 });
-
 test("capacity and ownership refusals cannot trigger upload-id recovery", () => {
   for (const cause of ["capacity-refusal", "owner-mismatch"] as const) {
     const { channel, failures, stalls } = channelUnderTest({ measuring: true });
@@ -181,8 +174,6 @@ test("capacity and ownership refusals cannot trigger upload-id recovery", () => 
     expect(stalls).toEqual([]);
   }
 });
-
-// The session worker owns the finalizing DELETE and sends it when the terminal record lands.
 test("teardown finalizes a dropped session feed, but not a completed one", async () => {
   const dropped = channelUnderTest({ measuring: true });
   let droppedFinalizes = 0;
@@ -200,57 +191,52 @@ test("teardown finalizes a dropped session feed, but not a completed one", async
   await channel.teardown(true);
   expect(finalizes).toBe(0);
 });
-
-// The server aggregate is cumulative, so the replacement's first frames arrive behind the count already shown; taking.
 test("a server count that arrives behind the last one does not move the curve", () => {
   const { channel, curve, durations } = channelUnderTest({ measuring: true });
 
-  channel.accept({ type: "bytes", n: 1000, t: 1_000_000_000 });
-  channel.accept({ type: "bytes", n: 2000, t: 2_000_000_000 });
-  channel.accept({ type: "bytes", n: 500, t: 3_000_000_000 });
-  channel.accept({ type: "bytes", n: 2600, t: 4_000_000_000 });
+  bytes(channel, 1000, 1);
+  bytes(channel, 2000, 2);
+  bytes(channel, 500, 3);
+  bytes(channel, 2600, 4);
   expect(curve).toEqual([1000, 600]);
   expect(durations).toEqual([1, 2]);
 });
-
 test("upload recovery bytes stay accounted without resuming a stalled sibling", () => {
   const { channel, curve, liveness, progress } = channelUnderTest(
     { measuring: true },
     false,
   );
 
-  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
-  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
+  bytes(channel, 100, 1);
+  bytes(channel, 250, 2);
 
   expect(curve).toEqual([150]);
   expect(liveness).toEqual([false]);
   expect(progress).toEqual([150]);
 });
-
 test("only an advancing server checkpoint refreshes the visual bridge baseline", () => {
   const { channel, presentations } = channelUnderTest({ measuring: true });
 
-  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
-  channel.accept({ type: "bytes", n: 100, t: 2_000_000_000 });
-  channel.accept({ type: "bytes", n: 250, t: 3_000_000_000 });
+  bytes(channel, 100, 1);
+  bytes(channel, 100, 2);
+  bytes(channel, 250, 3);
 
   expect(presentations).toEqual([750]);
 });
-
 test("the first advancing replacement checkpoint closes a rotation gap", () => {
   const { channel, curve, progress, recoveryGaps, recoveryBytes } =
     channelUnderTest({
       measuring: true,
     });
   channel.beginRecoveryGap();
-  channel.accept({ type: "bytes", n: 100, t: 1_000_000_000 });
+  bytes(channel, 100, 1);
   expect(recoveryGaps).toHaveLength(1);
   expect(recoveryBytes).toEqual([100]);
   expect(progress).toEqual([100]);
   expect(curve).toEqual([]);
 
-  channel.accept({ type: "bytes", n: 250, t: 2_000_000_000 });
-  channel.accept({ type: "bytes", n: 400, t: 3_000_000_000 });
+  bytes(channel, 250, 2);
+  bytes(channel, 400, 3);
 
   expect(recoveryGaps).toHaveLength(1);
   expect(recoveryGaps[0]).toBeGreaterThanOrEqual(0);
@@ -258,36 +244,32 @@ test("the first advancing replacement checkpoint closes a rotation gap", () => {
   expect(curve).toEqual([150, 150]);
   expect(progress).toEqual([100, 150, 150]);
 });
-
-// Unreachable today (every path tears down first), but a worker left running under a new feed would keep pushing its.
 test("taking a session feed terminates the worker feed it replaces", async () => {
   globalThis.Worker = TestWorker as unknown as typeof Worker;
-    const { channel, failures } = channelUnderTest();
-    const primed = channel.prime("upload", "gmu_one");
-    const worker = TestWorker.last!;
+  const { channel, failures } = channelUnderTest();
+  const primed = channel.prime("upload", "gmu_one");
+  const worker = TestWorker.last!;
 
-    const attached = channel.attachExternal(() => {});
-    expect(worker.terminated).toBe(1);
+  const attached = channel.attachExternal(() => {});
+  expect(worker.terminated).toBe(1);
 
-    await channel.teardown(false);
-    expect(await attached).toBe("superseded");
-    expect(await primed).toBe(false);
-    expect(failures).toEqual([]);
+  await channel.teardown(false);
+  expect(await attached).toBe("superseded");
+  expect(await primed).toBe(false);
+  expect(failures).toEqual([]);
 });
-
-// A discarded stage arriving mid-finalize must resolve the pending grace rather than start a second one, and.
 test("teardown(false) while finalizing resolves the pending grace", async () => {
   globalThis.Worker = TestWorker as unknown as typeof Worker;
-    const { channel, failures } = channelUnderTest();
-    void channel.prime("upload", "gmu_test");
-    const worker = TestWorker.last!;
+  const { channel, failures } = channelUnderTest();
+  void channel.prime("upload", "gmu_test");
+  const worker = TestWorker.last!;
 
-    const finalizing = channel.teardown(true);
-    expect(worker.sent).toContainEqual({ type: "stop" });
-    expect(worker.terminated).toBe(0);
+  const finalizing = channel.teardown(true);
+  expect(worker.sent).toContainEqual({ type: "stop" });
+  expect(worker.terminated).toBe(0);
 
-    await channel.teardown(false);
-    await finalizing;
-    expect(worker.terminated).toBe(1);
-    expect(failures).toEqual([]);
+  await channel.teardown(false);
+  await finalizing;
+  expect(worker.terminated).toBe(1);
+  expect(failures).toEqual([]);
 });

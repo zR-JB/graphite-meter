@@ -1,11 +1,7 @@
 // One seam for the byte lanes.
 import type { FlowDirection, RecoveryCause } from "../contract";
 import type { ProgressEvent } from "../workers/progressFeed";
-import {
-  downloadWorker,
-  uploadWorker,
-  wtTransferWorker,
-} from "./workerPool";
+import { downloadWorker, uploadWorker, wtTransferWorker } from "./workerPool";
 import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -150,7 +146,7 @@ export function sessionLane(
 ): ByteLane {
   let worker: Worker | null = null;
   let established = false;
-// One session death reaches every lane reader, the accept loop and the close promise, so only the first failure of.
+  // One session death reaches every lane reader, the accept loop and the close promise, so only the first failure of.
   let failed = false;
   let establishTimer: ReturnType<typeof setTimeout> | null = null;
   let stopAck: (() => void) | null = null;
@@ -175,15 +171,10 @@ export function sessionLane(
   };
 
   const onMessage = (msg: WorkerMsg): void => {
-    dispatchWorkerMessage(
-      msg,
-      events,
-      fail,
-      () => {
-        established = true;
-        clearEstablishTimer();
-      },
-    );
+    dispatchWorkerMessage(msg, events, fail, () => {
+      established = true;
+      clearEstablishTimer();
+    });
   };
 
   return {

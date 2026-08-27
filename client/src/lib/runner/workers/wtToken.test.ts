@@ -1,28 +1,27 @@
 import { test, expect } from "bun:test";
 import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
+import { stubFetch } from "./test-helpers.test";
 
 const MINT = { url: "https://meter.test/wt/session" };
 
 function respondWith(response: Response): () => void {
-  const real = globalThis.fetch;
-  globalThis.fetch = (async () => response) as unknown as typeof fetch;
-  return () => {
-    globalThis.fetch = real;
-  };
+  return stubFetch((async () => response) as unknown as typeof fetch);
 }
 
 function captureFetch(): {
   init: () => RequestInit | undefined;
   restore: () => void;
 } {
-  const real = globalThis.fetch;
   let init: RequestInit | undefined;
-  globalThis.fetch = (async (_input: RequestInfo | URL, got?: RequestInit) => {
+  const restore = stubFetch((async (
+    _input: RequestInfo | URL,
+    got?: RequestInit,
+  ) => {
     init = got;
     return Response.json({ token: "gmw_abc" });
-  }) as unknown as typeof fetch;
-  return { init: () => init, restore: () => (globalThis.fetch = real) };
+  }) as unknown as typeof fetch);
+  return { init: () => init, restore };
 }
 
 function expectMint(
@@ -93,19 +92,15 @@ function respondOnAbort(): {
   seen: () => AbortSignal | undefined;
   restore: () => void;
 } {
-  const real = globalThis.fetch;
   let seen: AbortSignal | undefined;
-  globalThis.fetch = ((_input: RequestInfo | URL, got?: RequestInit) =>
-    new Promise<Response>((_, reject) => {
-      seen = got?.signal ?? undefined;
-      seen?.addEventListener("abort", () => reject(new Error("aborted")));
-    })) as unknown as typeof fetch;
-  return {
-    seen: () => seen,
-    restore: () => {
-      globalThis.fetch = real;
-    },
-  };
+  const restore = stubFetch(
+    ((_input: RequestInfo | URL, got?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        seen = got?.signal ?? undefined;
+        seen?.addEventListener("abort", () => reject(new Error("aborted")));
+      })) as unknown as typeof fetch,
+  );
+  return { seen: () => seen, restore };
 }
 
 test("a mint that never answers is abandoned on its own bound", async () => {
@@ -141,18 +136,12 @@ function countingMint(): {
   calls: () => number;
   restore: () => void;
 } {
-  const real = globalThis.fetch;
   let calls = 0;
-  globalThis.fetch = (async () => {
+  const restore = stubFetch((async () => {
     calls++;
     return Response.json({ token: "gmw_live", expires: Date.now() + 30_000 });
-  }) as unknown as typeof fetch;
-  return {
-    calls: () => calls,
-    restore: () => {
-      globalThis.fetch = real;
-    },
-  };
+  }) as unknown as typeof fetch);
+  return { calls: () => calls, restore };
 }
 
 test("a re-dial reuses the token the failed dial never spent", async () => {

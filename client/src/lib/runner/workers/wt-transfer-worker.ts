@@ -103,7 +103,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   const minted = await mintWtToken(msg.mint);
   if (stopped) return;
-// An authenticated dial cannot proceed without a token.
+  // An authenticated dial cannot proceed without a token.
   if (msg.mint && minted.token === "") {
     if (minted.authRequired) {
       post({ type: "auth-required" });
@@ -124,7 +124,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     return;
   }
   session = dialed;
-// `closed` resolves on a graceful close and rejects on an abrupt one, and the server always closes gracefully, so.
+  // `closed` resolves on a graceful close and rejects on an abrupt one, and the server always closes gracefully, so.
   const closed = (): void => fail(true, "webtransport session closed");
   void dialed.closed.then(closed, closed);
   try {
@@ -147,7 +147,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     fail(true, String(err));
     return;
   }
-// The race resolved on `ready`, so the server accepted the CONNECT and deleted the token it carried.
+  // The race resolved on `ready`, so the server accepted the CONNECT and deleted the token it carried.
   spendWtToken(token);
   post({ type: "established" });
   if (msg.dir === "down") {
@@ -222,7 +222,7 @@ async function readDatagrams(): Promise<void> {
     for (;;) {
       const { value, done } = await reader.read();
       if (done || stopped) return;
-// One clock read serves both the report window and the yield gap: a datagram is ~1200 bytes, so a second read.
+      // One clock read serves both the report window and the yield gap: a datagram is ~1200 bytes, so a second read.
       const now = performance.now();
       countDownload((value as Uint8Array).byteLength, now);
       if (now - lastYield < YIELD_GAP_MS) continue;
@@ -244,9 +244,9 @@ async function uploadDatagrams(): Promise<void> {
     let lastYield = performance.now();
     while (!stopped) {
       await writer.ready;
-// The path MTU estimate can shrink mid-session and an oversized datagram is dropped with a resolved promise, so.
+      // The path MTU estimate can shrink mid-session and an oversized datagram is dropped with a resolved promise, so.
       const size = Math.min(payload.length, datagrams.maxDatagramSize);
-// Returning silently would leave the stage running to its full timer with zero bytes, no restart and no.
+      // Returning silently would leave the stage running to its full timer with zero bytes, no restart and no.
       if (size === 0) {
         fail(true, "webtransport datagram size collapsed");
         return;
@@ -322,11 +322,11 @@ async function readProgressStreams(
         return;
       }
       opened = true;
-// Keep accepting later server-opened control streams concurrently so an explicit lane refusal reaches the.
+      // Keep accepting later server-opened control streams concurrently so an explicit lane refusal reaches the.
       void readProgress(value as ReadableStream);
     }
   } catch (err) {
-// A transport-level break is the session dying: recoverable, the owner restarts the session and the server.
+    // A transport-level break is the session dying: recoverable, the owner restarts the session and the server.
     if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
   }
 }
@@ -342,7 +342,7 @@ async function readProgress(
     completed?.();
     return;
   }
-// Recoverable for the same reason that one is: the owner restarts the session and the server re-opens the feed.
+  // Recoverable for the same reason that one is: the owner restarts the session and the server re-opens the feed.
   if (end === "eof") fail(true, "webtransport progress feed ended early");
 }
 

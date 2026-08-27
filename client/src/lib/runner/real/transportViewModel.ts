@@ -74,7 +74,7 @@ export function throughputOptionView(
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
   if (selection === "current" || selection === "auto") {
-// Resolve exactly what the runner resolves, so the automatic card never offers the session path a.
+    // Resolve exactly what the runner resolves, so the automatic card never offers the session path a.
     const runnable = typeof WebTransport !== "undefined";
     const target = selectThroughputTarget(discovery, selection, runnable);
     if (target)
@@ -82,7 +82,7 @@ export function throughputOptionView(
         disabled: false,
         detail: automaticDetail(target, discovery, "throughput"),
       };
-// Automatic's last resort is a session origin: say which of the two reasons left the card unresolved rather than.
+    // Automatic's last resort is a session origin: say which of the two reasons left the card unresolved rather than.
     const refused =
       !runnable && selectThroughputTarget(discovery, selection, true);
     return {
@@ -118,7 +118,7 @@ export function latencyOptionView(
         disabled: false,
         detail: automaticDetail(target, discovery, "latency"),
       };
-// An h3-only deployment advertises a datagram bus and no WebSocket, so blaming the server here tells a browser.
+    // An h3-only deployment advertises a datagram bus and no WebSocket, so blaming the server here tells a browser.
     const refused =
       !runnable && selectLatencyTarget(discovery, selection, true);
     return {
@@ -136,7 +136,7 @@ export function latencyOptionView(
     };
   const found = locateTarget(discovery.latency, selection);
   const entry = found?.entry ?? discovery.latency[selection];
-// A bus the server offers but this browser cannot drive says so, rather than reading as something the server failed.
+  // A bus the server offers but this browser cannot drive says so, rather than reading as something the server failed.
   const blocked = found
     ? needsMissingWebTransport(found.target.transport)
     : !runnable && entry?.targets.every((t) => t.transport === "webtransport");

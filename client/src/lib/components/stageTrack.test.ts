@@ -23,9 +23,16 @@ const model = (
 test("segmentState projects the central stage state without re-deriving it", () => {
   for (const [state, expected] of [
     [{ status: "disabled" }, { state: "disabled", fill: 0 }],
-    [{ status: "partial", fill: 100 }, { state: "partial", fill: 100 }],
-    [{ status: "active", warming: true }, { state: "warmup", fill: 0 }],
-  ] as const) expect(segmentState(stage(state))).toEqual(expected);
+    [
+      { status: "partial", fill: 100 },
+      { state: "partial", fill: 100 },
+    ],
+    [
+      { status: "active", warming: true },
+      { state: "warmup", fill: 0 },
+    ],
+  ] as const)
+    expect(segmentState(stage(state))).toEqual(expected);
 });
 
 test("lockReason uses the central terminal and recovery state", () => {
@@ -34,7 +41,10 @@ test("lockReason uses the central terminal and recovery state", () => {
     [false, "upload", "upload", "download", "partial", "done"],
     [false, "upload", "upload", "upload", "recovering", "recovering"],
     [false, "download", "download", "upload", "pending", "upcoming"],
-  ] as const) expect(lockReason(terminal, phase, selected, target, status)).toBe(expected);
+  ] as const)
+    expect(lockReason(terminal, phase, selected, target, status)).toBe(
+      expected,
+    );
 });
 
 test("terminal selection can skip retained execution without rewriting it", () => {

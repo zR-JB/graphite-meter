@@ -27,12 +27,12 @@ export class UploadPresentationBridge {
     this.#arrivals.push(now);
     if (this.#arrivals.length > 5) this.#arrivals.shift();
     this.#lastRate = rate;
-// An advancing server checkpoint is immediately authoritative again.
+    // An advancing server checkpoint is immediately authoritative again.
     this.#lanes.clear();
     this.#active = null;
   }
 
-/* Record one locally timed POST completion by lane. */
+  /* Record one locally timed POST completion by lane. */
   hint(lane: number, bytes: number, elapsedMs: number, now: number): void {
     if (lane < 0 || bytes <= 0 || elapsedMs <= 0) return;
     this.#lanes.set(lane, {
@@ -65,7 +65,7 @@ export class UploadPresentationBridge {
       return null;
     }
     const progress = afterFreshness / UPLOAD_PRESENTATION_SETTLE_MS;
-// Smoothstep has no slope discontinuity at either end and cannot overshoot the bounded local target or the.
+    // Smoothstep has no slope discontinuity at either end and cannot overshoot the bounded local target or the.
     const eased = progress * progress * (3 - 2 * progress);
     return active.rate + (this.#lastRate - active.rate) * eased;
   }
@@ -104,7 +104,7 @@ export class UploadPresentationBridge {
       latestAt = Math.max(latestAt, hint.at);
       count++;
     }
-// Do not multiply one lane by the configured count: uneven backpressure is exactly why every expected lane must.
+    // Do not multiply one lane by the configured count: uneven backpressure is exactly why every expected lane must.
     return count === expectedLanes && rate > 0 ? { rate, latestAt } : null;
   }
 

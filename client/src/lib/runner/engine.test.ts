@@ -3,9 +3,12 @@ import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
 import { RunnerCore } from "./core";
 import type { InfraInfo, RunnerConfig } from "./contract";
-import { PreflightUnavailableError, TransportUnavailableError } from "./real/transportError";
+import {
+  PreflightUnavailableError,
+  TransportUnavailableError,
+} from "./real/transportError";
 import { CONNECTION_FRESH_MS } from "./connectionModel";
-
+import { TEST_BUILD_TOKENS } from "./test-helpers.test";
 plugin({
   name: "svelte-runes",
   setup(build) {
@@ -22,32 +25,29 @@ plugin({
     });
   },
 });
-
-const BUILD_TOKENS = {
-  __GM_ALLOW_DUMMY__: false,
-  __GM_BUILD_PROFILE__: "test",
-  __GM_RELEASE_VERSION__: null,
-  __GM_SOURCE_REVISION__: "test-revision",
-  __GM_BUILD_IDENTITY__: "test test-revision",
-  __GM_CLIENT_VERSION__: "0.0.0-test",
-};
 function stubBuildGlobals(): () => void {
-  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   return () => {
-    for (const key of Object.keys(BUILD_TOKENS)) Reflect.deleteProperty(globalThis, key);
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
   };
 }
 function stubEngineGlobals(): () => void {
   const restoreBuild = stubBuildGlobals();
   const restoreWindow = stubGlobal("window", undefined);
-  Reflect.deleteProperty(globalThis, "window");
   return () => {
     restoreWindow();
     restoreBuild();
   };
 }
-
-async function withBootRunner(run: (engine: typeof import("./engine.svelte")) => Promise<void>, setup: () => () => void = () => stubBootEnvironment("visible")): Promise<void> {
+async function yieldUntil(done: () => boolean, turns = 10): Promise<void> {
+  for (let turn = 0; turn < turns && !done(); turn++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+async function withBootRunner(
+  run: (engine: typeof import("./engine.svelte")) => Promise<void>,
+  setup: () => () => void = () => stubBootEnvironment("visible"),
+): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
   const engine = await import("./engine.svelte");
   const restoreEnvironment = setup();
@@ -60,18 +60,23 @@ async function withBootRunner(run: (engine: typeof import("./engine.svelte")) =>
     restoreGlobals();
   }
 }
-
-async function checkPreparation(stages: RunnerConfig["stages"], checked: "throughput" | "latency"): Promise<void> {
+async function checkPreparation(
+  stages: RunnerConfig["stages"],
+  checked: "throughput" | "latency",
+): Promise<void> {
   await withBootRunner(async ({ cancelPendingStart, toggleRun }) => {
     const { store } = await import("../state/store.svelte");
-    const restoreFetch = stubGlobal("fetch", (_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>(() => void init));
+    const restoreFetch = stubGlobal(
+      "fetch",
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>(() => void init),
+    );
     const previousConfig = JSON.parse(JSON.stringify(store.config));
     store.config.stages = stages;
     store.config.skipLoadedLatencyWhenStageOff = true;
     store.reset();
     toggleRun();
-    for (let turn = 0; turn < 10 && store.preparation[checked] !== "checking"; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
-
+    await yieldUntil(() => store.preparation[checked] === "checking");
     const other = checked === "throughput" ? "latency" : "throughput";
     expect(store.preparation[checked]).toBe("checking");
     expect(store.preparation[other]).toBe("disabled");
@@ -123,7 +128,10 @@ function eventTarget() {
     },
   };
 }
-function stubEventBootEnvironment(visibility: "hidden" | "visible", online: boolean) {
+function stubEventBootEnvironment(
+  visibility: "hidden" | "visible",
+  online: boolean,
+) {
   const windowListeners = eventTarget();
   const documentListeners = eventTarget();
   const documentState = {
@@ -135,7 +143,11 @@ function stubEventBootEnvironment(visibility: "hidden" | "visible", online: bool
     addEventListener: windowListeners.addEventListener,
     removeEventListener: windowListeners.removeEventListener,
   };
-  const restores = [stubGlobal("window", windowValue), stubGlobal("document", documentState), stubGlobal("navigator", { onLine: online })];
+  const restores = [
+    stubGlobal("window", windowValue),
+    stubGlobal("document", documentState),
+    stubGlobal("navigator", { onLine: online }),
+  ];
   return {
     emit(type: string) {
       windowListeners.emit(type);
@@ -149,9 +161,8 @@ function stubEventBootEnvironment(visibility: "hidden" | "visible", online: bool
     },
   };
 }
-
 async function settleValidation(): Promise<void> {
-  for (let turn = 0; turn < 10; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+  await yieldUntil(() => false);
 }
 function stubValidationTimers() {
   const realNow = Date.now;
@@ -174,7 +185,9 @@ function stubValidationTimers() {
     advance(milliseconds: number) {
       now += milliseconds;
       for (;;) {
-        const due = [...timers.entries()].filter(([, timer]) => timer.at <= now).sort((a, b) => a[1].at - b[1].at)[0];
+        const due = [...timers.entries()]
+          .filter(([, timer]) => timer.at <= now)
+          .sort((a, b) => a[1].at - b[1].at)[0];
         if (!due) return;
         timers.delete(due[0]);
         due[1].run();
@@ -188,7 +201,6 @@ function stubValidationTimers() {
     },
   };
 }
-
 async function settleMicrotasks(): Promise<void> {
   for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
@@ -197,8 +209,10 @@ type ValidationContext = {
   environment: ReturnType<typeof stubEventBootEnvironment>;
   probeCalls: () => number;
 };
-
-async function withValidationRunner(probe: () => Promise<InfraInfo>, run: (context: ValidationContext) => Promise<void>): Promise<void> {
+async function withValidationRunner(
+  probe: () => Promise<InfraInfo>,
+  run: (context: ValidationContext) => Promise<void>,
+): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
   const { RealBackend } = await import("./RealRunner");
   const originalProbe = RealBackend.prototype.probe;
@@ -219,7 +233,6 @@ async function withValidationRunner(probe: () => Promise<InfraInfo>, run: (conte
     restoreGlobals();
   }
 }
-
 const PROBE_EVIDENCE: InfraInfo = {
   clientIp: "203.0.113.7",
   clientIpVersion: 4,
@@ -235,10 +248,8 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
   await withBootRunner(async ({ teardownRunner }) => {
     const { store } = await import("../state/store.svelte");
     store.ingest({ type: "infra", info: PROBE_EVIDENCE });
-
     store.reset();
     expect(store.infra).toEqual(PROBE_EVIDENCE);
-
     teardownRunner();
     expect(store.infra).toBeNull();
   });
@@ -259,16 +270,18 @@ test("an explicit second start click cancels a pending preflight", async () => {
   await withBootRunner(async ({ hasPendingStart, toggleRun }) => {
     const { store } = await import("../state/store.svelte");
     let pendingSignal: AbortSignal | undefined;
-    const restorePendingFetch = stubGlobal("fetch", (_input: RequestInfo | URL, init?: RequestInit) => {
-      pendingSignal = init?.signal ?? undefined;
-      return new Promise<Response>(() => {});
-    });
+    const restorePendingFetch = stubGlobal(
+      "fetch",
+      (_input: RequestInfo | URL, init?: RequestInit) => {
+        pendingSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      },
+    );
     store.reset();
-
     toggleRun();
     expect(hasPendingStart()).toBe(true);
     expect(store.preparing).toBe(true);
-    for (let turn = 0; turn < 10 && !pendingSignal; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldUntil(() => pendingSignal !== undefined);
     toggleRun();
     expect(hasPendingStart()).toBe(false);
     expect(store.preparing).toBe(false);
@@ -282,10 +295,12 @@ test("an explicit second start click cancels a pending preflight", async () => {
 test("a preflight failure stays idle instead of manufacturing a run error", async () => {
   await withBootRunner(async ({ toggleRun }) => {
     const { store } = await import("../state/store.svelte");
-    const restoreFetch = stubGlobal("fetch", () => Promise.reject(new Error("offline")));
+    const restoreFetch = stubGlobal("fetch", () =>
+      Promise.reject(new Error("offline")),
+    );
     store.reset();
     toggleRun();
-    for (let turn = 0; turn < 10 && store.preparing; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    await yieldUntil(() => !store.preparing);
     expect(store.phase).toBe("idle");
     expect(store.startError).toBe("Connection check failed");
     expect(store.preparation.status).toBe("failed");
@@ -294,7 +309,6 @@ test("a preflight failure stays idle instead of manufacturing a run error", asyn
 });
 test("connection failures use safe presentation copy", async () => {
   const { connectionFailureMessage } = await import("./engine.svelte");
-
   expect(
     connectionFailureMessage(
       new PreflightUnavailableError("preflight unavailable", {
@@ -363,13 +377,11 @@ test("bootRunner seeds background activity from the live visibilityState", async
   };
   try {
     const { bootRunner, teardownRunner } = await import("./engine.svelte");
-
     let restore = stubBootEnvironment("hidden");
     await bootRunner();
     teardownRunner();
     restore();
     expect(seeded).toEqual([false]);
-
     restore = stubBootEnvironment("visible");
     await bootRunner();
     teardownRunner();
@@ -399,18 +411,16 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
       expect(probeCalls()).toBe(1);
       expect(store.connectionValidation.throughput.state).toBe("verified");
       expect(store.connectionValidation.latency.state).toBe("verified");
-
       offline = true;
       const runner = getRunner() as RunnerCore;
       runner.emit({ type: "connectivity", state: "offline" });
-      for (let turn = 0; turn < 10 && probeCalls() < 2; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+      await yieldUntil(() => probeCalls() >= 2);
       runner.emit({ type: "connectivity", state: "offline" });
       releaseOffline?.();
       await settleValidation();
       expect(probeCalls()).toBe(2);
       expect(store.connectionValidation.throughput.state).toBe("failed");
       expect(store.connectionValidation.latency.state).toBe("failed");
-
       offline = false;
       runner.emit({ type: "connectivity", state: "connected" });
       await settleValidation();
@@ -435,7 +445,6 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
       await settleValidation();
       expect(probeCalls()).toBe(2);
       expect(store.connectionValidation.throughput.state).toBe("failed");
-
       offline = false;
       environment.emit("online");
       await settleValidation();
@@ -458,11 +467,9 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         const { getRunner } = engine;
         expect(probeCalls()).toBe(1);
         expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
-
         timers.advance(CONNECTION_FRESH_MS);
         await settleMicrotasks();
         expect(probeCalls()).toBe(2);
-
         offline = true;
         (getRunner() as RunnerCore).emit({
           type: "connectivity",
@@ -472,7 +479,6 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         await settleMicrotasks();
         expect(probeCalls()).toBe(3);
         expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
-
         timers.advance(CONNECTION_FRESH_MS - 1);
         await settleMicrotasks();
         expect(probeCalls()).toBe(3);
@@ -480,7 +486,6 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(1);
         await settleMicrotasks();
         expect(probeCalls()).toBe(4);
-
         timers.advance(CONNECTION_FRESH_MS - 1);
         await settleMicrotasks();
         expect(probeCalls()).toBe(4);
@@ -492,7 +497,6 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(0);
         await settleMicrotasks();
         expect(probeCalls()).toBe(5);
-
         const runner = getRunner() as RunnerCore;
         runner.emit({
           type: "phase",
@@ -513,7 +517,6 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(0);
         await settleMicrotasks();
         expect(probeCalls()).toBe(6);
-
         engine.teardownRunner();
         expect(timers.size()).toBe(0);
       },

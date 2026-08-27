@@ -5,7 +5,6 @@ import {
   httpProtocolLabel,
   normalizeHttpProtocol,
 } from "./protocol";
-
 test("protocol identifiers share one canonical mapping", () => {
   for (const value of ["http1", "http/1.1", "HTTP/1.1"])
     expect(normalizeHttpProtocol(value)).toBe("http1");
@@ -15,7 +14,6 @@ test("protocol identifiers share one canonical mapping", () => {
     expect(normalizeHttpProtocol(value)).toBe("http3");
   expect(normalizeHttpProtocol("unknown")).toBeUndefined();
 });
-
 test("canonical protocols drive labels and compensation transport", () => {
   expect(httpProtocolLabel("h2")).toBe("HTTP/2");
   expect(httpProtocolLabel("negotiated")).toBe("Negotiated HTTP");

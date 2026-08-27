@@ -1,11 +1,14 @@
 import { test, expect } from "bun:test";
 import type { CoreHost } from "./core";
 import type { RunnerConfig } from "./contract";
-// Type only: the class itself is imported dynamically, after the build globals the module reads at load time are in.
 import type { RealBackend } from "./RealRunner";
-
+import {
+  TEST_BUILD_TOKENS,
+  TEST_WT_ORIGIN,
+  TEST_WT_PREFLIGHT,
+  testWtConfig,
+} from "./test-helpers.test";
 const dials: string[] = [];
-// Refuses every dial, the shape of a network that does not carry UDP.
 class FakeWebTransport {
   readonly ready: Promise<void>;
   readonly closed: Promise<void>;
@@ -20,81 +23,21 @@ class FakeWebTransport {
   }
   close(): void {}
 }
-
-const WT_ORIGIN = "https://meter.test";
-
-const BUILD_TOKENS = {
-  __GM_ALLOW_DUMMY__: false,
-  __GM_BUILD_PROFILE__: "test",
-  __GM_RELEASE_VERSION__: null,
-  __GM_SOURCE_REVISION__: "test-revision",
-  __GM_BUILD_IDENTITY__: "test test-revision",
-  __GM_CLIENT_VERSION__: "0.0.0-test",
-};
-
+const WT_ORIGIN = TEST_WT_ORIGIN;
 const preflight = {
-  server: { name: "test" },
-  engineVersion: "test",
-  generation: "a",
-  capabilities: {
-    throughput: [
-      { baseUrl: WT_ORIGIN, transport: "webtransport", protocol: "http3" },
-    ],
-    latency: [],
-  },
+  ...TEST_WT_PREFLIGHT,
+  capabilities: { ...TEST_WT_PREFLIGHT.capabilities, latency: [] },
 };
-
-const config: RunnerConfig = {
-  stages: {
-    latency: false,
-    download: true,
-    upload: false,
-    bidirectional: false,
-  },
-  skipLoadedLatencyWhenStageOff: true,
-  transports: { throughputTarget: `${WT_ORIGIN}::wt`, latencyTarget: "auto" },
-  transferStreams: { mode: "auto", count: 1 },
-  duration: {
-    warmupMs: 0,
-    latencyMs: 1,
-    downloadMs: 1,
-    uploadMs: 1,
-    bidirectionalMs: 1,
-  },
-  pingCadence: "reply-driven",
-  loadedPingCadence: "medium",
-  experimentalChunkedDownload: false,
-  experimentalDatagramThroughput: false,
-  compensation: {
-    profile: "loopback",
-    transport: "auto",
-    params: {
-      mtuBytes: 65536,
-      ipVersion: "auto",
-      vlanTagged: false,
-      tcpOptionsMinBytes: 0,
-      tcpOptionsMaxBytes: 0,
-      encapsulationBytes: 0,
-      quicConnIdMinBytes: 0,
-      quicConnIdMaxBytes: 0,
-    },
-  },
-  adaptive: {
-    enabled: false,
-    minCoverageRatio: 1,
-    stabilityThreshold: 1,
-    maxPhaseReductionRatio: 0,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 0,
-  },
-  visualization: { throughputMaxBytesPerSec: "auto" },
-};
-
+const config: RunnerConfig = testWtConfig({
+  latency: false,
+  download: true,
+  upload: false,
+  bidirectional: false,
+});
+config.transferStreams = { mode: "auto", count: 1 };
 type BackendBody = (
   backend: import("./RealRunner").RealBackend,
 ) => Promise<void>;
-
 async function withProbeBackend(
   webTransport: unknown,
   probeConfig: RunnerConfig,
@@ -102,7 +45,7 @@ async function withProbeBackend(
   body: BackendBody,
 ): Promise<void> {
   const globals = globalThis as Record<string, unknown>;
-  Object.assign(globals, BUILD_TOKENS);
+  Object.assign(globals, TEST_BUILD_TOKENS);
   const { RealBackend } = await import("./RealRunner");
   const realFetch = globalThis.fetch;
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
@@ -150,29 +93,25 @@ async function withProbeBackend(
       Object.defineProperty(globalThis, "location", realLocation);
   }
 }
-
+const withFakeProbe = (
+  body: BackendBody,
+  capabilities = preflight,
+  probeConfig = config,
+): Promise<void> =>
+  withProbeBackend(FakeWebTransport, probeConfig, capabilities, body);
 test("a refused WebTransport check is re-dialled on the next probe, so Retry works", async () => {
-  await withProbeBackend(
-    FakeWebTransport,
-    config,
-    preflight,
-    async (backend) => {
-      const { TransportUnavailableError } = await import("./RealRunner");
-      // An explicit ::wt selection fails its role rather than degrading, so both probes reject.
-      for (const attempt of [1, 2]) {
-        await expect(backend.probe(config)).rejects.toBeInstanceOf(
-          TransportUnavailableError,
-        );
-        expect(dials.length).toBe(attempt);
-      }
-      expect(dials[0]).toContain("/wt/download");
-    },
-  );
+  await withFakeProbe(async (backend) => {
+    const { TransportUnavailableError } = await import("./RealRunner");
+    for (const attempt of [1, 2]) {
+      await expect(backend.probe(config)).rejects.toBeInstanceOf(
+        TransportUnavailableError,
+      );
+      expect(dials.length).toBe(attempt);
+    }
+    expect(dials[0]).toContain("/wt/download");
+  });
 });
-
-// A handshake only proves the path reaches the server.
 test("a session that establishes but carries no bytes is not Ready", async () => {
-  // A session that came up holds a server admission slot until it is closed, and the check runs again on every draft.
   let closes = 0;
   class SilentWebTransport {
     readonly ready = Promise.resolve();
@@ -200,8 +139,6 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
     },
   );
 });
-
-// The guard in front of a session dial has to test the kind that was actually advertised.
 test("a session kind this client cannot drive fails its role before any dial", async () => {
   const datagramPreflight = {
     ...preflight,
@@ -224,7 +161,6 @@ test("a session kind this client cannot drive fails its role before any dial", a
       const { TRANSPORTS } = await import("./real/transports");
       const realUsable = TRANSPORTS["webtransport-datagram"].usable;
       try {
-        // The session API is present, so the streams kind stays drivable; only the datagram kind is not, which is the.
         TRANSPORTS["webtransport-datagram"].usable = () => false;
         const dialled = dials.length;
         await expect(
@@ -245,17 +181,12 @@ test("a session kind this client cannot drive fails its role before any dial", a
     },
   );
 });
-
-/* overlapping probes ---------- validateConnections aborts the running probe and starts the next one without. */
-
-/* A session that establishes and then holds its verify lane until the test hands one over, so a probe can be. */
 class HeldWebTransport {
   static readonly live: HeldWebTransport[] = [];
   readonly ready = Promise.resolve();
   readonly closed = new Promise<void>(() => {});
   readonly incomingUnidirectionalStreams: ReadableStream;
   #lanes!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
-
   constructor() {
     HeldWebTransport.live.push(this);
     this.incomingUnidirectionalStreams = new ReadableStream({
@@ -264,8 +195,6 @@ class HeldWebTransport {
       },
     });
   }
-
-  /** Open one lane carrying a byte: what the check waits for. */
   deliver(): void {
     this.#lanes.enqueue(
       new ReadableStream({
@@ -276,39 +205,30 @@ class HeldWebTransport {
       }),
     );
   }
-
   close(): void {
     this.#lanes.error(new Error("session closed"));
   }
 }
-
 const autoConfig: RunnerConfig = {
   ...config,
   transports: { throughputTarget: "auto", latencyTarget: "auto" },
 };
-
-/* Run `body` against a backend whose only advertised throughput target is the held WebTransport session, which. */
 async function withHeldSessions(
   body: (backend: RealBackend) => Promise<void>,
 ): Promise<void> {
   HeldWebTransport.live.length = 0;
   await withProbeBackend(HeldWebTransport, autoConfig, preflight, body);
 }
-
-/* Turn the queue until `dials` sessions have been opened. */
 async function untilDialled(dials: number): Promise<void> {
   for (let turn = 0; turn < 100 && HeldWebTransport.live.length < dials; turn++)
     await Promise.resolve();
   expect(HeldWebTransport.live).toHaveLength(dials);
 }
-
-// Every other await in probe() throws on abort.
 test("an aborted WebTransport check aborts the probe, it does not degrade it", async () => {
   await withHeldSessions(async (backend) => {
     const abort = new AbortController();
     const probe = backend.probe(autoConfig, abort.signal);
     await untilDialled(1);
-
     abort.abort();
     expect(
       await probe.then(
@@ -318,8 +238,6 @@ test("an aborted WebTransport check aborts the probe, it does not degrade it", a
     ).toBe("rejected");
   });
 });
-
-// The abort lands while the older probe is inside the dial, which is the longest await in probe().
 test("an aborted probe leaves the transport a newer probe committed alone", async () => {
   await withHeldSessions(async (backend) => {
     const abort = new AbortController();
@@ -327,30 +245,24 @@ test("an aborted probe leaves the transport a newer probe committed alone", asyn
     await untilDialled(1);
     const second = backend.probe(autoConfig);
     await untilDialled(2);
-
     abort.abort();
     const firstOutcome = await first.then(
       () => "resolved",
       () => "rejected",
     );
     HeldWebTransport.live[1].deliver();
-
     expect((await second).selectedThroughputTransport).toBe("webtransport");
     expect(firstOutcome).toBe("rejected");
   });
 });
-
-// Supersession without an abort: the older probe's dial succeeds after the newer one has already committed.
 test("a probe superseded mid-dial does not commit behind the newer one", async () => {
   await withHeldSessions(async (backend) => {
     const first = backend.probe(autoConfig);
     await untilDialled(1);
     const second = backend.probe(autoConfig);
     await untilDialled(2);
-
     HeldWebTransport.live[1].deliver();
     expect((await second).selectedThroughputTransport).toBe("webtransport");
-
     HeldWebTransport.live[0].deliver();
     expect(
       await first.then(

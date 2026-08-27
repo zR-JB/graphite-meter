@@ -2,14 +2,12 @@ import { test, expect, afterEach } from "bun:test";
 import { bootWorker, type WorkerRealm } from "./test-helpers.test";
 
 const globals = globalThis as Record<string, unknown>;
-
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";
 const PROGRESS_URL = "https://meter.test/upload/progress/gmu_test";
 const MINT_URL = "https://meter.test/wt/token";
 
 const DATAGRAM_BYTES = 1200;
 const DRAIN_BUDGET = 40;
-
 type Out = {
   type: string;
   recoverable?: boolean;
@@ -30,68 +28,68 @@ type In =
   | { type: "stop" };
 
 type Timing = "micro" | "macro";
-
 const park = (): Promise<void> => new Promise(() => {});
 const macroTurn = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve));
 
-/** One server-opened NDJSON stream. */
 class FeedStream {
   #controller!: ReadableStreamDefaultController<Uint8Array>;
   readonly readable = new ReadableStream<Uint8Array>({
-    start: (controller) => {
-      this.#controller = controller;
-    },
+    start: (controller) => (this.#controller = controller),
   });
-
   push(record: object): void {
     this.#controller.enqueue(
       new TextEncoder().encode(`${JSON.stringify(record)}\n`),
     );
   }
-
   close(): void {
     this.#controller.close();
   }
-
   finish(): void {
     this.push({ type: "complete", bytes: 0, nanos: 1 });
     this.close();
   }
 }
-
-class FakeDatagrams {
-  writes = 0;
-  reads = 0;
-  collapseAfter = Infinity;
-  readonly writable: WritableStream<Uint8Array>;
-  readonly readable: ReadableStream<Uint8Array>;
-
-  constructor(timing: Timing, tick: () => void) {
-    this.writable = new WritableStream<Uint8Array>({
+function fakeDatagrams(timing: Timing, tick: () => void) {
+  let writes = 0;
+  let reads = 0;
+  let collapseAfter = Infinity;
+  const turn = (): Promise<void> | undefined =>
+    timing === "macro" ? macroTurn() : undefined;
+  return {
+    get writes() {
+      return writes;
+    },
+    get reads() {
+      return reads;
+    },
+    get collapseAfter() {
+      return collapseAfter;
+    },
+    set collapseAfter(value: number) {
+      collapseAfter = value;
+    },
+    writable: new WritableStream<Uint8Array>({
       write: () => {
-        this.writes++;
+        writes++;
         tick();
-        if (this.writes >= DRAIN_BUDGET) return park();
-        return timing === "macro" ? macroTurn() : undefined;
+        return writes >= DRAIN_BUDGET ? park() : turn();
       },
-    });
-    this.readable = new ReadableStream<Uint8Array>({
+    }),
+    readable: new ReadableStream<Uint8Array>({
       pull: (controller) => {
-        this.reads++;
+        reads++;
         tick();
-        if (this.reads >= DRAIN_BUDGET) return park();
+        if (reads >= DRAIN_BUDGET) return park();
         controller.enqueue(new Uint8Array(DATAGRAM_BYTES));
-        return timing === "macro" ? macroTurn() : undefined;
+        return turn();
       },
-    });
-  }
-
-  get maxDatagramSize(): number {
-    return this.writes >= this.collapseAfter ? 0 : DATAGRAM_BYTES;
-  }
+    }),
+    get maxDatagramSize() {
+      return writes >= collapseAfter ? 0 : DATAGRAM_BYTES;
+    },
+  };
 }
-
 let timing: Timing = "macro";
 let mintRefuses = false;
 let dialRefuses = false;
@@ -101,15 +99,12 @@ const tokenOf = (url: string): string =>
   new URL(url).searchParams.get("token") ?? "";
 let clockMs = 0;
 const dialed: FakeSession[] = [];
-
 class FakeSession {
   readonly ready = dialRefuses
     ? Promise.reject(new Error("connect refused"))
     : Promise.resolve();
   readonly closed = park();
-  readonly datagrams = new FakeDatagrams(timing, () => {
-    clockMs += 1;
-  });
+  readonly datagrams = fakeDatagrams(timing, () => (clockMs += 1));
   readonly feed = new FeedStream();
   closes = 0;
   lanes = 0;
@@ -117,41 +112,32 @@ class FakeSession {
   readonly incomingUnidirectionalStreams = new ReadableStream<
     ReadableStream<Uint8Array>
   >({
-    start: (controller) => {
-      this.#incoming = controller;
-    },
+    start: (controller) => (this.#incoming = controller),
   });
-
   constructor(url = SESSION_URL) {
     this.#incoming.enqueue(this.feed.readable);
     dialUrls.push(url);
     dialed.push(this);
   }
-
   refusal(record: object): void {
     const stream = new FeedStream();
     this.#incoming.enqueue(stream.readable);
     stream.push(record);
     stream.close();
   }
-
   createUnidirectionalStream(): Promise<WritableStream<Uint8Array>> {
     this.lanes++;
     return Promise.resolve(new WritableStream<Uint8Array>({ write: park }));
   }
-
   close(): void {
     this.closes++;
   }
 }
-
 const session = (): FakeSession => dialed[dialed.length - 1];
-
 const realFetch = globalThis.fetch;
 const realPost = globals.postMessage;
 const realWebTransport = globals.WebTransport;
 const realNow = performance.now.bind(performance);
-
 const fakeFetch = async (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -175,7 +161,6 @@ const fakeFetch = async (
   }
   throw new Error(`unexpected fetch ${url}`);
 };
-
 function install(sinkTiming: Timing = "macro"): void {
   timing = sinkTiming;
   mintRefuses = false;
@@ -188,7 +173,6 @@ function install(sinkTiming: Timing = "macro"): void {
   globalThis.fetch = fakeFetch as typeof fetch;
   performance.now = () => realNow() + clockMs;
 }
-
 afterEach(() => {
   performance.now = realNow;
   globalThis.fetch = realFetch;
@@ -198,20 +182,19 @@ afterEach(() => {
     Reflect.deleteProperty(globals, "WebTransport");
   else globals.WebTransport = realWebTransport;
 });
-
 type Realm = WorkerRealm<Out>;
-
 let realms = 0;
-
 async function boot(): Promise<Realm> {
   return bootWorker("./wt-transfer-worker.ts", realms++);
 }
-
 const errors = (realm: Realm): Out[] =>
   realm.posted.filter((msg) => msg.type === "error");
 
 type Start = Extract<In, { type: "start" }>;
-function startTransfer(realm: Realm, options: Partial<Omit<Start, "type">> = {}): void {
+function startTransfer(
+  realm: Realm,
+  options: Partial<Omit<Start, "type">> = {},
+): void {
   realm.send({
     type: "start",
     url: SESSION_URL,
@@ -222,7 +205,6 @@ function startTransfer(realm: Realm, options: Partial<Omit<Start, "type">> = {})
     ...options,
   });
 }
-
 async function bootTransfer(
   options: Partial<Omit<Start, "type">> = {},
   configure: () => void = () => {},
@@ -233,7 +215,6 @@ async function bootTransfer(
   startTransfer(realm, options);
   return realm;
 }
-
 async function packetsBeforeStopSeen(
   dir: "up" | "down",
   sinkTiming: Timing,
@@ -250,7 +231,6 @@ async function packetsBeforeStopSeen(
   await Bun.sleep(30);
   return seen;
 }
-
 test("the datagram upload loop yields to its own message queue", async () => {
   const micro = await packetsBeforeStopSeen("up", "micro");
   const macro = await packetsBeforeStopSeen("up", "macro");
@@ -258,7 +238,6 @@ test("the datagram upload loop yields to its own message queue", async () => {
   expect(micro).toBeLessThan(DRAIN_BUDGET);
   expect(macro).toBeLessThan(DRAIN_BUDGET);
 });
-
 test("the datagram download loop yields to its own message queue", async () => {
   const micro = await packetsBeforeStopSeen("down", "micro");
   const macro = await packetsBeforeStopSeen("down", "macro");
@@ -266,7 +245,6 @@ test("the datagram download loop yields to its own message queue", async () => {
   expect(micro).toBeLessThan(DRAIN_BUDGET);
   expect(macro).toBeLessThan(DRAIN_BUDGET);
 });
-
 test("a progress feed that ends without a terminal record is reported", async () => {
   const realm = await bootTransfer();
   await Bun.sleep(5);
@@ -288,7 +266,6 @@ test("a progress feed that ends without a terminal record is reported", async ()
     },
   ]);
 });
-
 test("a later upload refusal stream preserves its structural cause", async () => {
   const realm = await bootTransfer();
   await Bun.sleep(5);
@@ -312,7 +289,6 @@ test("a later upload refusal stream preserves its structural cause", async () =>
   });
   expect(errors(realm)).toEqual([]);
 });
-
 test("a datagram size that collapses to zero is reported", async () => {
   const realm = await bootTransfer({ lanes: 0, datagrams: true });
   await Bun.sleep(0);
@@ -327,12 +303,9 @@ test("a datagram size that collapses to zero is reported", async () => {
     },
   ]);
 });
-
 function startDownload(realm: Realm, mintUrl: string): void {
   startTransfer(realm, { dir: "down", mint: { url: mintUrl } });
 }
-
-// Only a CONNECT the server accepted spends a token.
 test("a dial refused before acceptance re-dials on the same token", async () => {
   const mintUrl = "https://meter.test/unspent/wt/token";
   const realm = await bootTransfer(
@@ -347,8 +320,6 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   expect(tokenOf(dialUrls[1])).toBe(tokenOf(dialUrls[0]));
   expect(mints).toBe(1);
 });
-
-// The server deletes the token on the CONNECT that carries it, so a session that established has to report the spend.
 test("a session that established never offers its token again", async () => {
   const mintUrl = "https://meter.test/spent/wt/token";
   const realm = await bootTransfer({ dir: "down", mint: { url: mintUrl } });
@@ -360,8 +331,6 @@ test("a session that established never offers its token again", async () => {
   expect(tokenOf(dialUrls[1])).not.toBe(tokenOf(dialUrls[0]));
   expect(mints).toBe(2);
 });
-
-// `auth-required` latches the same stop flag a graceful stop does, so the ack the owner waits on has to survive it.
 test("a stop after auth-required is still acknowledged", async () => {
   const realm = await bootTransfer(
     { mint: { url: MINT_URL } },

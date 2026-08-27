@@ -6,7 +6,11 @@ import {
 import { authenticationRequired } from "../../request-auth";
 
 test("admission rejections are terminal for a download lane", () => {
-  for (const [status, recoverable] of [[429, false], [503, false], [500, true]] as const)
+  for (const [status, recoverable] of [
+    [429, false],
+    [503, false],
+    [500, true],
+  ] as const)
     expect(recoverableDownloadStatus(status)).toBe(recoverable);
 });
 

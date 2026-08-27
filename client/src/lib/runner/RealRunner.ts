@@ -97,25 +97,25 @@ export class RealBackend implements RunnerBackend {
   #discoveryOrigin = "";
   #discoveryProtocol: string | undefined;
   #probeInfo: InfraInfo | null = null;
-/* Monotonic probe epoch. */
+  /* Monotonic probe epoch. */
   #probeEpoch = 0;
 
-/* Transfer stage state: bidirectional primes both directions on the same stage. */
+  /* Transfer stage state: bidirectional primes both directions on the same stage. */
   /** One lane pool + its bookkeeping, per active transfer direction. */
   #lanes: Partial<Record<FlowDirection, TransferDirection>> = {};
-/* Active from the stage's first #primeTransfer through #teardownTransfer. */
+  /* Active from the stage's first #primeTransfer through #teardownTransfer. */
   #transferActive = false;
   /** The activity whose transfer connections are currently alive. */
   #transferActivity: PhaseActivity | null = null;
-/* Invalidates teardown continuations when a later run or stage owns the shared lane/feed fields. */
+  /* Invalidates teardown continuations when a later run or stage owns the shared lane/feed fields. */
   #transferGeneration = 0;
-/* A second upload-id invalidation belongs to runner expiry, not an unbounded mint loop. */
+  /* A second upload-id invalidation belongs to runner expiry, not an unbounded mint loop. */
   #uploadRotationUsed = false;
   #uploadRotationInFlight = false;
   /** A local-only visual bridge over irregular authoritative upload delivery. */
   #uploadPresentation = new UploadPresentationBridge();
   #uploadPresentationTimer: ReturnType<typeof setTimeout> | null = null;
-/* The STAGE-level stalled flag reported to the host, deduped so stall/resume fire once per edge. */
+  /* The STAGE-level stalled flag reported to the host, deduped so stall/resume fire once per edge. */
   #stalled = false;
   /** Per-run cache-buster seed, so `?cb=` is unique across runs and streams. */
   #cbSeed = "";
@@ -158,7 +158,7 @@ export class RealBackend implements RunnerBackend {
     discardTransfer: () => this.#discardTransfer(),
   };
 
-/* Its stall/resume reach the core ONLY for the idle latency stage; during a transfer stage the byte lanes drive. */
+  /* Its stall/resume reach the core ONLY for the idle latency stage; during a transfer stage the byte lanes drive. */
   #latency = new LatencyChannel({
     host: () => this.#host!,
     target: () => this.#latencyTarget,
@@ -180,7 +180,7 @@ export class RealBackend implements RunnerBackend {
     },
   });
 
-/* Never runs at the same time as #latency: stopped in onRunStart, restarted on run end. */
+  /* Never runs at the same time as #latency: stopped in onRunStart, restarted on run end. */
   #idle = new IdleKeepalive({
     host: () => this.#host!,
     throughputTarget: () => this.#throughputTarget,
@@ -188,7 +188,7 @@ export class RealBackend implements RunnerBackend {
   });
 
   #disposed = false;
-/* False while hidden; the idle keepalive stays stopped so the browser can park the tab. */
+  /* False while hidden; the idle keepalive stays stopped so the browser can park the tab. */
   #background = true;
 
   attach(host: CoreHost): void {
@@ -196,7 +196,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PROBE ================= */
-/* Resolves `InfraInfo`: client address, server identity, negotiated protocols, engine version, pre-test ping. */
+  /* Resolves `InfraInfo`: client address, server identity, negotiated protocols, engine version, pre-test ping. */
   async probe(
     config: RunnerConfig,
     signal?: AbortSignal,
@@ -205,7 +205,7 @@ export class RealBackend implements RunnerBackend {
     try {
       return await this.#runProbe(config, signal, role);
     } finally {
-// On a hidden page it must not stay: Chromium throttles a hidden page's worker timers to roughly once a minute.
+      // On a hidden page it must not stay: Chromium throttles a hidden page's worker timers to roughly once a minute.
       if (!this.#background) this.#idle.stop();
     }
   }
@@ -270,7 +270,7 @@ export class RealBackend implements RunnerBackend {
       signal,
     );
 
-// Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
+    // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
     const probeRtts =
       needsLatency && role !== "throughput"
         ? await this.#idle.collectRtts(signal)
@@ -287,13 +287,13 @@ export class RealBackend implements RunnerBackend {
     return info;
   }
 
-/* Reads as an abort, which is what supersession is to the older caller. */
+  /* Reads as an abort, which is what supersession is to the older caller. */
   #assertCurrentProbe(epoch: number): void {
     if (epoch !== this.#probeEpoch)
       throw new DOMException("probe superseded", "AbortError");
   }
 
-/* Records the origin and negotiated protocol the page itself reached. */
+  /* Records the origin and negotiated protocol the page itself reached. */
   async #fetchDiscovery(
     epoch: number,
     signal?: AbortSignal,
@@ -341,7 +341,7 @@ export class RealBackend implements RunnerBackend {
     return { pf, discovery };
   }
 
-/* A session target is separate; the fetch view carries fallback bytes and proves the path. */
+  /* A session target is separate; the fetch view carries fallback bytes and proves the path. */
   #selectThroughputRole(
     config: RunnerConfig,
     discovery: TransportDiscovery,
@@ -383,7 +383,7 @@ export class RealBackend implements RunnerBackend {
     return selected;
   }
 
-/* Bind the latency role and report whether the run needs it for latency or transfer stages. */
+  /* Bind the latency role and report whether the run needs it for latency or transfer stages. */
   #selectLatencyRole(
     config: RunnerConfig,
     discovery: TransportDiscovery,
@@ -421,7 +421,7 @@ export class RealBackend implements RunnerBackend {
     return needsLatency;
   }
 
-/* `GET {path}/probe` over the fetch view, which proves the path and the protocol the browser negotiated on it. */
+  /* `GET {path}/probe` over the fetch view, which proves the path and the protocol the browser negotiated on it. */
   async #probeThroughputPath(
     selected: FetchThroughputTarget,
     previous: InfraInfo | null,
@@ -490,7 +490,7 @@ export class RealBackend implements RunnerBackend {
       } finally {
         if (probeDeadline !== undefined) clearTimeout(probeDeadline);
       }
-        // The fetch view carries fallback bytes, so its protocol is proven even when a session is committed.
+      // The fetch view carries fallback bytes, so its protocol is proven even when a session is committed.
       const fetchProtocolProven = browserProtocolMatchesTarget(
         selected,
         firstHopProtocol,
@@ -512,7 +512,7 @@ export class RealBackend implements RunnerBackend {
     return { pathProbe, firstHopProtocol };
   }
 
-/* Probe the latency target's path; it may resolve a different client address than throughput. */
+  /* Probe the latency target's path; it may resolve a different client address than throughput. */
   async #probeLatencyPath(
     previous: InfraInfo | null,
     role: ConnectionRole | undefined,
@@ -550,7 +550,7 @@ export class RealBackend implements RunnerBackend {
     return latencyPathProbe;
   }
 
-/* Decide whether the run carries bytes over a session or over fetch. */
+  /* Decide whether the run carries bytes over a session or over fetch. */
   async #commitThroughputTransport(
     config: RunnerConfig,
     pf: Preflight,
@@ -626,7 +626,7 @@ export class RealBackend implements RunnerBackend {
     };
   }
 
-/* What this engine can drive, per role: WebSocket and WebTransport pings, fetch-stream and WebTransport transfer. */
+  /* What this engine can drive, per role: WebSocket and WebTransport pings, fetch-stream and WebTransport transfer. */
   describe(): EngineInfo {
     return {
       name: "real",
@@ -660,7 +660,7 @@ export class RealBackend implements RunnerBackend {
 
   onStageBegin(activity: PhaseActivity): void | Promise<void> {
     const preparations: Promise<void>[] = [];
-// The ping channel is ALWAYS a latency-role transport on its OWN socket.
+    // The ping channel is ALWAYS a latency-role transport on its OWN socket.
     if (needsPings(activity)) {
       const pingKind = this.#latencyTarget?.transport ?? null;
       if (pingKind) {
@@ -701,7 +701,7 @@ export class RealBackend implements RunnerBackend {
       return Promise.all(preparations).then(() => undefined);
   }
 
-/* `underLoad` marks pings taken while the stage moves bytes (bufferbloat). */
+  /* `underLoad` marks pings taken while the stage moves bytes (bufferbloat). */
   onStageMeasure(activity: PhaseActivity): void {
     const underLoad = activity.transfer.length > 0;
     // A direction missing here failed to prime, and has nothing to measure.
@@ -753,7 +753,7 @@ export class RealBackend implements RunnerBackend {
     this.#uploadRotationInFlight = true;
     this.#clearUploadPresentation();
     try {
-// The old feed and every session-lane callback become inert before the old lanes are detached.
+      // The old feed and every session-lane callback become inert before the old lanes are detached.
       this.#uploadProgress.invalidateGeneration();
       this.#lanes.up?.discard();
       await this.#uploadProgress.teardown(false);
@@ -780,7 +780,7 @@ export class RealBackend implements RunnerBackend {
     this.#closeAll();
   }
 
-/* Token mint the WebTransport workers call before each dial. */
+  /* Token mint the WebTransport workers call before each dial. */
   #wtMint(origin: string, route: string): SessionLaneOptions["mint"] {
     if (!authEnabled) return undefined;
     return {
@@ -790,7 +790,7 @@ export class RealBackend implements RunnerBackend {
     };
   }
 
-/* A handshake proves reachability; opening a stream and reading a byte proves the selected transfer path. */
+  /* A handshake proves reachability; opening a stream and reading a byte proves the selected transfer path. */
   async #verifyWtThroughput(
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; detail: string }> {
@@ -846,7 +846,7 @@ export class RealBackend implements RunnerBackend {
     } catch (cause) {
       // A superseded probe reports no verdict; aborts must not write backend-wide state.
       if (signal?.aborted) throw cause;
-// A session that came up and then carried nothing is a different fault from one that never reached the server.
+      // A session that came up and then carried nothing is a different fault from one that never reached the server.
       return {
         ok: false,
         detail: established
@@ -857,7 +857,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= TRANSPORT NEGOTIATION ================= */
-/* An advertised WebTransport target still needs UDP to reach the server, so a failure reselects the WebSocket. */
+  /* An advertised WebTransport target still needs UDP to reach the server, so a failure reselects the WebSocket. */
   async #verifyLatencyChannel(
     discovery: TransportDiscovery,
     config: RunnerConfig,
@@ -886,7 +886,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   /* ================= PRIME (warmup window): open, don't measure ================= */
-/* Open `dir` streams over `kind`: GET download bytes or streamed POST upload bytes, then prime the path. */
+  /* Open `dir` streams over `kind`: GET download bytes or streamed POST upload bytes, then prime the path. */
   #primeTransfer(
     kind: TransportKind,
     dir: FlowDirection,
@@ -937,7 +937,7 @@ export class RealBackend implements RunnerBackend {
     this.#lanes[dir] = direction;
     this.#transferActive = true;
 
-// Download streams the body down (?bytes=N sizes it); upload streams a generated body up until the stage stops.
+    // Download streams the body down (?bytes=N sizes it); upload streams a generated body up until the stage stops.
     const spec: LaneUrlSpec = {
       dir,
       base,
@@ -972,10 +972,10 @@ export class RealBackend implements RunnerBackend {
       return;
     }
     direction.spawn(Array.from({ length: laneCount }, (_, i) => url(i)));
-// Warmup download progress carries seq=0 and is ignored, so no warmup bytes bleed into measurement.
+    // Warmup download progress carries seq=0 and is ignored, so no warmup bytes bleed into measurement.
   }
 
-/* Mint the upload session ID, establish its meter, then open POST or session upload lanes. */
+  /* Mint the upload session ID, establish its meter, then open POST or session upload lanes. */
   async #primeUploadTransfer(
     dir: FlowDirection,
     base: string,
@@ -1025,7 +1025,7 @@ export class RealBackend implements RunnerBackend {
       await feed;
       return;
     }
-// The progress stream is the authoritative upload meter.
+    // The progress stream is the authoritative upload meter.
     if (!(await this.#uploadProgress.prime(uploadLane.stage, id))) return;
     const progressLane = this.#transferActive ? this.#lanes[dir] : undefined;
     if (!progressLane) return;
@@ -1063,7 +1063,7 @@ export class RealBackend implements RunnerBackend {
     }
   }
 
-/* Combine the directions into the STAGE-level flag. */
+  /* Combine the directions into the STAGE-level flag. */
   #reconcileStall(
     detail?: string,
     recoveryCause?: RecoveryCause,
@@ -1091,7 +1091,7 @@ export class RealBackend implements RunnerBackend {
   /** Stop every POST lane, wait for the server's terminal upload count, then release the stage state. */
   async #teardownTransfer(generation: number): Promise<boolean> {
     this.#clearUploadPresentation();
-// A graceful WT stop finalizes in the worker; the progress teardown then has nothing left to wait on.
+    // A graceful WT stop finalizes in the worker; the progress teardown then has nothing left to wait on.
     await Promise.all(Object.values(this.#lanes).map((d) => d!.stop()));
     if (generation !== this.#transferGeneration) return false;
     await this.#uploadProgress.teardown(true);
@@ -1103,7 +1103,7 @@ export class RealBackend implements RunnerBackend {
   }
 
   #discardTransfer(): void {
-// Any outstanding graceful teardown now belongs to an older lifecycle.
+    // Any outstanding graceful teardown now belongs to an older lifecycle.
     this.#transferGeneration++;
     this.#clearUploadPresentation();
     for (const direction of Object.values(this.#lanes)) direction!.discard();
@@ -1127,7 +1127,7 @@ export class RealBackend implements RunnerBackend {
     if (!this.#disposed && this.#background) this.#idle.start();
   }
 
-/* Emit only a temporary target for the gauge and compact live card. */
+  /* Emit only a temporary target for the gauge and compact live card. */
   #emitUploadPresentation(): void {
     const healthy =
       this.#transferActive &&
@@ -1166,7 +1166,7 @@ export class RealBackend implements RunnerBackend {
     this.#host?.emit({ type: "uploadPresentation", bytesPerSec: null });
   }
 
-/* Suspend the idle keepalive while the page is hidden. */
+  /* Suspend the idle keepalive while the page is hidden. */
   setBackgroundActivity(enabled: boolean): void {
     if (this.#background === enabled) return;
     this.#background = enabled;

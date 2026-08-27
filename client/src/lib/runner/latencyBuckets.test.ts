@@ -8,7 +8,6 @@ import {
   upsertLatencyBucket,
 } from "./latencyBuckets";
 import type { LatencyBucket } from "./contract";
-
 function buckets(
   startT = 0,
   phase: "latency" | "download" = "latency",
@@ -20,19 +19,16 @@ function buckets(
   result.reset(startT, phase, underLoad, continuityId, durationMs);
   return result;
 }
-
 test("long phases widen presentation buckets within the history budget", () => {
   expect(latencyPresentationBucketMs(4_000)).toBe(200);
   expect(latencyPresentationBucketMs(4_000_000)).toBe(3_400);
 });
-
 test("live duration extensions widen the active latency bucket", () => {
   const result = buckets(0, "latency", false, 1, 4_000);
   expect(result.nextBoundaryT).toBe(200);
   result.widen(4_000_000);
   expect(result.nextBoundaryT).toBe(3_400);
 });
-
 test("phase-aligned buckets retain median tail and loss summaries", () => {
   const result = buckets(1_000, "latency", false, 7);
   expect(result.observe(1_010, 10, false)).toEqual([]);
@@ -55,21 +51,17 @@ test("phase-aligned buckets retain median tail and loss summaries", () => {
     continuityId: 7,
   });
 });
-
 test("closed windows emit without waiting for another observation", () => {
   const result = buckets();
   result.observe(10, 20, false);
-
   expect(result.closeThrough(199)).toEqual([]);
   expect(result.closeThrough(200)).toHaveLength(1);
   expect(result.closeThrough(200)).toEqual([]);
 });
-
 test("a late observation revises its original closed window", () => {
   const result = buckets();
   result.observe(50, 10, false);
   const history = result.closeThrough(200);
-
   const revised = result.observe(150, 100, false);
   expect(revised).toHaveLength(1);
   expect(revised[0]).toMatchObject({
@@ -85,14 +77,12 @@ test("a late observation revises its original closed window", () => {
   expect(history).toEqual(revised);
   expect(result.flush(400)).toBeNull();
 });
-
 test("late arrival order does not rewrite observation-time jitter", () => {
   const result = buckets();
   result.observe(150, 100, false);
   const history = result.closeThrough(200);
   const [revised] = result.observe(50, 10, false);
   upsertLatencyBucket(history, revised);
-
   expect(history[0]).toMatchObject({
     firstRttMs: 10,
     lastRttMs: 100,
@@ -100,23 +90,19 @@ test("late arrival order does not rewrite observation-time jitter", () => {
     rttDeltaCount: 1,
   });
 });
-
 test("revised buckets replace rather than duplicate visible history", () => {
   const initial = buckets();
   initial.observe(50, 10, false);
   const history: LatencyBucket[] = initial.closeThrough(200);
   const [revised] = initial.observe(150, 20, false);
-
   upsertLatencyBucket(history, revised);
   expect(history).toHaveLength(1);
   expect(history[0].pingCount).toBe(2);
 });
-
 test("history mutations distinguish tail appends from required reindexing", () => {
   const history: LatencyBucket[] = [];
   const first = singleLatencyBucket(0, 10, false, "latency");
   const tail = singleLatencyBucket(400, 40, false, "latency");
-
   expect(upsertLatencyBucket(history, first)).toBe("tail-append");
   expect(upsertLatencyBucket(history, tail)).toBe("tail-append");
   expect(
@@ -141,7 +127,6 @@ test("history mutations distinguish tail appends from required reindexing", () =
     ),
   ).toBe("structural-change");
 });
-
 test("bucket summaries preserve exact consecutive RTT jitter", () => {
   const result = buckets();
   const summary = result.closeThrough(0);
@@ -157,10 +142,8 @@ test("bucket summaries preserve exact consecutive RTT jitter", () => {
   ] as const)
     summary.push(...result.observe(t, rtt, false));
   summary.push(...result.closeThrough(400));
-
   expect(latencyJitterMs(summary)).toBeCloseTo(270 / 7, 10);
 });
-
 test("jitter skips losses but never invents variation across continuity", () => {
   const result = buckets();
   const summary = [
@@ -172,17 +155,14 @@ test("jitter skips losses but never invents variation across continuity", () => 
     ...result.closeThrough(600),
   ];
   expect(latencyJitterMs(summary)).toBe(10);
-
   result.reset(600, "download", true, 2);
   summary.push(
     ...result.observe(610, 200, false),
     ...result.observe(650, 220, false),
     ...result.closeThrough(800),
   );
-  // Only 10→20 and 200→220 are real consecutive differences.
   expect(latencyJitterMs(summary)).toBe(15);
 });
-
 test("partial flush is truthful and an all-loss bucket has no RTT", () => {
   const result = buckets(0, "download", true, 2);
   result.observe(30, 0, true);
@@ -198,7 +178,6 @@ test("partial flush is truthful and an all-loss bucket has no RTT", () => {
     underLoad: true,
   });
 });
-
 test("the same timed outcomes bucket identically regardless of callback grouping", () => {
   const outcomes = [
     { t: 20, rtt: 12, lost: false },
@@ -218,7 +197,6 @@ test("the same timed outcomes bucket identically regardless of callback grouping
     const tail = result.flush(450);
     return tail ? [...emitted, tail] : emitted;
   };
-
   expect(collect(outcomes.map((outcome) => [outcome]))).toEqual(
     collect([outcomes.slice(0, 3), outcomes.slice(3)]),
   );

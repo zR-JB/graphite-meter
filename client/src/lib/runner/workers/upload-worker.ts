@@ -161,7 +161,7 @@ async function run(url: string): Promise<void> {
   try {
     buildPool();
   } catch (err) {
-// Left to reject, the promise takes no worker `error` event with it — unhandled rejections do not reach.
+    // Left to reject, the promise takes no worker `error` event with it — unhandled rejections do not reach.
     post({
       type: "error",
       recoverable: true,
@@ -210,7 +210,7 @@ async function run(url: string): Promise<void> {
         });
         return; // RealBackend decides whether to restart this lane
       }
-// This is not an observation: the server progress feed owns byte/time accounting.
+      // This is not an observation: the server progress feed owns byte/time accounting.
       const elapsedMs = performance.now() - postStart;
       post({ type: "alive", bytes: sentBytes, elapsedMs });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
@@ -220,7 +220,7 @@ async function run(url: string): Promise<void> {
         sizer,
       ));
     } catch (err) {
-// A POST that failed on an expired session is an auth failure, not a transport one, so the session is.
+      // A POST that failed on an expired session is an auth failure, not a transport one, so the session is.
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(self.location.origin))

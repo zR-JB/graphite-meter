@@ -148,7 +148,7 @@ export function classifyTransportDiscovery(
 
   const throughput: TransportDiscovery["throughput"] = {};
   for (const endpoint of throughputEndpoints) {
-// An absent one is the original contract's fetch stream, which the Go decoder assumes too; dropping it would.
+    // An absent one is the original contract's fetch stream, which the Go decoder assumes too; dropping it would.
     const mechanism: string = endpoint.transport ?? "fetch-stream";
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
@@ -196,7 +196,7 @@ export function classifyTransportDiscovery(
 
   const latency: TransportDiscovery["latency"] = {};
   for (const endpoint of latencyEndpoints) {
-// An absent mechanism is the original wire contract's WebSocket bus.
+    // An absent mechanism is the original wire contract's WebSocket bus.
     const mechanism: string = endpoint.transport ?? "websocket";
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
@@ -330,7 +330,7 @@ export function selectThroughputTarget(
     fetch.find((target) => target.origin === discovery.pageOrigin) ??
     (fetch.length === 1 ? fetch[0] : null);
   if (preferred) return preferred;
-// A WebTransport-only origin is the last resort, and `runnable` is what keeps it to a client that can drive the.
+  // A WebTransport-only origin is the last resort, and `runnable` is what keeps it to a client that can drive the.
   const wtOnly = advertised.filter(
     (entry) =>
       !targetOfKind(entry, "fetch-stream") &&
@@ -412,7 +412,7 @@ export function selectLatencyTarget(
   const advertised = Object.values(discovery.latency).filter(
     (entry) => entry.state === "advertised",
   );
-// Each bus resolves by the same rule: the page's own origin, else the only candidate.
+  // Each bus resolves by the same rule: the page's own origin, else the only candidate.
   const only = (kind: TransportKind): LatencyTarget | null => {
     const usable = advertised
       .map((entry) => targetOfKind(entry, kind))

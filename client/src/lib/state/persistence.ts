@@ -177,6 +177,5 @@ export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
-  } catch {
-  }
+  } catch {}
 }

@@ -93,7 +93,7 @@ function selectTarget(
   role: ConnectionRole,
   selection: string,
 ): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
-// The panel must resolve what the runner resolves, so both roles apply the same browser-capability gate rather than.
+  // The panel must resolve what the runner resolves, so both roles apply the same browser-capability gate rather than.
   return role === "throughput"
     ? selectThroughputTarget(
         discovery,
@@ -121,7 +121,7 @@ function committedTarget(
   if (!id) return null;
   const advertised = locateTarget(discovery.throughput, id)?.target;
   if (advertised) return advertised;
-// A degrade off a session-only origin commits to a fetch view that origin never advertised, so no id names it; the.
+  // A degrade off a session-only origin commits to a fetch view that origin never advertised, so no id names it; the.
   const session = discovery.throughput[id]?.targets.find(
     (target): target is WebTransportThroughputTarget =>
       target.transport !== "fetch-stream",
@@ -216,7 +216,7 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-// "current"/"auto" have no entry of their own: they resolve to whichever advertised target the selector picks.
+  // "current"/"auto" have no entry of their own: they resolve to whichever advertised target the selector picks.
   if (selection !== "current" && selection !== "auto") {
     const byOrigin: Record<
       string,
@@ -253,7 +253,7 @@ export function presentConnections(
       evidenceMatches &&
       infra?.discoveryGeneration === discovery?.generation;
     const evidence = currentEvidence ? infra : null;
-// Evidence names the path the run drove; the selector names the one it wanted.
+    // Evidence names the path the run drove; the selector names the one it wanted.
     const target =
       (discovery && evidence && committedTarget(discovery, role, evidence)) ??
       preferred;

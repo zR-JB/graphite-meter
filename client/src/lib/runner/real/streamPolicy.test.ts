@@ -44,8 +44,20 @@ test("automatic H1 reserves control connections and splits bidirectional capacit
   for (const [input, expected] of [
     [{ ...base, dir: "down" }, 2],
     [{ ...base, dir: "up" }, 2],
-    [{ ...base, transfer: ["down"], dir: "down" }, BROWSER_CONNECTION_BUDGET - 1],
-    [{ ...base, policy: { mode: "auto", count: 1 }, transfer: ["down"], dir: "down", needsPing: false }, 1],
+    [
+      { ...base, transfer: ["down"], dir: "down" },
+      BROWSER_CONNECTION_BUDGET - 1,
+    ],
+    [
+      {
+        ...base,
+        policy: { mode: "auto", count: 1 },
+        transfer: ["down"],
+        dir: "down",
+        needsPing: false,
+      },
+      1,
+    ],
   ] as const)
     expect(transferStreamCount(input)).toBe(expected);
 });
@@ -87,8 +99,18 @@ test("stream diagnostics distinguish automatic and forced policy", () => {
   for (const [policy, stages, protocol, expected] of [
     [auto, bidirectional, "http2", "Automatic · 1 download / 4 upload"],
     [auto, bidirectional, "http3", "Automatic · 1 download / 1 upload"],
-    [{ mode: "forced", count: 9 }, bidirectional, "http3", "Forced · 9 per direction"],
-    [{ mode: "auto", count: 3 }, download, "http1", "Automatic · up to 3 per direction"],
+    [
+      { mode: "forced", count: 9 },
+      bidirectional,
+      "http3",
+      "Forced · 9 per direction",
+    ],
+    [
+      { mode: "auto", count: 3 },
+      download,
+      "http1",
+      "Automatic · up to 3 per direction",
+    ],
   ] as const)
     expect(describeTransferStreams(policy, stages, protocol)).toBe(expected);
 });
@@ -114,7 +136,12 @@ test("the automatic H1 description reports the count its stages resolve", () => 
 });
 
 test("stream counts are clamped to a usable range", () => {
-  for (const [value, expected] of [[Number.NaN, 1], [0, 1], [2.4, 2], [999, 128]] as const)
+  for (const [value, expected] of [
+    [Number.NaN, 1],
+    [0, 1],
+    [2.4, 2],
+    [999, 128],
+  ] as const)
     expect(normalizeStreamCount(value)).toBe(expected);
 });
 

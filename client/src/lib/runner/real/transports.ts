@@ -5,7 +5,7 @@ interface TransportSpec {
   kind: TransportKind;
   /** Which role a kind can serve. */
   role: "throughput" | "latency" | "both";
-/* Whether this browser has the API at all. */
+  /* Whether this browser has the API at all. */
   usable(): boolean;
   /** Whether the bytes ride a session rather than one request per lane. */
   ridesSession: boolean;

@@ -31,7 +31,6 @@
     store.restoreTestDisplayDefaults();
     setupResetVersion++;
   }
-
 </script>
 
 <SidePanel

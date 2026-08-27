@@ -4,9 +4,7 @@ import { percentile } from "./stats";
 const LATENCY_SCALE_WINDOW_MS = 6_000;
 const LATENCY_SCALE_HEADROOM = 1.25;
 export const LATENCY_SCALE_SHRINK_DWELL_MS = 2_000;
-const LATENCY_SCALE_LADDER_MS = [
-  20, 40, 100, 200, 400, 1_000, 2_000, 4_000,
-];
+const LATENCY_SCALE_LADDER_MS = [20, 40, 100, 200, 400, 1_000, 2_000, 4_000];
 
 function niceAbove(value: number): number {
   const exponent = 10 ** Math.floor(Math.log10(Math.max(1, value)));

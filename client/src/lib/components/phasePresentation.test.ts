@@ -4,20 +4,28 @@ import type { Phase } from "../runner/contract";
 
 test("phaseKicker: one eyebrow per phase, idle falls back to Standby", () => {
   for (const [phase, expected] of [
-    ["connecting", "Connecting"], ["bidirectional", "Bidirectional"], ["error", "Error"], ["idle", "Standby"],
+    ["connecting", "Connecting"],
+    ["bidirectional", "Bidirectional"],
+    ["error", "Error"],
+    ["idle", "Standby"],
   ] as const)
     expect(phaseKicker(phase)).toBe(expected);
 });
 
 test("phaseMessage: plain-language copy per phase", () => {
   for (const [phase, expected] of [
-    ["latency", "Measuring path latency"], ["bidirectional", "Sending + receiving"], ["aborted", "Sequence stopped"], ["idle", "Ready"],
+    ["latency", "Measuring path latency"],
+    ["bidirectional", "Sending + receiving"],
+    ["aborted", "Sequence stopped"],
+    ["idle", "Ready"],
   ] as const)
     expect(phaseMessage(phase, null)).toBe(expected);
 });
 
 test("phaseMessage: error prefers the resolved reason label", () => {
-  expect(phaseMessage("error", "TLS handshake failed")).toBe("TLS handshake failed");
+  expect(phaseMessage("error", "TLS handshake failed")).toBe(
+    "TLS handshake failed",
+  );
   expect(phaseMessage("error", null)).toBe("Runner needs attention");
 });
 

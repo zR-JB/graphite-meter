@@ -26,7 +26,7 @@ interface ClientByteAggregation {
 /** What a direction needs from the stage that owns it. */
 export interface DirectionHost {
   host: () => CoreHost;
-/* A healthy sibling's bytes remain accounted while another required direction is stalled. */
+  /* A healthy sibling's bytes remain accounted while another required direction is stalled. */
   sampleProvesStageLiveness?: () => boolean;
   /** This direction's stall state flipped; the stage combines the directions. */
   stallChanged: (
@@ -51,7 +51,7 @@ export interface DirectionHost {
 
 interface DirectionOptions {
   dir: FlowDirection;
-/* The stage that owns this direction, and the target for failStage: a bidirectional lane failure reports against. */
+  /* The stage that owns this direction, and the target for failStage: a bidirectional lane failure reports against. */
   stage: PhaseActivity["stage"];
   /** Lanes for this direction, resolved from the stream policy at prime time. */
   laneCount: number;
@@ -91,15 +91,15 @@ export class TransferDirection {
   #timers: (ReturnType<typeof setTimeout> | null)[] = [];
   /** Client byte accounting, download only: the /upload/progress channel is upload's sole byte source. */
   #aggregation: ClientByteAggregation | null;
-/* Monotonic measurement epoch. */
+  /* Monotonic measurement epoch. */
   #measureSeq = 0;
   /** False once the stage released this direction, so a released lane never spawns workers no one owns. */
   #live = true;
   /** True while graceful lane shutdown can still deliver its final bytes. */
   #stopping = false;
-/* Per-direction measured-byte watchdog. */
+  /* Per-direction measured-byte watchdog. */
   #progressTimer: ReturnType<typeof setTimeout> | null = null;
-/* Captured into each upload-lane callback so an old worker cannot cross a session rotation boundary after a. */
+  /* Captured into each upload-lane callback so an old worker cannot cross a session rotation boundary after a. */
   #uploadGeneration = 0;
 
   constructor(opts: DirectionOptions) {
@@ -108,7 +108,7 @@ export class TransferDirection {
     this.laneCount = opts.laneCount;
     this.newLane = opts.lane;
     this.#deps = opts.host;
-// Bound the stagger so the last lane still spawns within half the warmup; 0 with no warmup, so lanes spawn.
+    // Bound the stagger so the last lane still spawns within half the warmup; 0 with no warmup, so lanes spawn.
     this.#staggerMs = laneStaggerMs(
       opts.laneCount,
       opts.warmupMs,
@@ -125,7 +125,7 @@ export class TransferDirection {
         : null;
   }
 
-/* Open a lane per URL, staggered per index so lanes do not slow-start in lockstep. */
+  /* Open a lane per URL, staggered per index so lanes do not slow-start in lockstep. */
   spawn(urls: string[]): void {
     this.streamUrls = urls;
     for (let i = 0; i < urls.length; i++) {
@@ -145,7 +145,7 @@ export class TransferDirection {
     this.#uploadGeneration = generation;
   }
 
-/* Begin measuring the lanes opened at prime time and NEVER reopened: re-spawning throws away the warmed. */
+  /* Begin measuring the lanes opened at prime time and NEVER reopened: re-spawning throws away the warmed. */
   measure(): void {
     this.measuring = true;
     this.#armProgressWatchdog();
@@ -176,7 +176,7 @@ export class TransferDirection {
     this.#deps.stallChanged(detail, cause, this.dir);
   }
 
-/* One positive measured byte delta for this direction. */
+  /* One positive measured byte delta for this direction. */
   noteMeasuredProgress(bytes: number): void {
     if (bytes <= 0 || !this.measuring || !this.#live || this.#stopping) return;
     this.#armProgressWatchdog();
@@ -192,18 +192,18 @@ export class TransferDirection {
     }, DIRECTION_PROGRESS_WINDOW_MS);
   }
 
-/* Flush the partial cadence window, then stop the lanes gracefully: a session lane finalizes the upload before it. */
+  /* Flush the partial cadence window, then stop the lanes gracefully: a session lane finalizes the upload before it. */
   stop(): Promise<void> {
     return this.#release(true);
   }
 
-/* Drop the lanes immediately, for an abort or a discarded stage. */
+  /* Drop the lanes immediately, for an abort or a discarded stage. */
   discard(): void {
     for (const lane of this.#lanes) lane?.discard();
     void this.#release(false);
   }
 
-/* Cancel the timers and release the lanes. */
+  /* Cancel the timers and release the lanes. */
   #release(flush: boolean): Promise<void> {
     this.#stopping = true;
     if (this.#progressTimer !== null) clearTimeout(this.#progressTimer);
@@ -218,13 +218,13 @@ export class TransferDirection {
     });
   }
 
-/* Open (or re-open) lane `i`. */
+  /* Open (or re-open) lane `i`. */
   #startLane(i: number): void {
     if (!this.#live || this.#stopping) return;
     const lane = this.newLane(i, this.#laneEvents(i, this.#uploadGeneration));
     this.#lanes[i] = lane;
     lane.start();
-// A restarted lane must resume the live measurement window: without the current seq its reports are discarded as.
+    // A restarted lane must resume the live measurement window: without the current seq its reports are discarded as.
     if (this.measuring && this.dir === "down") lane.measure(this.#measureSeq);
   }
 
@@ -245,11 +245,11 @@ export class TransferDirection {
     };
   }
 
-/* Aggregation tick: sum each lane's bytes over that lane's own receive interval into one real sample, zero-byte. */
+  /* Aggregation tick: sum each lane's bytes over that lane's own receive interval into one real sample, zero-byte. */
   #aggregate(aggregation: ClientByteAggregation): void {
     const now = performance.now();
     const durationSec = (now - aggregation.lastAggregateAt) / 1000;
-// A window with no duration has nothing to ingest against: leave its lane bytes pending for the next one.
+    // A window with no duration has nothing to ingest against: leave its lane bytes pending for the next one.
     if (durationSec <= 0) return;
     aggregation.lastAggregateAt = now;
     let delta = 0;
@@ -275,7 +275,7 @@ export class TransferDirection {
       );
   }
 
-/* A lane moved bytes. */
+  /* A lane moved bytes. */
   #onProgress(
     i: number,
     bytes: number,
@@ -299,7 +299,7 @@ export class TransferDirection {
     if (this.#stopping) this.#aggregate(aggregation);
   }
 
-/* It is intentionally not liveness or measurement evidence; only the server feed can establish that. */
+  /* It is intentionally not liveness or measurement evidence; only the server feed can establish that. */
   #onAlive(
     lane: number,
     bytes?: number,
@@ -316,7 +316,7 @@ export class TransferDirection {
       this.#deps.uploadPresentationHint?.(lane, bytes, elapsedMs, generation);
   }
 
-/* Recoverable (the common case: a dropped connection) → stall once, then re-open the lane so a real sample. */
+  /* Recoverable (the common case: a dropped connection) → stall once, then re-open the lane so a real sample. */
   #onError(
     i: number,
     detail: string,
@@ -326,12 +326,12 @@ export class TransferDirection {
     // Ignore late errors after release (a stop()/terminate races the worker).
     if (!this.#live || this.#stopping) return;
     if (cause === "unknown-upload-id" && this.measuring) {
-// The runner owns the one allowed ID rotation.
+      // The runner owns the one allowed ID rotation.
       this.setStalled(true, detail, cause);
       return;
     }
     if (!recoverable) {
-// A refused lane is structural protocol evidence, not a transport stall.
+      // A refused lane is structural protocol evidence, not a transport stall.
       this.#deps
         .host()
         .failStage(
@@ -343,10 +343,10 @@ export class TransferDirection {
       return;
     }
     if (this.measuring) this.setStalled(true, detail);
-// Re-open the lane after a backoff, so a persistently failing stream cannot spin a tight respawn loop.
+    // Re-open the lane after a backoff, so a persistently failing stream cannot spin a tight respawn loop.
     this.#lanes[i]?.discard();
     this.#lanes[i] = null;
-// One pending restart per lane: an orphan timer would spawn a duplicate worker into the next stage, and the lane.
+    // One pending restart per lane: an orphan timer would spawn a duplicate worker into the next stage, and the lane.
     const pending = this.#timers[i];
     if (pending) clearTimeout(pending);
     this.#timers[i] = setTimeout(() => {

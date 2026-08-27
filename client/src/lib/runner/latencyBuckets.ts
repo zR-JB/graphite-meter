@@ -73,7 +73,7 @@ export class LatencyPresentationBuckets {
         : this.#closed.findLast(
             (bucket) => t >= bucket.startT && t < bucket.endT,
           );
-// The raw accumulator already owns the outcome.
+    // The raw accumulator already owns the outcome.
     if (!target) return emitted;
     this.#record(target, t, rttMs, lost);
     if (target !== pending) {
@@ -83,7 +83,7 @@ export class LatencyPresentationBuckets {
     return emitted;
   }
 
-/* The runner's master deadline calls this even when no later ping arrives, so display cadence is owned by bucket. */
+  /* The runner's master deadline calls this even when no later ping arrives, so display cadence is owned by bucket. */
   closeThrough(t: number): LatencyBucket[] {
     const emitted: LatencyBucket[] = [];
     while (this.#pending && t >= this.#pending.endT) {

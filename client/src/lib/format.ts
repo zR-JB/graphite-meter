@@ -67,7 +67,7 @@ export function rateScaleIndex(
   base: UnitBase,
   headroom = 1,
 ): number {
-// `headroom` delays prefix promotion.
+  // `headroom` delays prefix promotion.
   const k = base === "base10" ? 1000 : 1024;
   if (baseUnits < headroom) return 0;
   return Math.max(
