@@ -14,8 +14,7 @@ import (
 	"time"
 )
 
-// challengeFor returns the base64url challenge a terminal client derives from a
-// verifier, matching goclient/auth.go.
+// challengeFor returns the base64url challenge a terminal client derives from a verifier, matching goclient/auth.go.
 func challengeFor(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
@@ -54,8 +53,6 @@ func TestCliPageRedirectsToLoginWithoutSession(t *testing.T) {
 }
 
 func TestCliPageRejectsBearerPrincipal(t *testing.T) {
-	// Only the browser session may approve: cliPage sees the Bearer principal
-	// and redirects to /login, so a grant can never approve itself.
 	s := testService(t)
 	_, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))

@@ -21,9 +21,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// captureWindow is the stage duration in tests that assert traffic landed:
-// wide enough that a contended CI runner still records samples, so the
-// assertions test capture rather than machine speed.
 const captureWindow = 2 * time.Second
 
 /* ---- pure helper functions ---- */
@@ -461,9 +458,6 @@ func TestRunLatencyStageEndToEnd(t *testing.T) {
 	}
 }
 
-// TestRunStopsPromptlyOnContextCancel checks a mid-warmup cancellation unwinds
-// every stage's goroutines and returns context.Canceled without emitting an
-// EventError (fail() swallows cancellation as an expected shutdown, not a fault).
 func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	srv := newDownloadOnlyServer(t)
 	defer srv.Close()
@@ -508,9 +502,6 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	}
 }
 
-// newBidirectionalServer wires up every endpoint the bidirectional stage
-// touches: preflight, a download echo, and the upload session/sink/progress
-// trio (mirroring newFakeUploadServer in upload_test.go).
 func newBidirectionalServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var uploaded atomic.Uint64
@@ -546,10 +537,6 @@ func newBidirectionalServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// TestRunBidirectionalStageEndToEnd checks the download and upload lanes run
-// concurrently without interfering: each reports its own non-zero Result, at
-// both a single forced stream and the forced-stream clamp ceiling from
-// Config.normalized().
 func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -558,8 +545,6 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 		duration time.Duration
 	}{
 		{"single stream", 1, 500 * time.Millisecond},
-		// Spawning 128 lanes under the race detector eats most of a half
-		// second, so the clamp case gets headroom for its startup cost.
 		{"clamped to the max of 128", 999, 2 * time.Second},
 	}
 	for _, c := range cases {
@@ -617,10 +602,6 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 	}
 }
 
-// TestTransferStagesOpenTheirOwnDirectionsLanes checks each direction opens the
-// lane count it resolved rather than one count shared by both, which is what an
-// automatic multiplexed policy asks for: h2 runs one download lane and four
-// upload lanes.
 func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	var uploaded atomic.Uint64
 	var mu sync.Mutex
@@ -690,9 +671,6 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	}
 }
 
-// TestRunTransferStageFanInErrorCancelsSiblingLane checks that when one lane
-// of a transfer stage fails, its sibling, still actively transferring, is
-// cancelled promptly rather than left running until its own duration expires.
 func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	var downloadBytesServed atomic.Int64
 	mux := http.NewServeMux()
@@ -706,8 +684,6 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 		_, _ = w.Write(make([]byte, n))
 	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
-		// The delay lets the download lane get well into transferring, so this
-		// failure lands mid-transfer for its sibling rather than racing start-up.
 		time.Sleep(150 * time.Millisecond)
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -735,17 +711,10 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 }
 
-// A failed transfer stage publishes no result of any kind. The loaded-latency
-// probe holds samples when the stage is cancelled and its cancellation is not
-// an error, so a result emitted from inside that goroutine would carry the
-// failed stage's name: a consumer keying results by stage would read the stage
-// as having measured something.
 func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ping", echoPingHandler())
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
-		// The delay puts the failure well after the loaded-latency probe has
-		// samples in hand, so suppression is what the assertion turns on.
 		time.Sleep(300 * time.Millisecond)
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -793,10 +762,6 @@ func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
 	}
 }
 
-// A stage that succeeds publishes both of its results, and the transfer one
-// lands last: the two share the stage's name, so a consumer that keys results
-// by stage keeps whichever arrived last, and that has to be the throughput
-// number rather than the loaded-latency companion.
 func TestLoadedLatencyResultPrecedesTheTransferResult(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ping", echoPingHandler())
@@ -891,18 +856,13 @@ func newEchoPingServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// The probe that proves a latency origin reachable is a plain GET over the
-// WebSocket client, which is pinned to HTTP/1.1 whatever bus the stage then
-// runs on. Reporting its answer for a WebTransport bus announced an HTTP/1.1
-// run that never happened, so the bus names its own version.
 func TestLatencyBusEvidenceNamesTheBusNotTheProbe(t *testing.T) {
 	probe := &wire.Probe{ProtocolNegotiated: "HTTP/1.1"}
 	wt := &wire.LatencyTarget{Transport: wire.TransportWebTransport}
 	if got, want := latencyBusEvidence(wt, probe), "h3"; got != want {
 		t.Errorf("WebTransport bus evidence = %q, want %q", got, want)
 	}
-	// The WebSocket bus really is the HTTP/1.1 the probe observed: its Upgrade
-	// handshake cannot ride anything else.
+	// The WebSocket bus really is the HTTP/1.1 the probe observed: its Upgrade handshake cannot ride anything else.
 	ws := &wire.LatencyTarget{Transport: wire.TransportWebSocket}
 	if got, want := latencyBusEvidence(ws, probe), "HTTP/1.1"; got != want {
 		t.Errorf("WebSocket bus evidence = %q, want %q", got, want)
@@ -912,8 +872,6 @@ func TestLatencyBusEvidenceNamesTheBusNotTheProbe(t *testing.T) {
 	}
 }
 
-// One phrase per path, shared by the selectors that offer it, the readiness
-// panel that verifies it, and the run screen that reports it.
 func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	for _, c := range []struct{ transport, protocol, want string }{
 		{wire.TransportFetchStream, "http1", "Fetch stream · HTTP/1.1 · TLS"},
@@ -921,8 +879,6 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 		{wire.TransportWebSocket, "http1", "WebSocket · HTTP/1.1 · TLS"},
 		{wire.TransportWebTransport, "http3", "WebTransport · HTTP/3 · TLS"},
 		{wire.TransportWebTransportDatagram, "http3", "WebTransport datagrams · HTTP/3 · TLS"},
-		// A run holds the negotiated evidence rather than the target's name for
-		// it, and must not read as a different path for spelling it that way.
 		{wire.TransportWebTransport, "h3", "WebTransport · HTTP/3 · TLS"},
 		{wire.TransportFetchStream, "", "Fetch stream · -- · TLS"},
 	} {
@@ -935,12 +891,6 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	}
 }
 
-// A bound inside a stage expiring wraps context.DeadlineExceeded, which the
-// stage filter once swallowed along with the caller's own cancellation. The
-// silent-server case reaches it that way — the redial window expires rather
-// than being refused — so the stage published a part-window byte total as the
-// whole window's rate. The refused case never did, because a refusal is not a
-// deadline, which is why the integration test beside it stayed green.
 func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
 	redialExpired := fmt.Errorf("webtransport session lost and not replaced within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
 	feedExpired := fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, context.DeadlineExceeded)
@@ -949,8 +899,6 @@ func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
 			t.Errorf("stageFailed(%v) = false, want the stage to fail", err)
 		}
 	}
-	// A stop is not a failure: the caller's cancellation, and the sibling
-	// direction's through cancelStage, both arrive as Canceled.
 	for _, err := range []error{nil, context.Canceled, fmt.Errorf("lane %d: %w", 1, context.Canceled)} {
 		if stageFailed(err) {
 			t.Errorf("stageFailed(%v) = true, want the stage to report", err)

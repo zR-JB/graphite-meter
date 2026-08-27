@@ -24,8 +24,7 @@ describe("authenticationRequired", () => {
       ),
     ).toBe(true);
 
-    // A bare 403 from a proxy or WAF is not an expired session. Otherwise a
-    // misconfigured hop becomes a login redirect loop.
+// A bare 403 from a proxy or WAF is not an expired session.
     expect(authenticationRequired(response(403))).toBe(false);
     expect(
       authenticationRequired(response(403, { "Graphite-Meter-Auth": "yes" })),

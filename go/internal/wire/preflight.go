@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// Preflight is the discovery document a server serves at /preflight: who it is
-// and which measurement targets it offers.
+// Preflight is the discovery document a server serves at /preflight: who it is and which measurement targets it offers.
 type Preflight struct {
 	Server        ServerInfo   `json:"server"`
 	EngineVersion string       `json:"engineVersion"`
@@ -29,10 +28,7 @@ type Capabilities struct {
 	LatencyTargets    []LatencyTarget    `json:"latency"`
 }
 
-// Transport names the mechanism that reaches a target. One origin can offer
-// several, so a client picks a target by (baseUrl, transport). The datagram
-// variant serves throughput as unreliable datagrams on the same session
-// routes: goodput with visible loss, advertised as its own path.
+// Transport names the mechanism that reaches a target.
 const (
 	TransportFetchStream          = "fetch-stream"
 	TransportWebSocket            = "websocket"
@@ -40,23 +36,13 @@ const (
 	TransportWebTransportDatagram = "webtransport-datagram"
 )
 
-// WTMaxStreams is the published ceiling on a WebTransport session's concurrent
-// streams per direction: the `streams=` range /wt/download accepts (1..16) and
-// the lanes /wt/upload serves before resetting the next one, per api/wire.md.
-// Server and client both hold to it, so a count above it is reported as what
-// the session actually carries.
+// WTMaxStreams is the published ceiling on a WebTransport session's concurrent streams per direction.
 const WTMaxStreams = 16
 
-// WTIdleBound is the published inactivity target for a WebTransport session,
-// per api/wire.md. The server samples at half-bound intervals, so it closes a
-// session carrying no peer traffic after about this long and no later than
-// roughly 1.5x this value. Clients pace traffic under the target, so it lives
-// here rather than server-side where the two could disagree.
+// WTIdleBound is the published inactivity target for a WebTransport session, per api/wire.md.
 const WTIdleBound = 30 * time.Second
 
-// ThroughputTarget is one download/upload endpoint. The non-JSON fields are
-// normalized client-side conveniences. The wire shape intentionally contains
-// only baseUrl, the transport, and the deterministic/negotiated protocol.
+// ThroughputTarget is one download/upload endpoint.
 type ThroughputTarget struct {
 	ID        string           `json:"-"`
 	Origin    string           `json:"baseUrl"`
@@ -72,8 +58,7 @@ type ThroughputRoutes struct {
 	WTSession, WTDownload, WTUpload                        string
 }
 
-// LatencyTarget is one ping endpoint. Only baseUrl and the transport cross the
-// wire; the rest is filled in client-side.
+// LatencyTarget is one ping endpoint.
 type LatencyTarget struct {
 	ID        string        `json:"-"`
 	Origin    string        `json:"baseUrl"`
@@ -86,10 +71,7 @@ type LatencyTarget struct {
 // LatencyRoutes are the paths a LatencyTarget serves.
 type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 
-// DefaultThroughputRoutes returns the paths a discovered target serves. They
-// never cross the wire. api/routes.txt pins them against the server mounts
-// (internal/server/listeners.go) and the client table
-// (client/src/lib/runner/real/backendPure.ts); internal/server/routes_test.go asserts it.
+// DefaultThroughputRoutes returns the paths a discovered target serves.
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
 		Probe: "/probe", Download: "/download", Upload: "/upload",
@@ -98,8 +80,7 @@ func DefaultThroughputRoutes() ThroughputRoutes {
 	}
 }
 
-// DefaultLatencyRoutes returns the latency-target counterpart of
-// DefaultThroughputRoutes, pinned the same way.
+// DefaultLatencyRoutes returns the latency-target counterpart of DefaultThroughputRoutes, pinned the same way.
 func DefaultLatencyRoutes() LatencyRoutes {
 	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping", WTSession: "/wt/session", WTPing: "/wt/ping"}
 }
@@ -124,8 +105,7 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON reads the wire shape and derives the client-side fields. The
-// protocol follows the transport: WebSocket rides HTTP/1.1, WebTransport HTTP/3.
+// UnmarshalJSON reads the wire shape and derives the client-side fields.
 func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		BaseURL   string `json:"baseUrl"`
@@ -157,10 +137,7 @@ type Probe struct {
 	Load               *ProbeLoad `json:"load,omitempty"`
 }
 
-// ProbeLoad is measurement-handler occupancy at probe time. Active is the
-// number of admission-wrapped handlers holding slots; Max is the configured
-// handler ceiling. One test can hold more than one handler. Admission still
-// refuses outright overload with 429/503.
+// ProbeLoad is measurement-handler occupancy at probe time.
 type ProbeLoad struct {
 	Active int `json:"active"`
 	Max    int `json:"max"`

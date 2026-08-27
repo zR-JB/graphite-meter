@@ -1,5 +1,4 @@
-// Command graphite-meter-client is a native Bubble Tea speedtest client for the
-// Graphite Meter server.
+// Command graphite-meter-client is a native Bubble Tea speedtest client for the Graphite Meter server.
 package main
 
 import (
@@ -62,8 +61,6 @@ func main() {
 	}
 	cfg.PingInterval = interval
 
-	// No mouse reporting: the terminal keeps its own selection, so the screen
-	// stays copyable with the mouse or with a keyboard selection.
 	p := tea.NewProgram(newModel(cfg), tea.WithFPS(30), tea.WithAltScreen())
 	final, err := p.Run()
 	if err != nil {
@@ -94,9 +91,6 @@ func parseStages(raw string) goclient.StageSet {
 	return s
 }
 
-// transportFlags refuses a mistyped transport where the answer is the list of
-// names. Left to the run, a typo reads as an endpoint the server did not
-// advertise ("auto target unavailable over webscoket") rather than as a typo.
 func transportFlags(throughput, latency string) error {
 	if err := goclient.ValidateThroughputTransport(throughput); err != nil {
 		return fmt.Errorf("-throughput-transport: %w", err)
@@ -107,12 +101,6 @@ func transportFlags(throughput, latency string) error {
 	return nil
 }
 
-// parsePing resolves the cadence flag against the bus latencyTransport names. An
-// unusable value falls back to the medium preset, but one the datagram bus would
-// not survive is an error: the server reaps a WebTransport ping bus that has
-// gone quiet, so honouring it silently would spend every stage redialing. A run
-// pinned to the WebSocket bus is not subject to that bound, and automatic
-// selection defers it until Prepare verifies the bus it actually selected.
 func parsePing(raw, latencyTransport string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "instant":

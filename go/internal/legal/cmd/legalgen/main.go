@@ -501,9 +501,7 @@ func hasGoReplacementProvenance(entries []legal.Provenance, name, version, scope
 func goComponent(name, version, dir string, reviews []legal.Review) (legal.Component, error) {
 	files, err := componentLegalFiles(dir, "go", name, reviews)
 	if err != nil {
-		// Review-template mode needs to report the unresolved component rather
-		// than hiding it behind discovery failure. Normal mode still fails
-		// closed because UNKNOWN has no valid review basis.
+		// Review-template mode needs to report the unresolved component rather than hiding it behind discovery failure.
 		return legal.Component{Name: name, Version: version, Ecosystem: "go", Source: legalSource(name, ""), DeclaredLicenseExpression: "UNKNOWN", SelectedLicenseExpression: "UNKNOWN"}, nil
 	}
 	component := componentFromFiles("go", name, version, legalSource(name, ""), files)
@@ -568,10 +566,7 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 		path := filepath.Join(dir, relative)
 		data, err := os.ReadFile(path)
 		if os.IsNotExist(err) {
-			// Bun's isolated linker stores a package's dependencies beside the
-			// package directory rather than beneath package/node_modules. Preserve
-			// the reviewed logical name while reading the same dependency-owned
-			// legal file from that isolated-store sibling.
+			// Bun's isolated linker stores a package's dependencies beside the package directory rather than beneath.
 			prefix := "node_modules" + string(filepath.Separator)
 			if after, ok := strings.CutPrefix(relative, prefix); ok {
 				path = filepath.Join(filepath.Dir(dir), after)
@@ -593,18 +588,7 @@ func reviewedLegalFiles(dir, ecosystem, name string, reviews []legal.Review) ([]
 }
 
 func goToolchainComponent(repo string) (legal.Component, error) {
-	// The reviewed standard-library version is a repository property, not an
-	// ambient PATH property. The generator itself is built by `go run`, so
-	// runtime.Version reports the toolchain that actually compiled/executed it.
-	// Require that selected toolchain to match the exact release in go/go.mod,
-	// then use the repository pin as the inventory version. Go 1.27's tidy
-	// removes a redundant toolchain directive when it equals the go directive,
-	// so the patch-qualified go directive is authoritative in that layout.
-	//
-	// This deliberately avoids spawning a second `go env GOVERSION` process:
-	// hooks, shims, and linked worktrees can make that nested command resolve a
-	// different Go executable even though the generator is already running with
-	// the correct selected toolchain.
+	// The reviewed standard-library version is a repository property, not an ambient PATH property.
 	expected, err := repositoryGoToolchainVersion(repo)
 	if err != nil {
 		return legal.Component{}, err
@@ -614,9 +598,7 @@ func goToolchainComponent(repo string) (legal.Component, error) {
 		return legal.Component{}, err
 	}
 
-	// The checked-in snapshots are the canonical legal material. GOROOT is an
-	// installation-dependent input and may contain distro or local-build
-	// formatting differences that are unrelated to the reviewed Go release.
+	// The checked-in snapshots are the canonical legal material.
 	files, err := legal.ReadRootLegalFiles(filepath.Join(repo, "legal", "toolchains", "go"))
 	if err != nil {
 		return legal.Component{}, fmt.Errorf("go toolchain legal material unavailable: %w", err)
@@ -873,9 +855,7 @@ func addProvenance(repo string, components []legal.Component, entries []legal.Pr
 			if files[i].Kind == "" {
 				files[i].Kind = "license"
 			}
-			// Provenance paths identify the checked-in source of a manual
-			// artifact; notices expose the upstream/legal basename instead of a
-			// workstation-relative repository path.
+			// Provenance paths identify the checked-in source of a manual artifact.
 			files[i].Name = filepath.Base(files[i].Name)
 		}
 		component := legal.Component{Name: entry.Name, Version: entry.Version, Ecosystem: entry.Ecosystem, Source: entry.Upstream, DeclaredLicenseExpression: entry.LicenseExpression, SelectedLicenseExpression: entry.LicenseExpression, Modified: entry.Modified}
@@ -978,9 +958,7 @@ func tuiReport(copyText, sourceURL string, licenseText []byte, noticesText strin
 }
 
 func marshal(value any) ([]byte, error) {
-	// Generated legal artifacts have a checked-in indentation and trailing
-	// newline contract, so use deterministic v2 JSON with the same two-space
-	// indentation for reproducible snapshots.
+	// Generated legal artifacts have a checked-in indentation and trailing newline contract.
 	b, err := json.Marshal(value, json.Deterministic(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return nil, err

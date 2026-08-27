@@ -5,9 +5,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// keymap holds every binding the program answers to. A screen publishes the
-// subset it accepts through ShortHelp, which is what the footer renders, so a
-// key that works is a key that is listed.
 type keymap struct {
 	sections key.Binding
 	rows     key.Binding
@@ -67,16 +64,13 @@ func (m model) ShortHelp() []key.Binding {
 	case m.mode == modeRun:
 		return []key.Binding{keys.cancel, keys.help, keys.quit}
 	case m.auth != nil && !m.authOpened:
-		// enter belongs to the approval until the page is opened, so the row it
-		// would otherwise activate is not offered.
+		// enter belongs to the approval until the page is opened, so the row it would otherwise activate is not offered.
 		return []key.Binding{keys.approve, keys.sections, keys.rows, keys.run, keys.verify, keys.help, keys.quit}
 	default:
 		return []key.Binding{keys.sections, keys.rows, keys.activate, keys.run, keys.verify, keys.help, keys.quit}
 	}
 }
 
-// FullHelp lays the same bindings out in columns of three, so the expanded
-// view can never disagree with the footer about what a screen accepts.
 func (m model) FullHelp() [][]key.Binding {
 	all := m.ShortHelp()
 	cols := make([][]key.Binding, 0, (len(all)+2)/3)

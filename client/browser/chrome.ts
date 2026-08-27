@@ -18,8 +18,6 @@ export function createChromeWebView(
       url: false,
       path,
       argv: chromeLaunchArgs(),
-      // Startup diagnostics are essential on headless runners. Keep local
-      // output quiet unless explicitly requested.
       stderr:
         process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
     },

@@ -52,8 +52,6 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 	}
 }
 
-// newSilentPingServer accepts the WebSocket and reads PINGs but never answers,
-// simulating a peer that is up but not responding.
 func newSilentPingServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -99,9 +97,6 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 	}
 }
 
-// newIntermittentLossPingServer answers every PING except every dropEvery'th
-// one (by ID), which it silently swallows. The pattern mixes hits and misses
-// rather than an all-respond or a never-respond peer.
 func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -133,9 +128,6 @@ func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Ser
 	return httptest.NewServer(mux)
 }
 
-// TestMeasureLatencyMixedLossComputesRatioAndRTT checks a mixed sequence of
-// hits and misses (rather than all-or-nothing loss) still yields a partial
-// loss ratio and RTT stats computed only from the responses that arrived.
 func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 	const dropEvery = 3 // every 3rd ping (by ID) goes unanswered
 	srv := newIntermittentLossPingServer(t, dropEvery)
@@ -168,10 +160,6 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 	}
 }
 
-// newDroppingPingServer answers PONGs and then drops the connection without a
-// close handshake once it has sent dropAfter of them: what a route's lifetime
-// bound looks like from the client. It counts the connections it accepts, so a
-// test can tell a reconnect from a bus that merely survived.
 func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atomic.Int64) {
 	t.Helper()
 	var accepted atomic.Int64
@@ -203,9 +191,6 @@ func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atom
 	return httptest.NewServer(mux), &accepted
 }
 
-// TestMeasureLatencyRedialsAProvenBus covers the reconnect path directly: a bus
-// that has answered is replaced when it drops mid-window, and the stage keeps
-// sampling across the gap rather than failing or counting it as loss.
 func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	const dropAfter = 3
 	srv, accepted := newDroppingPingServer(t, dropAfter)
@@ -230,16 +215,11 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	if stats.Count <= dropAfter {
 		t.Errorf("Count = %d, want more than the %d samples one bus answers before dropping", stats.Count, dropAfter)
 	}
-	// The gap between buses is a connection gap, not packet loss: the pings in
-	// flight when the bus died are dropped from pending rather than counted.
 	if stats.Loss == 1 {
 		t.Errorf("Loss = %v, want the redialled bus's answers to count", stats.Loss)
 	}
 }
 
-// TestMeasureLatencyClosedConnectionDoesNotHang checks that a peer dropping
-// the connection while measurement is still gated (start never fires, a warmup
-// in progress) surfaces an error promptly instead of hanging.
 func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {

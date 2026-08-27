@@ -1,6 +1,3 @@
-// Command authassets bakes the auth UI files into Go string constants.
-// Its go:generate directive sets the working directory to internal/auth.
-// The relative asset and output paths resolve against that directory.
 package main
 
 import (

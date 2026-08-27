@@ -8,8 +8,6 @@ import (
 )
 
 // httpSession adapts an (http.ResponseWriter, *http.Request) pair to Session.
-// It serves h1/h2/h3 request/response endpoints; Bus reports not-ok since
-// plain HTTP has no message channel.
 type httpSession struct {
 	w http.ResponseWriter
 	r *http.Request

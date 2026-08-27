@@ -3,7 +3,6 @@ package wire
 import "testing"
 
 // Decode sits on the ping hot path: one call per PING/PONG per connection.
-// These benchmarks pin its allocation-free cost.
 
 func BenchmarkDecodePING(b *testing.B) {
 	msg := Encode(Frame{Op: OpPING, ID: 4294967295})

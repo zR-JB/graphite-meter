@@ -16,9 +16,7 @@ type DatagramConn interface {
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
 }
 
-// wtDatagramBus adapts WebTransport datagrams to MessageBus: one wire message
-// per datagram. Nothing retransmits here, so a ping that never returns is real
-// packet loss rather than a stalled reliable queue.
+// wtDatagramBus adapts WebTransport datagrams to MessageBus: one wire message per datagram.
 type wtDatagramBus struct {
 	conn DatagramConn
 	ctx  context.Context
@@ -34,9 +32,7 @@ func (b *wtDatagramBus) Recv() (string, error) {
 
 func (b *wtDatagramBus) Send(msg string) error { return b.conn.SendDatagram([]byte(msg)) }
 
-// webtransportSession is one logical request inside a WebTransport session:
-// either its datagram bus or a single accepted stream. A session hosts many of
-// them, so the seams a given request does not use report ErrUnsupported.
+// webtransportSession is one logical request inside a WebTransport session.
 type webtransportSession struct {
 	ctx   context.Context
 	query url.Values
@@ -51,9 +47,7 @@ func NewWebTransportBusSession(ctx context.Context, conn DatagramConn, query url
 	return &webtransportSession{ctx: ctx, query: query, bus: &wtDatagramBus{conn: conn, ctx: ctx}}
 }
 
-// NewWebTransportStreamSession wraps one accepted stream as a byte Session.
-// sink serves download, src serves upload, and owner is the client key derived
-// from the session's CONNECT request, since a stream carries no request.
+// NewWebTransportStreamSession wraps one accepted stream as a byte Session. sink serves download, src serves upload.
 func NewWebTransportStreamSession(ctx context.Context, query url.Values, sink io.Writer, src io.Reader, owner string) Session {
 	return &webtransportSession{ctx: ctx, query: query, sink: sink, src: src, owner: owner}
 }
@@ -90,11 +84,7 @@ func (s *webtransportSession) Bus() (MessageBus, bool) {
 // ClientOwner reports the client key of the session this stream belongs to.
 func (s *webtransportSession) ClientOwner() string { return s.owner }
 
-// A blocked WebTransport stream operation observes neither its context nor a
-// dead session: cancelling alone leaves the call waiting on a session close
-// that may never arrive, so the cancel and a deadline poke always travel
-// together. The deadline goes first, because CancelWrite takes the lock a
-// parked header write holds. These tie the pair to ctx and return the stop.
+// A blocked WebTransport stream operation observes neither its context nor a dead session.
 
 type wtSendStream interface {
 	CancelWrite(webtransport.StreamErrorCode)

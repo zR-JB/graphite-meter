@@ -15,12 +15,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// testBlockSize is a realistic download-block size for the wrap-around tests
-// (matches the server's 256 KiB block).
+// testBlockSize is a realistic download-block size for the wrap-around tests (matches the server's 256 KiB block).
 const testBlockSize = 256 * 1024
 
-// randomBlock returns n incompressible random bytes, like the server's shared
-// download block.
+// randomBlock returns n incompressible random bytes, like the server's shared download block.
 func randomBlock(n int) []byte {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -29,8 +27,7 @@ func randomBlock(n int) []byte {
 	return b
 }
 
-// newDownloadServer mounts /download (over the same httpAdapter the real mux
-// uses) backed by a small block so block-wrap is easy to exercise.
+// newDownloadServer mounts /download over httpAdapter with a small block for wraparound tests.
 func newDownloadServer(blockSize int) (*httptest.Server, []byte) {
 	block := randomBlock(blockSize)
 	mux := http.NewServeMux()
@@ -153,15 +150,12 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 	}
 }
 
-// TestDownloadContextCancel checks the stream stops promptly when the request
-// context is cancelled mid-flight, without trying to fulfil the full length.
 func TestDownloadContextCancel(t *testing.T) {
 	block := randomBlock(4096)
 	dl := NewDownload(block, nil)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	// The sink cancels the context after the first write and keeps counting: the
-	// loop must observe Done() and return instead of streaming all 10 MiB.
+	// The sink cancels the context after the first write and keeps counting.
 	sink := &cancelOnWrite{cancel: cancel}
 	s := &fakeSession{ctx: ctx, query: "bytes=" + strconv.Itoa(10<<20), sink: sink}
 
@@ -190,8 +184,7 @@ func (c *cancelOnWrite) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// fakeSession is a minimal transport.Session exposing only what Download.Handle
-// uses: Context, Query, and OpenDownloadSink (non-HTTP, so headers are skipped).
+// fakeSession is a minimal transport.Session exposing only what Download.Handle uses: Context, Query.
 type fakeSession struct {
 	ctx   context.Context
 	query string
@@ -208,10 +201,6 @@ func (f *fakeSession) OpenDownloadSink() (io.Writer, error) {
 func (f *fakeSession) OpenUploadSource() (io.Reader, error) { return nil, transport.ErrUnsupported }
 func (f *fakeSession) Bus() (transport.MessageBus, bool)    { return nil, false }
 
-// BenchmarkDownloadThroughput streams a multi-megabyte download over a loopback
-// TCP server end to end, so it measures the endpoint's real serving throughput
-// (block wrap-around, HTTP framing, and the loopback stack) rather than a
-// synthetic in-memory copy. b.SetBytes makes the result read as MB/s.
 func BenchmarkDownloadThroughput(b *testing.B) {
 	srv, _ := newDownloadServer(testBlockSize)
 	b.Cleanup(srv.Close)

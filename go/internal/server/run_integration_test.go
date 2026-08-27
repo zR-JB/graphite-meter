@@ -14,10 +14,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
-// testListenerSockets reserves the exact sockets an integration test will hand
-// to listener assembly. In particular H3 reserves TCP and UDP on the same port
-// at the same time, removing the release/rebind TOCTOU that made race/shuffle
-// runs intermittently fail with "address already in use".
+// testListenerSockets reserves the exact sockets an integration test will hand to listener assembly.
 type testListenerSockets struct {
 	t   *testing.T
 	tcp map[string]net.Listener
@@ -86,8 +83,7 @@ func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
 	return net.ListenPacket("udp", addr)
 }
 
-// waitForOK polls a URL until it answers 200 or the deadline passes, so the
-// test does not race the listeners coming up inside Run.
+// waitForOK polls a URL until it answers 200 or the deadline passes.
 func waitForOK(t *testing.T, client *http.Client, url string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -105,8 +101,7 @@ func waitForOK(t *testing.T, client *http.Client, url string) {
 	t.Fatalf("server never served 200 at %s", url)
 }
 
-// runUntilCancel starts Run in the background and returns a stop function that
-// cancels it and asserts a clean (nil) shutdown.
+// runUntilCancel starts Run in the background and returns a stop function that cancels it and asserts a clean (nil).
 func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -125,9 +120,6 @@ func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) f
 	}
 }
 
-// TestRunServesClearH1AndShutsDownCleanly drives the whole Run lifecycle over a
-// real loopback socket: validation, endpoint build, the clear-H1 assemble path,
-// runServices, and a clean shutdown on cancel.
 func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 	sockets := newTestListenerSockets(t)
 	addr := sockets.reserveTCP()
@@ -150,8 +142,6 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 	}
 }
 
-// TestRunServesTLSH1 additionally exercises the TLS listener build: tcpTLS, the
-// certificate manager, and the HTTPS assemble branch.
 func TestRunServesTLSH1(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
@@ -171,9 +161,6 @@ func TestRunServesTLSH1(t *testing.T) {
 	waitForOK(t, client, "https://"+tlsAddr+"/preflight")
 }
 
-// TestRunServesH3 exercises assembleH3: the QUIC UDP listener plus its TCP
-// Alt-Svc bootstrap companion. It proves only that the sockets bind and shut
-// down cleanly: an H3 client round-trip is out of scope here.
 func TestRunServesH3(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
@@ -187,8 +174,7 @@ func TestRunServesH3(t *testing.T) {
 	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
-	// The bootstrap companion is a TCP listener on the H3 address; a successful
-	// dial proves assembleH3 bound its sockets.
+	// The bootstrap companion is a TCP listener on the H3 address; a successful dial proves assembleH3 bound its sockets.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		conn, err := net.DialTimeout("tcp", h3Addr, 200*time.Millisecond)
@@ -203,8 +189,6 @@ func TestRunServesH3(t *testing.T) {
 	}
 }
 
-// TestRunClosesOpenedListenersOnBindFailure forces the second listener's bind to
-// fail so Run unwinds through closeOpened and returns the error.
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
@@ -233,7 +217,6 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	reclaimed.Close()
 }
 
-// TestRunRejectsInvalidConfig proves Run rejects a bad config without binding.
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxConnections = -1 // fails validateLimits

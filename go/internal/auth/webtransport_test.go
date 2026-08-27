@@ -11,8 +11,6 @@ import (
 	"time"
 )
 
-// mintForSession runs the mint through the request path: a principal-bearing
-// request against MintWebTransportSessionToken.
 func mintForSession(t *testing.T, s *Service, sess *session) string {
 	t.Helper()
 	r := secureRequest(http.MethodPost, "/wt/session", nil)
@@ -25,8 +23,6 @@ func mintForSession(t *testing.T, s *Service, sess *session) string {
 	return token
 }
 
-// wtConnect drives the Enforce boundary with an extended CONNECT carrying the
-// given URL query, and reports whether the request reached the handler.
 func wtConnect(t *testing.T, s *Service, path string) (reached bool, status int) {
 	t.Helper()
 	reachedHandler := false
@@ -36,8 +32,6 @@ func wtConnect(t *testing.T, s *Service, path string) (reached bool, status int)
 			t.Error("CONNECT reached the handler without a principal")
 		}
 	})
-	// httptest parses a CONNECT target in authority form; the HTTP/3 server
-	// delivers an extended CONNECT with a normal :path, which this mirrors.
 	r := secureRequest(http.MethodGet, path, nil)
 	r.Method = http.MethodConnect
 	w := httptest.NewRecorder()
@@ -45,8 +39,6 @@ func wtConnect(t *testing.T, s *Service, path string) (reached bool, status int)
 	return reachedHandler, w.Code
 }
 
-// A listener that does not mount the session routes must not run the CONNECT
-// branch: the request would 404 anyway, and the token is single-use.
 func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -97,10 +89,6 @@ func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
 	}
 }
 
-// The CONNECT path applies none of the origin, Sec-Fetch-Site or double-submit
-// rules that make an ambient credential safe, so it must take none. A live
-// session cookie is refused there even though the same cookie authenticates
-// every other route.
 func TestWebTransportConnectRefusesASessionCookie(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
@@ -121,8 +109,7 @@ func TestWebTransportConnectRefusesASessionCookie(t *testing.T) {
 	if reached || w.Code != http.StatusForbidden {
 		t.Fatalf("cookie-only CONNECT: reached=%t status=%d, want a 403 refusal", reached, w.Code)
 	}
-	// The refusal is the cookie being ignored, not the session being unusable:
-	// a token minted from it still gets in.
+	// The refusal is the cookie being ignored, not the session being unusable: a token minted from it still gets in.
 	if reached, status := wtConnect(t, s, "/wt/ping?token="+mintForSession(t, s, sess)); !reached {
 		t.Fatalf("minted token refused after the cookie was: HTTP %d", status)
 	}
@@ -157,8 +144,6 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 		t.Fatal("expired token accepted")
 	}
 
-	// At the cap the mint refuses. Evicting instead would spend a token another
-	// tab is about to present, turning one dial's retry into another's failure.
 	tokens := make([]string, 0, maxSessionWTTokens)
 	for range maxSessionWTTokens {
 		offset += time.Second
@@ -183,8 +168,6 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 	mintForSession(t, s, sess)
 }
 
-// grantFor issues a native-client grant against sess, as cliToken does: the
-// grant and the browser login that approved it are one session.
 func grantFor(t *testing.T, s *Service, sess *session) string {
 	t.Helper()
 	grant := randomToken(32)
@@ -196,8 +179,6 @@ func grantFor(t *testing.T, s *Service, sess *session) string {
 	return grant
 }
 
-// mintWithGrant drives the mint through the boundary the way anything holding a
-// grant would reach it, and reports whether a token came back.
 func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 	t.Helper()
 	minted := false
@@ -215,11 +196,6 @@ func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 	return minted
 }
 
-// A grant carries the session its browser approval created, so a token minted
-// from one occupies that login's cap. Nothing needs it to: a native CONNECT
-// presents its Authorization header directly. Minting from a grant would let
-// anything holding one exhaust the eight slots and deny the browser it came
-// from, for as long as it kept re-minting.
 func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -242,10 +218,6 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 	}
 }
 
-// A refusal at the cap is capacity, not an authentication failure: the session
-// is intact and a slot frees within wtTokenLifetime. The two refusals must be
-// distinguishable, or the endpoint answers both with the same status and a
-// signed-in caller is told to retry what will never work, or to log in again.
 func TestWebTransportMintSeparatesCapacityFromNoSession(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -265,9 +237,6 @@ func TestWebTransportMintSeparatesCapacityFromNoSession(t *testing.T) {
 	}
 }
 
-// expireLocked runs on a wtTokenLifetime ticker, so a session that reaches its
-// deadline keeps its entry, and its tokens theirs, until the next sweep. The
-// deadline is what must stop them authenticating, not the sweep.
 func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSessionUntil("subject", "Name", "local", time.Now().Add(50*time.Millisecond))
@@ -292,9 +261,6 @@ func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	}
 }
 
-// Revocation removes the token, rather than leaving consumeWebTransportToken's
-// session check to refuse it: an unremoved token holds a slot in the service
-// map for its full lifetime after the session that owned it is gone.
 func TestRevokingASessionRemovesItsTokensFromTheService(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -311,9 +277,6 @@ func TestRevokingASessionRemovesItsTokensFromTheService(t *testing.T) {
 	}
 }
 
-// The CONNECT branch runs ahead of the boundary's own TLS demand, so it makes
-// its own: the token is a credential in a URL and must not cross a cleartext
-// hop. secureRequest sets r.TLS, so nothing else in this package drives one.
 func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -338,8 +301,6 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 	}
 }
 
-// The token is the whole credential for a session upgrade and it travels in a
-// URL, so its length is a security property in its own right.
 func TestWebTransportTokenCarries256Bits(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
@@ -359,12 +320,6 @@ func TestWebTransportTokenCarries256Bits(t *testing.T) {
 	}
 }
 
-// The session rows of allowedCORSMethod are the one part of that table no
-// browser reaches: CONNECT is a forbidden fetch method, so it never appears in
-// a preflight, and corsPreflight's own Access-Control-Allow-Methods omits it.
-// They exist because routes_test.go requires every pinned measurement path to
-// allow some method, which is loose enough that MethodPost satisfies it just as
-// well. This says which method, so the rows describe the routes they name.
 func TestWebTransportSessionRoutesPreflightForCONNECTAlone(t *testing.T) {
 	for _, path := range []string{"/wt/download", "/wt/upload", "/wt/ping"} {
 		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
@@ -382,8 +337,7 @@ func TestWebTransportSessionRoutesPreflightForCONNECTAlone(t *testing.T) {
 	}
 }
 
-// Stated, not derived: the expiry tests offset from this constant, so a change
-// to it would validate itself.
+// Stated, not derived: the expiry tests offset from this constant, so a change to it would validate itself.
 func TestWebTransportTokenLifetimeIsThirtySeconds(t *testing.T) {
 	if wtTokenLifetime != 30*time.Second {
 		t.Fatalf("wtTokenLifetime = %v, want 30s: a token outliving the dial it was minted for holds its session's cap for nothing", wtTokenLifetime)

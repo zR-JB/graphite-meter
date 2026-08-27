@@ -33,9 +33,6 @@ func TestBudgetKeyCollapsesIPv6ToTheAllocation(t *testing.T) {
 	}
 }
 
-// One IPv6 allocation routinely covers 2^64 addresses. Keying budgets per /128
-// would let a single customer prefix spend the per-address budget once per
-// address it owns, which is no budget at all.
 func TestIPv6SiblingsShareOnePasswordBudget(t *testing.T) {
 	s := testService(t)
 	for i := range maxAddressAttempts {
@@ -66,9 +63,6 @@ func TestIPv6SiblingsShareOneExchangeBudget(t *testing.T) {
 	}
 }
 
-// The token exchange is the only anonymous path that produces an outbound
-// request to the identity provider, so it needs a volume bound of its own.
-// The transaction caps free on use and bound only concurrency.
 func TestTokenExchangeIsThrottledPerAddress(t *testing.T) {
 	s := testService(t)
 	address := "203.0.113.7:40000"
@@ -102,9 +96,6 @@ func TestExchangeBudgetDrainsWithTheWindow(t *testing.T) {
 	}
 }
 
-// A saturated global ceiling and a broken service look the same from outside.
-// The log line is how an operator tells them apart, and it must not itself
-// become a flood an attacker can drive.
 func TestGlobalCeilingLogsOncePerWindow(t *testing.T) {
 	s := testService(t)
 	now := time.Now()

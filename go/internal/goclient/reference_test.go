@@ -1,12 +1,5 @@
 //go:build reference
 
-// The native client's rate against a running server, as the browser
-// benchmark's absolute reference. It sets socket buffers and an exact
-// Content-Length, neither of which a browser can, so it is an upper bound on
-// what any browser could reach rather than a target.
-//
-//	GM_REF_URL=http://127.0.0.1:7246 go test -tags reference \
-//	  -run TestNativeReference -v -count=1 ./internal/goclient/
 package goclient_test
 
 import (

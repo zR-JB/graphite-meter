@@ -6,33 +6,25 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// Download streams incompressible random bytes for the client's download
-// measurement. It serves slices of one shared immutable RNG block (built once at
-// startup) so a request does no per-request allocation and never regenerates
-// bytes. The client derives all rates; the server only sinks bytes.
+// Download streams incompressible random bytes for the client's download measurement.
 type Download struct {
 	block []byte
 	meter *Meter // optional verbose per-second logger; nil unless -verbose
 }
 
-// Download size bounds for ?bytes=. The ceiling keeps one request from streaming
-// an absurd length; the client opens fresh or parallel requests instead.
 const (
 	defaultBytes int64 = 25 * 1024 * 1024        // 25 MiB when ?bytes= is absent
 	maxBytes     int64 = 64 * 1024 * 1024 * 1024 // 64 GiB hard ceiling
 )
 
-// NewDownload builds the endpoint bound to the shared RNG block. meter may be
-// nil (no verbose logging).
+// NewDownload builds the endpoint bound to the shared RNG block. meter may be nil (no verbose logging).
 func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
 func (d *Download) ID() string { return "download" }
 
-// Handle streams ?bytes= of the shared block into the session's download sink,
-// wrapping at the block end. Context cancellation or a write error stops early.
-// ?cb= is a cache-buster only; Cache-Control: no-store enforces freshness.
+// Handle streams ?bytes= of the shared block into the session's download sink, wrapping at the block end.
 func (d *Download) Handle(s transport.Session) error {
 	n := parseBytes(s.Query().Get("bytes"))
 
@@ -77,8 +69,6 @@ func (d *Download) Handle(s transport.Session) error {
 	return nil
 }
 
-// parseBytes reads the requested length: empty/invalid → default; clamped to
-// [0, maxBytes].
 func parseBytes(raw string) int64 {
 	if raw == "" {
 		return defaultBytes

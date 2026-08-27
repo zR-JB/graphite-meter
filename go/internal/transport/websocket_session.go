@@ -10,9 +10,6 @@ import (
 )
 
 // wsBus adapts a *websocket.Conn to MessageBus: one wire message per text frame.
-// WS frames are message-delimited, so api/wire.md needs no length prefix here.
-// WS rides TCP, which retransmits, so packet loss is hidden from this bus; the
-// WebTransport datagram bus is the one that exposes it.
 type wsBus struct {
 	conn *websocket.Conn
 	ctx  context.Context
@@ -30,17 +27,14 @@ func (b *wsBus) Send(msg string) error {
 	return b.conn.Write(b.ctx, websocket.MessageText, []byte(msg))
 }
 
-// websocketSession is a Session over a WebSocket bus (/ws/ping). It exposes a
-// MessageBus and reports ErrUnsupported for the HTTP and byte-stream seams: a
-// bus endpoint never touches those.
+// websocketSession is a Session over a WebSocket bus (/ws/ping).
 type websocketSession struct {
 	conn  *websocket.Conn
 	ctx   context.Context
 	query url.Values
 }
 
-// NewWebSocketSession wraps an upgraded WebSocket conn as a Session. ctx bounds
-// the bus lifetime (the adapter cancels it when the handler returns).
+// NewWebSocketSession wraps an upgraded WebSocket conn as a Session.
 func NewWebSocketSession(ctx context.Context, conn *websocket.Conn, query url.Values) Session {
 	return &websocketSession{conn: conn, ctx: ctx, query: query}
 }

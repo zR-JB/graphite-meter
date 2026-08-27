@@ -1,8 +1,6 @@
 import { fmtSpeed } from "../format";
 
-/** A live announcement is a measurement statement, so it receives only the
- * authoritative presented transfer rate. Visual bridge targets stay outside
- * this model. */
+/* A live announcement is a measurement statement, so it receives only the authoritative presented transfer rate. */
 export function authoritativeTransferAnnouncement(input: {
   authoritativeBytesPerSec: number;
   /** Provided to make the presentation boundary explicit; never announced. */

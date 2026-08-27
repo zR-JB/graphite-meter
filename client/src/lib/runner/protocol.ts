@@ -4,8 +4,7 @@ import type {
   ProtocolTarget,
 } from "./contract";
 
-/** Canonicalize protocol identifiers from Resource Timing, Go net/http, and
- * configured targets into one ProtocolTarget vocabulary. */
+/* Canonicalize protocol identifiers from Resource Timing, Go net/http, and configured targets into one. */
 export function normalizeHttpProtocol(
   protocol?: string,
 ): ProtocolTarget | undefined {

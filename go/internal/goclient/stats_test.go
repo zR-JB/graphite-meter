@@ -34,8 +34,7 @@ func TestPercentile(t *testing.T) {
 	})
 
 	t.Run("interpolated fraction", func(t *testing.T) {
-		// 4 samples: pos = 0.5*3 = 1.5 -> lo=1, hi=2, frac=0.5
-		// interpolate xs[1]=20ms and xs[2]=30ms -> 25ms
+		// 4 samples: pos = 0.5*3 = 1.5 -> lo=1, hi=2, frac=0.5 interpolate xs[1]=20ms and xs[2]=30ms -> 25ms
 		xs := []time.Duration{ms(10), ms(20), ms(30), ms(40)}
 		want := ms(25)
 		if got := percentile(xs, 0.5); got != want {

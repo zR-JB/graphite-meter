@@ -1,6 +1,4 @@
-/** Replace known low-level network details at user-facing measurement seams.
- *  The structured failure remains in state for diagnostics; this only keeps
- *  browser/worker transport wording out of cards, toasts, and tooltips. */
+/* Replace known low-level network details at user-facing measurement seams. */
 export function failureDetail(
   detail: string | undefined,
   fallback = "Connection lost",

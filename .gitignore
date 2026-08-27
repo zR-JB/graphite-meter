@@ -13,6 +13,7 @@ go/graphite-meter
 go/graphite-meter-client
 # test/coverage artifacts the just recipes and `go test -c` emit
 go/cover.out
+/.go-cache/
 *.test
 # release cross-compile intermediates + archives; must stay ignored so
 # buildvcs stamps vcs.modified=false and release binaries reproduce

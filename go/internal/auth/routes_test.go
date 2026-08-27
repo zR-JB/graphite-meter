@@ -15,15 +15,8 @@ import (
 
 const routePinPath = "../../../api/routes.txt"
 
-// preflightPath is the one measurement-adjacent path outside the pin: discovery
-// is served by every listener but requested through no route table, so the
-// enumerations carry it and this test names it.
 const preflightPath = "/preflight"
 
-// loadRoutePin parses api/routes.txt into name → path. The parser is a copy of
-// the one in go/internal/server/routes_test.go because auth cannot import
-// server without inverting the dependency.
-// pinnedKinds is path → mounting mechanism, filled by the same parse.
 var pinnedKinds = map[string]string{}
 
 // pathsOfKind returns every pinned path reached by the named mechanism.
@@ -64,8 +57,6 @@ func loadRoutePin(t *testing.T) map[string]string {
 	return pinned
 }
 
-// enumeratedPaths returns every "/"-prefixed string literal in fn's body, which
-// is how each enforcement site spells the paths it recognises.
 func enumeratedPaths(t *testing.T, file, fn string) []string {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
@@ -94,8 +85,6 @@ func enumeratedPaths(t *testing.T, file, fn string) []string {
 	return nil
 }
 
-// assertEnumerates reports drift in both directions: a path the pin carries and
-// the site dropped, and a path the site recognises that nothing pins.
 func assertEnumerates(t *testing.T, site string, want, got []string) {
 	t.Helper()
 	have := make(map[string]bool, len(got))
@@ -113,10 +102,6 @@ func assertEnumerates(t *testing.T, site string, want, got []string) {
 	}
 }
 
-// TestAuthRoutesMatchPin holds the enforcement boundary's own route
-// enumerations to api/routes.txt. auth cannot import the package that mounts
-// the routes, so the pin file is the only thing keeping the lists aligned, and
-// a path the boundary does not recognise is a path it does not protect.
 func TestAuthRoutesMatchPin(t *testing.T) {
 	pinned := loadRoutePin(t)
 	ping, ok := pinned["ping"]
@@ -174,8 +159,6 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The ping route demands the public Origin outright; the rest of the
-		// measurement set settles for a same-origin fetch metadata claim.
 		for _, path := range measurement {
 			r := secureRequest(http.MethodGet, path, nil)
 			r.Header.Set("Sec-Fetch-Site", "same-origin")

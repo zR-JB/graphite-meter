@@ -12,13 +12,10 @@ import (
 
 const routePinPath = "../../../api/routes.txt"
 
-// pinnedRoute is one row of api/routes.txt: the path a route is mounted at and
-// the transport that reaches it.
+// pinnedRoute is one row of api/routes.txt: the path a route is mounted at and the transport that reaches it.
 type pinnedRoute struct{ path, kind string }
 
-// loadRoutePin parses api/routes.txt into name → route, skipping comment/blank
-// lines. This is the same fixture the TS route table asserts against
-// (client/src/lib/runner/real/routes.test.ts).
+// loadRoutePin parses api/routes.txt into name → route, skipping comment/blank lines.
 func loadRoutePin(t *testing.T) map[string]pinnedRoute {
 	t.Helper()
 	f, err := os.Open(routePinPath)
@@ -57,17 +54,12 @@ func loadRoutePin(t *testing.T) map[string]pinnedRoute {
 	return pinned
 }
 
-// TestRoutesMatchPin is the byte-exact check both languages run against the same
-// file: the paths this server mounts and the defaults a discovered target carries
-// must be exactly the pinned set, no more and no less.
 func TestRoutesMatchPin(t *testing.T) {
 	pinned := loadRoutePin(t)
 	throughput := wire.DefaultThroughputRoutes()
 	latency := wire.DefaultLatencyRoutes()
 
-	// Every Go constant that must hold the pinned path: what the mux mounts,
-	// then the defaults a discovered target carries. The kind is how the
-	// registry mounts it, so a route moved between mechanisms fails here.
+	// Every Go constant that must hold the pinned path: what the mux mounts, then the defaults a discovered target.
 	sites := map[string]struct {
 		kind  string
 		paths []string
@@ -103,10 +95,6 @@ func TestRoutesMatchPin(t *testing.T) {
 	}
 }
 
-// TestRouteKindsMatchTheRegistry closes the loop the pinned kind column exists
-// for: the column is compared against the mechanism each route is registered
-// under, not against a second hand-written table. Moving a route between
-// RegisterHTTP / RegisterWS / RegisterWT fails here.
 func TestRouteKindsMatchTheRegistry(t *testing.T) {
 	pinned := loadRoutePin(t)
 	// One listener carrying every mechanism, so each pinned route is registered.

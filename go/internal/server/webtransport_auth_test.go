@@ -13,11 +13,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A browser CONNECT carries neither cookies nor headers, so the whole
-// authenticated WebTransport path rests on a token minted over HTTP and spent
-// in the CONNECT URL. These exercise it on the wire, against the listener that
-// actually mounts the session routes: a simulated CONNECT sets the very request
-// fields (TLS, path, protocol) the boundary reads, so it cannot prove them.
+// A browser CONNECT carries neither cookies nor headers, so the whole authenticated WebTransport path rests on a token.
 
 // mintWTToken asks /wt/session for one CONNECT token as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
@@ -54,8 +50,7 @@ func (s *authenticatedStack) wtTransport(t *testing.T) *webtransport.Transport {
 	return d
 }
 
-// connectPing dials the ping bus, retrying only while the listener comes up, and
-// reports the CONNECT status a refusal answered with.
+// connectPing dials the ping bus, retrying only while the listener comes up.
 func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string, hdr http.Header) (*webtransport.Session, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -77,8 +72,7 @@ func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport
 	}
 }
 
-// answersPing proves the session reached the ping endpoint rather than merely
-// completing a handshake.
+// answersPing proves the session reached the ping endpoint rather than merely completing a handshake.
 func answersPing(t *testing.T, sess *webtransport.Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

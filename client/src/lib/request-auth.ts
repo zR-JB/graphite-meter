@@ -4,8 +4,7 @@ export function redirectForCredentials(
   return credentials === "include" ? "error" : undefined;
 }
 
-/** Only the explicit marker means an expired session. A bare 403 from a proxy
- *  or WAF does not count: a misconfigured hop becomes a redirect loop. */
+/* Only the explicit marker means an expired session. */
 export function authenticationRequired(response: {
   status: number;
   headers: Pick<Headers, "get">;
@@ -38,8 +37,7 @@ export async function sessionAuthenticationRequired(
     });
     return authenticationRequired(response);
   } catch {
-    // Transport failure, refused redirect, and timeout are not expiry evidence.
-    // A network blip must not bounce a user off a working page.
+// Transport failure, refused redirect, and timeout are not expiry evidence.
     return false;
   } finally {
     clearTimeout(timeout);

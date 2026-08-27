@@ -24,8 +24,6 @@ const (
 	argonKeyLen         = 32
 )
 
-// HashPassword encodes password as an Argon2id PHC string using the parameters
-// this package will accept back, so a hash it mints always verifies here.
 func HashPassword(password string) (string, error) {
 	if err := validatePassword(password); err != nil {
 		return "", err
@@ -92,8 +90,6 @@ func validatePassword(password string) error {
 	return nil
 }
 
-// ReadPassword reads without terminal echo when possible and falls back to one
-// line from the supplied reader for redirected input.
 func ReadPassword(reader *bufio.Reader, input *os.File) (string, error) {
 	if term.IsTerminal(int(input.Fd())) {
 		value, err := term.ReadPassword(int(input.Fd()))

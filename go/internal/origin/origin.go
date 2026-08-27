@@ -7,8 +7,6 @@ import (
 	"strings"
 )
 
-// Key normalizes scheme and host casing and removes explicit default ports.
-// Non-origin values such as the relative self marker pass through untouched.
 func Key(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" || u.Hostname() == "" {

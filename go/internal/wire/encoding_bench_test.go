@@ -7,17 +7,6 @@ import (
 )
 
 // Why the ping bus keeps a text codec while the progress feed carries NDJSON.
-// PONG is the hot frame: one per ping per chain, and the server aggregates every
-// client's. Measured on an 8-core dev box, ns/op:
-//
-//	decode  text 38   json 522 (6 allocs)  binary 3.3
-//	encode  text 60   json 94             binary 1.7
-//
-// At the saturation harness's ~200k pings/s that is ~1.5% of a core for text
-// against ~12% for JSON, on the same CPU the envelope shows is what inflates
-// observer RTT. Binary would save ~1.3% more, which is not worth a schema
-// toolchain in two languages: protobuf adds field tags and generated-struct
-// allocation on top of the hand-rolled floor measured here.
 
 type jsonPong struct {
 	Op    string `json:"op"`
@@ -65,8 +54,7 @@ func BenchmarkDecodeJSON(b *testing.B) {
 	}
 }
 
-// Hand-rolled fixed-layout binary: the best case a binary codec can reach, so
-// it bounds what protobuf could win. Protobuf adds varint tags on top of this.
+// Hand-rolled fixed-layout binary: the best case a binary codec can reach, so it bounds what protobuf could win.
 func BenchmarkDecodeBinary(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
@@ -115,8 +103,7 @@ func TestEncodingSizes(t *testing.T) {
 	t.Logf("text=%dB json=%dB binary=%dB", len(textPong), len(jsonPongB), len(binPong))
 }
 
-// PONG carries TIME,<nanos> that neither client reads: the server writes it,
-// both clients parse it, nobody consumes it. This is what it costs to carry.
+// PONG carries TIME,<nanos> that neither client reads: the server writes it, both clients parse it, nobody consumes it.
 func BenchmarkEncodePONGWithoutNanos(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {

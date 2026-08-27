@@ -1,11 +1,4 @@
-/* ============================================================
- * The Graphite Meter: closed-loop transfer sizer (shared)
- * ============================================================
- * Sizes the NEXT transfer to a target wall-duration from the last one's observed
- * rate, so one tool spans dial-up to multi-Gbit. The rate is EWMA-smoothed
- * per-lane, so lanes cannot synchronise into oscillation. The size is
- * step-clamped and bounded. The current transfer always runs to completion.
- * ============================================================ */
+/* The Graphite Meter: closed-loop transfer sizer (shared). */
 
 export interface SizerCfg {
   /** Wall-time each transfer aims to span. */
@@ -20,8 +13,7 @@ export interface SizerCfg {
   stepDown: number;
 }
 
-/** Given the bytes/elapsed just observed and the running rate EWMA, return the
- *  next size and the updated EWMA. `prevEwma === 0` seeds from the first sample. */
+/* Given the bytes/elapsed just observed and the running rate EWMA, return the next size and the updated EWMA. */
 export function nextTransferBytes(
   prevBytes: number,
   elapsedMs: number,

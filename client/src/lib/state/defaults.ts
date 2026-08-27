@@ -1,5 +1,3 @@
-// The shipped run configuration and its duration presets. Separate from the
-// store so persistence can read the defaults without importing it back.
 import type { RunnerConfig } from "../runner/contract";
 
 export const DEFAULT_CONFIG: RunnerConfig = {
@@ -14,9 +12,6 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   },
   pingCadence: "reply-driven",
   loadedPingCadence: "medium",
-  // The automatic H1 ceiling, and the starting point for a forced count.
-  // 2 lanes is the loopback optimum, beating 4 by 9.6%; 4 is the plateau under
-  // loss, so it ships as the compromise. See docs/BENCHMARKS.md.
   transferStreams: { mode: "auto", count: 4 },
   experimentalChunkedDownload: false,
   experimentalDatagramThroughput: false,

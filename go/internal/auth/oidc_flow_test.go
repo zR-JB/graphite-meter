@@ -306,8 +306,6 @@ func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
 	}
 }
 
-// A provider whose discovery document mistypes an optional field still yields
-// valid endpoints, so discovery must complete rather than fail permanently.
 func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
 	f := newFakeOIDC(t)
 	f.mu.Lock()
@@ -322,10 +320,6 @@ func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
 	}
 }
 
-// The callback is the tail of a navigation the identity provider started. A
-// redirect there would be followed without the SameSite=Strict session cookie
-// the callback just set, bouncing a successful first login back to /login, so
-// the callback must answer with a same-site hop instead.
 func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	f := newFakeOIDC(t)
 	s := f.service(t)
@@ -358,8 +352,6 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	}
 }
 
-// A CLI challenge enters the OIDC transaction only when it is well-formed;
-// anything else is stored as the no-challenge case.
 func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
 	f := newFakeOIDC(t)
 	s := f.service(t)
@@ -396,8 +388,6 @@ func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
 	}
 }
 
-// A CLI challenge carried through the OIDC transaction must reach the approval
-// page through the same same-site hop, and only when it is well-formed.
 func TestOIDCInterstitialCarriesOnlyValidCLIChallenge(t *testing.T) {
 	s := testService(t)
 	sum := sha256.Sum256([]byte("terminal-verifier"))

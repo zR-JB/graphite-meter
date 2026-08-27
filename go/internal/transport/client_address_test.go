@@ -44,8 +44,7 @@ func TestResolveClientAddress(t *testing.T) {
 	}
 }
 
-// X-Real-IP is the header the trusted proxy overwrites from its own peer, so it
-// outranks the client-settable headers a failed strip upstream would leave.
+// X-Real-IP is the header the trusted proxy overwrites from its own peer.
 func TestForwardedHeaderPrecedence(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "10.0.0.2:1234"

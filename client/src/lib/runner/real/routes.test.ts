@@ -1,9 +1,7 @@
 import { test, expect } from "bun:test";
 import { ROUTES } from "./backendPure";
 
-// The SAME fixture the Go route test asserts against
-// (go/internal/server/routes_test.go). Resolve it from this file's dir up to the
-// repo root (real → runner → lib → src → client → repo). Bun exposes import.meta.dir.
+// The SAME fixture the Go route test asserts against (go/internal/server/routes_test.go).
 const pinPath = `${import.meta.dir}/../../../../../api/routes.txt`;
 
 function parsePin(text: string): Record<string, string> {

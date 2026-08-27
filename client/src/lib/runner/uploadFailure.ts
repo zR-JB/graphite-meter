@@ -4,8 +4,7 @@ import type { RecoveryCause } from "./contract";
 export type UploadRefusalCode =
   "invalid" | "globalFull" | "clientFull" | "ownerMismatch";
 
-/** Classify only explicit protocol evidence. Missing evidence is a transient
- * connection loss, never permission to rotate an upload id. */
+/* Classify only explicit protocol evidence. */
 export function classifyUploadFailure(
   status?: number,
   code?: string | null,

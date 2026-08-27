@@ -18,8 +18,6 @@ import (
 
 const certPollInterval = time.Minute
 
-// certificateManager fails construction on an invalid certificate, so a bad
-// certificate stops startup. It atomically swaps complete renewals.
 type certificateManager struct {
 	cfg     *config.Config
 	current atomic.Pointer[tls.Certificate]

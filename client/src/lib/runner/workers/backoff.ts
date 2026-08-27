@@ -1,10 +1,6 @@
-/* ============================================================
- * Reconnect backoff for ping-worker.ts and upload-progress-worker.ts.
- * Pure so it is unit-testable.
- * ============================================================ */
+/* Reconnect backoff for ping-worker.ts and upload-progress-worker.ts. */
 
-/** Next reconnect backoff (ms): starts at `minMs` on the first failure (prev
- *  0), then doubles each subsequent failure up to `maxMs`. */
+/* Next reconnect backoff (ms): starts at `minMs` on the first failure (prev 0), then doubles each subsequent. */
 export function nextBackoff(
   prev: number,
   minMs: number,

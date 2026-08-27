@@ -9,8 +9,7 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// loadSchema compiles api/<name>.schema.json, the cross-language contract the
-// Go structs and the golden documents are both pinned to.
+	// loadSchema compiles the cross-language schema used by Go structs and golden documents.
 func loadSchema(t *testing.T, name string) *jsonschema.Schema {
 	t.Helper()
 	raw, err := os.ReadFile("../../../api/" + name + ".schema.json")
@@ -76,10 +75,7 @@ func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 	}
 }
 
-// api/wire.md calls `transport` a required field but keeps a back-compat path
-// for documents written before it existed: a target with no transport reads as
-// the default its list always carried. Dropping the default leaves the field
-// empty, and a client selecting by (baseUrl, transport) matches no target at all.
+// api/wire.md calls `transport` a required field but keeps a back-compat path for documents written before it existed.
 func TestTargetsWithoutATransportKeepTheirLegacyDefault(t *testing.T) {
 	var throughput ThroughputTarget
 	if err := json.Unmarshal([]byte(`{"baseUrl":"https://speed.example:7246","protocol":"http2"}`), &throughput); err != nil {
@@ -124,8 +120,6 @@ func TestTargetJSONUsesStrictNativeV2Decoding(t *testing.T) {
 }
 
 // A latency target's protocol never crosses the wire; it follows the transport.
-// WebTransport is an HTTP/3 extended CONNECT, so reporting http1 for it would
-// mislabel every result the WebTransport ping bus produces.
 func TestLatencyTargetProtocolFollowsItsTransport(t *testing.T) {
 	for transport, want := range map[string]string{
 		TransportWebSocket:    "http1",
@@ -143,9 +137,6 @@ func TestLatencyTargetProtocolFollowsItsTransport(t *testing.T) {
 	}
 }
 
-// TestPreflightGoldenSurvivesARoundTrip pins that decoding restores the
-// client-side route fields json:"-" keeps off the wire, and that re-encoding
-// still satisfies the schema.
 func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 	var pf Preflight
 	data, err := os.ReadFile("../../../api/preflight.golden.json")

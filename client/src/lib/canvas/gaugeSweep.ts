@@ -1,11 +1,8 @@
 // Pure dial mapping and interpolation.
-
 import type { Phase } from "../runner/contract";
-
 export function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
-
 export interface SweepTargetInput {
   phase: Phase;
   /** Current raw throughput (bytes/sec) during a transfer phase. */
@@ -19,12 +16,10 @@ export interface SweepTargetInput {
   /** Metric represented after completion. */
   completedKind: "speed" | "latency";
 }
-
 /** Fixed positions for the phases that carry no measurable value. */
 const PROBE_SWEEP = 0.3;
 const IDLE_SWEEP = 0.1;
 const FAULT_SWEEP = 0.05;
-
 /** The 0-1 sweep fraction the dial eases toward for the given frame's state. */
 export function sweepTarget(s: SweepTargetInput): number {
   const throughput = () => {
@@ -55,7 +50,6 @@ export function sweepTarget(s: SweepTargetInput): number {
       return FAULT_SWEEP;
   }
 }
-
 /** Map a 0-1 sweep fraction to its position (radians) along the dial's arc. */
 export function angleForFraction(
   fraction: number,
@@ -64,7 +58,6 @@ export function angleForFraction(
 ): number {
   return arcStart + arcSweep * clamp01(fraction);
 }
-
 export function interpolateSweep(
   current: number,
   target: number,

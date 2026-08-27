@@ -11,10 +11,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// protocolChoiceLabel names an HTTP version the way every other surface does,
-// so the version row and the path beside it do not spell the same protocol two
-// ways. "auto" is this row's own value and not a version at all: it is what the
-// row holds while the decision is still the transport's to make.
 func protocolChoiceLabel(protocol string) string {
 	if protocol == "auto" {
 		return "Automatic"
@@ -42,8 +38,6 @@ func stageSummary(s goclient.StageSet) string {
 	return strings.Join(parts, ", ")
 }
 
-// runOrder previews the run screen's timeline: the same stages, in the same
-// order, with the window each one measures for.
 func runOrder(cfg goclient.Config) []string {
 	stages := plannedStages(cfg)
 	if len(stages) == 0 {
@@ -56,16 +50,11 @@ func runOrder(cfg goclient.Config) []string {
 	return lines
 }
 
-// labelColumn is the width every menu row's label holds, so the values beside
-// them line up down the panel. fieldColumn is the same idea for the readings
-// on the run screen, whose labels are single words.
 const (
 	labelColumn = 18
 	fieldColumn = 11
 )
 
-// field is one labelled reading. The value carries its own styling, so the
-// label is padded before it is rendered rather than after.
 func field(label, value string) string {
 	return labelStyle.Render(pad(label, fieldColumn)) + value
 }
@@ -78,16 +67,10 @@ func valueLine(label, value, note string) string {
 	return fmt.Sprintf("%-*s %s  %s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(note))
 }
 
-// inertValueLine is valueLine for a setting the rest of the configuration
-// ignores: the value drops to the note's tone, so the row reads as inactive
-// without moving or disappearing.
 func inertValueLine(label, value, note string) string {
 	return fmt.Sprintf("%s %s  %s", mutedStyle.Render(pad(label, labelColumn)), mutedStyle.Render(value), mutedStyle.Render(note))
 }
 
-// pathRow is a path selector line: what the configured path is, where in the
-// cycle enter walks it sits, and which origin it points at. Every description
-// comes from discovery, so the row stands still while a connection check runs.
 func pathRow(label, target, transport string, choices []pathChoice) string {
 	value, note, pos := unofferedPathLabel(target, transport), "", ""
 	for i, c := range choices {
@@ -104,10 +87,6 @@ func pathRow(label, target, transport string, choices []pathChoice) string {
 	return row
 }
 
-// unofferedPathLabel names a pair no stop of the cycle carries: a flag
-// combination discovery has not confirmed, or a selection made before the
-// origin left discovery. It is spelled out rather than blanked, because it is
-// still what the next check will be asked for.
 func unofferedPathLabel(target, transport string) string {
 	if target == "auto" && transport == "auto" {
 		return "Automatic"
@@ -126,9 +105,6 @@ func unofferedPathLabel(target, transport string) string {
 	return mechanism + " · " + target
 }
 
-// shortOrigin names a target's origin against the server the client is talking
-// to. Native listeners differ from that server by port alone, so the port on
-// its own identifies them; anything else is named by host and port.
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
@@ -140,8 +116,6 @@ func shortOrigin(base, target string) string {
 	return u.Host
 }
 
-// pad widens s to at least w cells. Styling is applied after padding, so the
-// padding is counted in cells rather than in escape bytes.
 func pad(s string, w int) string {
 	if len(s) >= w {
 		return s
@@ -156,11 +130,6 @@ func checkbox(on bool) string {
 	return mutedStyle.Render("○")
 }
 
-// timingLabel names the Timing row at index row, in row order. The section is
-// already called Timing and every row but the last is a stage window, so the
-// stages carry their own names rather than repeating "duration" five times —
-// which is also what keeps a row inside the label column shared with the
-// Connections rows beside it.
 func timingLabel(row int) string {
 	switch row {
 	case 0:
@@ -180,14 +149,9 @@ func timingLabel(row int) string {
 	}
 }
 
-// eighths are the partial-cell fills between an empty and a full block. A
-// bar's tip moves in sub-cell steps.
+// eighths are the partial-cell fills between an empty and a full block. A bar's tip moves in sub-cell steps.
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
-// renderBar fills width cells with value/scale. Callers pass the largest value
-// in view as scale, so every bar on a screen compares against one denominator.
-// The tip renders at eighth-cell resolution. lead brightens the last filled
-// cell, which makes a live bar's motion legible.
 func renderBar(value, scale float64, width int, lead bool) string {
 	cells := 0.0
 	if scale > 0 {
@@ -216,8 +180,6 @@ func rateLine(name string, rate, scale float64, w int) string {
 	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
 }
 
-// latencyLine holds the last round trip on screen across lost pings. A streak
-// annotates the value beside it, and three in a row reads as a timeout.
 func latencyLine(s goclient.LatencySample, lostStreak int) string {
 	if s.RTT <= 0 {
 		if lostStreak > 0 {
@@ -274,8 +236,7 @@ func fmtBytes(n uint64) string {
 	return fmt.Sprintf("%.2f %s", v, units[i])
 }
 
-// fmtClock renders a running clock: tenths under a minute, whole seconds
-// above, where tenths only flicker.
+// fmtClock renders a running clock: tenths under a minute, whole seconds above, where tenths only flicker.
 func fmtClock(d time.Duration) string {
 	d = max(d, 0)
 	if d < time.Minute {

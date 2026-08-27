@@ -45,8 +45,7 @@ func TestPasswordLoginWrongPassword(t *testing.T) {
 
 func TestPasswordLoginThrottled(t *testing.T) {
 	s := testService(t)
-	// Spend the per-address budget, then the next attempt is refused without
-	// ever reaching the hash.
+	// Spend the per-address budget, then the next attempt is refused without ever reaching the hash.
 	for i := range maxAddressAttempts {
 		if !s.allowAttempt(passwordPost(s, "secret")) {
 			t.Fatalf("attempt %d refused early", i)
@@ -59,8 +58,7 @@ func TestPasswordLoginThrottled(t *testing.T) {
 
 func TestPasswordLoginVerifierBusy(t *testing.T) {
 	s := testService(t)
-	// Saturate the Argon2 concurrency gate so verification is refused rather
-	// than queued.
+	// Saturate the Argon2 concurrency gate so verification is refused rather than queued.
 	for range cap(s.argon) {
 		s.argon <- struct{}{}
 	}
@@ -79,8 +77,7 @@ func TestPasswordLoginWrongModeIsNotFound(t *testing.T) {
 }
 
 func TestOIDCStartProviderNotReady(t *testing.T) {
-	// In password mode the OIDC provider is absent, so a start request fails
-	// closed with the provider-unavailable notice.
+	// In password mode the OIDC provider is absent, so a start request fails closed with the provider-unavailable notice.
 	s := testService(t)
 	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=x"))
 	r.Host = "meter.example"
@@ -96,8 +93,6 @@ func TestOIDCStartProviderNotReady(t *testing.T) {
 }
 
 func TestOIDCStartRejectsBadCSRF(t *testing.T) {
-	// A ready provider still refuses a start request whose double-submit CSRF
-	// token has no matching login cookie, redirecting with the stale notice.
 	s := newFakeOIDC(t).service(t)
 	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=nope"))
 	r.Host = "meter.example"
