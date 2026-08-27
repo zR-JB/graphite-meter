@@ -1,9 +1,5 @@
-// Vite replaces these tokens at build time. Use raw __GM_*__ constants for
-// tree-shaken branches; BUILD is for ordinary runtime reads.
+// Vite replaces these tokens at build time.
 export const BUILD = {
-  defaultEngine: __GM_DEFAULT_ENGINE__,
-  allowDummy: __GM_ALLOW_DUMMY__,
-  devTools: __GM_DEV_TOOLS__,
   profile: __GM_BUILD_PROFILE__,
   version: __GM_RELEASE_VERSION__,
   revision: __GM_SOURCE_REVISION__,

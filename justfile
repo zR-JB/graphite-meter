@@ -25,14 +25,12 @@ set shell := ["pwsh", "-NoProfile", "-Command"]
 # to the underlying shell. This eliminates inline "KEY=VALUE command" breaking on Windows.
 set export
 
-# --- Production build knobs (override via env or `just prod label=… engine=…`) ---
+# --- Production build knobs (override via environment variables) ---
 # These feed the client's Vite `define` (see client/vite.config.ts) and the
 # server's version ldflag. `client-build-prod` / `prod` / `server-build-prod`
-# all build a real-only, dev-tooling-free bundle by default; flip the knobs to
-# produce a configurable multi-engine build instead.
-engine := env("GM_CLIENT_ENGINE", "real")
+# all build a real-only bundle by default; flip the dummy knob to produce a
+# configurable multi-engine build instead.
 allow_dummy := env("GM_CLIENT_ALLOW_DUMMY", "0")
-dev_tools := env("GM_CLIENT_DEV_TOOLS", "0")
 
 # Untagged builds use the source revision as identity; only release automation
 # supplies VERSION.
@@ -196,7 +194,7 @@ client-build-dev:
 # Build the client with the production profile.
 [group('build')]
 client-build-prod:
-    bun -e "process.env.GM_CLIENT_ENGINE='{{ engine }}'; process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_DEV_TOOLS='{{ dev_tools }}'; process.env.GM_CLIENT_BUILD_PROFILE='prod'; process.env.GM_CLIENT_REVISION='{{ revision }}'; const version='{{ release_version }}'; if (version) process.env.VERSION=version; else delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_BUILD_PROFILE='prod'; process.env.GM_CLIENT_REVISION='{{ revision }}'; const version='{{ release_version }}'; if (version) process.env.VERSION=version; else delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
 
 # Discover the production browser closure in a temporary Vite output tree and
 # run the single offline legal generator. The scan build always consumes the
@@ -561,8 +559,8 @@ goclient-run:
 dev: client-build-dev _embed-client
     cd go && go run ./cmd/graphite-meter
 
-# Override the GM_CLIENT_* knobs inline exactly like client-build-prod, e.g.
-# `just prod allow_dummy=1 dev_tools=1`. For a persisted binary
+# Override the GM_CLIENT_ALLOW_DUMMY knob inline exactly like client-build-prod, e.g.
+# `just prod allow_dummy=1`. For a persisted binary
 # instead of a live run, use `server-build-prod`.
 # Prod: build + embed the prod-profile client, then `go run` the version-stamped server on :7246.
 # Build the production client and run the embedded server.

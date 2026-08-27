@@ -1,196 +1,67 @@
-// Deterministic development sample source.
+/* Small deterministic backend used only by the browser-test build. */
 
 import type {
-  RunnerConfig,
-  PingCadence,
-  RunnerAnomaly,
-  InfraInfo,
   EngineInfo,
-  FlowDirection,
+  InfraInfo,
   PhaseActivity,
+  RunnerConfig,
+  TransportDiscovery,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
-import { needsPings, ROUTES } from "./real/backendPure";
-import { BUILD } from "../buildenv";
-import { singleLatencyBucket } from "./latencyBuckets";
-import { fixedPingIntervalMs } from "./pingCadence";
+import { ROUTES } from "./real/backendPure";
 
-export interface DummyOptions {
-  seed?: number;
-  /** Inject anomalies at fractions of each phase: */
-  anomalies?: {
-    packetDropAt?: number[]; // e.g. [0.4, 0.7] → drop bursts
-    latencySpikeAt?: number[]; // e.g. [0.5] → 3× rtt spike
-    throughputDipAt?: number[]; // e.g. [0.6] → 400ms 40% drop
-  };
-  /** Realistic target profiles: */
-  profile?: "fiber" | "cable" | "lte" | "satellite" | "throttled";
-}
+const DOWN_RATE = 40_000_000;
+const UP_RATE = 8_000_000;
+const RTT_MS = 16;
+const TICK_MS = 60;
+const DUMMY_FETCH_ID = "dummy-fetch";
+const DUMMY_WEBTRANSPORT_ID = "dummy-webtransport";
+const DUMMY_DATAGRAM_ID = "dummy-datagram";
+const DUMMY_WEBSOCKET_ID = "dummy-websocket";
 
-/* ---------- Profile table: mean throughput + latency character ---------- */
-interface ProfileSpec {
-  downBytesPerSec: number;
-  upBytesPerSec: number;
-  idleRttMs: number;
-  /** RTT increase under load: drives the bufferbloat grade. */
-  loadedDeltaMs: number;
-  /** Baseline loss probability per ping. */
-  lossBase: number;
-  /** Relative std of the plateau (throughput and idle RTT): how steady the link
-   *  is. The adaptive stability score reads it, so steady links (fiber/cable)
-   *  finish early while jittery ones (lte/satellite) use the full window. */
-  jitter: number;
-}
-
-// Throughput is bytes/sec (browser-native). Link rates are conventionally
-// quoted in bits/sec, so the trailing comment notes the familiar bit-rate.
-const PROFILES: Record<NonNullable<DummyOptions["profile"]>, ProfileSpec> = {
-  fiber: {
-    downBytesPerSec: 117.5e6,
-    upBytesPerSec: 110e6,
-    idleRttMs: 6,
-    loadedDeltaMs: 4,
-    lossBase: 0.0,
-    jitter: 0.04,
-  }, // ~940/880 Mbit/s
-  cable: {
-    downBytesPerSec: 40e6,
-    upBytesPerSec: 2.75e6,
-    idleRttMs: 16,
-    loadedDeltaMs: 34,
-    lossBase: 0.002,
-    jitter: 0.05,
-  }, // ~320/22 Mbit/s
-  lte: {
-    downBytesPerSec: 8e6,
-    upBytesPerSec: 3e6,
-    idleRttMs: 38,
-    loadedDeltaMs: 62,
-    lossBase: 0.01,
-    jitter: 0.09,
-  }, // ~64/24 Mbit/s
-  satellite: {
-    downBytesPerSec: 13.75e6,
-    upBytesPerSec: 1.75e6,
-    idleRttMs: 600,
-    loadedDeltaMs: 180,
-    lossBase: 0.015,
-    jitter: 0.11,
-  }, // ~110/14 Mbit/s
-  throttled: {
-    downBytesPerSec: 1.1875e6,
-    upBytesPerSec: 0.5625e6,
-    idleRttMs: 28,
-    loadedDeltaMs: 48,
-    lossBase: 0.005,
-    jitter: 0.05,
-  }, // ~9.5/4.5 Mbit/s
-};
-
-/** The dummy has no request/reply transport; one core tick approximates the
- * reply-driven worker's UI-visible sample stream. Fixed pacing stays shared
- * with the real engine. */
-function pingIntervalMs(cadence: PingCadence): number {
-  return fixedPingIntervalMs(cadence) ?? 20;
-}
-
-const THROUGHPUT_CADENCE_MS = 100;
-
-export interface DummySampleContext {
-  activity: PhaseActivity;
-  measuring: boolean;
-  elapsed: number;
-  segStart: number;
-  segEnd: number;
-  realNow: number;
-}
-
-/* ---------- Live anomaly defaults ----------
- * Defaults for RUNTIME anomalies injected mid-run via `injectAnomaly`. Each
- * occupies an absolute [start,end) window in ms since run start, anchored at
- * the instant the Developer button fires. Construction-time
- * `DummyOptions.anomalies` fire at phase fractions instead. */
-const LIVE_ANOMALY_DEFAULTS = {
-  latencySpike: { magnitude: 3, durationMs: 600 }, // rtt ×3 for 600ms
-  packetLoss: { magnitude: 0.6, durationMs: 900 }, // 60% loss probability
-  throughputDrop: { magnitude: 0.4, durationMs: 600 }, // bytesPerSec −40%
-  connectionDrop: { durationMs: 4000 }, // full dead-air drop, then reconnect
-} as const;
-
-/** A scheduled live anomaly with an absolute window on the run timeline. */
-interface LiveAnomaly {
-  kind: RunnerAnomaly["kind"];
-  start: number; // ms since run start
-  end: number;
-  magnitude: number;
-}
-
-/* ---------- Deterministic RNG (mulberry32 + Box-Muller) ---------- */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
+// Browser-only stable samples exercise RunnerCore without a running server or transport implementation.
 export class DummyBackend implements RunnerBackend {
-  #opts: Required<Pick<DummyOptions, "profile">> & DummyOptions;
-  #spec: ProfileSpec;
-  #rand: () => number;
   #host: CoreHost | null = null;
-
-  // Wall-time gates keep synthetic callback cadence independent of run timing.
-  #lastThroughputAt = -Infinity;
-  #lastPingAt = -Infinity;
-  #sampleTimer: ReturnType<typeof setTimeout> | null = null;
   #activity: PhaseActivity | null = null;
-  #segmentStart = 0;
-
-  // Live, dev-injected anomalies. Each is an absolute [start,end) window
-  // on the effective timeline; the synthesis hooks read this list.
-  #liveAnomalies: LiveAnomaly[] = [];
-
-  // A live connection-drop window in wall time. It contributes zero-byte
-  // duration samples without proving delivery, then resumes at the window end.
-  #dropEndReal = 0; // monotonic time the drop lifts at, or 0 when not dropped
-  #dropLastReal = 0;
-
-  constructor(opts: DummyOptions = {}) {
-    this.#opts = { profile: opts.profile ?? "fiber", ...opts };
-    this.#spec = PROFILES[this.#opts.profile];
-    this.#rand = mulberry32(opts.seed ?? 0x9e3779b9);
-  }
+  #timer: ReturnType<typeof setTimeout> | null = null;
 
   attach(host: CoreHost): void {
     this.#host = host;
   }
 
-  /* ---------- Gaussian noise via Box-Muller ---------- */
-  #gauss(): number {
-    const u = Math.max(1e-9, this.#rand());
-    const v = this.#rand();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  describe(): EngineInfo {
+    return {
+      name: "dummy",
+      version: "browser-fixture",
+      latencyTransports: ["webtransport", "websocket"],
+      throughputTransports: [
+        "fetch-stream",
+        "webtransport",
+        "webtransport-datagram",
+      ],
+    };
   }
 
-  /* ================= PROBE ================= */
   async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
     signal?.throwIfAborted();
-    const pageOrigin =
-      typeof location === "undefined" ? "http://localhost" : location.origin;
-    const secure = pageOrigin.startsWith("https:");
-    const throughputId = secure ? "http1-tls" : "http1-clear";
-    const latencyId = secure ? "ws-http1-tls" : "ws-http1-clear";
-    // The page origin advertises every throughput mechanism a real one can, so
-    // the settings panel and the endpoint drawer render their whole surface
-    // against the dummy. Nothing here dials: the samples are synthetic either
-    // way, and the ids exist so a selection has something to name.
-    const wtId = `${throughputId}::wt`;
-    const wtDatagramId = `${throughputId}::wtdg`;
-    const wtRoutes = {
+    const origin =
+      typeof location === "undefined" ? "http://dummy.test" : location.origin;
+    const secure = origin.startsWith("https:");
+    const fetchTarget = {
+      id: DUMMY_FETCH_ID,
+      origin,
+      transport: "fetch-stream" as const,
+      protocol: "negotiated" as const,
+      tls: secure,
+      routes: {
+        probe: ROUTES.probe,
+        download: ROUTES.download,
+        upload: ROUTES.upload,
+        uploadSession: ROUTES.uploadSession,
+        uploadProgress: ROUTES.uploadProgress,
+      },
+    };
+    const webTransportRoutes = {
       probe: ROUTES.probe,
       wtSession: ROUTES.wtSession,
       wtDownload: ROUTES.wtDownload,
@@ -198,405 +69,169 @@ export class DummyBackend implements RunnerBackend {
       uploadSession: ROUTES.uploadSession,
       uploadProgress: ROUTES.uploadProgress,
     };
-    // A probe reports the path it committed to, and the dummy commits to
-    // whatever was selected: reporting the fetch lane under a session selection
-    // would deny the card the user chose.
-    const session =
-      config.transports.throughputTarget === wtId
-        ? ({ id: wtId, transport: "webtransport" } as const)
-        : config.transports.throughputTarget === wtDatagramId
-          ? ({ id: wtDatagramId, transport: "webtransport-datagram" } as const)
-          : null;
-    this.#host?.emit({
-      type: "transportDiscovery",
-      discovery: {
-        generation: "dummy",
-        engineVersion: "dummy-1.0.0",
-        server: {
-          name: "Graphite Edge — Frankfurt",
-          location: "Frankfurt, DE",
-        },
-        fetchedAt: Date.now(),
-        pageOrigin,
-        pageSecure: secure,
-        pageProtocol: "http/1.1",
-        throughput: {
-          [throughputId]: {
-            state: "advertised",
-            targets: [
-              {
-                id: throughputId,
-                origin: pageOrigin,
-                transport: "fetch-stream",
-                protocol: "http1",
-                tls: secure,
-                routes: {
-                  probe: ROUTES.probe,
-                  download: ROUTES.download,
-                  upload: ROUTES.upload,
-                  uploadSession: ROUTES.uploadSession,
-                  uploadProgress: ROUTES.uploadProgress,
-                },
-              },
-              {
-                id: wtId,
-                origin: pageOrigin,
-                transport: "webtransport",
-                protocol: "http3",
-                tls: secure,
-                routes: wtRoutes,
-              },
-              {
-                id: wtDatagramId,
-                origin: pageOrigin,
-                transport: "webtransport-datagram",
-                protocol: "http3",
-                tls: secure,
-                routes: wtRoutes,
-              },
-            ],
-          },
-        },
-        latency: {
-          [latencyId]: {
-            state: "advertised",
-            targets: [
-              {
-                id: latencyId,
-                origin: pageOrigin,
-                transport: "websocket",
-                protocol: "http1",
-                tls: secure,
-                routes: { probe: ROUTES.probe, ping: ROUTES.ping },
-              },
-            ],
-          },
+    const webTransportTarget = {
+      id: DUMMY_WEBTRANSPORT_ID,
+      origin,
+      transport: "webtransport" as const,
+      protocol: "http3" as const,
+      tls: secure,
+      routes: webTransportRoutes,
+    };
+    const datagramTarget = {
+      id: DUMMY_DATAGRAM_ID,
+      origin,
+      transport: "webtransport-datagram" as const,
+      protocol: "http3" as const,
+      tls: secure,
+      routes: webTransportRoutes,
+    };
+    const websocketTarget = {
+      id: DUMMY_WEBSOCKET_ID,
+      origin,
+      transport: "websocket" as const,
+      protocol: "http1" as const,
+      tls: secure,
+      routes: { probe: ROUTES.probe, ping: ROUTES.ping },
+    };
+    const discovery: TransportDiscovery = {
+      generation: "dummy-browser",
+      engineVersion: "browser-fixture",
+      server: { name: "Graphite Meter browser fixture", location: "test" },
+      fetchedAt: Date.now(),
+      pageOrigin: origin,
+      pageSecure: origin.startsWith("https:"),
+      throughput: {
+        [origin]: {
+          state: "advertised",
+          targets: [fetchTarget, webTransportTarget, datagramTarget],
         },
       },
-    });
-    const interval = 90;
-    const pings = 4;
-    // Emit a few pre-test pings so the sparkline has something to show. These
-    // are pre-run telemetry, emitted directly (not accumulated into a result).
-    for (let i = 0; i < pings; i++) {
-      await new Promise((r) => setTimeout(r, interval));
-      const rtt = this.#spec.idleRttMs * (1 + this.#gauss() * 0.08);
-      this.#host?.emit({
-        type: "latency",
-        // Pre-test idle pings: phase "idle" (negative t), so the LatencyProfile's
-        // idle lane (phase==="latency") excludes them while the sparkline shows them.
-        sample: singleLatencyBucket(-interval * (pings - i), rtt, false),
-      });
-    }
-
-    const octet = () => Math.floor(this.#rand() * 254) + 1;
+      latency: {
+        [origin]: {
+          state: "advertised",
+          targets: [
+            websocketTarget,
+            {
+              id: DUMMY_WEBTRANSPORT_ID,
+              origin,
+              transport: "webtransport" as const,
+              protocol: "http3" as const,
+              tls: secure,
+              routes: {
+                probe: ROUTES.probe,
+                wtSession: ROUTES.wtSession,
+                wtPing: ROUTES.wtPing,
+              },
+            },
+          ],
+        },
+      },
+    };
+    this.#host?.emit({ type: "transportDiscovery", discovery });
+    const throughputSelection = config.transports.throughputTarget;
+    const throughputTarget = [
+      DUMMY_FETCH_ID,
+      DUMMY_WEBTRANSPORT_ID,
+      DUMMY_DATAGRAM_ID,
+    ].includes(throughputSelection)
+      ? throughputSelection
+      : DUMMY_FETCH_ID;
+    const throughput = discovery.throughput[origin].targets.find(
+      (target) => target.id === throughputTarget,
+    )!;
+    const latencySelection = config.transports.latencyTarget;
+    const latencyTarget =
+      latencySelection === DUMMY_WEBTRANSPORT_ID ||
+      (latencySelection === "auto" && typeof WebTransport !== "undefined")
+        ? DUMMY_WEBTRANSPORT_ID
+        : DUMMY_WEBSOCKET_ID;
+    const latency = discovery.latency[origin].targets.find(
+      (target) => target.id === latencyTarget,
+    )!;
     return {
-      clientIp: `${octet()}.${octet()}.${octet()}.${octet()}`,
+      clientIp: "127.0.0.1",
       clientIpVersion: 4,
       clientIpSource: "socket",
-      server: {
-        name: "Graphite Edge — Frankfurt",
-        location: "Frankfurt, DE",
-      },
-      preTestPingMs: this.#spec.idleRttMs,
-      engineVersion: "dummy-1.0.0",
-      discoveryGeneration: "dummy",
-      protocolNegotiated: "http/1.1",
-      selectedThroughputTarget: session?.id ?? throughputId,
-      selectedThroughputProtocol: session ? "http3" : "http1",
-      selectedLatencyTarget: latencyId,
-      selectedThroughputTransport: session?.transport ?? "fetch-stream",
-      selectedLatencyTransport: "websocket",
-      latencyProtocolNegotiated: "http/1.1",
+      server: discovery.server,
+      preTestPingMs: RTT_MS,
+      engineVersion: discovery.engineVersion,
+      discoveryGeneration: discovery.generation,
+      protocolNegotiated: throughput.protocol === "http3" ? "h3" : "http/1.1",
+      selectedThroughputTarget: throughputTarget,
+      selectedThroughputProtocol: throughput.protocol,
+      selectedThroughputTransport: throughput.transport,
+      selectedLatencyTarget: latencyTarget,
+      selectedLatencyTransport: latency.transport,
+      latencyProtocolNegotiated:
+        latency.protocol === "http3" ? "h3" : "http/1.1",
       firstHopProtocol: "http/1.1",
-      firstHopSecure: secure,
+      firstHopSecure: discovery.pageSecure,
+      serverLoad: { active: 0, max: 1 },
     };
   }
 
-  /** Synthetic capabilities: the dummy "supports" every per-role transport,
-   *  exercising the full capability surface the UI renders. Everything here is
-   *  simulated. WebSocket appears only under latency: it is the ping bus, never
-   *  a byte-transfer lane. */
-  describe(): EngineInfo {
-    return {
-      name: "dummy",
-      version: BUILD.clientVersion,
-      latencyTransports: ["webtransport", "websocket"],
-      throughputTransports: ["webtransport", "fetch-stream"],
-    };
-  }
+  onRunStart(): void {}
 
-  /* ================= LIFECYCLE (core → backend) ================= */
-  onRunStart(_config: RunnerConfig): void {
-    this.#stopSamples();
-    this.#lastThroughputAt = -Infinity;
-    this.#lastPingAt = -Infinity;
-    this.#liveAnomalies = [];
-    this.#dropEndReal = 0;
-  }
-
-  onStageBegin(_activity: PhaseActivity): void {
-    this.#stopSamples();
+  onStageBegin(activity: PhaseActivity): void {
+    this.#activity = activity;
+    this.#stop();
   }
 
   onStageMeasure(activity: PhaseActivity): void {
-    const host = this.#host;
-    const cfg = host?.config;
-    if (!host || !cfg) return;
-    this.#stopSamples();
     this.#activity = activity;
-    this.#segmentStart = host.elapsed;
-    this.#scheduleSample(0);
+    this.#stop();
+    this.#scheduleSample();
   }
 
-  onStageEnd(_activity: PhaseActivity): void {
-    this.#stopSamples();
-  }
-
-  onComplete(): void {
-    this.#stopSamples();
-  }
-
-  onAbort(): void {
-    this.#stopSamples();
-  }
-
-  /** Fallback idle RTT for an empty-sample run: the profile's idle ping. */
-  idleHintMs(): number {
-    return this.#spec.idleRttMs;
-  }
-
-  sample(ctx: DummySampleContext): void {
-    const cfg = this.#host?.config;
-    if (!cfg) return;
-    const { activity, measuring, elapsed, segStart, segEnd, realNow } = ctx;
-
-    // Account dead air as zero-byte wall time without falsely resuming delivery.
-    if (this.#dropEndReal > 0) {
-      const seconds = Math.max(0, realNow - this.#dropLastReal) / 1000;
-      this.#dropLastReal = realNow;
-      for (const dir of activity.transfer)
-        this.#host!.ingestThroughput(dir, 0, 0, seconds);
-      if (realNow < this.#dropEndReal) return;
-      this.#dropEndReal = 0;
-      this.#dropLastReal = 0;
-      this.#host!.resume();
-      // Snap the sample cadence gates to realNow so resume dumps no backlog.
-      this.#lastThroughputAt = realNow;
-      this.#lastPingAt = realNow;
-    }
-
-    // The warmup window primes real connections; the dummy has none, so it emits
-    // nothing until measurement begins, like a real backend at onStageMeasure.
-    if (!measuring) return;
-
-    // Throughput on the stage's transfer lanes. Cadence gates on real time so
-    // live schedule edits cannot bunch callbacks together.
-    if (
-      activity.transfer.length > 0 &&
-      realNow - this.#lastThroughputAt >= THROUGHPUT_CADENCE_MS
-    ) {
-      this.#lastThroughputAt = realNow;
-      for (const dir of activity.transfer) {
-        this.#synthThroughput(dir, elapsed, segStart, segEnd);
-      }
-    }
-
-    // Idle-stage pings, or loaded (bufferbloat) pings during a transfer stage.
-    // `activity.loadedLatency` folds in the skip rule, resolved by the scheduler.
-    const pingInterval = pingIntervalMs(
-      activity.stage === "latency" ? cfg.pingCadence : cfg.loadedPingCadence,
-    );
-    if (needsPings(activity) && realNow - this.#lastPingAt >= pingInterval) {
-      this.#lastPingAt = realNow;
-      this.#synthLatency(activity, elapsed, segStart, segEnd);
-    }
-  }
-
-  #scheduleSample(delay: number): void {
-    this.#sampleTimer = setTimeout(() => {
-      this.#sampleTimer = null;
-      const host = this.#host;
-      const activity = this.#activity;
-      const cfg = host?.config;
-      if (!host || !activity || !cfg || host.phase !== activity.stage) return;
-      const now = performance.now();
-      this.sample({
-        activity,
-        measuring: true,
-        elapsed: host.elapsed,
-        segStart: this.#segmentStart,
-        segEnd: this.#segmentStart + cfg.duration[`${activity.stage}Ms`],
-        realNow: now,
-      });
-      const pingActive = needsPings(activity);
-      const pingInterval = pingActive
-        ? pingIntervalMs(
-            activity.stage === "latency"
-              ? cfg.pingCadence
-              : cfg.loadedPingCadence,
-          )
-        : Infinity;
-      const next = Math.min(
-        activity.transfer.length
-          ? this.#lastThroughputAt + THROUGHPUT_CADENCE_MS
-          : Infinity,
-        pingActive ? this.#lastPingAt + pingInterval : Infinity,
-        this.#dropEndReal > 0
-          ? Math.min(this.#dropEndReal, now + 100)
-          : Infinity,
-      );
-      if (Number.isFinite(next)) this.#scheduleSample(Math.max(1, next - now));
-    }, delay);
-  }
-
-  #stopSamples(): void {
-    if (this.#sampleTimer) clearTimeout(this.#sampleTimer);
-    this.#sampleTimer = null;
+  onStageEnd(): void {
+    this.#stop();
     this.#activity = null;
   }
 
-  /* ---------- Throughput sample synthesis ---------- */
-  // `dir` (not the phase) picks the rate, so the bidirectional phase synthesizes
-  // a down lane and an up lane from the same profile per tick.
-  #synthThroughput(
-    dir: FlowDirection,
-    elapsed: number,
-    segStart: number,
-    segEnd: number,
-  ) {
-    const tp = elapsed - segStart; // ms into this phase
-    const phaseLen = segEnd - segStart;
-    const mean =
-      dir === "down" ? this.#spec.downBytesPerSec : this.#spec.upBytesPerSec;
-
-    // Logistic ramp-up over the first ~1.2s.
-    const ramp = 1 / (1 + Math.exp(-(tp - 600) / 150));
-
-    // Noisy plateau, Gaussian noise scaled by the profile's steadiness.
-    let bytesPerSec = mean * ramp * (1 + this.#gauss() * this.#spec.jitter);
-
-    // Throughput dip anomaly: 400ms 40% drop centred on each fraction.
-    for (const f of this.#opts.anomalies?.throughputDipAt ?? []) {
-      const center = f * phaseLen;
-      if (tp >= center && tp < center + 400) bytesPerSec *= 0.6;
-    }
-
-    // Live throughput-drop anomaly: cut bytesPerSec by `magnitude` in-window.
-    const drop = this.#activeAnomaly("throughput-drop", elapsed);
-    if (drop) bytesPerSec *= Math.max(0, 1 - drop.magnitude);
-
-    bytesPerSec = Math.max(0, bytesPerSec);
-
-    // Bytes over the cadence window (rate is bytes/sec). The core accumulates
-    // them and tracks the total; direction travels with the sample.
-    const bytes = bytesPerSec * (THROUGHPUT_CADENCE_MS / 1000);
-    this.#host!.ingestThroughput(
-      dir,
-      bytesPerSec,
-      bytes,
-      THROUGHPUT_CADENCE_MS / 1000,
-    );
+  onComplete(): void {
+    this.#stop();
   }
 
-  /* ---------- Latency sample synthesis ---------- */
-  // `activity.transfer` (not the phase) decides under-load: a stage that moves
-  // bytes produces loaded (bufferbloat) pings; the latency stage produces idle.
-  #synthLatency(
-    activity: PhaseActivity,
-    elapsed: number,
-    segStart: number,
-    segEnd: number,
-  ) {
-    const tp = elapsed - segStart;
-    const phaseLen = segEnd - segStart;
-    const frac = tp / phaseLen;
-    const underLoad = activity.transfer.length > 0;
-
-    let rtt = this.#spec.idleRttMs;
-    if (underLoad) {
-      // Under-load latency rises toward the profile's loaded delta.
-      const loadRamp = 1 / (1 + Math.exp(-(tp - 500) / 200));
-      rtt += this.#spec.loadedDeltaMs * loadRamp;
-    }
-    rtt *= 1 + this.#gauss() * this.#spec.jitter; // jitter scaled by steadiness
-
-    // Latency spike anomaly: 3× RTT near each fraction.
-    for (const f of this.#opts.anomalies?.latencySpikeAt ?? []) {
-      if (Math.abs(frac - f) < 0.02) rtt *= 3;
-    }
-
-    // Live latency-spike anomaly: scale rtt by `magnitude` in-window.
-    const spike = this.#activeAnomaly("latency-spike", elapsed);
-    if (spike) rtt *= spike.magnitude;
-
-    // Packet loss: baseline + burst windows.
-    let lossProb = this.#spec.lossBase;
-    for (const f of this.#opts.anomalies?.packetDropAt ?? []) {
-      if (Math.abs(frac - f) < 0.03) lossProb = 0.6;
-    }
-    // Live packet-loss anomaly: raise loss probability in-window.
-    const loss = this.#activeAnomaly("packet-loss", elapsed);
-    if (loss) lossProb = Math.max(lossProb, loss.magnitude);
-    const lost = this.#rand() < lossProb;
-
-    this.#host!.ingestLatency(
-      { rttMs: rtt, lost, observedAtMs: performance.now() },
-      underLoad,
-    );
+  onAbort(): void {
+    this.#stop();
   }
 
-  /* ================= LIVE ANOMALY INJECTION ================= */
-  /**
-   * Fire a dev-only anomaly into the in-flight run. It opens an absolute window
-   * starting at the current elapsed and is consumed by the synthesis hooks.
-   * No-op when not running (no host config), so the Developer panel's disabled
-   * state mirrors `isRunning`.
-   */
-  injectAnomaly(a: RunnerAnomaly): void {
+  idleHintMs(): number {
+    return RTT_MS;
+  }
+
+  #scheduleSample(): void {
+    this.#timer = setTimeout(() => {
+      this.#timer = null;
+      this.#sample();
+      if (this.#activity) this.#scheduleSample();
+    }, TICK_MS);
+  }
+
+  #sample(): void {
+    const activity = this.#activity;
     const host = this.#host;
-    if (!host || !host.config || host.phase === "idle") return;
-
-    // Connection drops use wall time so schedule edits cannot shorten them.
-    if (a.kind === "connection-drop") {
-      const durationMs =
-        a.durationMs ?? LIVE_ANOMALY_DEFAULTS.connectionDrop.durationMs;
-      this.#dropLastReal = performance.now();
-      this.#dropEndReal = this.#dropLastReal + durationMs;
-      host.stall({ reason: "connection-lost", detail: "injected drop" });
-      return;
+    if (!activity || !host) return;
+    if (activity.transfer.length) {
+      for (const direction of activity.transfer) {
+        const rate = direction === "down" ? DOWN_RATE : UP_RATE;
+        host.ingestThroughput(
+          direction,
+          rate,
+          rate * (TICK_MS / 1000),
+          TICK_MS / 1000,
+        );
+      }
     }
-
-    // Anchor the window at the core's current run clock: the same absolute
-    // elapsed the synthesis hooks match anomalies against.
-    const elapsed = host.elapsed;
-    const defaults =
-      a.kind === "latency-spike"
-        ? LIVE_ANOMALY_DEFAULTS.latencySpike
-        : a.kind === "packet-loss"
-          ? LIVE_ANOMALY_DEFAULTS.packetLoss
-          : LIVE_ANOMALY_DEFAULTS.throughputDrop;
-    const durationMs = a.durationMs ?? defaults.durationMs;
-    this.#liveAnomalies.push({
-      kind: a.kind,
-      start: elapsed,
-      end: elapsed + durationMs,
-      magnitude: a.magnitude ?? defaults.magnitude,
-    });
+    if (!activity.transfer.length || activity.loadedLatency)
+      host.ingestLatency(
+        { rttMs: RTT_MS, lost: false, observedAtMs: performance.now() },
+        activity.loadedLatency,
+      );
   }
 
-  /** The currently-active live anomaly of a given kind, if any. Also prunes
-   *  windows that have fully elapsed so the list stays bounded. */
-  #activeAnomaly(
-    kind: RunnerAnomaly["kind"],
-    elapsed: number,
-  ): LiveAnomaly | null {
-    if (this.#liveAnomalies.length) {
-      this.#liveAnomalies = this.#liveAnomalies.filter((x) => elapsed < x.end);
-    }
-    for (const x of this.#liveAnomalies) {
-      if (x.kind === kind && elapsed >= x.start && elapsed < x.end) return x;
-    }
-    return null;
+  #stop(): void {
+    if (this.#timer !== null) clearTimeout(this.#timer);
+    this.#timer = null;
   }
 }

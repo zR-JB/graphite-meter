@@ -89,7 +89,7 @@
   });
   const serverInstance = $derived.by(() => {
     const value = store.transportDiscovery?.generation;
-    if (!value || value === "dummy") return value ?? "—";
+    if (!value) return "—";
     return `${value.slice(0, 8)}…`;
   });
   const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
