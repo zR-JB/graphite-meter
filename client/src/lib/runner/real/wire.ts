@@ -1,14 +1,7 @@
-/**
- * Message-bus wire codec, the TS half of a cross-language pin with
- * go/internal/wire/{opcodes,frame}.go. Both sides assert byte-for-byte identity
- * across versions (wire.test.ts, frame_test.go). Framing is message-delimited
- * ASCII: one message per WS frame or WT datagram, parsed by indexOf(',')
- * slicing, never JSON, never regex. Only the ping worker imports this module.
- */
+/* Only the ping worker imports this module. */
 
-/** Opcode keyword table: uppercase keywords, the TS mirror of
- *  go/internal/wire/opcodes.go. */
-export const Op = {
+/** Opcode keyword table: uppercase keywords, the TS mirror of go/internal/wire/opcodes.go. */
+const Op = {
   HI: "HI",
   READY: "READY",
   PING: "PING",
@@ -17,9 +10,7 @@ export const Op = {
   ERR: "ERR",
 } as const;
 
-/** A parsed wire frame. `id` is a uint32, safe as a JS number. `nanos` is a
- *  uint64 held as its digits: it exceeds Number.MAX_SAFE_INTEGER, has to
- *  round-trip byte-exact, and no consumer reads it. */
+/* A parsed wire frame. */
 export type Frame =
   | { op: "READY" }
   | { op: "BYE" }
@@ -29,8 +20,8 @@ export type Frame =
   | { op: "ERR"; code: string; text: string };
 
 /** Stable rejection codes a receiver echoes as ERR,<code>,<text>. */
-export const ErrBadOp = "bad_op"; // unknown opcode keyword
-export const ErrBadArgs = "bad_args"; // opcode known, args missing/malformed
+const ErrBadOp = "bad_op"; // unknown opcode keyword
+const ErrBadArgs = "bad_args"; // opcode known, args missing/malformed
 
 /** Thrown by decode for a malformed frame; `code` is the token to echo as ERR. */
 export class DecodeError extends Error {
@@ -45,13 +36,10 @@ export class DecodeError extends Error {
 }
 
 const MAX_U32 = 4294967295;
-/** uint64 max as digits. Same-length digit strings compare lexicographically
- *  the way they compare numerically, which is how the bound is checked without
- *  building a BigInt to compare against. */
+/* uint64 max as digits. */
 const MAX_U64_DIGITS = "18446744073709551615";
 
-/** Digits only, non-empty, no sign or whitespace: what Go's strconv.ParseUint
- *  accepts. A char-code scan, so validation allocates nothing. */
+/* Digits only, non-empty, no sign or whitespace: what Go's strconv.ParseUint accepts. */
 function digitsOnly(s: string): boolean {
   if (s.length === 0) return false;
   for (let i = 0; i < s.length; i++) {
@@ -61,8 +49,7 @@ function digitsOnly(s: string): boolean {
   return true;
 }
 
-/** A uint32 is under Number.MAX_SAFE_INTEGER, so it parses exactly as a Number.
- *  Ten digits cannot overflow the check. */
+/* A uint32 is under Number.MAX_SAFE_INTEGER, so it parses exactly as a Number. */
 function u32(s: string, field: string): number {
   if (!digitsOnly(s) || s.length > 10) throw new DecodeError(ErrBadArgs, field);
   const v = Number(s);
@@ -70,8 +57,7 @@ function u32(s: string, field: string): number {
   return v;
 }
 
-/** A uint64 is kept as its digits: it exceeds Number.MAX_SAFE_INTEGER, and
- *  every consumer either re-emits it verbatim or does not read it at all. */
+/* A uint64 is kept as its digits: it exceeds Number.MAX_SAFE_INTEGER, and every consumer either re-emits it. */
 function u64Digits(s: string, field: string): string {
   if (
     !digitsOnly(s) ||
@@ -82,8 +68,7 @@ function u64Digits(s: string, field: string): string {
   return s;
 }
 
-/** Parse one on-wire message into a Frame. Throws DecodeError(bad_op) on an
- *  unknown opcode and DecodeError(bad_args) on missing/malformed args. */
+/* Parse one on-wire message into a Frame. */
 export function decode(msg: string): Frame {
   const comma = msg.indexOf(",");
   const op = comma === -1 ? msg : msg.slice(0, comma);

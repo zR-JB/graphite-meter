@@ -9,26 +9,36 @@ import {
 } from "./latencyBuckets";
 import type { LatencyBucket } from "./contract";
 
+function buckets(
+  startT = 0,
+  phase: "latency" | "download" = "latency",
+  underLoad = false,
+  continuityId = 1,
+  durationMs?: number,
+): LatencyPresentationBuckets {
+  const result = new LatencyPresentationBuckets();
+  result.reset(startT, phase, underLoad, continuityId, durationMs);
+  return result;
+}
+
 test("long phases widen presentation buckets within the history budget", () => {
   expect(latencyPresentationBucketMs(4_000)).toBe(200);
   expect(latencyPresentationBucketMs(4_000_000)).toBe(3_400);
 });
 
 test("live duration extensions widen the active latency bucket", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1, 4_000);
-  expect(buckets.nextBoundaryT).toBe(200);
-  buckets.widen(4_000_000);
-  expect(buckets.nextBoundaryT).toBe(3_400);
+  const result = buckets(0, "latency", false, 1, 4_000);
+  expect(result.nextBoundaryT).toBe(200);
+  result.widen(4_000_000);
+  expect(result.nextBoundaryT).toBe(3_400);
 });
 
 test("phase-aligned buckets retain median tail and loss summaries", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(1_000, "latency", false, 7);
-  expect(buckets.observe(1_010, 10, false)).toEqual([]);
-  expect(buckets.observe(1_040, 100, false)).toEqual([]);
-  expect(buckets.observe(1_080, 0, true)).toEqual([]);
-  const emitted = buckets.observe(1_200, 20, false);
+  const result = buckets(1_000, "latency", false, 7);
+  expect(result.observe(1_010, 10, false)).toEqual([]);
+  expect(result.observe(1_040, 100, false)).toEqual([]);
+  expect(result.observe(1_080, 0, true)).toEqual([]);
+  const emitted = result.observe(1_200, 20, false);
   expect(emitted).toHaveLength(1);
   expect(emitted[0]).toMatchObject({
     startT: 1_000,
@@ -47,22 +57,20 @@ test("phase-aligned buckets retain median tail and loss summaries", () => {
 });
 
 test("closed windows emit without waiting for another observation", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1);
-  buckets.observe(10, 20, false);
+  const result = buckets();
+  result.observe(10, 20, false);
 
-  expect(buckets.closeThrough(199)).toEqual([]);
-  expect(buckets.closeThrough(200)).toHaveLength(1);
-  expect(buckets.closeThrough(200)).toEqual([]);
+  expect(result.closeThrough(199)).toEqual([]);
+  expect(result.closeThrough(200)).toHaveLength(1);
+  expect(result.closeThrough(200)).toEqual([]);
 });
 
 test("a late observation revises its original closed window", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1);
-  buckets.observe(50, 10, false);
-  const history = buckets.closeThrough(200);
+  const result = buckets();
+  result.observe(50, 10, false);
+  const history = result.closeThrough(200);
 
-  const revised = buckets.observe(150, 100, false);
+  const revised = result.observe(150, 100, false);
   expect(revised).toHaveLength(1);
   expect(revised[0]).toMatchObject({
     startT: 0,
@@ -75,15 +83,14 @@ test("a late observation revises its original closed window", () => {
   });
   upsertLatencyBucket(history, revised[0]);
   expect(history).toEqual(revised);
-  expect(buckets.flush(400)).toBeNull();
+  expect(result.flush(400)).toBeNull();
 });
 
 test("late arrival order does not rewrite observation-time jitter", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1);
-  buckets.observe(150, 100, false);
-  const history = buckets.closeThrough(200);
-  const [revised] = buckets.observe(50, 10, false);
+  const result = buckets();
+  result.observe(150, 100, false);
+  const history = result.closeThrough(200);
+  const [revised] = result.observe(50, 10, false);
   upsertLatencyBucket(history, revised);
 
   expect(history[0]).toMatchObject({
@@ -95,8 +102,7 @@ test("late arrival order does not rewrite observation-time jitter", () => {
 });
 
 test("revised buckets replace rather than duplicate visible history", () => {
-  const initial = new LatencyPresentationBuckets();
-  initial.reset(0, "latency", false, 1);
+  const initial = buckets();
   initial.observe(50, 10, false);
   const history: LatencyBucket[] = initial.closeThrough(200);
   const [revised] = initial.observe(150, 20, false);
@@ -137,9 +143,8 @@ test("history mutations distinguish tail appends from required reindexing", () =
 });
 
 test("bucket summaries preserve exact consecutive RTT jitter", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1);
-  const summary = buckets.closeThrough(0);
+  const result = buckets();
+  const summary = result.closeThrough(0);
   for (const [t, rtt] of [
     [10, 10],
     [40, 10],
@@ -150,42 +155,39 @@ test("bucket summaries preserve exact consecutive RTT jitter", () => {
     [280, 10],
     [320, 100],
   ] as const)
-    summary.push(...buckets.observe(t, rtt, false));
-  summary.push(...buckets.closeThrough(400));
+    summary.push(...result.observe(t, rtt, false));
+  summary.push(...result.closeThrough(400));
 
   expect(latencyJitterMs(summary)).toBeCloseTo(270 / 7, 10);
 });
 
 test("jitter skips losses but never invents variation across continuity", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "latency", false, 1);
+  const result = buckets();
   const summary = [
-    ...buckets.observe(10, 10, false),
-    ...buckets.closeThrough(200),
-    ...buckets.observe(210, 0, true),
-    ...buckets.closeThrough(400),
-    ...buckets.observe(410, 20, false),
-    ...buckets.closeThrough(600),
+    ...result.observe(10, 10, false),
+    ...result.closeThrough(200),
+    ...result.observe(210, 0, true),
+    ...result.closeThrough(400),
+    ...result.observe(410, 20, false),
+    ...result.closeThrough(600),
   ];
   expect(latencyJitterMs(summary)).toBe(10);
 
-  buckets.reset(600, "download", true, 2);
+  result.reset(600, "download", true, 2);
   summary.push(
-    ...buckets.observe(610, 200, false),
-    ...buckets.observe(650, 220, false),
-    ...buckets.closeThrough(800),
+    ...result.observe(610, 200, false),
+    ...result.observe(650, 220, false),
+    ...result.closeThrough(800),
   );
-  // Only 10→20 and 200→220 are real consecutive differences. The explicit
-  // latency→loaded-download break contributes no synthetic 20→200 jump.
+  // Only 10→20 and 200→220 are real consecutive differences.
   expect(latencyJitterMs(summary)).toBe(15);
 });
 
 test("partial flush is truthful and an all-loss bucket has no RTT", () => {
-  const buckets = new LatencyPresentationBuckets();
-  buckets.reset(0, "download", true, 2);
-  buckets.observe(30, 0, true);
-  buckets.observe(90, 0, true);
-  expect(buckets.flush(100)).toMatchObject({
+  const result = buckets(0, "download", true, 2);
+  result.observe(30, 0, true);
+  result.observe(90, 0, true);
+  expect(result.flush(100)).toMatchObject({
     startT: 0,
     endT: 100,
     medianRttMs: null,
@@ -207,14 +209,13 @@ test("the same timed outcomes bucket identically regardless of callback grouping
     { t: 410, rtt: 20, lost: false },
   ];
   const collect = (groups: (typeof outcomes)[]) => {
-    const buckets = new LatencyPresentationBuckets();
-    buckets.reset(0, "latency", false, 1);
+    const result = buckets();
     const emitted = groups.flatMap((group) =>
       group.flatMap((outcome) =>
-        buckets.observe(outcome.t, outcome.rtt, outcome.lost),
+        result.observe(outcome.t, outcome.rtt, outcome.lost),
       ),
     );
-    const tail = buckets.flush(450);
+    const tail = result.flush(450);
     return tail ? [...emitted, tail] : emitted;
   };
 

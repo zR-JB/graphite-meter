@@ -13,8 +13,7 @@ export const authEnabled =
     .querySelector('meta[name="graphite-meter-auth"]')
     ?.getAttribute("content") === "enabled";
 
-/** Replaces the current document, so the calling task stops executing here.
- *  `expired` is the phrasing key the server-rendered login page reads. */
+/* `expired` is the phrasing key the server-rendered login page reads. */
 export function redirectToLogin(reason = "expired"): void {
   if (!authEnabled || redirecting) return;
   redirecting = true;
@@ -30,7 +29,7 @@ export interface SessionBudget {
   checkedAt: number;
 }
 
-export type SessionCoverage = "enough" | "renew" | "too-long" | "invalid";
+type SessionCoverage = "enough" | "renew" | "too-long" | "invalid";
 
 export function classifySessionCoverage(
   requiredMs: number,
@@ -143,8 +142,7 @@ export async function classifyAuthenticationFailure(
   localSignal?: AbortSignal,
 ): Promise<boolean> {
   if (!authEnabled || localSignal?.aborted) return false;
-  // Parallel transfer workers share one probe: a single expiry must not fan
-  // out into a burst of /auth/session requests.
+  // Parallel transfer workers share one probe: a single expiry must not fan out into a burst of /auth/session requests.
   const pending = (pendingClassification ??= sessionAuthenticationRequired(
     location.origin,
   ));

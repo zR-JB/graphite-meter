@@ -1,20 +1,5 @@
-/* ============================================================
- * The Graphite Meter: upload generate-and-POST worker
- * ============================================================
- * One worker per parallel upload stream. It builds one incompressible Blob pool
- * from CSPRNG bytes, which gzip and br cannot shrink, and POSTs zero-copy slices
- * of it in a loop over whichever HTTP version the origin negotiated. The server
- * drains and counts the bytes; upload-progress-worker.ts relays the
- * authoritative total. This lane saturates.
- * ============================================================ */
+/* The server drains and counts the bytes; upload-progress-worker.ts relays the authoritative total. */
 
-import {
-  setDebugLogging,
-  debugEnabled,
-  dlog,
-  fmtBytes,
-  DebugWindow,
-} from "../../debug";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
@@ -25,20 +10,15 @@ import { incompressibleBlock } from "./payload";
 import { classifyUploadFailure } from "../uploadFailure";
 import type { RecoveryCause } from "../contract";
 
-/** `debug`/`id` drive verbose per-stream logging only. The lane is stopped by
- *  terminating the worker, so there is no shutdown message. */
+/* The lane is stopped by terminating the worker, so there is no shutdown message. */
 type InMsg = {
   type: "start";
   url: string;
-  debug?: boolean;
-  id?: number;
   streams?: number;
   credentials?: RequestCredentials;
   headers?: Record<string, string>;
 };
-/** `alive` marks one POST the server drained. Its local byte/time pair is only
- * a bounded presentation hint; /upload/progress remains the authoritative
- * source for measurement. `error` restarts a lane. */
+/* Its local byte/time pair is only a bounded presentation hint; /upload/progress remains the authoritative source. */
 type OutMsg =
   | { type: "alive"; bytes: number; elapsedMs: number }
   | {
@@ -56,28 +36,21 @@ const post = (m: OutMsg) => ctx.postMessage(m);
 
 /** Pool floor keeps the autosizer useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
-/** Reservoir for a device that reports no memory. An absent value is not
- *  evidence of a large device: Chromium reports navigator.deviceMemory, so this
- *  is the Firefox/Safari tier, phones included. */
+/* Reservoir for a device that reports no memory. */
 const UNKNOWN_DEVICE_POOL_BYTES = 128 * 1024 * 1024;
-/** Upload reservoir, divided across the lanes and also the sizer's ceiling.
- *  Worth +10.9% at 256 MiB over 64 MiB; see docs/BENCHMARKS.md. */
+/* Upload reservoir, divided across the lanes and also the sizer's ceiling. */
 const UPLOAD_TOTAL_POOL_BYTES = 256 * 1024 * 1024;
 /** Wall time each POST aims to span. */
 const TARGET_POST_MS = 500;
 /** Smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 
-/** How the POST body reaches fetch. A Blob slice is a view fetch reads through;
- *  an ArrayBuffer is copied per POST, which is the cost the Blob path avoids. */
+/* How the POST body reaches fetch. */
 type UploadBody = "blob" | "arrayBuffer";
 const UPLOAD_BODY: UploadBody = "blob";
 
 /* ---- Closed-loop POST sizing, per worker (see autosize.ts) ---- */
-/** The POST target is about ACCURACY: the request/response turnaround sits
- *  inside the server's elapsed-time denominator, so a too-short POST lowers the
- *  measured rate. Interleaved lanes cover each other's turnaround.
- *  maxBytes is the pool size, set on `start`. */
+/* The POST target is about ACCURACY: the request/response turnaround sits inside the server's elapsed-time. */
 const sizer: SizerCfg = {
   targetMs: TARGET_POST_MS,
   minBytes: MIN_POST_BYTES,
@@ -105,38 +78,25 @@ export function uploadPoolBytes(
   return Math.max(MIN_POOL_BYTES, Math.floor(reservoir / streams));
 }
 
-/** Whether an HTTP status is a transient lane failure. Explicit client/protocol
- * refusals are terminal; a generic server failure remains a same-id reconnect.
- * Session rotation is decided separately from the server's refusal code. */
+/* Explicit client/protocol refusals are terminal; a generic server failure remains a same-id reconnect. */
 export function recoverableStatus(status: number): boolean {
   return status === 0 || status === 408 || (status >= 500 && status !== 503);
 }
 
-/** The reused incompressible pool, built on first start. A Blob slice is a view
- *  fetch reads through, which is why Blob is the default. */
+/* The reused incompressible pool, built on first start. */
 let pool: Blob | Uint8Array<ArrayBuffer> | null = null;
 /** Byte length of the pool as actually built. */
 let poolBytes = 0;
-/** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the
- *  autosizer's upper clamp. */
+/** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the autosizer's upper clamp. */
 let poolTargetBytes = UPLOAD_TOTAL_POOL_BYTES;
-/** Bytes the NEXT POST sends, the closed-loop variable. Starts at the minimum
- *  for a fast first sample, then tracks the target times this lane's rate. */
+/* Bytes the NEXT POST sends, the closed-loop variable. */
 let nextBytes = MIN_POST_BYTES;
 /** This lane's smoothed throughput (bytes/sec); 0 until the first POST completes. */
 let rateEwma = 0;
 
-/** Stream index, tagging debug lines only (`ul-worker#<id>`). */
-let streamId = 0;
-/** Completed-POST debug window: one step per POST rather than byte-granular,
- *  enough to show whether turnaround leaves the wire idle. */
-const dbg = new DebugWindow();
-
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
-    setDebugLogging(msg.debug ?? false);
-    streamId = msg.id ?? 0;
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers ?? {};
     const deviceMemory = (navigator as unknown as { deviceMemory?: number })
@@ -145,14 +105,11 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     sizer.maxBytes = poolTargetBytes; // the pool is the size ceiling
     nextBytes = Math.min(MIN_POST_BYTES, poolTargetBytes);
     rateEwma = 0;
-    dbg.reset();
     void run(msg.url);
   }
 };
 
-/** Build the reused pool by repeating one filled block up to poolTargetBytes.
- *  The Blob copies each part into its own backing store, so the construction
- *  heap peaks at ~block + pool. Every POST then slices a view of it. */
+/* Build the reused pool by repeating one filled block up to poolTargetBytes. */
 function buildPool(): void {
   const wantBlob = UPLOAD_BODY === "blob";
   if (
@@ -183,17 +140,14 @@ function buildPool(): void {
   poolBytes = poolTargetBytes;
 }
 
-/** A Blob slice is a view fetch reads through; a byte view is copied per POST.
- *  That copy is the cost the Blob path exists to avoid. */
+/* A Blob slice is a view fetch reads through; a byte view is copied per POST. */
 function bodyFor(sentBytes: number): BodyInit {
   return pool instanceof Blob
     ? pool.slice(0, sentBytes)
     : pool!.subarray(0, sentBytes);
 }
 
-/** Release the tiny JSON echo so the keep-alive connection serves the next POST:
- *  an unread body pins it and stalls the lane. The POST is already complete, so
- *  a failed release costs at most one connection. */
+/* Release the tiny JSON echo so the keep-alive connection serves the next POST: an unread body pins it and stalls. */
 async function drainForKeepAlive(res: Response): Promise<void> {
   try {
     await res.arrayBuffer();
@@ -202,17 +156,12 @@ async function drainForKeepAlive(res: Response): Promise<void> {
   }
 }
 
-/** Drive the lane for the whole stage: POSTs of adaptively-sized pool slices in
- *  a loop. Mirrors download-worker.ts's re-fetch loop, and a network error ends
- *  the lane (RealBackend restarts it). Each completed POST resizes the NEXT one. */
+/* Mirrors download-worker.ts's re-fetch loop, and a network error ends the lane (RealBackend restarts it). */
 async function run(url: string): Promise<void> {
   try {
     buildPool();
   } catch (err) {
-    // The reservoir is up to 256 MiB, so a constrained device can refuse it.
-    // Left to reject, the promise takes no worker `error` event with it —
-    // unhandled rejections do not reach Worker.onerror — and the lane dies
-    // silently, reported later as a direction that carried no data.
+// Left to reject, the promise takes no worker `error` event with it — unhandled rejections do not reach.
     post({
       type: "error",
       recoverable: true,
@@ -261,8 +210,7 @@ async function run(url: string): Promise<void> {
         });
         return; // RealBackend decides whether to restart this lane
       }
-      // This is not an observation: the server progress feed owns byte/time
-      // accounting. The local pair can only smooth the live visual target.
+// This is not an observation: the server progress feed owns byte/time accounting.
       const elapsedMs = performance.now() - postStart;
       post({ type: "alive", bytes: sentBytes, elapsedMs });
       ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
@@ -271,20 +219,8 @@ async function run(url: string): Promise<void> {
         rateEwma,
         sizer,
       ));
-      if (debugEnabled()) {
-        const window = dbg.add(sentBytes);
-        if (window)
-          dlog(`ul-worker#${streamId}`, "post-complete", {
-            rate: window.rate,
-            postSize: fmtBytes(nextBytes),
-            window: window.window,
-            total: window.total,
-            dt: window.dt,
-          });
-      }
     } catch (err) {
-      // A POST that failed on an expired session is an auth failure, not a
-      // transport one, so the session is re-checked before the error is reported.
+// A POST that failed on an expired session is an auth failure, not a transport one, so the session is.
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(self.location.origin))

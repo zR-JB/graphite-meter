@@ -1,20 +1,11 @@
-// What each measurement transport is. Record<TransportKind, TransportSpec>
-// makes a missing row here a build error; it does not make the branches one.
-// A new kind needs every site that switches on the kind read:
-//   contract.ts, api/preflight.ts, api/endpoints.ts, real/backendPure.ts,
-//   real/streamPolicy.ts, real/targetPresentation.ts, real/transportViewModel.ts,
-//   RealRunner.ts, connectionModel.ts, workers/ping-worker.ts,
-//   components/EndpointInfo.svelte, components/settings/TestSetupPanel.svelte
-// real/latencyChannel.ts is the one that fails quietly: an if/else on
-// "webtransport", so an unhandled kind takes the WebSocket branch.
+// What each measurement transport is.
 import type { TransportKind } from "../contract";
 
-export interface TransportSpec {
+interface TransportSpec {
   kind: TransportKind;
   /** Which role a kind can serve. */
   role: "throughput" | "latency" | "both";
-  /** Whether this browser has the API at all. Called per use, not frozen at
-   *  module load: an API's presence is an environment fact. */
+/* Whether this browser has the API at all. */
   usable(): boolean;
   /** Whether the bytes ride a session rather than one request per lane. */
   ridesSession: boolean;
@@ -25,24 +16,16 @@ export interface TransportSpec {
 const hasWebTransport = (): boolean => typeof WebTransport !== "undefined";
 const always = (): boolean => true;
 
-/** Why this browser cannot drive WebTransport: a page served over plain http,
- *  or a browser that never shipped the API. */
-export type WebTransportGap = "insecure-page" | "no-api";
+/* Why this browser cannot drive WebTransport: a page served over plain http, or a browser that never shipped the. */
+type WebTransportGap = "insecure-page" | "no-api";
 
-/** Which reason applies, or null when WebTransport is reachable.
- *
- *  `WebTransport` is [SecureContext], so an http page has no such global —
- *  indistinguishable by presence alone from Safari, and only one of the two is
- *  the reader's to fix. A context declaring no secure-context flag at all (a
- *  test runner) reads as the browser gap, the honest answer where there is no
- *  page. */
+/* Which reason applies, or null when WebTransport is reachable. */
 export function webTransportGap(): WebTransportGap | null {
   if (hasWebTransport()) return null;
   return globalThis.isSecureContext === false ? "insecure-page" : "no-api";
 }
 
-/** The server clamps both directions here (wire.WTMaxStreams), refusing an
- *  upload lane past it. Callers clamp against it directly; see streamPolicy. */
+/* The server clamps both directions here (wire.WTMaxStreams), refusing an upload lane past it. */
 export const WT_MAX_LANES = 16;
 
 export const TRANSPORTS: Record<TransportKind, TransportSpec> = {
@@ -81,14 +64,7 @@ export function transportRunnable(kind: TransportKind): boolean {
   return TRANSPORTS[kind].usable();
 }
 
-/** Whether a transfer kind rides a session rather than fetch requests.
- *
- *  The flag decides only which of two carriers RealRunner reaches for
- *  (#primeTransfer takes #wtThroughputTarget when it is set), and there is no
- *  third: #committedKind returns "fetch-stream" for everything that is not a
- *  resolved session target. A kind added with ridesSession false and no fetch
- *  lane of its own therefore compiles clean and carries its bytes over fetch
- *  lanes, measuring a transport nobody selected. */
+/* A kind added with ridesSession false and no fetch lane of its own therefore compiles clean and carries its. */
 export function ridesSession(kind: TransportKind): boolean {
   return TRANSPORTS[kind].ridesSession;
 }

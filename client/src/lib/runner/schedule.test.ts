@@ -6,10 +6,7 @@ import {
 } from "./schedule";
 import type { RunnerConfig } from "./contract";
 
-// A minimal but complete RunnerConfig fixture. store.svelte.ts's DEFAULT_CONFIG
-// cannot be imported here: it is a .svelte.ts module running Svelte 5 rune calls
-// ($state) at module scope, which do not exist outside the Svelte runtime, so
-// bun:test throws "$state is not defined" on import.
+// A minimal but complete RunnerConfig fixture.
 const BASE_CONFIG: RunnerConfig = {
   stages: { latency: true, download: true, upload: true, bidirectional: false },
   skipLoadedLatencyWhenStageOff: true,
@@ -52,7 +49,12 @@ const BASE_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
-function cfg(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
+type ConfigOverrides = Omit<Partial<RunnerConfig>, "stages" | "duration"> & {
+  stages?: Partial<RunnerConfig["stages"]>;
+  duration?: Partial<RunnerConfig["duration"]>;
+};
+
+function cfg(overrides: ConfigOverrides = {}): RunnerConfig {
   return {
     ...BASE_CONFIG,
     ...overrides,
@@ -62,7 +64,7 @@ function cfg(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
 }
 
 test("bidirectional stage activity carries both directions in fixed order", () => {
-  const c = cfg({ stages: { ...BASE_CONFIG.stages, bidirectional: true } });
+  const c = cfg({ stages: { bidirectional: true } });
   const { segments } = buildSegments(c);
   const bidi = segments.find((s) => s.phase === "bidirectional");
   expect(bidi).toBeDefined();
@@ -71,13 +73,13 @@ test("bidirectional stage activity carries both directions in fixed order", () =
 });
 
 test("bidirectional stage is omitted from the timeline when disabled", () => {
-  const c = cfg({ stages: { ...BASE_CONFIG.stages, bidirectional: false } });
+  const c = cfg({ stages: { bidirectional: false } });
   const { segments } = buildSegments(c);
   expect(segments.some((s) => s.phase === "bidirectional")).toBe(false);
 });
 
 test("bidirectional runs last, after latency/download/upload", () => {
-  const c = cfg({ stages: { ...BASE_CONFIG.stages, bidirectional: true } });
+  const c = cfg({ stages: { bidirectional: true } });
   const { segments } = buildSegments(c);
   const bidiStart = segments.find((s) => s.phase === "bidirectional")!.start;
   for (const s of segments) {
@@ -100,11 +102,11 @@ test("bidirectional gets its own warmup segment when warmupMs > 0", () => {
 
 test("reconfigureTimeline appends a not-yet-started bidirectional stage when enabled mid-run", () => {
   const before = cfg({
-    stages: { ...BASE_CONFIG.stages, bidirectional: false },
+    stages: { bidirectional: false },
   });
   const { segments } = buildSegments(before);
   const after = cfg({
-    stages: { ...BASE_CONFIG.stages, bidirectional: true },
+    stages: { bidirectional: true },
   });
   const rebuilt = reconfigureTimeline(segments, 0, after);
   expect(rebuilt.segments.some((s) => s.phase === "bidirectional")).toBe(true);
@@ -112,11 +114,11 @@ test("reconfigureTimeline appends a not-yet-started bidirectional stage when ena
 
 test("reconfigureTimeline drops a not-yet-started bidirectional stage when disabled mid-run", () => {
   const before = cfg({
-    stages: { ...BASE_CONFIG.stages, bidirectional: true },
+    stages: { bidirectional: true },
   });
   const { segments } = buildSegments(before);
   const after = cfg({
-    stages: { ...BASE_CONFIG.stages, bidirectional: false },
+    stages: { bidirectional: false },
   });
   const rebuilt = reconfigureTimeline(segments, 0, after);
   expect(rebuilt.segments.some((s) => s.phase === "bidirectional")).toBe(false);
@@ -130,28 +132,26 @@ test("reconfigureTimeline resizes the active stage from its original start", () 
       upload: false,
       bidirectional: false,
     },
-    duration: { ...BASE_CONFIG.duration, warmupMs: 0, downloadMs: 10000 },
+    duration: { warmupMs: 0, downloadMs: 10000 },
   });
   const { segments } = buildSegments(before);
   const shortened = reconfigureTimeline(
     segments,
     3000,
-    cfg({ ...before, duration: { ...before.duration, downloadMs: 5000 } }),
+    cfg({ stages: before.stages, duration: { downloadMs: 5000 } }),
   );
   expect(shortened.segments[0]).toMatchObject({ start: 0, end: 5000 });
 
   const expired = reconfigureTimeline(
     segments,
     3000,
-    cfg({ ...before, duration: { ...before.duration, downloadMs: 2000 } }),
+    cfg({ stages: before.stages, duration: { downloadMs: 2000 } }),
   );
   expect(expired.totalMs).toBe(3000);
 });
 
 test("truncateSegmentAt closes at real elapsed and shifts the untouched tail", () => {
-  const built = buildSegments(
-    cfg({ duration: { ...BASE_CONFIG.duration, warmupMs: 0 } }),
-  );
+  const built = buildSegments(cfg({ duration: { warmupMs: 0 } }));
   const download = built.segments.find((s) => s.phase === "download")!;
   const elapsed = download.start + 5_500;
   const truncated = truncateSegmentAt(built.segments, download, elapsed);

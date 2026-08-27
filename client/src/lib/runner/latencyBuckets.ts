@@ -6,9 +6,8 @@ import {
 } from "./presentationHistory";
 
 export const LATENCY_PRESENTATION_BUCKET_MS = 200;
-/** Keep the same bounded history in the producer and store so a delayed worker
- * delivery can revise any bucket the UI can still display. */
-export const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
+/* Keep the same bounded history in the producer and store so a delayed worker delivery can revise any bucket the. */
+const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
 
 export function latencyPresentationBucketMs(durationMs: number): number {
   const minimum = LATENCY_PRESENTATION_BUCKET_MS;
@@ -74,9 +73,7 @@ export class LatencyPresentationBuckets {
         : this.#closed.findLast(
             (bucket) => t >= bucket.startT && t < bucket.endT,
           );
-    // The raw accumulator already owns the outcome. If delivery is older than
-    // the bounded visible history, omit it from presentation rather than lie by
-    // moving it into the current window.
+// The raw accumulator already owns the outcome.
     if (!target) return emitted;
     this.#record(target, t, rttMs, lost);
     if (target !== pending) {
@@ -86,9 +83,7 @@ export class LatencyPresentationBuckets {
     return emitted;
   }
 
-  /** Close every elapsed presentation window. The runner's master deadline
-   *  calls this even when no later ping arrives, so display cadence is owned by
-   *  bucket time rather than source cadence. */
+/* The runner's master deadline calls this even when no later ping arrives, so display cadence is owned by bucket. */
   closeThrough(t: number): LatencyBucket[] {
     const emitted: LatencyBucket[] = [];
     while (this.#pending && t >= this.#pending.endT) {
@@ -182,11 +177,9 @@ function sameLatencyWindow(a: LatencyBucket, b: LatencyBucket): boolean {
   );
 }
 
-export type LatencyHistoryMutation = "tail-append" | "structural-change";
+type LatencyHistoryMutation = "tail-append" | "structural-change";
 
-/** Insert a newly closed bucket or replace a late revision in chronological
- * order. Return whether cached positional indexes must be rebuilt; pure tail
- * appends remain eligible for incremental indexing. */
+/* Insert a newly closed bucket or replace a late revision in chronological order. */
 export function upsertLatencyBucket(
   history: LatencyBucket[],
   bucket: LatencyBucket,
@@ -242,9 +235,7 @@ export function singleLatencyBucket(
   };
 }
 
-/** Exact mean absolute consecutive RTT difference across summarized buckets.
- * Losses carry no RTT and are skipped; explicit phase/stall continuity breaks
- * never create a synthetic cross-series delta. */
+/* Losses carry no RTT and are skipped; explicit phase/stall continuity breaks never create a synthetic. */
 export function latencyJitterMs(buckets: readonly LatencyBucket[]): number {
   let previousRtt: number | null = null;
   let previousBucket: LatencyBucket | null = null;

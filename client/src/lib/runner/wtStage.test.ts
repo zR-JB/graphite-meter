@@ -4,8 +4,7 @@ import type { PhaseActivity, RunnerConfig } from "./contract";
 
 const WT_ORIGIN = "https://meter.test";
 
-/** A path that establishes and delivers one lane, which is what the throughput
- *  check requires before it reports Ready. */
+/* A path that establishes and delivers one lane, which is what the throughput check requires before it reports. */
 class LiveWebTransport {
   readonly ready = Promise.resolve();
   readonly closed = new Promise<void>(() => {});
@@ -31,8 +30,7 @@ interface Sent {
   seq?: number;
 }
 
-/** Speaks the worker protocol without running one: the session worker is the
- *  only thing between a lane and the network. */
+/* Speaks the worker protocol without running one: the session worker is the only thing between a lane and the. */
 class FakeWorker {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
@@ -141,6 +139,14 @@ function baseConfig(): RunnerConfig {
   };
 }
 
+function activity(stage: "download" | "upload"): PhaseActivity {
+  return {
+    stage,
+    transfer: [stage === "download" ? "down" : "up"],
+    loadedLatency: false,
+  };
+}
+
 interface Harness {
   backend: import("./RealRunner").RealBackend;
   throughput: { dir: string; bytes: number }[];
@@ -148,14 +154,11 @@ interface Harness {
   session(): FakeWorker;
 }
 
-/** Boots a real backend against a WebTransport-only origin, probed and ready to
- *  run a stage. Restores every global it replaced. */
+/* Boots a real backend against a WebTransport-only origin, probed and ready to run a stage. */
 async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
   const globals = globalThis as Record<string, unknown>;
   Object.assign(globals, {
-    __GM_DEFAULT_ENGINE__: "real",
     __GM_ALLOW_DUMMY__: false,
-    __GM_DEV_TOOLS__: false,
     __GM_BUILD_PROFILE__: "test",
     __GM_RELEASE_VERSION__: null,
     __GM_SOURCE_REVISION__: "test-revision",
@@ -244,9 +247,7 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
     if (realLocation)
       Object.defineProperty(globalThis, "location", realLocation);
     for (const key of [
-      "__GM_DEFAULT_ENGINE__",
       "__GM_ALLOW_DUMMY__",
-      "__GM_DEV_TOOLS__",
       "__GM_BUILD_PROFILE__",
       "__GM_RELEASE_VERSION__",
       "__GM_SOURCE_REVISION__",
@@ -257,16 +258,11 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
   }
 }
 
-// One session carries every lane, so the stage opens one worker whatever the
-// stream count, and only reports that carry the live measure epoch are counted.
+// One session carries every lane, so the stage opens one worker whatever the stream count, and only reports that.
 test("a WebTransport download stage carries bytes into the core", async () => {
   await withBackend(async ({ backend, throughput, failures, session }) => {
-    const activity: PhaseActivity = {
-      stage: "download",
-      transfer: ["down"],
-      loadedLatency: false,
-    };
-    await backend.onStageBegin(activity);
+    const phase = activity("download");
+    await backend.onStageBegin(phase);
     expect(sessions).toHaveLength(1);
     const start = session().sent[0];
     expect(start.url).toBe(
@@ -274,7 +270,7 @@ test("a WebTransport download stage carries bytes into the core", async () => {
     );
 
     session().emit({ type: "progress", bytes: 999, elapsedMs: 10, seq: 0 });
-    backend.onStageMeasure(activity);
+    backend.onStageMeasure(phase);
     expect(session().sent.at(-1)).toEqual({ type: "measure", seq: 1 });
 
     session().emit({
@@ -284,7 +280,7 @@ test("a WebTransport download stage carries bytes into the core", async () => {
       seq: 1,
     });
     await Bun.sleep(5);
-    await backend.onStageEnd(activity);
+    await backend.onStageEnd(phase);
 
     expect(throughput).toEqual([{ dir: "down", bytes: 4_000_000 }]);
     expect(failures).toEqual([]);
@@ -292,17 +288,11 @@ test("a WebTransport download stage carries bytes into the core", async () => {
   });
 });
 
-// Upload is metered by the server's feed, which rides the same session. The
-// stage may not open its lanes before the feed is running, or the first bytes
-// go uncounted.
+// Upload is metered by the server's feed, which rides the same session.
 test("a WebTransport upload stage is metered by the server feed", async () => {
   await withBackend(async ({ backend, throughput, failures, session }) => {
-    const activity: PhaseActivity = {
-      stage: "upload",
-      transfer: ["up"],
-      loadedLatency: false,
-    };
-    const beginning = backend.onStageBegin(activity);
+    const phase = activity("upload");
+    const beginning = backend.onStageBegin(phase);
     for (let i = 0; i < 20 && sessions.length === 0; i++)
       await Promise.resolve();
     expect(session().sent[0].url).toBe(`${WT_ORIGIN}/wt/upload?id=gmu_test`);
@@ -311,22 +301,21 @@ test("a WebTransport upload stage is metered by the server feed", async () => {
     await beginning;
     expect(failures).toEqual([]);
 
-    backend.onStageMeasure(activity);
+    backend.onStageMeasure(phase);
     for (const n of [100, 250])
       session().emit({
         type: "upload-progress",
         msg: { type: "bytes", n, t: n * 1_000_000 },
       });
 
-    const ending = backend.onStageEnd(activity);
+    const ending = backend.onStageEnd(phase);
     session().emit({
       type: "upload-progress",
       msg: { type: "complete", n: 400, t: 400_000_000 },
     });
     await ending;
 
-    // The first record after measure is the baseline, and every later one is a
-    // delta against the server's running total.
+    // The first record is the baseline; later records are deltas against the server total.
     expect(throughput.map((s) => s.dir)).toEqual(["up", "up"]);
     expect(throughput.map((s) => s.bytes)).toEqual([150, 150]);
     expect(failures).toEqual([]);

@@ -6,31 +6,34 @@ export interface ProgressDelta {
 }
 
 /** Owns the byte/time window shared by fetch and WebTransport downloads. */
-export class ProgressWindow {
-  #bytes = 0;
-  #startedAt: number;
-  /** Deltas are batched to this cadence before crossing the thread. */
-  #gapMs: number;
+interface ProgressWindow {
+  reset(now?: number): void;
+  add(bytes: number, now?: number): ProgressDelta | null;
+  flush(now?: number): ProgressDelta | null;
+}
 
-  constructor(now = performance.now(), gapMs = REPORT_GAP_MS) {
-    this.#startedAt = now;
-    this.#gapMs = gapMs;
-  }
+export function progressWindow(
+  now = performance.now(),
+  gapMs = REPORT_GAP_MS,
+): ProgressWindow {
+  let bytes = 0;
+  let startedAt = now;
 
-  reset(now = performance.now()): void {
-    this.#bytes = 0;
-    this.#startedAt = now;
-  }
-
-  add(bytes: number, now = performance.now()): ProgressDelta | null {
-    this.#bytes += bytes;
-    if (now - this.#startedAt < this.#gapMs) return null;
-    return this.flush(now);
-  }
-
-  flush(now = performance.now()): ProgressDelta | null {
-    const delta = { bytes: this.#bytes, elapsedMs: now - this.#startedAt };
-    this.reset(now);
+  const reset = (at = performance.now()): void => {
+    bytes = 0;
+    startedAt = at;
+  };
+  const flush = (at = performance.now()): ProgressDelta | null => {
+    const delta = { bytes, elapsedMs: at - startedAt };
+    reset(at);
     return delta.bytes > 0 && delta.elapsedMs > 0 ? delta : null;
-  }
+  };
+  return {
+    reset,
+    add(amount, at = performance.now()) {
+      bytes += amount;
+      return at - startedAt < gapMs ? null : flush(at);
+    },
+    flush,
+  };
 }

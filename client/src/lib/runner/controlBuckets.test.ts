@@ -28,3 +28,22 @@ test("paired lanes keep a shared capped bucket window", () => {
     Array.from({ length: 8 }, (_, i) => 16 + i + 116 + i),
   );
 });
+
+test("timestamped paired lanes retain only overlapping temporal buckets", () => {
+  const buckets = new PairedRateBuckets(16);
+  for (let i = 0; i < 40; i++) buckets.observe("down", 250, 250, (i + 1) * 250);
+  // Upload starts late, but overlaps the download's final sixteen buckets.
+  for (let i = 0; i < 16; i++)
+    buckets.observe("up", 500, 250, (24 + i + 1) * 250);
+  expect(buckets.completedCount).toBe(16);
+  expect([...buckets.rates]).toEqual(Array(16).fill(3_000));
+
+  // A restart beyond the retained window must not pair new upload evidence with old download buckets by index.
+  buckets.observe("up", 500, 250, 80 * 250 + 250);
+  expect(buckets.completedCount).toBe(0);
+
+  buckets.reset();
+  buckets.observe("down", 250, 250, 250);
+  buckets.observe("up", 500, 250, 250);
+  expect([...buckets.rates]).toEqual([3_000]);
+});

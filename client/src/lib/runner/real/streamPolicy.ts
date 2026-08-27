@@ -1,6 +1,4 @@
 // Resolves the configured transfer-stream policy after protocol selection.
-// Automatic H1 respects its configured browser-pool ceiling; a multiplexed
-// protocol reads its lane counts from MULTIPLEXED_STREAMS.
 import type {
   FlowDirection,
   PhaseActivity,
@@ -18,12 +16,7 @@ export { WT_MAX_LANES };
 
 type MultiplexedProtocol = "http2" | "http3";
 
-/** Automatic lanes per direction over a multiplexed connection, and the sole
- *  source for both the count and the text describing it. Download takes one:
- *  the connection already carries it at full rate. Upload splits by protocol —
- *  under loss h2 gains 10.1% going from 1 to 4 lanes while h3 loses 9.3% over
- *  the same range, disjoint IQRs both ways, and the loopback peaks agree.
- *  See docs/BENCHMARKS.md. */
+/* Upload splits by protocol — under loss h2 gains 10.1% going from 1 to 4 lanes while h3 loses 9.3% over the same. */
 export const MULTIPLEXED_STREAMS: Record<
   MultiplexedProtocol,
   Record<FlowDirection, number>
@@ -38,14 +31,13 @@ function multiplexed(
   return protocol === "http2" || protocol === "http3";
 }
 
-export interface TransferStreamOptions {
+interface TransferStreamOptions {
   protocol: ProtocolTarget;
   policy: TransferStreamPolicy;
   transfer: readonly FlowDirection[];
   dir: FlowDirection;
   needsPing: boolean;
-  /** WebTransport lanes are continuous streams with no request turnaround, so
-   *  automatic mode runs one per direction. */
+  /** WebTransport lanes are continuous streams with no request turnaround, so automatic mode runs one per direction. */
   webTransport?: boolean;
   totalBudget?: number;
 }
@@ -57,8 +49,7 @@ export function normalizeStreamCount(count: number): number {
 }
 
 export function transferStreamCount(opts: TransferStreamOptions): number {
-  // Forced means exact even above the browser's nominal H1 pool. Required
-  // control sockets already exist when these lanes start.
+// Forced means exact even above the browser's nominal H1 pool.
   if (opts.policy.mode === "forced")
     return opts.webTransport
       ? Math.min(WT_MAX_LANES, normalizeStreamCount(opts.policy.count))
@@ -82,11 +73,7 @@ export function transferStreamCount(opts: TransferStreamOptions): number {
   return Math.min(share, ceiling);
 }
 
-/** The lanes a run's stages resolve to, per direction, largest first. An H1
- *  stage shares the browser budget with the control connections, so what a
- *  bidirectional stage opens is not what a download-only one does; "up to" is
- *  the largest of them. Resolved by transferStreamCount itself, so the
- *  description and the lanes cannot disagree. */
+/* The lanes a run's stages resolve to, per direction, largest first. */
 function autoStreamCeiling(
   policy: TransferStreamPolicy,
   protocol: ProtocolTarget | undefined,
@@ -105,21 +92,18 @@ function autoStreamCeiling(
           needsPing: needsPings(activity),
         }),
       );
-  // No stage carries bytes, so nothing resolves a count: the configured
-  // ceiling is all there is to describe.
+  // No stage carries bytes, so nothing resolves a count: the configured ceiling is all there is to describe.
   return most || normalizeStreamCount(policy.count);
 }
 
-/** `activities` are the stages the run will execute, which is what the
- *  automatic H1 count depends on. */
+/** `activities` are the stages the run will execute, which is what the automatic H1 count depends on. */
 export function describeTransferStreams(
   policy: TransferStreamPolicy,
   activities: readonly PhaseActivity[],
   protocol?: ProtocolTarget,
   transport?: TransportKind,
 ): string {
-  // A datagram run opens no lanes in either direction; the transport's own
-  // send queue paces it, so a lane count would describe nothing.
+// A datagram run opens no lanes in either direction; the transport's own send queue paces it, so a lane count would.
   if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
   const webTransport = transport === "webtransport";
   if (policy.mode === "forced") {

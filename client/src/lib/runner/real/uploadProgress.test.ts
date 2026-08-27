@@ -1,32 +1,17 @@
-// Corners of the upload meter that the RealRunner and wtStage integration pins
-// do not reach: a superseded external attach, a discard arriving while a
-// finalizing teardown still holds the worker, and the server-count clamp that
-// keeps two feeds for one upload id from moving the curve backwards.
-import { test, expect } from "bun:test";
+// Corners of the upload meter that the RealRunner and wtStage integration pins do not reach: a superseded external.
+import { test, expect, afterEach } from "bun:test";
 import type { CoreHost } from "../core";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import {
   UploadProgressChannel,
   type UploadProgressLane,
 } from "./uploadProgress";
+import { TestWorker } from "./test-helpers.test";
 
-class FakeWorker {
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly sent: unknown[] = [];
-  terminated = 0;
-  static last: FakeWorker | null = null;
-
-  constructor() {
-    FakeWorker.last = this;
-  }
-  postMessage(message: unknown): void {
-    this.sent.push(message);
-  }
-  terminate(): void {
-    this.terminated++;
-  }
-}
+const realWorker = globalThis.Worker;
+afterEach(() => {
+  globalThis.Worker = realWorker;
+});
 
 const target: FetchThroughputTarget = {
   id: "http://meter.test:7246",
@@ -128,8 +113,7 @@ function channelUnderTest(
   };
 }
 
-// Only one owner may act on an attach outcome, so a replaced or torn-down feed
-// resolves "superseded" rather than failing the stage on its establish timeout.
+// Only one owner may act on an attach outcome, so a replaced or torn-down feed resolves "superseded" rather than.
 test("attachExternal: a replaced feed is superseded, not a stage failure", async () => {
   const { channel, failures } = channelUnderTest();
   const first = channel.attachExternal(() => {});
@@ -158,8 +142,7 @@ test("an old upload generation cannot feed the replacement meter", async () => {
   expect(await second).toBe("superseded");
 });
 
-// A refused feed ends the attach as surely as a ready record: left pending, the
-// runner would receive both a recovery request and an establish timeout.
+// A refused feed ends the attach as surely as a ready record: left pending, the runner would receive both a recovery.
 test("accept: a refusal ends a pending external attach", async () => {
   const { channel, failures } = channelUnderTest({ measuring: true });
   const attached = channel.attachExternal(() => {});
@@ -169,8 +152,7 @@ test("accept: a refusal ends a pending external attach", async () => {
     detail: "session closed",
     cause: "transient-connection",
   });
-  // Racing an already-settled sentinel reports an attach left pending as a
-  // value rather than as a whole-test timeout.
+  // Racing an already-settled sentinel reports an attach left pending as a value rather than as a whole-test timeout.
   const outcome = await Promise.race([attached, Promise.resolve("pending")]);
   expect(outcome).toBe("superseded");
   expect(failures).toEqual([]);
@@ -200,9 +182,7 @@ test("capacity and ownership refusals cannot trigger upload-id recovery", () => 
   }
 });
 
-// The session worker owns the finalizing DELETE and sends it when the terminal
-// record lands. A second one from here is a DELETE against an upload id the next
-// stage may already have taken.
+// The session worker owns the finalizing DELETE and sends it when the terminal record lands.
 test("teardown finalizes a dropped session feed, but not a completed one", async () => {
   const dropped = channelUnderTest({ measuring: true });
   let droppedFinalizes = 0;
@@ -221,10 +201,7 @@ test("teardown finalizes a dropped session feed, but not a completed one", async
   expect(finalizes).toBe(0);
 });
 
-// One upload id can be reported by two feeds at once while a session feed
-// replaces an HTTP one. The server aggregate is cumulative, so the replacement's
-// first frames arrive behind the count already shown; taking them would feed the
-// curve a negative delta and then double-count the catch-up.
+// The server aggregate is cumulative, so the replacement's first frames arrive behind the count already shown; taking.
 test("a server count that arrives behind the last one does not move the curve", () => {
   const { channel, curve, durations } = channelUnderTest({ measuring: true });
 
@@ -282,16 +259,12 @@ test("the first advancing replacement checkpoint closes a rotation gap", () => {
   expect(progress).toEqual([100, 150, 150]);
 });
 
-// Unreachable today (every path tears down first), but a worker left running
-// under a new feed would keep pushing its own upload id's cumulative count into
-// the next stage's meter, which the monotonic guard accepts.
+// Unreachable today (every path tears down first), but a worker left running under a new feed would keep pushing its.
 test("taking a session feed terminates the worker feed it replaces", async () => {
-  const realWorker = globalThis.Worker;
-  globalThis.Worker = FakeWorker as unknown as typeof Worker;
-  try {
+  globalThis.Worker = TestWorker as unknown as typeof Worker;
     const { channel, failures } = channelUnderTest();
     const primed = channel.prime("upload", "gmu_one");
-    const worker = FakeWorker.last!;
+    const worker = TestWorker.last!;
 
     const attached = channel.attachExternal(() => {});
     expect(worker.terminated).toBe(1);
@@ -300,20 +273,14 @@ test("taking a session feed terminates the worker feed it replaces", async () =>
     expect(await attached).toBe("superseded");
     expect(await primed).toBe(false);
     expect(failures).toEqual([]);
-  } finally {
-    globalThis.Worker = realWorker;
-  }
 });
 
-// A discarded stage arriving mid-finalize must resolve the pending grace rather
-// than start a second one, and terminate the worker exactly once.
+// A discarded stage arriving mid-finalize must resolve the pending grace rather than start a second one, and.
 test("teardown(false) while finalizing resolves the pending grace", async () => {
-  const realWorker = globalThis.Worker;
-  globalThis.Worker = FakeWorker as unknown as typeof Worker;
-  try {
+  globalThis.Worker = TestWorker as unknown as typeof Worker;
     const { channel, failures } = channelUnderTest();
     void channel.prime("upload", "gmu_test");
-    const worker = FakeWorker.last!;
+    const worker = TestWorker.last!;
 
     const finalizing = channel.teardown(true);
     expect(worker.sent).toContainEqual({ type: "stop" });
@@ -323,7 +290,4 @@ test("teardown(false) while finalizing resolves the pending grace", async () => 
     await finalizing;
     expect(worker.terminated).toBe(1);
     expect(failures).toEqual([]);
-  } finally {
-    globalThis.Worker = realWorker;
-  }
 });

@@ -1,21 +1,17 @@
-// The two ping channels: the stage-scoped latency channel and the persistent
-// idle keepalive. The ping worker owns its bus, its reconnects and the
-// RTT timestamps; these classes own the worker's lifecycle and route its
-// samples into the core.
+// The ping worker owns its bus, its reconnects and the RTT timestamps; these classes own the worker's lifecycle and.
 import type { CoreHost } from "../core";
 import type { TransportKind } from "../contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
-import { pingWorker, stopWorker, type AuthRequiredMsg } from "./workerPool";
+import { pingWorker, type AuthRequiredMsg } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../latencyBuckets";
 import { fixedPingIntervalMs } from "../pingCadence";
 import { pingSampleContextTime, type PingSample } from "../workers/pingSample";
 
-/** Ping worker → channel messages. The worker owns reconnection and brackets a
- *  reconnect window with stall/resume, keeping the channel alive. */
+/* The worker owns reconnection and brackets a reconnect window with stall/resume, keeping the channel alive. */
 type PingOutMsg =
   | { type: "open" }
   | { type: "ready" }
@@ -41,8 +37,7 @@ const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
-/** The bus URL for a target, or null when the target does not speak `kind`.
- *  WebSocket needs the ws(s) scheme; WebTransport dials the https origin. */
+/* The bus URL for a target, or null when the target does not speak `kind`. */
 function pingUrl(
   target: LatencyTarget | null,
   kind: TransportKind,
@@ -53,8 +48,7 @@ function pingUrl(
     : httpToWs(target.origin) + target.routes.ping;
 }
 
-/** Token mint for a WebTransport ping dial, when authentication is on. Minting
- *  is a measurement mutation, so it carries the CSRF header and credentials. */
+/* Token mint for a WebTransport ping dial, when authentication is on. */
 function pingMint(target: LatencyTarget | null):
   | {
       url: string;
@@ -70,31 +64,25 @@ function pingMint(target: LatencyTarget | null):
   };
 }
 
-export interface LatencyChannelDeps {
+interface LatencyChannelDeps {
   host: () => CoreHost;
   target: () => LatencyTarget | null;
-  /** Reconnect edges reported by the ping worker. A later ping outcome, not
-   *  socket reopening, proves recovery to the core. */
+/* Reconnect edges reported by the ping worker. */
   stall: (detail: string) => void;
   resume: () => void;
-  /** Window-realm performance origin. Injectable only for deterministic
-   * cross-realm timestamp tests. */
+  /** Window-realm performance origin. Injectable only for deterministic cross-realm timestamp tests. */
   timeOriginMs?: number;
 }
 
-/** The stage-owned ping channel: one per stage (idle latency, then each loaded
- *  transfer stage). It runs on its OWN socket, never on the stage's transfer
- *  transport. */
+/* The stage-owned ping channel: one per stage (idle latency, then each loaded transfer stage). */
 export class LatencyChannel {
   #deps: LatencyChannelDeps;
   #worker: Worker | null = null;
   /** True from prime to teardown. Gates late worker messages. */
   #active = false;
-  /** Bounds one ping establishment attempt. A timeout reports a stall; the
-   * runner owns whether the latency stage eventually expires. */
+/* A timeout reports a stall; the runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The underLoad tag stamped on forwarded samples (true during a transfer
-   *  stage's loaded latency). Set when measure() flips reporting on. */
+/* The underLoad tag stamped on forwarded samples (true during a transfer stage's loaded latency). */
   #underLoad = false;
   #timeOriginMs: number;
 
@@ -103,9 +91,7 @@ export class LatencyChannel {
     this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
-  /** Open the latency (ping) channel over `kind` and warm it. The ping worker
-   *  owns the bus and the ping algorithm. Its warmup pings stay inside the
-   *  worker; measure() flips reporting on over that same connection. */
+/* The ping worker owns the bus and the ping algorithm. */
   prime(kind: TransportKind, isLatencyStage = false): void {
     const host = this.#deps.host();
     const cfg = host.config!;
@@ -115,11 +101,9 @@ export class LatencyChannel {
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
-    // Reply-driven uses this only for its loss sweep; its sends are driven by
-    // PONGs and the worker's adaptive backup.
+    // Reply-driven uses this only for its loss sweep; its sends are driven by PONGs and the worker's adaptive backup.
     const intervalMs = fixedIntervalMs ?? PING_LOSS_FLOOR_MS;
-    // A loaded stage shares the link with the transfer, so its depth is the
-    // same either way; the idle stage goes deeper unless PONGs pace the sends.
+// A loaded stage shares the link with the transfer, so its depth is the same either way; the idle stage goes.
     const maxInFlight = !isLatencyStage
       ? PING_LOADED_MAX_IN_FLIGHT
       : replyDriven
@@ -128,10 +112,7 @@ export class LatencyChannel {
 
     this.#underLoad = false;
     this.#active = true;
-    // A bus that never establishes reports nothing at all — a hung handshake
-    // produces no samples and no stall — so the wait for the first pong is
-    // bounded on every stage. Only the idle stage fails on it; a loaded stage
-    // has byte lanes of its own and reports the gap instead.
+// A bus that never establishes reports nothing at all — a hung handshake produces no samples and no stall — so.
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
       const detail = "ping connection could not be established";
@@ -161,29 +142,23 @@ export class LatencyChannel {
     this.#worker = worker;
   }
 
-  /** Enable reporting on the socket prime() opens, at that stage's cadence.
-   *  The worker owns RTT, loss, and observation time; this channel translates
-   *  only the cross-realm clock coordinate and adds the stage's `underLoad`
-   *  attribution. */
+/* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
   measure(underLoad: boolean): void {
     this.#underLoad = underLoad;
     this.#worker?.postMessage({ type: "measure" });
   }
 
-  /** Stop + terminate the ping worker, which drops its bus without a close
-   *  frame: the server's read ends with the socket. Idempotent. */
+/* Stop + terminate the ping worker, which drops its bus without a close frame: the server's read ends with the. */
   teardown(): void {
     this.#active = false;
     this.#clearEstablishTimer();
     if (this.#worker) {
-      stopWorker(this.#worker);
+      this.#worker.terminate();
       this.#worker = null;
     }
   }
 
-  /** Handle a message from the ping worker. The worker reports already-computed
-   *  RTTs; the channel tags underLoad and forwards. stall/resume bracket a
-   *  reconnect, and the coordinator decides whether that reaches the core. */
+/* Handle a message from the ping worker. */
   #onMessage(msg: PingOutMsg): void {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
@@ -214,8 +189,7 @@ export class LatencyChannel {
         // Socket establishment alone does not restore latency evidence.
         break;
       case "ready":
-        // READY is the peer's protocol acknowledgement. Warmup pongs stay in
-        // the worker, so waiting for a measured sample can outlive warmup.
+// Warmup pongs stay in the worker, so waiting for a measured sample can outlive warmup.
         this.#clearEstablishTimer();
         break;
       case "open":
@@ -231,30 +205,25 @@ export class LatencyChannel {
   }
 }
 
-export interface IdleKeepaliveDeps {
+interface IdleKeepaliveDeps {
   host: () => CoreHost;
   throughputTarget: () => FetchThroughputTarget | null;
   latencyTarget: () => LatencyTarget | null;
-  /** Window-realm performance origin. Injectable only for deterministic
-   * cross-realm timestamp tests. */
+  /** Window-realm performance origin. Injectable only for deterministic cross-realm timestamp tests. */
   timeOriginMs?: number;
 }
 
-/** The persistent idle ping: connectivity indicator plus the preflight RTT
- *  median. Separate from the stage-scoped LatencyChannel and never active at
- *  the same time (stopped when a run starts, restarted when it ends). */
+/* Separate from the stage-scoped LatencyChannel and never active at the same time (stopped when a run starts. */
 export class IdleKeepalive {
   #deps: IdleKeepaliveDeps;
   #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
   #targetKey = "";
-  /** Set while collectRtts() is harvesting the keepalive's first RTTs; `finish`
-   *  resolves the preflight median wait (idempotent). */
+/* Set while collectRtts() is harvesting the keepalive's first RTTs; `finish` resolves the preflight median wait. */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
   #probeReady: { finish: (error?: Error) => void } | null = null;
-  /** True from a stall until the next sample. "connected" emits once, on the
-   *  offline→online edge. */
+  /** True from a stall until the next sample. "connected" emits once, on the offline→online edge. */
   #offline = false;
   /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
@@ -264,9 +233,7 @@ export class IdleKeepalive {
     this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
   }
 
-  /** Start the persistent idle ping at `intervalMs`. Idempotent per target, and
-   *  a no-op without a resolvable latency target. Each run end restarts it, so
-   *  the connectivity pill stays live outside a test. */
+/* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     const targetKey = `${throughputTargetKey(this.#deps.throughputTarget())}\n${this.#deps.latencyTarget()?.id ?? ""}`;
     if (this.#active && this.#targetKey === targetKey) return;
@@ -276,15 +243,13 @@ export class IdleKeepalive {
     if (!channel || !url) return;
     this.#active = true;
     this.#targetKey = targetKey;
-    // The store latches its pulse offline on connection-lost. A fresh worker's
-    // first samples must emit a "connected" edge to un-latch it.
+// A fresh worker's first samples must emit a "connected" edge to un-latch it.
     this.#offline = true;
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
       this.#onMessage(e.data);
     worker.onerror = (e: ErrorEvent): void => {
-      // A worker dying at load time has no in-worker reconnect loop, usually
-      // because the bundle-serving server is down. Report offline and respawn.
+// A worker dying at load time has no in-worker reconnect loop, usually because the bundle-serving server is down.
       this.#onMessage({
         type: "stall",
         detail: e.message || "idle ping worker error",
@@ -309,8 +274,7 @@ export class IdleKeepalive {
     this.#worker = worker;
   }
 
-  /** Stop the idle keepalive when a run starts (onRunStart) or the app tears
-   *  down. Idempotent. */
+  /** Stop the idle keepalive when a run starts (onRunStart) or the app tears down. Idempotent. */
   stop(): void {
     this.#active = false;
     this.#targetKey = "";
@@ -325,15 +289,12 @@ export class IdleKeepalive {
       }),
     );
     if (this.#worker) {
-      stopWorker(this.#worker);
+      this.#worker.terminate();
       this.#worker = null;
     }
   }
 
-  /** Start the idle keepalive at the probe cadence and resolve with its first
-   *  PROBE_PING_COUNT RTTs (median → preTestPingMs). The worker then settles to
-   *  the sparse liveness cadence. Resolves with whatever arrives by the timeout,
-   *  never rejects. */
+/* The worker then settles to the sparse liveness cadence. */
   collectRtts(signal?: AbortSignal): Promise<number[]> {
     if (signal?.aborted) return Promise.resolve([]);
     this.start(PROBE_PING_INTERVAL_MS);
@@ -357,9 +318,7 @@ export class IdleKeepalive {
     });
   }
 
-  /** Resolve once the keepalive worker reports its socket ready, so a run can
-   *  refuse to start on a latency transport that never establishes. Rejects with
-   *  TransportUnavailableError on timeout or if the keepalive is stopped. */
+/* Resolve once the keepalive worker reports its socket ready, so a run can refuse to start on a latency transport. */
   verifyReady(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     this.start(PROBE_PING_INTERVAL_MS);
@@ -367,9 +326,7 @@ export class IdleKeepalive {
       const finish = (error?: Error): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
-        // Only the live wait clears the slot: an older instance timing out or
-        // aborting would otherwise silence the newer one's ready message, which
-        // then waits out its own budget on a channel that is already up.
+// Only the live wait clears the slot: an older instance timing out or aborting would otherwise silence the.
         if (this.#probeReady?.finish === finish) this.#probeReady = null;
         if (error) reject(error);
         else resolve();
@@ -384,9 +341,7 @@ export class IdleKeepalive {
               { role: "latency" },
             ),
           ),
-        // The worker's own establish deadline plus its mint sit inside this
-        // one, so without the margin the owner always fires first and a healthy
-        // slow bus is degraded before it can report ready.
+// The worker's own establish deadline plus its mint sit inside this one, so without the margin the owner.
         PING_ESTABLISH_TIMEOUT_MS,
       );
       this.#probeReady = { finish };
@@ -394,9 +349,7 @@ export class IdleKeepalive {
     });
   }
 
-  /** Re-spawn an idle worker that dies at load time. One timer at a time, and
-   *  each dead spawn schedules the next, so the keepalive knocks every
-   *  IDLE_RESPAWN_MS until the server serves the script. */
+/* Re-spawn an idle worker that dies at load time. */
   #scheduleRespawn(intervalMs?: number): void {
     if (!this.#active || this.#respawnTimer) return;
     this.#respawnTimer = setTimeout(() => {
@@ -407,10 +360,7 @@ export class IdleKeepalive {
     }, IDLE_RESPAWN_MS);
   }
 
-  /** Handle a message from the idle ping worker. Idle samples skip
-   *  `host.ingestLatency` (run accumulation) and go out as `latency` events
-   *  tagged phase "idle", which the store buffers separately. Outside a run
-   *  `connectivity` is the only status the store takes. */
+/* Handle a message from the idle ping worker. */
   #onMessage(msg: PingOutMsg): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {

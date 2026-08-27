@@ -1,9 +1,4 @@
-/* ============================================================
- * The Graphite Meter: adaptive duration helper
- * Runner-agnostic confidence math for confidence-based early
- * phase exit. Pure TypeScript, zero Svelte or DOM deps, so any
- * engine reuses it verbatim.
- * ============================================================ */
+/* The Graphite Meter: adaptive duration helper Runner-agnostic confidence math for confidence-based early phase. */
 
 import type {
   AdaptiveDurationConfig,
@@ -14,59 +9,44 @@ import { TRANSFER_CONTROL_BUCKET_MS } from "./controlBuckets";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { median } from "./stats";
 
-/* ---------- Stability-score coefficients ----------
- * score = clamp(1 − (varianceRatio·K1 + slopeRatio·K2), 0, 1).
- * Higher coefficients make the gate stricter: a small amount of
- * jitter or drift pulls the score down faster. */
+/* Stability-score coefficients ---------- score = clamp(1 − (varianceRatio·K1 + slopeRatio·K2), 0, 1). */
 
-/** Transfer stability: penalty on sample-to-mean variance (coefficient of
- *  variation), which stays small on a settled plateau. */
+/* Transfer stability: penalty on sample-to-mean variance (coefficient of variation), which stays small on a. */
 const TRANSFER_VARIANCE_K = 2.2;
-/** Transfer stability: penalty on first-vs-last segment drift. Sustained drift
- *  means the transfer has not settled, so it withholds an early exit. */
+/* Transfer stability: penalty on first-vs-last segment drift. */
 const TRANSFER_SLOPE_K = 1.4;
 
 /** Latency stability: how hard sustained RTT jitter is penalized. */
 const LATENCY_JITTER_K = 1.2;
 /** Latency stability: how hard packet loss within the window is penalized. */
 const LATENCY_LOSS_K = 3.6;
-/** Below this baseline, small timer/network noise is treated in absolute ms
- * rather than magnified by division through a tiny loopback/LAN RTT. */
+/* Below this baseline, small timer/network noise is treated in absolute ms rather than magnified by division. */
 const LATENCY_JITTER_FLOOR_MS = 20;
 
-/** Fixed transfer-control horizon, expressed once in time and resolved through
- * the canonical bucket duration so tuning either cannot silently drift. */
-export const TRANSFER_CONFIDENCE_WINDOW_MS = 4_000;
+/* Fixed transfer-control horizon, expressed once in time and resolved through the canonical bucket duration so. */
+const TRANSFER_CONFIDENCE_WINDOW_MS = 4_000;
 export const TRANSFER_CONFIDENCE_BUCKETS = Math.floor(
   TRANSFER_CONFIDENCE_WINDOW_MS / TRANSFER_CONTROL_BUCKET_MS,
 );
 /** Latency confidence is selected by event time, never callback count. */
 export const LATENCY_CONFIDENCE_WINDOW_MS = 4_000;
 
-/** Statistical floors retained when a configured sample target must be capped
- * to fit a phase. Explicitly lower advanced config remains authoritative. */
+/* Explicitly lower advanced config remains authoritative. */
 const MIN_LATENCY_CONFIDENCE_SAMPLES = 3;
 const MIN_TRANSFER_CONFIDENCE_SAMPLES = 4;
 
-/** Slope is measured as |mean(firstSegment) − mean(lastSegment)| / mean.
- *  The window is split into this many segments (first vs last third). */
+/* Slope is measured as |mean(firstSegment) − mean(lastSegment)| / mean. */
 const SLOPE_SEGMENTS = 3;
 /** Minimum samples per slope segment so a 2-sample window still works. */
 const MIN_SLOPE_SEGMENT = 2;
 
-/** Score at or above this, and below stabilityThreshold, reads as the "medium"
- *  pip band; below it reads "low". "high" starts at stabilityThreshold, so the
- *  green pip and "ready to finish early" are one signal. */
+/* Score at or above this, and below stabilityThreshold, reads as the "medium" pip band; below it reads "low". */
 const STABILITY_MED_BAND = 0.6;
 
-/** Hysteresis margin below `stabilityThreshold` for leaving the stable state.
- *  Entry needs the full threshold; exit needs a drop this far below it, so the
- *  pip and the stable window do not flicker at the boundary. */
+/* Hysteresis margin below `stabilityThreshold` for leaving the stable state. */
 const STABILITY_HYSTERESIS = 0.08;
 
-/** Schmitt trigger for the "stable" state: enter at `stabilityThreshold`, leave
- *  below `stabilityThreshold − STABILITY_HYSTERESIS`. In the dead band it keeps
- *  the state it carries in. */
+/* Schmitt trigger for the "stable" state: enter at `stabilityThreshold`, leave below `stabilityThreshold −. */
 export function isStillStable(
   wasStable: boolean,
   score: number,
@@ -77,8 +57,7 @@ export function isStillStable(
   return wasStable ? score >= exit : score >= enter;
 }
 
-/** Band from the *latched* stable state (hysteretic): a sustained stable run
- *  reads "high"; otherwise the score's climb shows as medium/low. */
+/* Band from the *latched* stable state (hysteretic): a sustained stable run reads "high"; otherwise the score's. */
 export function bandForState(stable: boolean, score: number): StabilityBand {
   if (stable) return "high";
   if (score >= STABILITY_MED_BAND) return "medium";
@@ -127,16 +106,12 @@ export interface LatencyConfidenceScore extends Omit<
   lossRatio: number;
 }
 
-export interface TimedLatencyOutcome {
+interface TimedLatencyOutcome {
   tMs: number;
   rttMs: number | null;
 }
 
-/**
- * Transfer (download/upload) confidence from a window of bytes/sec values.
- * Stability falls as the plateau gets noisier (variance) or keeps drifting
- * up/down (slope). Returns score 0 when there is not enough signal yet.
- */
+/* Transfer (download/upload) confidence from a window of bytes/sec values. */
 export function transferConfidence(
   bytesPerSecValues: number[],
 ): ConfidenceScore {
@@ -170,11 +145,7 @@ export function transferConfidence(
   return { score, varianceRatio, slopeRatio, sampleCount: values.length };
 }
 
-/**
- * Latency confidence from unloaded ping outcomes. RTT and loss use the same
- * trailing window; robust median deviation ignores isolated tail spikes while
- * sustained jitter and packet loss still lower confidence.
- */
+/* Latency confidence from unloaded ping outcomes. */
 export function latencyConfidence(
   outcomes: TimedLatencyOutcome[],
 ): LatencyConfidenceScore {
@@ -223,17 +194,14 @@ interface ExitDecisionBase {
   cfg: AdaptiveDurationConfig;
 }
 
-/** Latency decisions must name their cadence so no caller can silently bypass
- * cadence-aware evidence sizing. Transfer decisions have fixed control buckets. */
+/* Latency decisions must name their cadence so no caller can silently bypass cadence-aware evidence sizing. */
 export type ExitDecisionInput = ExitDecisionBase &
   (
     | { kind: "latency"; latencyCadence: PingCadence }
     | { kind: "transfer"; latencyCadence?: never }
   );
 
-/** The fraction of a phase's nominal duration that must elapse for an early
- *  exit: `minCoverageRatio`, and never below what `maxPhaseReductionRatio`
- *  permits, so the rail and the progress bar stay honest. */
+/* The fraction of a phase's nominal duration that must elapse for an early exit: `minCoverageRatio`, and never. */
 function requiredCoverageRatio(cfg: AdaptiveDurationConfig): number {
   return Math.max(cfg.minCoverageRatio, 1 - cfg.maxPhaseReductionRatio);
 }
@@ -242,11 +210,7 @@ function configuredFloor(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
-/** Resolve the evidence floor from the actual phase policy. The configured
- * floor is the desired target; fixed source cadence, the trailing confidence
- * horizon, and the confirmation reserve cap it to a target that can arm before
- * the phase ends. Very short phases still retain a statistical minimum instead
- * of weakening confidence merely to force an early exit. */
+/* Resolve the evidence floor from the actual phase policy. */
 type ConfidenceSampleFloorInput =
   | {
       kind: "latency";
@@ -286,12 +250,9 @@ export function confidenceSampleFloor(
     statisticalMinimum = MIN_TRANSFER_CONFIDENCE_SAMPLES;
   } else {
     const intervalMs = fixedPingIntervalMs(input.latencyCadence);
-    // Reply-driven pacing reflects the path itself rather than an intentional
-    // sampling delay. Do not lower its evidence target when the path yields too
-    // few independent outcomes.
+// Reply-driven pacing reflects the path itself rather than an intentional sampling delay.
     if (intervalMs == null) return requested;
-    // The worker re-anchors fixed cadence and attempts a measured send at the
-    // phase boundary, so fixed-capacity math may include that first outcome.
+// The worker re-anchors fixed cadence and attempts a measured send at the phase boundary, so fixed-capacity math.
     capacity = Math.min(
       Math.ceil(LATENCY_CONFIDENCE_WINDOW_MS / intervalMs),
       1 + Math.floor(candidateBudgetMs / intervalMs),
@@ -303,11 +264,7 @@ export function confidenceSampleFloor(
   return Math.max(minimum, Math.min(requested, capacity));
 }
 
-/**
- * True once the current phase may end early: the coverage floor is reached, the
- * stability score is at `stabilityThreshold`, and the kind's min-sample floor is
- * met. False while adaptive is disabled or the phase has no duration.
- */
+/* True once the current phase may end early: the coverage floor is reached, the stability score is at. */
 export function shouldExitPhase(input: ExitDecisionInput): boolean {
   const { kind, elapsedMs, durationMs, confidence, cfg } = input;
   if (!cfg.enabled) return false;

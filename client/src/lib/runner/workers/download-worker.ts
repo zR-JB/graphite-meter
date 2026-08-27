@@ -1,33 +1,19 @@
-/* ============================================================
- * The Graphite Meter: download read-and-count worker
- * ============================================================
- * One worker per parallel download stream. It streams GET /download, counts
- * each chunk's byteLength and discards it, so the payload never crosses the
- * thread boundary and memory stays O(1). Only `{ bytes }` deltas go back,
- * batched to ~50 ms. The lane re-fetches until the worker is terminated.
- * ============================================================ */
+/* The Graphite Meter: download read-and-count worker ============================================================. */
 
-import { setDebugLogging, debugEnabled, dlog, DebugWindow } from "../../debug";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
 import { nextTransferBytes, type SizerCfg } from "./autosize";
-import { ProgressWindow, type ProgressDelta } from "./progressWindow";
+import { progressWindow, type ProgressDelta } from "./progressWindow";
 import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
-/** Main → worker. `debug`/`id` drive verbose per-stream logging only. `chunk`
- *  selects the experimental mode: adaptively-sized `&bytes=N` requests (see
- *  autosize.ts) over one keep-alive connection, preserving cwnd. Default off
- *  runs one 64 GiB stream; the flag A/B-tests ramp responsiveness. The lane is
- *  stopped by terminating the worker, so there is no shutdown message. */
+/* Main → worker. */
 type InMsg =
   | {
       type: "start";
       url: string;
-      debug?: boolean;
-      id?: number;
       chunk?: boolean;
       credentials?: RequestCredentials;
       headers?: HeadersInit;
@@ -55,15 +41,12 @@ export function downloadFetchInit(
   };
 }
 
-// Narrow `self` to the dedicated-worker scope so postMessage/onmessage type
-// cleanly under the combined DOM + WebWorker libs.
+// Narrow `self` to the dedicated-worker scope so postMessage/onmessage type cleanly under the combined DOM +.
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 let credentials: RequestCredentials = "same-origin";
 let headers: HeadersInit | undefined;
 
-/** Experimental chunked-request sizer (see autosize.ts). The generous max costs
- *  no RAM because the reader discards as it counts, so a fast stable link climbs
- *  toward it and only a slow or dropping link shrinks for responsiveness. */
+/* Experimental chunked-request sizer (see autosize.ts). */
 const CHUNK_SIZER: SizerCfg = {
   targetMs: 350,
   minBytes: 128 * 1024,
@@ -78,29 +61,19 @@ let chunked = false;
 let nextBytes = CHUNK_SIZER.minBytes;
 let rateEwma = 0;
 let measureSeq = 0;
-let progress = new ProgressWindow(0, REPORT_GAP_MS);
-
-/** Stream index, tagging debug lines only (`dl-worker#<id>`). */
-let streamId = 0;
-/** Raw-receive debug window, independent of the 50 ms progress batching.
- *  Reflects what this reader pulls off the socket, comparable to btop and
- *  `-verbose`. */
-const dbg = new DebugWindow();
+let progress = progressWindow(0, REPORT_GAP_MS);
 
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
-    setDebugLogging(msg.debug ?? false);
-    streamId = msg.id ?? 0;
     chunked = msg.chunk ?? false;
-    progress = new ProgressWindow(performance.now(), REPORT_GAP_MS);
+    progress = progressWindow(performance.now(), REPORT_GAP_MS);
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers;
     nextBytes = CHUNK_SIZER.minBytes;
     rateEwma = 0;
     measureSeq = 0;
     progress.reset();
-    dbg.reset();
     void run(msg.url);
   } else if (msg.type === "measure") {
     measureSeq = msg.seq;
@@ -115,21 +88,14 @@ function postProgress(delta: ProgressDelta | null): void {
 }
 
 async function run(url: string): Promise<void> {
-  // Re-fetch loop: keep the lane busy for the whole measured window even if a
-  // single request reaches its Content-Length.
+  // Re-fetch until the measured window ends, even when one response reaches Content-Length.
   for (;;) {
-    // Count the chunk and drop it. Deltas batch to the main thread; verbose mode
-    // logs the pre-aggregation 1 Hz receive rate, ground truth for the reader.
+// Count the chunk and drop it.
     const count = (n: number): void => {
       const now = performance.now();
       postProgress(progress.add(n, now));
-      if (debugEnabled()) {
-        const window = dbg.add(n, now);
-        if (window) dlog(`dl-worker#${streamId}`, "raw-receive", window);
-      }
     };
-    // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is
-    // (its ?bytes= is baked in by RealBackend). Time the whole fetch to resize next.
+// Chunked mode appends the adaptive size; long-stream mode uses the URL as-is (its ?bytes= is baked in by.
     const requestedBytes = nextBytes;
     const requestUrl = chunked ? `${url}&bytes=${requestedBytes}` : url;
     const fetchStart = performance.now();
@@ -161,8 +127,7 @@ async function run(url: string): Promise<void> {
         ));
       }
     } catch (err) {
-      // A read that failed on an expired session is an auth failure, not a
-      // transport one, so the session is re-checked before the error is reported.
+// A read that failed on an expired session is an auth failure, not a transport one, so the session is.
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(self.location.origin))
@@ -177,9 +142,7 @@ async function run(url: string): Promise<void> {
   }
 }
 
-/** A BYOB reader over the body, or null when the body is not a byte stream.
- *  Reusing one buffer avoids the default reader's per-chunk allocation and GC,
- *  which is the read-side throughput ceiling at multi-Gbit/s. */
+/* A BYOB reader over the body, or null when the body is not a byte stream. */
 function byobReader(
   body: ReadableStream<Uint8Array>,
 ): ReadableStreamBYOBReader | null {
@@ -190,10 +153,7 @@ function byobReader(
   }
 }
 
-/** Read a response body to completion, feeding each chunk's byte count to
- *  `count`. fetch plus a reader is the only way to read and discard a streamed
- *  response at O(1) memory: XHR buffers the whole response internally, which a
- *  multi-GiB download exhausts. */
+/* Read a response body to completion, feeding each chunk's byte count to `count`. */
 async function readBody(
   body: ReadableStream<Uint8Array>,
   count: (n: number) => void,
@@ -205,8 +165,7 @@ async function readBody(
       const chunk = await byob.read(new Uint8Array(buf));
       if (chunk.done) break;
       if (chunk.value.byteLength) count(chunk.value.byteLength);
-      // read() detaches the buffer and returns the same backing store in
-      // `value`; reusing it keeps the loop allocation-free.
+      // Reusing read()'s returned backing store keeps the loop allocation-free.
       buf = chunk.value.buffer as ArrayBuffer;
     }
     return;

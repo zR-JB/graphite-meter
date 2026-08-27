@@ -82,24 +82,46 @@ export class FixedRateBuckets {
   }
 }
 
-/** Two lane windows trimmed by one shared bucket index. */
+/** Two lane windows retained and summed only at shared temporal bucket indexes. */
 export class PairedRateBuckets {
   #down = new FixedRateBuckets();
   #up = new FixedRateBuckets();
+  #temporal = false;
+  #latestBucket = -1;
+  #temporalDown = new Map<number, TemporalBucket>();
+  #temporalUp = new Map<number, TemporalBucket>();
 
   constructor(private readonly maxCompleted = Number.POSITIVE_INFINITY) {}
 
   reset(): void {
     this.#down.reset();
     this.#up.reset();
+    this.#temporal = false;
+    this.#latestBucket = -1;
+    this.#temporalDown.clear();
+    this.#temporalUp.clear();
   }
 
-  observe(direction: "down" | "up", bytes: number, durationMs: number): void {
+  observe(
+    direction: "down" | "up",
+    bytes: number,
+    durationMs: number,
+    endAtMs?: number,
+  ): void {
+    if (Number.isFinite(endAtMs)) {
+      this.#temporal = true;
+      this.#observeTemporal(direction, bytes, durationMs, endAtMs as number);
+      this.#trimTemporal();
+      return;
+    }
+    // Keep cadence-only behavior for isolated callers; production supplies the shared run-clock timestamp above.
+    if (this.#temporal) return;
     (direction === "down" ? this.#down : this.#up).observe(bytes, durationMs);
     this.#trim();
   }
 
   get rates(): readonly number[] {
+    if (this.#temporal) return this.#temporalRates();
     const count = Math.min(this.#down.completedCount, this.#up.completedCount);
     return Array.from(
       { length: count },
@@ -108,7 +130,71 @@ export class PairedRateBuckets {
   }
 
   get completedCount(): number {
+    if (this.#temporal) return this.#temporalRates().length;
     return Math.min(this.#down.completedCount, this.#up.completedCount);
+  }
+
+  #observeTemporal(
+    direction: "down" | "up",
+    bytesInput: number,
+    durationInputMs: number,
+    endAtMs: number,
+  ): void {
+    const durationMs = Number.isFinite(durationInputMs)
+      ? Math.max(0, durationInputMs)
+      : 0;
+    if (durationMs <= 0) return;
+    const bytes = Number.isFinite(bytesInput) ? Math.max(0, bytesInput) : 0;
+    const startAtMs = endAtMs - durationMs;
+    if (!Number.isFinite(startAtMs)) return;
+    const buckets =
+      direction === "down" ? this.#temporalDown : this.#temporalUp;
+    const endBucket = Math.ceil(endAtMs / TRANSFER_CONTROL_BUCKET_MS) - 1;
+    this.#latestBucket = Math.max(this.#latestBucket, endBucket);
+    this.#trimTemporal();
+    const firstRetained =
+      this.maxCompleted === Number.POSITIVE_INFINITY
+        ? Number.NEGATIVE_INFINITY
+        : this.#latestBucket - Math.max(0, this.maxCompleted) + 1;
+    let atMs = Math.max(startAtMs, firstRetained * TRANSFER_CONTROL_BUCKET_MS);
+    while (atMs < endAtMs) {
+      const index = Math.floor(atMs / TRANSFER_CONTROL_BUCKET_MS);
+      const bucketEndMs = (index + 1) * TRANSFER_CONTROL_BUCKET_MS;
+      const takeMs = Math.min(endAtMs, bucketEndMs) - atMs;
+      if (takeMs <= 0) break;
+      if (index >= firstRetained) {
+        const bucket = buckets.get(index) ?? { bytes: 0, durationMs: 0 };
+        bucket.bytes += (bytes * takeMs) / durationMs;
+        bucket.durationMs += takeMs;
+        buckets.set(index, bucket);
+      }
+      atMs += takeMs;
+    }
+  }
+
+  #temporalRates(): number[] {
+    const indexes: number[] = [];
+    for (const [index, down] of this.#temporalDown) {
+      const up = this.#temporalUp.get(index);
+      if (up && completeTemporalBucket(down) && completeTemporalBucket(up))
+        indexes.push(index);
+    }
+    indexes.sort((a, b) => a - b);
+    return indexes.map(
+      (index) =>
+        ((this.#temporalDown.get(index)!.bytes +
+          this.#temporalUp.get(index)!.bytes) *
+          1_000) /
+        TRANSFER_CONTROL_BUCKET_MS,
+    );
+  }
+
+  #trimTemporal(): void {
+    if (this.maxCompleted === Number.POSITIVE_INFINITY) return;
+    const first = this.#latestBucket - Math.max(0, this.maxCompleted) + 1;
+    for (const buckets of [this.#temporalDown, this.#temporalUp])
+      for (const index of buckets.keys())
+        if (index < first) buckets.delete(index);
   }
 
   #trim(): void {
@@ -122,3 +208,11 @@ export class PairedRateBuckets {
     this.#up.dropBefore(alignedBase);
   }
 }
+
+interface TemporalBucket {
+  bytes: number;
+  durationMs: number;
+}
+
+const completeTemporalBucket = (bucket: TemporalBucket): boolean =>
+  bucket.durationMs >= TRANSFER_CONTROL_BUCKET_MS - 1e-6;

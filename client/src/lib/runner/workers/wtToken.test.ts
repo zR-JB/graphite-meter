@@ -12,41 +12,51 @@ function respondWith(response: Response): () => void {
   };
 }
 
+function captureFetch(): {
+  init: () => RequestInit | undefined;
+  restore: () => void;
+} {
+  const real = globalThis.fetch;
+  let init: RequestInit | undefined;
+  globalThis.fetch = (async (_input: RequestInfo | URL, got?: RequestInit) => {
+    init = got;
+    return Response.json({ token: "gmw_abc" });
+  }) as unknown as typeof fetch;
+  return { init: () => init, restore: () => (globalThis.fetch = real) };
+}
+
+function expectMint(
+  response: Response,
+  expected: { token: string; authRequired: boolean },
+): Promise<void> {
+  const restore = respondWith(response);
+  return mintWtToken(MINT)
+    .then((result) => expect(result).toEqual(expected))
+    .finally(restore);
+}
+
 test("a mint refusal carrying the marker reports the session as gone", async () => {
-  const restore = respondWith(
+  await expectMint(
     new Response("no", {
       status: 403,
       headers: { "Graphite-Meter-Auth": "required" },
     }),
+    { token: "", authRequired: true },
   );
-  try {
-    expect(await mintWtToken(MINT)).toEqual({ token: "", authRequired: true });
-  } finally {
-    restore();
-  }
 });
 
-// A proxy or WAF answering 403 is not evidence of expiry, so the caller retries
-// rather than bouncing the page to a login it did not need.
 test("a bare refusal is a retry, not a login", async () => {
-  const restore = respondWith(new Response("no", { status: 403 }));
-  try {
-    expect(await mintWtToken(MINT)).toEqual({ token: "", authRequired: false });
-  } finally {
-    restore();
-  }
+  await expectMint(new Response("no", { status: 403 }), {
+    token: "",
+    authRequired: false,
+  });
 });
 
 test("a minted token comes back with no auth verdict", async () => {
-  const restore = respondWith(Response.json({ token: "gmw_abc" }));
-  try {
-    expect(await mintWtToken(MINT)).toEqual({
-      token: "gmw_abc",
-      authRequired: false,
-    });
-  } finally {
-    restore();
-  }
+  await expectMint(Response.json({ token: "gmw_abc" }), {
+    token: "gmw_abc",
+    authRequired: false,
+  });
 });
 
 test("no mint configured means authentication is off", async () => {
@@ -56,48 +66,29 @@ test("no mint configured means authentication is off", async () => {
   });
 });
 
-// Every credentialed request in the client refuses redirects: a hop that
-// bounces the mint to a login page would otherwise answer 200 with a body that
-// carries no token, and the failure would read as an unreachable server.
 test("a credentialed mint refuses redirects", async () => {
-  const real = globalThis.fetch;
-  let init: RequestInit | undefined;
-  globalThis.fetch = (async (_input: RequestInfo | URL, got?: RequestInit) => {
-    init = got;
-    return Response.json({ token: "gmw_abc" });
-  }) as unknown as typeof fetch;
+  const capture = captureFetch();
   try {
     await mintWtToken({ ...MINT, credentials: "include" });
-    expect(init?.redirect).toBe("error");
-    expect(init?.credentials).toBe("include");
+    expect(capture.init()?.redirect).toBe("error");
+    expect(capture.init()?.credentials).toBe("include");
   } finally {
-    globalThis.fetch = real;
+    capture.restore();
   }
 });
 
-// The mint is a state-changing POST under the boundary's own rules: without the
-// double-submit header mutationOriginAllowed refuses every one of them, a GET
-// is answered 405, and a cached response would hand back a token an earlier
-// dial already spent.
 test("a mint is an uncached POST carrying the caller's headers", async () => {
-  const real = globalThis.fetch;
-  let init: RequestInit | undefined;
-  globalThis.fetch = (async (_input: RequestInfo | URL, got?: RequestInit) => {
-    init = got;
-    return Response.json({ token: "gmw_abc" });
-  }) as unknown as typeof fetch;
+  const capture = captureFetch();
   try {
     await mintWtToken({ ...MINT, headers: { "X-CSRF-Token": "csrf-token" } });
-    expect(init?.method).toBe("POST");
-    expect(init?.cache).toBe("no-store");
-    expect(init?.headers).toEqual({ "X-CSRF-Token": "csrf-token" });
+    expect(capture.init()?.method).toBe("POST");
+    expect(capture.init()?.cache).toBe("no-store");
+    expect(capture.init()?.headers).toEqual({ "X-CSRF-Token": "csrf-token" });
   } finally {
-    globalThis.fetch = real;
+    capture.restore();
   }
 });
 
-/** A fetch that answers only when its signal aborts, so a test can prove the
- *  mint carries a bound of its own. */
 function respondOnAbort(): {
   seen: () => AbortSignal | undefined;
   restore: () => void;
@@ -117,8 +108,6 @@ function respondOnAbort(): {
   };
 }
 
-// A mint that never answers holds the dial open past the point its token would
-// have expired, so it carries a bound whether or not the caller supplies one.
 test("a mint that never answers is abandoned on its own bound", async () => {
   const hang = respondOnAbort();
   try {
@@ -131,8 +120,6 @@ test("a mint that never answers is abandoned on its own bound", async () => {
   }
 }, 10_000);
 
-// The caller's signal has to cut the mint short without displacing that bound,
-// which is what makes the two an "any" rather than a choice.
 test("a caller's signal cuts the mint short", async () => {
   const hang = respondOnAbort();
   const caller = new AbortController();
@@ -150,7 +137,6 @@ test("a caller's signal cuts the mint short", async () => {
   }
 });
 
-/** Count mints, answering each with a live token. */
 function countingMint(): {
   calls: () => number;
   restore: () => void;
@@ -169,10 +155,6 @@ function countingMint(): {
   };
 }
 
-// A dial that fails before its CONNECT is accepted leaves the token unspent, so
-// the retry carries the same one. Minting per attempt fills the session's cap
-// of eight within a couple of seconds, and every stage and tab of that login is
-// refused for the rest of the token lifetime.
 test("a re-dial reuses the token the failed dial never spent", async () => {
   const url = "https://meter.test/reused";
   const mint = countingMint();
@@ -188,10 +170,6 @@ test("a re-dial reuses the token the failed dial never spent", async () => {
   }
 });
 
-// The window is what bounds a dial the server accepted but the client never saw
-// resolve: the token is gone server-side and reuse would replay a dead one. It
-// is sized to expire by the time the retry runs — the establish budget the dial
-// burned plus the restart backoff — so widening it reintroduces that replay.
 test("the reuse window expires by the retry that follows a failed dial", async () => {
   const url = "https://meter.test/window";
   const mint = countingMint();
@@ -205,8 +183,6 @@ test("the reuse window expires by the retry that follows a failed dial", async (
   }
 }, 10_000);
 
-// A CONNECT the server accepted spends the token, so the next dial must not
-// carry it: the server has already deleted it and would refuse the replay.
 test("a spent token is never handed out again", async () => {
   const url = "https://meter.test/spent";
   const mint = countingMint();

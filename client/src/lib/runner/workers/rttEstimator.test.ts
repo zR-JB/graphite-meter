@@ -8,8 +8,7 @@ test("observeRtt: the first sample seeds srtt directly and rttvar to half of it"
 
 test("observeRtt: a repeated identical RTT holds srtt and decays rttvar", () => {
   const first = observeRtt(INITIAL_RTT_ESTIMATE, 100);
-  const second = observeRtt(first, 100); // same RTT again: srtt unchanged
-  // srtt: 0.875*100 + 0.125*100 = 100
+  const second = observeRtt(first, 100); // same RTT again: srtt unchanged; 0.875*100 + 0.125*100 = 100.
   expect(second.srtt).toBeCloseTo(100, 10);
   // rttvar: 0.75*50 + 0.25*|100-100| = 37.5 (decays toward 0 over repeats)
   expect(second.rttvar).toBeCloseTo(37.5, 10);

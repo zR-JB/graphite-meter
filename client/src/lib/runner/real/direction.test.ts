@@ -18,8 +18,7 @@ interface Clock {
   advance(ms: number): void;
 }
 
-/** Drives performance.now and the timer queue together, so a budget measured in
- *  time can be asserted without waiting it out. */
+/* Drives performance.now and the timer queue together, so a budget measured in time can be asserted without. */
 function withClock<T>(body: (clock: Clock) => T): T {
   let now = 0;
   let nextId = 1;
@@ -67,7 +66,11 @@ interface Recorded {
   stalls: string[];
 }
 
-function fakeHost(record: Recorded, clock: Clock): DirectionHost {
+function fakeHost(
+  record: Recorded,
+  clock: Clock,
+  core: Record<string, unknown> = {},
+): DirectionHost {
   const host = {
     failStage: () => record.skips.push(clock.now()),
     fail: (_reason: string, message: string) => record.fails.push(message),
@@ -76,6 +79,7 @@ function fakeHost(record: Recorded, clock: Clock): DirectionHost {
     emit: () => {},
     stall: () => {},
     resume: () => {},
+    ...core,
   } as unknown as CoreHost;
   return {
     host: () => host,
@@ -86,28 +90,39 @@ function fakeHost(record: Recorded, clock: Clock): DirectionHost {
   };
 }
 
-/** A lane that never carries a byte. `establishMs` is how long it takes to say
- *  so: 0 for a refused connection, the establish budget for a silent one. */
-function deadLane(
-  establishMs: number,
-  events: LaneEvents,
-  record: Recorded,
-  clock: Clock,
-): ByteLane {
+type StartLane = () => void;
+type StopLane = () => void | Promise<void>;
+
+function lane(start: StartLane = () => {}, stop: StopLane = () => {}): ByteLane {
   return {
-    start(): void {
-      record.starts.push(clock.now());
-      setTimeout(() => events.onError(true, "no bytes"), establishMs);
-    },
+    start,
     measure(): void {},
-    stop: () => Promise.resolve(),
+    stop: () => Promise.resolve(stop()),
     discard(): void {},
   };
 }
 
+function newDirection(
+  clock: Clock,
+  record: Recorded = { skips: [], fails: [], starts: [], stalls: [] },
+  options: {
+    dir?: "up" | "down";
+    stage?: "upload" | "download" | "bidirectional";
+    host?: DirectionHost;
+    makeLane?: (events: LaneEvents) => ByteLane;
+  } = {},
+): TransferDirection {
+  return new TransferDirection({
+    dir: options.dir ?? "up",
+    stage: options.stage ?? "upload",
+    laneCount: 1,
+    warmupMs: 0,
+    host: options.host ?? fakeHost(record, clock),
+    lane: (_i, events) => options.makeLane?.(events) ?? lane(),
+  });
+}
+
 // A recoverable establish failure stays with the runner-owned recovery budget.
-// The direction may retry after its bounded backoff, but cannot independently
-// skip the stage whether the failure is immediate or takes one establish bound.
 for (const [what, establishMs] of [
   ["a lane refused at once", 0],
   ["a lane that goes silent", ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS],
@@ -115,13 +130,14 @@ for (const [what, establishMs] of [
   test(`${what} never independently skips its stage`, () => {
     withClock((clock) => {
       const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
-      const direction = new TransferDirection({
+      const direction = newDirection(clock, record, {
         dir: "down",
         stage: "download",
-        laneCount: 1,
-        warmupMs: 0,
-        host: fakeHost(record, clock),
-        lane: (_i, events) => deadLane(establishMs, events, record, clock),
+        makeLane: (events) =>
+          lane(() => {
+            record.starts.push(clock.now());
+            setTimeout(() => events.onError(true, "no bytes"), establishMs);
+          }),
       });
       direction.spawn(["https://meter.test/lane"]);
       direction.measure();
@@ -138,31 +154,21 @@ for (const [what, establishMs] of [
   });
 }
 
-// The deadline covers a path that never worked. One that did is a drop, and a
-// drop is restarted until the restart bound, whatever the stage has left to run.
+// The deadline covers a path that never worked.
 test("a lane that carried bytes is restarted past the skip deadline", () => {
   withClock((clock) => {
     const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
     let carried = false;
-    const direction = new TransferDirection({
-      dir: "up",
-      stage: "upload",
-      laneCount: 1,
-      warmupMs: 0,
-      host: fakeHost(record, clock),
-      lane: (_i, events) => ({
-        start(): void {
+    const direction = newDirection(clock, record, {
+      makeLane: (events) =>
+        lane(() => {
           record.starts.push(clock.now());
           if (!carried) {
             carried = true;
             events.onAlive();
           }
           setTimeout(() => events.onError(true, "dropped"), 10);
-        },
-        measure(): void {},
-        stop: () => Promise.resolve(),
-        discard(): void {},
-      }),
+        }),
     });
     direction.spawn(["https://meter.test/lane"]);
 
@@ -180,37 +186,20 @@ test("a local upload completion is a presentation hint, not measurement evidence
   withClock((clock) => {
     const hints: [number, number, number, number][] = [];
     let ingests = 0;
-    const host = {
-      failStage() {},
-      fail() {},
-      ingestThroughput() {
+    const deps = fakeHost(
+      { skips: [], fails: [], starts: [], stalls: [] },
+      clock,
+      {
+        ingestThroughput() {
         ingests++;
+        },
       },
-      ingestLatency() {},
-      emit() {},
-      stall() {},
-      resume() {},
-    } as unknown as CoreHost;
-    const direction = new TransferDirection({
-      dir: "up",
-      stage: "upload",
-      laneCount: 1,
-      warmupMs: 0,
-      host: {
-        host: () => host,
-        stallChanged: () => {},
-        uploadProgress: () => {},
-        uploadPresentationHint: (lane, bytes, elapsedMs, generation) =>
-          hints.push([lane, bytes, elapsedMs, generation]),
-        beginUploadMeasure: () => {},
-        discardTransfer: () => {},
-      },
-      lane: (_i, events) => ({
-        start: () => events.onAlive(640, 80),
-        measure: () => {},
-        stop: () => Promise.resolve(),
-        discard: () => {},
-      }),
+    );
+    deps.uploadPresentationHint = (lane, bytes, elapsedMs, generation) =>
+      hints.push([lane, bytes, elapsedMs, generation]);
+    const direction = newDirection(clock, undefined, {
+      host: deps,
+      makeLane: (events) => lane(() => events.onAlive(640, 80)),
     });
     direction.setUploadGeneration(7);
     direction.spawn(["https://meter.test/upload"]);
@@ -225,18 +214,9 @@ test("a local upload completion is a presentation hint, not measurement evidence
 test("a permanent lane refusal finalizes only its affected stage", () => {
   withClock((clock) => {
     const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
-    const direction = new TransferDirection({
-      dir: "up",
+    const direction = newDirection(clock, record, {
       stage: "bidirectional",
-      laneCount: 1,
-      warmupMs: 0,
-      host: fakeHost(record, clock),
-      lane: (_i, events) => ({
-        start: () => events.onError(false, "HTTP 429"),
-        measure: () => {},
-        stop: () => Promise.resolve(),
-        discard: () => {},
-      }),
+      makeLane: (events) => lane(() => events.onError(false, "HTTP 429")),
     });
     direction.spawn(["https://meter.test/lane"]);
 
@@ -250,21 +230,12 @@ test("an explicit invalid upload id enters runner recovery without a same-id res
   withClock((clock) => {
     const record: Recorded = { skips: [], fails: [], starts: [], stalls: [] };
     let refuse = (): void => {};
-    const direction = new TransferDirection({
-      dir: "up",
-      stage: "upload",
-      laneCount: 1,
-      warmupMs: 0,
-      host: fakeHost(record, clock),
-      lane: (_i, events) => ({
-        start: () => {
+    const direction = newDirection(clock, record, {
+      makeLane: (events) =>
+        lane(() => {
           record.starts.push(clock.now());
           refuse = () => events.onError(true, "HTTP 400", "unknown-upload-id");
-        },
-        measure: () => {},
-        stop: () => Promise.resolve(),
-        discard: () => {},
-      }),
+        }),
     });
     direction.spawn(["https://meter.test/lane"]);
     direction.measure();
@@ -277,48 +248,30 @@ test("an explicit invalid upload id enters runner recovery without a same-id res
   });
 });
 
-// performance.now is coarsened per origin, so two reports arriving while a lane
-// stops can land in the same tick. The second window has no duration to divide
-// by, and its bytes have to survive into the next one that does.
+// The second window has no duration to divide by, and its bytes have to survive into the next one that does.
 test("bytes reported inside one clock tick reach the next aggregate", () => {
   withClock((clock) => {
     const bytes: number[] = [];
-    const host = {
-      failStage() {},
-      fail() {},
-      ingestThroughput(_dir: string, _rate: number, delta: number) {
-        bytes.push(delta);
+    const deps = fakeHost(
+      { skips: [], fails: [], starts: [], stalls: [] },
+      clock,
+      {
+        ingestThroughput(_dir: string, _rate: number, delta: number) {
+          bytes.push(delta);
+        },
       },
-      ingestLatency() {},
-      emit() {},
-      stall() {},
-      resume() {},
-    } as unknown as CoreHost;
-    const direction = new TransferDirection({
+    );
+    const direction = newDirection(clock, undefined, {
       dir: "down",
       stage: "download",
-      laneCount: 1,
-      warmupMs: 0,
-      host: {
-        host: () => host,
-        stallChanged: () => {},
-        uploadProgress: () => {},
-        beginUploadMeasure: () => {},
-        discardTransfer: () => {},
-      },
-      lane: (_i, events) => ({
-        start() {},
-        measure() {},
-        stop() {
-          // Both reports aggregate immediately (the direction is stopping), the
-          // first one in the same tick as the stop's own flush.
+      host: deps,
+      makeLane: (events) =>
+        lane(() => {}, () => {
+// Both reports aggregate immediately (the direction is stopping), the first one in the same tick as the.
           events.onProgress(17, 25, 1);
           clock.advance(1);
           events.onProgress(5, 25, 1);
-          return Promise.resolve();
-        },
-        discard() {},
-      }),
+        }),
     });
 
     direction.spawn(["https://meter.test/lane"]);
@@ -331,39 +284,20 @@ test("bytes reported inside one clock tick reach the next aggregate", () => {
 
 test("graceful stop aggregates a lane's final progress report", async () => {
   const bytes: number[] = [];
-  const host = {
-    failStage() {},
-    fail() {},
+  const deps = fakeHost({ skips: [], fails: [], starts: [], stalls: [] }, {
+    now: () => performance.now(),
+    advance: (ms) => setTimeout(() => {}, ms),
+  }, {
     ingestThroughput(_dir: string, _rate: number, delta: number) {
       bytes.push(delta);
     },
-    ingestLatency() {},
-    emit() {},
-    stall() {},
-    resume() {},
-  } as unknown as CoreHost;
-  const deps: DirectionHost = {
-    host: () => host,
-    stallChanged: () => {},
-    uploadProgress: () => {},
-    beginUploadMeasure: () => {},
-    discardTransfer: () => {},
-  };
+  });
   const direction = new TransferDirection({
-    dir: "down",
-    stage: "download",
-    laneCount: 1,
-    warmupMs: 0,
-    host: deps,
-    lane: (_i, events) => ({
-      start() {},
-      measure() {},
-      async stop() {
+    dir: "down", stage: "download", laneCount: 1, warmupMs: 0, host: deps,
+    lane: (_i, events) => lane(() => {}, async () => {
         await new Promise((resolve) => setTimeout(resolve, 1));
         events.onProgress(17, 25, 1);
-      },
-      discard() {},
-    }),
+      }),
   });
 
   direction.spawn(["https://meter.test/wt/download"]);
@@ -389,18 +323,10 @@ test("a silently pending measured direction stalls independently", () => {
     let direction!: TransferDirection;
     const host = fakeHost(record, clock);
     host.stallChanged = () => states.push(direction.stalled);
-    direction = new TransferDirection({
-      dir: "up",
+    direction = newDirection(clock, record, {
       stage: "bidirectional",
-      laneCount: 1,
-      warmupMs: 0,
       host,
-      lane: (_i, _events) => ({
-        start() {},
-        measure() {},
-        stop: () => Promise.resolve(),
-        discard() {},
-      }),
+      makeLane: () => lane(),
     });
 
     direction.spawn(["https://meter.test/wt/upload"]);
@@ -411,8 +337,7 @@ test("a silently pending measured direction stalls independently", () => {
     direction.noteMeasuredProgress(0);
     expect(states).toEqual([true]);
 
-    // A slow direction recovers on its own first receiver-counted byte and
-    // stays healthy while bytes remain inside the window.
+// A slow direction recovers on its own first receiver-counted byte and stays healthy while bytes remain inside.
     direction.noteMeasuredProgress(1);
     expect(states).toEqual([true, false]);
     clock.advance(DIRECTION_PROGRESS_WINDOW_MS - 1);
@@ -435,18 +360,10 @@ test("discard cancels a pending direction watchdog", () => {
     let direction!: TransferDirection;
     const host = fakeHost(record, clock);
     host.stallChanged = () => states.push(direction.stalled);
-    direction = new TransferDirection({
-      dir: "up",
+    direction = newDirection(clock, record, {
       stage: "upload",
-      laneCount: 1,
-      warmupMs: 0,
       host,
-      lane: () => ({
-        start() {},
-        measure() {},
-        stop: () => Promise.resolve(),
-        discard() {},
-      }),
+      makeLane: () => lane(),
     });
     direction.spawn(["https://meter.test/wt/upload"]);
     direction.measure();

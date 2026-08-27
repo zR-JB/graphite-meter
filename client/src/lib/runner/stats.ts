@@ -1,9 +1,4 @@
-/* ============================================================
- * The Graphite Meter: sample statistics helpers
- * Pure, engine-agnostic descriptors over raw sample arrays.
- * Shared by the evaluation core, so the dummy and a real runner
- * reduce samples identically.
- * ============================================================ */
+/* The Graphite Meter: sample statistics helpers Pure, engine-agnostic descriptors over raw sample arrays. */
 
 /** Median of an unsorted array; 0 for empty. */
 export function median(xs: number[]): number {
@@ -32,13 +27,12 @@ export function meanAbsDeviation(xs: number[]): number {
   return acc / (xs.length - 1);
 }
 
-export interface WeightedValue {
+interface WeightedValue {
   value: number;
   weight: number;
 }
 
-/** Weighted center for bucket summaries whose observations represent different
- *  numbers of raw outcomes. Non-positive weights carry no evidence. */
+/* Weighted center for bucket summaries whose observations represent different numbers of raw outcomes. */
 export function weightedMean(values: WeightedValue[]): number | null {
   let weightedTotal = 0;
   let totalWeight = 0;

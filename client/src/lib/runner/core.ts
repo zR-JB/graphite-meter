@@ -1,12 +1,10 @@
-// Engine-agnostic runner orchestration: phase timeline, measured-time clock,
-// stalls, early finish, accumulation, and RunnerEvent emission.
+// Engine-agnostic orchestration for phase timing, stalls, early finish, accumulation, and event emission.
 
 import type {
   NetworkRunner,
   LiveRunConfig,
   RunnerConfig,
   RunnerEvent,
-  RunnerAnomaly,
   RunnerError,
   Phase,
   PhaseTransition,
@@ -38,7 +36,6 @@ import {
   type Segment,
 } from "./schedule";
 import { RunAccumulator } from "./evaluation";
-import { debugEnabled, dlog, fmtRate, fmtBytes, fmtMs } from "../debug";
 import { GrowingRateEstimator } from "./rateEstimator";
 import { LatencyPresentationBuckets } from "./latencyBuckets";
 import {
@@ -47,8 +44,7 @@ import {
   LANE_RESTART_BACKOFF_MS,
 } from "./real/budgets";
 
-// This bounds only runner publication/progress work. Authoritative sources keep
-// their own cadence; the core never creates an observation to fill this slot.
+// Authoritative sources keep their own cadence; the core never creates an observation to fill this slot.
 const PRESENTATION_CADENCE_MS = 60;
 const RUNNER_DEADLINE_MS = PRESENTATION_CADENCE_MS;
 const STABILITY_CADENCE_MS = 100;
@@ -60,6 +56,14 @@ const RECOVERY_ATTEMPT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 export const STAGE_RECOVERY_BUDGET_MS =
   RECOVERY_ATTEMPTS * RECOVERY_ATTEMPT_MS +
   (RECOVERY_ATTEMPTS - 1) * LANE_RESTART_BACKOFF_MS;
+
+type TransferPhase = Extract<Phase, "download" | "upload" | "bidirectional">;
+
+const isTransferPhase = (phase: Phase): phase is TransferPhase =>
+  phase === "download" || phase === "upload" || phase === "bidirectional";
+
+const isMeasuredPhase = (phase: Phase): phase is TransportRole =>
+  phase === "latency" || isTransferPhase(phase);
 
 export interface CoreHost {
   // Rates drive presentation/stability; bytesDelta and durationSec remain authoritative.
@@ -73,12 +77,9 @@ export interface CoreHost {
     provesLiveness?: boolean,
   ): void;
   ingestLatency(observation: LatencyObservation, underLoad: boolean): void;
-  /** Account a rotation handoff in final byte/time reduction only. It is never
-   * a source observation, presentation sample, or control/confidence input. */
+  /* Account a rotation handoff only in final byte/time reduction. */
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
-  /** Account bytes first visible at a replacement upload checkpoint. Their
-   * server count is authoritative, but it has no prior checkpoint from which
-   * to derive a live rate, so it stays out of presentation and control. */
+  /* Server recovery bytes are authoritative but lack a prior checkpoint for a live-rate estimate. */
   recordRecoveryBytes(dir: FlowDirection, bytes: number): void;
   // A stall retains elapsed dead air but blocks completion until resume or timeout.
   stall(info: StallInfo): void;
@@ -101,9 +102,7 @@ export interface CoreHost {
   presentationRate(dir: FlowDirection): number;
 }
 
-/** The stage-owned lifecycle the core drives per enabled stage, each call
- *  carrying that stage's resolved PhaseActivity. Connections belong to the
- *  STAGE, so one connection set spans its warmup and its measured window. */
+/* Connections belong to the STAGE, so one connection set spans its warmup and its measured window. */
 export interface RunnerBackend {
   attach(host: CoreHost): void;
   // Probe may emit negative-timestamp pre-run latency events through host.emit.
@@ -114,17 +113,13 @@ export interface RunnerBackend {
   ): Promise<InfraInfo>;
   describe(): EngineInfo;
   onRunStart(config: RunnerConfig): void;
-  // Open and PRIME every connection the activity names. Preparation may be
-  // asynchronous; the stage clock remains parked until it resolves.
+  // Open and PRIME every connection the activity names.
   onStageBegin(activity: PhaseActivity): void | Promise<void>;
-  // Start measuring on the connections primed by onStageBegin, never reopening
-  // them. Fires immediately after onStageBegin when warmupMs <= 0.
+  // Start measuring on the connections primed by onStageBegin, never reopening them.
   onStageMeasure(activity: PhaseActivity): void;
-  // Close the stage's connections. Result reduction waits for asynchronous
-  // final samples and shutdown.
+  // Close the stage's connections. Result reduction waits for asynchronous final samples and shutdown.
   onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
-  /** The runner owns recovery expiry. Backends may make bounded attempts only
-   * while this signal remains live; opening a transport is not recovery. */
+  /* The runner owns recovery expiry. */
   onStageRecovery?(request: {
     stage: TransportRole;
     direction?: FlowDirection;
@@ -137,7 +132,6 @@ export interface RunnerBackend {
   setBackgroundActivity?(enabled: boolean): void;
   onReconfigure?(stages: RunnerConfig["stages"]): void;
   idleHintMs?(): number;
-  injectAnomaly?(a: RunnerAnomaly): void;
 }
 
 export class RunnerCore implements NetworkRunner, CoreHost {
@@ -152,8 +146,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #runGeneration = 0;
   #t0 = 0; // monotonic clock reading at run start
   #segments: Segment[] = [];
-  #totalMs = 0;
-  #lastEmittedPhase: Phase = "idle";
   #stagePreparing = false;
   #stagePreparationId = 0;
   #activeSeg: Segment | null = null;
@@ -186,7 +178,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #presentedRate: Record<FlowDirection, number> = { down: 0, up: 0 };
   #continuityId = 0;
   #latencyBuckets = new LatencyPresentationBuckets();
-  #debugThroughputLogAt: Record<FlowDirection, number> = { down: 0, up: 0 };
 
   #stageFailures = new Map<TransportRole, StageFailure>();
   #completedEarlyStages = new Set<TransportRole>();
@@ -239,15 +230,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return this.#backend.describe();
   }
 
-  injectAnomaly(a: RunnerAnomaly): void {
-    this.#backend.injectAnomaly?.(a);
-  }
-
   /* ================= START ================= */
-  /** `prepared` is the InfraInfo an earlier probe() resolved. The app always
-   *  passes one, since validateConnections probes before it starts a run; a
-   *  caller that has not probed omits it and start resolves the selection
-   *  itself, inside the `connecting` phase so the wait stays cancellable. */
+  /* `prepared` is the InfraInfo an earlier probe() resolved. */
   async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
     if (this.#running || this.#prepareAbort) this.abort();
     const generation = ++this.#runGeneration;
@@ -257,7 +241,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
     const from = this.#phase;
     this.#phase = "connecting";
-    this.#lastEmittedPhase = "connecting";
     this.emit({
       type: "phase",
       transition: { from, to: "connecting", stage: null, t: 0 },
@@ -291,9 +274,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#cfg = config;
 
     // Build the phase timeline, skipping disabled stages (shared scheduler).
-    const { segments, totalMs } = buildSegments(config);
+    const { segments } = buildSegments(config);
     this.#segments = segments;
-    this.#totalMs = totalMs;
     this.#t0 = performance.now();
     this.#lastRealNow = this.#t0;
     this.#lastSampleWall = this.#t0; // arm the watchdog from run start
@@ -306,7 +288,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   #resetRunState() {
     this.#running = false;
-    this.#lastEmittedPhase = "idle";
     this.#activeSeg = null;
     this.#lastStabilityAt = -Infinity;
     this.#lastThroughputDisplayAt.down = -Infinity;
@@ -389,13 +370,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     );
     this.#cfg = { ...this.#cfg, ...config };
 
-    const { segments, totalMs } = reconfigureTimeline(
+    const { segments } = reconfigureTimeline(
       this.#segments,
       this.#measuredElapsed,
       this.#cfg,
     );
     this.#segments = segments;
-    this.#totalMs = totalMs;
     const activeAfter = segmentAt(segments, this.#measuredElapsed);
     if (
       activeBefore &&
@@ -427,7 +407,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const latencyBoundary = this.#latencyBuckets.nextBoundaryT;
     if (latencyBoundary != null)
       deadlines.push(latencyBoundary - this.#measuredElapsed);
-    if (this.#isMeasuredPhase(this.#phase)) {
+    if (isMeasuredPhase(this.#phase)) {
       deadlines.push(
         this.#measuring
           ? this.#lastSampleWall + STALL_WATCHDOG_MS - now
@@ -453,9 +433,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#stagePreparing) return;
     this.#measuredElapsed += dtWall;
     const elapsed = this.#measuredElapsed;
-    this.#emitClosedLatencyPresentation();
+    for (const bucket of this.#latencyBuckets.closeThrough(
+      this.#measuredElapsed,
+    ))
+      this.emit({ type: "latency", sample: bucket });
 
-    if (elapsed >= this.#totalMs && this.#measuring) {
+    if (elapsed >= (this.#segments.at(-1)?.end ?? 0) && this.#measuring) {
       this.#finish();
       return;
     }
@@ -467,33 +450,29 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const seg = segmentAt(this.#segments, elapsed);
     if (!seg) return;
 
-    // Confirmation time advances normally even when no new source callback is
-    // due. Confidence itself changes only when exact observations arrive.
+    // Confirmation time advances normally even when no new source callback is due.
     if (this.#earlyCandidateSeg >= 0 && this.#updateStability()) {
       this.#tick();
       return;
     }
 
-    // Adjacent segments always differ in phase, so one segment edge drives both
-    // the UI phase event and the backend stage lifecycle.
+    // Adjacent segments always differ in phase, so one segment edge drives both the UI phase event and the backend.
     if (seg !== this.#activeSeg) {
       const prev = this.#activeSeg;
       // Same stage ⇒ the warmup→measure seam: keep the primed connections.
-      // Otherwise a STAGE boundary: end the old stage's I/O, begin the new one's.
       const sameStage =
         prev !== null && prev.activity.stage === seg.activity.stage;
 
       const enter = (): void => {
-        this.#finalizeStage(this.#lastEmittedPhase);
+        this.#finalizeStage(this.#phase);
 
         const transition: PhaseTransition = {
-          from: this.#lastEmittedPhase,
+          from: this.#phase,
           to: seg.phase,
           stage: seg.activity.stage,
           t: seg.start,
         };
         this.#activeSeg = seg;
-        this.#lastEmittedPhase = seg.phase;
         this.#phase = seg.phase;
         this.emit({ type: "phase", transition });
         this.#beginAdaptivePhase();
@@ -568,9 +547,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  /** A measured stage receives a fresh silence budget. Preparation and warmup
-   * deliberately produce no transfer evidence, so neither may inherit the
-   * previous stage's watchdog deadline. */
+  /* A measured stage receives a fresh silence budget. */
   #startStageMeasure(activity: PhaseActivity): void {
     this.#lastSampleWall = performance.now();
     this.#backend.onStageMeasure(activity);
@@ -588,10 +565,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const cfg = this.#cfg;
     if (!cfg) return;
     const phase = this.#phase;
-    // Direction travels with the sample, so a bidirectional phase carries
-    // concurrent down + up. Stray samples outside a transfer phase are ignored.
-    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
-      return;
+    // Direction travels with the sample, so a bidirectional phase carries concurrent down + up.
+    if (!isTransferPhase(phase)) return;
     // Zero-byte samples retain time but cannot prove delivery or clear a stall.
     if (bytesDelta > 0 && provesLiveness) this.#noteRealSample();
     this.#bytesCumulative += bytesDelta;
@@ -602,11 +577,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       bytesDelta,
       durationSec,
       serverAuthoritative,
+      this.#measuredElapsed +
+        Math.max(0, performance.now() - this.#lastRealNow),
     );
-    // A stalled direction may keep reporting accounting windows, and a healthy
-    // bidirectional sibling may keep moving without proving stage liveness.
-    // Preserve both in the exact reducer, but leave the presentation estimator
-    // parked so only the centralized stall transition can drive live rates.
+    // Retain stalled accounting exactly; only all-direction liveness may resume presentation rates.
     if (!this.#measuring) return;
     const estimate = this.#rateEstimator[dir].observe({
       bytes: bytesDelta,
@@ -619,18 +593,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     if (this.#updateStability()) this.#tick();
     const now = performance.now();
-    if (debugEnabled() && now - this.#debugThroughputLogAt[dir] >= 1000) {
-      this.#debugThroughputLogAt[dir] = now;
-      dlog("core:throughput", `${dir} exact windows`, {
-        source: fmtRate(liveBytesPerSec),
-        presented: fmtRate(estimate.presentedBytesPerSec),
-        fast: fmtRate(estimate.fastBytesPerSec),
-        regime: estimate.regimeId,
-        candidate: estimate.candidate ?? "none",
-        cumulative: fmtBytes(this.#bytesCumulative),
-        t: fmtMs(this.#measuredElapsed),
-      });
-    }
     if (
       estimate.regimeChanged ||
       now - this.#lastThroughputDisplayAt[dir] >= PRESENTATION_CADENCE_MS
@@ -643,16 +605,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void {
     if (durationSec <= 0) return;
     const phase = this.#phase;
-    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
-      return;
+    if (!isTransferPhase(phase)) return;
     this.#accum.recordRecoveryGap(phase, dir, durationSec);
   }
 
   recordRecoveryBytes(dir: FlowDirection, bytes: number): void {
     if (bytes <= 0) return;
     const phase = this.#phase;
-    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
-      return;
+    if (!isTransferPhase(phase)) return;
     this.#bytesCumulative += bytes;
     this.#accum.recordRecoveryBytes(phase, dir, bytes);
   }
@@ -663,8 +623,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   #emitThroughputPresentation(dir: FlowDirection, bytesPerSec: number): void {
     const phase = this.#phase;
-    if (phase !== "download" && phase !== "upload" && phase !== "bidirectional")
-      return;
+    if (!isTransferPhase(phase)) return;
     this.#presentedRate[dir] = bytesPerSec;
     this.emit({
       type: "throughput",
@@ -680,23 +639,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   ingestLatency(observation: LatencyObservation, underLoad: boolean): void {
-    // Only a measured phase feeds the accumulator: a stray warmup/idle ping must
-    // not pollute idle-latency or bufferbloat. Probe pings use host.emit.
+    // Only measured phases feed the accumulator; warmup and pre-run pings stay out of results.
     const phase = this.#phase;
-    if (
-      phase !== "latency" &&
-      phase !== "download" &&
-      phase !== "upload" &&
-      phase !== "bidirectional"
-    ) {
-      return;
-    }
-    // Loaded pings use another connection and cannot prove that transfer bytes
-    // still move. Only the latency-only stage uses them as its liveness signal.
+    if (!isMeasuredPhase(phase)) return;
+    // Loaded pings use another connection and cannot prove transfer bytes still move.
     if (phase === "latency") this.#noteRealSample();
-    // Translate the authoritative wall observation into the measured timeline.
-    // Projection avoids assigning the runner's up-to-100 ms tick lag to the
-    // sample, while phase and receipt bounds reject stale or future timestamps.
+    // Translate the window-clock observation into the runner's measured timeline.
     const wallNow = performance.now();
     const projectedNow =
       this.#measuredElapsed + Math.max(0, wallNow - this.#lastRealNow);
@@ -730,15 +678,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (bucket) this.emit({ type: "latency", sample: bucket });
   }
 
-  #emitClosedLatencyPresentation(): void {
-    for (const bucket of this.#latencyBuckets.closeThrough(
-      this.#measuredElapsed,
-    ))
-      this.emit({ type: "latency", sample: bucket });
-  }
-
-  /** End every presentation series at a lifecycle boundary and seed latency's
-   *  next bucket with the same continuity generation as throughput. */
+  /* End every presentation series at a lifecycle boundary and seed latency's next bucket with the same continuity. */
   #breakPresentationContinuity(): void {
     this.#flushLatencyPresentation();
     this.#continuityId++;
@@ -783,8 +723,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= STALL / RESUME (CoreHost) ================= */
   stall(info: StallInfo): void {
-    // No-op if already stalled: a backend may report repeatedly, and re-arming
-    // would reset the max-stall clock anchored at #stalledSinceWall.
+    // No-op if already stalled: a backend may report repeatedly, and re-arming would reset the max-stall clock.
     if (!this.#measuring) return;
     this.#measuring = false;
     this.#stalledSinceWall = performance.now();
@@ -848,22 +787,18 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
   }
 
-  /** Refresh the watchdog for a real measured sample, and auto-resume a stall:
-   *  the link is demonstrably delivering. Every ingest* path calls it, so
-   *  dead-air detection keys off genuine samples. */
+  /* Refresh the watchdog for a real measured sample, and auto-resume a stall: the link is demonstrably delivering. */
   #noteRealSample(): void {
     this.#lastSampleWall = performance.now();
     if (!this.#measuring) this.resume();
   }
 
-  /** Wall-clock stall bookkeeping. The watchdog detects silence; only the
-   * runner's derived recovery deadline may finalize the affected stage. */
+  /* Wall-clock stall bookkeeping. */
   #updateStallState(now: number): boolean {
     if (this.#measuring) {
-      // Watchdog only inside a measured phase: warmup primes connections and
-      // legitimately produces no samples.
+      // Watchdog only inside a measured phase: warmup primes connections and legitimately produces no samples.
       if (
-        this.#isMeasuredPhase(this.#phase) &&
+        isMeasuredPhase(this.#phase) &&
         now - this.#lastSampleWall > STALL_WATCHDOG_MS
       ) {
         this.stall({ reason: "connection-lost", detail: "no data" });
@@ -887,17 +822,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return false;
   }
 
-  /** Phases subject to the stall watchdog. Warmup is excluded: it primes
-   *  connections without measuring. */
-  #isMeasuredPhase(phase: Phase): boolean {
-    return (
-      phase === "latency" ||
-      phase === "download" ||
-      phase === "upload" ||
-      phase === "bidirectional"
-    );
-  }
-
   failStage(
     stage: TransportRole,
     reason: StageFailure["reason"],
@@ -907,12 +831,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#running || this.#stageFailures.has(stage)) return;
     const failure: StageFailure = { stage, direction, reason, message };
     this.#stageFailures.set(stage, failure);
-    // Preserve qualifying exact evidence before ending the stage. A failure
-    // changes its status to partial; it does not erase a truthful result.
+    // Preserve qualifying exact evidence before ending the stage.
     this.#finalizeStage(stage);
 
-    // Close the stage's I/O and jump measured-time past its remaining timeline
-    // so the next tick lands on the following stage (or the finish).
+    // Close stage I/O and skip its remaining timeline so the next tick enters the following stage.
     if (this.#activeSeg?.activity.stage === stage) {
       this.#backend.onStageEnd(this.#activeSeg.activity, false);
       this.#activeSeg = null;
@@ -945,8 +867,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     this.#running = false;
     this.#flushLatencyPresentation();
-    // Cancel the backend's in-flight I/O and let it restart its idle keepalive:
-    // an errored run must not leave lanes streaming.
+    // Cancel the backend's in-flight I/O and let it restart its idle keepalive: an errored run must not leave lanes.
     this.#backend.onAbort();
     const error: RunnerError = {
       reason,
@@ -961,7 +882,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       cause,
     };
     this.#phase = "error";
-    this.#lastEmittedPhase = "error";
     this.emit({ type: "error", error });
   }
 
@@ -1036,10 +956,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       return false;
 
     if (seg.phase === "latency") this.#accum.confirmLatencyEarlyStop();
-    const previousTotalMs = this.#totalMs;
+    const previousTotalMs = this.#segments.at(-1)?.end ?? 0;
     const truncated = truncateSegmentAt(this.#segments, seg, elapsed);
     this.#segments = truncated.segments;
-    this.#totalMs = truncated.totalMs;
     if (truncated.totalMs < previousTotalMs)
       this.#completedEarlyStages.add(seg.activity.stage);
     this.#earlyCandidateSeg = -1;
@@ -1074,60 +993,48 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return true;
   }
 
-  /** Fallback idle RTT for empty-sample results (the backend's hint, else 0). */
-  #idleHint(): number {
-    return this.#backend.idleHintMs?.() ?? 0;
-  }
-
-  /** Compute, cache, and emit a measured phase's final result exactly once, the
-   *  moment it ends. No-op for warmup, non-run, and already-finalized stages. */
+  /* Compute, cache, and emit a measured phase's final result exactly once, the moment it ends. */
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
     this.#flushLatencyPresentation();
     const failed = this.#stageFailures.has(phase as TransportRole);
-    if (phase === "download" && cfg.stages.download && !this.#dlResult) {
-      this.#dlResult = failed
-        ? this.#accum.partialThroughputResult("download")
-        : this.#accum.throughputResult(
-            "download",
-            this.#completedEarlyStages.has("download"),
-          );
-      if (this.#dlResult)
-        this.emit({
-          type: "stageResult",
-          stage: "download",
-          result: this.#dlResult,
-        });
-    } else if (phase === "upload" && cfg.stages.upload && !this.#ulResult) {
-      this.#ulResult = failed
-        ? this.#accum.partialThroughputResult("upload")
-        : this.#accum.throughputResult(
-            "upload",
-            this.#completedEarlyStages.has("upload"),
-          );
-      if (this.#ulResult)
-        this.emit({
-          type: "stageResult",
-          stage: "upload",
-          result: this.#ulResult,
-        });
-    } else if (phase === "latency" && cfg.stages.latency && !this.#latResult) {
+    if (phase === "bidirectional") {
+      if (cfg.stages.bidirectional && failed)
+        this.#biResult ??= this.#accum.partialBidirectionalResult();
+      return;
+    }
+    if (phase === "latency") {
+      if (!cfg.stages.latency || this.#latResult) return;
       this.#latResult = failed
-        ? this.#accum.partialLatencyResult(cfg, this.#idleHint())
-        : this.#accum.latencyResult(cfg, this.#idleHint());
+        ? this.#accum.partialLatencyResult(
+            cfg,
+            this.#backend.idleHintMs?.() ?? 0,
+          )
+        : this.#accum.latencyResult(cfg, this.#backend.idleHintMs?.() ?? 0);
       if (this.#latResult)
         this.emit({
           type: "stageResult",
-          stage: "latency",
+          stage: phase,
           result: this.#latResult,
         });
-    } else if (
-      phase === "bidirectional" &&
-      cfg.stages.bidirectional &&
-      failed
-    ) {
-      this.#biResult ??= this.#accum.partialBidirectionalResult();
+      return;
     }
+    if (
+      (phase !== "download" && phase !== "upload") ||
+      !cfg.stages[phase] ||
+      (phase === "download" ? this.#dlResult : this.#ulResult)
+    )
+      return;
+    const result = failed
+      ? this.#accum.partialThroughputResult(phase)
+      : this.#accum.throughputResult(
+          phase,
+          this.#completedEarlyStages.has(phase),
+        );
+    if (!result) return;
+    if (phase === "download") this.#dlResult = result;
+    else this.#ulResult = result;
+    this.emit({ type: "stageResult", stage: phase, result });
   }
 
   /* ================= FINISH → RunResult ================= */
@@ -1138,7 +1045,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#running = false;
 
       const cfg = this.#cfg!;
-      this.#finalizeStage(this.#lastEmittedPhase);
+      this.#finalizeStage(this.#phase);
       const actualMs = Math.max(0, performance.now() - this.#t0);
       const bidirectional = cfg.stages.bidirectional
         ? this.#stageFailures.has("bidirectional")
@@ -1159,7 +1066,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       };
 
       this.#phase = "complete";
-      this.#lastEmittedPhase = "complete";
       this.#backend.onComplete();
       this.emit({ type: "complete", result });
     };

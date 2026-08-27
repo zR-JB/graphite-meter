@@ -14,23 +14,26 @@ import { fixedPingIntervalMs } from "./pingCadence";
 const timed = (values: (number | null)[], cadenceMs = 100) =>
   values.map((rttMs, index) => ({ tMs: index * cadenceMs, rttMs }));
 
-// ---------- standardDeviation ----------
-
-test("standardDeviation: empty array is 0", () => {
-  expect(standardDeviation([])).toBe(0);
-});
-
-test("standardDeviation: single-element array is 0", () => {
-  expect(standardDeviation([42])).toBe(0);
-});
-
-test("standardDeviation: uniform array is 0", () => {
-  expect(standardDeviation([5, 5, 5, 5, 5])).toBe(0);
-});
-
-test("standardDeviation: known-variance array matches hand-computed population stdev", () => {
-  // mean = 3; squared deviations = 4,1,0,1,4 -> variance = 10/5 = 2
-  expect(standardDeviation([1, 2, 3, 4, 5])).toBeCloseTo(Math.sqrt(2), 10);
+test.each([
+  { label: "standardDeviation: empty array is 0", values: [], expected: 0 },
+  {
+    label: "standardDeviation: single-element array is 0",
+    values: [42],
+    expected: 0,
+  },
+  {
+    label: "standardDeviation: uniform array is 0",
+    values: [5, 5, 5, 5, 5],
+    expected: 0,
+  },
+  {
+    label:
+      "standardDeviation: known-variance array matches hand-computed population stdev",
+    values: [1, 2, 3, 4, 5],
+    expected: Math.sqrt(2),
+  },
+])("$label", ({ values, expected }) => {
+  expect(standardDeviation([...values])).toBeCloseTo(expected, 10);
 });
 
 // ---------- transferConfidence ----------
@@ -153,16 +156,21 @@ test("shouldExitPhase: true once coverage, stability, and sample floor all hold"
   expect(shouldExitPhase(input())).toBe(true);
 });
 
-test("shouldExitPhase: false when adaptive is disabled", () => {
-  expect(shouldExitPhase(input({ cfg: cfg({ enabled: false }) }))).toBe(false);
-});
-
-test("shouldExitPhase: false for a degenerate (zero-duration) phase", () => {
-  expect(shouldExitPhase(input({ durationMs: 0 }))).toBe(false);
-});
-
-test("shouldExitPhase: false below the coverage floor", () => {
-  expect(shouldExitPhase(input({ elapsedMs: 4000 }))).toBe(false);
+test.each([
+  {
+    label: "shouldExitPhase: false when adaptive is disabled",
+    overrides: { cfg: cfg({ enabled: false }) },
+  },
+  {
+    label: "shouldExitPhase: false for a degenerate (zero-duration) phase",
+    overrides: { durationMs: 0 },
+  },
+  {
+    label: "shouldExitPhase: false below the coverage floor",
+    overrides: { elapsedMs: 4000 },
+  },
+])("$label", ({ overrides }) => {
+  expect(shouldExitPhase(input(overrides))).toBe(false);
 });
 
 test("shouldExitPhase: false below the stability threshold", () => {
@@ -196,8 +204,7 @@ test("shouldExitPhase: false below the sample-count floor", () => {
 });
 
 test("shouldExitPhase: coverage requirement is never below (1 - maxPhaseReductionRatio)", () => {
-  // minCoverageRatio alone would allow this at 65%, but maxPhaseReductionRatio
-  // caps the cut to 30%, requiring 70% coverage.
+  // minCoverageRatio alone would allow this at 65%, but maxPhaseReductionRatio caps the cut to 30%, requiring 70%.
   const strictCfg = cfg({ minCoverageRatio: 0, maxPhaseReductionRatio: 0.3 });
   expect(
     shouldExitPhase(
@@ -261,8 +268,7 @@ test("latency evidence policy keeps every fixed cadence eligible across shipped 
       const confidence = latencyConfidence(
         timed(Array(floor).fill(20), intervalMs),
       );
-      // Fixed cadence is explicitly re-anchored with a send at measurement
-      // start, so the nth ideal outcome follows (n - 1) intervals later.
+      // Fixed cadence is explicitly re-anchored with a send at measurement start, so the nth ideal outcome follows (n.
       const armAt = Math.max((floor - 1) * intervalMs, durationMs * coverage);
       expect(
         shouldExitPhase({

@@ -6,9 +6,8 @@ import {
 import { authenticationRequired } from "../../request-auth";
 
 test("admission rejections are terminal for a download lane", () => {
-  expect(recoverableDownloadStatus(429)).toBe(false);
-  expect(recoverableDownloadStatus(503)).toBe(false);
-  expect(recoverableDownloadStatus(500)).toBe(true);
+  for (const [status, recoverable] of [[429, false], [503, false], [500, true]] as const)
+    expect(recoverableDownloadStatus(status)).toBe(recoverable);
 });
 
 test("download requests retain bearer credentials", () => {
@@ -20,9 +19,7 @@ test("download requests retain bearer credentials", () => {
   expect(new Headers(init.headers).get("authorization")).toBe("Bearer grant");
 });
 
-// Only the marker means an expired session. A bare 403 from a proxy in front
-// of the server means a transfer failure. Treating that as `auth-required`
-// tears the run down and navigates away from the console.
+// A bare 403 from a proxy in front of the server means a transfer failure.
 test("only a marker-qualified 403 stops a lane as auth-required", () => {
   const response = (status: number, headers: Record<string, string> = {}) =>
     new Response("", { status, headers });
