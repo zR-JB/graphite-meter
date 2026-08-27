@@ -2,6 +2,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -31,24 +32,10 @@ const (
 	h3MaxTransferStreamsPerDirection = 128
 	h3UploadProgressStreams          = 1
 	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
-	// browserH3UniStreams is what a browser's HTTP/3 connection spends on
-	// client-initiated unidirectional streams before WebTransport opens a single
-	// lane: the control stream plus the QPACK encoder and decoder streams. It is
-	// a property of HTTP/3, not of WebTransport, and it is the floor the lane
-	// credit has to clear -- a bare literal 3 read as if it were lane budget.
-	browserH3UniStreams = 3
-	// wtLaneCreditHeadroom keeps QUIC stream credit from being the limit that
-	// binds first, so the app-level lane semaphore is the one that refuses the
-	// 17th lane. Credit refuses by parking a stream forever; the semaphore
-	// refuses by resetting it, which is what api/wire.md promises and the only
-	// refusal a byte stream can carry.
-	wtLaneCreditHeadroom = 4
+	browserH3UniStreams              = 3
+	wtLaneCreditHeadroom             = 4
 )
 
-// Measurement route paths, the mounting half of the cross-language pin.
-// /preflight advertises origins only, so every language keeps its own table.
-// The other two are client/src/lib/runner/real/backendPure.ts (ROUTES) and
-// wire.Default{Throughput,Latency}Routes. api/routes.txt pins all three.
 const (
 	routeProbe          = "/probe"
 	routeDownload       = "/download"
@@ -69,13 +56,7 @@ type endpoints struct {
 	uploadProgress                   *endpoint.UploadProgress
 	admission                        *requestAdmission
 	trustedProxies                   []netip.Prefix
-	// wtIdleBound is how long a session may carry nothing the peer sent before
-	// it is closed; the handlers take it as an argument, so this is where it is
-	// chosen. It may be shortened but MUST NOT exceed wire.WTIdleBound: the
-	// upload aggregate's TTL is derived from that constant (upload_store.go)
-	// so a counter survives a bound-driven close. A longer bound outlives the
-	// aggregate, and the re-dial then silently restarts the count at zero.
-	wtIdleBound time.Duration
+	wtIdleBound                      time.Duration
 }
 
 type service struct {
@@ -84,10 +65,6 @@ type service struct {
 	stop                func(context.Context) error
 }
 
-// listenerSockets owns socket creation. Production uses the operating system
-// directly; integration tests can hand already-bound sockets to the exact same
-// assembly path so they never have to "find a free port", release it, and race
-// another process to rebind it later.
 type listenerSockets interface {
 	listenTCP(string) (net.Listener, error)
 	listenUDP(string) (net.PacketConn, error)
@@ -132,13 +109,9 @@ func publicH3Port(cfg *config.Config) string {
 	if cfg.NativePublic.H3 != "" {
 		u, err := url.Parse(cfg.NativePublic.H3)
 		if err == nil {
-			if port := u.Port(); port != "" {
-				return port
-			}
-			return "443"
+			return cmp.Or(u.Port(), "443")
 		}
 	}
-	// Without a public origin the advertised port is the one H3 binds.
 	_, port, _ := net.SplitHostPort(cfg.Native.H3)
 	return port
 }
@@ -146,9 +119,7 @@ func publicH3Port(cfg *config.Config) string {
 type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
 	requiredProto                                 int
-	// wt mounts the WebTransport routes as extended CONNECT upgraders. Set on
-	// the HTTP/3 listener only.
-	wt *webtransport.Server
+	wt                                            *webtransport.Server
 }
 
 type protocolEndpoint struct {
@@ -168,38 +139,32 @@ func (e protocolEndpoint) Handle(s transport.Session) error {
 	return e.Endpoint.Handle(s)
 }
 
-func listenerMux(ctx context.Context, e *endpoints, topology muxTopology) *http.ServeMux {
-	return listenerMuxWithSPA(ctx, e, topology, static.Handler())
-}
-
-func listenerMuxWithSPA(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler) *http.ServeMux {
-	return listenerMuxConfigured(ctx, e, topology, spa, nil)
-}
-
-// buildRegistry declares which routes this listener serves and by which
-// mechanism. api/routes.txt is pinned against the result (routes_test.go).
 func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *endpoint.Registry {
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
 		reg.RegisterHTTP("/preflight", e.preflight)
 	}
-	probe := e.probe
 	if topology.bootstrap {
-		probe = e.bootstrapProbe
+		reg.RegisterHTTP(routeProbe, e.bootstrapProbe)
+	} else {
+		reg.RegisterHTTP(routeProbe, e.probe)
 	}
-	reg.RegisterHTTP(routeProbe, probe)
 	if topology.transfers {
-		transfer := func(h endpoint.Endpoint) endpoint.Endpoint {
-			if topology.requiredProto == 0 {
-				return h
+		register := func(path string, h endpoint.Endpoint) {
+			if topology.requiredProto != 0 {
+				h = protocolEndpoint{Endpoint: h, major: topology.requiredProto}
 			}
-			return protocolEndpoint{Endpoint: h, major: topology.requiredProto}
+			reg.RegisterHTTP(path, h)
 		}
-		reg.RegisterHTTP(routeDownload, transfer(e.download))
-		reg.RegisterHTTP(routeUploadSession, transfer(e.uploadSession))
-		reg.RegisterHTTP(routeWTSession, transfer(endpoint.NewWTSession(wtTokenMinter(authn))))
-		reg.RegisterHTTP(routeUpload, transfer(e.upload))
-		reg.RegisterHTTP(routeUploadProgress, transfer(e.uploadProgress))
+		register(routeDownload, e.download)
+		register(routeUploadSession, e.uploadSession)
+		var minter endpoint.WTTokenMinter
+		if authn != nil && authn.Enabled() {
+			minter = authn.MintWebTransportSessionToken
+		}
+		register(routeWTSession, endpoint.NewWTSession(minter))
+		register(routeUpload, e.upload)
+		register(routeUploadProgress, e.uploadProgress)
 	}
 	if topology.latency {
 		reg.RegisterWS(routePing, e.ping)
@@ -236,8 +201,6 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if authn != nil {
 		publicOrigin = authn.PublicOrigin()
 	}
-	// Only routes this listener actually mounts: wrapping one it answers with a
-	// 404 would take an admission slot for nothing.
 	var wrapped []string
 	if topology.transfers {
 		wrapped = append(wrapped, routeDownload, routeUpload, routeUploadProgress)
@@ -256,70 +219,31 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	return m
 }
 
-// wtOriginCheck pins the session upgrade to the canonical origin under
-// authentication, and accepts any origin in public mode. A request without an
-// Origin header is a native client, which no browser origin policy governs.
 func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
-	if authn == nil || !authn.Enabled() {
-		return func(*http.Request) bool { return true }
+	enabled := authn != nil && authn.Enabled()
+	pinned := ""
+	if enabled {
+		pinned = authn.PublicOrigin()
 	}
-	pinned := authn.PublicOrigin()
 	return func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin == "" || origin == pinned
+		return !enabled || r.Header.Get("Origin") == "" || r.Header.Get("Origin") == pinned
 	}
 }
 
-// wtTokenMinter adapts the auth service's CONNECT-token mint; nil when
-// authentication is off, so /wt/session answers with an empty token.
-func wtTokenMinter(authn *auth.Service) endpoint.WTTokenMinter {
-	if authn == nil || !authn.Enabled() {
-		return nil
-	}
-	return authn.MintWebTransportSessionToken
-}
-
-// disableNagle stops Nagle batching a small latency probe into the following
-// write and inflating every sample. A connection that refuses it still measures.
-func disableNagle(c net.Conn) {
-	if tc, ok := c.(*net.TCPConn); ok {
-		_ = tc.SetNoDelay(true)
-	}
-}
-
-// baseServer configures a listener's server. Every accepted connection holds a
-// connection-admission slot until it closes, and ReadHeaderTimeout does not
-// bound a connection idling between requests, so IdleTimeout is what keeps an
-// idle peer from pinning a slot. That is a capacity property of the socket, not
-// of authentication, so both bounds apply on every listener.
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-		disableNagle(c)
+		if tc, ok := c.(*net.TCPConn); ok {
+			_ = tc.SetNoDelay(true)
+		}
 		return ctx
 	}}
 }
 
-// pinConnectOrigins restricts the authenticated CSP's connect-src to the
-// measurement origins /preflight advertises for the canonical UI host, the only
-// host auth accepts. It derives them from the targets the client is handed, so
-// it cannot omit one.
-func pinConnectOrigins(cfg *config.Config, authn *auth.Service) {
-	u, err := url.Parse(cfg.Auth.PublicURL)
-	if err != nil {
-		return
-	}
-	authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
-}
-
-// Run validates the config and certificate, binds every configured listener,
-// and shuts the logical server down as one unit.
+// Run validates the config and certificate, binds every configured listener.
 func Run(ctx context.Context, cfg *config.Config) error {
 	return runWithSockets(ctx, cfg, systemListenerSockets{})
 }
 
-// runWithSockets is Run with socket creation injected. Keeping this seam below
-// the exported API lets tests reserve the exact TCP/UDP sockets they will use
-// while production keeps the normal net.Listen/net.ListenPacket behavior.
 func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) error {
 	b, err := newListenerBuild(ctx, cfg, sockets)
 	if err != nil {
@@ -331,11 +255,6 @@ func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSoc
 	return runServices(ctx, cfg, b.services)
 }
 
-// newListenerBuild validates the config and brings up everything the listeners
-// share: authentication, the certificate manager, the endpoint set and the
-// connection budget. Socket creation is injected here so tests can reserve the
-// exact live TCP/UDP sockets they exercise while production passes
-// systemListenerSockets from Run.
 func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerSockets) (*listenerBuild, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
@@ -359,7 +278,9 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	spa := static.Handler()
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandler()
-		pinConnectOrigins(cfg, authn)
+		if u, err := url.Parse(cfg.Auth.PublicURL); err == nil {
+			authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
+		}
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
@@ -367,9 +288,6 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa, sockets: sockets}, nil
 }
 
-// listenerBuild accumulates the listeners Run assembles: the shared
-// dependencies, the services to start, and the sockets to close if a later
-// listener fails to bind.
 type listenerBuild struct {
 	ctx         context.Context
 	cfg         *config.Config
@@ -383,18 +301,13 @@ type listenerBuild struct {
 	sockets     listenerSockets
 }
 
-// closeOpened releases every socket bound so far, so a failed bind does not
-// leave the earlier listeners holding their ports.
 func (b *listenerBuild) closeOpened() {
 	for _, c := range b.opened {
-		// Nothing to recover from: the process is already unwinding a bind failure.
 		_ = c.Close()
 	}
 }
 
-// tcpTLS binds a TLS-over-TCP listener and appends it as a service. The HTTPS
-// H1, H2, and H3-bootstrap listeners share it.
-func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
+func (b *listenerBuild) addTCP(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
 	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
 	s := baseServer(b.authn.Enforce(mux, l), proto)
 	ln, err := b.sockets.listenTCP(addr)
@@ -403,10 +316,13 @@ func (b *listenerBuild) tcpTLS(name, addr string, proto *http.Protocols, l auth.
 		return err
 	}
 	b.opened = append(b.opened, ln)
-	tlsLn := tls.NewListener(admittedListener{Listener: ln, admission: b.connections}, b.cm.tlsConfig(alpn))
+	var served net.Listener = admittedListener{Listener: ln, admission: b.connections}
+	if alpn != "" {
+		served = tls.NewListener(served, b.cm.tlsConfig(alpn))
+	}
 	b.services = append(b.services, service{
 		name: name, addr: addr, network: "tcp",
-		run: func() error { return serve(tlsLn, s) }, stop: s.Shutdown,
+		run: func() error { return serve(served, s) }, stop: s.Shutdown,
 	})
 	return nil
 }
@@ -417,34 +333,25 @@ func h1Protocols() *http.Protocols {
 	return p
 }
 
-// assemble builds every configured listener into b.services.
 func (b *listenerBuild) assemble() error {
 	spa := b.spa
-	// Clear HTTP/1.1 is the one listener bound unconditionally.
-	h1 := baseServer(b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, b.authn), auth.Listener{UI: true}), h1Protocols())
-	h1ln, err := b.sockets.listenTCP(b.cfg.Native.H1)
-	if err != nil {
-		return err
-	}
-	b.opened = append(b.opened, h1ln)
 	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
 	if b.authn.Enabled() {
 		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
-	b.services = append(b.services, service{
-		name: h1Name, addr: b.cfg.Native.H1, network: "tcp",
-		run: func() error { return serve(admittedListener{Listener: h1ln, admission: b.connections}, h1) }, stop: h1.Shutdown,
-	})
+	if err := b.addTCP(h1Name, b.cfg.Native.H1, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, ""); err != nil {
+		return err
+	}
 
 	if b.cfg.Native.H1TLS != "" {
-		if err := b.tcpTLS("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, "http/1.1"); err != nil {
+		if err := b.addTCP("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, "http/1.1"); err != nil {
 			return err
 		}
 	}
 	if b.cfg.Native.H2 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		if err := b.tcpTLS("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p, auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), "h2"); err != nil {
+		if err := b.addTCP("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p, auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), "h2"); err != nil {
 			return err
 		}
 	}
@@ -454,9 +361,6 @@ func (b *listenerBuild) assemble() error {
 	return nil
 }
 
-// serveWebTransport hands each accepted QUIC connection to the WebTransport
-// server, which serves the HTTP/3 requests on it and routes WebTransport
-// streams to the session an extended CONNECT opened.
 func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Listener) error {
 	for {
 		conn, err := ln.Accept(ctx)
@@ -471,9 +375,6 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-// h3QUICConfig is the one capacity policy for every H3 listener. The request
-// ceiling preserves the supported fetch lanes in both active directions plus
-// the upload-progress GET that opens before them.
 func h3QUICConfig() *quic.Config {
 	cfg := transport.NewQUICConfig()
 	cfg.HandshakeIdleTimeout = 5 * time.Second
@@ -483,24 +384,13 @@ func h3QUICConfig() *quic.Config {
 	return cfg
 }
 
-// assembleH3 binds the HTTP/3 UDP listener plus its TCP Alt-Svc bootstrap
-// companion.
 func (b *listenerBuild) assembleH3() error {
-	if err := b.tcpTLS("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
+	if err := b.addTCP("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
 		return err
 	}
-	// Connection capacity is a property of the socket, not authentication, so
-	// every H3 listener uses the same request and WebTransport stream policy.
 	quicConfig := h3QUICConfig()
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
-	// Public mode answers every origin, as the wildcard-CORS measurement routes
-	// do: there is no session state a forged origin could reach. Under
-	// authentication the upgrade is pinned to the canonical origin, mirroring
-	// the WebSocket upgrade, even though the boundary already refuses a CONNECT
-	// without a credential no cross-origin page can mint.
 	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
-	// Advertises the WebTransport settings and wraps ConnContext, so it must
-	// run before the listener starts.
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{WebTransport: true})
 	h3.MaxHeaderBytes = 32 << 10
@@ -524,9 +414,6 @@ func (b *listenerBuild) assembleH3() error {
 			}
 			return err
 		}, stop: func(context.Context) error {
-			// Serving connections directly leaves http3's graceful path
-			// uninitialised, so its Shutdown would answer nil without draining.
-			// Closing the sessions is the shutdown, and it frees the UDP socket.
 			err := wt.Close()
 			_ = quicListener.Close()
 			_ = quicTransport.Close()
@@ -535,8 +422,6 @@ func (b *listenerBuild) assembleH3() error {
 	return nil
 }
 
-// runServices starts every listener, then blocks until the context ends or a
-// listener fails, shutting the rest down on the way out.
 func runServices(ctx context.Context, cfg *config.Config, services []service) error {
 	errs := make(chan error, len(services))
 	for _, svc := range services {
@@ -549,7 +434,13 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 			errs <- err
 		}()
 	}
-	defer shutdown(services)
+	defer func() {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		for _, svc := range services {
+			_ = svc.stop(stopCtx)
+		}
+	}()
 	select {
 	case <-ctx.Done():
 		return nil
@@ -570,10 +461,6 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 	}
 }
 
-// admissionLogLine is the operator's whole view of what is refusing traffic, so
-// every bound that can refuse has to appear in it with the occupancy that made
-// it refuse -- otherwise a saturated deployment reports room to spare while
-// every session CONNECT is turned away.
 func admissionLogLine(r requestAdmissionStats, c admissionStats) string {
 	return fmt.Sprintf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, %d per client, rejected %d budget + %d client; connections %d active / %d peak, rejected %d global + %d client",
 		r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
@@ -581,20 +468,10 @@ func admissionLogLine(r requestAdmissionStats, c admissionStats) string {
 		c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 }
 
-// shutdown gives every listener the same bounded budget to drain. Failures are
-// discarded: the caller is already returning, and one listener refusing to stop
-// must not keep the others running.
-func shutdown(services []service) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, s := range services {
-		_ = s.stop(ctx)
-	}
-}
-
 func serve(ln net.Listener, srv *http.Server) error {
-	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	err := srv.Serve(ln)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
 	}
-	return nil
+	return err
 }

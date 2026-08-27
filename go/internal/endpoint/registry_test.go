@@ -16,10 +16,14 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
+func wsAdapter(parent context.Context, e Endpoint) http.Handler {
+	return wsAdapterWithOrigin(parent, e, "")
+}
+func httpAdapter(e Endpoint) http.Handler { return httpAdapterWithOrigin(e, "") }
+
 /* ---- test doubles ---- */
 
-// echoEndpoint writes its id into the response (HTTP) or bus (WS), so a test
-// mounting several endpoints can tell which one answered a given path.
+// echoEndpoint writes its id into the response (HTTP) or bus (WS).
 type echoEndpoint struct{ id string }
 
 func (e *echoEndpoint) ID() string { return e.id }
@@ -34,8 +38,7 @@ func (e *echoEndpoint) Handle(s transport.Session) error {
 	return nil
 }
 
-// countingEndpoint is a call-counting, error-injecting Endpoint stub for
-// httpAdapter/wsAdapter tests.
+// countingEndpoint is a call-counting, error-injecting Endpoint stub for httpAdapter/wsAdapter tests.
 type countingEndpoint struct {
 	calls atomic.Int32
 	err   error
@@ -47,8 +50,7 @@ func (e *countingEndpoint) Handle(s transport.Session) error {
 	return e.err
 }
 
-// blockingEndpoint's Handle blocks on the session's context and reports back
-// through unblocked the instant it observes cancellation.
+// blockingEndpoint's Handle blocks on the session's context and reports back through unblocked the instant it observes.
 type blockingEndpoint struct {
 	unblocked chan struct{}
 }
@@ -61,8 +63,6 @@ func (e *blockingEndpoint) Handle(s transport.Session) error {
 }
 
 // drainEndpoint reads the bus until it errors, the shape every bus endpoint has.
-// The read limit is enforced by the library on that read, so the endpoint only
-// has to be reading for it to apply.
 type drainEndpoint struct{}
 
 func (e *drainEndpoint) ID() string { return "drain" }
@@ -82,9 +82,6 @@ func wsURL(httpURL string) string { return "ws" + strings.TrimPrefix(httpURL, "h
 
 /* ---- tests ---- */
 
-// TestMountResolvesHTTPAndWSIndependently checks Mount wires both an HTTP
-// endpoint and a WS endpoint from the same registry onto one mux, each
-// resolving only at its own path.
 func TestMountResolvesHTTPAndWSIndependently(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterHTTP("/http-ep", &echoEndpoint{id: "http-reply"})
@@ -124,8 +121,6 @@ func TestMountResolvesHTTPAndWSIndependently(t *testing.T) {
 	}
 }
 
-// TestHTTPAdapterSetsCommonHeaders checks setCommonHeaders is applied on both
-// a successful response and an error response.
 func TestHTTPAdapterSetsCommonHeaders(t *testing.T) {
 	check := func(t *testing.T, res *http.Response) {
 		t.Helper()
@@ -170,8 +165,6 @@ func TestHTTPAdapterSetsCommonHeaders(t *testing.T) {
 	})
 }
 
-// TestHTTPAdapterOptionsShortCircuits checks a CORS preflight OPTIONS gets a
-// bare 204 and never reaches the wrapped endpoint's Handle.
 func TestHTTPAdapterOptionsShortCircuits(t *testing.T) {
 	e := &countingEndpoint{}
 	srv := httptest.NewServer(httpAdapter(e))
@@ -195,8 +188,6 @@ func TestHTTPAdapterOptionsShortCircuits(t *testing.T) {
 	}
 }
 
-// TestHTTPAdapterHandleErrorReturns500 checks a Handle error surfaces as a 500
-// with the error text in the body.
 func TestHTTPAdapterHandleErrorReturns500(t *testing.T) {
 	e := &countingEndpoint{err: errBoom}
 	srv := httptest.NewServer(httpAdapter(e))
@@ -220,8 +211,6 @@ func TestHTTPAdapterHandleErrorReturns500(t *testing.T) {
 	}
 }
 
-// TestWSAdapterUpgradeSucceeds checks a plain upgrade with a Handle that
-// returns nil closes normally.
 func TestWSAdapterUpgradeSucceeds(t *testing.T) {
 	e := &countingEndpoint{}
 	mux := http.NewServeMux()
@@ -246,8 +235,6 @@ func TestWSAdapterUpgradeSucceeds(t *testing.T) {
 	}
 }
 
-// TestWSAdapterHandleErrorClosesWithInternalError checks a Handle error after
-// a successful upgrade closes the connection with StatusInternalError.
 func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	e := &countingEndpoint{err: errBoom}
 	mux := http.NewServeMux()
@@ -269,10 +256,6 @@ func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	}
 }
 
-// TestHTTPAdapterOptionsIgnoresRequestHeaders checks the permissive-CORS design
-// point: a preflight OPTIONS carrying Origin and both Access-Control-Request
-// headers still gets the same wildcard response. Public mode is cookie-less, so
-// nothing is reflected or validated per-request.
 func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
 	e := &countingEndpoint{}
 	srv := httptest.NewServer(httpAdapter(e))
@@ -306,11 +289,7 @@ func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
 	}
 }
 
-// A named origin means the server holds session state, so the wildcard public
-// mode answers with would be a real hole: `Access-Control-Allow-Origin: *` lets
-// any page read a measurement response, and the credentials the authenticated
-// UI sends only travel under a named origin. Nothing else in the suite looks at
-// the authenticated header set.
+// A named origin means the server holds session state, so the wildcard public mode answers with would be a real hole.
 func TestHTTPAdapterNarrowsCORSToANamedOrigin(t *testing.T) {
 	const origin = "https://ui.example"
 	srv := httptest.NewServer(httpAdapterWithOrigin(&countingEndpoint{}, origin))
@@ -339,8 +318,7 @@ func TestHTTPAdapterNarrowsCORSToANamedOrigin(t *testing.T) {
 	}
 }
 
-// An oversized frame is a peer forcing the server to buffer. Bus frames are tiny
-// text control messages, so the read limit sits far under the library default.
+// An oversized frame is a peer forcing the server to buffer.
 func TestWSAdapterBoundsFrameSize(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws", wsAdapter(t.Context(), &drainEndpoint{}))
@@ -366,10 +344,6 @@ func TestWSAdapterBoundsFrameSize(t *testing.T) {
 	}
 }
 
-// TestMountLongestPathWins checks a subtree ("/api/") and a more specific
-// literal ("/api/specific") on one registry resolve by ServeMux's longest-match
-// rule whatever the map iteration order. Mount is a thin, order-independent
-// wrapper and must not break that precedence when paths overlap.
 func TestMountLongestPathWins(t *testing.T) {
 	reg := NewRegistry()
 	reg.RegisterHTTP("/api/", &echoEndpoint{id: "subtree"})
@@ -399,9 +373,6 @@ func TestMountLongestPathWins(t *testing.T) {
 	check("/api/other", "subtree")
 }
 
-// TestMountShutdownCancelUnblocksWSHandler checks the context Mount is given
-// bounds every bus handler's lifetime: cancelling it while a handler is parked
-// on ctx.Done() (as conn.Read/Write would be) unblocks that handler promptly.
 func TestMountShutdownCancelUnblocksWSHandler(t *testing.T) {
 	e := &blockingEndpoint{unblocked: make(chan struct{})}
 	parent, cancelParent := context.WithCancel(t.Context())

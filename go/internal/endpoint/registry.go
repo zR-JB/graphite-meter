@@ -12,18 +12,14 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// Registry maps paths to endpoints. The HTTP mux is built by walking it, and bus
-// endpoints (WebSocket) and WebTransport sessions resolve from the same
-// registry. Adding an endpoint is one Register call, no listener code changes.
+// Registry maps paths to endpoints.
 type Registry struct {
 	httpEndpoints map[string]Endpoint
 	wsEndpoints   map[string]Endpoint
 	wtEndpoints   map[string]WTHandler
 }
 
-// Kinds reports how each registered path is reached: the mounting mechanism
-// itself, not a restatement of it. api/routes.txt is pinned against this, so
-// moving a route between Register* calls fails the pin.
+// Kinds reports how each registered path is reached.
 func (r *Registry) Kinds() map[string]string {
 	kinds := make(map[string]string, len(r.httpEndpoints)+len(r.wsEndpoints)+len(r.wtEndpoints))
 	for path := range maps.Keys(r.httpEndpoints) {
@@ -52,29 +48,23 @@ func (r *Registry) RegisterHTTP(path string, e Endpoint) {
 	r.httpEndpoints[path] = e
 }
 
-// RegisterWS mounts an endpoint as a WebSocket bus at path. The upgrade is an
-// HTTP/1.1 Upgrade on the existing h1 origin, no new listener.
+// RegisterWS mounts an endpoint as a WebSocket bus at path.
 func (r *Registry) RegisterWS(path string, e Endpoint) {
 	r.wsEndpoints[path] = e
 }
 
-// RegisterWT mounts a WebTransport session handler at path. The upgrade is an
-// extended CONNECT on the existing HTTP/3 listener, no new listener.
+// RegisterWT mounts a WebTransport session handler at path.
 func (r *Registry) RegisterWT(path string, h WTHandler) {
 	r.wtEndpoints[path] = h
 }
 
-// MountWebTransport attaches the registered session handlers onto mux as
-// CONNECT upgraders. parent bounds every session's lifetime.
+// MountWebTransport attaches registered session handlers onto mux.
 func (r *Registry) MountWebTransport(parent context.Context, mux *http.ServeMux, server *webtransport.Server) {
 	for path, h := range r.wtEndpoints {
 		mux.Handle(path, wtAdapter(parent, h, server))
 	}
 }
 
-// wtAdapter upgrades the request to a WebTransport session and serves it until
-// it ends. The handler blocks: Upgrade detaches the session from the request, so
-// returning early would release the admission slot bounding the session.
 func wtAdapter(parent context.Context, h WTHandler, server *webtransport.Server) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, err := server.Upgrade(w, r)
@@ -91,16 +81,12 @@ func wtAdapter(parent context.Context, h WTHandler, server *webtransport.Server)
 	})
 }
 
-// Mount attaches every registered endpoint onto mux: HTTP request/response
-// handlers and WebSocket bus upgrades. parent bounds every bus's lifetime.
-// Passing the server's run context lets srv.Shutdown unblock handlers parked in
-// conn.Read/Write instead of hanging the shutdown window.
+// Mount attaches every registered endpoint onto mux.
 func (r *Registry) Mount(parent context.Context, mux *http.ServeMux) {
 	r.MountWithOrigin(parent, mux, "")
 }
 
-// MountWithOrigin restricts browser cross-origin measurement access to one
-// canonical authenticated UI origin. An empty origin preserves public mode.
+// MountWithOrigin restricts browser cross-origin measurement access to one origin.
 func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, origin string) {
 	for path, e := range r.httpEndpoints {
 		mux.Handle(path, httpAdapterWithOrigin(e, origin))
@@ -110,44 +96,30 @@ func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, o
 	}
 }
 
-// wsAdapter is the public-mode wsAdapterWithOrigin: no origin restriction.
-func wsAdapter(parent context.Context, e Endpoint) http.Handler {
-	return wsAdapterWithOrigin(parent, e, "")
-}
-
-// wsAdapterWithOrigin upgrades the request to a WebSocket and runs the endpoint
-// against a websocketSession exposing the message bus. A non-empty allowedOrigin
-// means the server holds session state, so the upgrade is pinned to that one UI
-// origin. An empty allowedOrigin is public mode.
 func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		var origins []string
+		if allowedOrigin != "" {
+			// allowedOrigin is the String() of a *url.URL the auth service already parsed at startup.
+			u, _ := url.Parse(allowedOrigin)
+			origins = []string{u.Host}
+		}
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			// Public mode is auth-less and cookie-less, holding no session state a
-			// forged origin could abuse. It mirrors the wildcard CORS on HTTP.
+			// Public mode is auth-less and cookie-less, holding no session state a forged origin could abuse.
 			InsecureSkipVerify: allowedOrigin == "",
-			OriginPatterns: func() []string {
-				if allowedOrigin == "" {
-					return nil
-				}
-				// allowedOrigin is the String() of a *url.URL the auth service
-				// already parsed at startup, so re-parsing it cannot fail.
-				u, _ := url.Parse(allowedOrigin)
-				return []string{u.Host}
-			}(),
-			CompressionMode: websocket.CompressionDisabled,
+			OriginPatterns:     origins,
+			CompressionMode:    websocket.CompressionDisabled,
 		})
 		if err != nil {
 			return // Accept already wrote the handshake-failure response
 		}
-		// Bus frames are tiny text control messages (opcodes.go). A read limit well
-		// under the library default stops a peer forcing a large buffered allocation.
+		// Bus frames are tiny text control messages (opcodes.go).
 		conn.SetReadLimit(2048)
-		// Accept hijacks the conn, which makes r.Context() unreliable (see its
-		// docs). parent keeps the bus bounded by the server's shutdown instead.
+		// Accept hijacks the conn, which makes r.Context() unreliable (see its docs).
 		var ctx context.Context
 		var cancel context.CancelFunc
 		if deadline, ok := r.Context().Deadline(); ok {
@@ -176,12 +148,6 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 	})
 }
 
-// httpAdapter is the public-mode httpAdapterWithOrigin: wildcard CORS.
-func httpAdapter(e Endpoint) http.Handler { return httpAdapterWithOrigin(e, "") }
-
-// httpAdapterWithOrigin wraps an Endpoint as an http.Handler: it applies the
-// global CORS + timing headers, short-circuits CORS preflight OPTIONS, and runs
-// the endpoint against an httpSession.
 func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setCommonHeaders(w, origin)
@@ -196,10 +162,6 @@ func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
 	})
 }
 
-// setCommonHeaders admits cross-origin measurement: the UI and the measurement
-// listener sit on different ports. Timing-Allow-Origin gates Resource Timing.
-// An empty origin is public mode and answers with wildcards. A named origin
-// narrows every header to it and admits credentials, which a wildcard may not.
 func setCommonHeaders(w http.ResponseWriter, origin string) {
 	h := w.Header()
 	if origin != "" {

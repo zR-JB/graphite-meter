@@ -18,8 +18,6 @@ import (
 	"time"
 )
 
-// AuthRequiredError reports a server that refuses the request until the
-// operator approves a grant at URL.
 type AuthRequiredError struct{ URL string }
 
 func (e *AuthRequiredError) Error() string { return "authentication required at " + e.URL }
@@ -34,9 +32,6 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
-// ClassifyAuthFailure re-checks the server when a run fails, turning runErr
-// into an AuthRequiredError if the grant is revoked. Revocation cuts a transfer
-// short as a bare stream error, so the cause needs a fresh request.
 func ClassifyAuthFailure(ctx context.Context, cfg Config, runErr error) error {
 	if runErr == nil || ctx.Err() != nil || cfg.authToken() == "" {
 		return runErr
@@ -76,11 +71,6 @@ type PendingAuthorization struct {
 	close              func()
 }
 
-// BeginAuthorization starts a PKCE exchange against authURL. Opening the
-// browser is left to the caller, so the operator can read the code the approval
-// page asks them to match before a window takes the screen. The grant only ever
-// travels over verified HTTPS, so an unparseable, plaintext or -insecure server
-// URL is refused outright.
 func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
 		return nil, errors.New("authenticated operation refuses -insecure")
@@ -108,7 +98,7 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	q := login.Query()
 	q.Set("challenge", challenge)
 	login.RawQuery = q.Encode()
-	token := *login
+	token := login.Clone()
 	token.Path = "/auth/cli/token"
 	token.RawQuery = ""
 	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:5])
@@ -120,9 +110,6 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	return &PendingAuthorization{BrowserURL: login.String(), Code: code, Origin: issuingOrigin, verifier: verifier, tokenURL: token.String(), client: client, close: tr.CloseIdleConnections}, nil
 }
 
-// Open shows the approval page in the operator's browser. It is best-effort:
-// the caller also surfaces BrowserURL and Code, so a headless or misconfigured
-// desktop costs the operator nothing.
 func (p *PendingAuthorization) Open() { openBrowser(p.BrowserURL) }
 
 func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
@@ -133,9 +120,6 @@ func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 	return login, nil
 }
 
-// Poll waits for the browser approval, returning the grant. Transport errors
-// retry: the server may restart while the operator is still in the browser.
-// lastTransportErr names the cause when the deadline arrives.
 func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 	defer p.close()
 	ticker := time.Tick(time.Second)
@@ -153,8 +137,6 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			var out struct {
 				Token string `json:"token"`
 			}
-			// A body that fails to decode leaves Token empty, which the checks
-			// below already treat as "not approved yet".
 			_ = json.UnmarshalRead(res.Body, &out)
 			_ = res.Body.Close()
 			if res.StatusCode == http.StatusOK && out.Token != "" {

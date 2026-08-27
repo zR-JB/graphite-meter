@@ -26,17 +26,13 @@ const (
 )
 
 type Event struct {
-	Kind                                EventKind
-	At                                  time.Time
-	Stage                               string
-	Direction                           Direction
-	Message                             string
-	ThroughputTarget, LatencyTarget     string
-	ThroughputProtocol, LatencyProtocol string
-	// The transports the run committed to. A consumer needs the throughput one
-	// to describe the lanes a session delivers rather than the count that was
-	// requested, and the latency one because an evicted ping means packet loss
-	// on a datagram bus and a stalled queue on a WebSocket.
+	Kind                                  EventKind
+	At                                    time.Time
+	Stage                                 string
+	Direction                             Direction
+	Message                               string
+	ThroughputTarget, LatencyTarget       string
+	ThroughputProtocol, LatencyProtocol   string
 	ThroughputTransport, LatencyTransport string
 
 	Preflight    *wire.Preflight

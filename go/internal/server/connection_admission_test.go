@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,8 +19,7 @@ type testAddr string
 func (a testAddr) Network() string { return "tcp" }
 func (a testAddr) String() string  { return string(a) }
 
-// scriptedConn is a net.Conn stub with a preset remote address. It records
-// whether Accept closes it on an admission refusal.
+// scriptedConn is a net.Conn stub with a preset remote address.
 type scriptedConn struct {
 	net.Conn
 	remote net.Addr
@@ -90,8 +90,7 @@ func TestSocketKeyIPv6AndTrustedProxy(t *testing.T) {
 }
 
 func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
-	// clientMax 1: Accept closes the second conn from a client and returns the
-	// next admissible one in the same call.
+	// clientMax 1: Accept closes the second conn from a client and returns the next admissible one in the same call.
 	a := newConnectionAdmission(5, 1, nil)
 	over := &scriptedConn{remote: testAddr("192.0.2.1:2")}
 	ln := admittedListener{
@@ -146,8 +145,7 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	}
 }
 
-// An idle connection holds an admission slot on every listener, so the bounds
-// that release it must not depend on authentication being configured.
+// An idle connection holds an admission slot on every listener.
 func TestBaseServerBoundsIdleConnections(t *testing.T) {
 	s := baseServer(http.NotFoundHandler(), nil)
 	if s.IdleTimeout != 60*time.Second || s.MaxHeaderBytes != 32<<10 {
@@ -159,7 +157,7 @@ func TestAdmittedConnReleasesOnce(t *testing.T) {
 	server, client := net.Pipe()
 	defer client.Close()
 	called := 0
-	conn := &admittedConn{Conn: server, release: func() { called++ }}
+	conn := &admittedConn{Conn: server, release: sync.OnceFunc(func() { called++ })}
 	_ = conn.Close()
 	_ = conn.Close()
 	if called != 1 {

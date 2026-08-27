@@ -3,6 +3,7 @@ package goclient
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -25,6 +26,19 @@ func TestHTTPEndpoint(t *testing.T) {
 		if got != c.want {
 			t.Errorf("httpEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
 		}
+	}
+}
+
+func TestEndpointWithQueryReplacesGeneratedValues(t *testing.T) {
+	got, err := endpointWithQuery("https://meter.example/download?lane=old&keep=yes", url.Values{
+		"lane": {"2"}, "bytes": {"1024"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://meter.example/download?bytes=1024&keep=yes&lane=2"
+	if got != want {
+		t.Fatalf("endpointWithQuery() = %q, want %q", got, want)
 	}
 }
 

@@ -20,8 +20,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// recordingConn is the datagram half of a session: it replays queued datagrams
-// and records what was sent.
+// recordingConn is the datagram half of a session: it replays queued datagrams and records what was sent.
 type recordingConn struct {
 	incoming []string
 	sent     [][]byte
@@ -59,8 +58,7 @@ type failingConn struct{ recordingConn }
 
 func (c *failingConn) SendDatagram([]byte) error { return io.ErrClosedPipe }
 
-// The flood loop in HandleSession re-runs the download until the session dies;
-// the latched failure is what ends it without spinning on a dead sink.
+// The flood loop in HandleSession re-runs the download until the session dies.
 func TestDatagramSinkLatchesASendFailure(t *testing.T) {
 	sink := &datagramSink{conn: &failingConn{}}
 	if _, err := sink.Write(make([]byte, 1)); err == nil {
@@ -71,8 +69,7 @@ func TestDatagramSinkLatchesASendFailure(t *testing.T) {
 	}
 }
 
-// Every spelling of zero is the park path. A zero that reached the lane loop
-// would spin without moving bytes for the whole session lifetime.
+// Every spelling of zero is the park path.
 func TestWTDownloadParksOnEveryZeroSpelling(t *testing.T) {
 	for _, spelling := range []string{"0", "00", "+0", "-0"} {
 		if got := parseBytes(spelling); got != 0 {
@@ -84,11 +81,7 @@ func TestWTDownloadParksOnEveryZeroSpelling(t *testing.T) {
 	}
 }
 
-// ?datagrams= is presence-based, but a spelling of zero is a refusal rather
-// than presence. HandleSession states the rule eleven lines above the mode
-// switch -- "any zero request serves nothing" -- and bytes= follows it, so a
-// mode switch that compared the raw spelling turned the flood and the drain on
-// for ?datagrams=0.
+// ?datagrams= is presence-based, but a spelling of zero is a refusal rather than presence.
 func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	for _, tc := range []struct {
 		query string
@@ -120,8 +113,7 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	}
 }
 
-// refusingLane is a lane whose peer resets it: every write is refused before a
-// byte lands, which is what a lane carrying nothing looks like from the server.
+// refusingLane is a lane whose peer resets it: every write is refused before a byte lands.
 type refusingLane struct{ closed bool }
 
 func (l *refusingLane) Write([]byte) (int, error)                { return 0, io.ErrClosedPipe }
@@ -129,15 +121,13 @@ func (l *refusingLane) Close() error                             { l.closed = tr
 func (l *refusingLane) CancelWrite(webtransport.StreamErrorCode) {}
 func (l *refusingLane) SetWriteDeadline(time.Time) error         { return nil }
 
-// countingLanes counts how many lanes the loop asked for. The limit is a
-// harness bound, not a server one: without the anti-churn guard the loop never
-// stops on its own, and a test that hangs reports nothing.
+// countingLanes counts how many lanes the loop asked for.
 type countingLanes struct {
 	opened int
 	limit  int
 }
 
-func (l *countingLanes) openLane(context.Context) (laneStream, error) {
+func (l *countingLanes) open() (laneStream, error) {
 	if l.opened >= l.limit {
 		return nil, io.ErrUnexpectedEOF
 	}
@@ -145,25 +135,19 @@ func (l *countingLanes) openLane(context.Context) (laneStream, error) {
 	return &refusingLane{}, nil
 }
 
-// A download lane is replaced the moment it is exhausted, for as long as the
-// session lives. A peer that resets everything it is handed would therefore have
-// the server opening streams at handshake speed for the whole session bound,
-// paying a stream setup per refusal. A lane that carried nothing is that peer,
-// and the loop stops rather than reopening.
+// A download lane is replaced the moment it is exhausted, for as long as the session lives.
 func TestServeLaneStopsOnceAPeerRefusesALane(t *testing.T) {
 	lanes := &countingLanes{limit: 64}
 	h := &wtDownload{download: NewDownload(make([]byte, 4096), nil)}
 
-	h.serveLane(t.Context(), lanes, url.Values{"bytes": {"4096"}}, nil)
+	h.serveLane(t.Context(), func(context.Context) (laneStream, error) { return lanes.open() }, url.Values{"bytes": {"4096"}}, nil)
 
 	if lanes.opened != 1 {
 		t.Fatalf("opened %d lanes against a peer that refused every one, want 1: the loop reopens streams for as long as the peer keeps refusing them", lanes.opened)
 	}
 }
 
-// deadlineRecordingStream records the read deadline armed before each read and
-// advances a clock, so a re-armed bound is distinguishable from one absolute
-// deadline set once.
+// deadlineRecordingStream records the read deadline armed before each read and advances a clock.
 type deadlineRecordingStream struct{ deadlines []time.Time }
 
 func (s *deadlineRecordingStream) SetReadDeadline(t time.Time) error {
@@ -177,10 +161,7 @@ func (s *deadlineRecordingStream) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// A lane is bounded by inactivity, not by one absolute deadline: the deadline
-// is re-armed before every read, matching the fetch path's per-POST bound.
-// Armed once instead, a lane delivering steadily would still be cut
-// uploadReadTimeout after its first byte.
+// A lane is bounded by inactivity, not by one absolute deadline: the deadline is re-armed before every read.
 func TestIdleTimeoutReaderReArmsItsDeadlineEveryRead(t *testing.T) {
 	stream := &deadlineRecordingStream{}
 	reader := idleTimeoutReader{str: stream, timeout: time.Hour}
@@ -203,13 +184,7 @@ func TestIdleTimeoutReaderReArmsItsDeadlineEveryRead(t *testing.T) {
 	}
 }
 
-// A mint refusal is two different answers. A session at its per-session token
-// cap is intact and gets a slot back within the token lifetime, so the caller's
-// one correct move is to wait and ask again -- capacity, which this codebase
-// answers with a retryable status and Retry-After (upload_owner.go's
-// writeUploadAccessError, and requestAdmission.acquire). The cap is per session,
-// so it takes the per-client status those two use rather than the server-wide
-// one. A request with nothing to bind a token to is the only real refusal.
+// A mint refusal is two different answers.
 func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -235,8 +210,7 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 			if got := rec.Header().Get("Retry-After"); got != tc.retryAfter {
 				t.Errorf("Retry-After = %q, want %q", got, tc.retryAfter)
 			}
-			// A refusal that carried the auth marker would send the user to a
-			// login; neither of these is an authentication failure.
+			// A refusal that carried the auth marker would send the user to a login; neither of these is an authentication.
 			if got := rec.Header().Get("Graphite-Meter-Auth"); got != "" {
 				t.Errorf("Graphite-Meter-Auth = %q, want it absent", got)
 			}
@@ -277,8 +251,7 @@ func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
 	}
 }
 
-// The drain feeds the upload counter, so a datagram larger than the buffer must
-// refuse rather than deliver a prefix and undercount the rest.
+// The drain feeds the upload counter, so a datagram larger than the buffer must refuse rather than deliver a prefix.
 func TestDatagramSourceRefusesToTruncate(t *testing.T) {
 	src := datagramSource{conn: &recordingConn{incoming: []string{"a datagram longer than the buffer"}}, ctx: t.Context()}
 	if _, err := src.Read(make([]byte, 8)); err != io.ErrShortBuffer {
@@ -286,9 +259,7 @@ func TestDatagramSourceRefusesToTruncate(t *testing.T) {
 	}
 }
 
-// A datagram drain refused before its first read never reaches Read, which
-// used to be the only place the idle timer was stopped, so each refused session
-// left a timer armed for the whole read bound.
+// A datagram drain refused before its first read never reaches Read.
 func TestIdleTimeoutSourceDisarmsWhenTheDrainEnds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -303,8 +274,6 @@ func TestIdleTimeoutSourceDisarmsWhenTheDrainEnds(t *testing.T) {
 	})
 }
 
-// TestUploadProgressHandleStreamReportsTheCounter runs the WebTransport feed
-// over a pipe: ready first, then the terminal count once the upload finishes.
 func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
@@ -337,8 +306,6 @@ func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 	}
 }
 
-// TestUploadProgressHandleStreamRefusesAnUnknownID reports the refusal as a
-// record, since a stream has no status code.
 func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
 	var out strings.Builder
 	NewUploadProgress(NewUploadStore()).HandleStream(t.Context(), "gmu_missing", "owner", &out)

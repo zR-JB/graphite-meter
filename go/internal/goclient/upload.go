@@ -41,10 +41,6 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	var progress *uploadProgress
 	var lane func(context.Context, int) error
 	if r.targetTransport() == wire.TransportWebTransport {
-		// The lanes and their counter share one session, so progress reports the
-		// connection actually under test. A replacement session re-attaches the
-		// same feed: the server keeps one aggregate per id, so the counters and
-		// the measurement baseline carry across.
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
 			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
 		}, func(establishCtx context.Context, sess *wtSession) error {
@@ -63,9 +59,6 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 			return Result{}, err
 		}
 		defer host.close()
-		// A feed can end while its session lives: the server reaps an idle
-		// aggregate, or refuses after ready. HTTP re-attaches to the same
-		// aggregate, so the counter survives either.
 		go r.reattachUploadProgress(progress, progressURL)
 		lane = func(laneCtx context.Context, _ int) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
@@ -107,20 +100,9 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, nil)
-	if err != nil {
-		return "", err
-	}
-	res, err := r.http.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", unexpectedStatus(res)
-	}
 	var out uploadSessionResponse
-	if err := json.UnmarshalRead(res.Body, &out); err != nil {
+	_, err = (jsonHTTPClient{r.http}).requestJSON(ctx, http.MethodPost, u, nil, nil, &out, unexpectedStatus)
+	if err != nil {
 		return "", err
 	}
 	if out.UploadID == "" {
@@ -136,22 +118,20 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		return err
 	}
 	for ctx.Err() == nil {
-		u, err := url.Parse(base)
+		u, err := endpointWithQuery(base, url.Values{
+			"id":   {id},
+			"lane": {strconv.Itoa(lane)},
+			"cb":   {strconv.FormatInt(time.Now().UnixNano(), 10)},
+		})
 		if err != nil {
 			return err
 		}
-		q := u.Query()
-		q.Set("id", id)
-		q.Set("lane", strconv.Itoa(lane))
-		q.Set("cb", strconv.FormatInt(time.Now().UnixNano(), 10))
-		u.RawQuery = q.Encode()
-		req, err := r.newKnownLengthUpload(ctx, u.String(), block)
+		req, err := r.newKnownLengthUpload(ctx, u, block)
 		if err != nil {
 			return err
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			// A refused POST paces its retry, like every other reconnect path.
 			if !laneRetryPause(ctx) {
 				return nil
 			}
@@ -166,10 +146,6 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 	return nil
 }
 
-// newKnownLengthUpload declares an exact Content-Length so the server reads
-// large slices straight from the socket, matching the download's sized GET.
-// Chunked framing drains the body in small pieces, roughly halving upload
-// throughput on a fast link.
 func (r *runner) newKnownLengthUpload(ctx context.Context, target string, block []byte) (*http.Request, error) {
 	body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
@@ -181,8 +157,6 @@ func (r *runner) newKnownLengthUpload(ctx context.Context, target string, block 
 	return req, nil
 }
 
-// cyclingBody is a request body that repeats block until it has emitted limit
-// bytes, then returns io.EOF. A limit <= 0 cycles without end.
 type cyclingBody struct {
 	ctx   context.Context
 	block []byte
@@ -218,8 +192,6 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 
 func (b *cyclingBody) Close() error { return nil }
 
-// http.NewRequest passes an io.ReadCloser body to the transport as-is instead
-// of wrapping it in io.NopCloser.
 var _ io.ReadCloser = (*cyclingBody)(nil)
 
 type uploadProgress struct {
@@ -239,12 +211,8 @@ type uploadProgress struct {
 	once      sync.Once
 }
 
-// uploadCount is the server's counter pair. It is replaced as one value so a
-// reader never pairs one record's byte total with another's active time.
 type uploadCount struct{ bytes, nanos uint64 }
 
-// counters reports the server's byte total and active nanoseconds, zero before
-// the first record.
 func (p *uploadProgress) counters() (bytes, nanos uint64) {
 	if held := p.count.Load(); held != nil {
 		return held.bytes, held.nanos
@@ -252,18 +220,6 @@ func (p *uploadProgress) counters() (bytes, nanos uint64) {
 	return 0, 0
 }
 
-// advance publishes a counter pair no older than the one held. Two readers can
-// drain one aggregate at once (an HTTP re-attach and a replacement session's
-// stream), and a replaced reader can still deliver a buffered record, so the
-// swap is one CAS on the pair: the byte total cannot regress and the two values
-// cannot be split.
-//
-// Time alone still can, on a record with more bytes and fewer nanos: the server
-// reads total and clock separately, so two feeds pair them differently. The
-// equal-bytes half of the guard catches the common case, a superseded feed's
-// buffered `complete` repeating the total with a shorter time. The reported
-// figure is protected by sampleServerUpload's window, which takes the maximum
-// pair seen, so a short time here cannot shrink the denominator.
 func (p *uploadProgress) advance(bytes, nanos uint64) bool {
 	next := &uploadCount{bytes: bytes, nanos: nanos}
 	for {
@@ -284,17 +240,12 @@ type uploadProgressEvent struct {
 	Message string `json:"message"`
 }
 
-// withUploadID appends the id to a progress URL, the address the DELETE that
-// finalizes an upload is sent to whatever transport carried the bytes.
 func withUploadID(base, id string) string {
-	u, err := url.Parse(base)
+	u, err := endpointWithQuery(base, url.Values{"id": {id}})
 	if err != nil {
 		return base
 	}
-	q := u.Query()
-	q.Set("id", id)
-	u.RawQuery = q.Encode()
-	return u.String()
+	return u
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, target string) (*uploadProgress, error) {
@@ -319,8 +270,6 @@ func (r *runner) openUploadProgress(ctx context.Context, target string) (*upload
 	return p, nil
 }
 
-// cancelReadCloser keeps a successful reattach request alive until its body is
-// replaced or the stage ends. Failed or timed-out attempts cancel immediately.
 type cancelReadCloser struct {
 	io.ReadCloser
 	cancel context.CancelFunc
@@ -332,88 +281,57 @@ func (b *cancelReadCloser) Close() error {
 	return err
 }
 
-type progressOpenResult struct {
-	res *http.Response
-	err error
-}
-
-// openUploadProgressWithin opens one replacement without tying a successful
-// body's lifetime to the recovery deadline. The request owns a cancel context;
-// the deadline only chooses how long to wait for headers, and the adopted body
-// carries cancellation until Close.
 func (r *runner) openUploadProgressWithin(stageCtx, recoveryCtx context.Context, target string) (io.ReadCloser, error) {
 	attemptCtx, cancelAttempt := context.WithCancel(stageCtx)
+	stopRecovery := context.AfterFunc(recoveryCtx, cancelAttempt)
+	defer stopRecovery()
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, target, nil)
 	if err != nil {
 		cancelAttempt()
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/x-ndjson")
-	opened := make(chan progressOpenResult, 1)
-	go func() {
-		res, err := r.http.Do(req)
-		opened <- progressOpenResult{res: res, err: err}
-	}()
-	select {
-	case got := <-opened:
-		if got.err != nil {
-			cancelAttempt()
-			return nil, got.err
-		}
-		if got.res.StatusCode != http.StatusOK {
-			err := unexpectedStatus(got.res)
-			_ = got.res.Body.Close()
-			cancelAttempt()
-			return nil, err
-		}
-		return &cancelReadCloser{ReadCloser: got.res.Body, cancel: cancelAttempt}, nil
-	case <-recoveryCtx.Done():
+	res, err := r.http.Do(req)
+	if err != nil {
 		cancelAttempt()
-		got := <-opened
-		if got.res != nil {
-			_ = got.res.Body.Close()
-		}
-		return nil, recoveryCtx.Err()
+		return nil, err
 	}
+	if res.StatusCode != http.StatusOK {
+		err := unexpectedStatus(res)
+		_ = res.Body.Close()
+		cancelAttempt()
+		return nil, err
+	}
+	return &cancelReadCloser{ReadCloser: res.Body, cancel: cancelAttempt}, nil
 }
 
-// reattachUploadProgress keeps the fetch feed alive across the server's
-// request bound: when the GET dies with the stage still running, a fresh GET
-// resumes the same aggregate, as the browser's progress worker does.
 func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 	opened := time.Now()
 	for {
-		ended := p.currentDone()
+		_, ended := p.current()
 		select {
 		case <-p.ctx.Done():
 			return
 		case <-ended:
 		}
-		// A replacement session may have attached its stream while this goroutine
-		// was waking on the superseded reader. It already recovered the feed; do
-		// not replace it with a redundant HTTP request.
-		if p.currentDone() != ended {
+		if _, current := p.current(); current != ended {
 			opened = time.Now()
 			continue
 		}
 		recoveryCtx, cancelRecovery := context.WithTimeout(p.ctx, wtSessionRedialWindow)
-		// A feed that ended as fast as it opened is making no progress, and a
-		// server closing every one of them instantly would otherwise be hot-
-		// retried for the whole stage. One that ran first reopens without a
-		// pause, so a rollover at the server's request bound costs no records.
 		if time.Since(opened) < wtRedialBackoff && !laneRetryPause(recoveryCtx) && p.ctx.Err() != nil {
 			cancelRecovery()
 			return
 		}
 		var lastErr error
 		for recoveryCtx.Err() == nil {
-			if p.currentDone() != ended {
+			if _, current := p.current(); current != ended {
 				cancelRecovery()
 				break
 			}
 			body, err := r.openUploadProgressWithin(p.ctx, recoveryCtx, target)
 			if err == nil {
-				if p.currentDone() != ended {
+				if _, current := p.current(); current != ended {
 					_ = body.Close()
 					cancelRecovery()
 					break
@@ -423,21 +341,11 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 				cancelRecovery()
 				break
 			}
-			// Authentication cannot recover inside this retry window: it needs
-			// operator action. Surface the classified refusal immediately instead
-			// of allowing the recovery deadline to race with and obscure it.
 			if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
 				cancelRecovery()
-				select {
-				case p.errs <- err:
-				default:
-				}
-				p.cancel()
+				p.fail(err)
 				return
 			}
-			// A final attempt can finish at the same instant as recoveryCtx. Keep
-			// the last concrete transport/status failure rather than replacing it
-			// with the retry budget's generic deadline.
 			if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
 				lastErr = err
 			}
@@ -450,26 +358,20 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 			}
 		}
 		cancelRecovery()
-		if recoveryCtx.Err() != nil && p.ctx.Err() == nil && p.currentDone() == ended {
+		if recoveryCtx.Err() != nil && p.ctx.Err() == nil {
+			_, current := p.current()
+			if current != ended {
+				continue
+			}
 			if lastErr == nil {
 				lastErr = recoveryCtx.Err()
 			}
-			select {
-			case p.errs <- fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, lastErr):
-			default:
-			}
-			// Nothing will advance the counter now. waitNext blocks on this
-			// channel's cancellation and on p.changed alone, and the stage
-			// context carries no deadline, so without this a feed that dies
-			// before the first record hangs the run rather than failing it.
-			p.cancel()
+			p.fail(fmt.Errorf("upload progress lost and not reattached within %v: %w", wtSessionRedialWindow, lastErr))
 			return
 		}
 	}
 }
 
-// readUploadProgress consumes the NDJSON feed from body, whichever transport
-// carries it, and finalizes over HTTP at deleteURL.
 func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
 	readCtx, cancel := context.WithCancel(ctx)
 	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}
@@ -488,11 +390,6 @@ func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, del
 	return p, nil
 }
 
-// attach replaces the feed's byte source with a stream from a replacement
-// session. The server keeps one aggregate per id and the newest feed takes it
-// over, so the counters and the measurement baseline carry across. A feed
-// already closed takes no new reader: close() has run its one-shot cancel and
-// would otherwise block forever on a reader installed behind it.
 func (p *uploadProgress) attach(body io.ReadCloser) {
 	done := make(chan struct{})
 	p.mu.Lock()
@@ -511,8 +408,6 @@ func (p *uploadProgress) attach(body io.ReadCloser) {
 	go p.read(body, done)
 }
 
-// signalReady delivers the first feed's ready-or-refused verdict exactly once;
-// later attachments repeat the handshake records to an already-running stage.
 func (p *uploadProgress) signalReady(err error) {
 	if p.readySent.CompareAndSwap(false, true) {
 		p.ready <- err
@@ -534,7 +429,6 @@ func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
 		case "ready":
 			p.signalReady(nil)
 		case "progress", "complete":
-			// The server's count only moves forward, whichever reader delivers it.
 			if !p.advance(event.Bytes, event.Nanos) {
 				continue
 			}
@@ -555,9 +449,6 @@ func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
 	}
 }
 
-// waitNext blocks until the server's counter advances past `after`. One feed
-// ending is not the end of the report: a replacement session re-attaches to the
-// same aggregate, so only this channel's own cancellation is terminal.
 func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	for p.seq.Load() <= after {
 		select {
@@ -571,7 +462,6 @@ func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
 	return true
 }
 
-// failure is the reason the feed stopped, or fallback when it queued none.
 func (p *uploadProgress) failure(fallback error) error {
 	select {
 	case err := <-p.errs:
@@ -581,16 +471,27 @@ func (p *uploadProgress) failure(fallback error) error {
 	}
 }
 
-func (p *uploadProgress) currentDone() chan struct{} {
+func (p *uploadProgress) fail(err error) {
+	select {
+	case p.errs <- err:
+	default:
+	}
+	p.cancel()
+}
+
+func (p *uploadProgress) current() (io.ReadCloser, chan struct{}) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.done
+	return p.body, p.done
+}
+
+func (p *uploadProgress) currentDone() chan struct{} {
+	_, done := p.current()
+	return done
 }
 
 func (p *uploadProgress) closeBody() {
-	p.mu.Lock()
-	body := p.body
-	p.mu.Unlock()
+	body, _ := p.current()
 	if body != nil {
 		_ = body.Close()
 	}
@@ -600,8 +501,8 @@ func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
 		p.closeBody()
-		// nil when the feed was cancelled before its first reader was installed.
-		if done := p.currentDone(); done != nil {
+		_, done := p.current()
+		if done != nil {
 			<-done
 		}
 	})
@@ -616,15 +517,14 @@ func (p *uploadProgress) bye() {
 			_ = res.Body.Close()
 		}
 	}
+	_, done := p.current()
 	select {
-	case <-p.currentDone():
+	case <-done:
 	case <-ctx.Done():
 	}
 	p.close()
 }
 
-// sampleServerUpload measures from the server's byte and active-time counters,
-// so the rate excludes time the server spent with nothing to read.
 func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64, laneErr <-chan error) (rateStats, error) {
 	lastN, lastT := baselineN, baselineT
 	return rateLoop{
@@ -632,14 +532,10 @@ func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *upload
 		laneErr:  laneErr,
 		stageErr: p.errs,
 		window: func(stats *rateStats) {
-			// lastN/lastT are the highest pair this loop has sampled, and the
-			// sampler only ever moves them forward. Taking the larger of the two
-			// keeps the final window off a record that arrived out of order,
-			// which would otherwise shrink the elapsed time and inflate the rate.
 			n, elapsed := p.counters()
 			n, elapsed = max(n, lastN), max(elapsed, lastT)
 			if n >= baselineN && elapsed >= baselineT {
-				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- guarded elapsed >= baselineT; diff fits int64
+				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- elapsed is monotonic and bounded
 			}
 		},
 		sample: func(now time.Time, stats *rateStats) {

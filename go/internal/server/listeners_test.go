@@ -16,6 +16,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -36,7 +37,7 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(t.Context(), e, muxTopology{bootstrap: true})
+	mux := listenerMuxConfigured(t.Context(), e, muxTopology{bootstrap: true}, static.Handler(), nil)
 	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -52,7 +53,7 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(t.Context(), e, muxTopology{transfers: true, requiredProto: 2})
+	mux := listenerMuxConfigured(t.Context(), e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), nil)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
@@ -72,7 +73,7 @@ func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMux(t.Context(), e, muxTopology{transfers: true, requiredProto: 2})
+	mux := listenerMuxConfigured(t.Context(), e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), nil)
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -99,9 +100,9 @@ func TestH1MountsSPAAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mux := listenerMuxWithSPA(t.Context(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux := listenerMuxConfigured(t.Context(), e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), nil)
 	for _, path := range []string{"/", "/preflight"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -167,13 +168,13 @@ func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h1 := listenerMux(t.Context(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1})
+	h1 := listenerMuxConfigured(t.Context(), e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}, static.Handler(), nil)
 	rec := httptest.NewRecorder()
 	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("H1 latency websocket is not mounted")
 	}
-	h3 := listenerMux(t.Context(), e, muxTopology{transfers: true})
+	h3 := listenerMuxConfigured(t.Context(), e, muxTopology{transfers: true}, static.Handler(), nil)
 	rec = httptest.NewRecorder()
 	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
 	if rec.Code == http.StatusNotFound {
@@ -197,21 +198,14 @@ func TestPublicH3Port(t *testing.T) {
 	}
 }
 
-// The idle bound is a contract value: clients pace their traffic under it, and
-// the native client validates its ping cadence against the same constant. It
-// reaches the session handlers as a constructor argument, so this is where it
-// is chosen and where server and contract are held together.
+// The idle bound is a contract value: clients pace their traffic under it.
 func TestEndpointsCarryThePublishedIdleBound(t *testing.T) {
 	cfg := config.Default()
 	e, err := buildEndpoints(t.Context(), &cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Equality, not "at most": raising it above the constant makes a session
-	// outlive the upload aggregate whose TTL is derived from that same constant
-	// (endpoint/upload_store.go), and the re-dial after a bound-driven close
-	// then reports only post-reconnect bytes. Whoever makes this configurable
-	// has to change this line, which is the point of pinning it here.
+	// Equality matters because a larger bound can outlive the upload aggregate TTL.
 	if e.wtIdleBound != wire.WTIdleBound {
 		t.Errorf("WebTransport idle bound = %v, want the published %v: the upload aggregate TTL is derived from that constant, so a longer bound resets the upload counter to zero across a reconnect", e.wtIdleBound, wire.WTIdleBound)
 	}
@@ -222,23 +216,13 @@ func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
 	if want := int64(257); cfg.MaxIncomingStreams != want {
 		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)", cfg.MaxIncomingStreams, want)
 	}
-	// The literal, not the production expression: repeating that expression here
-	// asserts only that it equals itself, and any of its three terms could then
-	// change without a test noticing.
+	// The literal, not the production expression: repeating that expression here asserts only that it equals itself.
 	if want := int64(23); cfg.MaxIncomingUniStreams != want {
 		t.Fatalf("incoming unidirectional streams = %d, want %d (3 HTTP/3 control + 16 lanes + 4 headroom)", cfg.MaxIncomingUniStreams, want)
 	}
 }
 
-// api/wire.md promises the lane past wire.WTMaxStreams is reset rather than
-// served. Only the app-level semaphore in endpoint/webtransport.go can reset
-// one: a lane refused by QUIC stream credit instead parks on the credit
-// indefinitely, with no error frame and nothing for the client to observe -- a
-// byte stream carries no channel to report a refusal on. So the credit has to
-// outrun what a browser can spend before its first lane, or the documented
-// refusal is unreachable from the only client that has to see it. Granting
-// exactly browserH3UniStreams + wire.WTMaxStreams left a browser with exactly
-// 16 lanes and made the app guard dead code.
+// api/wire.md promises the lane past wire.WTMaxStreams is reset rather than served.
 func TestH3UniStreamCreditOutrunsABrowsersLaneCeiling(t *testing.T) {
 	credit := h3QUICConfig().MaxIncomingUniStreams
 	floor := int64(browserH3UniStreams + wire.WTMaxStreams)
@@ -248,10 +232,7 @@ func TestH3UniStreamCreditOutrunsABrowsersLaneCeiling(t *testing.T) {
 	}
 }
 
-// The unit half of TestWebTransportConnectRefusesAForeignOrigin, which needs a
-// whole authenticated HTTP/3 stack to reach this function. wtOriginCheck is the
-// only origin policy an extended CONNECT passes through, so it is pinned here
-// too: a live-fire test that stops compiling takes the guard with it.
+// The unit half of TestWebTransportConnectRefusesAForeignOrigin.
 func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
 	hash, err := auth.HashPassword("secret")
 	if err != nil {
@@ -273,8 +254,7 @@ func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
 		origin string
 		want   bool
 	}{
-		// No Origin at all is a native client, which no browser origin policy
-		// governs; the credential is what admits it.
+		// No Origin at all is a native client, which no browser origin policy governs; the credential is what admits it.
 		{"", true},
 		{authn.PublicOrigin(), true},
 		{"https://attacker.example", false},
@@ -289,18 +269,13 @@ func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
 			t.Errorf("wtOriginCheck(Origin: %q) = %v, want %v", tc.origin, got, tc.want)
 		}
 	}
-	// Public mode holds no session state a forged origin could reach, and
-	// answers every origin as the wildcard-CORS measurement routes do.
+	// Public mode holds no session state a forged origin could reach.
 	if open := wtOriginCheck(nil); !open(withOrigin("https://attacker.example")) {
 		t.Error("public mode refused a cross-origin CONNECT")
 	}
 }
 
 // The admission log is the operator's whole view of what is refusing traffic.
-// A deployment whose session budget is full refuses every /wt/* CONNECT with
-// 503 while the measurement pool still reports room, so the line has to carry
-// the session budget's own occupancy and its own refusals or it names no
-// remedy: /probe's published load shape reports the pool alone.
 func TestAdmissionLogLineNamesTheSessionBudget(t *testing.T) {
 	a := newRequestAdmission(256, 32, 64, 16, time.Minute, time.Hour)
 	for i := range 3 {

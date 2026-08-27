@@ -15,6 +15,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -152,7 +153,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	}
 	p := &http.Protocols{}
 	p.SetHTTP1(true)
-	srv := baseServer(listenerMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}), p)
+	srv := baseServer(listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, static.Handler(), nil), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -205,7 +206,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	}
 	p := &http.Protocols{}
 	p.SetHTTP2(true)
-	srv := baseServer(listenerMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}), p)
+	srv := baseServer(listenerMuxConfigured(ctx, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), nil), p)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +263,7 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMux(ctx, e, muxTopology{transfers: true})}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, static.Handler(), nil)}
 	go h3.Serve(pc)
 	defer func() { _ = h3.Close(); _ = pc.Close() }()
 	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
