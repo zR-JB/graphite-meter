@@ -3,6 +3,7 @@ import type { CoreHost } from "./core";
 import type { RunnerConfig, RunnerEvent } from "./contract";
 import { DummyBackend } from "./dummy";
 
+const noop = () => {};
 class Host implements CoreHost {
   config: RunnerConfig | null = null;
   phase = "download" as const;
@@ -19,18 +20,16 @@ class Host implements CoreHost {
     this.latency = sample.rttMs;
     this.latencyObservations.push(sample);
   }
-  recordRecoveryGap(): void {}
-  recordRecoveryBytes(): void {}
-  stall(): void {}
-  resume(): void {}
+  recordRecoveryGap = noop;
+  recordRecoveryBytes = noop;
+  stall = noop;
+  resume = noop;
   emit(event: RunnerEvent): void {
     this.events.push(event);
   }
-  fail(): void {}
-  failStage(): void {}
-  presentationRate(): number {
-    return 0;
-  }
+  fail = noop;
+  failStage = noop;
+  presentationRate = () => 0;
 }
 
 const activity = {
@@ -70,7 +69,7 @@ test("measured stages emit stable throughput and loaded latency samples", async 
   backend.attach(host);
   backend.onStageBegin(activity);
   backend.onStageMeasure(activity);
-  await new Promise((resolve) => setTimeout(resolve, 75));
+  await new Promise<void>((resolve) => setTimeout(resolve, 75));
   backend.onStageEnd();
 
   expect(host.throughput.length).toBeGreaterThan(0);
