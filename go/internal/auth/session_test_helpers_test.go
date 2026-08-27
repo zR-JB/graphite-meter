@@ -2,8 +2,21 @@ package auth
 
 import (
 	"context"
+	"net/http"
 	"time"
 )
+
+func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
+	setCookie(w, name, value, expires, true, http.SameSiteStrictMode)
+}
+
+func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
+	setCookie(w, csrfCookie, value, expires, false, http.SameSiteStrictMode)
+}
+
+func setTransactionCookie(w http.ResponseWriter, value string, expires time.Time) {
+	setCookie(w, transactionCookie, value, expires, true, http.SameSiteLaxMode)
+}
 
 func (s *Service) createSessionUntil(subject, name, provider string, expires time.Time) (string, *session, error) {
 	raw, sess, err := s.createSession(subject, name, provider)
@@ -14,8 +27,7 @@ func (s *Service) createSessionUntil(subject, name, provider string, expires tim
 		expires = sess.expires
 	}
 	sess.cancel()
-	// This context represents the session's absolute expiry, independent of the
-	// test lifetime that created it.
+	// This context represents the session's absolute expiry, independent of the test lifetime that created it.
 	sess.ctx, sess.cancel = context.WithDeadline(context.Background(), expires)
 	sess.expires = expires
 	return raw, sess, nil

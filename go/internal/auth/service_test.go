@@ -278,8 +278,6 @@ func TestAuthPagesPreserveSameOriginFormOrigin(t *testing.T) {
 }
 
 func TestAppCSPPinsScriptsAndConnectSrc(t *testing.T) {
-	// The baseline directives and connect-src 'self' are always present;
-	// script-src appears only when a real client build supplies a hash.
 	base := appCSP("", "")
 	for _, want := range []string{
 		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
@@ -324,8 +322,6 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	}
 }
 
-// The pre-paint theme script is only allowed to run because the CSP pins its
-// digest, so every page must ship the exact bytes that digest covers.
 func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	digest := func(asset string) string {
 		sum := sha256.Sum256([]byte(asset))
@@ -335,8 +331,6 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	if policy := authPageCSP(""); !strings.Contains(policy, pin) {
 		t.Fatalf("CSP %q does not pin both embedded scripts", policy)
 	}
-	// pending.js posts the sign-in forms with fetch; without connect-src 'self'
-	// the login CSP's default-src 'none' blocks it and sign-in silently fails.
 	if policy := authPageCSP(""); !strings.Contains(policy, "connect-src 'self'") {
 		t.Fatalf("login CSP %q does not allow the same-origin sign-in fetch", policy)
 	}
@@ -355,8 +349,6 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		// A rendered script must match a hashed asset byte for byte or the CSP
-		// blocks it; html/template's JS lexer strips comments from literal text.
 		rest := rendered.String()
 		scripts := 0
 		for {
@@ -724,7 +716,7 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 		{"hybrid", true, true, true},
 	} {
 		t.Run(fmt.Sprintf("%s-ready-%v", tc.mode, tc.ready), func(t *testing.T) {
-			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}, public: public, loginTemplate: loginTemplate, now: time.Now}
+			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}, public: public, now: time.Now}
 			if tc.provider {
 				s.oidc = newOIDCState(s.cfg, "secret", false)
 				if tc.ready {
@@ -859,8 +851,7 @@ func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {
 	}
 }
 
-// The login page carries a CLI challenge into its forms only when it is
-// well-formed.
+// The login page carries a CLI challenge into its forms only when it is well-formed.
 func TestLoginPageOnlyCarriesValidChallenge(t *testing.T) {
 	s := testService(t)
 	sum := sha256.Sum256([]byte("terminal-verifier"))
@@ -969,8 +960,6 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 		return out
 	}
-	// auth.css states the light palette twice, per data-theme and as the OS
-	// fallback, so consecutive repeats collapse. Drift between them survives.
 	for _, name := range []string{"canvas", "surface-1", "surface-inset", "border", "text", "text-muted", "text-inverse", "brand", "brand-strong", "signal", "signal-soft", "err", "err-soft", "focus-ring", "edge-highlight"} {
 		authValues := slices.Compact(values(authCSS, name))
 		if appValues := values(string(css), name); !reflect.DeepEqual(authValues, appValues) {
