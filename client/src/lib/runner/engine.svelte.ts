@@ -23,6 +23,7 @@ import { buildSegments } from "./schedule";
 import {
   CONNECTION_FAILURE_REASONS,
   CONNECTION_FRESH_MS,
+  connectionFailureBackoff,
   CONNECTION_ROLES,
   type ConnectionValidationState,
   connectionDraftKey,
@@ -53,6 +54,7 @@ let sessionBudget: SessionBudget | null = null;
 let validationTimer: ReturnType<typeof setTimeout> | null = null;
 let validationDueAt = 0;
 let lastValidationAttemptAt = 0;
+let validationFailureCount = 0;
 let connectivityOnline: boolean | null = null;
 const SESSION_RUN_MARGIN_MS = 60_000;
 
@@ -258,6 +260,18 @@ function markValidation(
 }
 
 function preparedIsFresh(key: string): boolean {
+  const config = $state.snapshot(store.config);
+  if (
+    CONNECTION_ROLES.some((role) =>
+      roleNeedsValidation(
+        config,
+        store.connectionValidation,
+        role,
+        store.transportDiscovery,
+      ),
+    )
+  )
+    return false;
   return !!(
     prepared &&
     prepared.key === key &&
@@ -356,6 +370,11 @@ export async function validateConnections(
     }
     if (firstFailure) {
       prepared = null;
+      if (firstFailure instanceof PreflightUnavailableError)
+        store.connectivity = "offline";
+      validationFailureCount++;
+      validationDueAt =
+        Date.now() + connectionFailureBackoff(validationFailureCount);
       throw firstFailure;
     }
     if (!latest) throw new Error("no connection role was validated");
@@ -364,6 +383,7 @@ export async function validateConnections(
       info: latest,
       verifiedAt: Date.now(),
     };
+    validationFailureCount = 0;
     validationDueAt = prepared.verifiedAt + CONNECTION_FRESH_MS;
     return latest;
   } finally {
@@ -593,6 +613,7 @@ export function teardownRunner() {
   clearValidationTimer();
   validationDueAt = 0;
   lastValidationAttemptAt = 0;
+  validationFailureCount = 0;
   connectivityOnline = null;
   window.removeEventListener("online", refreshAfterTransition);
   window.removeEventListener("offline", refreshAfterOffline);

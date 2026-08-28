@@ -191,14 +191,18 @@
     overflow-wrap: anywhere;
   }
   .copy small {
+    display: -webkit-box;
     overflow: hidden;
     color: var(--text-soft);
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 500;
     line-height: 1.35;
+    line-clamp: 2;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
   }
   .validation {
     display: grid;

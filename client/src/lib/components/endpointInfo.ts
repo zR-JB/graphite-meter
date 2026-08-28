@@ -70,6 +70,26 @@ export function advertisedServerCapabilities(
   };
 }
 
+/* Fetch paths are the HTTP capability contract; other transports belong to their path cards. */
+export function advertisedServerHttpPaths(
+  discovery: TransportDiscovery | null,
+): string[] | null {
+  if (!discovery) return null;
+  const targets = [
+    ...Object.values(discovery.throughput)
+      .flatMap((entry) => entry.targets)
+      .filter((target) => target.transport === "fetch-stream"),
+  ];
+  return [
+    ...new Set(
+      targets.map(
+        (target) =>
+          `${httpProtocolLabel(target.protocol)} · ${target.tls ? "TLS" : "clear"}`,
+      ),
+    ),
+  ];
+}
+
 /* Protocol evidence has distinct observation points. */
 export function pathEvidence(
   role: "throughput" | "latency",
