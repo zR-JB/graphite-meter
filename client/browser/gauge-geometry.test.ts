@@ -144,6 +144,58 @@ async function assertGaugeLabels(page: Page) {
   }
 }
 
+async function assertGaugeCanvasAlignment(page: Page) {
+  const boxes = await page.locator(".gauge-panel .stage").evaluate((stage) => {
+    const canvas = stage.querySelector("canvas");
+    if (!(canvas instanceof HTMLCanvasElement))
+      throw new Error("missing gauge");
+    const stageBox = stage.getBoundingClientRect();
+    const canvasBox = canvas.getBoundingClientRect();
+    return {
+      stage: {
+        left: stageBox.left,
+        right: stageBox.right,
+        top: stageBox.top,
+        bottom: stageBox.bottom,
+        centerX: (stageBox.left + stageBox.right) / 2,
+        centerY: (stageBox.top + stageBox.bottom) / 2,
+      },
+      canvas: {
+        left: canvasBox.left,
+        right: canvasBox.right,
+        top: canvasBox.top,
+        bottom: canvasBox.bottom,
+        centerX: (canvasBox.left + canvasBox.right) / 2,
+        centerY: (canvasBox.top + canvasBox.bottom) / 2,
+      },
+    };
+  });
+  expectNear(boxes.canvas.left, boxes.stage.left);
+  expectNear(boxes.canvas.right, boxes.stage.right);
+  expectNear(boxes.canvas.top, boxes.stage.top);
+  expectNear(boxes.canvas.bottom, boxes.stage.bottom);
+  expectNear(boxes.canvas.centerX, boxes.stage.centerX);
+  expectNear(boxes.canvas.centerY, boxes.stage.centerY);
+}
+
+test("running and completed gauge geometry stays aligned to the shared layout", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  const settings = await configureSettings(page, "three-stage");
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startTest(page);
+  await expect(page.locator("#console")).toHaveAttribute(
+    "data-phase",
+    "download",
+  );
+  await assertGaugeCanvasAlignment(page);
+  await assertGaugeLabels(page);
+  await waitForCompletion(page, 10_000);
+  await assertGaugeCanvasAlignment(page);
+  await assertGaugeLabels(page);
+});
+
 for (const viewport of [
   { name: "desktop", width: 1440, height: 900 },
   { name: "mobile", width: 390, height: 844 },

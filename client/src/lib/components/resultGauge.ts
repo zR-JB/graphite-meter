@@ -10,6 +10,69 @@ interface ResultGaugeArc {
   dashed: boolean;
 }
 
+export interface ResultGaugeHeadPlacement {
+  /** Original result fraction, retained for exact endpoint mapping. */
+  fraction: number;
+  /** Compact inward lane; zero is reserved for the primary result. */
+  lane: number;
+  radius: number;
+}
+
+export interface ResultGaugeHeadLayoutOptions {
+  baseRadius: number;
+  arcSweep: number;
+  headRadius: number;
+  borderWidth: number;
+  /** Clearance between outside edges of neighboring marker borders. */
+  clearance?: number;
+}
+
+/** Assign stable inward lanes to sorted result heads without changing their angles. */
+export function resultGaugeHeadPlacements(
+  fractions: readonly number[],
+  options: ResultGaugeHeadLayoutOptions,
+): ResultGaugeHeadPlacement[] {
+  const clearance = Math.max(0, options.clearance ?? 2);
+  const extent =
+    Math.max(0, options.headRadius) + Math.max(0, options.borderWidth);
+  const laneStep = Math.max(1, extent * 2 + clearance);
+  const minimumRadius = extent + clearance;
+  const placed: ResultGaugeHeadPlacement[] = [];
+  const angles = fractions.map((fraction) =>
+    Number.isFinite(fraction) ? fraction * options.arcSweep : 0,
+  );
+
+  for (const [index, fraction] of fractions.entries()) {
+    if (index === 0) {
+      placed.push({ fraction, lane: 0, radius: options.baseRadius });
+      continue;
+    }
+
+    let lane = 0;
+    while (true) {
+      const radius = Math.max(
+        minimumRadius,
+        options.baseRadius - lane * laneStep,
+      );
+      const angle = angles[index]!;
+      const overlaps = placed.some((other, otherIndex) => {
+        const otherAngle = angles[otherIndex]!;
+        const x = radius * Math.cos(angle);
+        const y = radius * Math.sin(angle);
+        const otherX = other.radius * Math.cos(otherAngle);
+        const otherY = other.radius * Math.sin(otherAngle);
+        return Math.hypot(x - otherX, y - otherY) < extent * 2 + clearance;
+      });
+      if (!overlaps || radius <= minimumRadius) {
+        placed.push({ fraction, lane, radius });
+        break;
+      }
+      lane += 1;
+    }
+  }
+  return placed;
+}
+
 const arcValue = (value: number): number =>
   Number.isFinite(value) ? value : -Infinity;
 
