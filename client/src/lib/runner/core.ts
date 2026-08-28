@@ -38,6 +38,7 @@ import {
 import { RunAccumulator } from "./evaluation";
 import { GrowingRateEstimator } from "./rateEstimator";
 import { LatencyPresentationBuckets } from "./latencyBuckets";
+import { fixedPingIntervalMs } from "./pingCadence";
 import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -686,12 +687,17 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   #resetLatencyPresentation(): void {
+    const cadence =
+      this.#phase === "latency"
+        ? this.#cfg?.pingCadence
+        : this.#cfg?.loadedPingCadence;
     this.#latencyBuckets.reset(
       this.#measuredElapsed,
       this.#phase,
       this.#phase !== "latency",
       this.#continuityId,
       Math.max(0, (this.#activeSeg?.end ?? 0) - (this.#activeSeg?.start ?? 0)),
+      cadence ? fixedPingIntervalMs(cadence) : null,
     );
   }
 

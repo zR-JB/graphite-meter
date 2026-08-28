@@ -14,7 +14,8 @@ import type {
   EngineInfo,
   ThroughputResult,
 } from "./contract";
-import { LATENCY_PRESENTATION_BUCKET_MS } from "./latencyBuckets";
+import { latencyPresentationBucketMs } from "./latencyBuckets";
+import { fixedPingIntervalMs } from "./pingCadence";
 import { DEFAULT_CONFIG } from "../state/defaults";
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
@@ -127,6 +128,8 @@ type ConfigOverrides = {
   stages?: Partial<RunnerConfig["stages"]>;
   duration?: Partial<RunnerConfig["duration"]>;
   adaptive?: Partial<RunnerConfig["adaptive"]>;
+  pingCadence?: RunnerConfig["pingCadence"];
+  loadedPingCadence?: RunnerConfig["loadedPingCadence"];
 };
 const stageDefaults: RunnerConfig["stages"] = {
   latency: false,
@@ -156,6 +159,8 @@ function makeConfig(overrides: ConfigOverrides = {}): RunnerConfig {
     ...base,
     stages: { ...stageDefaults, ...overrides.stages },
     duration: { ...durationDefaults, ...overrides.duration },
+    pingCadence: overrides.pingCadence ?? base.pingCadence,
+    loadedPingCadence: overrides.loadedPingCadence ?? base.loadedPingCadence,
     transferStreams: { mode: "auto", count: 6 },
     transports: {
       throughputTarget: "current",
@@ -539,8 +544,9 @@ test("latency presentation does not bridge a short stall", async () => {
   advance(100);
   core.resume();
   core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow }, true);
-  advance(200);
+  advance(300);
   core.ingestLatency({ rttMs: 14, lost: false, observedAtMs: fakeNow }, true);
+  advance(250);
   const buckets = eventSamples(events, "latency");
   expect(buckets.length).toBeGreaterThanOrEqual(2);
   expect(buckets[0].continuityId).not.toBe(buckets.at(-1)!.continuityId);
@@ -551,13 +557,36 @@ test("latency presentation closes on bucket time without a later ping", async ()
   advance(10);
   core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, true);
   expect(hasEvent(events, "latency")).toBe(false);
-  advance(190);
+  advance(240);
   const latency = eventSamples(events, "latency")[0];
   expect(latency).toMatchObject({
     startT: 0,
-    endT: LATENCY_PRESENTATION_BUCKET_MS,
+    endT: latencyPresentationBucketMs(1_000, 250),
     medianRttMs: 20,
   });
+});
+
+test("loaded latency presentation follows every fixed cadence", async () => {
+  const durationMs = 2_400;
+  for (const cadence of ["fast", "medium", "slow"] as const) {
+    const pingIntervalMs = fixedPingIntervalMs(cadence)!;
+    const { core, events } = await startCore({
+      loadedPingCadence: cadence,
+      duration: { downloadMs: durationMs },
+    });
+    for (let t = 0; t < durationMs; t += pingIntervalMs)
+      core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: t }, true);
+    // The final runner tick closes the last time bucket and the phase.
+    fakeNow = durationMs;
+    advance(0);
+
+    const samples = eventSamples(events, "latency");
+    const bucketMs = latencyPresentationBucketMs(durationMs, pingIntervalMs);
+    expect(samples.every((sample) => sample.pingCount > 0)).toBe(true);
+    expect(samples.map((sample) => sample.startT)).toEqual(
+      samples.map((_, index) => index * bucketMs),
+    );
+  }
 });
 
 test("queued latency outcomes retain their worker observation buckets", async () => {
