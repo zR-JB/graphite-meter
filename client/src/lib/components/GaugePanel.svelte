@@ -3,7 +3,14 @@
   import { store } from "../state/store.svelte";
   import { GaugeEngine } from "../canvas/GaugeEngine";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
-  import { gaugeLayout } from "../canvas/gaugeLayout";
+  import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "../canvas/gaugeLayout";
+  import {
+    fmtGaugeTick,
+    gaugeRateValue,
+    gaugeUnitLabel,
+    throughputGaugeFraction,
+    throughputValueAtFraction,
+  } from "../canvas/gaugeScale";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -56,7 +63,6 @@
   let liveRatePresentation: PresentationHandle | null = null;
   let reducedRateMotion = false;
 
-  const TICK_FRACTIONS = [0, 0.25, 0.5, 0.75, 1];
   const EMPTY_DISPLAY = { value: "—", unit: "" };
   const completedKind = $derived<"speed" | "latency">(
     terminalArcs.length ? "speed" : "latency",
@@ -78,14 +84,36 @@
     store.phase === "latency" ||
       (store.phase === "complete" && completedKind === "latency"),
   );
+  const gaugeScaleBytesPerSec = $derived(store.gaugeScaleBytesPerSec);
+  const gaugeUnit = $derived(
+    gaugeUnitLabel(gaugeScaleBytesPerSec, store.unitBase, store.unitKind),
+  );
+  const gaugeRate = (bytesPerSec: number) =>
+    gaugeRateValue(
+      bytesPerSec,
+      gaugeScaleBytesPerSec,
+      store.unitBase,
+      store.unitKind,
+    );
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
-      return TICK_FRACTIONS.map((f) => fmtMs(gaugeLatency.scaleMs * f));
-    const scale = store.displayScaleBytesPerSec;
-    return TICK_FRACTIONS.map((f) => fmtSpeed(store.toUnit(scale * f)));
+      return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
+        fraction,
+        label: fmtMs(gaugeLatency.scaleMs * fraction),
+      }));
+    return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
+      fraction,
+      label: fmtGaugeTick(
+        gaugeRate(throughputValueAtFraction(fraction, gaugeScaleBytesPerSec)),
+      ),
+    }));
   });
-  const layout = $derived.by(() =>
-    gaugeLayout(gaugeSize.width, gaugeSize.height, gaugeTicks.length),
+  const layout = $derived(gaugeLayout(gaugeSize.width, gaugeSize.height));
+  const throughputEvidence = $derived(
+    (store.phase === "download" ||
+      store.phase === "upload" ||
+      store.phase === "bidirectional") &&
+      store.liveThroughput.some((sample) => sample.phase === store.phase),
   );
   const showGaugeTicks = $derived(
     !unusableStage &&
@@ -115,17 +143,17 @@
     if (p === "complete") {
       if (terminalArcs.length === 1)
         return {
-          value: fmtSpeed(store.toUnit(terminalArcs[0].bytesPerSec)),
-          unit: `${store.unitLabel} · ${terminalArcs[0].label}`,
+          value: fmtSpeed(gaugeRate(terminalArcs[0].bytesPerSec)),
+          unit: `${gaugeUnit} · ${terminalArcs[0].label}`,
         };
-      if (terminalArcs.length > 1) return { value: "", unit: store.unitLabel };
+      if (terminalArcs.length > 1) return { value: "", unit: gaugeUnit };
       return store.result?.latency
         ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
         : EMPTY_DISPLAY;
     }
     return {
-      value: fmtSpeed(store.toUnit(liveRateValues.transfer)),
-      unit: store.unitLabel,
+      value: fmtSpeed(gaugeRate(liveRateValues.transfer)),
+      unit: gaugeUnit,
     };
   });
 
@@ -213,8 +241,8 @@
       return authoritativeTransferAnnouncement({
         authoritativeBytesPerSec: store.liveTransferBytesPerSec,
         visualBytesPerSec: store.visualTransferBytesPerSec,
-        toUnit: store.toUnit.bind(store),
-        unit: store.unitLabel,
+        toUnit: gaugeRate,
+        unit: gaugeUnit,
       });
     return display;
   });
@@ -227,14 +255,14 @@
     terminalArcs
       .map(
         (arc) =>
-          `${arc.label} ${fmtSpeed(store.toUnit(arc.bytesPerSec))} ${store.unitLabel}${arc.dashed ? ", partial" : ""}`,
+          `${arc.label} ${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}${arc.dashed ? ", partial" : ""}`,
       )
       .join("; "),
   );
   const terminalSummary = $derived.by(() =>
     store.phase === "complete" && terminalArcs.length > 1
       ? terminalArcs.map((arc) => ({
-          value: fmtSpeed(store.toUnit(arc.bytesPerSec)),
+          value: fmtSpeed(gaugeRate(arc.bytesPerSec)),
           direction:
             arc.phase === "download" || arc.label.endsWith("download")
               ? "download"
@@ -325,11 +353,13 @@
     void gaugeLatency.rttMs;
     void gaugeLatency.scaleMs;
     void store.liveLatencyLost;
-    void store.displayScaleBytesPerSec;
+    void store.gaugeScaleBytesPerSec;
+    void store.liveThroughput.length;
+    void throughputEvidence;
     void store.measuring;
     void store.unitBase;
     void store.unitKind;
-    void store.unitLabel;
+    void gaugeUnit;
     void liveRateValues;
     void layout;
     engine?.wake();
@@ -373,7 +403,7 @@
   onMount(() => {
     engine = new GaugeEngine(() => {
       const p = store.phase;
-      const scale = store.displayScaleBytesPerSec;
+      const scale = store.gaugeScaleBytesPerSec;
       return {
         phase: p,
         showValue: !unusableStage,
@@ -383,6 +413,8 @@
             ? terminalArcs[0].bytesPerSec
             : liveRateValues.transfer,
         scaleBytesPerSec: scale,
+        throughputEvidence:
+          p === "complete" ? terminalArcs.length > 0 : throughputEvidence,
         latencyScaleMs: gaugeLatency.scaleMs,
         layout,
         rtt: gaugeLatency.rttMs,
@@ -391,10 +423,7 @@
           p === "complete"
             ? terminalArcs.map((arc) => ({
                 phase: arc.phase,
-                fraction: Math.min(
-                  1,
-                  Math.max(0, arc.bytesPerSec / Math.max(1, scale)),
-                ),
+                fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
                 dashed: arc.dashed,
               }))
             : [],
@@ -470,7 +499,7 @@
               data-anchor-x={point.anchorX}
               data-anchor-y={point.anchorY}
               style:left={`${point.x}px`}
-              style:top={`${point.y}px`}>{gaugeTicks[index]}</span
+              style:top={`${point.y}px`}>{gaugeTicks[index].label}</span
             >
           {/each}
         </div>
@@ -709,6 +738,7 @@
     position: absolute;
     transform: translate(-50%, -50%);
     font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
     font-size: 8.5px;
     font-weight: 600;
     color: var(--text-soft);
@@ -716,29 +746,29 @@
     white-space: nowrap;
     line-height: 1;
   }
-  .gauge-tick[data-anchor-x="start"] {
-    transform: translate(0, -50%);
-  }
   .gauge-tick[data-anchor-x="end"] {
     transform: translate(-100%, -50%);
   }
-  .gauge-tick[data-anchor-y="start"] {
-    transform: translate(-50%, 0);
+  .gauge-tick[data-anchor-x="start"] {
+    transform: translate(0, -50%);
   }
   .gauge-tick[data-anchor-y="end"] {
     transform: translate(-50%, -100%);
   }
-  .gauge-tick[data-anchor-x="start"][data-anchor-y="start"] {
-    transform: translate(0, 0);
+  .gauge-tick[data-anchor-y="start"] {
+    transform: translate(-50%, 0);
   }
-  .gauge-tick[data-anchor-x="start"][data-anchor-y="end"] {
-    transform: translate(0, -100%);
+  .gauge-tick[data-anchor-x="end"][data-anchor-y="end"] {
+    transform: translate(-100%, -100%);
   }
   .gauge-tick[data-anchor-x="end"][data-anchor-y="start"] {
     transform: translate(-100%, 0);
   }
-  .gauge-tick[data-anchor-x="end"][data-anchor-y="end"] {
-    transform: translate(-100%, -100%);
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="end"] {
+    transform: translate(0, -100%);
+  }
+  .gauge-tick[data-anchor-x="start"][data-anchor-y="start"] {
+    transform: translate(0, 0);
   }
   .metric-wrap {
     position: absolute;

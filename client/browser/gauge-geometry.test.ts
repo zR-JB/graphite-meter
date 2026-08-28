@@ -11,6 +11,7 @@ import {
   waitForCompletion,
   type Page,
 } from "./webview";
+import { gaugeLayout } from "../src/lib/canvas/gaugeLayout";
 function persistedConfig(latency: boolean) {
   return JSON.stringify({
     config: {
@@ -58,28 +59,107 @@ for (const viewport of [
     expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
   });
 }
-test("gauge tick labels use shared optical anchors", async ({ page }) => {
-  await openApp(page);
-  await configureSettings(page, "latency-only");
-  await startTest(page);
-  await expect(page.locator("#console")).toHaveAttribute(
-    "data-phase",
-    "latency",
+async function assertGaugeLabels(page: Page) {
+  const labels = page.locator(".gauge-tick");
+  await expect(labels).toHaveCount(5);
+  const stageSize = await page
+    .locator(".gauge-panel .stage")
+    .evaluate((element) => {
+      return { width: element.clientWidth, height: element.clientHeight };
+    });
+  const expected = gaugeLayout(stageSize.width, stageSize.height);
+  const tickOuter = Math.hypot(
+    expected.majorTicks[0]!.to.x - expected.center.x,
+    expected.majorTicks[0]!.to.y - expected.center.y,
   );
-  const anchors = await page.locator(".gauge-tick").evaluateAll((ticks) =>
+  const anchors = await labels.evaluateAll((ticks) =>
     ticks.map((tick) => ({
       x: tick.getAttribute("data-anchor-x"),
       y: tick.getAttribute("data-anchor-y"),
     })),
   );
   expect(anchors).toEqual([
-    { x: "start", y: "start" },
-    { x: "start", y: "end" },
-    { x: "center", y: "end" },
-    { x: "end", y: "end" },
     { x: "end", y: "start" },
+    { x: "end", y: "end" },
+    { x: "center", y: "end" },
+    { x: "start", y: "end" },
+    { x: "start", y: "start" },
   ]);
-});
+  const boxes = await labels.evaluateAll((ticks) => {
+    const stage = ticks[0]!.parentElement!.getBoundingClientRect();
+    const center = { x: stage.width / 2, y: stage.height / 2 };
+    return ticks.map((tick) => {
+      const box = tick.getBoundingClientRect();
+      const style = getComputedStyle(tick);
+      const anchor = {
+        x: Number.parseFloat(style.left),
+        y: Number.parseFloat(style.top),
+      };
+      const left = box.left - stage.left;
+      const right = box.right - stage.left;
+      const top = box.top - stage.top;
+      const bottom = box.bottom - stage.top;
+      const nearestX = Math.max(left, Math.min(center.x, right));
+      const nearestY = Math.max(top, Math.min(center.y, bottom));
+      return {
+        anchor,
+        box: {
+          left,
+          right,
+          top,
+          bottom,
+        },
+        anchorX: tick.getAttribute("data-anchor-x"),
+        anchorY: tick.getAttribute("data-anchor-y"),
+        nearestRadius: Math.hypot(nearestX - center.x, nearestY - center.y),
+        contained:
+          box.left >= stage.left &&
+          box.right <= stage.right &&
+          box.top >= stage.top &&
+          box.bottom <= stage.bottom,
+      };
+    });
+  });
+  for (const label of boxes) {
+    if (label.anchorX === "end") expectNear(label.box.right, label.anchor.x);
+    if (label.anchorX === "start") expectNear(label.box.left, label.anchor.x);
+    if (label.anchorX === "center")
+      expectNear((label.box.left + label.box.right) / 2, label.anchor.x);
+    if (label.anchorY === "end") expectNear(label.box.bottom, label.anchor.y);
+    if (label.anchorY === "start") expectNear(label.box.top, label.anchor.y);
+    if (label.anchorY === "center")
+      expectNear((label.box.top + label.box.bottom) / 2, label.anchor.y);
+    expect(label.nearestRadius).toBeGreaterThanOrEqual(tickOuter + 1);
+    expect(label.contained).toBe(true);
+  }
+  for (const [index, first] of boxes.entries()) {
+    for (const second of boxes.slice(index + 1)) {
+      expect(
+        first.box.right <= second.box.left ||
+          second.box.right <= first.box.left ||
+          first.box.bottom <= second.box.top ||
+          second.box.bottom <= first.box.top,
+      ).toBe(true);
+    }
+  }
+}
+
+for (const viewport of [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 390, height: 844 },
+]) {
+  test(`throughput gauge labels stay anchored and separated at ${viewport.name} width`, async ({
+    page,
+  }) => {
+    await openApp(page, "dummy", viewport);
+    await startTest(page);
+    await expect(page.locator("#console")).toHaveAttribute(
+      "data-phase",
+      "download",
+    );
+    await assertGaugeLabels(page);
+  });
+}
 test("a short landscape phone keeps anchored chrome and scrollable flyouts", async ({
   page,
 }) => {

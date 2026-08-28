@@ -19,6 +19,7 @@ interface GaugeState {
   showValue?: boolean;
   valueBytesPerSec: number;
   scaleBytesPerSec: number;
+  throughputEvidence: boolean;
   latencyScaleMs: number;
   layout: GaugeLayout;
   rtt: number;
@@ -55,7 +56,7 @@ export class GaugeEngine {
   #sweep = 0;
   #showValue = true;
   #lastFrame = 0;
-  #layout: GaugeLayout = gaugeLayout(0, 0, 0);
+  #layout: GaugeLayout = gaugeLayout(0, 0);
   #resultArcs: readonly GaugeResultArc[] = [];
   #completedSweep = 0;
   #resultColors: Record<ResultArcPhase, string> = {
@@ -179,6 +180,7 @@ export class GaugeEngine {
       phase: s.phase,
       valueBytesPerSec: s.valueBytesPerSec,
       scaleBytesPerSec: s.scaleBytesPerSec,
+      throughputEvidence: s.throughputEvidence,
       latencyScaleMs: s.latencyScaleMs,
       rtt: s.rtt,
       completedKind: s.completedKind,

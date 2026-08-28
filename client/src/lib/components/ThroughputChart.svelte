@@ -42,7 +42,7 @@
     void store.latencyRevision;
     void store.phaseElapsedMs;
     void store.latencyEnabled;
-    void store.displayScaleBytesPerSec; // re-arm if the shared scale / pinned ceiling shifts while parked
+    void store.chartScaleBytesPerSec; // re-arm if the chart scale / pinned ceiling shifts while parked
     void store.latencyScaleMs;
     void store.stageResults.download;
     void store.stageResults.upload;
@@ -85,7 +85,7 @@
           store.latency.at(-1)?.endT ?? 0,
         ),
         runSeq: store.runSeq,
-        scaleBytesPerSec: store.displayScaleBytesPerSec,
+        scaleBytesPerSec: store.chartScaleBytesPerSec,
         latencyScaleMs: store.latencyScaleMs,
         resultRates: {
           download: store.stageResults.download?.reportedBytesPerSec,

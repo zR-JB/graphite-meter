@@ -38,6 +38,7 @@ import {
   rateValueAt,
   rawRateFrom,
 } from "../format";
+import { gaugeScaleForPeak } from "../canvas/gaugeScale";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
 import { latencyJitterMs, upsertLatencyBucket } from "../runner/latencyBuckets";
@@ -406,7 +407,7 @@ class AppStore {
 
   #peakBytesPerSec = $state(0);
 
-  displayScaleBytesPerSec = $derived.by(() => {
+  chartScaleBytesPerSec = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     if (typeof cfg === "number" && cfg > 0) return cfg;
     const bidi = this.result?.bidirectional;
@@ -418,6 +419,23 @@ class AppStore {
     );
     return sharedThroughputScale(
       Math.max(this.#sustainedPeakBytesPerSec, terminalPeak),
+    );
+  });
+
+  gaugeScaleBytesPerSec = $derived.by(() => {
+    const cfg = this.config.visualization.throughputMaxBytesPerSec;
+    const bidi = this.result?.bidirectional;
+    const terminalPeak = Math.max(
+      this.stageResults.download?.reportedBytesPerSec ?? 0,
+      this.stageResults.upload?.reportedBytesPerSec ?? 0,
+      (bidi?.down?.reportedBytesPerSec ?? 0) +
+        (bidi?.up?.reportedBytesPerSec ?? 0),
+    );
+    if (typeof cfg === "number" && cfg > 0)
+      return gaugeScaleForPeak(cfg, false);
+    return gaugeScaleForPeak(
+      Math.max(this.#sustainedPeakBytesPerSec, terminalPeak),
+      true,
     );
   });
 

@@ -42,7 +42,7 @@ export interface ChartData {
   timelineT: number;
   /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
-  /** Dwell-filtered throughput ceiling shared with the gauge dial. */
+  /** Linear chart throughput ceiling; the gauge has its own perceptual scale. */
   scaleBytesPerSec: number;
   /** Shared robust latency ceiling, identical to the gauge. */
   latencyScaleMs: number;
