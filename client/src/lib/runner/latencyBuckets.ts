@@ -9,10 +9,21 @@ export const LATENCY_PRESENTATION_BUCKET_MS = 200;
 /* Keep the same bounded history in the producer and store so a delayed worker delivery can revise any bucket the. */
 const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
 
-export function latencyPresentationBucketMs(durationMs: number): number {
+export function latencyPresentationBucketMs(
+  durationMs: number,
+  pingIntervalMs: number | null = null,
+): number {
   const minimum = LATENCY_PRESENTATION_BUCKET_MS;
   const needed = Math.max(0, durationMs) / PRESENTATION_POINT_LIMIT;
-  return Math.max(minimum, Math.ceil(needed / minimum) * minimum);
+  const base = Math.max(minimum, Math.ceil(needed / minimum) * minimum);
+  if (
+    !Number.isFinite(pingIntervalMs) ||
+    pingIntervalMs == null ||
+    pingIntervalMs <= 0
+  )
+    return base;
+  // Aligning to fixed-cadence intervals prevents artificial empty bins.
+  return Math.ceil(base / pingIntervalMs) * pingIntervalMs;
 }
 
 interface TimedRtt {
@@ -37,6 +48,7 @@ export class LatencyPresentationBuckets {
   #closed: PendingBucket[] = [];
   #sequence = 0;
   #bucketMs = LATENCY_PRESENTATION_BUCKET_MS;
+  #pingIntervalMs: number | null = null;
 
   reset(
     phaseStartT: number,
@@ -44,18 +56,23 @@ export class LatencyPresentationBuckets {
     underLoad: boolean,
     continuityId: number,
     durationMs = 0,
+    pingIntervalMs: number | null = null,
   ): void {
     this.#phase = phase;
     this.#underLoad = underLoad;
     this.#continuityId = continuityId;
-    this.#bucketMs = latencyPresentationBucketMs(durationMs);
+    this.#pingIntervalMs = pingIntervalMs;
+    this.#bucketMs = latencyPresentationBucketMs(durationMs, pingIntervalMs);
     this.#pending = this.#empty(phaseStartT);
     this.#closed = [];
     this.#sequence = 0;
   }
 
   widen(durationMs: number): void {
-    const bucketMs = latencyPresentationBucketMs(durationMs);
+    const bucketMs = latencyPresentationBucketMs(
+      durationMs,
+      this.#pingIntervalMs,
+    );
     if (bucketMs <= this.#bucketMs) return;
     this.#bucketMs = bucketMs;
     if (this.#pending)
@@ -64,7 +81,14 @@ export class LatencyPresentationBuckets {
 
   observe(t: number, rttMs: number, lost: boolean): LatencyBucket[] {
     if (!this.#pending)
-      this.reset(t, this.#phase, this.#underLoad, this.#continuityId);
+      this.reset(
+        t,
+        this.#phase,
+        this.#underLoad,
+        this.#continuityId,
+        0,
+        this.#pingIntervalMs,
+      );
     const emitted = this.closeThrough(t);
     const pending = this.#pending!;
     const target =

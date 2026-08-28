@@ -14,20 +14,59 @@ function buckets(
   underLoad = false,
   continuityId = 1,
   durationMs?: number,
+  pingIntervalMs: number | null = null,
 ): LatencyPresentationBuckets {
   const result = new LatencyPresentationBuckets();
-  result.reset(startT, phase, underLoad, continuityId, durationMs);
+  result.reset(
+    startT,
+    phase,
+    underLoad,
+    continuityId,
+    durationMs,
+    pingIntervalMs,
+  );
   return result;
 }
 test("long phases widen presentation buckets within the history budget", () => {
   expect(latencyPresentationBucketMs(4_000)).toBe(200);
   expect(latencyPresentationBucketMs(4_000_000)).toBe(3_400);
 });
+test("fixed ping cadences align presentation buckets to their wire interval", () => {
+  expect(latencyPresentationBucketMs(4_000, 80)).toBe(240);
+  expect(latencyPresentationBucketMs(4_000, 250)).toBe(250);
+  expect(latencyPresentationBucketMs(4_000, 600)).toBe(600);
+  expect(latencyPresentationBucketMs(4_000, null)).toBe(200);
+  expect(latencyPresentationBucketMs(4_000_000, 80)).toBe(3_440);
+});
 test("live duration extensions widen the active latency bucket", () => {
   const result = buckets(0, "latency", false, 1, 4_000);
   expect(result.nextBoundaryT).toBe(200);
   result.widen(4_000_000);
   expect(result.nextBoundaryT).toBe(3_400);
+
+  const aligned = buckets(0, "download", true, 1, 4_000, 250);
+  aligned.widen(4_000_000);
+  expect(aligned.nextBoundaryT).toBe(3_500);
+  expect(aligned.nextBoundaryT! % 250).toBe(0);
+});
+test("ideal fixed-cadence outcomes produce evenly spaced occupied points", () => {
+  for (const pingIntervalMs of [80, 250, 600]) {
+    const result = buckets(0, "download", true, 1, 2_400, pingIntervalMs);
+    const emitted: LatencyBucket[] = [];
+    for (let t = 0; t < 2_400; t += pingIntervalMs)
+      emitted.push(...result.observe(t, 20, false));
+    const summary = result.flush(2_400);
+    expect(summary).not.toBeNull();
+    if (summary) emitted.push(summary);
+    // Every emitted point is occupied; no empty bucket is manufactured.
+    expect(emitted.every((bucket) => bucket.pingCount > 0)).toBe(true);
+    const bucketMs = latencyPresentationBucketMs(2_400, pingIntervalMs);
+    expect(emitted.map((bucket) => bucket.startT)).toEqual(
+      emitted.map((_, index) => index * bucketMs),
+    );
+    for (let i = 1; i < emitted.length; i++)
+      expect(emitted[i].startT - emitted[i - 1].startT).toBe(bucketMs);
+  }
 });
 test("phase-aligned buckets retain median tail and loss summaries", () => {
   const result = buckets(1_000, "latency", false, 7);
@@ -200,4 +239,36 @@ test("the same timed outcomes bucket identically regardless of callback grouping
   expect(collect(outcomes.map((outcome) => [outcome]))).toEqual(
     collect([outcomes.slice(0, 3), outcomes.slice(3)]),
   );
+});
+test("batched and out-of-order outcomes retain worker time buckets", () => {
+  const result = buckets(0, "download", true, 1, 1_000, 250);
+  result.observe(50, 10, false);
+  const initial = result.closeThrough(250);
+  const [revised] = result.observe(150, 100, false);
+  expect(initial[0]).toMatchObject({ startT: 0, endT: 250 });
+  expect(revised).toMatchObject({
+    startT: 0,
+    endT: 250,
+    medianRttMs: 55,
+    pingCount: 2,
+  });
+  expect(revised.t).toBe(125);
+});
+test("an absent cadence slot stays absent and a reported loss stays loss-only", () => {
+  const result = buckets(0, "download", true, 1, 1_000, 250);
+  const emitted: LatencyBucket[] = [];
+  emitted.push(...result.observe(0, 10, false));
+  emitted.push(...result.observe(250, 0, true));
+  // There is intentionally no outcome in [500, 750); this is a real gap.
+  emitted.push(...result.observe(750, 20, false));
+  const tail = result.flush(1_000);
+  if (tail) emitted.push(tail);
+
+  expect(emitted.map((bucket) => bucket.startT)).toEqual([0, 250, 750]);
+  expect(emitted.find((bucket) => bucket.startT === 500)).toBeUndefined();
+  expect(emitted[1]).toMatchObject({
+    pingCount: 1,
+    lossCount: 1,
+    medianRttMs: null,
+  });
 });
