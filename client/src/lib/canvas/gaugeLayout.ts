@@ -1,6 +1,19 @@
 const ARC_START = Math.PI * 0.75;
 const ARC_SWEEP = Math.PI * 1.5;
-const MAJOR_TICK_COUNT = 9;
+export const GAUGE_TICK_FRACTIONS = [
+  0,
+  1 / 8,
+  2 / 8,
+  3 / 8,
+  4 / 8,
+  5 / 8,
+  6 / 8,
+  7 / 8,
+  1,
+] as const;
+export const GAUGE_LABEL_FRACTIONS = [0, 2 / 8, 4 / 8, 6 / 8, 1] as const;
+const LABEL_CLEARANCE = 8;
+const AXIS_EPSILON = 1e-6;
 interface GaugePoint {
   x: number;
   y: number;
@@ -18,15 +31,15 @@ export interface GaugeLayout {
   arcWidth: number;
   arcStart: number;
   arcSweep: number;
-  majorTicks: ReadonlyArray<{ from: GaugePoint; to: GaugePoint }>;
+  majorTicks: ReadonlyArray<{
+    angle: number;
+    from: GaugePoint;
+    to: GaugePoint;
+  }>;
   labelPoints: ReadonlyArray<GaugeLabelLayout>;
 }
 /** One CSS-pixel geometry model for the gauge canvas and DOM tick labels. */
-export function gaugeLayout(
-  width: number,
-  height: number,
-  labelCount: number,
-): GaugeLayout {
+export function gaugeLayout(width: number, height: number): GaugeLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
   const center = { x: safeWidth / 2, y: safeHeight / 2 };
@@ -42,30 +55,36 @@ export function gaugeLayout(
     x: center.x + Math.cos(angle) * distance,
     y: center.y + Math.sin(angle) * distance,
   });
-  const majorTicks = Array.from({ length: MAJOR_TICK_COUNT }, (_, index) => {
-    const angle = ARC_START + (index / (MAJOR_TICK_COUNT - 1)) * ARC_SWEEP;
-    return { from: pointAt(angle, tickInner), to: pointAt(angle, tickOuter) };
+  const majorTicks = GAUGE_TICK_FRACTIONS.map((fraction) => {
+    const angle = ARC_START + fraction * ARC_SWEEP;
+    return {
+      angle,
+      from: pointAt(angle, tickInner),
+      to: pointAt(angle, tickOuter),
+    };
   });
-  const labelPoints = Array.from(
-    { length: Math.max(0, labelCount) },
-    (_, index): GaugeLabelLayout => {
-      const fraction = labelCount > 1 ? index / (labelCount - 1) : 0.5;
+  const labelPoints = GAUGE_LABEL_FRACTIONS.map(
+    (fraction): GaugeLabelLayout => {
       const angle = ARC_START + fraction * ARC_SWEEP;
+      const point = pointAt(angle, tickOuter + LABEL_CLEARANCE);
       const horizontal = Math.cos(angle);
       const vertical = Math.sin(angle);
-      const flank = Math.abs(horizontal) > 0.35;
-      const opticalOffset =
-        flank && vertical < -0.35 ? 4 : flank && vertical > 0.35 ? 2 : 0;
-      const labelRadius = tickOuter + 7 + (flank ? 5 : 0) + opticalOffset;
-      const point = pointAt(angle, labelRadius);
       return {
         ...point,
         angle,
-        // Labels on the outer flanks grow inward; labels above or below the arc grow away from it.
+        // The point is the label's nearest edge/corner on the exact tick ray.
         anchorX:
-          horizontal < -0.35 ? "start" : horizontal > 0.35 ? "end" : "center",
+          horizontal < -AXIS_EPSILON
+            ? "end"
+            : horizontal > AXIS_EPSILON
+              ? "start"
+              : "center",
         anchorY:
-          vertical < -0.35 ? "end" : vertical > 0.35 ? "start" : "center",
+          vertical < -AXIS_EPSILON
+            ? "end"
+            : vertical > AXIS_EPSILON
+              ? "start"
+              : "center",
       };
     },
   );

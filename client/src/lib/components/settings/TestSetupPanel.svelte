@@ -150,7 +150,7 @@
   function setVizAuto(auto: boolean) {
     store.config.visualization.throughputMaxBytesPerSec = auto
       ? "auto"
-      : Math.max(1, Math.round(store.displayScaleBytesPerSec));
+      : Math.max(1, Math.round(store.chartScaleBytesPerSec));
   }
   function setVizMax(event: Event) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
@@ -353,7 +353,9 @@
       </label>
     {/if}
     <p class="hint">
-      Sets the gauge and chart ceiling. Automatic follows the measured peak.
+      The chart keeps this exact ceiling; the gauge rounds to a readable scale.
+      Automatic chart scaling follows the measured peak, while the gauge starts
+      at 1 Gbit/s and grows by decimal decades.
     </p>
   </section>
 
