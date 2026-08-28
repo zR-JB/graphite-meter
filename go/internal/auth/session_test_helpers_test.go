@@ -7,15 +7,11 @@ import (
 )
 
 func setSessionCookie(w http.ResponseWriter, name, value string, expires time.Time) {
-	setCookie(w, name, value, expires, true, http.SameSiteStrictMode)
-}
-
-func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
-	setCookie(w, csrfCookie, value, expires, false, http.SameSiteStrictMode)
+	setHTTPOnlyCookie(w, name, value, expires, http.SameSiteStrictMode)
 }
 
 func setTransactionCookie(w http.ResponseWriter, value string, expires time.Time) {
-	setCookie(w, transactionCookie, value, expires, true, http.SameSiteLaxMode)
+	setHTTPOnlyCookie(w, transactionCookie, value, expires, http.SameSiteLaxMode)
 }
 
 func (s *Service) createSessionUntil(subject, name, provider string, expires time.Time) (string, *session, error) {

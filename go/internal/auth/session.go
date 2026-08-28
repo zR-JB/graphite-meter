@@ -128,8 +128,12 @@ func randomToken(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func setCookie(w http.ResponseWriter, name, value string, expires time.Time, httpOnly bool, sameSite http.SameSite) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: httpOnly, SameSite: sameSite})
+func setHTTPOnlyCookie(w http.ResponseWriter, name, value string, expires time.Time, sameSite http.SameSite) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: sameSite})
+}
+
+func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode})
 }
 
 func clearTransactionCookie(w http.ResponseWriter) {
