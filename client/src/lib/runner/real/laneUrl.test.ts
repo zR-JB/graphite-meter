@@ -8,19 +8,11 @@ const fetchSpec: LaneUrlSpec = {
   uploadPath: "/upload",
   cbSeed: "r42",
   bytes: 1024,
-  chunkDownload: false,
 };
 
 test("a download lane carries its size and a per-lane cache buster", () => {
   expect(laneUrl(fetchSpec, 3)).toBe(
     "http://meter.test:7246/download?bytes=1024&cb=r42-3",
-  );
-});
-
-// The chunked worker appends its own adaptive size, so a baked-in one would be overridden by a second bytes parameter.
-test("a chunked download lane omits the size", () => {
-  expect(laneUrl({ ...fetchSpec, chunkDownload: true }, 0)).toBe(
-    "http://meter.test:7246/download?cb=r42-0",
   );
 });
 

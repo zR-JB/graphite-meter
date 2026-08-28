@@ -13,7 +13,6 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   pingCadence: "reply-driven",
   loadedPingCadence: "medium",
   transferStreams: { mode: "auto", count: 4 },
-  experimentalChunkedDownload: false,
   experimentalDatagramThroughput: false,
   transports: {
     throughputTarget: "auto",

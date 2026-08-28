@@ -5,7 +5,6 @@ import {
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
-import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { incompressibleBlock } from "./payload";
 import { classifyUploadFailure } from "../uploadFailure";
 import type { RecoveryCause } from "../contract";
@@ -34,7 +33,7 @@ let credentials: RequestCredentials = "same-origin";
 let headers: Record<string, string> = {};
 const post = (m: OutMsg) => ctx.postMessage(m);
 
-/** Pool floor keeps the autosizer useful on constrained devices. */
+/** Pool floor keeps adaptive sizing useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
 /* Reservoir for a device that reports no memory. */
 const UNKNOWN_DEVICE_POOL_BYTES = 128 * 1024 * 1024;
@@ -49,16 +48,23 @@ const MIN_POST_BYTES = 128 * 1024;
 type UploadBody = "blob" | "arrayBuffer";
 const UPLOAD_BODY: UploadBody = "blob";
 
-/* ---- Closed-loop POST sizing, per worker (see autosize.ts) ---- */
-/* The POST target is about ACCURACY: the request/response turnaround sits inside the server's elapsed-time. */
-const sizer: SizerCfg = {
-  targetMs: TARGET_POST_MS,
-  minBytes: MIN_POST_BYTES,
-  maxBytes: MIN_POST_BYTES,
-  alpha: 0.3,
-  stepUp: 2,
-  stepDown: 0.5,
-};
+/* The POST target is about ACCURACY: request/response turnaround sits in server elapsed time. */
+export function nextUploadBytes(
+  prevBytes: number,
+  elapsedMs: number,
+  prevEwma: number,
+  maxBytes: number,
+): { bytes: number; ewma: number } {
+  if (elapsedMs <= 0) return { bytes: prevBytes, ewma: prevEwma };
+  const observed = (prevBytes / elapsedMs) * 1000;
+  const ewma = prevEwma === 0 ? observed : 0.3 * observed + 0.7 * prevEwma;
+  const want = (ewma * TARGET_POST_MS) / 1000;
+  const stepped = Math.min(prevBytes * 2, Math.max(prevBytes * 0.5, want));
+  return {
+    bytes: Math.floor(Math.min(maxBytes, Math.max(MIN_POST_BYTES, stepped))),
+    ewma,
+  };
+}
 
 /** Divide the device-scaled total reservoir across the actual lane count. */
 export function uploadPoolBytes(
@@ -87,7 +93,7 @@ export function recoverableStatus(status: number): boolean {
 let pool: Blob | Uint8Array<ArrayBuffer> | null = null;
 /** Byte length of the pool as actually built. */
 let poolBytes = 0;
-/** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the autosizer's upper clamp. */
+/** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the sizer's upper clamp. */
 let poolTargetBytes = UPLOAD_TOTAL_POOL_BYTES;
 /* Bytes the NEXT POST sends, the closed-loop variable. */
 let nextBytes = MIN_POST_BYTES;
@@ -102,7 +108,6 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
     const deviceMemory = (navigator as unknown as { deviceMemory?: number })
       .deviceMemory;
     poolTargetBytes = uploadPoolBytes(msg.streams ?? 1, deviceMemory);
-    sizer.maxBytes = poolTargetBytes; // the pool is the size ceiling
     nextBytes = Math.min(MIN_POST_BYTES, poolTargetBytes);
     rateEwma = 0;
     void run(msg.url);
@@ -213,11 +218,11 @@ async function run(url: string): Promise<void> {
       // This is not an observation: the server progress feed owns byte/time accounting.
       const elapsedMs = performance.now() - postStart;
       post({ type: "alive", bytes: sentBytes, elapsedMs });
-      ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
+      ({ bytes: nextBytes, ewma: rateEwma } = nextUploadBytes(
         sentBytes,
         elapsedMs,
         rateEwma,
-        sizer,
+        poolTargetBytes,
       ));
     } catch (err) {
       // A POST that failed on an expired session is an auth failure, not a transport one, so the session is.

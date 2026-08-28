@@ -45,8 +45,6 @@ export interface LaneUrlSpec {
   /** Per-run cache-buster seed, suffixed with the lane index. */
   cbSeed: string;
   bytes: number;
-  /** Chunked download omits the baked-in size; the worker appends its own. */
-  chunkDownload: boolean;
   /** Set when this direction rides a session instead of fetch lanes. */
   session?: {
     origin: string;
@@ -69,9 +67,7 @@ export function laneUrl(
     )}${session.datagrams ? "&datagrams=1" : ""}`;
   const cb = `${spec.cbSeed}-${index}`;
   if (spec.dir === "down")
-    return spec.chunkDownload
-      ? `${spec.base}${spec.downloadPath}?cb=${cb}`
-      : `${spec.base}${spec.downloadPath}?bytes=${spec.bytes}&cb=${cb}`;
+    return `${spec.base}${spec.downloadPath}?bytes=${spec.bytes}&cb=${cb}`;
   const id = uploadId ? `&id=${encodeURIComponent(uploadId)}` : "";
   return `${spec.base}${spec.uploadPath}?cb=${cb}${id}`;
 }
