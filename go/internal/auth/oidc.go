@@ -279,7 +279,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	tx.responseIssuer = o.responseIssuer
 	o.tx[key] = tx
 	o.mu.Unlock()
-	setCookie(w, transactionCookie, browser, tx.expires, true, http.SameSiteLaxMode)
+	setHTTPOnlyCookie(w, transactionCookie, browser, tx.expires, http.SameSiteLaxMode)
 	location := oauthCfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce))
 	http.Redirect(w, r, location, http.StatusSeeOther)
 }
@@ -434,8 +434,8 @@ func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx 
 	if tx.hasPrior {
 		s.revokeSessionHash(tx.prior, sess)
 	}
-	setCookie(w, sessionCookie, raw, sess.expires, true, http.SameSiteStrictMode)
-	setCookie(w, csrfCookie, sess.csrf, sess.expires, false, http.SameSiteStrictMode)
+	setHTTPOnlyCookie(w, sessionCookie, raw, sess.expires, http.SameSiteStrictMode)
+	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.oidc.Add(1)
 	clearCookie(w, loginCookie)
 	s.writeSignedInInterstitial(w, tx.cliChallenge)

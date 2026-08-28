@@ -10,7 +10,7 @@ import (
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	csrf := randomToken(32)
-	setCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute), true, http.SameSiteStrictMode)
+	setHTTPOnlyCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute), http.SameSiteStrictMode)
 	password, oidc := authModes(s.cfg.Mode)
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,
@@ -59,8 +59,8 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.rotateSuppliedSession(r, sess)
-	setCookie(w, sessionCookie, raw, sess.expires, true, http.SameSiteStrictMode)
-	setCookie(w, csrfCookie, sess.csrf, sess.expires, false, http.SameSiteStrictMode)
+	setHTTPOnlyCookie(w, sessionCookie, raw, sess.expires, http.SameSiteStrictMode)
+	setCSRFCookie(w, sess.csrf, sess.expires)
 	s.counters.local.Add(1)
 	clearCookie(w, loginCookie)
 	dest := "/"
