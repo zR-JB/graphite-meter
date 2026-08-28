@@ -371,12 +371,14 @@ export class IdleKeepalive {
     const host = this.#deps.host();
     switch (msg.type) {
       case "samples": {
+        let receivedPong = false;
         for (const sample of msg.samples) {
           if (this.#probeCollect && !sample.lost) {
             this.#probeCollect.rtts.push(sample.rtt);
             if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
               this.#probeCollect.finish();
           }
+          if (!sample.lost) receivedPong = true;
           host.emit({
             type: "latency",
             sample: singleLatencyBucket(
@@ -386,7 +388,8 @@ export class IdleKeepalive {
             ),
           });
         }
-        if (this.#offline) {
+        // A loss-only batch proves the worker is running, not that the server answered; recover only after a pong.
+        if (receivedPong && this.#offline) {
           this.#offline = false;
           host.emit({ type: "connectivity", state: "connected" });
         }

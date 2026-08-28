@@ -7,7 +7,10 @@ import {
   PreflightUnavailableError,
   TransportUnavailableError,
 } from "./real/transportError";
-import { CONNECTION_FRESH_MS } from "./connectionModel";
+import {
+  CONNECTION_FAILURE_BACKOFF_MS,
+  CONNECTION_FRESH_MS,
+} from "./connectionModel";
 import { TEST_BUILD_TOKENS } from "./test-helpers.test";
 plugin({
   name: "svelte-runes",
@@ -454,6 +457,29 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
     },
   );
 });
+
+test("a path-specific validation failure leaves global keepalive state unchanged", async () => {
+  let failThroughput = false;
+  await withValidationRunner(
+    async () => {
+      if (failThroughput)
+        throw new TransportUnavailableError("throughput unavailable", {
+          role: "throughput",
+        });
+      return PROBE_EVIDENCE;
+    },
+    async ({ engine }) => {
+      const { store } = await import("../state/store.svelte");
+      failThroughput = true;
+      await expect(
+        engine.validateConnections(true, "throughput"),
+      ).rejects.toThrow("throughput unavailable");
+      expect(store.connectionValidation.throughput.state).toBe("failed");
+      expect(store.connectivity).toBe("connected");
+    },
+  );
+});
+
 test("validation scheduler refreshes, backs off, defers hidden work, and tears down", async () => {
   let offline = false;
   const timers = stubValidationTimers();
@@ -478,8 +504,8 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(0);
         await settleMicrotasks();
         expect(probeCalls()).toBe(3);
-        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
-        timers.advance(CONNECTION_FRESH_MS - 1);
+        expect(timers.delays()).toContain(CONNECTION_FAILURE_BACKOFF_MS[0]);
+        timers.advance(CONNECTION_FAILURE_BACKOFF_MS[0] - 1);
         await settleMicrotasks();
         expect(probeCalls()).toBe(3);
         offline = false;
@@ -525,6 +551,41 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
     timers.restore();
   }
 });
+
+test("validation failures use staged backoff, cap, and reset after recovery", async () => {
+  let available = false;
+  const timers = stubValidationTimers();
+  try {
+    await withValidationRunner(
+      async () => {
+        if (!available) throw new Error("server unavailable");
+        return PROBE_EVIDENCE;
+      },
+      async ({ probeCalls }) => {
+        const maxRetryDelay =
+          CONNECTION_FAILURE_BACKOFF_MS[
+            CONNECTION_FAILURE_BACKOFF_MS.length - 1
+          ];
+        expect(probeCalls()).toBe(1);
+        for (const delay of CONNECTION_FAILURE_BACKOFF_MS) {
+          expect(timers.delays()).toContain(delay);
+          timers.advance(delay);
+          await settleMicrotasks();
+          expect(probeCalls()).toBeGreaterThanOrEqual(2);
+        }
+        expect(timers.delays()).toContain(maxRetryDelay);
+        available = true;
+        timers.advance(maxRetryDelay);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(7);
+        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+      },
+    );
+  } finally {
+    timers.restore();
+  }
+});
+
 test("a rerun stamps a fresh start epoch from every terminal phase", async () => {
   const { store } = await import("../state/store.svelte");
   for (const from of ["complete", "aborted", "error"] as const) {

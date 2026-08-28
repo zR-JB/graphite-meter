@@ -80,6 +80,34 @@ test("idle latency buckets use each worker observation time", () => {
   keepalive.stop();
 });
 
+test("loss-only keepalive batches do not recover offline connectivity", () => {
+  const states: string[] = [];
+  const keepalive = new IdleKeepalive({
+    host: () =>
+      ({
+        emit(event: Parameters<CoreHost["emit"]>[0]) {
+          if (event.type === "connectivity") states.push(event.state);
+        },
+      }) as unknown as CoreHost,
+    throughputTarget: () => null,
+    latencyTarget: () => target,
+  });
+
+  keepalive.start();
+  TestWorker.last!.emit({ type: "stall", detail: "server stopped answering" });
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 0, lost: true, observedAtEpochMs: 1_000 }],
+  });
+  expect(states).toEqual(["offline"]);
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+  });
+  expect(states).toEqual(["offline", "connected"]);
+  keepalive.stop();
+});
+
 test("stage latency preserves distinct times from one worker batch", () => {
   const observations: number[] = [];
   const channel = new LatencyChannel({

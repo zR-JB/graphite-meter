@@ -6,6 +6,7 @@
   import { buildSegments } from "../runner/schedule";
   import {
     advertisedServerCapabilities,
+    advertisedServerHttpPaths,
     pathEvidence,
     serverLoadSummary,
     endpointPathStatus,
@@ -93,6 +94,9 @@
     return `${value.slice(0, 8)}…`;
   });
   const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
+  const httpPaths = $derived(
+    advertisedServerHttpPaths(store.transportDiscovery),
+  );
   let copyError = $state(false);
 
   // Every row here reads the same presentation the path cards do. `store.infra`
@@ -164,6 +168,20 @@
     <article class="card">
       <h3>Server capabilities</h3>
       <dl>
+        <div>
+          <dt>HTTP versions</dt>
+          {#if httpPaths === null}
+            <dd>Checking server</dd>
+          {:else if !httpPaths.length}
+            <dd>None advertised</dd>
+          {:else}
+            <dd class="protocols" aria-label={httpPaths.join(" · ")}>
+              {#each httpPaths as path}
+                <span class="protocol">{path}</span>
+              {/each}
+            </dd>
+          {/if}
+        </div>
         <div>
           <dt>Throughput</dt>
           <dd>{capabilities("throughput")}</dd>
@@ -400,6 +418,23 @@
     overflow-wrap: anywhere;
     word-break: normal;
     line-height: 1.43;
+  }
+  .protocols {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    font-family: var(--font-sans);
+    line-height: 1.2;
+  }
+  .protocol {
+    border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border));
+    border-radius: var(--r-full);
+    background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface-inset));
+    color: var(--text);
+    padding: 3px 6px;
+    font-size: 9px;
+    font-weight: 700;
+    white-space: nowrap;
   }
   .diagnostics-card {
     padding: 0;

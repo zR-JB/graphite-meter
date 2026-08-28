@@ -57,7 +57,19 @@ export interface ConnectionPresentation {
   verifiedAt?: number;
 }
 
-export const CONNECTION_FRESH_MS = 30_000;
+/* A successful path check is a snapshot, not a keepalive; the idle ping channel handles ordinary liveness. */
+export const CONNECTION_FRESH_MS = 2 * 60_000;
+export const CONNECTION_FAILURE_BACKOFF_MS = [
+  30_000, 60_000, 120_000, 240_000, 300_000,
+] as const;
+
+export function connectionFailureBackoff(attempt: number): number {
+  const index = Math.max(
+    0,
+    Math.min(attempt - 1, CONNECTION_FAILURE_BACKOFF_MS.length - 1),
+  );
+  return CONNECTION_FAILURE_BACKOFF_MS[index];
+}
 export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
 
 /* Failures that leave the path's reachability unknown: connectivity latches offline and the cached probe is. */
