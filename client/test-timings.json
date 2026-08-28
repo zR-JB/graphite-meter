@@ -67,7 +67,6 @@
     "src/lib/runner/real/laneUrl.test.ts": 1,
     "src/lib/runner/schedule.test.ts": 1,
     "src/lib/runner/stats.test.ts": 1,
-    "src/lib/runner/workers/autosize.test.ts": 1,
     "src/lib/runner/workers/backoff.test.ts": 1,
     "src/lib/runner/workers/rttEstimator.test.ts": 1,
     "src/lib/state/stagePresentation.test.ts": 1,

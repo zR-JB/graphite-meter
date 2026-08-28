@@ -145,8 +145,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     uploadPath: ROUTES.upload,
     cbSeed: `bench${Math.round(performance.now())}`,
     bytes: PER_STREAM_BYTES,
-    // The lane sweep measures the long-stream lane, which is what the app runs.
-    chunkDownload: false,
     session,
   };
 
@@ -221,7 +219,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
             url: laneUrl(urls, i, uploadId),
             lanes: spec.lanes,
             credentials: "same-origin",
-            chunk: urls.chunkDownload,
           },
           events(i),
         ),

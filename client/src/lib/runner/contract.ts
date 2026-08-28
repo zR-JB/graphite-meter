@@ -107,8 +107,6 @@ export interface RunnerConfig {
   /** PING wire cadence during transfer stages, including warmup. */
   loadedPingCadence: PingCadence;
   transferStreams: TransferStreamPolicy;
-  /** Experimental adaptive download chunks instead of one long stream per lane. */
-  experimentalChunkedDownload: boolean;
   /** Lists the WebTransport datagram card; selection remains independent of this filter. */
   experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */

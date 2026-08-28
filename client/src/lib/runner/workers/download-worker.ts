@@ -5,7 +5,6 @@ import {
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
-import { nextTransferBytes, type SizerCfg } from "./autosize";
 import { progressWindow, type ProgressDelta } from "./progressWindow";
 import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
 
@@ -14,7 +13,6 @@ type InMsg =
   | {
       type: "start";
       url: string;
-      chunk?: boolean;
       credentials?: RequestCredentials;
       headers?: HeadersInit;
     }
@@ -46,32 +44,15 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 let credentials: RequestCredentials = "same-origin";
 let headers: HeadersInit | undefined;
 
-/* Experimental chunked-request sizer (see autosize.ts). */
-const CHUNK_SIZER: SizerCfg = {
-  targetMs: 350,
-  minBytes: 128 * 1024,
-  maxBytes: 256 * 1024 * 1024,
-  alpha: 0.3,
-  stepUp: 2,
-  stepDown: 0.5,
-};
-
-/** Chunked mode (experimental) + its closed-loop state. */
-let chunked = false;
-let nextBytes = CHUNK_SIZER.minBytes;
-let rateEwma = 0;
 let measureSeq = 0;
 let progress = progressWindow(0, REPORT_GAP_MS);
 
 ctx.onmessage = (e: MessageEvent<InMsg>) => {
   const msg = e.data;
   if (msg.type === "start") {
-    chunked = msg.chunk ?? false;
     progress = progressWindow(performance.now(), REPORT_GAP_MS);
     credentials = msg.credentials ?? "same-origin";
     headers = msg.headers;
-    nextBytes = CHUNK_SIZER.minBytes;
-    rateEwma = 0;
     measureSeq = 0;
     progress.reset();
     void run(msg.url);
@@ -90,20 +71,12 @@ function postProgress(delta: ProgressDelta | null): void {
 async function run(url: string): Promise<void> {
   // Re-fetch until the measured window ends, even when one response reaches Content-Length.
   for (;;) {
-    // Count the chunk and drop it.
     const count = (n: number): void => {
       const now = performance.now();
       postProgress(progress.add(n, now));
     };
-    // Chunked mode appends the adaptive size; long-stream mode uses the URL as-is (its ?bytes= is baked in by.
-    const requestedBytes = nextBytes;
-    const requestUrl = chunked ? `${url}&bytes=${requestedBytes}` : url;
-    const fetchStart = performance.now();
     try {
-      const res = await fetch(
-        requestUrl,
-        downloadFetchInit(credentials, headers),
-      );
+      const res = await fetch(url, downloadFetchInit(credentials, headers));
       if (authenticationRequired(res)) {
         post({ type: "auth-required" });
         return;
@@ -118,14 +91,6 @@ async function run(url: string): Promise<void> {
       }
       await readBody(res.body, count);
       postProgress(progress.flush()); // the window's remainder
-      if (chunked) {
-        ({ bytes: nextBytes, ewma: rateEwma } = nextTransferBytes(
-          requestedBytes,
-          performance.now() - fetchStart,
-          rateEwma,
-          CHUNK_SIZER,
-        ));
-      }
     } catch (err) {
       // A read that failed on an expired session is an auth failure, not a transport one, so the session is.
       if (

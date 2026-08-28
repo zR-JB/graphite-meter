@@ -910,8 +910,6 @@ export class RealBackend implements RunnerBackend {
     });
     // A WebTransport session uses one worker; it opens `streams` lanes internally.
     const laneCount = wt ? 1 : streams;
-    // Adaptive download chunks are requested by the worker, so it appends `&bytes=N` itself.
-    const chunkDownload = dir === "down" && cfg.experimentalChunkedDownload;
 
     const direction: TransferDirection = new TransferDirection({
       dir,
@@ -929,7 +927,6 @@ export class RealBackend implements RunnerBackend {
             credentials: authEnabled ? "include" : "same-origin",
             // CSRF is needed on upload POST; adding it to download GET triggers a cross-port CORS preflight.
             headers: dir === "up" ? csrfHeader() : {},
-            chunk: chunkDownload,
           },
           events,
         ),
@@ -945,7 +942,6 @@ export class RealBackend implements RunnerBackend {
       uploadPath: this.#throughputTarget?.routes.upload ?? ROUTES.upload,
       cbSeed: this.#cbSeed,
       bytes: PER_STREAM_BYTES,
-      chunkDownload,
       session: wt && {
         origin: wt.origin,
         uploadPath: wt.routes.wtUpload,

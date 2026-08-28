@@ -449,20 +449,6 @@
   </section>
 
   <section class="panel">
-    <h3>Download engine</h3>
-    <Switch
-      bind:checked={store.config.experimentalChunkedDownload}
-      disabled={running}
-      label="Chunked download (experimental)"
-    />
-    <p class="hint">
-      Uses adaptive chunks instead of one long request per lane. Slower, but
-      bounds browser memory: Firefox holds roughly one byte per byte downloaded
-      across a single long request.
-    </p>
-  </section>
-
-  <section class="panel">
     <h3>Datagram throughput</h3>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
       <!-- Above the toggle: this panel ends a long scroll, and a note past the

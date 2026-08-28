@@ -99,7 +99,6 @@ test("an upload worker's local completion metadata stays on the alive seam", () 
       dir: "up",
       lanes: 1,
       credentials: "same-origin",
-      chunk: false,
     },
     {
       onProgress: () => {

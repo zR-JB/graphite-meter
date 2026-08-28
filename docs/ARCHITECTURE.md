@@ -434,11 +434,10 @@ persisted or reported.
 | Worker                      | Role                                                                                                                                                                      |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `download-worker.ts`        | One per download lane; streams and discards bytes, reports periodic byte/time deltas.                                                                                     |
-| `upload-worker.ts`          | One per upload lane; builds and POSTs the incompressible payload. Its local completion metadata may drive a bounded live visual hint, never upload accounting.            |
+| `upload-worker.ts`          | One per upload lane; sizes, builds and POSTs the incompressible payload. Its local completion metadata may drive a bounded live visual hint, never upload accounting. |
 | `upload-progress-worker.ts` | The authoritative upload byte/rate source, parsing NDJSON from the selected throughput target.                                                                            |
 | `ping-worker.ts`            | Owns the ping bus, `/ws/ping` or `/wt/ping`, and the entire RTT/loss/timestamp algorithm off the main thread; batched outcomes retain their individual observation times. |
 | `wt-transfer-worker.ts`     | Owns one WebTransport session per direction: reads the server-opened download lanes and progress feed, opens the upload lanes, and finalizes with DELETE.                 |
-| `autosize.ts`               | Shared helper (not a worker): EWMA-smoothed, step-clamped transfer sizing used by the upload worker and the chunked-download path.                                        |
 | `payload.ts`                | Shared helper (not a worker): the memoised incompressible source block both upload paths write.                                                                           |
 
 Byte lanes reach workers through `real/byteLane.ts`: a transfer direction drives lanes as

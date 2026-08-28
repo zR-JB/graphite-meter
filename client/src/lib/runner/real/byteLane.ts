@@ -37,7 +37,6 @@ interface FetchLaneOptions {
   lanes: number;
   headers?: Record<string, string>;
   credentials: RequestCredentials;
-  chunk: boolean;
 }
 
 export interface SessionLaneOptions {
@@ -120,7 +119,6 @@ export function fetchLane(
         streams: opts.lanes,
         credentials: opts.credentials,
         headers: opts.headers,
-        chunk: opts.chunk,
       });
       worker = w;
     },

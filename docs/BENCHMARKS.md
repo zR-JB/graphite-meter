@@ -175,8 +175,8 @@ client ships. The constants themselves are no longer overridable and no longer l
 `client/src/lib/runner/workers/tuning.ts`, read by the fetch download lane and the WebTransport
 session lane alike; the upload constants are module constants in `workers/upload-worker.ts` and the
 session ones in `workers/wt-transfer-worker.ts`. The rows marked † were never worker constants: the
-lane counts live in `client/src/lib/state/defaults.ts` and `real/streamPolicy.ts`, and chunked
-download is a user setting in `state/defaults.ts`. Request streaming shipped no setting at all —
+lane counts live in `client/src/lib/state/defaults.ts` and `real/streamPolicy.ts`. Request streaming
+shipped no setting at all —
 its `uploadBody: "stream"` path has since been deleted, since nothing but the sweep could reach it.
 
 | Knob                   | Default       | Swept                        | Effect     | Verdict                    |
@@ -190,7 +190,6 @@ its `uploadBody: "stream"` path has since been deleted, since nothing but the sw
 | request streaming †    | off           | blob vs streamed, 4 ms RTT   | +4.2%      | null, under the bar        |
 | lanes, upload †        | see below     | 1 → 4                        | 3.0%       | null                       |
 | `reportGapMs`          | 50 ms         | 50 vs 200                    | 2.5%       | null                       |
-| chunked download †     | off           | false vs true                | 2.1%       | null on Chromium           |
 | `readBufBytes`         | 1 MiB         | 64 KiB → 16 MiB              | 2.1%       | null                       |
 | `targetPostMs`         | 500 ms        | 250 → 2000                   | 1.6%       | null                       |
 | `uploadDrain`          | `arrayBuffer` | arrayBuffer vs cancel        | 0.2%       | null                       |
@@ -217,8 +216,8 @@ artefact, not the transport, produced pass one's lane-count verdicts.
 ### Shipped defaults
 
 The values this change ships. **Every row is the browser client's unless it names the native
-client.** The worker measurement constants, the upload reservoir, chunked download and the
-connection budget exist only in the browser and have no native counterpart. The h2/h3 per-direction counts and
+client.** The worker measurement constants, the upload reservoir and the connection budget exist
+only in the browser and have no native counterpart. The h2/h3 per-direction counts and
 the one-stream-per-direction WebTransport rule are the same table in both clients
 (`client/src/lib/runner/real/streamPolicy.ts`, `go/internal/goclient/config.go`).
 
@@ -232,11 +231,10 @@ the one-stream-per-direction WebTransport rule are the same table in both client
 | WebTransport streams, automatic | **1** per direction                   | Mechanism, not measurement: a WebTransport lane is one continuous stream per direction and nothing turns around per request, so `real/streamPolicy.ts` returns 1 for both. The one WT upload measurement (best at 2 lanes, 1.78 Gbit/s) was not acted on — the transport sits an order of magnitude below the TCP transports, where lane tuning decides nothing. |
 | `BROWSER_CONNECTION_BUDGET`  | 6, unchanged                             | Nothing measured argues against it; it exists to avoid starving the browser's own per-origin pool.                            |
 | Upload reservoir             | **256 MiB**; 24 MiB at `deviceMemory` ≤ 4, 16 MiB at ≤ 2, 128 MiB when `deviceMemory` is absent | Four tiers (`upload-worker.ts`, `uploadPoolBytes`), each then divided by the lane count and floored at 2 MiB. Only Chromium reports `navigator.deviceMemory`, and an unknown device is not evidence of a large one. Pass one OOM-killed a 7 GB VM on the full reservoir. The 16 and 24 MiB thresholds are **unmeasured** — no mobile device was benchmarked — but they do ship. |
-| `PER_STREAM_BYTES`           | 64 GiB, unchanged                        | Bounding it enough to matter costs Firefox a third to a half of its throughput; the mitigation is the chunked-download setting. |
-| Chunked download             | off, user setting                        | −94% Firefox peak RSS for −40% throughput; free and pointless on Chromium. An engine-conditional default would make two engines answer differently about the same link. |
+| `PER_STREAM_BYTES`           | 64 GiB, unchanged                        | Firefox may retain substantial memory for a long response; the client no longer exposes the throughput-reducing response-size workaround. |
 
 **No new server-side knob follows from any of this.** The unresolved compromises — lane count per
-engine, chunked download, reservoir size — are device- and engine-scoped, which a server operator
+engine and reservoir size — are device- and engine-scoped, which a server operator
 cannot know, and the deployment-scoped bounds an operator can know already exist
 (`GM_MAX_SESSIONS_PER_CLIENT`, `GM_MAX_SESSION_DURATION`). An engine-conditional upload lane count
 is the strongest candidate for a future pass, pending data from a second machine.
@@ -264,12 +262,11 @@ Firefox accumulates within a response and releases between them. The RSS cliff s
 256 MiB and a 1 GiB response; 64 MiB responses hold about 526 MiB resident at ~5.6 Gbit/s. Capping
 responses at 4 GiB is throughput-free and buys back no memory at all.
 
-Decision: `PER_STREAM_BYTES` stays at 64 GiB and the mitigation is the chunked-download setting,
-which trades 40% of Firefox's throughput for 94% of its peak RSS. Above roughly 2 Gbit/s a Firefox
-client needs chunked download or a byte-bounded rather than time-bounded window; at 20 Gbit/s an
-8 s window is about 32 GB resident, which is an out-of-memory kill on a 32 GB machine. The "memory
-ceiling" that truncated Firefox matrix runs during this campaign was an operator-imposed cgroup at
-about 26 GiB — a machine with more RAM will not reproduce that kill.
+The client no longer exposes the throughput-reducing response-size workaround. Above roughly
+2 Gbit/s, a Firefox client may retain substantial memory for a time-bounded window; at 20 Gbit/s
+an 8 s window is about 32 GB resident, which is an out-of-memory kill on a 32 GB machine. The
+"memory ceiling" that truncated Firefox matrix runs during this campaign was an operator-imposed
+cgroup at about 26 GiB — a machine with more RAM will not reproduce that kill.
 
 **Do not raise Firefox's socket-buffer pref.** Moving it from 32 to 64 KiB is worth +31% on
 loopback, nothing at all on a gigabit link, and costs −12% to −29% on an uncapped lossy path, the
