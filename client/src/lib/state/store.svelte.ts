@@ -32,8 +32,9 @@ import {
 } from "../compensation";
 import {
   quantile,
-  sharedThroughputScale,
-  rateScaleIndex,
+  chartThroughputScale,
+  DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
+  throughputUnitIndex,
   rateUnit,
   rateValueAt,
   rawRateFrom,
@@ -121,8 +122,6 @@ export interface LatencyLane {
 }
 
 const MAX_IDLE_SAMPLES = 60;
-
-const UNIT_STEP_UP_HEADROOM = 1.2;
 
 type LiveStability = Record<
   "latency" | "download" | "upload" | "bidirectional",
@@ -417,7 +416,7 @@ class AppStore {
       (bidi?.down?.reportedBytesPerSec ?? 0) +
         (bidi?.up?.reportedBytesPerSec ?? 0),
     );
-    return sharedThroughputScale(
+    return chartThroughputScale(
       Math.max(this.#sustainedPeakBytesPerSec, terminalPeak),
     );
   });
@@ -431,21 +430,26 @@ class AppStore {
       (bidi?.down?.reportedBytesPerSec ?? 0) +
         (bidi?.up?.reportedBytesPerSec ?? 0),
     );
-    if (typeof cfg === "number" && cfg > 0)
-      return gaugeScaleForPeak(cfg, false);
-    return gaugeScaleForPeak(
-      Math.max(this.#sustainedPeakBytesPerSec, terminalPeak),
-      true,
+    if (typeof cfg === "number" && cfg > 0) return gaugeScaleForPeak(cfg);
+    const scalePeak = Math.max(
+      this.#sustainedPeakBytesPerSec,
+      terminalPeak,
+      this.#unitIndex < 2 ? this.#peakBytesPerSec : 0,
     );
+    return gaugeScaleForPeak(scalePeak, {
+      minimumBitsPerSec: this.#unitIndex >= 2 ? 1_000_000_000 : undefined,
+    });
   });
 
   #unitIndex = $derived.by(() => {
     const cfg = this.config.visualization.throughputMaxBytesPerSec;
     const refBytesPerSec =
-      typeof cfg === "number" && cfg > 0 ? cfg : this.#peakBytesPerSec;
-    const baseUnits =
-      this.unitKind === "bytes" ? refBytesPerSec : refBytesPerSec * 8;
-    return rateScaleIndex(baseUnits, this.unitBase, UNIT_STEP_UP_HEADROOM);
+      typeof cfg === "number" && cfg > 0
+        ? cfg
+        : this.#peakBytesPerSec > 0
+          ? this.#peakBytesPerSec
+          : DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
+    return throughputUnitIndex(refBytesPerSec, this.unitBase, this.unitKind);
   });
 
   get unitLabel() {

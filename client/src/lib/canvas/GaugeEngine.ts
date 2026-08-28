@@ -5,8 +5,10 @@ import { gaugeLayout, type GaugeLayout } from "./gaugeLayout";
 import { canvasPixelRatio } from "./canvasResolution";
 import {
   resultGaugeFillTarget,
+  resultGaugeHeadPlacements,
   sortResultGaugeArcs,
   type ResultArcPhase,
+  type ResultGaugeHeadPlacement,
 } from "../components/resultGauge";
 interface GaugeResultArc {
   phase: ResultArcPhase;
@@ -58,6 +60,7 @@ export class GaugeEngine {
   #lastFrame = 0;
   #layout: GaugeLayout = gaugeLayout(0, 0);
   #resultArcs: readonly GaugeResultArc[] = [];
+  #resultHeadPlacements: readonly ResultGaugeHeadPlacement[] = [];
   #completedSweep = 0;
   #resultColors: Record<ResultArcPhase, string> = {
     download: "#4da3ff",
@@ -164,6 +167,16 @@ export class GaugeEngine {
       fraction: arc.bytesPerSec,
       dashed: arc.dashed,
     }));
+    const headGeometry = this.#headGeometry();
+    this.#resultHeadPlacements = resultGaugeHeadPlacements(
+      this.#resultArcs.map((arc) => arc.fraction),
+      {
+        baseRadius: this.#layout.radius,
+        arcSweep: this.#layout.arcSweep,
+        headRadius: headGeometry.radius,
+        borderWidth: headGeometry.borderWidth,
+      },
+    );
     const enteringComplete =
       s.phase === "complete" && this.#lastPhase !== "complete";
     if (enteringComplete && this.#resultArcs.length) {
@@ -230,7 +243,7 @@ export class GaugeEngine {
     }
     ctx.globalAlpha = 1;
     if (this.#lastPhase === "complete" && this.#resultArcs.length) {
-      // Paint results from highest to lowest on one radius; the finish position clips each layer.
+      // Paint results from highest to lowest on the shared arc; lanes stay stable throughout reveal.
       for (const [index, arc] of this.#resultArcs.entries()) {
         const visibleFraction = Math.min(
           Math.max(0, arc.fraction),
@@ -256,6 +269,64 @@ export class GaugeEngine {
           arc.dashed ? [arcW * 1.5, arcW] : [],
         );
       }
+      // Leaders sit above arcs and below heads so the primary remains visually dominant.
+      for (const [index, arc] of this.#resultArcs.entries()) {
+        const placement = this.#resultHeadPlacements[index];
+        const visibleFraction = Math.min(
+          Math.max(0, arc.fraction),
+          this.#completedSweep,
+        );
+        if (!placement || placement.lane === 0 || visibleFraction <= 0.002)
+          continue;
+        const end = angleForFraction(
+          visibleFraction,
+          layout.arcStart,
+          layout.arcSweep,
+        );
+        const trueX = cx + Math.cos(end) * r;
+        const trueY = cy + Math.sin(end) * r;
+        const headX = cx + Math.cos(end) * placement.radius;
+        const headY = cy + Math.sin(end) * placement.radius;
+        ctx.save();
+        ctx.strokeStyle = this.#track;
+        ctx.globalAlpha = 0.55;
+        ctx.lineWidth = 3;
+        ctx.lineCap = "round";
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(trueX, trueY);
+        ctx.lineTo(headX, headY);
+        ctx.stroke();
+        ctx.strokeStyle = this.#resultColors[arc.phase];
+        ctx.globalAlpha = 0.7;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(trueX, trueY);
+        ctx.lineTo(headX, headY);
+        ctx.stroke();
+        ctx.restore();
+      }
+      // Draw secondary heads first and the primary last for deterministic dominance.
+      for (let index = this.#resultArcs.length - 1; index >= 0; index -= 1) {
+        const arc = this.#resultArcs[index]!;
+        const placement = this.#resultHeadPlacements[index];
+        const visibleFraction = Math.min(
+          Math.max(0, arc.fraction),
+          this.#completedSweep,
+        );
+        if (!placement || visibleFraction <= 0.002) continue;
+        const end = angleForFraction(
+          visibleFraction,
+          layout.arcStart,
+          layout.arcSweep,
+        );
+        this.#drawHead(
+          cx + Math.cos(end) * placement.radius,
+          cy + Math.sin(end) * placement.radius,
+          this.#resultColors[arc.phase],
+          arc.dashed,
+        );
+      }
       return;
     }
     if (this.#showValue && sweep > 0.002) {
@@ -266,18 +337,36 @@ export class GaugeEngine {
       ctx.stroke();
       const hx = cx + Math.cos(valueEnd) * r;
       const hy = cy + Math.sin(valueEnd) * r;
-      const headR = arcW * 0.55;
-      const ringW = Math.max(1, headR * 0.22);
-      ctx.fillStyle = this.#accent;
+      this.#drawHead(hx, hy, this.#accent);
+    }
+  }
+  #headGeometry(): { radius: number; borderWidth: number } {
+    const radius = this.#layout.arcWidth * 0.55;
+    return { radius, borderWidth: Math.max(1, radius * 0.22) };
+  }
+  #drawHead(x: number, y: number, color: string, hollow = false): void {
+    const ctx = this.#ctx;
+    if (!ctx) return;
+    const { radius, borderWidth } = this.#headGeometry();
+    ctx.save();
+    ctx.fillStyle = hollow ? this.#track : color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = this.#track;
+    ctx.lineWidth = borderWidth;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + borderWidth * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+    if (hollow) {
+      // The track-colored center keeps partial evidence hollow while the phase color identifies it.
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1, borderWidth * 0.55);
       ctx.beginPath();
-      ctx.arc(hx, hy, headR, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = this.#track;
-      ctx.lineWidth = ringW;
-      ctx.beginPath();
-      ctx.arc(hx, hy, headR + ringW * 0.5, 0, Math.PI * 2);
+      ctx.arc(x, y, radius * 0.68, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.restore();
   }
   #strokeArc(
     ctx: CanvasRenderingContext2D,

@@ -1,14 +1,13 @@
 import { expect, test } from "bun:test";
 import {
   fmtGaugeTick,
-  gaugeRateValue,
   gaugeScaleForPeak,
-  gaugeUnitLabel,
   throughputTickValues,
   throughputGaugeFraction,
   throughputValueAtFraction,
   THROUGHPUT_VALUE_KNOTS,
 } from "./gaugeScale";
+import { rateValueAt } from "../format";
 
 test("piecewise throughput transfer is monotonic, bounded, and invertible", () => {
   let previous = 0;
@@ -32,22 +31,23 @@ test("piecewise throughput transfer is monotonic, bounded, and invertible", () =
 });
 
 test("one-gigabit gauge labels use Mbit/s and exact five-label table", () => {
-  const scale = gaugeScaleForPeak(125_000_000, true);
+  const scale = gaugeScaleForPeak(125_000_000, {
+    minimumBitsPerSec: 1_000_000_000,
+  });
   expect(scale).toBe(125_000_000);
-  expect(gaugeUnitLabel(scale, "base10", "bits")).toBe("Mbit/s");
   expect(
     throughputTickValues(scale).map((value) =>
-      gaugeRateValue(value, scale, "base10", "bits"),
+      rateValueAt(value, "base10", "bits", 2),
     ),
   ).toEqual([0, 5, 10, 50, 100, 250, 500, 750, 1000]);
   expect(
     [0, 0.25, 0.5, 0.75, 1].map((fraction) =>
       fmtGaugeTick(
-        gaugeRateValue(
+        rateValueAt(
           throughputValueAtFraction(fraction, scale),
-          scale,
           "base10",
           "bits",
+          2,
         ),
       ),
     ),
@@ -55,14 +55,19 @@ test("one-gigabit gauge labels use Mbit/s and exact five-label table", () => {
 });
 
 test("automatic gauge scale stays at one gigabit until it exceeds it", () => {
-  expect(gaugeScaleForPeak(1, true)).toBe(125_000_000);
-  expect(gaugeScaleForPeak(125_000_000, true)).toBe(125_000_000);
-  expect(gaugeScaleForPeak(125_000_001, true)).toBe(1_250_000_000);
+  const automatic = { minimumBitsPerSec: 1_000_000_000 };
+  expect(gaugeScaleForPeak(1, automatic)).toBe(125_000_000);
+  expect(gaugeScaleForPeak(125_000_000, automatic)).toBe(125_000_000);
+  expect(gaugeScaleForPeak(125_000_001, automatic)).toBe(1_250_000_000);
+});
+
+test("a sub-mega automatic scale waives the one-gigabit floor", () => {
+  expect(gaugeScaleForPeak(12_501)).toBe(125_000);
 });
 
 test("explicit chart ceilings stay exact while gauge uses the next decade", () => {
-  expect(gaugeScaleForPeak(117_125_000, false)).toBe(125_000_000);
-  expect(gaugeScaleForPeak(12_500_000, false)).toBe(12_500_000);
+  expect(gaugeScaleForPeak(117_125_000)).toBe(125_000_000);
+  expect(gaugeScaleForPeak(12_500_000)).toBe(12_500_000);
   expect(fmtGaugeTick(1_234.5)).toBe("1235");
   expect(fmtGaugeTick(0)).toBe("0");
 });
@@ -73,15 +78,12 @@ test("SI, byte, and IEC gauge labels remain truthful and ungrouped", () => {
     ["base10", "bytes"],
     ["base2", "bytes"],
   ] as const) {
-    const scale = gaugeScaleForPeak(125_000_000, true);
+    const scale = gaugeScaleForPeak(125_000_000, {
+      minimumBitsPerSec: 1_000_000_000,
+    });
     const values = [0, 0.25, 0.5, 0.75, 1].map((fraction) =>
       fmtGaugeTick(
-        gaugeRateValue(
-          throughputValueAtFraction(fraction, scale),
-          scale,
-          base,
-          kind,
-        ),
+        rateValueAt(throughputValueAtFraction(fraction, scale), base, kind, 2),
       ),
     );
     expect(values.every((value) => !value.includes(","))).toBe(true);

@@ -6,8 +6,6 @@
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "../canvas/gaugeLayout";
   import {
     fmtGaugeTick,
-    gaugeRateValue,
-    gaugeUnitLabel,
     throughputGaugeFraction,
     throughputValueAtFraction,
   } from "../canvas/gaugeScale";
@@ -85,16 +83,8 @@
       (store.phase === "complete" && completedKind === "latency"),
   );
   const gaugeScaleBytesPerSec = $derived(store.gaugeScaleBytesPerSec);
-  const gaugeUnit = $derived(
-    gaugeUnitLabel(gaugeScaleBytesPerSec, store.unitBase, store.unitKind),
-  );
-  const gaugeRate = (bytesPerSec: number) =>
-    gaugeRateValue(
-      bytesPerSec,
-      gaugeScaleBytesPerSec,
-      store.unitBase,
-      store.unitKind,
-    );
+  const gaugeUnit = $derived(store.unitLabel);
+  const gaugeRate = (bytesPerSec: number) => store.toUnit(bytesPerSec);
   const gaugeTicks = $derived.by(() => {
     if (msTicksActive)
       return GAUGE_LABEL_FRACTIONS.map((fraction) => ({

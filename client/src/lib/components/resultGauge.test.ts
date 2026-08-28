@@ -3,6 +3,7 @@ import type { RunResult, ThroughputResult } from "../runner/contract";
 import {
   resultGaugeArcs,
   resultGaugeFillTarget,
+  resultGaugeHeadPlacements,
   sortResultGaugeArcs,
 } from "./resultGauge";
 
@@ -128,5 +129,74 @@ test("partial result styling remains dashed without marker geometry", () => {
   );
   expect(arcs).toEqual([
     arc("bidirectional", "Bidirectional download", 30, true),
+  ]);
+});
+
+const headOptions = {
+  baseRadius: 72,
+  arcSweep: Math.PI * 1.5,
+  headRadius: 3.3,
+  borderWidth: 1,
+};
+
+const headDistance = (
+  a: { fraction: number; radius: number },
+  b: { fraction: number; radius: number },
+): number => {
+  const angleA = a.fraction * headOptions.arcSweep;
+  const angleB = b.fraction * headOptions.arcSweep;
+  return Math.hypot(
+    a.radius * Math.cos(angleA) - b.radius * Math.cos(angleB),
+    a.radius * Math.sin(angleA) - b.radius * Math.sin(angleB),
+  );
+};
+
+test("result heads stay on the base radius when their endpoints are separated", () => {
+  const placements = resultGaugeHeadPlacements([0, 0.5, 1], headOptions);
+  expect(placements.map((placement) => placement.radius)).toEqual([72, 72, 72]);
+  expect(placements.map((placement) => placement.fraction)).toEqual([
+    0, 0.5, 1,
+  ]);
+});
+
+test("the highest result always stays primary while equal and near-equal clusters use inward lanes", () => {
+  for (const fractions of [
+    [0.5, 0.5],
+    [0.5, 0.5, 0.5],
+    [0.5, 0.501, 0.502],
+  ]) {
+    const placements = resultGaugeHeadPlacements(fractions, headOptions);
+    expect(placements[0]!.radius).toBe(headOptions.baseRadius);
+    expect(
+      placements.every(
+        (placement, index) =>
+          index === 0 || placement.radius <= headOptions.baseRadius,
+      ),
+    ).toBe(true);
+    for (let i = 0; i < placements.length; i += 1) {
+      for (let j = i + 1; j < placements.length; j += 1)
+        expect(
+          headDistance(placements[i]!, placements[j]!),
+        ).toBeGreaterThanOrEqual(
+          2 * (headOptions.headRadius + headOptions.borderWidth) + 2,
+        );
+    }
+  }
+});
+
+test("result head placement is deterministic and bounded for compact gauge geometry", () => {
+  const first = resultGaugeHeadPlacements([0.42, 0.42, 0.42], {
+    ...headOptions,
+    baseRadius: 36,
+  });
+  const second = resultGaugeHeadPlacements([0.42, 0.42, 0.42], {
+    ...headOptions,
+    baseRadius: 36,
+  });
+  expect(first).toEqual(second);
+  expect(first[0]!.radius).toBe(36);
+  expect(first.every((placement) => placement.radius >= 6.3)).toBe(true);
+  expect(first.map((placement) => placement.fraction)).toEqual([
+    0.42, 0.42, 0.42,
   ]);
 });

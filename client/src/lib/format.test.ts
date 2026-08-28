@@ -1,12 +1,17 @@
 import { test, expect } from "bun:test";
 import {
   fmtBytes,
+  fmtSpeed,
   rateScaleIndex,
   rateValueAt,
   niceCeil,
   quantile,
   niceStep,
   niceDomain,
+  chartThroughputScale,
+  DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
+  rateUnit,
+  throughputUnitIndex,
 } from "./format";
 
 test("fmtBytes: zero renders as an integer byte count", () => {
@@ -45,6 +50,87 @@ test("rateScaleIndex: base2 tiers step on powers of 1024", () => {
 test("rateScaleIndex: headroom delays the step-up past the raw boundary", () => {
   expect(rateScaleIndex(1199, "base10", 1.2)).toBe(0);
   expect(rateScaleIndex(1200, "base10", 1.2)).toBe(1);
+});
+
+test("throughput unit authority keeps the 1.2 promotion threshold consistent", () => {
+  const mbit = (gigabit: number) => (gigabit * 1_000_000_000) / 8;
+  expect(
+    rateUnit(
+      "base10",
+      "bits",
+      throughputUnitIndex(mbit(0.1), "base10", "bits"),
+    ),
+  ).toBe("Mbit/s");
+  expect(
+    rateUnit(
+      "base10",
+      "bits",
+      throughputUnitIndex(mbit(0.9), "base10", "bits"),
+    ),
+  ).toBe("Mbit/s");
+  expect(
+    rateUnit(
+      "base10",
+      "bits",
+      throughputUnitIndex(mbit(1.19), "base10", "bits"),
+    ),
+  ).toBe("Mbit/s");
+  expect(
+    rateUnit(
+      "base10",
+      "bits",
+      throughputUnitIndex(mbit(1.2), "base10", "bits"),
+    ),
+  ).toBe("Gbit/s");
+  expect(
+    rateUnit("base10", "bits", throughputUnitIndex(mbit(10), "base10", "bits")),
+  ).toBe("Gbit/s");
+});
+
+test("throughput displays keep precision for promoted gigabit values", () => {
+  expect(fmtSpeed(8.886)).toBe("8.89");
+  expect(fmtSpeed(937)).toBe("937.0");
+});
+
+test("automatic unit reference starts at the 100 Mbit/s fallback", () => {
+  expect(DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC * 8).toBe(100_000_000);
+  expect(chartThroughputScale(0)).toBe(
+    DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
+  );
+  expect(
+    rateUnit(
+      "base10",
+      "bits",
+      throughputUnitIndex(
+        DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
+        "base10",
+        "bits",
+      ),
+    ),
+  ).toBe("Mbit/s");
+});
+
+test("a positive sub-mega automatic reference is not lifted to the fallback tier", () => {
+  expect(
+    rateUnit("base10", "bits", throughputUnitIndex(12_500, "base10", "bits")),
+  ).toBe("kbit/s");
+});
+
+test("throughput unit authority handles SI bytes and IEC bytes", () => {
+  expect(
+    rateUnit(
+      "base10",
+      "bytes",
+      throughputUnitIndex(1_200_000, "base10", "bytes"),
+    ),
+  ).toBe("MB/s");
+  expect(
+    rateUnit(
+      "base2",
+      "bytes",
+      throughputUnitIndex(1_258_292, "base2", "bytes"),
+    ),
+  ).toBe("MiB/s");
 });
 
 test("rateValueAt: converts bytes/s at the base tier", () => {
