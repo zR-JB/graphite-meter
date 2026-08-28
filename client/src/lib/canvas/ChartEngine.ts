@@ -3,7 +3,7 @@ import type {
   ThroughputSample,
   LatencyBucket,
 } from "../runner/contract";
-import { sharedThroughputScale } from "../format";
+import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
 import {
   latencyBucketExceedsScale,
   latencyScaleForHistory,
@@ -467,7 +467,7 @@ export class ChartEngine {
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
-      d.scaleBytesPerSec !== sharedThroughputScale(0) ||
+      d.scaleBytesPerSec !== DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC ||
       d.throughput.length > 0;
     const rttMin = 0;
     // Terminal mode resolves its Y domain from full history rather than the recent live controller.

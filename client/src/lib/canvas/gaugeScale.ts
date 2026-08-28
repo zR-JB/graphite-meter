@@ -1,5 +1,3 @@
-import { rateScaleIndex, rateUnit, rateValueAt, rawRateFrom } from "../format";
-
 // Throughput values use one low-end transfer curve for both directions.
 export const THROUGHPUT_VALUE_KNOTS = [
   0, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1,
@@ -7,8 +5,6 @@ export const THROUGHPUT_VALUE_KNOTS = [
 export const THROUGHPUT_FRACTION_KNOTS = THROUGHPUT_VALUE_KNOTS.map(
   (_, index) => index / (THROUGHPUT_VALUE_KNOTS.length - 1),
 );
-
-const AUTO_GAUGE_FLOOR_BITS_PER_SEC = 1_000_000_000;
 
 function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0;
@@ -79,68 +75,22 @@ function decimalCeiling(value: number): number {
   return 10 ** Math.ceil(Math.log10(value));
 }
 
+export interface GaugeScaleOptions {
+  /** Optional raw floor, used by automatic scales at mega-unit tiers. */
+  minimumBitsPerSec?: number;
+}
+
 /** Select the gauge ceiling independently from the chart ceiling. */
 export function gaugeScaleForPeak(
   peakBytesPerSec: number,
-  automatic: boolean,
+  options: GaugeScaleOptions = {},
 ): number {
   const peakBitsPerSec = Math.max(0, peakBytesPerSec) * 8;
-  const bitsPerSec = automatic
-    ? Math.max(AUTO_GAUGE_FLOOR_BITS_PER_SEC, decimalCeiling(peakBitsPerSec))
-    : decimalCeiling(peakBitsPerSec);
+  const bitsPerSec = Math.max(
+    options.minimumBitsPerSec ?? 0,
+    decimalCeiling(peakBitsPerSec),
+  );
   return bitsPerSec / 8;
-}
-
-/** Prefix index that keeps the smallest nonzero labeled tick at >= 1. */
-export function gaugeUnitIndex(
-  scaleBytesPerSec: number,
-  base: "base10" | "base2",
-  kind: "bits" | "bytes",
-): number {
-  const scale = safeScale(scaleBytesPerSec);
-  let index = rateScaleIndex(kind === "bits" ? scale * 8 : scale, base, 1);
-  while (
-    index > 0 &&
-    rateValueAt(throughputValueAtFraction(0.25, scale), base, kind, index) < 1
-  )
-    index--;
-  return index;
-}
-
-export function gaugeUnitLabel(
-  scaleBytesPerSec: number,
-  base: "base10" | "base2",
-  kind: "bits" | "bytes",
-): string {
-  return rateUnit(base, kind, gaugeUnitIndex(scaleBytesPerSec, base, kind));
-}
-
-export function gaugeRateValue(
-  bytesPerSec: number,
-  scaleBytesPerSec: number,
-  base: "base10" | "base2",
-  kind: "bits" | "bytes",
-): number {
-  return rateValueAt(
-    bytesPerSec,
-    base,
-    kind,
-    gaugeUnitIndex(scaleBytesPerSec, base, kind),
-  );
-}
-
-export function gaugeRateFrom(
-  displayValue: number,
-  scaleBytesPerSec: number,
-  base: "base10" | "base2",
-  kind: "bits" | "bytes",
-): number {
-  return rawRateFrom(
-    displayValue,
-    base,
-    kind,
-    gaugeUnitIndex(scaleBytesPerSec, base, kind),
-  );
 }
 
 /** Compact, ungrouped labels with bounded meaningful precision. */

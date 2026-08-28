@@ -76,6 +76,17 @@ export function rateScaleIndex(
   );
 }
 
+/** Select the single display tier used by every throughput presentation. */
+export function throughputUnitIndex(
+  referenceBytesPerSec: number,
+  base: UnitBase,
+  kind: UnitKind,
+): number {
+  const baseUnits =
+    kind === "bytes" ? referenceBytesPerSec : referenceBytesPerSec * 8;
+  return rateScaleIndex(baseUnits, base, 1.2);
+}
+
 export function rateValueAt(
   bytesPerSec: number,
   base: UnitBase,
@@ -96,9 +107,13 @@ export function rawRateFrom(
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-export function sharedThroughputScale(peakBytesPerSec: number): number {
+/** The 100 Mbit/s reference used before automatic measurement has data. */
+export const DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC = 12_500_000;
+
+/** Select the linear chart's 1/2/5 ceiling. */
+export function chartThroughputScale(peakBytesPerSec: number): number {
   // The scale is chosen in bit/s, then converted back to bytes/s. Bits and bytes displays share one visual ceiling.
-  if (peakBytesPerSec <= 0) return 1.25e7;
+  if (peakBytesPerSec <= 0) return DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
   return ceil125(peakBytesPerSec * 8) / 8;
 }
 
