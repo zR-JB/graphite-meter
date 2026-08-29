@@ -1,6 +1,7 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs } from "../format";
+import { fmtMs, niceDomain } from "../format";
 import type { LatencyLane } from "../state/store.svelte";
+import type { TransportKind } from "../runner/contract";
 
 export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
 
@@ -22,13 +23,43 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
 };
 
 // The chart's value range; min is the left edge, span its width in the metric's own units (niceDomain's {min, span}).
-interface Domain {
+export interface LatencyProfileDomain {
   min: number;
+  max: number;
   span: number;
 }
 
+export type LatencyProfileLaneLike = {
+  min: number | null;
+  max: number | null;
+  p10: number | null;
+  p90: number | null;
+  center: number | null;
+  current?: number | null;
+};
+
+/** Shared value-domain policy for live and finalized latency profiles. */
+export function profileDomain(
+  lanes: readonly LatencyProfileLaneLike[],
+): LatencyProfileDomain {
+  const values = lanes.flatMap((lane) =>
+    [lane.min, lane.max].filter((value): value is number => value != null),
+  );
+  return niceDomain(values, { floor: 1 });
+}
+
+/** Saved latency loss is meaningful only when datagrams provide explicit transport evidence. */
+export function savedLatencyLossVisible(
+  transportKind: TransportKind | null,
+): boolean {
+  return transportKind === "webtransport-datagram";
+}
+
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(value: number | null, domain: Domain): number {
+export function pos(
+  value: number | null,
+  domain: LatencyProfileDomain,
+): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
@@ -37,7 +68,7 @@ export function pos(value: number | null, domain: Domain): number {
 export function rangeWidth(
   min: number | null,
   max: number | null,
-  domain: Domain,
+  domain: LatencyProfileDomain,
 ): number {
   if (min == null || max == null) return 0;
   return Math.max(1.5, pos(max, domain) - pos(min, domain));

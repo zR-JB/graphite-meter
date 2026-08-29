@@ -8,10 +8,12 @@ import {
   nearestMetric,
   hoverContext,
   metricLabel,
+  profileDomain,
+  savedLatencyLossVisible,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
-const DOMAIN = { min: 0, span: 100 };
+const DOMAIN = { min: 0, max: 100, span: 100 };
 
 function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   return {
@@ -44,6 +46,21 @@ test("rangeWidth: span as a percentage, hairline floor, null-safe", () => {
   expect(rangeWidth(40, 40, DOMAIN)).toBe(1.5); // flat still shows
   expect(rangeWidth(null, 30, DOMAIN)).toBe(0);
   expect(rangeWidth(10, null, DOMAIN)).toBe(0);
+});
+
+test("profileDomain is shared by live and finalized lane profiles", () => {
+  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
+    min: 0,
+    max: 200,
+    span: 200,
+  });
+});
+
+test("saved latency loss requires datagram transport evidence", () => {
+  expect(savedLatencyLossVisible("webtransport-datagram")).toBe(true);
+  expect(savedLatencyLossVisible("webtransport")).toBe(false);
+  expect(savedLatencyLossVisible("websocket")).toBe(false);
+  expect(savedLatencyLossVisible(null)).toBe(false);
 });
 
 test("tickLabel: non-positive collapses to a bare zero", () => {

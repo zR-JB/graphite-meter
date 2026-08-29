@@ -3,19 +3,20 @@
   // bands, current values, jitter, and loss.
   import { store } from "../state/store.svelte";
   import type { TransportRole } from "../runner/contract";
-  import { fmtMs, niceDomain } from "../format";
+  import { fmtMs } from "../format";
   import { tooltip, JARGON } from "../actions/tooltip";
   import { failureDetail } from "./failurePresentation";
+  import LatencyProfileTrack from "./LatencyProfileTrack.svelte";
   import {
     type MetricKey,
     metricLabel,
     pos as domainPos,
-    rangeWidth as domainRangeWidth,
     tickLabel,
     lossLabel,
     metricValue,
     nearestMetric,
     hoverContext,
+    profileDomain,
   } from "./latencyProfile";
 
   interface Props {
@@ -39,19 +40,12 @@
     ),
   );
 
-  const domain = $derived.by(() => {
-    const values: number[] = [];
-    for (const lane of lanes) {
-      if (lane.min != null) values.push(lane.min);
-      if (lane.max != null) values.push(lane.max);
-    }
-    return niceDomain(values, { floor: 1 });
-  });
+  const domain = $derived(profileDomain(lanes));
 
   const ticks = $derived([
     domain.min,
     domain.min + domain.span / 2,
-    domain.max,
+    domain.min + domain.span,
   ]);
 
   let hover = $state<{
@@ -85,9 +79,6 @@
   // ./latencyProfile holds the domain-free helpers. These wrappers bind the
   // reactive chart domain, keeping the template call sites terse.
   const pos = (value: number | null) => domainPos(value, domain);
-  const rangeWidth = (min: number | null, max: number | null) =>
-    domainRangeWidth(min, max, domain);
-
   function onStripMove(e: PointerEvent, key: TransportRole) {
     const lane = lanes.find((l) => l.key === key);
     if (!lane) return;
@@ -171,36 +162,13 @@
             onpointermove={(e) => onStripMove(e, lane.key)}
             onpointerleave={clearHover}
           >
-            {#if lane.min != null && lane.max != null}
-              <span
-                class="range"
-                style="left:{pos(lane.min)}%;width:{rangeWidth(
-                  lane.min,
-                  lane.max,
-                )}%"
-              ></span>
-            {/if}
-            {#if lane.p10 != null && lane.p90 != null}
-              <span
-                class="band"
-                style="left:{pos(lane.p10)}%;width:{rangeWidth(
-                  lane.p10,
-                  lane.p90,
-                )}%"
-              ></span>
-            {/if}
-            {#if lane.center != null}
-              <i class="center-marker" style="left:{pos(lane.center)}%"></i>
-            {/if}
-            {#if lane.current != null}
-              <i class="cur-marker" style="left:{pos(lane.current)}%"></i>
-            {/if}
-            {#if lane.lossRatio > 0}
-              <i
-                class="loss-marker"
-                style="width:{Math.min(34, Math.max(8, lane.lossRatio * 100))}%"
-              ></i>
-            {/if}
+            <LatencyProfileTrack
+              {lane}
+              {domain}
+              showCurrent={true}
+              showLoss={true}
+              tone={lane.key}
+            />
 
             {#if hover?.key === lane.key && hoverValue != null}
               <span class="guide" style="left:{pos(hoverValue)}%"></span>
@@ -403,99 +371,6 @@
       var(--surface-2);
     cursor: crosshair;
     isolation: isolate;
-  }
-
-  .range {
-    position: absolute;
-    top: 13px;
-    height: 5px;
-    min-width: 10px;
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--text-soft) 40%, transparent);
-  }
-  .range::before,
-  .range::after {
-    position: absolute;
-    top: -7px;
-    width: 1px;
-    height: 19px;
-    content: "";
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--text-soft) 64%, transparent);
-  }
-  .range::before {
-    left: 0;
-  }
-  .range::after {
-    right: 0;
-  }
-
-  .band {
-    position: absolute;
-    top: 6px;
-    height: 18px;
-    min-width: 8px;
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--signal) 28%, transparent);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--signal-strong) 22%, transparent);
-  }
-  .lane[data-tone="download"] .band {
-    background: color-mix(in srgb, var(--phase-download) 28%, transparent);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--phase-download) 30%, transparent);
-  }
-  .lane[data-tone="upload"] .band {
-    background: color-mix(in srgb, var(--phase-upload) 28%, transparent);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--phase-upload) 30%, transparent);
-  }
-
-  .center-marker,
-  .cur-marker {
-    position: absolute;
-    transform: translateX(-50%);
-  }
-  .center-marker {
-    top: 5px;
-    bottom: 5px;
-    width: 2px;
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--text) 54%, transparent);
-  }
-  .cur-marker {
-    top: 9px;
-    bottom: 9px;
-    width: 10px;
-    border: 2px solid var(--surface-1);
-    border-radius: var(--r-full);
-    background: var(--signal-strong);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--signal) 18%, transparent);
-  }
-  .lane[data-tone="download"] .cur-marker {
-    background: var(--phase-download);
-    box-shadow: 0 0 0 2px
-      color-mix(in srgb, var(--phase-download) 22%, transparent);
-  }
-  .lane[data-tone="upload"] .cur-marker {
-    background: var(--phase-upload);
-    box-shadow: 0 0 0 2px
-      color-mix(in srgb, var(--phase-upload) 22%, transparent);
-  }
-
-  .loss-marker {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    min-width: 8px;
-    border-radius: var(--r-full);
-    background: repeating-linear-gradient(
-      -45deg,
-      var(--err) 0 4px,
-      color-mix(in srgb, var(--err) 44%, transparent) 4px 8px
-    );
-    opacity: 0.82;
   }
 
   /* hover affordances */

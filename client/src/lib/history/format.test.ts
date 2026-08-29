@@ -49,5 +49,15 @@ describe("history formatting", () => {
     );
     expect(formatRecentCompletion(now - 24 * 60 * 60_000, now)).toBeNull();
     expect(formatRecentCompletion(now + 5_000, now)).toBe("now");
+    expect(formatRecentCompletion(now - 59_999, now)).toBe("now");
+    expect(formatRecentCompletion(now - 60_000, now)).toBe("1 min ago");
+    expect(formatRecentCompletion(now - (59 * 60_000 + 59_999), now)).toBe(
+      "59 min ago",
+    );
+    expect(formatRecentCompletion(now - 60 * 60_000, now)).toBe("1 hr ago");
+    expect(formatRecentCompletion(now - (23 * 60 * 60_000 + 59_999), now)).toBe(
+      "23 hr ago",
+    );
+    expect(formatRecentCompletion(now - 24 * 60 * 60_000, now)).toBeNull();
   });
 });

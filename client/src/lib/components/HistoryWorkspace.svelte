@@ -105,12 +105,6 @@
       icon: ICON.ping,
       sort: "loaded",
     },
-    status: {
-      label: "Status",
-      short: "Status",
-      icon: ICON.check,
-      sort: null,
-    },
   };
 
   async function resolveSelection(id: string | null, generation: number) {
@@ -266,23 +260,22 @@
   }
 
   function metric(record: HistoryRecordV1, column: HistoryColumn): string {
-    if (column === "download")
-      return resultRate(
+    const values: Record<HistoryColumn, string> = {
+      download: resultRate(
         record.stages.download.status,
         record.stages.download.result?.reportedBytesPerSec,
-      );
-    if (column === "upload")
-      return resultRate(
+      ),
+      upload: resultRate(
         record.stages.upload.status,
         record.stages.upload.result?.reportedBytesPerSec,
-      );
-    if (column === "bidirectional") return bidiRate(record);
-    if (column === "idle")
-      return record.stages.latency.result
+      ),
+      bidirectional: bidiRate(record),
+      idle: record.stages.latency.result
         ? formatLatency(record.stages.latency.result.reportedMs)
-        : stageStatusLabel(record.stages.latency.status);
-    if (column === "loaded") return loadedMetric(record);
-    return partial(record) ? "Partial" : "Complete";
+        : stageStatusLabel(record.stages.latency.status),
+      loaded: loadedMetric(record),
+    };
+    return values[column];
   }
 
   function dateLabel(value: number): string {
@@ -330,6 +323,9 @@
 
   onMount(() => {
     void load();
+    const relativeRefresh = window.setInterval(() => {
+      if (document.visibilityState === "visible") renderedAt = Date.now();
+    }, 60_000);
     const refresh = () => void load(false);
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
@@ -343,6 +339,7 @@
       window.removeEventListener("graphite-meter-history-changed", refresh);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(relativeRefresh);
       repository.close();
     };
   });
@@ -427,6 +424,11 @@
           Enable result history
         </button>
       {/if}
+      {#if malformedCount > 0}
+        <button type="button" onclick={() => (confirm = { kind: "clear" })}>
+          Clear all saved results
+        </button>
+      {/if}
     </div>
   {:else}
     <div class="archive-overview" aria-label="History overview">
@@ -450,9 +452,7 @@
 
     <div class="archive-toolbar">
       <p>
-        <strong>Results</strong><span
-          >Newest completion is the default order.</span
-        >
+        <strong>Results</strong>
       </p>
       <div class="toolbar-actions">
         <HistoryViewControl
@@ -560,9 +560,7 @@
                     >
                   </time>
                   <span class="row-badges">
-                    {#if partial(record) && !columns.includes("status")}<em
-                        class="partial">Partial</em
-                      >{/if}
+                    {#if partial(record)}<em class="partial">Partial</em>{/if}
                     {#if selectedId === record.id}<em class="selected-badge"
                         >Selected</em
                       >{/if}
@@ -575,10 +573,7 @@
                         column
                       ].short}</small
                     >
-                    <strong
-                      class:partial-value={column === "status" &&
-                        partial(record)}>{metric(record, column)}</strong
-                    >
+                    <strong>{metric(record, column)}</strong>
                   </span>
                 {/each}
               </a>
@@ -605,7 +600,6 @@
           <footer class="archive-management">
             <div>
               <strong>Archive management</strong>
-              <span>Destructive actions affect this browser only.</span>
             </div>
             <button type="button" onclick={() => (confirm = { kind: "clear" })}
               >Clear all saved results</button
@@ -657,7 +651,7 @@
     ? "Clear result history?"
     : "Delete this result?"}
   description={confirm?.kind === "clear"
-    ? `Permanently remove all ${records.length} saved results from this browser?`
+    ? "Permanently remove all locally stored results from this browser?"
     : "Permanently remove this saved result from this browser?"}
   confirmLabel={confirm?.kind === "clear" ? "Clear history" : "Delete result"}
   onCancel={() => (confirm = null)}
@@ -694,9 +688,10 @@
     border-bottom: 1px solid var(--border-strong);
     background: linear-gradient(
       110deg,
-      color-mix(in srgb, var(--brand) 8%, var(--surface-2)),
-      var(--surface-1) 58%
+      color-mix(in srgb, var(--brand) 15%, var(--surface-2)),
+      color-mix(in srgb, var(--phase-latency) 5%, var(--surface-1)) 58%
     );
+    box-shadow: var(--elev-tile);
   }
   .history-title {
     display: flex;
@@ -855,8 +850,12 @@
       minmax(100px, 0.55fr) minmax(250px, 1.4fr)
       minmax(180px, 0.8fr);
     border-bottom: 1px solid var(--border);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
+    background: linear-gradient(
+      105deg,
+      color-mix(in srgb, var(--brand) 8%, var(--surface-inset)),
+      var(--surface-inset) 62%
+    );
+    box-shadow: inset 0 -1px 0 var(--border);
   }
   .archive-overview > div {
     min-width: 0;
@@ -899,10 +898,6 @@
     display: grid;
     gap: 2px;
     font-size: var(--type-xs);
-  }
-  .archive-toolbar > p span {
-    color: var(--text-soft);
-    font-size: 9px;
   }
   .toolbar-actions {
     display: flex;
@@ -958,7 +953,7 @@
     min-width: 0;
   }
   .column-head > span + span {
-    border-left: 1px solid var(--border-subtle);
+    border-left: 0;
   }
   .column-head button,
   .static-head {
@@ -1026,7 +1021,8 @@
     contain-intrinsic-size: 58px;
   }
   li + li {
-    border-top: 1px solid var(--border);
+    border-top: 0;
+    margin-top: 2px;
   }
   li.selected {
     content-visibility: visible;
@@ -1121,7 +1117,7 @@
   .metric-cell {
     display: grid;
     align-content: center;
-    border-left: 1px solid var(--border-subtle);
+    border-left: 0;
     text-align: right;
   }
   .metric-cell small {
@@ -1133,8 +1129,18 @@
     font: 620 10px var(--font-mono);
     line-height: 1.35;
   }
-  .metric-cell strong.partial-value {
-    color: var(--warn);
+  .metric-cell[data-tone="download"] {
+    background: color-mix(in srgb, var(--phase-download) 3%, transparent);
+  }
+  .metric-cell[data-tone="upload"] {
+    background: color-mix(in srgb, var(--phase-upload) 3%, transparent);
+  }
+  .metric-cell[data-tone="bidirectional"] {
+    background: color-mix(in srgb, var(--phase-bidirectional) 3%, transparent);
+  }
+  .metric-cell[data-tone="idle"],
+  .metric-cell[data-tone="loaded"] {
+    background: color-mix(in srgb, var(--phase-latency) 3%, transparent);
   }
   .detail-inspector {
     min-width: 0;
@@ -1209,9 +1215,6 @@
     color: var(--text-muted);
     font-size: var(--type-xs);
   }
-  .archive-management span {
-    font-size: 9px;
-  }
   .archive-management button {
     min-height: 30px;
     padding: 0 9px;
@@ -1258,7 +1261,7 @@
       contain-intrinsic-size: 190px;
     }
     li + li {
-      border-top: 1px solid var(--border);
+      border-top: 0;
     }
     li.selected {
       border-color: color-mix(in srgb, var(--brand) 64%, var(--border));
@@ -1329,9 +1332,6 @@
     .archive-toolbar {
       align-items: flex-start;
       padding-inline: var(--space-3);
-    }
-    .archive-toolbar > p span {
-      display: none;
     }
     .saving-notice {
       align-items: flex-start;

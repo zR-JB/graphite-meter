@@ -274,6 +274,39 @@ test("History is safe to reload and malformed client routes stay in the shell", 
   ).toBeVisible();
 });
 
+test("malformed-only archives keep a raw clear path", async ({ page }) => {
+  await openApp(page, "dummy", { width: 900, height: 700 });
+  await seedHistory(page, [{ id: "malformed", unexpected: true }]);
+  await openHistory(page);
+  await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
+  const clear = page.getByRole("button", { name: "Clear all saved results" });
+  await expect(clear).toBeVisible();
+  await clear.click();
+  const dialog = page.getByRole("alertdialog", {
+    name: "Clear result history?",
+  });
+  await expect(
+    dialog.getByText(
+      "Permanently remove all locally stored results from this browser?",
+    ),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "Clear history" }).click();
+  await expect(page.getByText("No saved results")).toBeVisible();
+  const count = await page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const request = indexedDB.open("graphite-meter", 1);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const tx = request.result.transaction("results", "readonly");
+          const get = tx.objectStore("results").count();
+          get.onsuccess = () => resolve(get.result);
+        };
+      }),
+  );
+  expect(count).toBe(0);
+});
+
 test("wordmark semantics preserve a live run away from the meter", async ({
   page,
 }) => {
@@ -380,6 +413,19 @@ test("deep-linked detail is a focused side inspector and a focused inline expans
   const heading = page.locator(".result-detail h2");
   await expect(page.locator(".detail-inspector")).toBeVisible();
   await expect(heading).toBeFocused();
+  const detail = page.locator(".detail-inspector");
+  await expect(detail.locator(".profile-lane")).toHaveCount(4);
+  await expect(detail.getByText("P50", { exact: true })).toBeVisible();
+  await expect(detail.getByText("P95", { exact: true })).toBeVisible();
+  await expect(detail.getByText("Stability", { exact: true })).toBeVisible();
+  await expect(detail.locator(".bufferbloat-band")).toHaveCount(0);
+  await expect(detail.locator("summary.section-head")).toHaveCount(4);
+  await expect(detail.locator(".disclosure")).toHaveCount(0);
+  await expect(detail.locator(".phase-row")).toHaveCount(3);
+  await expect(detail.locator(".phase-row")).not.toContainText("loss");
+  await expect(
+    detail.getByRole("button", { name: "Close result" }),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page.locator(".history-workspace"));
 
   await page.keyboard.press("Escape");
@@ -527,7 +573,7 @@ test("sortable headers expose natural reversible order with missing values last"
   await expect(partialRow.getByText("Partial", { exact: true })).toHaveCount(1);
   await expect(
     partialRow.locator(".date-cell").getByText("Partial", { exact: true }),
-  ).toHaveCount(0);
+  ).toHaveCount(1);
 
   const downloadHeader = page
     .getByRole("columnheader", { name: /Down/ })

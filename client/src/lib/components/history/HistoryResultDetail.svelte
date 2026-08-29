@@ -4,16 +4,17 @@
     formatDuration,
     formatHistoryBytes,
     formatHistoryRate,
-    formatLatency,
-    formatPercent,
     stageStatusLabel,
   } from "../../history/format";
   import type {
     HistoryRecordV1,
-    LatencyLaneSnapshot,
     ThroughputSnapshot,
   } from "../../history/types";
   import { store } from "../../state/store.svelte";
+  import { savedLatencyLossVisible } from "../latencyProfile";
+  import LatencyProfileSummary, {
+    type FinalizedLatencyLane,
+  } from "./LatencyProfileSummary.svelte";
 
   interface Props {
     record: HistoryRecordV1;
@@ -35,40 +36,95 @@
       ].some((status) => status === "partial" || status === "failed"),
   );
 
-  const loadedProfiles = $derived<
-    {
-      key: "download" | "upload" | "bidirectional";
-      label: string;
-      icon: string;
-      lane: LatencyLaneSnapshot | null;
-    }[]
-  >([
-    {
-      key: "download",
-      label: "Loaded down",
-      icon: ICON.download,
-      lane: record.stages.latency.lanes.download,
-    },
-    {
-      key: "upload",
-      label: "Loaded up",
-      icon: ICON.upload,
-      lane: record.stages.latency.lanes.upload,
-    },
-    {
-      key: "bidirectional",
-      label: "Loaded bi-dir",
-      icon: ICON.bidirectional,
-      lane: record.stages.latency.lanes.bidirectional,
-    },
-  ]);
-  const availableLoadedProfiles = $derived(
-    loadedProfiles.filter((profile) => profile.lane !== null),
+  const loadedProfiles = $derived<FinalizedLatencyLane[]>(
+    [
+      ["download", "Loaded down", ICON.download],
+      ["upload", "Loaded up", ICON.upload],
+      ["bidirectional", "Loaded bi-dir", ICON.bidirectional],
+    ].flatMap(([key, label, icon]) => {
+      const lane =
+        record.stages.latency.lanes[
+          key as "download" | "upload" | "bidirectional"
+        ];
+      return lane
+        ? [{ key, label, icon, ...lane } as FinalizedLatencyLane]
+        : [];
+    }),
+  );
+  const profileLanes = $derived<FinalizedLatencyLane[]>(
+    [
+      record.stages.latency.lanes.latency
+        ? {
+            key: "latency" as const,
+            label: "Idle",
+            icon: ICON.ping,
+            ...record.stages.latency.lanes.latency,
+            headline: record.stages.latency.result
+              ? {
+                  p50Ms: record.stages.latency.result.p50Ms,
+                  p95Ms: record.stages.latency.result.p95Ms,
+                  stabilityScore: record.stages.latency.result.stabilityScore,
+                }
+              : undefined,
+          }
+        : null,
+      ...loadedProfiles,
+    ].filter((lane): lane is FinalizedLatencyLane => lane !== null),
   );
   const hasResponsivenessData = $derived(
-    record.stages.latency.result !== null ||
-      availableLoadedProfiles.length > 0 ||
-      record.bufferbloat !== null,
+    profileLanes.some((lane) =>
+      [lane.min, lane.max, lane.p10, lane.p90, lane.center, lane.jitter].some(
+        (value) => value != null,
+      ),
+    ),
+  );
+  const throughputRows = $derived(
+    [
+      record.stages.download.status !== "not-run"
+        ? {
+            key: "download",
+            label: "Download",
+            icon: ICON.download,
+            status: record.stages.download.status,
+            value: record.stages.download.result?.reportedBytesPerSec ?? null,
+            detail: record.stages.download.result
+              ? `${bytes(record.stages.download.result)} transferred`
+              : "",
+          }
+        : null,
+      record.stages.upload.status !== "not-run"
+        ? {
+            key: "upload",
+            label: "Upload",
+            icon: ICON.upload,
+            status: record.stages.upload.status,
+            value: record.stages.upload.result?.reportedBytesPerSec ?? null,
+            detail: record.stages.upload.result
+              ? `${bytes(record.stages.upload.result)} transferred`
+              : "",
+          }
+        : null,
+      record.stages.bidirectional.status !== "not-run"
+        ? {
+            key: "bidirectional",
+            label: "Bidirectional",
+            icon: ICON.bidirectional,
+            status: record.stages.bidirectional.status,
+            value:
+              record.stages.bidirectional.down && record.stages.bidirectional.up
+                ? record.stages.bidirectional.down.reportedBytesPerSec +
+                  record.stages.bidirectional.up.reportedBytesPerSec
+                : null,
+            detail:
+              record.stages.bidirectional.down || record.stages.bidirectional.up
+                ? `Down ${record.stages.bidirectional.down ? rate(record.stages.bidirectional.down.reportedBytesPerSec) : "Unavailable"} · Up ${record.stages.bidirectional.up ? rate(record.stages.bidirectional.up.reportedBytesPerSec) : "Unavailable"}`
+                : "",
+          }
+        : null,
+    ].filter((row) => row !== null),
+  );
+  const showLatencyLoss = $derived(
+    savedLatencyLossVisible(record.transport.latency.kind),
   );
 
   function rate(value: number | null | undefined): string {
@@ -86,8 +142,13 @@
 
 <article class="result-detail" aria-labelledby={`result-${record.id}-title`}>
   <header class="detail-head">
-    <button class="back-detail" type="button" onclick={onClose}>
-      <span>{@html ICON.back}</span>Close result
+    <button
+      class="close-detail"
+      type="button"
+      aria-label="Close result"
+      onclick={onClose}
+    >
+      <span>{@html ICON.close}</span>Close result
     </button>
     <div class="detail-title">
       <span class="eyebrow">Saved result</span>
@@ -134,67 +195,26 @@
         >{@html ICON.bidirectional}</span
       >
       <h3 id={`result-${record.id}-throughput`}>Throughput lanes</h3>
-      <span class="disclosure" aria-hidden="true">⌄</span>
     </summary>
     <div class="detail-content phase-stack">
-      <div class="phase-row" data-tone="download">
-        <div class="phase-name">
-          <span>{@html ICON.download}</span><strong>Download</strong>
+      {#each throughputRows as row (row.key)}
+        <div class="phase-row" data-tone={row.key}>
+          <div class="phase-name">
+            <span>{@html row.icon}</span><strong>{row.label}</strong>
+          </div>
+          <div class="phase-reading">
+            <strong
+              >{row.value == null
+                ? stageStatusLabel(row.status)
+                : rate(row.value)}</strong
+            >
+            {#if row.detail}<small>{row.detail}</small>{/if}
+          </div>
         </div>
-        <div class="phase-reading">
-          <strong
-            >{record.stages.download.result
-              ? rate(record.stages.download.result.reportedBytesPerSec)
-              : stageStatusLabel(record.stages.download.status)}</strong
-          >
-          {#if record.stages.download.result}<small
-              >{bytes(record.stages.download.result)} transferred · {formatPercent(
-                record.stages.download.result.packetLossPct,
-              )} loss</small
-            >{/if}
-        </div>
-      </div>
-      <div class="phase-row" data-tone="upload">
-        <div class="phase-name">
-          <span>{@html ICON.upload}</span><strong>Upload</strong>
-        </div>
-        <div class="phase-reading">
-          <strong
-            >{record.stages.upload.result
-              ? rate(record.stages.upload.result.reportedBytesPerSec)
-              : stageStatusLabel(record.stages.upload.status)}</strong
-          >
-          {#if record.stages.upload.result}<small
-              >{bytes(record.stages.upload.result)} transferred · {formatPercent(
-                record.stages.upload.result.packetLossPct,
-              )} loss</small
-            >{/if}
-        </div>
-      </div>
-      <div class="phase-row" data-tone="bidirectional">
-        <div class="phase-name">
-          <span>{@html ICON.bidirectional}</span><strong>Bidirectional</strong>
-        </div>
-        <div class="phase-reading">
-          <strong
-            >{record.stages.bidirectional.down && record.stages.bidirectional.up
-              ? rate(
-                  record.stages.bidirectional.down.reportedBytesPerSec +
-                    record.stages.bidirectional.up.reportedBytesPerSec,
-                )
-              : stageStatusLabel(record.stages.bidirectional.status)}</strong
-          >
-          {#if record.stages.bidirectional.down || record.stages.bidirectional.up}
-            <small>
-              Down {record.stages.bidirectional.down
-                ? rate(record.stages.bidirectional.down.reportedBytesPerSec)
-                : "Unavailable"} · Up {record.stages.bidirectional.up
-                ? rate(record.stages.bidirectional.up.reportedBytesPerSec)
-                : "Unavailable"}
-            </small>
-          {/if}
-        </div>
-      </div>
+      {/each}
+      {#if throughputRows.length === 0}<p class="not-run-note">
+          No throughput stages were run.
+        </p>{/if}
     </div>
   </details>
 
@@ -202,7 +222,6 @@
     <summary class="section-head">
       <span class="section-mark" data-tone="latency">{@html ICON.ping}</span>
       <h3 id={`result-${record.id}-latency`}>Responsiveness</h3>
-      <span class="disclosure" aria-hidden="true">⌄</span>
     </summary>
     <div class="detail-content">
       {#if !hasResponsivenessData}
@@ -215,99 +234,10 @@
           </span>
         </div>
       {:else}
-        {#if record.stages.latency.result}
-          <div class="idle-band" data-tone="latency">
-            <div class="profile-title">
-              <span>{@html ICON.ping}</span><strong>Idle</strong>
-              <em>{formatLatency(record.stages.latency.result.reportedMs)}</em>
-            </div>
-            <dl class="metric-grid">
-              <div>
-                <dt>Minimum</dt>
-                <dd>{formatLatency(record.stages.latency.result.minMs)}</dd>
-              </div>
-              <div>
-                <dt>p50</dt>
-                <dd>{formatLatency(record.stages.latency.result.p50Ms)}</dd>
-              </div>
-              <div>
-                <dt>p95</dt>
-                <dd>{formatLatency(record.stages.latency.result.p95Ms)}</dd>
-              </div>
-              <div>
-                <dt>Jitter</dt>
-                <dd>{formatLatency(record.stages.latency.result.jitterMs)}</dd>
-              </div>
-              <div>
-                <dt>Loss</dt>
-                <dd>
-                  {formatPercent(record.stages.latency.result.packetLossPct)}
-                </dd>
-              </div>
-              <div>
-                <dt>Stability</dt>
-                <dd>
-                  {formatPercent(
-                    record.stages.latency.result.stabilityScore * 100,
-                    0,
-                  )}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        {:else}
-          <div class="stage-unavailable compact">
-            <strong>{stageStatusLabel(record.stages.latency.status)}</strong>
-            <span>No idle latency summary is available.</span>
-          </div>
-        {/if}
-        {#if availableLoadedProfiles.length}
-          <div class="loaded-stack">
-            {#each availableLoadedProfiles as profile (profile.key)}
-              <div class="loaded-row" data-tone={profile.key}>
-                <div class="profile-title">
-                  <span>{@html profile.icon}</span><strong
-                    >{profile.label}</strong
-                  >
-                  <em>{formatLatency(profile.lane!.center)}</em>
-                </div>
-                <dl class="metric-grid compact">
-                  <div>
-                    <dt>Minimum</dt>
-                    <dd>{formatLatency(profile.lane!.min)}</dd>
-                  </div>
-                  <div>
-                    <dt>p10–p90</dt>
-                    <dd>
-                      {formatLatency(profile.lane!.p10)} – {formatLatency(
-                        profile.lane!.p90,
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Jitter</dt>
-                    <dd>{formatLatency(profile.lane!.jitter)}</dd>
-                  </div>
-                  <div>
-                    <dt>Loss</dt>
-                    <dd>{formatPercent(profile.lane!.lossRatio * 100)}</dd>
-                  </div>
-                </dl>
-              </div>
-            {/each}
-          </div>
-        {/if}
-        {#if record.bufferbloat}
-          <div class="bufferbloat-band">
-            <span>Loaded latency</span>
-            <strong>{formatLatency(record.bufferbloat.loadedMs)}</strong>
-            <small
-              >Idle {formatLatency(record.bufferbloat.idleMs)} · increase {formatLatency(
-                record.bufferbloat.increaseMs,
-              )} · grade {record.bufferbloat.grade}</small
-            >
-          </div>
-        {/if}
+        <LatencyProfileSummary
+          lanes={profileLanes}
+          showLoss={showLatencyLoss}
+        />
       {/if}
     </div>
   </details>
@@ -317,7 +247,6 @@
       <span class="section-mark">{@html ICON.info}</span>
       <h3 id={`result-${record.id}-context`}>Run context</h3>
       <span class="section-preview">Server, transport & build</span>
-      <span class="disclosure" aria-hidden="true">⌄</span>
     </summary>
     <dl class="detail-content context-list">
       <div>
@@ -365,7 +294,6 @@
         <span class="section-mark issue-mark">!</span>
         <h3 id={`result-${record.id}-issues`}>Structured failures</h3>
         <span class="section-preview">{record.failures.length}</span>
-        <span class="disclosure" aria-hidden="true">⌄</span>
       </summary>
       <ul class="detail-content">
         {#each record.failures as failure}
@@ -388,7 +316,6 @@
         <span class="section-mark wire-mark">W</span>
         <h3 id={`result-${record.id}-wire`}>Wire-rate snapshot</h3>
         <span class="section-preview">Optional estimate</span>
-        <span class="disclosure" aria-hidden="true">⌄</span>
       </summary>
       <div class="detail-content">
         <p class="wire-note">
@@ -434,7 +361,7 @@
     background: color-mix(in srgb, var(--surface-1) 94%, transparent);
     backdrop-filter: blur(12px);
   }
-  .back-detail {
+  .close-detail {
     display: inline-flex;
     align-items: center;
     justify-self: start;
@@ -449,15 +376,15 @@
     font-weight: 700;
     cursor: pointer;
   }
-  .back-detail:hover {
+  .close-detail:hover {
     border-color: var(--border-strong);
     color: var(--text);
   }
-  .back-detail span {
+  .close-detail span {
     display: grid;
     place-items: center;
   }
-  .back-detail :global(svg) {
+  .close-detail :global(svg) {
     width: 14px;
     height: 14px;
   }
@@ -491,8 +418,12 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     border-bottom: 1px solid var(--border);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--brand) 6%, var(--surface-inset)),
+      var(--surface-inset)
+    );
+    box-shadow: inset 0 -1px 0 var(--border);
   }
   .run-facts div {
     min-width: 0;
@@ -527,10 +458,9 @@
     gap: var(--space-2);
     padding: 11px var(--space-4);
     cursor: pointer;
-    list-style: none;
   }
-  .section-head::-webkit-details-marker {
-    display: none;
+  .section-head::marker {
+    color: var(--brand);
   }
   .section-head:hover {
     background: color-mix(in srgb, var(--brand) 5%, var(--surface-1));
@@ -560,19 +490,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .disclosure {
-    color: var(--text-soft);
-    font: 750 13px var(--font-mono);
-    transition: transform var(--dur-hover) var(--ease-out);
-  }
-  .detail-group[open] > .section-head .disclosure {
-    transform: rotate(180deg);
-  }
   .detail-content {
     margin: 0 var(--space-4) var(--space-4);
   }
-  .phase-stack,
-  .loaded-stack {
+  .phase-stack {
     overflow: hidden;
   }
   .phase-row {
@@ -584,8 +505,7 @@
     padding: 12px 8px 12px 11px;
     border-left: 2px solid var(--tone);
   }
-  .phase-row + .phase-row,
-  .loaded-row + .loaded-row {
+  .phase-row + .phase-row {
     border-top: 1px solid var(--border);
   }
   [data-tone="download"] {
@@ -600,8 +520,7 @@
   [data-tone="latency"] {
     --tone: var(--phase-latency);
   }
-  .phase-name,
-  .profile-title {
+  .phase-name {
     display: flex;
     align-items: center;
     gap: 7px;
@@ -609,15 +528,13 @@
     color: var(--text-muted);
     font-size: var(--type-xs);
   }
-  .phase-name span,
-  .profile-title > span {
+  .phase-name span {
     display: grid;
     place-items: center;
     flex: none;
     color: var(--tone);
   }
-  .phase-name :global(svg),
-  .profile-title :global(svg) {
+  .phase-name :global(svg) {
     width: 15px;
     height: 15px;
   }
@@ -638,70 +555,10 @@
     font-size: 9px;
     line-height: 1.45;
   }
-  .idle-band,
-  .loaded-row {
-    --tone: var(--phase-latency);
-    padding: 12px;
-    border-left: 2px solid var(--tone);
-    background: var(--surface-inset);
-  }
-  .idle-band {
-    border-left: 2px solid var(--tone);
-  }
-  .loaded-stack {
-    margin-top: var(--space-2);
-  }
-  .profile-title strong {
-    font-weight: 700;
-  }
-  .profile-title em {
-    margin-left: auto;
-    overflow-wrap: anywhere;
-    color: var(--text);
-    font: 650 var(--type-sm) var(--font-mono);
-    font-style: normal;
-    text-align: right;
-  }
-  .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 9px var(--space-3);
-    margin: var(--space-3) 0 0;
-  }
-  .metric-grid.compact {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .metric-grid div {
-    min-width: 0;
-  }
   dd {
     margin: 2px 0 0;
     overflow-wrap: anywhere;
     font: 600 var(--type-xs) var(--font-mono);
-  }
-  .bufferbloat-band {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 3px var(--space-3);
-    margin-top: var(--space-2);
-    padding: 11px 12px;
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--phase-latency) 7%, var(--surface-2));
-  }
-  .bufferbloat-band span {
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    font-weight: 700;
-  }
-  .bufferbloat-band strong {
-    color: var(--text);
-    font: 650 var(--type-sm) var(--font-mono);
-  }
-  .bufferbloat-band small {
-    grid-column: 1 / -1;
-    color: var(--text-soft);
-    font-size: 9px;
   }
   .context-list,
   .wire-list {
@@ -728,9 +585,6 @@
     padding: 12px;
     border-left: 2px solid var(--text-soft);
     background: var(--surface-inset);
-  }
-  .stage-unavailable.compact {
-    margin-bottom: var(--space-2);
   }
   .stage-unavailable strong {
     font-size: var(--type-sm);
@@ -812,8 +666,6 @@
       padding-left: 22px;
       text-align: left;
     }
-    .metric-grid,
-    .metric-grid.compact,
     .context-list,
     .wire-list {
       grid-template-columns: repeat(2, minmax(0, 1fr));

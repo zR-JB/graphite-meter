@@ -28,6 +28,8 @@ const ALLOWED = new Set([
   "s.icon",
   "c.icon",
   "profile.icon",
+  "row.icon",
+  "lane.icon",
   "columnMeta[column].icon",
 ]);
 

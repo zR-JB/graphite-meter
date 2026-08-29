@@ -36,7 +36,6 @@
     bidirectional: "Bidirectional",
     idle: "Idle latency",
     loaded: "Loaded latency",
-    status: "Status",
   };
 
   async function toggle() {
