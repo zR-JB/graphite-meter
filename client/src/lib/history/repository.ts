@@ -112,12 +112,14 @@ export class HistoryRepository {
     tx.objectStore(STORE).delete(id);
     await transactionDone(tx);
   }
+  /** Clear every raw value, including entries that fail the history schema. */
   async clear(): Promise<void> {
     const db = await this.db();
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).clear();
     await transactionDone(tx);
   }
+
   close(): void {
     this.#db?.close();
     this.#db = null;

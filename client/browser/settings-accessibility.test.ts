@@ -33,6 +33,29 @@ test("settings expose live controls and lock run construction inputs", async ({
     settings.locator('input[name="throughput-target"]:checked'),
   ).toBeDisabled();
 });
+
+test("settings group result and advanced controls in the requested order", async ({
+  page,
+}) => {
+  await openApp(page);
+  const settings = await openSettings(page);
+  const headings = settings.locator("h3");
+  const order = await headings.evaluateAll((nodes) =>
+    nodes.map((node) => node.textContent?.trim()),
+  );
+  expect(order.indexOf("Result history")).toBeLessThan(
+    order.indexOf("Wire-rate estimates"),
+  );
+  expect(order.indexOf("Wire-rate estimates")).toBeLessThan(
+    order.indexOf("Gauge scale"),
+  );
+  expect(order.indexOf("Transfer streams")).toBeGreaterThan(
+    order.indexOf("Datagram throughput"),
+  );
+  await expect(settings.getByText("Minimum coverage")).toHaveCount(0);
+  await expect(settings.getByText("Stability threshold")).toHaveCount(0);
+  await expect(settings.getByText("Confirmation ms")).toHaveCount(0);
+});
 test("connection paths stay single-column by default and reflow after a dock resize", async ({
   page,
 }) => {

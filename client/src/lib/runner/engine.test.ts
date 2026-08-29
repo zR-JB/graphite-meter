@@ -349,6 +349,25 @@ test("connection failures use safe presentation copy", async () => {
     ),
   ).toBe("Connection check failed");
 });
+test("runner boundary canonicalizes every adaptive tuning field", async () => {
+  const { canonicalAdaptiveConfig } = await import("./engine.svelte");
+  const { DEFAULT_CONFIG } = await import("../state/defaults");
+  const hostile = {
+    ...DEFAULT_CONFIG.adaptive,
+    enabled: false,
+    minCoverageRatio: 0.01,
+    stabilityThreshold: 0.01,
+    maxPhaseReductionRatio: 0.99,
+    minLatencySamples: 1,
+    minTransferSamples: 1,
+    confirmationMs: 1,
+    glideMs: 1,
+  };
+  expect(canonicalAdaptiveConfig(hostile)).toEqual({
+    ...DEFAULT_CONFIG.adaptive,
+    enabled: false,
+  });
+});
 test("preparation names a disabled throughput path for latency-only runs", async () => {
   await checkPreparation(
     {

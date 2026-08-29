@@ -8,7 +8,7 @@ export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 export type ThemePref = "dark" | "light" | "auto";
 export type ResultHistoryPreference = "default" | "enabled" | "disabled";
 export type HistoryColumn =
-  "download" | "upload" | "bidirectional" | "idle" | "loaded" | "status";
+  "download" | "upload" | "bidirectional" | "idle" | "loaded";
 
 export const HISTORY_COLUMNS: readonly HistoryColumn[] = [
   "download",
@@ -16,14 +16,12 @@ export const HISTORY_COLUMNS: readonly HistoryColumn[] = [
   "bidirectional",
   "idle",
   "loaded",
-  "status",
 ];
 export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
   "download",
   "upload",
   "idle",
   "loaded",
-  "status",
 ];
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
@@ -142,11 +140,14 @@ export function loadPersisted(): PersistedState {
 
   const parsedConfig = object(parsed.config);
   const parsedAdaptive = object(parsedConfig?.adaptive);
-  if (
-    parsedAdaptive?.confirmationMs === undefined &&
-    typeof parsedAdaptive?.glideMs === "number"
-  )
-    merged.config.adaptive.confirmationMs = parsedAdaptive.glideMs;
+  // Adaptive tuning is internal policy; preserve only its enable preference.
+  merged.config.adaptive = {
+    ...DEFAULT_CONFIG.adaptive,
+    enabled:
+      parsedAdaptive?.enabled === undefined
+        ? DEFAULT_CONFIG.adaptive.enabled
+        : parsedAdaptive.enabled === true,
+  };
   merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
     defaults.config.pingCadence,
@@ -198,6 +199,11 @@ export function loadPersisted(): PersistedState {
 export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+    const safe = structuredClone(snapshot);
+    safe.config.adaptive = {
+      ...DEFAULT_CONFIG.adaptive,
+      enabled: snapshot.config.adaptive.enabled === true,
+    };
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
   } catch {}
 }
