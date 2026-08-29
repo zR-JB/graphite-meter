@@ -69,8 +69,14 @@ import {
   savePersisted,
   systemThemeDefault,
   DEFAULT_DOCK_WIDTH,
+  STORAGE_KEY,
   type ThemePref,
+  type ResultHistoryPreference,
+  DEFAULT_HISTORY_COLUMNS,
+  type HistoryColumn,
 } from "./persistence";
+import { BUILD } from "../buildenv";
+import { buildHistoryRecord, type HistoryRecordV1 } from "../history/types";
 
 type PreparationStatus =
   "idle" | "authenticating" | "checking" | "launching" | "failed";
@@ -132,7 +138,7 @@ function emptyStability(): LiveStability {
   return { latency: null, download: null, upload: null, bidirectional: null };
 }
 
-class AppStore {
+export class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
   preparation = $state<PreparationState>(emptyPreparation());
@@ -197,6 +203,24 @@ class AppStore {
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
   showWireEstimates = $state(true);
+  resultHistoryPreference = $state<ResultHistoryPreference>("default");
+  historyColumns = $state<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
+  // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
+  historyCandidate = $state.raw<HistoryRecordV1 | null>(null);
+  historyWarning = $state("");
+  operatorHistoryDefault = $derived.by(() => {
+    if (typeof document === "undefined") return false;
+    return (
+      document
+        .querySelector('meta[name="graphite-meter-result-history-default"]')
+        ?.getAttribute("content") === "true"
+    );
+  });
+  savingResults = $derived(
+    this.resultHistoryPreference === "enabled" ||
+      (this.resultHistoryPreference === "default" &&
+        this.operatorHistoryDefault),
+  );
   dockWidth = $state<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
   });
@@ -599,6 +623,77 @@ class AppStore {
       case "complete":
         this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
+        if (this.savingResults) {
+          const wireArgs = {
+            detectedProtocol: this.runConnections.throughput.browserProtocol,
+            detectedSecure: this.runConnections.throughput.target?.tls,
+            detectedIPVersion: this.runConnections.throughput.clientIpVersion,
+            detectedClientIP: this.runConnections.throughput.clientIp,
+            selectedTransport: this.runConnections.throughput.target?.transport,
+          };
+          const estimate = (
+            value: ThroughputResult | null,
+            phase: "download" | "upload",
+          ) =>
+            value
+              ? estimateResultCompensation(
+                  value,
+                  phase,
+                  wireArgs.detectedProtocol,
+                  wireArgs.detectedSecure,
+                  wireArgs.detectedIPVersion,
+                  wireArgs.detectedClientIP,
+                  wireArgs.selectedTransport,
+                )
+              : null;
+          const downloadWire = estimate(event.result.download, "download");
+          const uploadWire = estimate(event.result.upload, "upload");
+          const bidiEstimates = event.result.bidirectional
+            ? [
+                estimate(event.result.bidirectional.down, "download"),
+                estimate(event.result.bidirectional.up, "upload"),
+              ].filter((value): value is CompensationEstimate => value !== null)
+            : [];
+          const bidiWire = bidiEstimates.length
+            ? combineCompensationEstimates(bidiEstimates)
+            : null;
+          this.historyCandidate = buildHistoryRecord(
+            event.result,
+            {
+              infra: this.infra,
+              clientBuild: BUILD.clientVersion,
+              engineVersion: this.infra?.engineVersion ?? "unknown",
+              latencyLanes: Object.fromEntries(
+                this.latencyLanes.map((lane) => [
+                  lane.key,
+                  {
+                    min: lane.min,
+                    max: lane.max,
+                    p10: lane.p10,
+                    p90: lane.p90,
+                    center: lane.center,
+                    jitter: lane.jitter,
+                    lossRatio: lane.lossRatio,
+                    count: lane.count,
+                  },
+                ]),
+              ),
+              wireDownloadBytesPerSec:
+                this.showWireEstimates && downloadWire?.available
+                  ? downloadWire.estimatedBytesPerSec
+                  : null,
+              wireUploadBytesPerSec:
+                this.showWireEstimates && uploadWire?.available
+                  ? uploadWire.estimatedBytesPerSec
+                  : null,
+              wireBidirectionalBytesPerSec:
+                this.showWireEstimates && bidiWire?.available
+                  ? bidiWire.estimatedBytesPerSec
+                  : null,
+            },
+            Date.now(),
+          );
+        } else this.historyCandidate = null;
         this.phase = "complete";
         break;
       case "error": {
@@ -648,6 +743,7 @@ class AppStore {
       activeConfig: null,
       activeConnections: null,
       startEpoch: 0,
+      historyCandidate: null,
     });
     this.#scaleThroughput = [];
     this.#throughputTargetSpanMs = buildSegments(this.config).totalMs;
@@ -736,6 +832,12 @@ export const store = new AppStore();
 const SAVE_DEBOUNCE_MS = 250;
 
 if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== STORAGE_KEY) return;
+    const persisted = loadPersisted();
+    store.resultHistoryPreference = persisted.resultHistoryPreference;
+    store.historyColumns = persisted.historyColumns;
+  });
   let systemPrefersLight = $state(systemThemeDefault() === "light");
   if (window.matchMedia) {
     window
@@ -764,6 +866,8 @@ if (typeof window !== "undefined") {
         unitKind: store.unitKind,
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
+        resultHistoryPreference: store.resultHistoryPreference,
+        historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),
       };
       clearTimeout(timer);

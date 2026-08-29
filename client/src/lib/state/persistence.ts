@@ -6,15 +6,36 @@ const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light" | "auto";
+export type ResultHistoryPreference = "default" | "enabled" | "disabled";
+export type HistoryColumn =
+  "download" | "upload" | "bidirectional" | "idle" | "loaded" | "status";
+
+export const HISTORY_COLUMNS: readonly HistoryColumn[] = [
+  "download",
+  "upload",
+  "bidirectional",
+  "idle",
+  "loaded",
+  "status",
+];
+export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
+  "download",
+  "upload",
+  "idle",
+  "loaded",
+  "status",
+];
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
 
-interface PersistedState {
+export interface PersistedState {
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
+  resultHistoryPreference: ResultHistoryPreference;
+  historyColumns: HistoryColumn[];
   dockWidth: { left: number; right: number };
 }
 
@@ -32,6 +53,8 @@ export function defaultPersisted(): PersistedState {
     unitKind: "bits",
     theme: "auto",
     showWireEstimates: true,
+    resultHistoryPreference: "default",
+    historyColumns: [...DEFAULT_HISTORY_COLUMNS],
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
   };
 }
@@ -100,6 +123,22 @@ export function loadPersisted(): PersistedState {
   const parsed = safeParse(raw);
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
+  if (
+    !oneOf(parsed.resultHistoryPreference, ["default", "enabled", "disabled"])
+  )
+    merged.resultHistoryPreference = "default";
+  const historyColumns = Array.isArray(parsed.historyColumns)
+    ? [
+        ...new Set(
+          parsed.historyColumns.filter((column): column is HistoryColumn =>
+            oneOf(column, HISTORY_COLUMNS),
+          ),
+        ),
+      ]
+    : [];
+  merged.historyColumns = historyColumns.length
+    ? historyColumns
+    : [...DEFAULT_HISTORY_COLUMNS];
 
   const parsedConfig = object(parsed.config);
   const parsedAdaptive = object(parsedConfig?.adaptive);

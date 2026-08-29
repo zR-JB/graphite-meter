@@ -40,6 +40,36 @@ test("stored value at the current shape: hydrates as-is", () => {
   expect(loaded(snapshot)).toEqual(snapshot);
 });
 
+test("history preference migrates to default and preserves explicit overrides", () => {
+  const snapshot = defaultPersisted();
+  snapshot.resultHistoryPreference = "enabled";
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  expect(loadPersisted().resultHistoryPreference).toBe("enabled");
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ ...snapshot, resultHistoryPreference: "corrupt" }),
+  );
+  expect(loadPersisted().resultHistoryPreference).toBe("default");
+});
+
+test("history columns default, validate, deduplicate, and preserve order", () => {
+  expect(loadPersisted().historyColumns).toEqual([
+    "download",
+    "upload",
+    "idle",
+    "loaded",
+    "status",
+  ]);
+  expect(
+    loaded({
+      historyColumns: ["status", "bidirectional", "status", "bogus"],
+    }).historyColumns,
+  ).toEqual(["status", "bidirectional"]);
+  expect(loaded({ historyColumns: [] }).historyColumns).toEqual(
+    defaultPersisted().historyColumns,
+  );
+});
+
 test("older/partial stored shape: missing fields fall back to defaults", () => {
   const result = loaded({ theme: "light" });
   expect(result.theme).toBe("light");

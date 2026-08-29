@@ -16,8 +16,9 @@
 
   interface Props {
     running?: boolean;
+    onOpenHistory?: () => void;
   }
-  let { running = false }: Props = $props();
+  let { running = false, onOpenHistory }: Props = $props();
 
   function targetOption(
     target:
@@ -377,6 +378,29 @@
     </p>
   </section>
 
+  <section class="panel wide">
+    <h3>Result history</h3>
+    <Switch
+      checked={store.savingResults}
+      onToggle={(enabled) =>
+        (store.resultHistoryPreference = enabled ? "enabled" : "disabled")}
+      label="Save completed results on this device"
+    />
+    <p class="hint">
+      History is stored only in this browser. Your explicit choice overrides the
+      operator default.
+    </p>
+    <a
+      class="history-link"
+      href="#/history"
+      onclick={(event) => {
+        if (!onOpenHistory) return;
+        event.preventDefault();
+        onOpenHistory();
+      }}>Manage History</a
+    >
+  </section>
+
   <h2 class="tier-label">Advanced</h2>
 
   <section class="panel">
@@ -641,6 +665,10 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
+  }
+  .history-link {
+    color: var(--brand-strong);
+    font-size: 12px;
   }
   .caution {
     margin: 0;
