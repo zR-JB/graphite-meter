@@ -18,6 +18,10 @@ export const ICON = {
   check: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M20 6 9 17l-5-5"/></svg>`,
   close: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
   info: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
+  history: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16v13H4z"/><path d="M8 4h8"/><path d="M8 11h8M8 15h5"/></svg>`,
+  back: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M19 12H5"/><path d="m11 6-6 6 6 6"/></svg>`,
+  columns: `<svg viewBox="0 0 24 24" ${STROKE}><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M9 5v14M15 5v14"/></svg>`,
+  more: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`,
 } as const;
 
 export const BUILD_IDENTITY = BUILD.identity;

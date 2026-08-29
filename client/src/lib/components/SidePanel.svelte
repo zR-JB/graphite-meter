@@ -19,6 +19,7 @@
     dockWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    onClose?: () => void;
     toolbar?: Snippet;
     children: Snippet;
   }
@@ -34,12 +35,14 @@
     dockWidth,
     onResize,
     onResetWidth,
+    onClose,
     toolbar,
     children,
   }: Props = $props();
 
   function close() {
-    open = false;
+    if (onClose) onClose();
+    else open = false;
   }
 
   const MIN_WIDTH = 320;

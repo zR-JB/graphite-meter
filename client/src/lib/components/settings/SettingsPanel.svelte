@@ -13,6 +13,8 @@
     dockWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    onClose?: () => void;
+    onOpenHistory?: () => void;
   }
   let {
     open = $bindable(false),
@@ -21,6 +23,8 @@
     dockWidth,
     onResize,
     onResetWidth,
+    onClose,
+    onOpenHistory,
   }: Props = $props();
 
   let resetConfirmOpen = $state(false);
@@ -40,6 +44,7 @@
   {dockWidth}
   {onResize}
   {onResetWidth}
+  {onClose}
   side="left"
   title="Settings"
   kicker="Test & Display"
@@ -47,7 +52,7 @@
   width="min(560px, 94vw)"
 >
   {#key setupResetVersion}
-    <TestSetupPanel running={store.isRunning} />
+    <TestSetupPanel running={store.isRunning} {onOpenHistory} />
   {/key}
   <div class="settings-reset">
     <button
