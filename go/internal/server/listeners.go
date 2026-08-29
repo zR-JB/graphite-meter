@@ -275,12 +275,14 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		return nil, err
 	}
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
-	spa := static.Handler()
+	var spa http.Handler
 	if authn.Enabled() {
-		spa = static.AuthenticatedHandler()
+		spa = static.AuthenticatedHandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
 		if u, err := url.Parse(cfg.Auth.PublicURL); err == nil {
 			authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
 		}
+	} else {
+		spa = static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)

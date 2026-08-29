@@ -38,6 +38,18 @@ func TestH1AddressFlagOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestResultHistoryDefaultFlagOverridesConfig(t *testing.T) {
+	cfg := config.Default()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, &cfg)
+	if err := fs.Parse([]string{"-result-history-default"}); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ResultHistoryDefault {
+		t.Fatal("--result-history-default did not enable the default")
+	}
+}
+
 func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)

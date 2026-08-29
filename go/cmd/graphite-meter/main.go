@@ -114,6 +114,7 @@ func registerFlags(fs *flag.FlagSet, cfg *config.Config) {
 	fs.Func("public-latency-origins", "comma-separated WebSocket latency origins", func(value string) error { cfg.Public.Latency = splitFlagList(value); return nil })
 	fs.StringVar(&cfg.ServerName, "name", cfg.ServerName, "server name advertised in /preflight")
 	fs.StringVar(&cfg.ServerLocation, "location", cfg.ServerLocation, "server location label")
+	fs.BoolVar(&cfg.ResultHistoryDefault, "result-history-default", cfg.ResultHistoryDefault, "save completed browser results on this device by default")
 	fs.BoolVar(&cfg.Verbose, "verbose", cfg.Verbose, "log per-second download/upload throughput")
 	fs.IntVar(&cfg.MaxActiveMeasurements, "max-active-measurements", cfg.MaxActiveMeasurements, "maximum concurrent measurement handlers")
 	fs.IntVar(&cfg.MaxActiveMeasurementsPerClient, "max-active-measurements-per-client", cfg.MaxActiveMeasurementsPerClient, "maximum concurrent measurement handlers per client")

@@ -3,7 +3,6 @@ package static
 
 import (
 	"bytes"
-	"cmp"
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
@@ -12,6 +11,7 @@ import (
 	"net/http"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -50,67 +50,80 @@ func distRoot() fs.FS {
 	return sub
 }
 
-// Handler serves the embedded client as an SPA: a missing path falls back to index.html so client-side routing works.
+// Handler serves the public client while the browser owns all hash routes.
 func Handler() http.Handler {
-	return handlerFor(distRoot())
+	return HandlerWithResultHistoryDefault(false)
 }
 
-// AuthenticatedHandler serves the same build as Handler, injecting a marker <meta> into index responses so the client.
-func AuthenticatedHandler() http.Handler {
-	return handlerForAuthenticated(distRoot())
+// HandlerWithResultHistoryDefault adds the operator's local-history default to the public client metadata.
+func HandlerWithResultHistoryDefault(resultHistoryDefault bool) http.Handler {
+	return handlerForWithMarker(distRoot(), resultHistoryMarker(resultHistoryDefault))
 }
 
-func handlerForAuthenticated(fsys fs.FS) http.Handler {
-	base := handlerFor(fsys)
+// AuthenticatedHandlerWithResultHistoryDefault adds auth and local-history metadata to the client.
+func AuthenticatedHandlerWithResultHistoryDefault(resultHistoryDefault bool) http.Handler {
+	return handlerForWithMarker(distRoot(), slices.Concat(
+		[]byte(`<meta name="graphite-meter-auth" content="enabled">`),
+		resultHistoryMarker(resultHistoryDefault),
+	))
+}
+
+func resultHistoryMarker(enabled bool) []byte {
+	return []byte(`<meta name="graphite-meter-result-history-default" content="` + strconv.FormatBool(enabled) + `">`)
+}
+
+func handlerFor(fsys fs.FS) http.Handler {
+	return handlerForWithMarker(fsys, nil)
+}
+
+// handlerForWithMarker serves the shell only at / and otherwise requires an embedded file.
+func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
+	fileServer := http.FileServer(http.FS(fsys))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if isAssetPath(name) {
-			base.ServeHTTP(w, r)
+		if name == "" || name == "." {
+			serveIndexWithMarker(w, r, fsys, marker)
 			return
 		}
-		index, err := fs.ReadFile(fsys, "index.html")
-		if err != nil {
-			base.ServeHTTP(w, r)
-			return
+		if name != "index.html" {
+			if f, err := fsys.Open(name); err == nil {
+				_ = f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
 		}
-		marker := []byte(`<meta name="graphite-meter-auth" content="enabled">`)
-		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		// The marked index differs from the public one for the same URL.
-		w.Header().Set("Cache-Control", "no-store")
-		// The response is already committed; a write failure is the client hanging up and there is nothing left to report.
-		_, _ = w.Write(index)
+		http.NotFound(w, r)
 	})
 }
 
-// handlerFor builds the SPA-fallback handler over fsys.
-func handlerFor(fsys fs.FS) http.Handler {
-	fileServer := http.FileServer(http.FS(fsys))
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		name = cmp.Or(name, "index.html")
-		if f, err := fsys.Open(name); err == nil {
-			_ = f.Close()
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		// Serving index.html for a missing script fails strict MIME checks and the browser caches that failure.
-		if isAssetPath(name) {
+func serveIndexWithMarker(w http.ResponseWriter, r *http.Request, fsys fs.FS, marker []byte) {
+	if len(marker) != 0 {
+		index, err := fs.ReadFile(fsys, "index.html")
+		if err != nil {
 			http.NotFound(w, r)
 			return
 		}
-		serveIndex(w, r, fsys)
-	})
+		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Content-Length", strconv.Itoa(len(index)))
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(index)
+		return
+	}
+	serveIndex(w, r, fsys)
 }
 
-// isAssetPath reports whether name addresses a build file rather than a client route.
-func isAssetPath(name string) bool {
-	return path.Ext(name) != ""
-}
-
-// serveIndex writes fsys's index.html to w with http.ServeContent's caching/range/content-type handling.
+// serveIndex prevents caches from retaining operator-dependent metadata.
 func serveIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {
+	w.Header().Set("Cache-Control", "no-store")
 	f, err := fsys.Open("index.html")
 	if err != nil {
 		http.NotFound(w, r)
