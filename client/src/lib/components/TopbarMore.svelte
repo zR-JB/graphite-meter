@@ -205,7 +205,7 @@
   }
   .more-menu small {
     margin-top: 2px;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font-size: 9px;
   }
 </style>

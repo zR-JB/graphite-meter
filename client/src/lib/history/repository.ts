@@ -83,17 +83,37 @@ export class HistoryRepository {
   }
   async listWithDiagnostics(): Promise<HistoryListResult> {
     const db = await this.db();
-    const values = await request(
-      db
-        .transaction(STORE, "readonly")
-        .objectStore(STORE)
-        .index(INDEX)
-        .getAll(),
-    );
-    const records = values.filter(isHistoryRecord);
+    const tx = db.transaction(STORE, "readonly");
+    const store = tx.objectStore(STORE);
+    const rawCount = request(store.count());
+    let indexedCount = 0;
+    let malformedIndexedCount = 0;
+    const records: HistoryRecordV1[] = [];
+    const scan = new Promise<void>((resolve, reject) => {
+      const cursorRequest = store.index(INDEX).openCursor(null, "prev");
+      cursorRequest.onerror = () =>
+        reject(
+          cursorRequest.error ?? new Error("IndexedDB cursor request failed"),
+        );
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        indexedCount += 1;
+        if (isHistoryRecord(cursor.value)) {
+          if (records.length < HISTORY_LIMIT) records.push(cursor.value);
+        } else {
+          malformedIndexedCount += 1;
+        }
+        cursor.continue();
+      };
+    });
+    const [totalCount] = await Promise.all([rawCount, scan]);
     return {
       records: retainNewest(records),
-      malformedCount: values.length - records.length,
+      malformedCount: totalCount - indexedCount + malformedIndexedCount,
     };
   }
   async inspect(id: string): Promise<HistoryEntryResult> {

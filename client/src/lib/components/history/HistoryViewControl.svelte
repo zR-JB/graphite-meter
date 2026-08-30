@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { tooltip } from "../../actions/tooltip";
   import { ICON } from "../../constants";
   import {
     HISTORY_SORT_LABEL,
@@ -84,13 +85,16 @@
     bind:this={trigger}
     class="view-trigger"
     type="button"
+    aria-label="Choose visible columns"
     aria-haspopup="dialog"
     aria-expanded={open}
+    use:tooltip={compact
+      ? "Choose columns and sort order"
+      : "Choose visible columns"}
     onclick={toggle}
   >
-    <span>{@html ICON.columns}</span>
+    <span class="layout-icon">{@html ICON.columns}</span>
     <strong>{compact ? "View & sort" : "Columns"}</strong>
-    <span class="chevron" aria-hidden="true">⌄</span>
   </button>
   {#if open}
     <div
@@ -165,12 +169,12 @@
     font-family: var(--font-sans);
   }
   .view-trigger {
-    display: grid;
-    grid-template-columns: 15px auto 9px;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 9px;
+    justify-content: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 0 10px;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
@@ -184,23 +188,19 @@
     border-color: var(--border-strong);
     color: var(--text);
   }
-  .view-trigger > span:first-child,
+  .layout-icon,
   .check {
     display: grid;
     place-items: center;
   }
-  .view-trigger :global(svg),
+  .layout-icon :global(svg),
   .check :global(svg) {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
   }
-  .view-trigger > span:first-child,
+  .layout-icon,
   .check {
     color: var(--brand-strong);
-  }
-  .chevron {
-    color: var(--text-soft);
-    transform: translateY(-1px);
   }
   .view-popover {
     position: absolute;
@@ -213,13 +213,14 @@
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--shadow-float);
+    transform-origin: top right;
   }
   .group-head {
     display: flex;
     justify-content: space-between;
     gap: 8px;
     padding: 7px 8px 5px;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font: 700 9px var(--font-mono);
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -276,6 +277,24 @@
     color: var(--brand-strong);
     font: 750 15px var(--font-mono);
     text-align: center;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .view-popover {
+      animation: reveal-view-menu var(--dur-hover) var(--ease-out) both;
+    }
+    @keyframes reveal-view-menu {
+      from {
+        opacity: 0;
+        transform: translateY(-3px) scale(0.985);
+      }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .view-trigger,
+    .view-popover {
+      animation: none;
+      transition: none;
+    }
   }
   @media (max-width: 560px) {
     .view-popover {

@@ -17,7 +17,6 @@ const ALLOWED = new Set([
   "ICON.info",
   "ICON.more",
   "ICON.moon",
-  "ICON.back",
   "ICON.ping",
   "ICON.settings",
   "ICON.sun",
@@ -27,9 +26,8 @@ const ALLOWED = new Set([
   // Loop variables below hold ICON.* values from static component tables.
   "s.icon",
   "c.icon",
-  "profile.icon",
-  "row.icon",
-  "lane.icon",
+  "card.icon",
+  "laneIcons[lane.key]",
   "columnMeta[column].icon",
 ]);
 

@@ -54,6 +54,7 @@ test("builds an immutable sanitized partial snapshot", () => {
         protocolNegotiated: "h2",
         selectedThroughputTarget: "https://secret.invalid/raw",
         selectedThroughputTransport: "webtransport",
+        selectedLatencyTransport: "webtransport-datagram",
         latencyProtocolNegotiated: "h1",
       },
       clientBuild: "b",
@@ -84,6 +85,7 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(record.stages.latency.lanes.download?.center).toBe(18);
   expect(record.totalBytes).toBe(800);
   expect(record.ipVersion).toBe(4);
+  expect(record.transport.latency.kind).toBeNull();
   expect(JSON.stringify(record)).not.toContain("secret.invalid");
   expect(JSON.stringify(record)).not.toContain("raw secret");
   expect(JSON.stringify(record)).not.toContain("192.0.2.5");
@@ -114,6 +116,20 @@ test("rejects malformed nested records before they reach rendering", () => {
       transport: {
         ...valid.transport,
         throughput: { protocol: "https://raw", kind: null },
+      },
+    },
+    {
+      ...valid,
+      transport: {
+        ...valid.transport,
+        latency: { protocol: "h3", kind: "webtransport-datagram" },
+      },
+    },
+    {
+      ...valid,
+      transport: {
+        ...valid.transport,
+        throughput: { protocol: "h1", kind: "websocket" },
       },
     },
     {

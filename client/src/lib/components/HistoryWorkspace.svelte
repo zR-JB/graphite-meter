@@ -13,12 +13,15 @@
     stageStatusLabel,
   } from "../history/format";
   import {
-    HISTORY_SORT_LABEL,
     naturalDescending,
     sortHistory,
     type HistorySort,
   } from "../history/sort";
-  import type { HistoryRecordV1, StageStatus } from "../history/types";
+  import {
+    HISTORY_LIMIT,
+    type HistoryRecordV1,
+    type StageStatus,
+  } from "../history/types";
   import type { HistoryColumn } from "../state/persistence";
   import { store } from "../state/store.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -73,34 +76,29 @@
 
   const columnMeta: Record<
     HistoryColumn,
-    { label: string; short: string; icon: string; sort: HistorySort | null }
+    { short: string; icon: string; sort: HistorySort }
   > = {
     download: {
-      label: "Download",
       short: "Down",
       icon: ICON.download,
       sort: "download",
     },
     upload: {
-      label: "Upload",
       short: "Up",
       icon: ICON.upload,
       sort: "upload",
     },
     bidirectional: {
-      label: "Bidirectional",
       short: "Bi-dir",
       icon: ICON.bidirectional,
       sort: "bidirectional",
     },
     idle: {
-      label: "Idle latency",
       short: "Idle",
       icon: ICON.ping,
       sort: "idle",
     },
     loaded: {
-      label: "Loaded latency",
       short: "Loaded",
       icon: ICON.ping,
       sort: "loaded",
@@ -120,7 +118,11 @@
       const entry = await repository.inspect(id);
       if (generation !== loadGeneration || selectedId !== id) return;
       selectedState = entry.status;
-      if (entry.status === "ready") records = [entry.record, ...records];
+      if (entry.status === "ready")
+        records = [
+          entry.record,
+          ...records.filter((record) => record.id !== entry.record.id),
+        ].slice(0, HISTORY_LIMIT);
     } catch {
       if (generation === loadGeneration) loadState = "error";
     }
@@ -143,11 +145,6 @@
     }
   }
 
-  function select(record: HistoryRecordV1) {
-    focusedHeading = null;
-    onNavigate(record.id);
-  }
-
   function closeDetail() {
     const id = selectedId;
     onNavigate(null);
@@ -155,6 +152,15 @@
       if (!id) return;
       document.querySelector<HTMLElement>(`[data-history-id="${id}"]`)?.focus();
     }, 0);
+  }
+
+  function activate(record: HistoryRecordV1) {
+    if (selectedId === record.id) {
+      closeDetail();
+      return;
+    }
+    focusedHeading = null;
+    onNavigate(record.id);
   }
 
   function setSort(next: HistorySort, nextDescending: boolean) {
@@ -371,11 +377,15 @@
   {#if store.historyWarning || actionError || malformedCount}
     <div class="archive-warning" role="status">
       <span aria-hidden="true">!</span>
-      <p>
-        {store.historyWarning ||
-          actionError ||
-          `${malformedCount} malformed ${malformedCount === 1 ? "record was" : "records were"} ignored.`}
-      </p>
+      <div>
+        {#if store.historyWarning}<p>{store.historyWarning}</p>{/if}
+        {#if actionError}<p>{actionError}</p>{/if}
+        {#if malformedCount}<p>
+            {malformedCount} malformed {malformedCount === 1
+              ? "record was"
+              : "records were"} ignored.
+          </p>{/if}
+      </div>
     </div>
   {/if}
 
@@ -407,7 +417,7 @@
       <button type="button" onclick={() => load()}>Retry</button>
     </div>
   {:else if records.length === 0}
-    <div class="archive-state empty">
+    <div class="archive-state">
       <span class="state-icon">{@html ICON.history}</span>
       <h2>No saved results</h2>
       {#if store.savingResults}
@@ -425,7 +435,11 @@
         </button>
       {/if}
       {#if malformedCount > 0}
-        <button type="button" onclick={() => (confirm = { kind: "clear" })}>
+        <button
+          class="clear-empty"
+          type="button"
+          onclick={() => (confirm = { kind: "clear" })}
+        >
           Clear all saved results
         </button>
       {/if}
@@ -433,19 +447,14 @@
   {:else}
     <div class="archive-overview" aria-label="History overview">
       <div class="overview-primary">
-        <span>Saved locally</span><strong>{records.length}</strong>
+        <strong>{records.length}</strong>
+        <span>{records.length === 1 ? "result" : "results"} saved locally</span>
       </div>
-      <div>
-        <span>Date span</span>
+      <div class="overview-dates">
+        <span>Archive span</span>
         <strong
           >{oldest == null ? "—" : dateLabel(oldest)} <i>to</i>
           {newest == null ? "—" : dateLabel(newest)}</strong
-        >
-      </div>
-      <div class="overview-context">
-        <span>View</span><strong
-          >{columns.length + 1} columns · {HISTORY_SORT_LABEL[sort]}
-          {descending ? "↓" : "↑"}</strong
         >
       </div>
     </div>
@@ -486,45 +495,27 @@
               : "none"}
           >
             <button type="button" onclick={() => sortColumn("date")}>
-              <span>Date</span><i aria-hidden="true"
-                >{sort === "date" ? (descending ? "↓" : "↑") : "↕"}</i
-              >
+              <span>Date</span><i aria-hidden="true"></i>
             </button>
           </span>
           {#each columns as column}
             <span
               role="columnheader"
               data-tone={column}
-              aria-sort={columnMeta[column].sort &&
-              sort === columnMeta[column].sort
+              aria-sort={sort === columnMeta[column].sort
                 ? descending
                   ? "descending"
                   : "ascending"
-                : columnMeta[column].sort
-                  ? "none"
-                  : undefined}
+                : "none"}
             >
-              {#if columnMeta[column].sort}
-                <button
-                  type="button"
-                  onclick={() => sortColumn(columnMeta[column].sort!)}
-                >
-                  <span class="head-icon">{@html columnMeta[column].icon}</span>
-                  <span>{columnMeta[column].short}</span>
-                  <i aria-hidden="true"
-                    >{sort === columnMeta[column].sort
-                      ? descending
-                        ? "↓"
-                        : "↑"
-                      : "↕"}</i
-                  >
-                </button>
-              {:else}
-                <span class="static-head"
-                  ><span class="head-icon">{@html columnMeta[column].icon}</span
-                  >{columnMeta[column].short}</span
-                >
-              {/if}
+              <button
+                type="button"
+                onclick={() => sortColumn(columnMeta[column].sort)}
+              >
+                <span class="head-icon">{@html columnMeta[column].icon}</span>
+                <span>{columnMeta[column].short}</span>
+                <i aria-hidden="true"></i>
+              </button>
             </span>
           {/each}
         </div>
@@ -540,12 +531,19 @@
                 aria-expanded={selectedId === record.id}
                 aria-label={`${fullDate(record.completedAt)}${partial(record) ? ", partial result" : ", complete result"}. Download ${resultRate(record.stages.download.status, record.stages.download.result?.reportedBytesPerSec)}. Upload ${resultRate(record.stages.upload.status, record.stages.upload.result?.reportedBytesPerSec)}. Bidirectional ${bidiRate(record)}. Idle ${record.stages.latency.result ? formatLatency(record.stages.latency.result.reportedMs) : stageStatusLabel(record.stages.latency.status)}. Loaded ${loadedMetric(record)}.`}
                 onclick={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return;
                   event.preventDefault();
-                  select(record);
+                  activate(record);
                 }}
               >
                 <span class="date-cell">
-                  <span class="date-mark" aria-hidden="true"></span>
                   <time datetime={new Date(record.completedAt).toISOString()}>
                     <strong title={fullDate(record.completedAt)}
                       >{rowDate(record.completedAt)}</strong
@@ -686,11 +684,9 @@
     gap: var(--space-4);
     padding: 10px var(--space-4);
     border-bottom: 1px solid var(--border-strong);
-    background: linear-gradient(
-      110deg,
-      color-mix(in srgb, var(--brand) 15%, var(--surface-2)),
-      color-mix(in srgb, var(--phase-latency) 5%, var(--surface-1)) 58%
-    );
+    background:
+      linear-gradient(180deg, var(--surface-2), var(--surface-1) 72%),
+      var(--surface-1);
     box-shadow: var(--elev-tile);
   }
   .history-title {
@@ -724,7 +720,7 @@
   }
   .history-title p {
     margin-top: 3px;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font-size: 9px;
     line-height: 1;
   }
@@ -775,6 +771,10 @@
     border: 1px solid currentColor;
     border-radius: var(--r-full);
     font: 750 10px var(--font-mono);
+  }
+  .archive-warning > div {
+    display: grid;
+    gap: 2px;
   }
   .archive-warning p {
     color: var(--text-muted);
@@ -841,49 +841,63 @@
     border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
     color: var(--brand-strong);
   }
+  .archive-state button.clear-empty {
+    border-color: var(--border);
+    background: transparent;
+    color: var(--text-muted);
+  }
+  .archive-state button.clear-empty:hover {
+    border-color: var(--err);
+    color: var(--err);
+  }
   .archive-state.error .state-icon {
     color: var(--err);
   }
   .archive-overview {
-    display: grid;
-    grid-template-columns:
-      minmax(100px, 0.55fr) minmax(250px, 1.4fr)
-      minmax(180px, 0.8fr);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    padding: 11px var(--space-4);
     border-bottom: 1px solid var(--border);
-    background: linear-gradient(
-      105deg,
-      color-mix(in srgb, var(--brand) 8%, var(--surface-inset)),
-      var(--surface-inset) 62%
-    );
-    box-shadow: inset 0 -1px 0 var(--border);
+    background:
+      linear-gradient(180deg, var(--surface-2), var(--surface-1) 82%),
+      var(--surface-1);
+    box-shadow: var(--elev-tile);
   }
   .archive-overview > div {
     min-width: 0;
-    padding: 11px var(--space-4);
-  }
-  .archive-overview > div + div {
-    border-left: 1px solid var(--border);
   }
   .archive-overview span {
     display: block;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font: 700 9px var(--font-mono);
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
   .archive-overview strong {
     display: block;
-    margin-top: 4px;
     overflow-wrap: anywhere;
     font: 650 var(--type-xs) var(--font-mono);
   }
+  .overview-primary {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+  }
   .archive-overview .overview-primary strong {
     color: var(--brand-strong);
-    font-size: var(--type-md);
-    line-height: 0.9;
+    font-size: var(--type-xl);
+    line-height: 1;
+  }
+  .overview-dates {
+    text-align: right;
+  }
+  .overview-dates strong {
+    margin-top: 3px;
   }
   .archive-overview i {
-    color: var(--text-soft);
+    color: var(--text-muted);
     font-style: normal;
   }
   .archive-toolbar {
@@ -921,6 +935,7 @@
   .archive-list {
     position: relative;
     min-width: 0;
+    background: var(--surface-1);
     isolation: isolate;
   }
   .workspace-body.wide-layout .archive-list {
@@ -945,18 +960,16 @@
     top: 0;
     z-index: 5;
     border-bottom: 1px solid var(--border-strong);
-    background: var(--surface-2);
+    background:
+      linear-gradient(180deg, var(--surface-2), var(--surface-1)),
+      var(--surface-1);
     background-clip: padding-box;
     box-shadow: var(--elev-tile);
   }
   .column-head > span {
     min-width: 0;
   }
-  .column-head > span + span {
-    border-left: 0;
-  }
-  .column-head button,
-  .static-head {
+  .column-head button {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -966,16 +979,14 @@
     padding: 0 10px;
     border: 0;
     background: transparent;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font: 700 9px var(--font-mono);
     letter-spacing: 0.05em;
     text-transform: uppercase;
+    cursor: pointer;
   }
   .column-head > span:first-child button {
     justify-content: flex-start;
-  }
-  .column-head button {
-    cursor: pointer;
   }
   .column-head button:hover {
     background: var(--brand-soft);
@@ -985,9 +996,35 @@
     color: var(--brand-strong);
   }
   .column-head i {
+    position: relative;
+    width: 9px;
+    height: 12px;
+    flex: none;
     color: var(--brand-strong);
-    font: 750 12px var(--font-mono);
-    font-style: normal;
+  }
+  .column-head i::after {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 4px;
+    height: 4px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    content: "";
+    opacity: 0;
+    transform: rotate(45deg);
+    transition: opacity var(--dur-hover) var(--ease-out);
+  }
+  .column-head button:hover i::after {
+    opacity: 0.35;
+  }
+  .column-head [aria-sort="descending"] i::after,
+  .column-head [aria-sort="ascending"] i::after {
+    opacity: 1;
+  }
+  .column-head [aria-sort="ascending"] i::after {
+    top: 5px;
+    transform: rotate(225deg);
   }
   .head-icon {
     display: grid;
@@ -1012,46 +1049,36 @@
   }
   ol {
     margin: 0;
-    padding: 0;
+    padding: 0 var(--space-2) var(--space-2);
     list-style: none;
   }
   li {
     min-width: 0;
+    border-bottom: 1px solid var(--border-subtle);
     content-visibility: auto;
     contain-intrinsic-size: 58px;
-  }
-  li + li {
-    border-top: 0;
-    margin-top: 2px;
   }
   li.selected {
     content-visibility: visible;
   }
   .result-row {
     position: relative;
+    min-height: 56px;
     color: inherit;
     text-decoration: none;
-    transition: background var(--dur-hover) var(--ease-out);
-  }
-  .result-row::before {
-    content: "";
-    position: absolute;
-    inset: 8px auto 8px 0;
-    width: 3px;
-    border-radius: 0 2px 2px 0;
-    background: transparent;
-    transition: background var(--dur-hover) var(--ease-out);
+    transition:
+      background var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
   }
   .result-row:hover {
-    background: color-mix(in srgb, var(--brand) 5%, var(--surface-2));
+    background: var(--surface-2);
   }
   .result-row[aria-current="true"] {
-    background: color-mix(in srgb, var(--brand) 12%, var(--surface-1));
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--brand) 40%, transparent);
-  }
-  .result-row[aria-current="true"]::before {
-    background: var(--brand);
+    background: color-mix(in srgb, var(--brand-soft) 62%, var(--surface-1));
+    box-shadow:
+      inset 3px 0 0 var(--brand),
+      inset 0 1px 0 color-mix(in srgb, var(--brand) 22%, transparent),
+      inset 0 -1px 0 color-mix(in srgb, var(--brand) 22%, transparent);
   }
   .date-cell,
   .metric-cell {
@@ -1062,14 +1089,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .date-mark {
-    width: 6px;
-    height: 6px;
-    flex: none;
-    border: 1px solid var(--brand);
-    border-radius: var(--r-full);
-    background: var(--surface-1);
   }
   .date-cell time {
     min-width: 0;
@@ -1087,7 +1106,7 @@
   }
   .date-cell time small {
     margin-top: 2px;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font: 500 9px var(--font-mono);
   }
   .row-badges {
@@ -1117,7 +1136,6 @@
   .metric-cell {
     display: grid;
     align-content: center;
-    border-left: 0;
     text-align: right;
   }
   .metric-cell small {
@@ -1126,21 +1144,8 @@
   .metric-cell strong {
     overflow-wrap: anywhere;
     color: var(--text);
-    font: 620 10px var(--font-mono);
+    font: 620 11px var(--font-mono);
     line-height: 1.35;
-  }
-  .metric-cell[data-tone="download"] {
-    background: color-mix(in srgb, var(--phase-download) 3%, transparent);
-  }
-  .metric-cell[data-tone="upload"] {
-    background: color-mix(in srgb, var(--phase-upload) 3%, transparent);
-  }
-  .metric-cell[data-tone="bidirectional"] {
-    background: color-mix(in srgb, var(--phase-bidirectional) 3%, transparent);
-  }
-  .metric-cell[data-tone="idle"],
-  .metric-cell[data-tone="loaded"] {
-    background: color-mix(in srgb, var(--phase-latency) 3%, transparent);
   }
   .detail-inspector {
     min-width: 0;
@@ -1152,10 +1157,6 @@
   .inline-inspector {
     border-top: 2px solid color-mix(in srgb, var(--brand) 50%, var(--border));
     background: var(--surface-1);
-  }
-  .inline-inspector :global(.detail-head) {
-    position: relative;
-    top: auto;
   }
   .selection-state {
     display: grid;
@@ -1194,7 +1195,7 @@
     padding: var(--space-4);
   }
   .load-more span {
-    color: var(--text-soft);
+    color: var(--text-muted);
     font: 600 9px var(--font-mono);
   }
   .archive-management {
@@ -1205,7 +1206,7 @@
     margin: var(--space-5) var(--space-4) var(--space-4);
     padding-top: var(--space-4);
     border-top: 1px solid var(--border);
-    color: var(--text-soft);
+    color: var(--text-muted);
   }
   .archive-management div {
     display: grid;
@@ -1221,7 +1222,7 @@
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: transparent;
-    color: var(--text-soft);
+    color: var(--text-muted);
     font-size: var(--type-xs);
     cursor: pointer;
   }
@@ -1238,13 +1239,6 @@
     white-space: nowrap;
   }
   @container (max-width: 820px) {
-    .archive-overview {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .archive-overview > div:nth-child(3) {
-      border-left: 0;
-      border-top: 1px solid var(--border);
-    }
     .column-head {
       display: none;
     }
@@ -1256,18 +1250,16 @@
     li {
       border: 1px solid var(--border);
       border-radius: var(--r-chrome);
-      background: var(--surface-inset);
-      box-shadow: var(--elev-recess);
+      background:
+        linear-gradient(180deg, var(--surface-2), transparent), var(--surface-1);
+      box-shadow: var(--elev-tile);
       contain-intrinsic-size: 190px;
-    }
-    li + li {
-      border-top: 0;
     }
     li.selected {
       border-color: color-mix(in srgb, var(--brand) 64%, var(--border));
       box-shadow:
         0 0 0 2px color-mix(in srgb, var(--brand) 16%, transparent),
-        var(--elev-recess);
+        var(--elev-tile);
     }
     .result-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1276,7 +1268,7 @@
       grid-column: 1 / -1;
       padding: 11px 12px;
       border-bottom: 1px solid var(--border);
-      background: var(--surface-2);
+      background: color-mix(in srgb, var(--surface-2) 72%, transparent);
     }
     .metric-cell {
       gap: 4px;
@@ -1324,10 +1316,9 @@
       justify-content: center;
     }
     .archive-overview {
+      display: grid;
       grid-template-columns: minmax(88px, 0.65fr) minmax(0, 1.35fr);
-    }
-    .overview-context {
-      display: none;
+      gap: var(--space-3);
     }
     .archive-toolbar {
       align-items: flex-start;
@@ -1349,9 +1340,6 @@
       width: 32px;
       height: 32px;
     }
-    .archive-overview > div {
-      padding: 9px var(--space-3);
-    }
     .archive-toolbar {
       display: grid;
     }
@@ -1369,15 +1357,34 @@
     }
   }
   @media (prefers-reduced-motion: no-preference) {
+    .history-workspace {
+      animation: reveal-history var(--dur-enter) var(--ease-out) both;
+    }
     .inline-inspector,
     .detail-inspector {
       animation: reveal-detail var(--dur-enter) var(--ease-out) both;
+    }
+    @keyframes reveal-history {
+      from {
+        opacity: 0;
+        transform: translateY(4px) scale(0.997);
+      }
     }
     @keyframes reveal-detail {
       from {
         opacity: 0;
         transform: translateY(4px);
       }
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .history-workspace,
+    .result-row {
+      animation: none;
+      transition: none;
+    }
+    .column-head i::after {
+      transition: none;
     }
   }
   @media (max-width: 759px) and (orientation: portrait) {

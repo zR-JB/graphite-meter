@@ -9,7 +9,6 @@ import {
   hoverContext,
   metricLabel,
   profileDomain,
-  savedLatencyLossVisible,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -54,13 +53,6 @@ test("profileDomain is shared by live and finalized lane profiles", () => {
     max: 200,
     span: 200,
   });
-});
-
-test("saved latency loss requires datagram transport evidence", () => {
-  expect(savedLatencyLossVisible("webtransport-datagram")).toBe(true);
-  expect(savedLatencyLossVisible("webtransport")).toBe(false);
-  expect(savedLatencyLossVisible("websocket")).toBe(false);
-  expect(savedLatencyLossVisible(null)).toBe(false);
 });
 
 test("tickLabel: non-positive collapses to a bare zero", () => {

@@ -199,10 +199,24 @@
   function historyRoute(id: string | null = null) {
     routeTo(withWorkspace(currentRoute, { kind: "history", selectedId: id }));
   }
-  function toggleHistory() {
-    if (historyOpen)
+  function restoreHistoryFocus() {
+    window.setTimeout(() => {
+      const historyControl = store.savingResults
+        ? document.querySelector<HTMLButtonElement>(
+            '.topbar [aria-label="Open History"], .topbar [aria-label="More controls"]',
+          )
+        : null;
+      (
+        historyControl ??
+        document.querySelector<HTMLButtonElement>(".topbar .brand-btn")
+      )?.focus();
+    }, 0);
+  }
+  function toggleHistory(restoreFocus = false) {
+    if (historyOpen) {
       backOrReplace(withWorkspace(currentRoute, { kind: "measurement" }));
-    else historyRoute();
+      if (restoreFocus) restoreHistoryFocus();
+    } else historyRoute();
   }
   function closeHistoryDetail() {
     backOrReplace(
@@ -280,13 +294,13 @@
         currentRoute.workspace.kind === "history" &&
         currentRoute.workspace.selectedId
       ) {
-        const detailBack = document.querySelector<HTMLButtonElement>(
-          ".result-detail .back-detail",
+        const detailClose = document.querySelector<HTMLButtonElement>(
+          ".result-detail .close-detail",
         );
-        if (detailBack) detailBack.click();
+        if (detailClose) detailClose.click();
         else closeHistoryDetail();
       } else if (historyOpen) {
-        toggleHistory();
+        toggleHistory(true);
       } else if (!measurementOpen) {
         return;
       } else if (store.isRunning) {
@@ -501,7 +515,7 @@
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
         use:tooltip={historyOpen ? "Close History" : "History — saved results"}
-        onclick={toggleHistory}>{@html ICON.history}</button
+        onclick={() => toggleHistory()}>{@html ICON.history}</button
       >{/if}
     {#if showThemeDirect}
       <button
@@ -562,7 +576,7 @@
             : null}
           onNavigate={(id: string | null) =>
             id ? historyRoute(id) : closeHistoryDetail()}
-          onClose={toggleHistory}
+          onClose={() => toggleHistory(true)}
         />{:else if historyChunkState === "error"}<div
           class="history-loading error"
           role="alert"

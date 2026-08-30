@@ -98,7 +98,7 @@ function record(
     },
     transport: {
       throughput: { protocol: "h3", kind: "webtransport" },
-      latency: { protocol: "h3", kind: "webtransport-datagram" },
+      latency: { protocol: "h3", kind: "webtransport" },
     },
     ipVersion: 6,
     client: { build: "0.0.0-browser-test+long-revision" },
@@ -192,6 +192,9 @@ test("explicitly enabled completion is reachable in History and stays responsive
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await startTest(page);
   await waitForCompletion(page, 20_000);
+  await expect(
+    page.locator('[data-latency-profile][data-variant="bare"]'),
+  ).toBeVisible();
   await toggleHistoryFromTopbar(page);
   await expect(page.getByRole("button", { name: "More controls" })).toHaveClass(
     /active/,
@@ -272,6 +275,27 @@ test("History is safe to reload and malformed client routes stay in the shell", 
   await expect(
     page.getByRole("heading", { name: "Page not found" }),
   ).toBeVisible();
+});
+
+test("an out-of-window deep link preserves the 2,000-summary memory cap", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1366, height: 768 });
+  const base = Date.UTC(2026, 7, 28, 12);
+  const values = Array.from({ length: 2_001 }, (_, index) =>
+    record(
+      `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+      base - index * 60_000,
+    ),
+  );
+  const oldest = values.at(-1)!;
+  await seedHistory(page, values);
+  await openHistory(page, oldest.id);
+
+  await expect(page.locator(".result-detail")).toBeVisible();
+  await expect(page.locator(".overview-primary")).toContainText(
+    "2000 results saved locally",
+  );
 });
 
 test("malformed-only archives keep a raw clear path", async ({ page }) => {
@@ -356,7 +380,7 @@ test("wide panels compose over History while narrow routes keep only the visible
   await openApp(page, "dummy", { width: 1440, height: 900 });
   await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
   const settings = await openSettings(page);
-  await settings.getByRole("link", { name: "Manage History" }).click();
+  await settings.getByRole("link", { name: "View History" }).click();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
   await expect(settingsPanel(page)).toBeVisible();
 
@@ -414,15 +438,33 @@ test("deep-linked detail is a focused side inspector and a focused inline expans
   await expect(page.locator(".detail-inspector")).toBeVisible();
   await expect(heading).toBeFocused();
   const detail = page.locator(".detail-inspector");
-  await expect(detail.locator(".profile-lane")).toHaveCount(4);
-  await expect(detail.getByText("P50", { exact: true })).toBeVisible();
-  await expect(detail.getByText("P95", { exact: true })).toBeVisible();
+  const profile = detail.locator(
+    '[data-latency-profile][data-variant="compact"]',
+  );
+  await expect(profile).toBeVisible();
+  await expect(profile.locator(".lane")).toHaveCount(4);
+  await expect(detail.getByText("Median (p50)", { exact: true })).toBeVisible();
+  await expect(detail.getByText("p95", { exact: true })).toBeVisible();
   await expect(detail.getByText("Stability", { exact: true })).toBeVisible();
-  await expect(detail.locator(".bufferbloat-band")).toHaveCount(0);
-  await expect(detail.locator("summary.section-head")).toHaveCount(4);
-  await expect(detail.locator(".disclosure")).toHaveCount(0);
-  await expect(detail.locator(".phase-row")).toHaveCount(3);
-  await expect(detail.locator(".phase-row")).not.toContainText("loss");
+  await expect(detail.locator("details")).toHaveCount(0);
+  await expect(detail.locator(".throughput-card")).toHaveCount(3);
+  await expect(detail.locator(".throughput-card em")).toHaveCount(0);
+  await expect(detail.locator(".throughput-card")).not.toContainText(/loss/i);
+  await expect(
+    detail.getByRole("heading", { name: "Run context" }),
+  ).toBeVisible();
+  await expect(
+    detail.getByRole("heading", { name: "Stage issues" }),
+  ).toHaveCount(0);
+  await expect(detail.getByText(/grade|increase/i)).toHaveCount(0);
+  const firstTrack = profile.locator(".track").first();
+  await firstTrack.focus();
+  await expect(profile.locator(".hover-card")).toBeVisible();
+  await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
+  await firstTrack.press("ArrowRight");
+  await expect(profile.locator(".hover-card")).toContainText(/P10|Result|P90/);
+  await profile.locator(".track").nth(1).focus();
+  await expect(profile.locator(".hover-card")).toContainText(/Avg/);
   await expect(
     detail.getByRole("button", { name: "Close result" }),
   ).toBeVisible();
@@ -445,6 +487,114 @@ test("deep-linked detail is a focused side inspector and a focused inline expans
     .include(".history-workspace")
     .analyze();
   expect(accessibility.violations).toEqual([]);
+  await page.evaluate(() =>
+    document.documentElement.setAttribute("data-theme", "dark"),
+  );
+  const darkAccessibility = await new AxeBuilder({ page })
+    .include(".history-workspace")
+    .analyze();
+  expect(darkAccessibility.violations).toEqual([]);
+});
+
+test("activating the selected result closes detail without hijacking modified links", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1440, height: 900 });
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+  await openHistory(page);
+  const settings = await openSettings(page);
+  const row = page.locator(`[data-history-id="${IDS.newest}"]`);
+  const detail = page.locator(".result-detail");
+
+  await row.click();
+  await expect(detail).toBeVisible();
+  await expect(row).toHaveAttribute("aria-current", "true");
+  await expect(row).toHaveAttribute("aria-expanded", "true");
+  expect(await page.evaluate(() => window.location.hash)).toBe(
+    `#/history/${IDS.newest}?panels=settings`,
+  );
+
+  for (const eventInit of [
+    { ctrlKey: true },
+    { metaKey: true },
+    { shiftKey: true },
+    { button: 1 },
+  ]) {
+    const wasPrevented = await row.evaluate((node, init) => {
+      let prevented: boolean | null = null;
+      document.addEventListener(
+        "click",
+        (event) => {
+          prevented = event.defaultPrevented;
+          event.preventDefault();
+        },
+        { once: true },
+      );
+      node.dispatchEvent(
+        new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        }),
+      );
+      return prevented;
+    }, eventInit);
+    expect(wasPrevented).toBe(false);
+    await expect(detail).toBeVisible();
+  }
+
+  await row.click();
+  await expect(detail).toHaveCount(0);
+  await expect(row).toBeFocused();
+  expect(await row.getAttribute("aria-current")).toBeNull();
+  await expect(row).toHaveAttribute("aria-expanded", "false");
+  expect(await page.evaluate(() => window.location.hash)).toBe(
+    "#/history?panels=settings",
+  );
+  await expect(settings).toBeVisible();
+
+  await row.press("Enter");
+  await expect(detail).toBeVisible();
+  await row.focus();
+  await row.press("Enter");
+  await expect(detail).toHaveCount(0);
+  await expect(row).toBeFocused();
+  expect(await page.evaluate(() => window.location.hash)).toBe(
+    "#/history?panels=settings",
+  );
+
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await row.click();
+  await expect(page.locator(".inline-inspector")).toBeVisible();
+  await row.click();
+  await expect(page.locator(".inline-inspector")).toHaveCount(0);
+  await expect(row).toBeFocused();
+  expect(await page.evaluate(() => window.location.hash)).toBe("#/history");
+
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await row.press("Enter");
+  await expect(detail).toBeVisible();
+  await row.focus();
+  await row.press("Enter");
+  await expect(detail).toHaveCount(0);
+  await expect(row).toBeFocused();
+});
+
+test("saved latency omits timeout loss without packet-loss provenance", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1366, height: 768 });
+  const saved = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+  await seedHistory(page, [saved]);
+  await openHistory(page, saved.id);
+  const profile = page.locator(
+    '[data-latency-profile][data-variant="compact"]',
+  );
+  await profile.locator(".track").first().focus();
+  await expect(profile.locator(".hover-card")).toBeVisible();
+  await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
+  await expect(profile.locator(".loss-marker")).toHaveCount(0);
 });
 
 test("recent rows use relative time and absent responsiveness stays concise", async ({
@@ -464,8 +614,9 @@ test("recent rows use relative time and absent responsiveness stays concise", as
     },
   };
   recent.bufferbloat = null;
-  const older = record(IDS.oldest, now - 25 * 60 * 60_000);
-  await seedHistory(page, [older, recent]);
+  const atBoundary = record(IDS.middle, now - 60 * 60_000);
+  const underBoundary = record(IDS.oldest, now - (59 * 60_000 + 59_000));
+  await seedHistory(page, [atBoundary, underBoundary, recent]);
   await openHistory(page);
 
   const recentRow = page.locator(`[data-history-id="${IDS.newest}"]`);
@@ -479,21 +630,20 @@ test("recent rows use relative time and absent responsiveness stays concise", as
   ).toContainText("Not run");
   await expect(
     page
-      .locator(`[data-history-id="${IDS.oldest}"]`)
+      .locator(`[data-history-id="${IDS.middle}"]`)
       .locator(".date-cell strong"),
   ).not.toContainText("ago");
+  await expect(
+    page
+      .locator(`[data-history-id="${IDS.oldest}"]`)
+      .locator(".date-cell strong"),
+  ).toHaveText("59 min ago");
 
   await recentRow.click();
-  const responsiveness = page
-    .locator(".detail-group")
-    .filter({ hasText: "Responsiveness" });
-  await responsiveness.getByRole("button", { name: /Responsiveness/ }).click();
-  await expect(responsiveness.locator(".stage-unavailable")).toContainText(
-    "Not run",
-  );
-  await expect(responsiveness.locator(".metric-grid")).toHaveCount(0);
-  await expect(responsiveness.locator(".loaded-row")).toHaveCount(0);
-  await expect(responsiveness.locator(".bufferbloat-band")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "Responsiveness" }),
+  ).toHaveCount(0);
+  await expect(page.locator(".stage-unavailable")).toHaveCount(0);
 });
 
 test("History is a toggleable archive layer with an explicit close and no empty inspector", async ({
@@ -513,6 +663,7 @@ test("History is a toggleable archive layer with an explicit close and no empty 
   await expect(page.locator(".detail-inspector")).toHaveCount(0);
   await expect(page.locator(".workspace-body.with-side")).toHaveCount(0);
   await expect(page.locator(".archive-overview")).not.toContainText("Saving");
+  await expect(page.locator(".archive-overview")).not.toContainText("View");
   await expect(page.locator(".archive-toolbar")).not.toContainText("Clear");
   const clearAll = page.getByRole("button", {
     name: "Clear all saved results",
@@ -539,10 +690,13 @@ test("History is a toggleable archive layer with an explicit close and no empty 
   ).toBeVisible();
 
   await openHistory(page);
-  await page.getByRole("button", { name: "Close History" }).first().click();
+  await page.locator(".close-history").click();
   await expect(
     page.getByRole("button", { name: "Start the speed test" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open History" }),
+  ).toBeFocused();
 });
 
 test("sortable headers expose natural reversible order with missing values last", async ({
@@ -588,6 +742,13 @@ test("sortable headers expose natural reversible order with missing values last"
   expect(await ids()).toEqual([IDS.newest, IDS.oldest, IDS.middle]);
   await downloadHeader.click();
   expect(await ids()).toEqual([IDS.oldest, IDS.newest, IDS.middle]);
+
+  await partialRow.click();
+  await expect(
+    page.getByRole("heading", { name: "Stage issues" }),
+  ).toBeVisible();
+  await expect(page.locator(".issue-list li")).toHaveCount(1);
+  await expect(page.locator(".result-detail details")).toHaveCount(0);
 });
 
 test("column visibility persists and narrow cards retain all six sort choices", async ({
@@ -596,7 +757,14 @@ test("column visibility persists and narrow cards retain all six sort choices", 
   await openApp(page, "dummy", { width: 1024, height: 768 });
   await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
   await openHistory(page);
-  await page.getByRole("button", { name: "Columns" }).click();
+  await page.getByRole("button", { name: "Choose visible columns" }).click();
+  await expect(
+    page.locator(".view-popover").getByRole("checkbox").first(),
+  ).toBeFocused();
+  await expect(page.getByRole("checkbox", { name: "Status" })).toHaveCount(0);
+  await expect(page.locator(".view-popover").getByRole("checkbox")).toHaveCount(
+    5,
+  );
   const bidi = page.getByRole("checkbox", { name: "Bidirectional" });
   await expect(bidi).toHaveAttribute("aria-checked", "false");
   await bidi.click();
@@ -610,9 +778,19 @@ test("column visibility persists and narrow cards retain all six sort choices", 
   ).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "View & sort" }).click();
+  await page.getByRole("button", { name: "Choose visible columns" }).click();
   await expect(page.locator(".view-popover").getByRole("radio")).toHaveCount(6);
   await expectNoHorizontalOverflow(page.locator(".view-popover"));
+  const trigger = page.getByRole("button", { name: "Choose visible columns" });
+  const triggerBox = await trigger.boundingBox();
+  const iconBox = await trigger.locator(".layout-icon svg").boundingBox();
+  expect(
+    Math.abs(
+      triggerBox!.y +
+        triggerBox!.height / 2 -
+        (iconBox!.y + iconBox!.height / 2),
+    ),
+  ).toBeLessThanOrEqual(1);
 });
 
 test("one inline scroll owner accepts wheel gestures over rows and mobile detail", async ({
@@ -654,7 +832,7 @@ test("one inline scroll owner accepts wheel gestures over rows and mobile detail
   ).toBe(false);
 
   await row.click();
-  const detailSurface = page.locator(".result-detail .phase-row").first();
+  const detailSurface = page.locator(".result-detail .throughput-card").first();
   await detailSurface.hover();
   const beforeDetailWheel = await scrollOwner.evaluate(
     (node) => node.scrollTop,
@@ -697,6 +875,7 @@ test("wide list and detail scroll independently under an opaque sticky header", 
 
   const list = page.locator(".archive-list");
   const detail = page.locator(".detail-inspector");
+  await expect(list).toBeVisible();
   await expect(detail).toHaveCount(0);
   await list.evaluate((node) => (node.scrollTop = 300));
   await page.locator(".result-row").nth(8).click();
@@ -713,7 +892,6 @@ test("wide list and detail scroll independently under an opaque sticky header", 
     "hidden",
   );
 
-  await detail.getByRole("button", { name: /Responsiveness/ }).click();
   await list.evaluate((node) => (node.scrollTop = 0));
   await detail.evaluate((node) => (node.scrollTop = 0));
   const cdp = await page.context.newCDPSession(page);
@@ -733,7 +911,7 @@ test("wide list and detail scroll independently under an opaque sticky header", 
   expect(await detail.evaluate((node) => node.scrollTop)).toBe(0);
   const listAfterWheel = await list.evaluate((node) => node.scrollTop);
 
-  const phase = detail.locator(".phase-row").first();
+  const phase = detail.locator(".throughput-card").first();
   await phase.hover();
   const phaseBox = await phase.boundingBox();
   await cdp.send("Input.dispatchMouseEvent", {
@@ -782,6 +960,28 @@ test("archive stays chunked and overflow-free across required shell geometries",
   await expect(
     page.getByRole("button", { name: "Clear all saved results" }),
   ).toHaveCount(0);
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(
+    await page
+      .locator(".history-workspace")
+      .evaluate((node) => getComputedStyle(node).animationName),
+  ).toBe("none");
+  expect(
+    Number.parseFloat(
+      await page
+        .locator(".result-row")
+        .first()
+        .evaluate((node) => getComputedStyle(node).transitionDuration),
+    ),
+  ).toBeLessThan(0.001);
+  await page.getByRole("button", { name: "Choose visible columns" }).click();
+  expect(
+    await page
+      .locator(".view-popover")
+      .evaluate((node) => getComputedStyle(node).animationName),
+  ).toBe("none");
+  await page.keyboard.press("Escape");
 
   const viewports = [
     { width: 390, height: 640 },

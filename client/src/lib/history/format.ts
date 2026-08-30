@@ -49,7 +49,7 @@ export function formatDuration(durationMs: number): string {
   return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
 }
 
-const RELATIVE_TIME_LIMIT_MS = 24 * 60 * 60 * 1_000;
+const RELATIVE_TIME_LIMIT_MS = 60 * 60 * 1_000;
 
 export function formatRecentCompletion(
   completedAt: number,
@@ -58,12 +58,8 @@ export function formatRecentCompletion(
   const elapsed = Math.max(0, now - completedAt);
   if (elapsed >= RELATIVE_TIME_LIMIT_MS) return null;
   if (elapsed < 60_000) return "now";
-  if (elapsed < 60 * 60_000) {
-    const minutes = Math.floor(elapsed / 60_000);
-    return `${minutes} min ago`;
-  }
-  const hours = Math.floor(elapsed / (60 * 60_000));
-  return `${hours} hr ago`;
+  const minutes = Math.floor(elapsed / 60_000);
+  return `${minutes} min ago`;
 }
 
 export function formatLatency(value: number | null | undefined): string {

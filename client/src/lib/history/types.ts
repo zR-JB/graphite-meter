@@ -53,6 +53,14 @@ export interface LatencyLaneSnapshot {
   lossRatio: number;
   count: number;
 }
+type ThroughputTransportKind = Extract<
+  TransportKind,
+  "fetch-stream" | "webtransport" | "webtransport-datagram"
+>;
+type LatencyTransportKind = Extract<
+  TransportKind,
+  "websocket" | "webtransport"
+>;
 export interface HistoryRecordV1 {
   schemaVersion: 1;
   id: string;
@@ -85,8 +93,11 @@ export interface HistoryRecordV1 {
   totalBytes: number;
   server: { name: string; location: string | null; engine: string };
   transport: {
-    throughput: { protocol: string | null; kind: TransportKind | null };
-    latency: { protocol: string | null; kind: TransportKind | null };
+    throughput: {
+      protocol: string | null;
+      kind: ThroughputTransportKind | null;
+    };
+    latency: { protocol: string | null; kind: LatencyTransportKind | null };
   };
   ipVersion: 4 | 6 | null;
   client: { build: string };
@@ -97,6 +108,22 @@ export interface HistoryRecordV1 {
     uploadBytesPerSec: number | null;
     bidirectionalBytesPerSec: number | null;
   } | null;
+}
+
+function throughputTransportKind(
+  value: TransportKind | undefined,
+): ThroughputTransportKind | null {
+  return value === "fetch-stream" ||
+    value === "webtransport" ||
+    value === "webtransport-datagram"
+    ? value
+    : null;
+}
+
+function latencyTransportKind(
+  value: TransportKind | undefined,
+): LatencyTransportKind | null {
+  return value === "websocket" || value === "webtransport" ? value : null;
 }
 
 function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
@@ -253,11 +280,13 @@ export function buildHistoryRecord(
     transport: {
       throughput: {
         protocol: context.infra?.protocolNegotiated ?? null,
-        kind: context.infra?.selectedThroughputTransport ?? null,
+        kind: throughputTransportKind(
+          context.infra?.selectedThroughputTransport,
+        ),
       },
       latency: {
         protocol: context.infra?.latencyProtocolNegotiated ?? null,
-        kind: context.infra?.selectedLatencyTransport ?? null,
+        kind: latencyTransportKind(context.infra?.selectedLatencyTransport),
       },
     },
     ipVersion: context.infra?.clientIpVersion ?? null,
@@ -327,11 +356,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     candidate === "stable-window" || candidate === "full-average";
   const band = (candidate: unknown): candidate is "low" | "medium" | "high" =>
     candidate === "low" || candidate === "medium" || candidate === "high";
-  const transportKind = (candidate: unknown): candidate is TransportKind =>
-    candidate === "webtransport" ||
-    candidate === "webtransport-datagram" ||
-    candidate === "websocket" ||
-    candidate === "fetch-stream";
   const protocol = (candidate: unknown): candidate is string | null =>
     candidate === null || (text(candidate, 32) && !candidate.includes("://"));
   const failureStage = (
@@ -543,16 +567,28 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
   )
     return false;
   const transport = record.transport;
-  const transportEntry = (candidate: unknown): boolean =>
+  const transportEntry = (
+    candidate: unknown,
+    kind: (candidate: unknown) => boolean,
+  ): boolean =>
     isObject(candidate) &&
     hasOnly(candidate, ["protocol", "kind"]) &&
     protocol(candidate.protocol) &&
-    (candidate.kind === null || transportKind(candidate.kind));
+    (candidate.kind === null || kind(candidate.kind));
   if (
     !isObject(transport) ||
     !hasOnly(transport, ["throughput", "latency"]) ||
-    !transportEntry(transport.throughput) ||
-    !transportEntry(transport.latency)
+    !transportEntry(
+      transport.throughput,
+      (kind) =>
+        kind === "fetch-stream" ||
+        kind === "webtransport" ||
+        kind === "webtransport-datagram",
+    ) ||
+    !transportEntry(
+      transport.latency,
+      (kind) => kind === "websocket" || kind === "webtransport",
+    )
   )
     return false;
   if (
