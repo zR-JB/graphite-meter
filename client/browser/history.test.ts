@@ -188,6 +188,8 @@ test("explicitly enabled completion is reachable in History and stays responsive
   await settings
     .getByText("Save completed results on this device", { exact: true })
     .click();
+  await settings.getByText("Show estimated wire rate", { exact: true }).click();
+  await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
   await settings.getByRole("button", { name: "short", exact: true }).click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await startTest(page);
@@ -203,6 +205,40 @@ test("explicitly enabled completion is reachable in History and stays responsive
   await expectNoHorizontalOverflow(page.locator(".topbar"));
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
   await expect(page.locator(".overview-primary")).toContainText("1");
+  const savedWireRate = await page.evaluate(
+    () =>
+      new Promise<number | null>((resolve, reject) => {
+        const opening = indexedDB.open("graphite-meter", 1);
+        opening.onerror = () => reject(opening.error);
+        opening.onsuccess = () => {
+          const db = opening.result;
+          const request = db
+            .transaction("results", "readonly")
+            .objectStore("results")
+            .getAll();
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const rows = request.result as HistoryRecordV1[];
+            db.close();
+            resolve(rows[0]?.wireEstimates?.downloadBytesPerSec ?? null);
+          };
+        };
+      }),
+  );
+  expect(savedWireRate).not.toBeNull();
+  expect(savedWireRate!).toBeGreaterThan(0);
+  await page.locator("a.result-row").first().click();
+  await expect(
+    page.getByRole("heading", { name: "Wire-rate snapshot" }),
+  ).toHaveCount(0);
+  const displaySettings = await openSettings(page);
+  await displaySettings
+    .getByText("Show estimated wire rate", { exact: true })
+    .click();
+  await displaySettings.getByRole("button", { name: "Close Settings" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Wire-rate snapshot" }),
+  ).toBeVisible();
   await expectNoHorizontalOverflow(page.locator(".history-workspace"));
   await expectNoHorizontalOverflow(page.locator("body"));
 });
@@ -581,7 +617,7 @@ test("activating the selected result closes detail without hijacking modified li
   await expect(row).toBeFocused();
 });
 
-test("saved latency shows loss only with WebTransport datagram provenance", async ({
+test("saved latency shows datagram loss only with WebTransport provenance", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
@@ -611,26 +647,39 @@ test("saved latency shows loss only with WebTransport datagram provenance", asyn
   await firstTrack.focus();
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
-  const packetLoss = page.locator(".packet-loss-section");
-  await expect(packetLoss).toBeVisible();
-  await expect(packetLoss.locator(".packet-loss-lanes li")).toHaveCount(2);
+  const datagramLoss = page.locator(".datagram-loss-section");
+  await expect(datagramLoss).toBeVisible();
   await expect(
-    packetLoss.locator('.packet-loss-lanes li[data-tone="latency"]'),
-  ).toHaveAttribute("aria-label", "Idle packet loss 1%, 140 samples");
+    datagramLoss.getByRole("heading", { name: "Datagram loss" }),
+  ).toBeVisible();
+  const lossHelp = datagramLoss.getByRole("note", {
+    name: "About datagram loss",
+  });
+  await expect(lossHelp).toHaveAttribute("tabindex", "0");
+  await lossHelp.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(
+    "Round-trip WebTransport datagram probes that received no reply. This is end-to-end round-trip loss, not directional raw IP packet loss.",
+  );
+  await page.mouse.move(0, 0);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await expect(datagramLoss.locator(".datagram-loss-lanes li")).toHaveCount(2);
   await expect(
-    packetLoss.locator('.packet-loss-lanes li[data-tone="upload"]'),
-  ).toHaveAttribute("aria-label", "Loaded Up packet loss 0%, 140 samples");
+    datagramLoss.locator('.datagram-loss-lanes li[data-tone="latency"]'),
+  ).toHaveAttribute("aria-label", "Idle datagram loss 1%, 140 samples");
   await expect(
-    packetLoss.locator('.packet-loss-lanes li[data-tone="upload"] em'),
+    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"]'),
+  ).toHaveAttribute("aria-label", "Loaded Up datagram loss 0%, 140 samples");
+  await expect(
+    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"] em'),
   ).toHaveText("0%");
-  await expect(packetLoss).not.toContainText("Loaded Down");
-  await expect(packetLoss).not.toContainText("Loaded Bi-dir");
+  await expect(datagramLoss).not.toContainText("Loaded Down");
+  await expect(datagramLoss).not.toContainText("Loaded Bi-dir");
 
   await page.evaluate(
     (id) => (window.location.hash = `/history/${id}`),
     websocket.id,
   );
-  await expect(packetLoss).toHaveCount(0);
+  await expect(datagramLoss).toHaveCount(0);
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",
@@ -641,7 +690,7 @@ test("saved latency shows loss only with WebTransport datagram provenance", asyn
     (id) => (window.location.hash = `/history/${id}`),
     unknown.id,
   );
-  await expect(packetLoss).toHaveCount(0);
+  await expect(datagramLoss).toHaveCount(0);
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",

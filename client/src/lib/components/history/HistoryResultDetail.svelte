@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tooltip } from "../../actions/tooltip";
   import { ICON } from "../../constants";
   import {
     formatDuration,
@@ -14,7 +15,7 @@
   } from "../../history/types";
   import { store } from "../../state/store.svelte";
   import {
-    savedLatencyShowsLoss,
+    savedLatencyHasDatagramLossEvidence,
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
@@ -36,7 +37,7 @@
     detail: string;
   }
 
-  interface PacketLossLane {
+  interface DatagramLossLane {
     key: LatencyProfileViewLane["key"];
     label: string;
     icon: string;
@@ -160,17 +161,17 @@
       ),
     ].filter((lane): lane is LatencyProfileViewLane => lane !== null),
   );
-  const showLatencyLoss = $derived(
-    savedLatencyShowsLoss(record.transport.latency.kind),
+  const showDatagramLoss = $derived(
+    savedLatencyHasDatagramLossEvidence(record.transport.latency.kind),
   );
 
-  function packetLossLane(
+  function datagramLossLane(
     key: LatencyProfileViewLane["key"],
     label: string,
     icon: string,
     tone: LatencyProfileTone,
     snapshot: LatencyLaneSnapshot | null,
-  ): PacketLossLane | null {
+  ): DatagramLossLane | null {
     if (!snapshot || snapshot.count <= 0) return null;
     return {
       key,
@@ -182,38 +183,38 @@
     };
   }
 
-  const packetLossLanes = $derived<PacketLossLane[]>(
-    showLatencyLoss
+  const datagramLossLanes = $derived<DatagramLossLane[]>(
+    showDatagramLoss
       ? [
-          packetLossLane(
+          datagramLossLane(
             "latency",
             "Idle",
             ICON.ping,
             "latency",
             record.stages.latency.lanes.latency,
           ),
-          packetLossLane(
+          datagramLossLane(
             "download",
             "Loaded Down",
             ICON.download,
             "download",
             record.stages.latency.lanes.download,
           ),
-          packetLossLane(
+          datagramLossLane(
             "upload",
             "Loaded Up",
             ICON.upload,
             "upload",
             record.stages.latency.lanes.upload,
           ),
-          packetLossLane(
+          datagramLossLane(
             "bidirectional",
             "Loaded Bi-dir",
             ICON.bidirectional,
             "bidirectional",
             record.stages.latency.lanes.bidirectional,
           ),
-        ].filter((lane): lane is PacketLossLane => lane !== null)
+        ].filter((lane): lane is DatagramLossLane => lane !== null)
       : [],
   );
 
@@ -387,20 +388,27 @@
     </section>
   {/if}
 
-  {#if packetLossLanes.length}
+  {#if datagramLossLanes.length}
     <section
-      class="detail-section packet-loss-section"
-      aria-labelledby={`result-${record.id}-packet-loss`}
+      class="detail-section datagram-loss-section"
+      aria-labelledby={`result-${record.id}-datagram-loss`}
     >
       <header class="section-head">
         <span aria-hidden="true">{@html ICON.ping}</span>
-        <h3 id={`result-${record.id}-packet-loss`}>Packet loss</h3>
+        <h3 id={`result-${record.id}-datagram-loss`}>Datagram loss</h3>
+        <span
+          class="section-help"
+          role="note"
+          aria-label="About datagram loss"
+          use:tooltip={"Round-trip WebTransport datagram probes that received no reply. This is end-to-end round-trip loss, not directional raw IP packet loss."}
+          >{@html ICON.info}</span
+        >
       </header>
-      <ul class="section-body packet-loss-lanes">
-        {#each packetLossLanes as lane (lane.key)}
+      <ul class="section-body datagram-loss-lanes">
+        {#each datagramLossLanes as lane (lane.key)}
           <li
             data-tone={lane.tone}
-            aria-label={`${lane.label} packet loss ${lane.value}, ${lane.count} samples`}
+            aria-label={`${lane.label} datagram loss ${lane.value}, ${lane.count} samples`}
           >
             <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
             <span>
@@ -611,6 +619,28 @@
     font-weight: 760;
     letter-spacing: -0.01em;
   }
+  .section-head > .section-help {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    margin-left: -4px;
+    border-radius: 50%;
+    color: var(--text-muted);
+    cursor: help;
+    transition:
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  .section-help:hover,
+  .section-help:focus-visible {
+    background: var(--surface-inset);
+    color: var(--text);
+  }
+  .section-help :global(svg) {
+    width: 13px;
+    height: 13px;
+  }
   .section-body {
     margin: 0;
     padding: 0 var(--space-4) var(--space-4);
@@ -684,13 +714,13 @@
     display: grid;
     gap: var(--space-3);
   }
-  .packet-loss-lanes {
+  .datagram-loss-lanes {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     gap: var(--space-2);
     list-style: none;
   }
-  .packet-loss-lanes li {
+  .datagram-loss-lanes li {
     --tone: var(--phase-latency);
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -701,21 +731,21 @@
     border-top: 1px solid color-mix(in srgb, var(--tone) 40%, var(--border));
     background: var(--surface-1);
   }
-  .packet-loss-lanes li > span:not(.phase-icon) {
+  .datagram-loss-lanes li > span:not(.phase-icon) {
     display: grid;
     min-width: 0;
   }
-  .packet-loss-lanes strong {
+  .datagram-loss-lanes strong {
     overflow: hidden;
     font-size: var(--type-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .packet-loss-lanes small {
+  .datagram-loss-lanes small {
     color: var(--text-muted);
     font: 500 9px var(--font-mono);
   }
-  .packet-loss-lanes em {
+  .datagram-loss-lanes em {
     color: var(--tone);
     font: 700 var(--type-sm) var(--font-mono);
     font-style: normal;

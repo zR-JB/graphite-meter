@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
+import type { ConnectionPresentation } from "../runner/connectionModel";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 
 plugin({
@@ -46,6 +47,29 @@ function result(): RunResult {
     },
     startedAt: 100,
     durationMs: 2_500,
+  };
+}
+
+function loopbackConnections(): Record<
+  "throughput" | "latency",
+  ConnectionPresentation
+> {
+  const connection = (
+    role: "throughput" | "latency",
+  ): ConnectionPresentation => ({
+    role,
+    selection: role === "throughput" ? "current" : "auto",
+    target: null,
+    availability: "not-advertised",
+    validation: "verified",
+    label: `${role} path`,
+    summary: "Loopback test path",
+    clientIp: "127.0.0.1",
+    clientIpVersion: 4,
+  });
+  return {
+    throughput: connection("throughput"),
+    latency: connection("latency"),
   };
 }
 
@@ -108,6 +132,44 @@ test("only an enabled complete event creates an immutable history candidate", as
   } finally {
     store.reset();
     store.resultHistoryPreference = previousPreference;
+    for (const key of Object.keys(BUILD_TOKENS))
+      Reflect.deleteProperty(globalThis, key);
+  }
+});
+
+test("wire snapshots are independent of their display preference", async () => {
+  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const previousPreference = store.resultHistoryPreference;
+  const previousShowWireEstimates = store.showWireEstimates;
+  try {
+    store.reset();
+    store.showWireEstimates = false;
+    store.resultHistoryPreference = "enabled";
+    store.ingest({ type: "complete", result: result() });
+    const hiddenWireCandidate = store.historyCandidate;
+    expect(
+      hiddenWireCandidate?.wireEstimates?.downloadBytesPerSec,
+    ).toBeGreaterThan(throughput.meanBytesPerSec);
+    expect(hiddenWireCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
+    expect(
+      hiddenWireCandidate?.wireEstimates?.bidirectionalBytesPerSec,
+    ).toBeNull();
+    expect(JSON.stringify(hiddenWireCandidate)).not.toContain("127.0.0.1");
+
+    store.showWireEstimates = true;
+    expect(store.historyCandidate).toBe(hiddenWireCandidate);
+
+    store.reset();
+    store.showWireEstimates = false;
+    store.resultHistoryPreference = "enabled";
+    store.activeConnections = loopbackConnections();
+    store.ingest({ type: "complete", result: result() });
+    expect(store.historyCandidate?.wireEstimates).toBeNull();
+  } finally {
+    store.reset();
+    store.resultHistoryPreference = previousPreference;
+    store.showWireEstimates = previousShowWireEstimates;
     for (const key of Object.keys(BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);
   }

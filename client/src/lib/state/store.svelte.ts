@@ -678,18 +678,15 @@ export class AppStore {
                   },
                 ]),
               ),
-              wireDownloadBytesPerSec:
-                this.showWireEstimates && downloadWire?.available
-                  ? downloadWire.estimatedBytesPerSec
-                  : null,
-              wireUploadBytesPerSec:
-                this.showWireEstimates && uploadWire?.available
-                  ? uploadWire.estimatedBytesPerSec
-                  : null,
-              wireBidirectionalBytesPerSec:
-                this.showWireEstimates && bidiWire?.available
-                  ? bidiWire.estimatedBytesPerSec
-                  : null,
+              wireDownloadBytesPerSec: downloadWire?.available
+                ? downloadWire.estimatedBytesPerSec
+                : null,
+              wireUploadBytesPerSec: uploadWire?.available
+                ? uploadWire.estimatedBytesPerSec
+                : null,
+              wireBidirectionalBytesPerSec: bidiWire?.available
+                ? bidiWire.estimatedBytesPerSec
+                : null,
             },
             Date.now(),
           );
