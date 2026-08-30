@@ -26,8 +26,13 @@ beforeEach(() => {
   memoryStorage.clear();
 });
 
-const { loadPersisted, savePersisted, defaultPersisted, STORAGE_KEY } =
-  await import("./persistence");
+const {
+  loadPersisted,
+  savePersisted,
+  defaultPersisted,
+  resolveResultHistoryPreference,
+  STORAGE_KEY,
+} = await import("./persistence");
 
 test("no stored value: returns defaults", () => {
   expect(loadPersisted()).toEqual(defaultPersisted());
@@ -50,6 +55,15 @@ test("history preference migrates to default and preserves explicit overrides", 
     JSON.stringify({ ...snapshot, resultHistoryPreference: "corrupt" }),
   );
   expect(loadPersisted().resultHistoryPreference).toBe("default");
+});
+
+test("history preference resolves explicit choices over either operator default", () => {
+  expect(resolveResultHistoryPreference("default", false)).toBe(false);
+  expect(resolveResultHistoryPreference("default", true)).toBe(true);
+  expect(resolveResultHistoryPreference("enabled", false)).toBe(true);
+  expect(resolveResultHistoryPreference("enabled", true)).toBe(true);
+  expect(resolveResultHistoryPreference("disabled", false)).toBe(false);
+  expect(resolveResultHistoryPreference("disabled", true)).toBe(false);
 });
 
 test("history columns default, validate, deduplicate, and preserve order", () => {

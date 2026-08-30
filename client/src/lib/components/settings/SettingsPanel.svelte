@@ -67,7 +67,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description="Restore test and display settings to the shipped defaults? Your theme, panel layout, and existing test results will be kept."
+  description="Restore test, display, and history-saving settings to their defaults? Your theme, panel layout, and saved results will be kept."
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}

@@ -11,7 +11,7 @@
     endpointActive: boolean;
     theme: ThemePref;
     onHistory: (invoker: HTMLElement) => void;
-    onEndpoint: () => void;
+    onEndpoint: (invoker: HTMLElement) => void;
     onTheme: () => void;
   }
 
@@ -49,6 +49,12 @@
     onHistory(trigger);
     await tick();
     if (trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+
+  function chooseEndpoint() {
+    open = false;
+    if (!trigger) return;
+    onEndpoint(trigger);
   }
 
   onMount(() => {
@@ -107,7 +113,7 @@
           type="button"
           role="menuitem"
           aria-current={endpointActive ? "true" : undefined}
-          onclick={() => choose(onEndpoint)}
+          onclick={chooseEndpoint}
         >
           <span>{@html ICON.info}</span>
           <span

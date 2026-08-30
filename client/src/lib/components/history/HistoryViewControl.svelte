@@ -39,6 +39,23 @@
     loaded: "Loaded latency",
   };
 
+  const directionOptions = $derived.by(() => {
+    if (sort === "date")
+      return [
+        { descending: true, label: "Newest first", symbol: "↓" },
+        { descending: false, label: "Oldest first", symbol: "↑" },
+      ];
+    if (sort === "idle" || sort === "loaded")
+      return [
+        { descending: false, label: "Lowest first", symbol: "↑" },
+        { descending: true, label: "Highest first", symbol: "↓" },
+      ];
+    return [
+      { descending: true, label: "Fastest first", symbol: "↓" },
+      { descending: false, label: "Slowest first", symbol: "↑" },
+    ];
+  });
+
   async function toggle() {
     open = !open;
     if (!open) return;
@@ -150,14 +167,23 @@
             </button>
           {/each}
         </div>
-        <button
-          class="direction"
-          type="button"
-          onclick={() => onSortChange(sort, !descending)}
+        <div
+          class="direction-options"
+          role="group"
+          aria-label={`Order for ${HISTORY_SORT_LABEL[sort]}`}
         >
-          <span aria-hidden="true">{descending ? "↓" : "↑"}</span>
-          {descending ? "Reverse to ascending" : "Reverse to descending"}
-        </button>
+          {#each directionOptions as option (option.label)}
+            <button
+              type="button"
+              aria-label={`${HISTORY_SORT_LABEL[sort]}: ${option.label}`}
+              aria-pressed={descending === option.descending}
+              onclick={() => onSortChange(sort, option.descending)}
+            >
+              <span aria-hidden="true">{option.symbol}</span>
+              {option.label}
+            </button>
+          {/each}
+        </div>
       {/if}
     </div>
   {/if}
@@ -252,7 +278,7 @@
     grid-template-columns: minmax(0, 1fr);
   }
   .options button,
-  .direction {
+  .direction-options button {
     display: grid;
     grid-template-columns: 17px minmax(0, 1fr);
     align-items: center;
@@ -270,7 +296,9 @@
   .options button:hover,
   .options button:focus-visible,
   .options button[aria-checked="true"],
-  .direction:hover {
+  .direction-options button:hover,
+  .direction-options button:focus-visible,
+  .direction-options button[aria-pressed="true"] {
     background: var(--brand-soft);
     color: var(--text);
   }
@@ -278,13 +306,18 @@
     opacity: 0.55;
     cursor: not-allowed;
   }
-  .direction {
-    width: 100%;
+  .direction-options {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px;
     margin-top: 3px;
+    padding-top: 3px;
     border-top: 1px solid var(--border-subtle);
-    border-radius: 0 0 var(--r-well) var(--r-well);
   }
-  .direction > span {
+  .direction-options button {
+    width: 100%;
+  }
+  .direction-options button > span {
     color: var(--brand-strong);
     font: 750 15px var(--font-mono);
     text-align: center;

@@ -71,11 +71,7 @@
     >
       <button type="button" role="menuitem" onclick={requestClear}>
         <span>{@html ICON.trash}</span>
-        <span
-          ><strong>Clear all saved results</strong><small
-            >Requires confirmation</small
-          ></span
-        >
+        <span><strong>Clear all saved results</strong></span>
       </button>
     </div>
   {/if}
@@ -144,19 +140,11 @@
     display: grid;
     place-items: center;
   }
-  .management-menu strong,
-  .management-menu small {
-    display: block;
-  }
   .management-menu strong {
     color: var(--text);
     font-size: var(--type-xs);
   }
-  .management-menu small {
-    margin-top: 2px;
-    color: var(--text-muted);
-    font-size: 9px;
-  }
+
   @media (prefers-reduced-motion: no-preference) {
     .management-menu {
       animation: reveal-management var(--dur-hover) var(--ease-out) both;

@@ -5,11 +5,10 @@
 
   interface Props {
     open: boolean;
-    invoker?: HTMLElement | null;
     onClose: () => void;
   }
 
-  let { open, invoker = null, onClose }: Props = $props();
+  let { open, onClose }: Props = $props();
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let data = $state<LegalAbout | null>(null);
 
@@ -39,7 +38,6 @@
 
   function close() {
     onClose();
-    window.setTimeout(() => invoker?.focus({ preventScroll: true }), 0);
   }
 
   function onDialogKeydown(event: KeyboardEvent) {

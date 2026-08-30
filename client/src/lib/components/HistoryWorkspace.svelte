@@ -47,14 +47,21 @@
   let visibleCount = $state(50);
   let renderedAt = $state(Date.now());
   let workspaceWidth = $state(0);
-  let detailHeading = $state<HTMLElement>();
+  let detailRegion = $state<HTMLElement>();
+  let detailCloseButton = $state<HTMLButtonElement>();
+  let requestedDetailFocus = $state<{
+    id: string;
+    target: "region" | "close" | "none";
+  } | null>(null);
+  let focusedDetailId = $state<string | null>(null);
+  let previousSelectedId = $state<string | null>(null);
+  let keyboardActivationId: string | null = null;
   let confirm = $state<
     { kind: "delete"; id: string } | { kind: "clear" } | null
   >(null);
   let confirmInvoker: HTMLElement | null = null;
   let actionError = $state("");
   let announcement = $state("");
-  let focusedHeading: HTMLElement | null = null;
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
@@ -154,20 +161,18 @@
   }
 
   function closeDetail() {
-    const id = selectedId;
     onNavigate(null);
-    window.setTimeout(() => {
-      if (!id) return;
-      document.querySelector<HTMLElement>(`[data-history-id="${id}"]`)?.focus();
-    }, 0);
   }
 
-  function activate(record: HistoryRecordV1) {
+  function activate(record: HistoryRecordV1, keyboard: boolean) {
     if (selectedId === record.id) {
       closeDetail();
       return;
     }
-    focusedHeading = null;
+    requestedDetailFocus = {
+      id: record.id,
+      target: keyboard ? "close" : "none",
+    };
     onNavigate(record.id);
   }
 
@@ -363,15 +368,48 @@
     const id = selectedId;
     if (loadState !== "ready") return;
     void resolveSelection(id, loadGeneration);
-    if (!id) focusedHeading = null;
+    if (!id) {
+      focusedDetailId = null;
+      requestedDetailFocus = null;
+    }
+  });
+
+  $effect(() => {
+    const id = selectedId;
+    const previous = previousSelectedId;
+    previousSelectedId = id;
+    if (!previous || id) return;
+    void tick().then(() => {
+      const target =
+        document.querySelector<HTMLElement>(
+          `[data-history-id="${previous}"]`,
+        ) ??
+        document.querySelector<HTMLElement>(
+          ".history-workspace .close-history",
+        );
+      target?.focus();
+    });
   });
 
   $effect(() => {
     const id = selectedRecord?.id;
-    const target = detailHeading;
-    if (!id || !target || target === focusedHeading) return;
-    focusedHeading = target;
-    void tick().then(() => target.focus({ preventScroll: sideInspector }));
+    const region = detailRegion;
+    const closeButton = detailCloseButton;
+    if (!id || focusedDetailId === id) return;
+    const request =
+      requestedDetailFocus?.id === id ? requestedDetailFocus.target : "region";
+    if (request === "none") {
+      focusedDetailId = id;
+      requestedDetailFocus = null;
+      return;
+    }
+    const target = request === "close" ? closeButton : region;
+    if (!target) return;
+    focusedDetailId = id;
+    requestedDetailFocus = null;
+    void tick().then(() =>
+      target.focus({ preventScroll: request === "region" && sideInspector }),
+    );
   });
 
   $effect(() => {
@@ -584,6 +622,16 @@
                 aria-current={selectedId === record.id ? "true" : undefined}
                 aria-expanded={selectedId === record.id}
                 aria-label={row.ariaLabel}
+                onkeydown={(event) => {
+                  if (
+                    event.key === "Enter" &&
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    !event.altKey
+                  )
+                    keyboardActivationId = record.id;
+                }}
                 onclick={(event) => {
                   if (
                     event.button !== 0 ||
@@ -594,7 +642,9 @@
                   )
                     return;
                   event.preventDefault();
-                  activate(record);
+                  const keyboard = keyboardActivationId === record.id;
+                  keyboardActivationId = null;
+                  activate(record, keyboard);
                 }}
               >
                 <span class="date-cell">
@@ -609,16 +659,19 @@
                       >{/if}
                   </span>
                 </span>
-                {#each columns as column}
-                  <span class="metric-cell" data-tone={column}>
-                    <small
-                      ><span>{@html columnMeta[column].icon}</span>{columnMeta[
-                        column
-                      ].short}</small
-                    >
-                    <strong>{row.metrics[column]}</strong>
-                  </span>
-                {/each}
+                <span class="metrics-row">
+                  {#each columns as column}
+                    <span class="metric-cell" data-tone={column}>
+                      <small
+                        ><span>{@html columnMeta[column].icon}</span
+                        >{columnMeta[column].short}</small
+                      >
+                      <strong title={row.metrics[column]}
+                        >{row.metrics[column]}</strong
+                      >
+                    </span>
+                  {/each}
+                </span>
               </a>
               {#if selectedId === record.id && selectedRecord && !sideInspector}
                 <div class="inline-inspector">
@@ -627,7 +680,8 @@
                     onClose={closeDetail}
                     onDelete={() =>
                       (confirm = { kind: "delete", id: record.id })}
-                    bind:heading={detailHeading}
+                    bind:region={detailRegion}
+                    bind:closeButton={detailCloseButton}
                   />
                 </div>
               {/if}
@@ -649,7 +703,8 @@
             onClose={closeDetail}
             onDelete={() =>
               (confirm = { kind: "delete", id: selectedRecord.id })}
-            bind:heading={detailHeading}
+            bind:region={detailRegion}
+            bind:closeButton={detailCloseButton}
           />
         </aside>
       {:else if selectedId && !selectedRecord && selectedState !== "ready"}
@@ -971,6 +1026,9 @@
       );
     min-width: 0;
   }
+  .metrics-row {
+    display: contents;
+  }
   .column-head {
     position: sticky;
     top: 0;
@@ -1228,8 +1286,8 @@
     }
     ol {
       display: grid;
-      gap: var(--space-2);
-      padding: var(--space-3);
+      gap: 6px;
+      padding: 8px;
     }
     li {
       border: 1px solid var(--border);
@@ -1237,7 +1295,7 @@
       background:
         linear-gradient(180deg, var(--surface-2), transparent), var(--surface-1);
       box-shadow: var(--elev-tile);
-      contain-intrinsic-size: 190px;
+      contain-intrinsic-size: 76px;
     }
     li.selected {
       border-color: color-mix(in srgb, var(--brand) 64%, var(--border));
@@ -1246,25 +1304,46 @@
         var(--elev-tile);
     }
     .result-row {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
+      min-height: 72px;
     }
     .date-cell {
-      grid-column: 1 / -1;
-      padding: 11px 12px;
+      min-height: 31px;
+      padding: 6px 9px 5px;
       border-bottom: 1px solid var(--border);
       background: color-mix(in srgb, var(--surface-2) 72%, transparent);
     }
-    .metric-cell {
+    .date-cell time {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    .date-cell time strong,
+    .date-cell time small {
+      margin: 0;
+    }
+    .date-cell time small {
+      flex: none;
+    }
+    .row-badges {
+      display: flex;
+      align-items: center;
       gap: 4px;
-      padding: 9px 12px;
-      border-left: 0;
+    }
+    .metrics-row {
+      display: grid;
+      grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
+      min-width: 0;
+    }
+    .metric-cell {
+      gap: 3px;
+      min-width: 0;
+      padding: 6px 7px 7px;
+      border-left: 1px solid var(--border-subtle);
       text-align: left;
     }
-    .metric-cell:nth-of-type(even) {
-      border-left: 1px solid var(--border-subtle);
-    }
-    .metric-cell:nth-of-type(n + 4) {
-      border-top: 1px solid var(--border-subtle);
+    .metric-cell:first-child {
+      border-left: 0;
     }
     .metric-cell small {
       display: flex;
@@ -1284,7 +1363,10 @@
       height: 12px;
     }
     .metric-cell strong {
-      font-size: var(--type-xs);
+      overflow: hidden;
+      font-size: 9px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
   @container (max-width: 560px) {
@@ -1322,14 +1404,26 @@
     .toolbar-actions {
       justify-content: space-between;
     }
-    .result-row {
-      grid-template-columns: 1fr;
+    .date-cell time {
+      gap: 5px;
     }
-    .metric-cell:nth-of-type(even) {
-      border-left: 0;
+    .date-cell time small {
+      font-size: 8px;
     }
-    .metric-cell:nth-of-type(n + 3) {
-      border-top: 1px solid var(--border-subtle);
+    .metric-cell {
+      padding-inline: 5px;
+    }
+    .metric-cell small {
+      gap: 3px;
+      font-size: 8px;
+      letter-spacing: 0.02em;
+    }
+    .metric-cell small :global(svg) {
+      width: 10px;
+      height: 10px;
+    }
+    .metric-cell strong {
+      font-size: 9px;
     }
   }
   @media (prefers-reduced-motion: no-preference) {

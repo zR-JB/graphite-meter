@@ -465,6 +465,18 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
   expect(Number.isFinite(elapsed)).toBe(true);
   await expect(page.locator(".result-row")).toHaveCount(50);
 
+  for (const width of [390, 340, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    const heights = await page
+      .locator(".result-row")
+      .evaluateAll((rows) =>
+        rows.slice(0, 10).map((row) => row.getBoundingClientRect().height),
+      );
+    expect(Math.max(...heights)).toBeLessThanOrEqual(80);
+    await expectNoHorizontalOverflow(page.locator(".history-workspace"));
+  }
+  await page.setViewportSize({ width: 1366, height: 768 });
+
   const listScroll = await page
     .locator(".archive-list")
     .evaluate((node) => node.scrollTop);
@@ -631,15 +643,21 @@ test("wide panels compose over History while narrow routes keep only the visible
   await expect(endpointPanel(page)).toHaveAttribute("inert", "");
 });
 
-test("deep-linked detail is a focused side inspector and a focused inline expansion", async ({
+test("deep-linked detail uses contextual focus without outlining its heading", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1440, height: 900 });
   await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
   await openHistory(page, IDS.newest);
   const heading = page.locator(".result-detail h2");
+  const detailRegion = page.locator(".result-detail");
   await expect(page.locator(".detail-inspector")).toBeVisible();
-  await expect(heading).toBeFocused();
+  await expect(detailRegion).toBeFocused();
+  await expect(heading).not.toBeFocused();
+  expect(await heading.getAttribute("tabindex")).toBeNull();
+  expect(
+    await detailRegion.evaluate((node) => getComputedStyle(node).outlineStyle),
+  ).toBe("none");
   const detail = page.locator(".detail-inspector");
   const profile = detail.locator(
     '[data-latency-profile][data-variant="compact"]',
@@ -681,7 +699,8 @@ test("deep-linked detail is a focused side inspector and a focused inline expans
   await page.setViewportSize({ width: 390, height: 844 });
   await row.click();
   await expect(page.locator(".inline-inspector")).toBeVisible();
-  await expect(heading).toBeFocused();
+  await expect(row).toBeFocused();
+  await expect(heading).not.toBeFocused();
   await expect(row.getByText("Selected", { exact: true })).toBeVisible();
   await expect(page.locator(".detail-inspector")).toHaveCount(0);
   await expectNoHorizontalOverflow(page.locator(".history-workspace"));
@@ -697,6 +716,55 @@ test("deep-linked detail is a focused side inspector and a focused inline expans
     .include(".history-workspace")
     .analyze();
   expect(darkAccessibility.violations).toEqual([]);
+});
+
+test("detail, Legal, and History keyboard routes keep focus on meaningful targets", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await setHistoryPreference(page, "enabled");
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+  await openHistory(page);
+
+  const row = page.locator(`[data-history-id="${IDS.newest}"]`);
+  const heading = page.locator(".result-detail h2");
+  const closeResult = page.getByRole("button", { name: "Close result" });
+  await row.focus();
+  await row.press("Enter");
+  await expect(closeResult).toBeFocused();
+  await expect(heading).not.toBeFocused();
+  expect(await heading.getAttribute("tabindex")).toBeNull();
+
+  await page.evaluate(() => window.history.back());
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  await expect(closeResult).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(row).toBeFocused();
+  await row.press("Enter");
+  await expect(closeResult).toBeFocused();
+
+  const endpoint = await openEndpointInfo(page);
+  const legalInvoker = endpoint.getByRole("button", { name: "About & legal" });
+  await legalInvoker.click();
+  await expect(
+    page.getByRole("dialog", { name: "About & legal" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(legalInvoker).toBeFocused();
+  await expect(heading).not.toBeFocused();
+  await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
+  await expect(
+    page.getByRole("button", { name: "Toggle endpoint info" }),
+  ).toBeFocused();
+
+  await page.keyboard.press("h");
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await expect(page.locator(".brand-btn")).not.toBeFocused();
+  await page.keyboard.press("h");
+  await expect(page.locator(".history-workspace")).toBeFocused();
+  await expect(page.locator(".result-detail h2")).toHaveCount(0);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
 
 test("activating the selected result closes detail without hijacking modified links", async ({
@@ -1007,6 +1075,13 @@ test("History shortcut uses neutral workspace focus and preserves its invocation
     page.getByRole("button", { name: "Open History" }),
   ).toBeFocused();
 
+  await settingsTrigger.click();
+  await expect(settingsPanel(page)).toBeVisible();
+  await settingsPanel(page)
+    .getByRole("button", { name: "Close Settings" })
+    .click();
+  await expect(settingsTrigger).toBeFocused();
+
   await page.keyboard.press("s");
   await expect(settingsPanel(page)).toBeVisible();
   await page.keyboard.press("s");
@@ -1233,6 +1308,31 @@ test("sortable headers expose natural reversible order with missing values last"
   ).toBeVisible();
   await expect(page.locator(".issue-list li")).toHaveCount(1);
   await expect(page.locator(".result-detail details")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(partialRow.getByText("Partial", { exact: true })).toHaveCount(1);
+  await expect(
+    page
+      .locator(`[data-history-id="${IDS.middle}"]`)
+      .locator('.metric-cell[data-tone="download"]'),
+  ).toContainText("Not run");
+  await expect(partialRow.locator(".metric-cell small")).toHaveCount(4);
+  expect(
+    await partialRow.evaluate((node) => node.getBoundingClientRect().height),
+  ).toBeLessThanOrEqual(80);
+  await page
+    .getByRole("button", { name: "Choose history view and sort" })
+    .click();
+  await page.getByRole("radio", { name: "Date" }).click();
+  await page.getByRole("button", { name: "Date: Oldest first" }).click();
+  await page.getByRole("checkbox", { name: "Upload" }).click();
+  await page.keyboard.press("Escape");
+  expect(await ids()).toEqual([IDS.oldest, IDS.middle, IDS.newest]);
+  await expect(
+    partialRow.locator('.metric-cell[data-tone="upload"]'),
+  ).toHaveCount(0);
+  await expectNoHorizontalOverflow(page.locator(".history-workspace"));
 });
 
 test("column visibility persists and narrow cards retain all six sort choices", async ({
@@ -1290,8 +1390,30 @@ test("column visibility persists and narrow cards retain all six sort choices", 
   expect(loadedBox!.x + loadedBox!.width).toBeLessThanOrEqual(
     popoverBox!.x + popoverBox!.width,
   );
-  await loadedSort.click();
-  await expect(loadedSort).toHaveAttribute("aria-checked", "true");
+  const directionCases = [
+    ["Date", "Newest first", "Oldest first"],
+    ["Download", "Fastest first", "Slowest first"],
+    ["Upload", "Fastest first", "Slowest first"],
+    ["Bidirectional", "Fastest first", "Slowest first"],
+    ["Idle", "Lowest first", "Highest first"],
+    ["Loaded", "Lowest first", "Highest first"],
+  ] as const;
+  for (const [field, natural, reverse] of directionCases) {
+    const fieldOption = page.getByRole("radio", { name: field });
+    await fieldOption.scrollIntoViewIfNeeded();
+    await fieldOption.click();
+    await expect(fieldOption).toHaveAttribute("aria-checked", "true");
+    const naturalDirection = page.getByRole("button", {
+      name: `${field}: ${natural}`,
+    });
+    const reverseDirection = page.getByRole("button", {
+      name: `${field}: ${reverse}`,
+    });
+    await expect(naturalDirection).toHaveAttribute("aria-pressed", "true");
+    await reverseDirection.click();
+    await expect(reverseDirection).toHaveAttribute("aria-pressed", "true");
+    await expect(naturalDirection).toHaveAttribute("aria-pressed", "false");
+  }
 
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 640 });
@@ -1353,6 +1475,7 @@ test("one inline scroll owner accepts wheel gestures over rows and mobile detail
 
   await row.click();
   const detailSurface = page.locator(".result-detail .throughput-card").first();
+  await detailSurface.scrollIntoViewIfNeeded();
   await detailSurface.hover();
   const beforeDetailWheel = await scrollOwner.evaluate(
     (node) => node.scrollTop,

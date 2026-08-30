@@ -174,3 +174,19 @@ test("wire snapshots are independent of their display preference", async () => {
       Reflect.deleteProperty(globalThis, key);
   }
 });
+
+test("settings reset returns history saving to the operator-controlled default", async () => {
+  const { store } = await import("./store.svelte");
+  const previousPreference = store.resultHistoryPreference;
+  try {
+    store.resultHistoryPreference = "enabled";
+    store.restoreTestDisplayDefaults();
+    expect(String(store.resultHistoryPreference)).toBe("default");
+
+    store.resultHistoryPreference = "disabled";
+    store.restoreTestDisplayDefaults();
+    expect(String(store.resultHistoryPreference)).toBe("default");
+  } finally {
+    store.resultHistoryPreference = previousPreference;
+  }
+});

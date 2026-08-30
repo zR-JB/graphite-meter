@@ -25,7 +25,8 @@
     record: HistoryRecordV1;
     onClose: () => void;
     onDelete: () => void;
-    heading?: HTMLElement;
+    region?: HTMLElement;
+    closeButton?: HTMLButtonElement;
   }
 
   interface ThroughputCard {
@@ -46,7 +47,13 @@
     count: number;
   }
 
-  let { record, onClose, onDelete, heading = $bindable() }: Props = $props();
+  let {
+    record,
+    onClose,
+    onDelete,
+    region = $bindable(),
+    closeButton = $bindable(),
+  }: Props = $props();
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
@@ -271,12 +278,17 @@
   );
 </script>
 
-<article class="result-detail" aria-labelledby={`result-${record.id}-title`}>
+<article
+  bind:this={region}
+  class="result-detail"
+  aria-labelledby={`result-${record.id}-title`}
+  tabindex="-1"
+>
   <header class="detail-hero">
     <div class="detail-toolbar">
       <div class="detail-title">
         <span>Saved result</span>
-        <h2 id={`result-${record.id}-title`} tabindex="-1" bind:this={heading}>
+        <h2 id={`result-${record.id}-title`}>
           <time datetime={completedDate.toISOString()}>
             {completedDate.toLocaleDateString(undefined, {
               weekday: "short",
@@ -294,6 +306,7 @@
         </h2>
       </div>
       <button
+        bind:this={closeButton}
         class="close-detail"
         type="button"
         aria-label="Close result"
@@ -496,6 +509,9 @@
     min-width: 0;
     background: var(--surface-1);
     color: var(--text);
+  }
+  .result-detail:focus {
+    outline: none;
   }
   h2,
   h3,

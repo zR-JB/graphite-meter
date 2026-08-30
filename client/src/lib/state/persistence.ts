@@ -7,6 +7,15 @@ export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
 
 export type ThemePref = "dark" | "light" | "auto";
 export type ResultHistoryPreference = "default" | "enabled" | "disabled";
+
+export function resolveResultHistoryPreference(
+  preference: ResultHistoryPreference,
+  operatorDefault: boolean,
+): boolean {
+  return (
+    preference === "enabled" || (preference === "default" && operatorDefault)
+  );
+}
 export type HistoryColumn =
   "download" | "upload" | "bidirectional" | "idle" | "loaded";
 

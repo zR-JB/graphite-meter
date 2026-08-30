@@ -55,14 +55,18 @@
         kind: "workspace";
         workspace: "history" | "measurement";
         afterPanel?: PanelSurface;
+        afterDialog?: boolean;
       }
     | {
         kind: "element";
         target: HTMLElement;
         workspace: "history" | "measurement";
+        afterPanel?: PanelSurface;
+        afterDialog?: boolean;
       }
     | null
   >(null);
+  const panelInvokers: Partial<Record<PanelSurface, HTMLElement>> = {};
 
   let resetConfirmOpen = $state(false);
   let legalInvoker = $state<HTMLElement | null>(null);
@@ -100,7 +104,19 @@
         const matchesRoute =
           intent.workspace === "history" ? historyOpen : measurementOpen;
         if (!matchesRoute) return;
-        if (intent.target.isConnected) {
+        if (
+          intent.afterPanel &&
+          currentRoute.kind === "app" &&
+          currentRoute.panels.includes(intent.afterPanel)
+        )
+          return;
+        if (
+          intent.afterDialog &&
+          currentRoute.kind === "app" &&
+          currentRoute.dialog === "legal"
+        )
+          return;
+        if (canRestoreFocus(intent.target)) {
           intent.target.focus({ preventScroll: true });
           workspaceFocusIntent = null;
           return;
@@ -116,6 +132,12 @@
           intent.afterPanel &&
           currentRoute.kind === "app" &&
           currentRoute.panels.includes(intent.afterPanel)
+        )
+          return;
+        if (
+          intent.afterDialog &&
+          currentRoute.kind === "app" &&
+          currentRoute.dialog === "legal"
         )
           return;
         const target = document.querySelector<HTMLElement>(
@@ -198,6 +220,14 @@
     auto: "Auto",
   };
 
+  function canRestoreFocus(
+    target: HTMLElement | null | undefined,
+  ): target is HTMLElement {
+    return !!(
+      target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')
+    );
+  }
+
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
@@ -261,14 +291,28 @@
   function focusWorkspace(
     workspace: "history" | "measurement",
     afterPanel?: PanelSurface,
+    afterDialog = false,
   ) {
-    workspaceFocusIntent = { kind: "workspace", workspace, afterPanel };
+    workspaceFocusIntent = {
+      kind: "workspace",
+      workspace,
+      afterPanel,
+      afterDialog,
+    };
   }
   function focusElement(
     target: HTMLElement,
     workspace: "history" | "measurement",
+    afterPanel?: PanelSurface,
+    afterDialog = false,
   ) {
-    workspaceFocusIntent = { kind: "element", target, workspace };
+    workspaceFocusIntent = {
+      kind: "element",
+      target,
+      workspace,
+      afterPanel,
+      afterDialog,
+    };
   }
   function closeHistory(focus: "measurement" | HTMLElement) {
     if (focus === "measurement") focusWorkspace("measurement");
@@ -305,16 +349,19 @@
   function dismissHistory() {
     const invoker = historyInvoker;
     historyInvoker = null;
-    closeHistory(invoker?.isConnected ? invoker : "measurement");
+    closeHistory(canRestoreFocus(invoker) ? invoker : "measurement");
   }
   function closeHistoryDetail() {
     backOrReplace(
       withWorkspace(currentRoute, { kind: "history", selectedId: null }),
     );
   }
-  function panelRoute(panel: PanelSurface) {
+  function panelRoute(panel: PanelSurface, invoker?: HTMLElement) {
     const replacingCompetingPanel =
       !dockQuery.matches && lastPanel !== undefined && lastPanel !== panel;
+    if (invoker) panelInvokers[panel] = invoker;
+    else delete panelInvokers[panel];
+    if (replacingCompetingPanel && lastPanel) delete panelInvokers[lastPanel];
     routeTo(
       activatePanel(currentRoute, panel, dockQuery.matches),
       replacingCompetingPanel,
@@ -323,9 +370,18 @@
   function closePanelRoute(panel: PanelSurface) {
     backOrReplace(closePanel(currentRoute, panel));
   }
-  function dismissPanel(panel: PanelSurface) {
+  function dismissPanel(panel: PanelSurface, invoker?: HTMLElement) {
+    const restore = invoker ?? panelInvokers[panel];
+    delete panelInvokers[panel];
     closePanelRoute(panel);
-    focusWorkspace(historyOpen ? "history" : "measurement", panel);
+    const workspace = historyOpen ? "history" : "measurement";
+    if (canRestoreFocus(restore)) focusElement(restore, workspace, panel);
+    else focusWorkspace(workspace, panel);
+  }
+  function togglePanelFromPointer(panel: PanelSurface, invoker: HTMLElement) {
+    const open = panel === "settings" ? settingsOpen : telemetryOpen;
+    if (open) dismissPanel(panel, invoker);
+    else panelRoute(panel, invoker);
   }
 
   function confirmReturnToStart() {
@@ -340,7 +396,17 @@
   }
 
   function closeLegal() {
-    backOrReplace(closeDialog(currentRoute));
+    const next = closeDialog(currentRoute);
+    const workspace =
+      next.kind === "app" && next.workspace.kind === "history"
+        ? "history"
+        : "measurement";
+    const invoker = legalInvoker;
+    legalInvoker = null;
+    if (canRestoreFocus(invoker))
+      focusElement(invoker, workspace, undefined, true);
+    else focusWorkspace(workspace, undefined, true);
+    backOrReplace(next);
   }
 
   function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -409,12 +475,11 @@
           : currentRoute.kind === "app"
             ? currentRoute.panels.at(-1)
             : undefined;
-        if (requested === "settings" && settingsOpen)
-          closePanelRoute("settings");
+        if (requested === "settings" && settingsOpen) dismissPanel("settings");
         else if (requested === "endpoint" && telemetryOpen)
-          closePanelRoute("endpoint");
-        else if (settingsOpen) closePanelRoute("settings");
-        else if (telemetryOpen) closePanelRoute("endpoint");
+          dismissPanel("endpoint");
+        else if (settingsOpen) dismissPanel("settings");
+        else if (telemetryOpen) dismissPanel("endpoint");
       } else {
         return;
       }
@@ -461,11 +526,36 @@
 
   onMount(() => {
     const onHashChange = () => {
+      const previous = currentRoute;
       const previousHistory = historyOpen;
       const next = parseRoute(window.location.hash);
       const nextHistory =
         next.kind === "app" && next.workspace.kind === "history";
       currentRoute = next;
+      if (!workspaceFocusIntent && previous.kind === "app") {
+        const workspace = nextHistory ? "history" : "measurement";
+        if (
+          previous.dialog === "legal" &&
+          (next.kind !== "app" || next.dialog !== "legal")
+        ) {
+          const invoker = legalInvoker;
+          legalInvoker = null;
+          if (canRestoreFocus(invoker)) focusElement(invoker, workspace);
+          else focusWorkspace(workspace);
+          return;
+        }
+        const nextPanels = next.kind === "app" ? next.panels : [];
+        const removedPanel = [...previous.panels]
+          .reverse()
+          .find((panel) => !nextPanels.includes(panel));
+        if (removedPanel) {
+          const invoker = panelInvokers[removedPanel];
+          delete panelInvokers[removedPanel];
+          if (canRestoreFocus(invoker)) focusElement(invoker, workspace);
+          else focusWorkspace(workspace);
+          return;
+        }
+      }
       if (
         previousHistory === nextHistory ||
         workspaceFocusIntent ||
@@ -598,8 +688,8 @@
       aria-label="Open settings"
       aria-expanded={settingsOpen}
       use:tooltip={"Settings — test and display (S)"}
-      onclick={() =>
-        settingsOpen ? closePanelRoute("settings") : panelRoute("settings")}
+      onclick={(event) =>
+        togglePanelFromPointer("settings", event.currentTarget as HTMLElement)}
       >{@html ICON.settings}</button
     >
     <span class="chrome-divider" aria-hidden="true"></span>
@@ -611,8 +701,10 @@
         type="button"
         aria-label={`${awayRunIndicator.label}. Return to live meter.`}
         use:tooltip={`${awayRunIndicator.label} — return to live meter`}
-        onclick={() =>
-          routeTo(withWorkspace(currentRoute, { kind: "measurement" }))}
+        onclick={() => {
+          focusWorkspace("measurement");
+          routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
+        }}
       >
         <span class="run-icon">{@html ICON[awayRunIndicator.icon]}</span>
         <span class="live-copy">
@@ -647,9 +739,11 @@
         aria-label="Toggle endpoint info"
         aria-expanded={telemetryOpen}
         use:tooltip={"Endpoint info"}
-        onclick={() =>
-          telemetryOpen ? closePanelRoute("endpoint") : panelRoute("endpoint")}
-        >{@html ICON.info}</button
+        onclick={(event) =>
+          togglePanelFromPointer(
+            "endpoint",
+            event.currentTarget as HTMLElement,
+          )}>{@html ICON.info}</button
       >
     {/if}
     {#if moreAvailable}
@@ -661,8 +755,8 @@
         endpointActive={telemetryOpen}
         theme={store.theme}
         onHistory={toggleHistoryFromPointer}
-        onEndpoint={() =>
-          telemetryOpen ? closePanelRoute("endpoint") : panelRoute("endpoint")}
+        onEndpoint={(invoker: HTMLElement) =>
+          togglePanelFromPointer("endpoint", invoker)}
         onTheme={toggleTheme}
       />
     {/if}
@@ -760,7 +854,7 @@
     onConfirm={confirmReturnToStart}
   />
 
-  <LegalDialog open={legalOpen} invoker={legalInvoker} onClose={closeLegal} />
+  <LegalDialog open={legalOpen} onClose={closeLegal} />
 </main>
 
 <style>

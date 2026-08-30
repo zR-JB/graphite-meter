@@ -67,6 +67,7 @@ import {
   defaultPersisted,
   loadPersisted,
   savePersisted,
+  resolveResultHistoryPreference,
   systemThemeDefault,
   DEFAULT_DOCK_WIDTH,
   STORAGE_KEY,
@@ -217,9 +218,10 @@ export class AppStore {
     );
   });
   savingResults = $derived(
-    this.resultHistoryPreference === "enabled" ||
-      (this.resultHistoryPreference === "default" &&
-        this.operatorHistoryDefault),
+    resolveResultHistoryPreference(
+      this.resultHistoryPreference,
+      this.operatorHistoryDefault,
+    ),
   );
   dockWidth = $state<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
@@ -757,6 +759,7 @@ export class AppStore {
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
+    this.resultHistoryPreference = defaults.resultHistoryPreference;
   }
 
   compactThroughputForDuration(durationMs: number) {

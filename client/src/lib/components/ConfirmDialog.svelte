@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
 
   interface Props {
@@ -22,6 +23,32 @@
     onConfirm,
     onCancel,
   }: Props = $props();
+  let wasOpen = false;
+  let returnFocus: HTMLElement | null = null;
+
+  $effect(() => {
+    const visible = open;
+    if (visible && !wasOpen) {
+      returnFocus =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    } else if (!visible && wasOpen) {
+      const target = returnFocus;
+      returnFocus = null;
+      void tick().then(() => {
+        const active = document.activeElement;
+        const needsFocus =
+          active === document.body ||
+          active === document.documentElement ||
+          !(active instanceof HTMLElement) ||
+          !active.isConnected;
+        if (needsFocus && target?.isConnected)
+          target.focus({ preventScroll: true });
+      });
+    }
+    wasOpen = visible;
+  });
 </script>
 
 {#if open}
