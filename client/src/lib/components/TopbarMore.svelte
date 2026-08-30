@@ -10,7 +10,7 @@
     historyActive: boolean;
     endpointActive: boolean;
     theme: ThemePref;
-    onHistory: () => void;
+    onHistory: (invoker: HTMLElement) => void;
     onEndpoint: () => void;
     onTheme: () => void;
   }
@@ -43,6 +43,14 @@
     action();
   }
 
+  async function chooseHistory() {
+    open = false;
+    if (!trigger) return;
+    onHistory(trigger);
+    await tick();
+    if (trigger.isConnected) trigger.focus({ preventScroll: true });
+  }
+
   onMount(() => {
     const outside = (event: PointerEvent) => {
       const target = event.target;
@@ -57,7 +65,6 @@
 <div class="more-control">
   <button
     bind:this={trigger}
-    class:active={showHistory && historyActive}
     class="more-trigger"
     type="button"
     aria-label="More controls"
@@ -86,7 +93,7 @@
           type="button"
           role="menuitem"
           aria-current={historyActive ? "page" : undefined}
-          onclick={() => choose(onHistory)}
+          onclick={chooseHistory}
         >
           <span class="history-icon">{@html ICON.history}</span>
           <span
@@ -146,12 +153,6 @@
   .more-trigger[aria-expanded="true"] {
     border-color: var(--border-strong);
     color: var(--text);
-  }
-  .more-trigger.active {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-    box-shadow: inset 0 -2px 0 var(--brand);
   }
   .more-trigger :global(svg),
   .more-menu button > span:first-child :global(svg) {

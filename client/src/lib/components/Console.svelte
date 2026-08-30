@@ -1,7 +1,7 @@
 <script lang="ts">
   // Main console shell: boots the runner, owns top-level panels, shortcuts,
   // theme toggle, and docked/flyout layout state.
-  import { onMount, type Component } from "svelte";
+  import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import {
     bootRunner,
@@ -49,6 +49,20 @@
     onClose: () => void;
   }> | null>(null);
   let historyChunkState = $state<"idle" | "loading" | "error">("idle");
+  let historyInvoker: HTMLElement | null = null;
+  let workspaceFocusIntent = $state<
+    | {
+        kind: "workspace";
+        workspace: "history" | "measurement";
+        afterPanel?: PanelSurface;
+      }
+    | {
+        kind: "element";
+        target: HTMLElement;
+        workspace: "history" | "measurement";
+      }
+    | null
+  >(null);
 
   let resetConfirmOpen = $state(false);
   let legalInvoker = $state<HTMLElement | null>(null);
@@ -75,11 +89,51 @@
   $effect(() => {
     if (historyOpen) loadHistoryWorkspace();
   });
+  $effect(() => {
+    const intent = workspaceFocusIntent;
+    void currentRoute;
+    void HistoryWorkspace;
+    if (!intent) return;
+    void tick().then(() => {
+      if (workspaceFocusIntent !== intent) return;
+      if (intent.kind === "element") {
+        const matchesRoute =
+          intent.workspace === "history" ? historyOpen : measurementOpen;
+        if (!matchesRoute) return;
+        if (intent.target.isConnected) {
+          intent.target.focus({ preventScroll: true });
+          workspaceFocusIntent = null;
+          return;
+        }
+        const fallback = historyOpen ? "history" : "measurement";
+        workspaceFocusIntent = { kind: "workspace", workspace: fallback };
+        return;
+      } else {
+        const matchesRoute =
+          intent.workspace === "history" ? historyOpen : measurementOpen;
+        if (!matchesRoute) return;
+        if (
+          intent.afterPanel &&
+          currentRoute.kind === "app" &&
+          currentRoute.panels.includes(intent.afterPanel)
+        )
+          return;
+        const target = document.querySelector<HTMLElement>(
+          intent.workspace === "history"
+            ? ".history-workspace"
+            : ".measurement-stage",
+        );
+        if (!target) return;
+        target.focus({ preventScroll: true });
+      }
+      workspaceFocusIntent = null;
+    });
+  });
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const historyDirectQuery = mediaQuery(`(min-width: 640px)`);
-  const endpointDirectQuery = mediaQuery(`(min-width: 800px)`);
-  const themeDirectQuery = mediaQuery(`(min-width: 360px)`);
-  const authenticatedLiveComfortQuery = mediaQuery(`(min-width: 460px)`);
+  const historyDirectQuery = mediaQuery(`(min-width: 340px)`);
+  const endpointDirectQuery = mediaQuery(`(min-width: 340px)`);
+  const themeDirectQuery = mediaQuery(`(min-width: 320px)`);
+  const liveDirectComfortQuery = mediaQuery(`(min-width: 380px)`);
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
@@ -116,14 +170,15 @@
       routeTo(reconciled, true);
   });
 
-  const showHistoryDirect = $derived(historyDirectQuery.matches);
-  const showEndpointDirect = $derived(endpointDirectQuery.matches);
-  const showThemeDirect = $derived(
-    themeDirectQuery.matches &&
-      (!authEnabled ||
-        awayRunIndicator === null ||
-        authenticatedLiveComfortQuery.matches),
+  const showHistoryDirect = $derived(
+    historyDirectQuery.matches &&
+      (awayRunIndicator === null || liveDirectComfortQuery.matches),
   );
+  const showEndpointDirect = $derived(
+    endpointDirectQuery.matches &&
+      (awayRunIndicator === null || liveDirectComfortQuery.matches),
+  );
+  const showThemeDirect = $derived(themeDirectQuery.matches);
   const historyInMore = $derived(store.savingResults && !showHistoryDirect);
   const endpointInMore = $derived(!showEndpointDirect);
   const themeInMore = $derived(!showThemeDirect);
@@ -196,27 +251,61 @@
       window.history.back();
     else routeTo(next, true);
   }
-  function historyRoute(id: string | null = null) {
+  function historyRoute(
+    id: string | null = null,
+    invoker: HTMLElement | null = null,
+  ) {
+    if (id === null) historyInvoker = invoker;
     routeTo(withWorkspace(currentRoute, { kind: "history", selectedId: id }));
   }
-  function restoreHistoryFocus() {
-    window.setTimeout(() => {
-      const historyControl = store.savingResults
-        ? document.querySelector<HTMLButtonElement>(
-            '.topbar [aria-label="Open History"], .topbar [aria-label="More controls"]',
-          )
-        : null;
-      (
-        historyControl ??
-        document.querySelector<HTMLButtonElement>(".topbar .brand-btn")
-      )?.focus();
-    }, 0);
+  function focusWorkspace(
+    workspace: "history" | "measurement",
+    afterPanel?: PanelSurface,
+  ) {
+    workspaceFocusIntent = { kind: "workspace", workspace, afterPanel };
   }
-  function toggleHistory(restoreFocus = false) {
+  function focusElement(
+    target: HTMLElement,
+    workspace: "history" | "measurement",
+  ) {
+    workspaceFocusIntent = { kind: "element", target, workspace };
+  }
+  function closeHistory(focus: "measurement" | HTMLElement) {
+    if (focus === "measurement") focusWorkspace("measurement");
+    else focusElement(focus, "measurement");
+    backOrReplace(withWorkspace(currentRoute, { kind: "measurement" }));
+  }
+  function auxiliaryOwnsFocus(route = currentRoute) {
+    return (
+      route.kind === "app" &&
+      (route.dialog === "legal" ||
+        (!dockQuery.matches && route.panels.length > 0))
+    );
+  }
+  function toggleHistoryFromPointer(invoker: HTMLElement) {
     if (historyOpen) {
-      backOrReplace(withWorkspace(currentRoute, { kind: "measurement" }));
-      if (restoreFocus) restoreHistoryFocus();
-    } else historyRoute();
+      closeHistory(invoker);
+    } else {
+      historyRoute(null, invoker);
+      focusElement(invoker, "history");
+    }
+  }
+  function toggleHistoryFromShortcut() {
+    const keepFocus = auxiliaryOwnsFocus();
+    if (historyOpen) {
+      historyInvoker = null;
+      if (keepFocus)
+        backOrReplace(withWorkspace(currentRoute, { kind: "measurement" }));
+      else closeHistory("measurement");
+    } else {
+      historyRoute();
+      if (!keepFocus) focusWorkspace("history");
+    }
+  }
+  function dismissHistory() {
+    const invoker = historyInvoker;
+    historyInvoker = null;
+    closeHistory(invoker?.isConnected ? invoker : "measurement");
   }
   function closeHistoryDetail() {
     backOrReplace(
@@ -233,6 +322,10 @@
   }
   function closePanelRoute(panel: PanelSurface) {
     backOrReplace(closePanel(currentRoute, panel));
+  }
+  function dismissPanel(panel: PanelSurface) {
+    closePanelRoute(panel);
+    focusWorkspace(historyOpen ? "history" : "measurement", panel);
   }
 
   function confirmReturnToStart() {
@@ -284,7 +377,8 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
+      return;
     if (isEditable(e.target)) return;
     if (resetConfirmOpen) return;
 
@@ -300,7 +394,7 @@
         if (detailClose) detailClose.click();
         else closeHistoryDetail();
       } else if (historyOpen) {
-        toggleHistory(true);
+        dismissHistory();
       } else if (!measurementOpen) {
         return;
       } else if (store.isRunning) {
@@ -337,11 +431,19 @@
 
     switch (e.key.toLowerCase()) {
       case "s":
-        settingsOpen ? closePanelRoute("settings") : panelRoute("settings");
+        if (settingsOpen) {
+          dismissPanel("settings");
+        } else panelRoute("settings");
         e.preventDefault();
         break;
       case "d":
-        telemetryOpen ? closePanelRoute("endpoint") : panelRoute("endpoint");
+        if (telemetryOpen) {
+          dismissPanel("endpoint");
+        } else panelRoute("endpoint");
+        e.preventDefault();
+        break;
+      case "h":
+        toggleHistoryFromShortcut();
         e.preventDefault();
         break;
       case "r":
@@ -359,7 +461,18 @@
 
   onMount(() => {
     const onHashChange = () => {
-      currentRoute = parseRoute(window.location.hash);
+      const previousHistory = historyOpen;
+      const next = parseRoute(window.location.hash);
+      const nextHistory =
+        next.kind === "app" && next.workspace.kind === "history";
+      currentRoute = next;
+      if (
+        previousHistory === nextHistory ||
+        workspaceFocusIntent ||
+        auxiliaryOwnsFocus(next)
+      )
+        return;
+      focusWorkspace(nextHistory ? "history" : "measurement");
     };
     window.addEventListener("hashchange", onHashChange);
     window.addEventListener("popstate", onHashChange);
@@ -510,12 +623,15 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults && showHistoryDirect}<button
-        class="ghost-btn icon-btn history-btn"
+        class="ghost-btn icon-btn"
         type="button"
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
+        aria-pressed={historyOpen}
         use:tooltip={historyOpen ? "Close History" : "History — saved results"}
-        onclick={() => toggleHistory()}>{@html ICON.history}</button
+        onclick={(event) =>
+          toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
+        >{@html ICON.history}</button
       >{/if}
     {#if showThemeDirect}
       <button
@@ -544,7 +660,7 @@
         historyActive={historyOpen}
         endpointActive={telemetryOpen}
         theme={store.theme}
-        onHistory={toggleHistory}
+        onHistory={toggleHistoryFromPointer}
         onEndpoint={() =>
           telemetryOpen ? closePanelRoute("endpoint") : panelRoute("endpoint")}
         onTheme={toggleTheme}
@@ -576,7 +692,7 @@
             : null}
           onNavigate={(id: string | null) =>
             id ? historyRoute(id) : closeHistoryDetail()}
-          onClose={() => toggleHistory(true)}
+          onClose={dismissHistory}
         />{:else if historyChunkState === "error"}<div
           class="history-loading error"
           role="alert"
@@ -589,7 +705,11 @@
         </div>{/if}
     </section>
   {:else}
-    <section class="zone stage flex min-w-0 flex-col overflow-y-auto">
+    <section
+      class="zone stage measurement-stage flex min-w-0 flex-col overflow-y-auto"
+      aria-label="Measurement workspace"
+      tabindex="-1"
+    >
       <GaugePanel /><ThroughputChart />
     </section>
   {/if}
@@ -612,8 +732,8 @@
     dockWidth={store.dockWidth.left}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
-    onClose={() => closePanelRoute("settings")}
-    onOpenHistory={() => historyRoute()}
+    onClose={() => dismissPanel("settings")}
+    onOpenHistory={(invoker: HTMLElement) => historyRoute(null, invoker)}
   />
   <TelemetryPanel
     open={telemetryOpen}
@@ -622,7 +742,7 @@
     dockWidth={store.dockWidth.right}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
-    onClose={() => closePanelRoute("endpoint")}
+    onClose={() => dismissPanel("endpoint")}
     onOpenLegal={openLegal}
   />
 
@@ -762,16 +882,6 @@
     width: 16px;
     height: 16px;
   }
-  .history-btn {
-    color: var(--brand-strong);
-  }
-  .history-btn[aria-current="page"] {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
-    background: var(--brand-soft);
-    box-shadow:
-      inset 0 1px 0 var(--edge-light),
-      inset 0 -2px 0 var(--brand);
-  }
   .chrome-divider {
     width: 1px;
     height: 22px;
@@ -873,6 +983,9 @@
   .history-loading p,
   .route-not-found p {
     margin: 0;
+  }
+  .measurement-stage:focus {
+    outline: none;
   }
   .history-loading button,
   .route-not-found a {

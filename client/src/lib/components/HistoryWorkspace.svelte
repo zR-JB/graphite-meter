@@ -14,7 +14,8 @@
   } from "../history/format";
   import {
     naturalDescending,
-    sortHistory,
+    prepareHistorySort,
+    sortPreparedHistory,
     type HistorySort,
   } from "../history/sort";
   import {
@@ -25,6 +26,7 @@
   import type { HistoryColumn } from "../state/persistence";
   import { store } from "../state/store.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import HistoryManagementControl from "./history/HistoryManagementControl.svelte";
   import HistoryResultDetail from "./history/HistoryResultDetail.svelte";
   import HistoryViewControl from "./history/HistoryViewControl.svelte";
 
@@ -49,14 +51,20 @@
   let confirm = $state<
     { kind: "delete"; id: string } | { kind: "clear" } | null
   >(null);
+  let confirmInvoker: HTMLElement | null = null;
   let actionError = $state("");
   let announcement = $state("");
   let focusedHeading: HTMLElement | null = null;
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
-  const ordered = $derived(sortHistory(records, sort, descending));
-  const visibleRecords = $derived(ordered.slice(0, visibleCount));
+  const preparedRecords = $derived(prepareHistorySort(records));
+  const ordered = $derived(
+    sortPreparedHistory(preparedRecords, sort, descending),
+  );
+  const visibleRows = $derived(
+    ordered.slice(0, visibleCount).map((record) => historyRow(record)),
+  );
   const selectedRecord = $derived(
     selectedId
       ? (records.find((record) => record.id === selectedId) ?? null)
@@ -210,9 +218,35 @@
         broadcastHistory({ type: "delete", id: action.id });
       }
       window.dispatchEvent(new Event("graphite-meter-history-changed"));
+      if (action.kind === "clear") {
+        confirmInvoker = null;
+        await tick();
+        document
+          .querySelector<HTMLElement>(".history-workspace .close-history")
+          ?.focus({ preventScroll: true });
+      }
     } catch {
       actionError = "The local archive could not be changed. Try again.";
+      const invoker = confirmInvoker;
+      confirmInvoker = null;
+      await tick();
+      if (invoker?.isConnected) invoker.focus({ preventScroll: true });
     }
+  }
+
+  function requestClear(invoker: HTMLElement) {
+    confirmInvoker = invoker;
+    confirm = { kind: "clear" };
+  }
+
+  function cancelConfirmation() {
+    const invoker = confirmInvoker;
+    confirm = null;
+    confirmInvoker = null;
+    if (invoker)
+      void tick().then(() => {
+        if (invoker.isConnected) invoker.focus({ preventScroll: true });
+      });
   }
 
   function partial(record: HistoryRecordV1): boolean {
@@ -265,8 +299,20 @@
     return "Unavailable";
   }
 
-  function metric(record: HistoryRecordV1, column: HistoryColumn): string {
-    const values: Record<HistoryColumn, string> = {
+  interface HistoryRowView {
+    record: HistoryRecordV1;
+    exactDate: string;
+    primaryDate: string;
+    secondaryDate: string;
+    partial: boolean;
+    metrics: Record<HistoryColumn, string>;
+    ariaLabel: string;
+  }
+
+  function historyRow(record: HistoryRecordV1): HistoryRowView {
+    const exactDate = fullDate(record.completedAt);
+    const recentDate = formatRecentCompletion(record.completedAt, renderedAt);
+    const metrics: Record<HistoryColumn, string> = {
       download: resultRate(
         record.stages.download.status,
         record.stages.download.result?.reportedBytesPerSec,
@@ -281,7 +327,21 @@
         : stageStatusLabel(record.stages.latency.status),
       loaded: loadedMetric(record),
     };
-    return values[column];
+    const isPartial = partial(record);
+    return {
+      record,
+      exactDate,
+      primaryDate: recentDate ?? dateLabel(record.completedAt),
+      secondaryDate: recentDate
+        ? dateLabel(record.completedAt)
+        : new Date(record.completedAt).toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+      partial: isPartial,
+      metrics,
+      ariaLabel: `${exactDate}${isPartial ? ", partial result" : ", complete result"}. Download ${metrics.download}. Upload ${metrics.upload}. Bidirectional ${metrics.bidirectional}. Idle ${metrics.idle}. Loaded ${metrics.loaded}.`,
+    };
   }
 
   function dateLabel(value: number): string {
@@ -297,10 +357,6 @@
       dateStyle: "medium",
       timeStyle: "short",
     });
-  }
-
-  function rowDate(value: number): string {
-    return formatRecentCompletion(value, renderedAt) ?? dateLabel(value);
   }
 
   $effect(() => {
@@ -355,10 +411,10 @@
   class="history-workspace"
   bind:clientWidth={workspaceWidth}
   aria-labelledby="history-title"
+  tabindex="-1"
 >
   <header class="history-head">
     <div class="history-title">
-      <span class="archive-mark">{@html ICON.history}</span>
       <div>
         <h1 id="history-title">History</h1>
         <p>Saved on this device</p>
@@ -435,13 +491,9 @@
         </button>
       {/if}
       {#if malformedCount > 0}
-        <button
-          class="clear-empty"
-          type="button"
-          onclick={() => (confirm = { kind: "clear" })}
-        >
-          Clear all saved results
-        </button>
+        <div class="empty-management">
+          <HistoryManagementControl onClear={requestClear} />
+        </div>
       {/if}
     </div>
   {:else}
@@ -472,6 +524,7 @@
           onColumnsChange={(next) => (store.historyColumns = next)}
           onSortChange={setSort}
         />
+        <HistoryManagementControl onClear={requestClear} />
       </div>
     </div>
 
@@ -520,7 +573,8 @@
           {/each}
         </div>
         <ol>
-          {#each visibleRecords as record (record.id)}
+          {#each visibleRows as row (row.record.id)}
+            {@const record = row.record}
             <li class:selected={selectedId === record.id}>
               <a
                 class="result-row"
@@ -529,7 +583,7 @@
                 href={`#/history/${record.id}`}
                 aria-current={selectedId === record.id ? "true" : undefined}
                 aria-expanded={selectedId === record.id}
-                aria-label={`${fullDate(record.completedAt)}${partial(record) ? ", partial result" : ", complete result"}. Download ${resultRate(record.stages.download.status, record.stages.download.result?.reportedBytesPerSec)}. Upload ${resultRate(record.stages.upload.status, record.stages.upload.result?.reportedBytesPerSec)}. Bidirectional ${bidiRate(record)}. Idle ${record.stages.latency.result ? formatLatency(record.stages.latency.result.reportedMs) : stageStatusLabel(record.stages.latency.status)}. Loaded ${loadedMetric(record)}.`}
+                aria-label={row.ariaLabel}
                 onclick={(event) => {
                   if (
                     event.button !== 0 ||
@@ -545,20 +599,11 @@
               >
                 <span class="date-cell">
                   <time datetime={new Date(record.completedAt).toISOString()}>
-                    <strong title={fullDate(record.completedAt)}
-                      >{rowDate(record.completedAt)}</strong
-                    >
-                    <small
-                      >{formatRecentCompletion(record.completedAt, renderedAt)
-                        ? dateLabel(record.completedAt)
-                        : new Date(record.completedAt).toLocaleTimeString(
-                            undefined,
-                            { hour: "2-digit", minute: "2-digit" },
-                          )}</small
-                    >
+                    <strong title={row.exactDate}>{row.primaryDate}</strong>
+                    <small>{row.secondaryDate}</small>
                   </time>
                   <span class="row-badges">
-                    {#if partial(record)}<em class="partial">Partial</em>{/if}
+                    {#if row.partial}<em class="partial">Partial</em>{/if}
                     {#if selectedId === record.id}<em class="selected-badge"
                         >Selected</em
                       >{/if}
@@ -571,7 +616,7 @@
                         column
                       ].short}</small
                     >
-                    <strong>{metric(record, column)}</strong>
+                    <strong>{row.metrics[column]}</strong>
                   </span>
                 {/each}
               </a>
@@ -594,15 +639,6 @@
             <button type="button" onclick={loadMore}>Load 50 more</button>
             <span>{visibleCount} of {ordered.length}</span>
           </div>
-        {:else}
-          <footer class="archive-management">
-            <div>
-              <strong>Archive management</strong>
-            </div>
-            <button type="button" onclick={() => (confirm = { kind: "clear" })}
-              >Clear all saved results</button
-            >
-          </footer>
         {/if}
       </div>
 
@@ -652,7 +688,7 @@
     ? "Permanently remove all locally stored results from this browser?"
     : "Permanently remove this saved result from this browser?"}
   confirmLabel={confirm?.kind === "clear" ? "Clear history" : "Delete result"}
-  onCancel={() => (confirm = null)}
+  onCancel={cancelConfirmation}
   onConfirm={confirmAction}
 />
 
@@ -671,6 +707,9 @@
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
+  }
+  .history-workspace:focus {
+    outline: none;
   }
   h1,
   h2,
@@ -692,24 +731,7 @@
   .history-title {
     display: flex;
     align-items: center;
-    gap: 9px;
     min-width: 0;
-  }
-  .archive-mark {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    flex: none;
-    border: 1px solid color-mix(in srgb, var(--brand) 48%, var(--border));
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
-    color: var(--brand-strong);
-  }
-  .archive-mark :global(svg) {
-    width: 17px;
-    height: 17px;
   }
   h1 {
     font-family: var(--font-display);
@@ -841,14 +863,8 @@
     border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
     color: var(--brand-strong);
   }
-  .archive-state button.clear-empty {
-    border-color: var(--border);
-    background: transparent;
-    color: var(--text-muted);
-  }
-  .archive-state button.clear-empty:hover {
-    border-color: var(--err);
-    color: var(--err);
+  .empty-management {
+    margin-top: var(--space-4);
   }
   .archive-state.error .state-icon {
     color: var(--err);
@@ -1198,38 +1214,6 @@
     color: var(--text-muted);
     font: 600 9px var(--font-mono);
   }
-  .archive-management {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    margin: var(--space-5) var(--space-4) var(--space-4);
-    padding-top: var(--space-4);
-    border-top: 1px solid var(--border);
-    color: var(--text-muted);
-  }
-  .archive-management div {
-    display: grid;
-    gap: 3px;
-  }
-  .archive-management strong {
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-  }
-  .archive-management button {
-    min-height: 30px;
-    padding: 0 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    cursor: pointer;
-  }
-  .archive-management button:hover {
-    border-color: var(--err);
-    color: var(--err);
-  }
   .sr-status {
     position: absolute;
     width: 1px;
@@ -1330,16 +1314,8 @@
     .saving-notice p {
       line-height: 1.4;
     }
-    .archive-management {
-      align-items: flex-start;
-      margin-inline: var(--space-3);
-    }
   }
   @container (max-width: 330px) {
-    .archive-mark {
-      width: 32px;
-      height: 32px;
-    }
     .archive-toolbar {
       display: grid;
     }

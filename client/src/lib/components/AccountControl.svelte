@@ -167,4 +167,16 @@
       display: none;
     }
   }
+  @media (max-width: 430px) {
+    .identity,
+    .everywhere {
+      display: none;
+    }
+    .account {
+      width: 32px;
+    }
+    .signout {
+      border-left: 0;
+    }
+  }
 </style>

@@ -39,15 +39,23 @@
 
   function close() {
     onClose();
-    window.setTimeout(() => invoker?.focus(), 0);
+    window.setTimeout(() => invoker?.focus({ preventScroll: true }), 0);
   }
 
   function onDialogKeydown(event: KeyboardEvent) {
-    event.stopPropagation();
     if (event.key === "Escape") {
+      event.stopPropagation();
       event.preventDefault();
       close();
+      return;
     }
+    const historyShortcut =
+      event.key.toLowerCase() === "h" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!historyShortcut) event.stopPropagation();
   }
 
   function componentTitle(component: LegalComponent): string {

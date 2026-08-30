@@ -16,7 +16,7 @@
 
   interface Props {
     running?: boolean;
-    onOpenHistory?: () => void;
+    onOpenHistory?: (invoker: HTMLElement) => void;
   }
   let { running = false, onOpenHistory }: Props = $props();
 
@@ -303,7 +303,7 @@
       onclick={(event) => {
         if (!onOpenHistory) return;
         event.preventDefault();
-        onOpenHistory();
+        onOpenHistory(event.currentTarget as HTMLElement);
       }}>View History</a
     >
   </section>

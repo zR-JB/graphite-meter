@@ -21,6 +21,7 @@ export const ICON = {
   history: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16v13H4z"/><path d="M8 4h8"/><path d="M8 11h8M8 15h5"/></svg>`,
   columns: `<svg viewBox="0 0 24 24" ${STROKE}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M9 10h12"/></svg>`,
   more: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`,
+  trash: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16M9 4h6l1 3H8zM6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5"/></svg>`,
 } as const;
 
 export const BUILD_IDENTITY = BUILD.identity;

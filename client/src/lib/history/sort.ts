@@ -36,20 +36,52 @@ function value(record: HistoryRecordV1, sort: HistorySort): number | null {
   // Use the result's user-facing aggregate; do not recombine detail lanes.
   return record.bufferbloat?.loadedMs ?? null;
 }
+
+export interface PreparedHistoryRecord {
+  record: HistoryRecordV1;
+  id: string;
+  completedAt: number;
+  keys: Record<HistorySort, number | null>;
+}
+
+/** Extract every numeric key once when the repository snapshot changes. */
+export function prepareHistorySort(
+  records: readonly HistoryRecordV1[],
+): PreparedHistoryRecord[] {
+  return records.map((record) => ({
+    record,
+    id: record.id,
+    completedAt: record.completedAt,
+    keys: Object.fromEntries(
+      HISTORY_SORTS.map((sort) => [sort, value(record, sort)]),
+    ) as Record<HistorySort, number | null>,
+  }));
+}
+
+export function sortPreparedHistory(
+  prepared: readonly PreparedHistoryRecord[],
+  sort: HistorySort,
+  descending = true,
+): HistoryRecordV1[] {
+  return [...prepared]
+    .sort((a, b) => {
+      const av = a.keys[sort];
+      const bv = b.keys[sort];
+      const stableTie =
+        b.completedAt - a.completedAt || b.id.localeCompare(a.id);
+      if (av == null && bv == null) return stableTie;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const delta = av - bv;
+      return delta === 0 ? stableTie : descending ? -delta : delta;
+    })
+    .map((entry) => entry.record);
+}
+
 export function sortHistory(
   records: readonly HistoryRecordV1[],
   sort: HistorySort,
   descending = true,
 ): HistoryRecordV1[] {
-  return [...records].sort((a, b) => {
-    const av = value(a, sort);
-    const bv = value(b, sort);
-    const stableTie = () =>
-      b.completedAt - a.completedAt || b.id.localeCompare(a.id);
-    if (av == null && bv == null) return stableTie();
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    const delta = av - bv;
-    return delta === 0 ? stableTie() : descending ? -delta : delta;
-  });
+  return sortPreparedHistory(prepareHistorySort(records), sort, descending);
 }

@@ -27,6 +27,9 @@
   <span><kbd>Space</kbd>{primary}</span>
   <span><kbd>S</kbd>Settings</span>
   <span><kbd>D</kbd>Info</span>
+  {#if store.savingResults}
+    <span><kbd>H</kbd>History</span>
+  {/if}
   {#if resolved}
     <span><kbd>R</kbd>Run again</span>
   {/if}

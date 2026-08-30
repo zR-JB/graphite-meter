@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { naturalDescending, sortHistory } from "./sort";
+import {
+  naturalDescending,
+  prepareHistorySort,
+  sortHistory,
+  sortPreparedHistory,
+} from "./sort";
 import type { HistoryRecordV1 } from "./types";
 
 function record(
@@ -139,4 +144,28 @@ test("each history field sorts in its natural direction and keeps nulls last", (
     ).toEqual(expected);
   expect(sortHistory(values, "download", false).at(-1)?.id).toBe("c");
   expect(sortHistory(values, "loaded", false).at(-1)?.id).toBe("c");
+});
+
+test("prepared sorting extracts each record's active metric once across repeated orders", () => {
+  let downloadReads = 0;
+  const values = Array.from({ length: 2_000 }, (_, index) => {
+    const item = record(String(index), index, index);
+    Object.defineProperty(item.stages.download.result!, "reportedBytesPerSec", {
+      enumerable: true,
+      get: () => {
+        downloadReads++;
+        return index;
+      },
+    });
+    return item;
+  });
+
+  const prepared = prepareHistorySort(values);
+  expect(downloadReads).toBe(values.length);
+  expect(sortPreparedHistory(prepared, "download", true).at(0)?.id).toBe(
+    "1999",
+  );
+  expect(sortPreparedHistory(prepared, "download", false).at(0)?.id).toBe("0");
+  expect(sortPreparedHistory(prepared, "date", true).at(0)?.id).toBe("1999");
+  expect(downloadReads).toBe(values.length);
 });

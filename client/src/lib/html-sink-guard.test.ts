@@ -20,6 +20,7 @@ const ALLOWED = new Set([
   "ICON.ping",
   "ICON.settings",
   "ICON.sun",
+  "ICON.trash",
   "ICON.upload",
   "ICON[awayRunIndicator.icon]",
   "THEME_ICON[store.theme]",

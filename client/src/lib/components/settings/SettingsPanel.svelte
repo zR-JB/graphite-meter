@@ -14,7 +14,7 @@
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
     onClose?: () => void;
-    onOpenHistory?: () => void;
+    onOpenHistory?: (invoker: HTMLElement) => void;
   }
   let {
     open = $bindable(false),

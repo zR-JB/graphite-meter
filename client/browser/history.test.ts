@@ -198,10 +198,16 @@ test("explicitly enabled completion is reachable in History and stays responsive
     page.locator('[data-latency-profile][data-variant="bare"]'),
   ).toBeVisible();
   await toggleHistoryFromTopbar(page);
-  await expect(page.getByRole("button", { name: "More controls" })).toHaveClass(
-    /active/,
-  );
+  await expect(
+    page.getByRole("button", { name: "Close History" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: /^Theme:/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Toggle endpoint info" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
   await expectNoHorizontalOverflow(page.locator(".topbar"));
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
   await expect(page.locator(".overview-primary")).toContainText("1");
@@ -250,11 +256,17 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
   await setHistoryPreference(page, "enabled");
   await expect(page.getByRole("button", { name: /^Theme:/ })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "More controls" }),
+    page.getByRole("button", { name: "Open History" }),
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open History" })).toHaveCount(
+  await expect(
+    page.getByRole("button", { name: "Toggle endpoint info" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
     0,
   );
+  await expectNoHorizontalOverflow(page.locator(".topbar"));
+
+  await page.setViewportSize({ width: 319, height: 844 });
   await page.getByRole("button", { name: "More controls" }).click();
   await expect(
     page.getByRole("menuitem", { name: /Open History/ }),
@@ -262,7 +274,7 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
   await expect(
     page.getByRole("menuitem", { name: /Endpoint info/ }),
   ).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Theme:/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /Theme:/ })).toBeVisible();
   await page.keyboard.press("Escape");
   await expectNoHorizontalOverflow(page.locator(".topbar"));
 
@@ -271,14 +283,12 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
     page.getByRole("button", { name: "Open History" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /^Theme:/ })).toBeVisible();
-  await page.getByRole("button", { name: "More controls" }).click();
   await expect(
-    page.getByRole("menuitem", { name: /Endpoint info/ }),
+    page.getByRole("button", { name: "Toggle endpoint info" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("menuitem", { name: /Open History/ }),
-  ).toHaveCount(0);
-  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
 
   await page.setViewportSize({ width: 844, height: 390 });
   await expect(
@@ -334,14 +344,155 @@ test("an out-of-window deep link preserves the 2,000-summary memory cap", async 
   );
 });
 
+test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1366, height: 768 });
+  const base = Date.UTC(2026, 7, 28, 12);
+  const values = Array.from({ length: 2_000 }, (_, index) =>
+    record(
+      `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+      base - index * 60_000,
+      1_000_000 + index,
+    ),
+  );
+  await seedHistory(page, values);
+  await openHistory(page);
+  await expect(page.locator(".result-row")).toHaveCount(50);
+
+  const profile = await page.evaluate(
+    () =>
+      new Promise<{ nestedMs: number; cachedMs: number }>((resolve, reject) => {
+        const opening = indexedDB.open("graphite-meter", 1);
+        opening.onerror = () => reject(opening.error);
+        opening.onsuccess = () => {
+          const database = opening.result;
+          const request = database
+            .transaction("results", "readonly")
+            .objectStore("results")
+            .getAll();
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const records = request.result;
+            database.close();
+            const stable = (a: any, b: any) =>
+              b.completedAt - a.completedAt ||
+              String(b.id).localeCompare(String(a.id));
+            const nestedSort = () =>
+              [...records].sort((a, b) => {
+                const av =
+                  a.stages.download.result?.reportedBytesPerSec ?? null;
+                const bv =
+                  b.stages.download.result?.reportedBytesPerSec ?? null;
+                if (av == null && bv == null) return stable(a, b);
+                if (av == null) return 1;
+                if (bv == null) return -1;
+                return av === bv ? stable(a, b) : bv - av;
+              });
+            const prepared = records.map((record) => ({
+              record,
+              key: record.stages.download.result?.reportedBytesPerSec ?? null,
+              id: record.id,
+              completedAt: record.completedAt,
+            }));
+            const cachedSort = () =>
+              [...prepared].sort((a, b) => {
+                if (a.key == null && b.key == null) return stable(a, b);
+                if (a.key == null) return 1;
+                if (b.key == null) return -1;
+                return a.key === b.key ? stable(a, b) : b.key - a.key;
+              });
+            nestedSort();
+            cachedSort();
+            const iterations = 40;
+            let started = performance.now();
+            for (let index = 0; index < iterations; index++) nestedSort();
+            const nestedMs = performance.now() - started;
+            started = performance.now();
+            for (let index = 0; index < iterations; index++) cachedSort();
+            resolve({
+              nestedMs,
+              cachedMs: performance.now() - started,
+            });
+          };
+        };
+      }),
+  );
+  const elapsed = await page.evaluate(
+    (expectedId) =>
+      new Promise<number>((resolve, reject) => {
+        const button = document.querySelector<HTMLButtonElement>(
+          '.column-head [data-tone="download"] button',
+        );
+        const list = document.querySelector(".archive-list ol");
+        if (!button || !list) {
+          reject(new Error("History sort controls are unavailable"));
+          return;
+        }
+        const started = performance.now();
+        const finish = () => {
+          if (
+            document
+              .querySelector(".result-row")
+              ?.getAttribute("data-history-id") !== expectedId
+          )
+            return false;
+          observer.disconnect();
+          window.clearTimeout(timeout);
+          resolve(performance.now() - started);
+          return true;
+        };
+        const observer = new MutationObserver(finish);
+        const timeout = window.setTimeout(() => {
+          observer.disconnect();
+          reject(new Error("History sort did not render"));
+        }, 2_000);
+        observer.observe(list, { childList: true, subtree: true });
+        button.click();
+        queueMicrotask(finish);
+      }),
+    values.at(-1)!.id,
+  );
+  await expect(page.locator(".result-row").first()).toHaveAttribute(
+    "data-history-id",
+    values.at(-1)!.id,
+  );
+  console.info(
+    `[history-sort-profile] 2000 rows × 40: nested ${profile.nestedMs.toFixed(2)} ms, cached ${profile.cachedMs.toFixed(2)} ms; interaction ${elapsed.toFixed(2)} ms`,
+  );
+  expect(profile.nestedMs).toBeGreaterThan(0);
+  expect(profile.cachedMs).toBeGreaterThan(0);
+  expect(Number.isFinite(elapsed)).toBe(true);
+  await expect(page.locator(".result-row")).toHaveCount(50);
+
+  const listScroll = await page
+    .locator(".archive-list")
+    .evaluate((node) => node.scrollTop);
+  expect(listScroll).toBe(0);
+  const management = page.getByRole("button", { name: "Archive management" });
+  await expect(management).toBeVisible();
+  await management.click();
+  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
+  const clearDialog = page.getByRole("alertdialog", {
+    name: "Clear result history?",
+  });
+  await clearDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(management).toBeFocused();
+  await management.click();
+  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
+  await clearDialog.getByRole("button", { name: "Clear history" }).click();
+  await expect(page.getByText("No saved results")).toBeVisible();
+});
+
 test("malformed-only archives keep a raw clear path", async ({ page }) => {
   await openApp(page, "dummy", { width: 900, height: 700 });
   await seedHistory(page, [{ id: "malformed", unexpected: true }]);
   await openHistory(page);
   await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
-  const clear = page.getByRole("button", { name: "Clear all saved results" });
-  await expect(clear).toBeVisible();
-  await clear.click();
+  const management = page.getByRole("button", { name: "Archive management" });
+  await expect(management).toBeVisible();
+  await management.click();
+  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
   const dialog = page.getByRole("alertdialog", {
     name: "Clear result history?",
   });
@@ -432,6 +583,22 @@ test("wide panels compose over History while narrow routes keep only the visible
     page.getByRole("dialog", { name: "About & legal" }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await page.keyboard.press("h");
+  await expect(
+    page.getByRole("dialog", { name: "About & legal" }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => window.location.hash)).toContain(
+    "panels=settings,endpoint",
+  );
+  expect(await page.evaluate(() => window.location.hash)).toContain(
+    "dialog=legal",
+  );
+  await expect(page.getByRole("heading", { name: "History" })).toHaveCount(0);
+  await page.keyboard.press("h");
+  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "About & legal" }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -766,18 +933,15 @@ test("History is a toggleable archive layer with an explicit close and no empty 
   await expect(page.locator(".archive-overview")).not.toContainText("Saving");
   await expect(page.locator(".archive-overview")).not.toContainText("View");
   await expect(page.locator(".archive-toolbar")).not.toContainText("Clear");
-  const clearAll = page.getByRole("button", {
-    name: "Clear all saved results",
-  });
-  const rowBox = await page.locator(".result-row").boundingBox();
-  const clearBox = await clearAll.boundingBox();
-  expect(clearBox!.y).toBeGreaterThan(rowBox!.y + rowBox!.height);
-  await clearAll.click();
+  const management = page.getByRole("button", { name: "Archive management" });
+  await management.click();
+  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
   const clearDialog = page.getByRole("alertdialog", {
     name: "Clear result history?",
   });
   await expect(clearDialog).toBeVisible();
   await clearDialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(management).toBeFocused();
   await expect(page.locator(".result-row")).toHaveCount(1);
 
   await setHistoryPreference(page, "disabled");
@@ -795,9 +959,228 @@ test("History is a toggleable archive layer with an explicit close and no empty 
   await expect(
     page.getByRole("button", { name: "Start the speed test" }),
   ).toBeVisible();
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+});
+
+test("History shortcut uses neutral workspace focus and preserves its invocation context", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await setHistoryPreference(page, "enabled");
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+
+  const hint = page
+    .locator(".command-hints span")
+    .filter({ hasText: "History" });
+  await expect(hint).toBeVisible();
+  const settingsTrigger = page.getByRole("button", { name: "Open settings" });
+  await settingsTrigger.focus();
+  await page.keyboard.press("h");
+  await expect(page.locator(".history-workspace")).toBeFocused();
+  await expect(settingsTrigger).not.toBeFocused();
+  await expect(page.locator(".brand-btn")).not.toBeFocused();
+  await page.waitForTimeout(400);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+  await page.keyboard.press("h");
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await expect(page.locator(".brand-btn")).not.toBeFocused();
+  await expect(settingsTrigger).not.toBeFocused();
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+
+  const endpointTrigger = page.getByRole("button", {
+    name: "Toggle endpoint info",
+  });
+  await endpointTrigger.focus();
+  await page.keyboard.press("h");
+  await expect(page.locator(".history-workspace")).toBeFocused();
+  await page.evaluate(() => window.history.back());
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await expect(page.locator(".brand-btn")).not.toBeFocused();
+
+  await page.getByRole("button", { name: "Open History" }).click();
+  await expect(
+    page.locator('.topbar [aria-label="Close History"]'),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
   await expect(
     page.getByRole("button", { name: "Open History" }),
   ).toBeFocused();
+
+  await page.keyboard.press("s");
+  await expect(settingsPanel(page)).toBeVisible();
+  await page.keyboard.press("s");
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await page.keyboard.press("d");
+  await expect(endpointPanel(page)).toBeVisible();
+  await page.keyboard.press("d");
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+});
+
+test("History shortcut stays functional while saving is paused and ignores editable or modified input", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await setHistoryPreference(page, "disabled");
+  await expect(
+    page.locator(".command-hints span").filter({ hasText: "History" }),
+  ).toHaveCount(0);
+
+  const settings = await openSettings(page);
+  const input = settings.locator("input").first();
+  await input.focus();
+  const settingsHash = await page.evaluate(() => window.location.hash);
+  await page.keyboard.press("h");
+  expect(await page.evaluate(() => window.location.hash)).toBe(settingsHash);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "h",
+        ctrlKey: true,
+        bubbles: true,
+      }),
+    );
+  });
+  expect(await page.evaluate(() => window.location.hash)).toBe(settingsHash);
+
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await page.keyboard.press("h");
+  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await page.keyboard.press("h");
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+
+  await startTest(page);
+  await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
+  await page.keyboard.press("h");
+  await expect(page.locator(".return-live")).toBeVisible();
+  await page.keyboard.press("h");
+  await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
+});
+
+test("phone topbar keeps History, Theme, and Endpoint direct without a special active fill", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 390, height: 640 });
+  await setHistoryPreference(page, "enabled");
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+  await startTest(page);
+  await page.getByRole("button", { name: "Open History" }).click();
+
+  const history = page.getByRole("button", { name: "Close History" });
+  const theme = page.getByRole("button", { name: /^Theme:/ });
+  const endpoint = page.getByRole("button", { name: "Toggle endpoint info" });
+  await expect(history).toBeVisible();
+  await expect(theme).toBeVisible();
+  await expect(endpoint).toBeVisible();
+  await expect(page.locator(".return-live")).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".history-title svg")).toHaveCount(0);
+  await expectNoHorizontalOverflow(page.locator(".topbar"));
+
+  for (const expectedTheme of ["Light", "Dark"] as const) {
+    while (
+      !(
+        await page
+          .getByRole("button", { name: new RegExp(`^Theme: ${expectedTheme}`) })
+          .state()
+      ).some((state) => state.visible)
+    )
+      await theme.click();
+    const styles = [];
+    for (const control of [history, endpoint])
+      styles.push(
+        await control.evaluate((node) => {
+          const style = getComputedStyle(node);
+          return {
+            background: style.backgroundColor,
+            border: style.borderColor,
+            color: style.color,
+            shadow: style.boxShadow,
+          };
+        }),
+      );
+    expect(styles[0]).toEqual(styles[1]);
+  }
+
+  const management = page.getByRole("button", { name: "Archive management" });
+  await management.click();
+  const managementMenu = page.getByRole("menu", { name: "Archive management" });
+  const managementBox = await managementMenu.boundingBox();
+  expect(managementBox!.x).toBeGreaterThanOrEqual(0);
+  expect(managementBox!.x + managementBox!.width).toBeLessThanOrEqual(390);
+  await page.keyboard.press("Escape");
+  await expect(management).toBeFocused();
+
+  await page.setViewportSize({ width: 340, height: 640 });
+  await expect(theme).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "More controls" }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page.locator(".topbar"));
+
+  await page.setViewportSize({ width: 319, height: 640 });
+  await expect(
+    page.getByRole("button", { name: "More controls" }),
+  ).toBeVisible();
+  await expectNoHorizontalOverflow(page.locator(".topbar"));
+});
+
+test("authenticated phone chrome compacts account identity before core controls", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const index = await Bun.file(
+    new URL("../dist/index.html", import.meta.url),
+  ).text();
+  await page.route("**/index.html*", (route) =>
+    route.fulfill({
+      body: index.replace(
+        "<head>",
+        '<head><meta name="graphite-meter-auth" content="enabled">',
+      ),
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+  );
+  await page.route("**/auth/session", (route) =>
+    route.fulfill({
+      json: {
+        name: "A deliberately long authenticated account name",
+        provider: "oidc",
+        expires: "2026-08-31T12:00:00Z",
+        csrf: "browser-test",
+        remainingMs: 3_600_000,
+        maximumLifetimeMs: 3_600_000,
+      },
+    }),
+  );
+  await page.goto("/index.html?engine=dummy");
+  await setHistoryPreference(page, "enabled");
+
+  await expect(
+    page.locator('form[aria-label*="deliberately long authenticated"]'),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Sign out .* everywhere/ }),
+  ).toBeHidden();
+  await expect(
+    page.getByRole("button", {
+      name: "Sign out A deliberately long authenticated account name",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open History" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Theme:/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Toggle endpoint info" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
+  await expectNoHorizontalOverflow(page.locator(".topbar"));
 });
 
 test("sortable headers expose natural reversible order with missing values last", async ({
@@ -879,10 +1262,14 @@ test("column visibility persists and narrow cards retain all six sort choices", 
   ).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Choose visible columns" }).click();
+  await page
+    .getByRole("button", { name: "Choose history view and sort" })
+    .click();
   await expect(page.locator(".view-popover").getByRole("radio")).toHaveCount(6);
   await expectNoHorizontalOverflow(page.locator(".view-popover"));
-  const trigger = page.getByRole("button", { name: "Choose visible columns" });
+  const trigger = page.getByRole("button", {
+    name: "Choose history view and sort",
+  });
   const triggerBox = await trigger.boundingBox();
   const iconBox = await trigger.locator(".layout-icon svg").boundingBox();
   expect(
@@ -892,6 +1279,38 @@ test("column visibility persists and narrow cards retain all six sort choices", 
         (iconBox!.y + iconBox!.height / 2),
     ),
   ).toBeLessThanOrEqual(1);
+
+  const popoverBox = await page.locator(".view-popover").boundingBox();
+  expect(popoverBox!.x).toBeGreaterThanOrEqual(0);
+  expect(popoverBox!.x + popoverBox!.width).toBeLessThanOrEqual(390);
+  const loadedSort = page.getByRole("radio", { name: "Loaded" });
+  await loadedSort.scrollIntoViewIfNeeded();
+  const loadedBox = await loadedSort.boundingBox();
+  expect(loadedBox!.x).toBeGreaterThanOrEqual(popoverBox!.x);
+  expect(loadedBox!.x + loadedBox!.width).toBeLessThanOrEqual(
+    popoverBox!.x + popoverBox!.width,
+  );
+  await loadedSort.click();
+  await expect(loadedSort).toHaveAttribute("aria-checked", "true");
+
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 390, height: 640 });
+  await trigger.click();
+  const shortPopover = page.locator(".view-popover");
+  await expect(shortPopover).toBeVisible();
+  const lastColumn = shortPopover
+    .getByRole("checkbox", { name: "Loaded latency" })
+    .first();
+  await lastColumn.scrollIntoViewIfNeeded();
+  const shortBox = await shortPopover.boundingBox();
+  const lastColumnBox = await lastColumn.boundingBox();
+  expect(shortBox!.x).toBeGreaterThanOrEqual(0);
+  expect(shortBox!.x + shortBox!.width).toBeLessThanOrEqual(390);
+  expect(shortBox!.y + shortBox!.height).toBeLessThanOrEqual(640);
+  expect(lastColumnBox!.x).toBeGreaterThanOrEqual(shortBox!.x);
+  expect(lastColumnBox!.x + lastColumnBox!.width).toBeLessThanOrEqual(
+    shortBox!.x + shortBox!.width,
+  );
 });
 
 test("one inline scroll owner accepts wheel gestures over rows and mobile detail", async ({
@@ -1059,8 +1478,8 @@ test("archive stays chunked and overflow-free across required shell geometries",
   await openHistory(page, values[0].id);
   await expect(page.locator(".result-row")).toHaveCount(50);
   await expect(
-    page.getByRole("button", { name: "Clear all saved results" }),
-  ).toHaveCount(0);
+    page.getByRole("button", { name: "Archive management" }),
+  ).toBeVisible();
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(
@@ -1076,7 +1495,10 @@ test("archive stays chunked and overflow-free across required shell geometries",
         .evaluate((node) => getComputedStyle(node).transitionDuration),
     ),
   ).toBeLessThan(0.001);
-  await page.getByRole("button", { name: "Choose visible columns" }).click();
+  const viewControl = page.getByRole("button", {
+    name: /Choose (visible columns|history view and sort)/,
+  });
+  await viewControl.click();
   expect(
     await page
       .locator(".view-popover")
@@ -1102,12 +1524,10 @@ test("archive stays chunked and overflow-free across required shell geometries",
 
   await page.locator(".load-more button").evaluate((button) => button.click());
   await expect(page.locator(".result-row")).toHaveCount(100);
-  await expect(
-    page.getByRole("button", { name: "Clear all saved results" }),
-  ).toHaveCount(0);
+  await expect(page.locator(".archive-management")).toHaveCount(0);
   await page.locator(".load-more button").evaluate((button) => button.click());
   await expect(page.locator(".result-row")).toHaveCount(120);
   await expect(
-    page.getByRole("button", { name: "Clear all saved results" }),
+    page.getByRole("button", { name: "Archive management" }),
   ).toBeVisible();
 });

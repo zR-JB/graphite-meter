@@ -80,12 +80,14 @@
   });
 </script>
 
-<div class="view-control">
+<div class="view-control" class:compact>
   <button
     bind:this={trigger}
     class="view-trigger"
     type="button"
-    aria-label="Choose visible columns"
+    aria-label={compact
+      ? "Choose history view and sort"
+      : "Choose visible columns"}
     aria-haspopup="dialog"
     aria-expanded={open}
     use:tooltip={compact
@@ -215,6 +217,12 @@
     box-shadow: var(--shadow-float);
     transform-origin: top right;
   }
+  .view-control.compact .view-popover {
+    width: min(280px, calc(100vw - 32px));
+    max-height: min(60dvh, 430px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   .group-head {
     display: flex;
     justify-content: space-between;
@@ -239,6 +247,9 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 2px;
+  }
+  .view-control.compact .options {
+    grid-template-columns: minmax(0, 1fr);
   }
   .options button,
   .direction {
@@ -296,10 +307,11 @@
       transition: none;
     }
   }
-  @media (max-width: 560px) {
-    .view-popover {
-      right: auto;
-      left: 0;
+  @media (max-width: 420px) {
+    .group-head {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 2px;
     }
   }
 </style>
