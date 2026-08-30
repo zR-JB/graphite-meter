@@ -32,8 +32,14 @@ export const DEFAULT_CONFIG: RunnerConfig = {
 
 /** Adaptive thresholds are runner policy; persistence owns only the switch. */
 export function canonicalAdaptiveConfig(
-  enabled: unknown = DEFAULT_CONFIG.adaptive.enabled,
+  value: unknown = DEFAULT_CONFIG.adaptive.enabled,
 ): RunnerConfig["adaptive"] {
+  const enabled =
+    value == null
+      ? undefined
+      : typeof value === "object" && "enabled" in value
+        ? value.enabled
+        : value;
   return {
     ...DEFAULT_CONFIG.adaptive,
     enabled:

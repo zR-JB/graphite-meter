@@ -507,7 +507,7 @@ export function toggleRun() {
     return;
   }
   const cfg = $state.snapshot(store.config);
-  cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive.enabled);
+  cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive);
   const key = connectionKey(cfg, store.transportDiscovery);
   const startAbort = new AbortController();
   const startSeq = ++pendingStartSeq;
@@ -571,7 +571,7 @@ export function returnToStart() {
 export function applyLiveRunConfig() {
   if (!store.isRunning) return;
   const config = $state.snapshot(store.config);
-  config.adaptive = canonicalAdaptiveConfig(config.adaptive.enabled);
+  config.adaptive = canonicalAdaptiveConfig(config.adaptive);
   const live: LiveRunConfig = {
     stages: config.stages,
     duration: config.duration,

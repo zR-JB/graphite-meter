@@ -363,7 +363,7 @@ test("runner boundary canonicalizes every adaptive tuning field", async () => {
     confirmationMs: 1,
     glideMs: 1,
   };
-  expect(canonicalAdaptiveConfig(hostile.enabled)).toEqual({
+  expect(canonicalAdaptiveConfig(hostile)).toEqual({
     ...DEFAULT_CONFIG.adaptive,
     enabled: false,
   });

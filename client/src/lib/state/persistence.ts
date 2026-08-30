@@ -141,7 +141,7 @@ export function loadPersisted(): PersistedState {
   const parsedConfig = object(parsed.config);
   const parsedAdaptive = object(parsedConfig?.adaptive);
   // Adaptive tuning is internal policy; preserve only its enable preference.
-  merged.config.adaptive = canonicalAdaptiveConfig(parsedAdaptive?.enabled);
+  merged.config.adaptive = canonicalAdaptiveConfig(parsedAdaptive);
   merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
     defaults.config.pingCadence,
@@ -194,11 +194,12 @@ export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
     const safe = structuredClone(snapshot);
+    const adaptive = canonicalAdaptiveConfig(snapshot.config.adaptive);
     const serialized = {
       ...safe,
       config: {
         ...safe.config,
-        adaptive: { enabled: snapshot.config.adaptive.enabled === true },
+        adaptive: { enabled: adaptive.enabled },
       },
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
