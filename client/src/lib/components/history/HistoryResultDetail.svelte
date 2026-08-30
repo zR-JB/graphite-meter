@@ -14,6 +14,7 @@
   } from "../../history/types";
   import { store } from "../../state/store.svelte";
   import {
+    savedLatencyShowsLoss,
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
@@ -33,6 +34,15 @@
     tone: LatencyProfileTone;
     value: string;
     detail: string;
+  }
+
+  interface PacketLossLane {
+    key: LatencyProfileViewLane["key"];
+    label: string;
+    icon: string;
+    tone: LatencyProfileTone;
+    value: string;
+    count: number;
   }
 
   let { record, onClose, onDelete, heading = $bindable() }: Props = $props();
@@ -149,6 +159,62 @@
         record.stages.latency.lanes.bidirectional,
       ),
     ].filter((lane): lane is LatencyProfileViewLane => lane !== null),
+  );
+  const showLatencyLoss = $derived(
+    savedLatencyShowsLoss(record.transport.latency.kind),
+  );
+
+  function packetLossLane(
+    key: LatencyProfileViewLane["key"],
+    label: string,
+    icon: string,
+    tone: LatencyProfileTone,
+    snapshot: LatencyLaneSnapshot | null,
+  ): PacketLossLane | null {
+    if (!snapshot || snapshot.count <= 0) return null;
+    return {
+      key,
+      label,
+      icon,
+      tone,
+      value: formatPercent(snapshot.lossRatio * 100),
+      count: snapshot.count,
+    };
+  }
+
+  const packetLossLanes = $derived<PacketLossLane[]>(
+    showLatencyLoss
+      ? [
+          packetLossLane(
+            "latency",
+            "Idle",
+            ICON.ping,
+            "latency",
+            record.stages.latency.lanes.latency,
+          ),
+          packetLossLane(
+            "download",
+            "Loaded Down",
+            ICON.download,
+            "download",
+            record.stages.latency.lanes.download,
+          ),
+          packetLossLane(
+            "upload",
+            "Loaded Up",
+            ICON.upload,
+            "upload",
+            record.stages.latency.lanes.upload,
+          ),
+          packetLossLane(
+            "bidirectional",
+            "Loaded Bi-dir",
+            ICON.bidirectional,
+            "bidirectional",
+            record.stages.latency.lanes.bidirectional,
+          ),
+        ].filter((lane): lane is PacketLossLane => lane !== null)
+      : [],
   );
 
   function transport(value: string | null): string | null {
@@ -318,6 +384,33 @@
           label="Saved latency distributions"
         />
       </div>
+    </section>
+  {/if}
+
+  {#if packetLossLanes.length}
+    <section
+      class="detail-section packet-loss-section"
+      aria-labelledby={`result-${record.id}-packet-loss`}
+    >
+      <header class="section-head">
+        <span aria-hidden="true">{@html ICON.ping}</span>
+        <h3 id={`result-${record.id}-packet-loss`}>Packet loss</h3>
+      </header>
+      <ul class="section-body packet-loss-lanes">
+        {#each packetLossLanes as lane (lane.key)}
+          <li
+            data-tone={lane.tone}
+            aria-label={`${lane.label} packet loss ${lane.value}, ${lane.count} samples`}
+          >
+            <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
+            <span>
+              <strong>{lane.label}</strong>
+              <small>{lane.count} samples</small>
+            </span>
+            <em>{lane.value}</em>
+          </li>
+        {/each}
+      </ul>
     </section>
   {/if}
 
@@ -590,6 +683,42 @@
   .responsiveness-body {
     display: grid;
     gap: var(--space-3);
+  }
+  .packet-loss-lanes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    gap: var(--space-2);
+    list-style: none;
+  }
+  .packet-loss-lanes li {
+    --tone: var(--phase-latency);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--tone) 40%, var(--border));
+    background: var(--surface-1);
+  }
+  .packet-loss-lanes li > span:not(.phase-icon) {
+    display: grid;
+    min-width: 0;
+  }
+  .packet-loss-lanes strong {
+    overflow: hidden;
+    font-size: var(--type-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .packet-loss-lanes small {
+    color: var(--text-muted);
+    font: 500 9px var(--font-mono);
+  }
+  .packet-loss-lanes em {
+    color: var(--tone);
+    font: 700 var(--type-sm) var(--font-mono);
+    font-style: normal;
   }
   .idle-summary {
     display: grid;

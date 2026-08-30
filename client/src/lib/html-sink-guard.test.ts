@@ -27,6 +27,7 @@ const ALLOWED = new Set([
   "s.icon",
   "c.icon",
   "card.icon",
+  "lane.icon",
   "laneIcons[lane.key]",
   "columnMeta[column].icon",
 ]);

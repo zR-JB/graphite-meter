@@ -9,6 +9,7 @@ import {
   hoverContext,
   metricLabel,
   profileDomain,
+  savedLatencyShowsLoss,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -66,6 +67,13 @@ test("lossLabel: hidden at zero, extra precision under one percent", () => {
   expect(lossLabel(-1)).toBe("");
   expect(lossLabel(0.005)).toBe("0.50% loss");
   expect(lossLabel(0.05)).toBe("5.0% loss");
+});
+
+test("saved latency loss requires WebTransport datagram provenance", () => {
+  expect(savedLatencyShowsLoss("webtransport")).toBe(true);
+  expect(savedLatencyShowsLoss("websocket")).toBe(false);
+  expect(savedLatencyShowsLoss(null)).toBe(false);
+  expect(savedLatencyShowsLoss("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {

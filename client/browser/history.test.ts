@@ -581,20 +581,72 @@ test("activating the selected result closes detail without hijacking modified li
   await expect(row).toBeFocused();
 });
 
-test("saved latency omits timeout loss without packet-loss provenance", async ({
+test("saved latency shows loss only with WebTransport datagram provenance", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
-  const saved = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
-  await seedHistory(page, [saved]);
-  await openHistory(page, saved.id);
+  const webtransport = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+  webtransport.stages.latency.lanes.download = null;
+  webtransport.stages.latency.lanes.upload = {
+    ...webtransport.stages.latency.lanes.upload!,
+    lossRatio: 0,
+  };
+  webtransport.stages.latency.lanes.bidirectional = null;
+  const websocket = record(IDS.middle, Date.UTC(2026, 7, 27, 12));
+  websocket.transport.latency = { protocol: "h2", kind: "websocket" };
+  const unknown = record(IDS.oldest, Date.UTC(2026, 7, 26, 12));
+  unknown.transport.latency = { protocol: null, kind: null };
+  await seedHistory(page, [webtransport, websocket, unknown]);
+  await openHistory(page, webtransport.id);
   const profile = page.locator(
     '[data-latency-profile][data-variant="compact"]',
   );
-  await profile.locator(".track").first().focus();
+  await expect(profile).toHaveAttribute(
+    "aria-label",
+    "Saved latency distributions",
+  );
+  const firstTrack = profile.locator(".track").first();
+  await expect(firstTrack).not.toHaveAttribute("aria-label", /loss/);
+  await expect(profile.locator(".loss-marker")).toHaveCount(0);
+  await firstTrack.focus();
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
+  const packetLoss = page.locator(".packet-loss-section");
+  await expect(packetLoss).toBeVisible();
+  await expect(packetLoss.locator(".packet-loss-lanes li")).toHaveCount(2);
+  await expect(
+    packetLoss.locator('.packet-loss-lanes li[data-tone="latency"]'),
+  ).toHaveAttribute("aria-label", "Idle packet loss 1%, 140 samples");
+  await expect(
+    packetLoss.locator('.packet-loss-lanes li[data-tone="upload"]'),
+  ).toHaveAttribute("aria-label", "Loaded Up packet loss 0%, 140 samples");
+  await expect(
+    packetLoss.locator('.packet-loss-lanes li[data-tone="upload"] em'),
+  ).toHaveText("0%");
+  await expect(packetLoss).not.toContainText("Loaded Down");
+  await expect(packetLoss).not.toContainText("Loaded Bi-dir");
+
+  await page.evaluate(
+    (id) => (window.location.hash = `/history/${id}`),
+    websocket.id,
+  );
+  await expect(packetLoss).toHaveCount(0);
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
+  await expect(profile.locator(".track").first()).not.toHaveAttribute(
+    "aria-label",
+    /loss/,
+  );
+
+  await page.evaluate(
+    (id) => (window.location.hash = `/history/${id}`),
+    unknown.id,
+  );
+  await expect(packetLoss).toHaveCount(0);
+  await expect(profile.locator(".loss-marker")).toHaveCount(0);
+  await expect(profile.locator(".track").first()).not.toHaveAttribute(
+    "aria-label",
+    /loss/,
+  );
 });
 
 test("recent rows use relative time and absent responsiveness stays concise", async ({

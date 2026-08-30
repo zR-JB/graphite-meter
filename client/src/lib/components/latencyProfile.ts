@@ -90,6 +90,11 @@ export function lossLabel(ratio: number): string {
   return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% loss`;
 }
 
+/** Saved ping loss is packet-loss evidence only on the datagram-backed WT bus. */
+export function savedLatencyShowsLoss(kind: string | null): boolean {
+  return kind === "webtransport";
+}
+
 export function metricValue(
   lane: LatencyProfileLaneLike,
   metric: MetricKey,
