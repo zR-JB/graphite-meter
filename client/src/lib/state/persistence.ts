@@ -1,6 +1,6 @@
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/real/streamPolicy";
-import { DEFAULT_CONFIG } from "./defaults";
+import { canonicalAdaptiveConfig, DEFAULT_CONFIG } from "./defaults";
 
 const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
@@ -141,13 +141,7 @@ export function loadPersisted(): PersistedState {
   const parsedConfig = object(parsed.config);
   const parsedAdaptive = object(parsedConfig?.adaptive);
   // Adaptive tuning is internal policy; preserve only its enable preference.
-  merged.config.adaptive = {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled:
-      parsedAdaptive?.enabled === undefined
-        ? DEFAULT_CONFIG.adaptive.enabled
-        : parsedAdaptive.enabled === true,
-  };
+  merged.config.adaptive = canonicalAdaptiveConfig(parsedAdaptive?.enabled);
   merged.config.pingCadence = coercePingCadence(
     parsedConfig?.pingCadence,
     defaults.config.pingCadence,
@@ -200,10 +194,13 @@ export function savePersisted(snapshot: PersistedState): void {
   if (typeof window === "undefined") return;
   try {
     const safe = structuredClone(snapshot);
-    safe.config.adaptive = {
-      ...DEFAULT_CONFIG.adaptive,
-      enabled: snapshot.config.adaptive.enabled === true,
+    const serialized = {
+      ...safe,
+      config: {
+        ...safe.config,
+        adaptive: { enabled: snapshot.config.adaptive.enabled === true },
+      },
     };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(safe));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
   } catch {}
 }

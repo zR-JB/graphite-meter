@@ -350,8 +350,8 @@ test("connection failures use safe presentation copy", async () => {
   ).toBe("Connection check failed");
 });
 test("runner boundary canonicalizes every adaptive tuning field", async () => {
-  const { canonicalAdaptiveConfig } = await import("./engine.svelte");
-  const { DEFAULT_CONFIG } = await import("../state/defaults");
+  const { canonicalAdaptiveConfig, DEFAULT_CONFIG } =
+    await import("../state/defaults");
   const hostile = {
     ...DEFAULT_CONFIG.adaptive,
     enabled: false,
@@ -363,7 +363,7 @@ test("runner boundary canonicalizes every adaptive tuning field", async () => {
     confirmationMs: 1,
     glideMs: 1,
   };
-  expect(canonicalAdaptiveConfig(hostile)).toEqual({
+  expect(canonicalAdaptiveConfig(hostile.enabled)).toEqual({
     ...DEFAULT_CONFIG.adaptive,
     enabled: false,
   });

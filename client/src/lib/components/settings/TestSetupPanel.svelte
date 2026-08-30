@@ -304,7 +304,7 @@
         if (!onOpenHistory) return;
         event.preventDefault();
         onOpenHistory();
-      }}>Manage History</a
+      }}>View History</a
     >
   </section>
 
@@ -316,13 +316,8 @@
       tooltip={JARGON.wireRate}
     />
     <p class="hint">
-      Forward-direction Ethernet estimate from protocol bytes only.
-    </p>
-    <p class="hint">
-      Uses the negotiated browser protocol and authoritative preflight IP family
-      when available. Otherwise it assumes a conservative 1500 B Ethernet path
-      with IPv4, standard TCP options, and no unknown tunnel or VLAN layers.
-      Loopback paths have no physical-wire estimate.
+      Estimated Ethernet rate from measured protocol bytes and available
+      connection details.
     </p>
   </section>
 

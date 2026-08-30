@@ -4,7 +4,6 @@ import type {
   LiveRunConfig,
   NetworkRunner,
   RunnerEvent,
-  RunnerConfig,
 } from "./contract";
 import { RunnerCore } from "./core";
 import { DummyBackend } from "./dummy";
@@ -14,7 +13,7 @@ import {
   TransportUnavailableError,
 } from "./RealRunner";
 import { store } from "../state/store.svelte";
-import { DEFAULT_CONFIG } from "../state/defaults";
+import { canonicalAdaptiveConfig } from "../state/defaults";
 import {
   requireSessionCoverage,
   liveScheduleFitsSession,
@@ -55,15 +54,6 @@ let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 let validationTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Keep adaptive tuning private to the runner's canonical policy. */
-export function canonicalAdaptiveConfig(
-  adaptive: RunnerConfig["adaptive"],
-): RunnerConfig["adaptive"] {
-  return {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: adaptive.enabled === true,
-  };
-}
 let validationDueAt = 0;
 let lastValidationAttemptAt = 0;
 let validationFailureCount = 0;
@@ -517,7 +507,7 @@ export function toggleRun() {
     return;
   }
   const cfg = $state.snapshot(store.config);
-  cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive);
+  cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive.enabled);
   const key = connectionKey(cfg, store.transportDiscovery);
   const startAbort = new AbortController();
   const startSeq = ++pendingStartSeq;
@@ -581,7 +571,7 @@ export function returnToStart() {
 export function applyLiveRunConfig() {
   if (!store.isRunning) return;
   const config = $state.snapshot(store.config);
-  config.adaptive = canonicalAdaptiveConfig(config.adaptive);
+  config.adaptive = canonicalAdaptiveConfig(config.adaptive.enabled);
   const live: LiveRunConfig = {
     stages: config.stages,
     duration: config.duration,

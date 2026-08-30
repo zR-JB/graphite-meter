@@ -55,6 +55,17 @@ test("settings group result and advanced controls in the requested order", async
   await expect(settings.getByText("Minimum coverage")).toHaveCount(0);
   await expect(settings.getByText("Stability threshold")).toHaveCount(0);
   await expect(settings.getByText("Confirmation ms")).toHaveCount(0);
+  await expect(
+    settings.getByRole("link", { name: "View History" }),
+  ).toBeVisible();
+  await expect(
+    settings.getByText(
+      "Estimated Ethernet rate from measured protocol bytes and available connection details.",
+    ),
+  ).toBeVisible();
+  await expect(
+    settings.getByText(/conservative 1500 B Ethernet path/),
+  ).toHaveCount(0);
 });
 test("connection paths stay single-column by default and reflow after a dock resize", async ({
   page,

@@ -97,7 +97,7 @@ GM_PUBLIC_ORIGINS=self
 | --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Server name in `/preflight`.                                                     |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Optional location label.                                                         |
-| `GM_RESULT_HISTORY_DEFAULT`              | `--result-history-default`             | `false`          | Resolved browser default for saving completed result summaries locally. An explicit browser choice always overrides this operator default. |
+| `GM_RESULT_HISTORY_DEFAULT`              | `--result-history-default`             | `false`          | Resolved browser default for saving completed result summaries locally. |
 | `GM_TRUSTED_PROXIES`                    | none                                   | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |

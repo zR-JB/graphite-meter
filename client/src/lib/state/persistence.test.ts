@@ -61,7 +61,7 @@ test("history columns default, validate, deduplicate, and preserve order", () =>
   ]);
   expect(
     loaded({
-      historyColumns: ["bidirectional", "bidirectional", "bogus"],
+      historyColumns: ["bidirectional", "status", "bidirectional", "bogus"],
     }).historyColumns,
   ).toEqual(["bidirectional"]);
   expect(loaded({ historyColumns: [] }).historyColumns).toEqual(
@@ -107,7 +107,7 @@ test("legacy adaptive tuning cannot override canonical defaults", () => {
   ).toBe(DEFAULT_CONFIG.adaptive.confirmationMs);
 });
 
-test("saving adaptive settings writes canonical policy and preserves enabled", () => {
+test("saving adaptive settings persists only enabled and restores canonical policy", () => {
   const snapshot = defaultPersisted();
   snapshot.config.adaptive = {
     ...snapshot.config.adaptive,
@@ -120,9 +120,9 @@ test("saving adaptive settings writes canonical policy and preserves enabled", (
     confirmationMs: 10,
   };
   savePersisted(snapshot);
-  expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY)!)).toMatchObject({
-    config: { adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: false } },
-  });
+  expect(
+    JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).config.adaptive,
+  ).toEqual({ enabled: false });
   expect(loadPersisted().config.adaptive).toEqual({
     ...DEFAULT_CONFIG.adaptive,
     enabled: false,
