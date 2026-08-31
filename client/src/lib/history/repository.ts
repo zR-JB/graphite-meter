@@ -1,5 +1,8 @@
 import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecordV1 } from "./types";
-import { InvalidHistoryRecordError } from "./errors";
+import {
+  InvalidHistoryRecordError,
+  StaleHistoryGenerationError,
+} from "./errors";
 import {
   currentHistoryGeneration,
   nextHistoryGeneration,
@@ -10,7 +13,10 @@ export {
   historyChanges,
   type HistoryChange,
 } from "./changes";
-export { InvalidHistoryRecordError } from "./errors";
+export {
+  InvalidHistoryRecordError,
+  StaleHistoryGenerationError,
+} from "./errors";
 
 export const HISTORY_DB_NAME = "graphite-meter";
 export const HISTORY_DB_VERSION = 2;
@@ -90,12 +96,17 @@ export class HistoryRepository {
     const store = tx.objectStore(STORE);
     const metadata = tx.objectStore(META);
     const generationRequest = metadata.get("generation");
+    let staleGeneration: string | undefined;
     generationRequest.onsuccess = () => {
+      const durableGeneration = generationRequest.result?.value;
       if (
+        generation &&
         generationRequest.result &&
-        generationRequest.result.value !== generation
-      )
+        durableGeneration !== generation
+      ) {
+        staleGeneration = durableGeneration ?? "";
         return;
+      }
       if (!generationRequest.result)
         metadata.put({ key: "generation", value: generation });
       store.put(record);
@@ -108,6 +119,8 @@ export class HistoryRepository {
       };
     };
     await transactionDone(tx);
+    if (staleGeneration !== undefined)
+      throw new StaleHistoryGenerationError(staleGeneration);
   }
   async listWithDiagnostics(): Promise<HistoryListResult> {
     const db = await this.db();

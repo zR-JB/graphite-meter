@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { HistoryWriteQueue } from "./writeQueue";
+import { StaleHistoryGenerationError } from "./errors";
 import type { HistoryRecordV1 } from "./types";
 
 const valid = {
@@ -138,4 +139,38 @@ test("clear generation invalidates in-flight writes in separate tab queues", asy
   await Promise.all([firstTab.flush(), secondTab.flush()]);
   expect(saved).toEqual([]);
   expect(removed).toEqual([valid.id, other.id]);
+});
+
+test("stale generation rejection resynchronizes without save or warning", async () => {
+  const other = {
+    ...valid,
+    id: "00000000-0000-4000-8000-000000000003",
+  };
+  const currentGeneration = "after-clear";
+  const writes: string[] = [];
+  const saved: string[] = [];
+  const dropped: string[] = [];
+  let warnings = 0;
+  const queue = new HistoryWriteQueue(
+    async (record, _isCurrent, generation) => {
+      if (!generation) throw new StaleHistoryGenerationError(currentGeneration);
+      writes.push(record.id);
+    },
+    async () => undefined,
+    (record) => saved.push(record.id),
+    (record) => dropped.push(record.id),
+    () => {
+      warnings += 1;
+    },
+  );
+  queue.enqueue(valid);
+  await queue.flush();
+  expect(writes).toEqual([]);
+  expect(saved).toEqual([]);
+  expect(dropped).toEqual([]);
+  expect(warnings).toBe(0);
+  queue.enqueue(other);
+  await queue.flush();
+  expect(writes).toEqual([other.id]);
+  expect(saved).toEqual([other.id]);
 });

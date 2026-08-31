@@ -1,5 +1,8 @@
 import { isHistoryRecord, type HistoryRecordV1 } from "./types";
-import { InvalidHistoryRecordError } from "./errors";
+import {
+  InvalidHistoryRecordError,
+  StaleHistoryGenerationError,
+} from "./errors";
 export type HistoryWrite = (
   record: HistoryRecordV1,
   isCurrent: () => boolean,
@@ -74,6 +77,10 @@ export class HistoryWriteQueue {
         }
         this.onSaved(pending.record);
       } catch (error) {
+        if (error instanceof StaleHistoryGenerationError) {
+          this.clear(error.generation);
+          continue;
+        }
         if (error instanceof InvalidHistoryRecordError) {
           this.#pending.shift();
           this.onPermanentFailure(pending.record);
