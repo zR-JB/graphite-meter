@@ -37,7 +37,7 @@ function value(record: HistoryRecordV1, sort: HistorySort): number | null {
   return record.bufferbloat?.loadedMs ?? null;
 }
 
-export interface PreparedHistoryRecord {
+interface PreparedHistoryRecord {
   record: HistoryRecordV1;
   id: string;
   completedAt: number;

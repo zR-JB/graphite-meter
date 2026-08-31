@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { HistoryWriteQueue } from "./writeQueue";
-import { StaleHistoryGenerationError } from "./errors";
+import {
+  InvalidHistoryRecordError,
+  StaleHistoryGenerationError,
+} from "./errors";
+import { historyChanges } from "./changes";
 import type { HistoryRecordV1 } from "./types";
 
 const valid = {
@@ -37,6 +41,15 @@ const valid = {
   wireEstimates: null,
 } satisfies HistoryRecordV1;
 
+function candidate(index: number): HistoryRecordV1 {
+  return {
+    ...valid,
+    id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
+    startedAt: index,
+    completedAt: index + 1,
+  };
+}
+
 test("permanent candidates are dropped while later valid candidates proceed", async () => {
   const saved: string[] = [];
   const dropped: string[] = [];
@@ -54,6 +67,27 @@ test("permanent candidates are dropped while later valid candidates proceed", as
   await queue.flush();
   expect(dropped).toEqual(["bad"]);
   expect(saved).toEqual([valid.id]);
+});
+
+test("a permanent repository rejection cannot block the next accepted write", async () => {
+  const first = candidate(16);
+  const second = candidate(17);
+  const saved: string[] = [];
+  const dropped: string[] = [];
+  const queue = new HistoryWriteQueue(
+    async (record) => {
+      if (record.id === first.id) throw new InvalidHistoryRecordError();
+    },
+    async () => undefined,
+    (record) => saved.push(record.id),
+    (record) => dropped.push(record.id),
+    () => undefined,
+  );
+  queue.enqueue(first);
+  queue.enqueue(second);
+  await queue.flush();
+  expect(dropped).toEqual([first.id]);
+  expect(saved).toEqual([second.id]);
 });
 
 test("transient failures leave the candidate queued for retry", async () => {
@@ -78,6 +112,171 @@ test("transient failures leave the candidate queued for retry", async () => {
   await queue.flush();
   expect(attempts).toBe(2);
   expect(transient).toBe(1);
+});
+
+test("a transient outage retains more than 128 accepted candidates in FIFO order", async () => {
+  const candidates = Array.from({ length: 160 }, (_, index) =>
+    candidate(index + 16),
+  );
+  const attempts: string[] = [];
+  const saved: string[] = [];
+  let unavailable = true;
+  const queue = new HistoryWriteQueue(
+    async (record) => {
+      attempts.push(record.id);
+      if (unavailable) {
+        unavailable = false;
+        throw new Error("temporary outage");
+      }
+    },
+    async () => undefined,
+    (record) => saved.push(record.id),
+    () => undefined,
+    () => undefined,
+  );
+  for (const record of candidates) expect(queue.enqueue(record)).toBe(true);
+
+  await queue.flush();
+  expect(saved).toEqual([]);
+  await queue.flush();
+  expect(attempts).toEqual([
+    candidates[0].id,
+    ...candidates.map(({ id }) => id),
+  ]);
+  expect(saved).toEqual(candidates.map(({ id }) => id));
+});
+
+test("metadata repair resynchronizes queued writes without a false save", async () => {
+  const repairGeneration = "repair-00000000-0000-4000-8000-000000000127";
+  const records = [candidate(16), candidate(17)];
+  const attempts: Array<{ id: string; generation: string }> = [];
+  const saved: string[] = [];
+  let repairNeeded = true;
+  const queue = new HistoryWriteQueue(
+    async (record, _isCurrent, generation) => {
+      attempts.push({ id: record.id, generation });
+      if (repairNeeded) {
+        repairNeeded = false;
+        throw new StaleHistoryGenerationError(repairGeneration);
+      }
+    },
+    async () => undefined,
+    (record) => saved.push(record.id),
+    () => undefined,
+    () => undefined,
+  );
+  records.forEach((record) => queue.enqueue(record));
+  await queue.flush();
+
+  expect(attempts).toEqual([
+    { id: records[0].id, generation: "" },
+    { id: records[0].id, generation: repairGeneration },
+    { id: records[1].id, generation: repairGeneration },
+  ]);
+  expect(saved).toEqual(records.map(({ id }) => id));
+
+  const later = candidate(18);
+  queue.enqueue(later);
+  await queue.flush();
+  expect(attempts.at(-1)).toEqual({
+    id: later.id,
+    generation: repairGeneration,
+  });
+  expect(saved).toEqual([...records, later].map(({ id }) => id));
+});
+
+test("a newer clear wins over a delayed metadata repair response", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  let storedGeneration = "";
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: () => storedGeneration || null,
+      setItem: (_key: string, value: string) => {
+        storedGeneration = value;
+      },
+      removeItem: () => {
+        storedGeneration = "";
+      },
+    },
+  });
+  const saved: string[] = [];
+  let firstAttempt = true;
+  try {
+    const queue = new HistoryWriteQueue(
+      async () => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          storedGeneration = "clear-00000000-0000-4000-8000-000000000127";
+          throw new StaleHistoryGenerationError(
+            "repair-00000000-0000-4000-8000-000000000126",
+          );
+        }
+      },
+      async () => undefined,
+      (record) => saved.push(record.id),
+      () => undefined,
+      () => undefined,
+    );
+    queue.enqueue(valid);
+    await queue.flush();
+    expect(saved).toEqual([]);
+
+    const next = candidate(16);
+    queue.enqueue(next);
+    await queue.flush();
+    expect(saved).toEqual([next.id]);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("a malformed cross-tab clear message cannot mutate queued work", async () => {
+  const original = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "BroadcastChannel",
+  );
+  let channel: { onmessage: ((event: MessageEvent) => void) | null } | null =
+    null;
+  class TestBroadcastChannel {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    constructor() {
+      channel = this;
+    }
+    close() {}
+  }
+  Object.defineProperty(globalThis, "BroadcastChannel", {
+    configurable: true,
+    value: TestBroadcastChannel,
+  });
+  let release!: () => void;
+  const saved: string[] = [];
+  try {
+    const queue = new HistoryWriteQueue(
+      async () => new Promise<void>((resolve) => (release = resolve)),
+      async () => undefined,
+      (record) => saved.push(record.id),
+      () => undefined,
+      () => undefined,
+    );
+    const stop = historyChanges((change) => {
+      if (change.type === "clear") queue.clear(change.generation);
+    });
+    queue.enqueue(valid);
+    await Promise.resolve();
+    channel!.onmessage?.({
+      data: { type: "clear", generation: "clear-attacker", extra: true },
+    } as MessageEvent);
+    release();
+    await queue.flush();
+    stop();
+    expect(saved).toEqual([valid.id]);
+  } finally {
+    if (original)
+      Object.defineProperty(globalThis, "BroadcastChannel", original);
+    else Reflect.deleteProperty(globalThis, "BroadcastChannel");
+  }
 });
 
 test("clear generation drops queued work and cleans an in-flight stale write", async () => {

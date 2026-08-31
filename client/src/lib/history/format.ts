@@ -8,7 +8,7 @@ import {
 } from "../format";
 import type { StageStatus } from "./types";
 
-export interface HistoryUnits {
+interface HistoryUnits {
   base: "base10" | "base2";
   kind: "bits" | "bytes";
 }

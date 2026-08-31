@@ -139,7 +139,7 @@ function emptyStability(): LiveStability {
   return { latency: null, download: null, upload: null, bidirectional: null };
 }
 
-export class AppStore {
+class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
   preparation = $state<PreparationState>(emptyPreparation());

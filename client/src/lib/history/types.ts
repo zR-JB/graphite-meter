@@ -7,16 +7,20 @@ import type {
   TransportKind,
   TerminationReason,
 } from "../runner/contract";
+import { createUuid, isUuid } from "../uuid";
 
-export const HISTORY_SCHEMA_VERSION = 1 as const;
+const HISTORY_SCHEMA_VERSION = 1 as const;
 export const HISTORY_LIMIT = 2_000 as const;
-const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MAX_FAILURES = 16;
-const MAX_LANE_COUNT = 1_000_000;
+const HISTORY_FAILURE_STAGES = [
+  "latency",
+  "download",
+  "upload",
+  "bidirectional",
+] as const;
+const MAX_HISTORY_TEXT_LENGTH = 256;
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
-export interface FailureSnapshot {
+interface FailureSnapshot {
   stage: "latency" | "download" | "upload" | "bidirectional";
   direction: "down" | "up" | null;
   reason: Exclude<TerminationReason, "user-abort">;
@@ -34,7 +38,7 @@ export interface ThroughputSnapshot {
   band: "low" | "medium" | "high";
   serverAuthoritative: boolean;
 }
-export interface LatencySnapshot {
+interface LatencySnapshot {
   reportedMs: number;
   minMs: number;
   p50Ms: number;
@@ -64,7 +68,7 @@ type LatencyTransportKind = Extract<
   "websocket" | "webtransport"
 >;
 export interface HistoryRecordV1 {
-  schemaVersion: 1;
+  schemaVersion: typeof HISTORY_SCHEMA_VERSION;
   id: string;
   startedAt: number;
   completedAt: number;
@@ -184,35 +188,27 @@ function bidirectionalStatus(
 function failureSnapshots(
   failures: Partial<Record<string, StageFailure>>,
 ): FailureSnapshot[] {
-  return Object.values(failures)
-    .filter(Boolean)
-    .map((failure) => ({
-      stage: failure!.stage,
-      direction: failure!.direction ?? null,
-      reason: failure!.reason,
-    }));
+  return HISTORY_FAILURE_STAGES.flatMap((stage) => {
+    const failure = failures[stage];
+    return failure
+      ? [
+          {
+            stage: failure.stage,
+            direction: failure.direction ?? null,
+            reason: failure.reason,
+          },
+        ]
+      : [];
+  });
 }
-function id(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function")
-    return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.getRandomValues === "function"
-  )
-    crypto.getRandomValues(bytes);
-  else
-    for (let index = 0; index < bytes.length; index++)
-      bytes[index] = Math.floor(Math.random() * 256);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+function historyText(value: string): string {
+  return value.slice(0, MAX_HISTORY_TEXT_LENGTH);
+}
+function historyProtocol(value: string | undefined): string | null {
+  return value && !value.includes("://") ? historyText(value) : null;
 }
 
-export interface HistoryBuildContext {
+interface HistoryBuildContext {
   infra: InfraInfo | null;
   clientBuild: string;
   engineVersion: string;
@@ -238,8 +234,8 @@ export function buildHistoryRecord(
   const bidiDown = throughput(bidi?.down ?? null);
   const bidiUp = throughput(bidi?.up ?? null);
   return {
-    schemaVersion: 1,
-    id: id(),
+    schemaVersion: HISTORY_SCHEMA_VERSION,
+    id: createUuid(),
     startedAt: Math.trunc(result.startedAt),
     completedAt: Math.trunc(completedAt),
     durationMs: result.durationMs,
@@ -275,24 +271,26 @@ export function buildHistoryRecord(
       (bidi?.down?.totalBytes ?? 0) +
       (bidi?.up?.totalBytes ?? 0),
     server: {
-      name: context.infra?.server.name ?? "Unknown",
-      location: context.infra?.server.location ?? null,
-      engine: context.engineVersion,
+      name: historyText(context.infra?.server.name ?? "Unknown"),
+      location: context.infra?.server.location
+        ? historyText(context.infra.server.location)
+        : null,
+      engine: historyText(context.engineVersion),
     },
     transport: {
       throughput: {
-        protocol: context.infra?.protocolNegotiated ?? null,
+        protocol: historyProtocol(context.infra?.protocolNegotiated),
         kind: throughputTransportKind(
           context.infra?.selectedThroughputTransport,
         ),
       },
       latency: {
-        protocol: context.infra?.latencyProtocolNegotiated ?? null,
+        protocol: historyProtocol(context.infra?.latencyProtocolNegotiated),
         kind: latencyTransportKind(context.infra?.selectedLatencyTransport),
       },
     },
     ipVersion: context.infra?.clientIpVersion ?? null,
-    client: { build: context.clientBuild },
+    client: { build: historyText(context.clientBuild) },
     failures: failureSnapshots(failures),
     wireEstimates:
       context.wireDownloadBytesPerSec != null ||
@@ -331,8 +329,9 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     nonnegative(candidate) && candidate <= 1;
   const nonnegativeOrNull = (candidate: unknown): candidate is number | null =>
     candidate === null || nonnegative(candidate);
-  const text = (candidate: unknown, max = 256): candidate is string =>
-    typeof candidate === "string" && candidate.length <= max;
+  const text = (candidate: unknown): candidate is string =>
+    typeof candidate === "string" &&
+    candidate.length <= MAX_HISTORY_TEXT_LENGTH;
   const hasOnly = (
     candidate: Record<string, unknown>,
     allowed: readonly string[],
@@ -363,14 +362,13 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
   const band = (candidate: unknown): candidate is "low" | "medium" | "high" =>
     candidate === "low" || candidate === "medium" || candidate === "high";
   const protocol = (candidate: unknown): candidate is string | null =>
-    candidate === null || (text(candidate, 32) && !candidate.includes("://"));
+    candidate === null || (text(candidate) && !candidate.includes("://"));
   const failureStage = (
     candidate: unknown,
   ): candidate is FailureSnapshot["stage"] =>
-    candidate === "latency" ||
-    candidate === "download" ||
-    candidate === "upload" ||
-    candidate === "bidirectional";
+    HISTORY_FAILURE_STAGES.includes(
+      candidate as (typeof HISTORY_FAILURE_STAGES)[number],
+    );
   const failureReason = (
     candidate: unknown,
   ): candidate is FailureSnapshot["reason"] =>
@@ -459,8 +457,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
       nonnegativeOrNull(candidate.jitter) &&
       unitInterval(candidate.lossRatio) &&
       Number.isInteger(candidate.count) &&
-      nonnegative(candidate.count) &&
-      candidate.count <= MAX_LANE_COUNT
+      nonnegative(candidate.count)
     );
   };
   const throughputStage = (
@@ -553,9 +550,8 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     record.completedAt < record.startedAt ||
     !nonnegative(record.durationMs) ||
     !nonnegative(record.totalBytes) ||
-    record.schemaVersion !== 1 ||
-    typeof record.id !== "string" ||
-    !UUID.test(record.id)
+    record.schemaVersion !== HISTORY_SCHEMA_VERSION ||
+    !isUuid(record.id)
   )
     return false;
   const measuredBytes =
@@ -609,20 +605,24 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     return false;
   if (
     !Array.isArray(record.failures) ||
-    record.failures.length > MAX_FAILURES ||
-    record.failures.some(
-      (failure) =>
-        !isObject(failure) ||
-        !hasOnly(failure, ["stage", "direction", "reason"]) ||
-        !failureStage(failure.stage) ||
-        !failureReason(failure.reason) ||
-        (failure.direction !== null &&
-          failure.direction !== "down" &&
-          failure.direction !== "up") ||
-        !text(failure.reason, 128),
-    )
+    record.failures.length > HISTORY_FAILURE_STAGES.length
   )
     return false;
+  const failedStages = new Set<FailureSnapshot["stage"]>();
+  for (const failure of record.failures) {
+    if (
+      !isObject(failure) ||
+      !hasOnly(failure, ["stage", "direction", "reason"]) ||
+      !failureStage(failure.stage) ||
+      !failureReason(failure.reason) ||
+      (failure.direction !== null &&
+        failure.direction !== "down" &&
+        failure.direction !== "up") ||
+      failedStages.has(failure.stage)
+    )
+      return false;
+    failedStages.add(failure.stage);
+  }
   const bufferbloat = record.bufferbloat;
   if (
     bufferbloat !== null &&
@@ -631,7 +631,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
       !nonnegative(bufferbloat.idleMs) ||
       !nonnegative(bufferbloat.loadedMs) ||
       !nonnegative(bufferbloat.increaseMs) ||
-      !text(bufferbloat.grade, 1) ||
+      typeof bufferbloat.grade !== "string" ||
       !["A", "B", "C", "D", "F"].includes(bufferbloat.grade))
   )
     return false;

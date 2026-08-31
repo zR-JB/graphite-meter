@@ -35,7 +35,7 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
 
-export interface PersistedState {
+interface PersistedState {
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";

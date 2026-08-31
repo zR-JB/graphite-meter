@@ -1,6 +1,6 @@
 import type { Phase } from "../runner/contract";
 
-export type ReturnToLive = {
+type ReturnToLive = {
   icon: "bolt" | "ping" | "download" | "upload" | "bidirectional";
   label: string;
   tone: "warmup" | "latency" | "download" | "upload" | "bidirectional";

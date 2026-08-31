@@ -149,29 +149,8 @@ test("rejects malformed nested records before they reach rendering", () => {
     },
     { ...valid, bufferbloat: { ...valid.bufferbloat, grade: "Z" } },
     { ...valid, durationMs: -1 },
-    { ...valid, failures: Array.from({ length: 17 }, () => valid.failures[0]) },
-    {
-      ...valid,
-      stages: {
-        ...valid.stages,
-        latency: {
-          ...valid.stages.latency,
-          lanes: {
-            ...valid.stages.latency.lanes,
-            latency: {
-              min: null,
-              max: null,
-              p10: null,
-              p90: null,
-              center: null,
-              jitter: null,
-              lossRatio: 0,
-              count: 1_000_001,
-            },
-          },
-        },
-      },
-    },
+    { ...valid, failures: [valid.failures[0], valid.failures[0]] },
+    { ...valid, failures: Array.from({ length: 5 }, () => valid.failures[0]) },
     { ...valid, totalBytes: valid.totalBytes + 1 },
     {
       ...valid,
@@ -185,6 +164,89 @@ test("rejects malformed nested records before they reach rendering", () => {
     },
   ];
   for (const value of cases) expect(isHistoryRecord(value)).toBe(false);
+});
+
+test("authoritative scalar counts are not rejected by an unrelated ceiling", () => {
+  const record = buildHistoryRecord(
+    result,
+    {
+      infra: null,
+      clientBuild: "b",
+      engineVersion: "e",
+      latencyLanes: {
+        latency: {
+          min: 1,
+          max: 2,
+          p10: 1,
+          p90: 2,
+          center: 1.5,
+          jitter: 0.5,
+          lossRatio: 0,
+          count: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    },
+    200,
+  );
+  expect(isHistoryRecord(record)).toBe(true);
+  expect(record.stages.latency.lanes.latency?.count).toBe(
+    Number.MAX_SAFE_INTEGER,
+  );
+});
+
+test("record construction bounds persisted display text without losing the run", () => {
+  const long = "x".repeat(300);
+  const record = buildHistoryRecord(
+    result,
+    {
+      infra: {
+        clientIp: "192.0.2.5",
+        clientIpVersion: 4,
+        clientIpSource: "socket",
+        server: { name: long, location: long },
+        preTestPingMs: 4,
+        engineVersion: long,
+        discoveryGeneration: "g",
+        protocolNegotiated: long,
+        selectedThroughputTransport: "fetch-stream",
+        selectedLatencyTransport: "websocket",
+        latencyProtocolNegotiated: "https://secret.invalid/raw",
+      },
+      clientBuild: long,
+      engineVersion: long,
+    },
+    200,
+  );
+  expect(isHistoryRecord(record)).toBe(true);
+  expect(record.server.name).toHaveLength(256);
+  expect(record.server.location).toHaveLength(256);
+  expect(record.server.engine).toHaveLength(256);
+  expect(record.client.build).toHaveLength(256);
+  expect(record.transport.throughput.protocol).toHaveLength(256);
+  expect(record.transport.latency.protocol).toBeNull();
+  expect(JSON.stringify(record)).not.toContain("secret.invalid");
+});
+
+test("failure snapshots are bounded by the four authoritative run stages", () => {
+  const record = buildHistoryRecord(
+    {
+      ...result,
+      stageFailures: {
+        latency: { stage: "latency", reason: "timeout", message: "raw" },
+        download: { stage: "download", reason: "timeout", message: "raw" },
+        upload: { stage: "upload", reason: "timeout", message: "raw" },
+        bidirectional: {
+          stage: "bidirectional",
+          reason: "timeout",
+          message: "raw",
+        },
+      },
+    },
+    { infra: null, clientBuild: "b", engineVersion: "e" },
+    200,
+  );
+  expect(record.failures).toHaveLength(4);
+  expect(isHistoryRecord(record)).toBe(true);
 });
 
 test("rejects non-date epochs while retaining valid date bounds", () => {

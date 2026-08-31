@@ -12,7 +12,11 @@ import {
   test,
   waitForCompletion,
 } from "./webview";
-import { HISTORY_TEST_DB } from "./history-db";
+import { HISTORY_DB } from "../src/lib/history/dbSchema";
+import {
+  isHistoryGeneration,
+  isRepairHistoryGeneration,
+} from "../src/lib/history/changes";
 
 type TestPage = Parameters<typeof openApp>[0];
 
@@ -113,32 +117,52 @@ function record(
   };
 }
 
-async function seedHistory(page: TestPage, values: unknown[], notify = true) {
+async function seedHistory(
+  page: TestPage,
+  values: unknown[],
+  notify = true,
+  generation?: unknown,
+) {
   await page.evaluate(
     (input) =>
       new Promise<void>((resolve, reject) => {
         const opening = indexedDB.open(input.db.name, input.db.version);
         opening.onupgradeneeded = () => {
           const database = opening.result;
-          const store = database.objectStoreNames.contains(input.db.results)
-            ? opening.transaction!.objectStore(input.db.results)
-            : database.createObjectStore(input.db.results, {
-                keyPath: input.db.id,
+          const store = database.objectStoreNames.contains(
+            input.db.resultsStore,
+          )
+            ? opening.transaction!.objectStore(input.db.resultsStore)
+            : database.createObjectStore(input.db.resultsStore, {
+                keyPath: input.db.resultKeyPath,
               });
-          if (!store.indexNames.contains(input.db.index))
-            store.createIndex(input.db.index, input.db.index);
-          if (!database.objectStoreNames.contains(input.db.meta))
-            database.createObjectStore(input.db.meta, {
-              keyPath: input.db.key,
+          if (!store.indexNames.contains(input.db.completedAtIndex))
+            store.createIndex(
+              input.db.completedAtIndex,
+              input.db.completedAtIndex,
+            );
+          if (!database.objectStoreNames.contains(input.db.metadataStore))
+            database.createObjectStore(input.db.metadataStore, {
+              keyPath: input.db.metadataKeyPath,
             });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const db = opening.result;
-          const transaction = db.transaction(input.db.results, "readwrite");
-          const store = transaction.objectStore(input.db.results);
+          const transaction = db.transaction(
+            input.generation === undefined
+              ? input.db.resultsStore
+              : [input.db.resultsStore, input.db.metadataStore],
+            "readwrite",
+          );
+          const store = transaction.objectStore(input.db.resultsStore);
           store.clear();
           for (const item of input.items) store.put(item);
+          if (input.generation !== undefined)
+            transaction.objectStore(input.db.metadataStore).put({
+              key: input.db.generationKey,
+              value: input.generation,
+            });
           transaction.oncomplete = () => {
             db.close();
             if (input.notify)
@@ -148,7 +172,41 @@ async function seedHistory(page: TestPage, values: unknown[], notify = true) {
           transaction.onerror = () => reject(transaction.error);
         };
       }),
-    { items: values, notify, db: HISTORY_TEST_DB },
+    { items: values, notify, generation, db: HISTORY_DB },
+  );
+}
+
+async function rawHistoryState(page: TestPage) {
+  return page.evaluate(
+    (schema) =>
+      new Promise<{ records: unknown[]; generation: unknown }>(
+        (resolve, reject) => {
+          const opening = indexedDB.open(schema.name, schema.version);
+          opening.onerror = () => reject(opening.error);
+          opening.onsuccess = () => {
+            const database = opening.result;
+            const transaction = database.transaction(
+              [schema.resultsStore, schema.metadataStore],
+              "readonly",
+            );
+            const records = transaction
+              .objectStore(schema.resultsStore)
+              .getAll();
+            const generation = transaction
+              .objectStore(schema.metadataStore)
+              .get(schema.generationKey);
+            transaction.onerror = () => reject(transaction.error);
+            transaction.oncomplete = () => {
+              database.close();
+              resolve({
+                records: records.result,
+                generation: generation.result?.value,
+              });
+            };
+          };
+        },
+      ),
+    HISTORY_DB,
   );
 }
 
@@ -189,6 +247,52 @@ async function toggleHistoryFromTopbar(page: TestPage) {
   await page.getByRole("menuitem", { name: /^(Open|Close) History/ }).click();
 }
 
+test("the measurement route keeps History UI and IndexedDB lazy", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const open = indexedDB.open.bind(indexedDB);
+    (window as typeof window & { historyDbOpens: number }).historyDbOpens = 0;
+    Object.defineProperty(indexedDB, "open", {
+      configurable: true,
+      value(name: string, version?: number) {
+        (window as typeof window & { historyDbOpens: number }).historyDbOpens +=
+          1;
+        return version === undefined ? open(name) : open(name, version);
+      },
+    });
+  });
+  await openApp(page, "dummy");
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { historyDbOpens: number }).historyDbOpens,
+    ),
+  ).toBe(0);
+  expect(
+    await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .some((entry) => entry.name.includes("HistoryWorkspace")),
+    ),
+  ).toBe(false);
+
+  await openHistory(page);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { historyDbOpens: number }).historyDbOpens,
+    ),
+  ).toBeGreaterThan(0);
+  expect(
+    await page.evaluate(() =>
+      performance
+        .getEntriesByType("resource")
+        .some((entry) => entry.name.includes("HistoryWorkspace")),
+    ),
+  ).toBe(true);
+});
+
 test("explicitly enabled completion is reachable in History and stays responsive", async ({
   page,
 }) => {
@@ -228,8 +332,8 @@ test("explicitly enabled completion is reachable in History and stays responsive
         opening.onsuccess = () => {
           const db = opening.result;
           const request = db
-            .transaction(authority.results, "readonly")
-            .objectStore(authority.results)
+            .transaction(authority.resultsStore, "readonly")
+            .objectStore(authority.resultsStore)
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
@@ -239,7 +343,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
           };
         };
       }),
-    HISTORY_TEST_DB,
+    HISTORY_DB,
   );
   expect(savedWireRate).not.toBeNull();
   expect(savedWireRate!).toBeGreaterThan(0);
@@ -378,8 +482,8 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
         opening.onsuccess = () => {
           const database = opening.result;
           const request = database
-            .transaction(db.results, "readonly")
-            .objectStore(db.results)
+            .transaction(db.resultsStore, "readonly")
+            .objectStore(db.resultsStore)
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
@@ -427,7 +531,7 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
           };
         };
       }),
-    HISTORY_TEST_DB,
+    HISTORY_DB,
   );
   const elapsed = await page.evaluate(
     (expectedId) =>
@@ -532,14 +636,80 @@ test("malformed-only archives keep a raw clear path", async ({ page }) => {
         const request = indexedDB.open(db.name, db.version);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
-          const tx = request.result.transaction(db.results, "readonly");
-          const get = tx.objectStore(db.results).count();
+          const tx = request.result.transaction(db.resultsStore, "readonly");
+          const get = tx.objectStore(db.resultsStore).count();
           get.onsuccess = () => resolve(get.result);
         };
       }),
-    HISTORY_TEST_DB,
+    HISTORY_DB,
   );
   expect(count).toBe(0);
+});
+
+test("repository repairs corrupt generation metadata without deleting raw rows", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await setHistoryPreference(page, "enabled");
+  const settings = await openSettings(page);
+  await settings.getByRole("button", { name: "short", exact: true }).click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+
+  const existing = record(IDS.oldest, Date.UTC(2026, 7, 28, 12));
+  const malformed = {
+    id: IDS.middle,
+    completedAt: Date.UTC(2026, 7, 28, 11),
+    unexpected: "raw malformed row",
+  };
+  await seedHistory(page, [existing, malformed], false, { corrupt: true });
+  await page.evaluate(() => {
+    localStorage.removeItem("graphite-meter:history-generation");
+    (
+      window as typeof window & { historySaveEvents: number }
+    ).historySaveEvents = 0;
+    window.addEventListener("graphite-meter-history-changed", () => {
+      (
+        window as typeof window & { historySaveEvents: number }
+      ).historySaveEvents += 1;
+    });
+  });
+
+  await startTest(page);
+  await waitForCompletion(page, 20_000);
+  await expect
+    .poll(async () => (await rawHistoryState(page)).records.length)
+    .toBe(3);
+  const state = await rawHistoryState(page);
+  expect(isHistoryGeneration(state.generation)).toBe(true);
+  expect(isRepairHistoryGeneration(state.generation as string)).toBe(true);
+  expect(
+    state.records.some(
+      (candidate) =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { id?: string }).id === existing.id,
+    ),
+  ).toBe(true);
+  expect(
+    state.records.some(
+      (candidate) =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { unexpected?: string }).unexpected ===
+          "raw malformed row",
+    ),
+  ).toBe(true);
+  expect(
+    await page.evaluate(
+      () =>
+        (window as typeof window & { historySaveEvents: number })
+          .historySaveEvents,
+    ),
+  ).toBe(1);
+
+  await openHistory(page);
+  await expect(page.locator(".result-row")).toHaveCount(2);
+  await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
 });
 
 test("wordmark semantics preserve a live run away from the meter", async ({

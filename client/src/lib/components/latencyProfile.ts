@@ -28,7 +28,7 @@ export interface LatencyProfileDomain {
   span: number;
 }
 
-export type LatencyProfileLaneLike = {
+type LatencyProfileLaneLike = {
   min: number | null;
   max: number | null;
   p10: number | null;

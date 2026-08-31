@@ -385,8 +385,8 @@
     if (!previous || id) return;
     void tick().then(() => {
       const target =
-        [...document.querySelectorAll<HTMLElement>("[data-history-id]")].find(
-          (element) => element.dataset.historyId === previous,
+        document.querySelector<HTMLElement>(
+          `[data-history-id="${previous}"]`,
         ) ??
         document.querySelector<HTMLElement>(
           ".history-workspace .close-history",
@@ -1440,13 +1440,11 @@
     }
     @keyframes reveal-history {
       from {
-        opacity: 0;
         transform: translateY(4px) scale(0.997);
       }
     }
     @keyframes reveal-detail {
       from {
-        opacity: 0;
         transform: translateY(4px);
       }
     }

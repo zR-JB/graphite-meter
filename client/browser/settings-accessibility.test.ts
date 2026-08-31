@@ -1,5 +1,5 @@
 import { AxeBuilder } from "./webview";
-import { HISTORY_TEST_DB } from "./history-db";
+import { HISTORY_DB } from "../src/lib/history/dbSchema";
 import {
   configureSettings,
   expect,
@@ -37,26 +37,31 @@ async function seedRetainedResult(page: TestPage) {
         const opening = indexedDB.open(input.db.name, input.db.version);
         opening.onupgradeneeded = () => {
           const database = opening.result;
-          const results = database.objectStoreNames.contains(input.db.results)
-            ? opening.transaction!.objectStore(input.db.results)
-            : database.createObjectStore(input.db.results, {
-                keyPath: input.db.id,
+          const results = database.objectStoreNames.contains(
+            input.db.resultsStore,
+          )
+            ? opening.transaction!.objectStore(input.db.resultsStore)
+            : database.createObjectStore(input.db.resultsStore, {
+                keyPath: input.db.resultKeyPath,
               });
-          if (!results.indexNames.contains(input.db.index))
-            results.createIndex(input.db.index, input.db.index);
-          if (!database.objectStoreNames.contains(input.db.meta))
-            database.createObjectStore(input.db.meta, {
-              keyPath: input.db.key,
+          if (!results.indexNames.contains(input.db.completedAtIndex))
+            results.createIndex(
+              input.db.completedAtIndex,
+              input.db.completedAtIndex,
+            );
+          if (!database.objectStoreNames.contains(input.db.metadataStore))
+            database.createObjectStore(input.db.metadataStore, {
+              keyPath: input.db.metadataKeyPath,
             });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
           const transaction = database.transaction(
-            input.db.results,
+            input.db.resultsStore,
             "readwrite",
           );
-          const results = transaction.objectStore(input.db.results);
+          const results = transaction.objectStore(input.db.resultsStore);
           results.clear();
           results.put(input.saved);
           transaction.oncomplete = () => {
@@ -67,7 +72,7 @@ async function seedRetainedResult(page: TestPage) {
         };
       }),
     {
-      db: HISTORY_TEST_DB,
+      db: HISTORY_DB,
       saved: {
         schemaVersion: 1,
         id: "00000000-0000-4000-8000-000000000127",
@@ -113,8 +118,11 @@ async function takeRetainedResultCount(page: TestPage) {
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
-          const transaction = database.transaction(db.results, "readwrite");
-          const results = transaction.objectStore(db.results);
+          const transaction = database.transaction(
+            db.resultsStore,
+            "readwrite",
+          );
+          const results = transaction.objectStore(db.resultsStore);
           const request = results.count();
           transaction.onerror = () => reject(transaction.error);
           request.onerror = () => reject(request.error);
@@ -128,7 +136,7 @@ async function takeRetainedResultCount(page: TestPage) {
           };
         };
       }),
-    HISTORY_TEST_DB,
+    HISTORY_DB,
   );
 }
 test("settings expose live controls and lock run construction inputs", async ({

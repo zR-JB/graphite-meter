@@ -862,7 +862,6 @@
     }
     @keyframes detail-content-enter {
       from {
-        opacity: 0;
         transform: translateY(3px);
       }
     }
