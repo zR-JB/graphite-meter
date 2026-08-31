@@ -8,7 +8,7 @@ routes](#webtransport-routes)). The plain request/response HTTP endpoints (`/pre
 normal HTTP (query params, status codes, streaming bodies).
 
 The Go and TypeScript implementations MUST agree with the shared conformance corpus
-`api/wire.testvectors.txt`; the Rust rewrite must preserve the same contract. The opcode keywords
+`api/wire.testvectors.txt`; every implementation must preserve the same contract. The opcode keywords
 are additionally pinned as a shared constant table in each implemented language
 (`go/internal/wire/opcodes.go`, `client/src/lib/runner/real/wire.ts`).
 
