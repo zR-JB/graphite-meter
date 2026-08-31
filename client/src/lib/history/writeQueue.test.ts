@@ -103,3 +103,39 @@ test("clear generation drops queued work and cleans an in-flight stale write", a
   expect(writes).toEqual([valid.id]);
   expect(removed).toEqual([valid.id]);
 });
+
+test("clear generation invalidates in-flight writes in separate tab queues", async () => {
+  const other = {
+    ...valid,
+    id: "00000000-0000-4000-8000-000000000002",
+  };
+  const writes: string[] = [];
+  const saved: string[] = [];
+  const removed: string[] = [];
+  const releases: Array<() => void> = [];
+  const makeQueue = () =>
+    new HistoryWriteQueue(
+      async (record) => {
+        writes.push(record.id);
+        await new Promise<void>((resolve) => releases.push(resolve));
+      },
+      async (id) => {
+        removed.push(id);
+      },
+      (record) => saved.push(record.id),
+      () => undefined,
+      () => undefined,
+    );
+  const firstTab = makeQueue();
+  const secondTab = makeQueue();
+  firstTab.enqueue(valid);
+  secondTab.enqueue(other);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(writes).toEqual([valid.id, other.id]);
+  firstTab.clear("after-clear");
+  secondTab.clear("after-clear");
+  releases.forEach((release) => release());
+  await Promise.all([firstTab.flush(), secondTab.flush()]);
+  expect(saved).toEqual([]);
+  expect(removed).toEqual([valid.id, other.id]);
+});

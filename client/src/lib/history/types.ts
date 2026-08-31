@@ -239,7 +239,7 @@ export function buildHistoryRecord(
     schemaVersion: 1,
     id: id(),
     startedAt: Math.trunc(result.startedAt),
-    completedAt,
+    completedAt: Math.trunc(completedAt),
     durationMs: result.durationMs,
     stages: {
       latency: {
