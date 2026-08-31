@@ -30,6 +30,25 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
+/** Adaptive thresholds are runner policy; persistence owns only the switch. */
+export function canonicalAdaptiveConfig(
+  value: unknown = DEFAULT_CONFIG.adaptive.enabled,
+): RunnerConfig["adaptive"] {
+  const enabled =
+    value == null
+      ? undefined
+      : typeof value === "object" && "enabled" in value
+        ? value.enabled
+        : value;
+  return {
+    ...DEFAULT_CONFIG.adaptive,
+    enabled:
+      enabled === undefined
+        ? DEFAULT_CONFIG.adaptive.enabled
+        : enabled === true,
+  };
+}
+
 export const DURATION_PRESETS = {
   short: {
     warmupMs: 600,

@@ -8,10 +8,12 @@ import {
   nearestMetric,
   hoverContext,
   metricLabel,
+  profileDomain,
+  savedLatencyHasDatagramLossEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
-const DOMAIN = { min: 0, span: 100 };
+const DOMAIN = { min: 0, max: 100, span: 100 };
 
 function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   return {
@@ -46,6 +48,14 @@ test("rangeWidth: span as a percentage, hairline floor, null-safe", () => {
   expect(rangeWidth(10, null, DOMAIN)).toBe(0);
 });
 
+test("profileDomain is shared by live and finalized lane profiles", () => {
+  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
+    min: 0,
+    max: 200,
+    span: 200,
+  });
+});
+
 test("tickLabel: non-positive collapses to a bare zero", () => {
   expect(tickLabel(0)).toBe("0");
   expect(tickLabel(-5)).toBe("0");
@@ -57,6 +67,13 @@ test("lossLabel: hidden at zero, extra precision under one percent", () => {
   expect(lossLabel(-1)).toBe("");
   expect(lossLabel(0.005)).toBe("0.50% loss");
   expect(lossLabel(0.05)).toBe("5.0% loss");
+});
+
+test("saved datagram loss requires WebTransport latency provenance", () => {
+  expect(savedLatencyHasDatagramLossEvidence("webtransport")).toBe(true);
+  expect(savedLatencyHasDatagramLossEvidence("websocket")).toBe(false);
+  expect(savedLatencyHasDatagramLossEvidence(null)).toBe(false);
+  expect(savedLatencyHasDatagramLossEvidence("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {

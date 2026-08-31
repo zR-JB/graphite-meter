@@ -1,6 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs } from "../format";
-import type { LatencyLane } from "../state/store.svelte";
+import { fmtMs, niceDomain } from "../format";
+import type { TransportRole } from "../runner/contract";
 
 export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
 
@@ -22,13 +22,50 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
 };
 
 // The chart's value range; min is the left edge, span its width in the metric's own units (niceDomain's {min, span}).
-interface Domain {
+export interface LatencyProfileDomain {
   min: number;
+  max: number;
   span: number;
 }
 
+type LatencyProfileLaneLike = {
+  min: number | null;
+  max: number | null;
+  p10: number | null;
+  p90: number | null;
+  center: number | null;
+  current?: number | null;
+  centerKind?: "average" | "result";
+};
+
+export type LatencyProfileTone =
+  "latency" | "download" | "upload" | "bidirectional";
+
+export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
+  key: TransportRole;
+  label: string;
+  tone: LatencyProfileTone;
+  jitter: number | null;
+  lossRatio: number;
+  count?: number;
+  active?: boolean;
+}
+
+/** Shared value-domain policy for live and finalized latency profiles. */
+export function profileDomain(
+  lanes: readonly LatencyProfileLaneLike[],
+): LatencyProfileDomain {
+  const values = lanes.flatMap((lane) =>
+    [lane.min, lane.max].filter((value): value is number => value != null),
+  );
+  return niceDomain(values, { floor: 1 });
+}
+
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(value: number | null, domain: Domain): number {
+export function pos(
+  value: number | null,
+  domain: LatencyProfileDomain,
+): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
@@ -37,7 +74,7 @@ export function pos(value: number | null, domain: Domain): number {
 export function rangeWidth(
   min: number | null,
   max: number | null,
-  domain: Domain,
+  domain: LatencyProfileDomain,
 ): number {
   if (min == null || max == null) return 0;
   return Math.max(1.5, pos(max, domain) - pos(min, domain));
@@ -53,20 +90,30 @@ export function lossLabel(ratio: number): string {
   return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% loss`;
 }
 
-export function metricValue(
-  lane: LatencyLane,
-  metric: MetricKey,
-): number | null {
-  return lane[metric];
+/** Saved probe loss is datagram-loss evidence only on the datagram-backed WT bus. */
+export function savedLatencyHasDatagramLossEvidence(
+  kind: string | null,
+): boolean {
+  return kind === "webtransport";
 }
 
-export function metricLabel(lane: LatencyLane, metric: MetricKey): string {
+export function metricValue(
+  lane: LatencyProfileLaneLike,
+  metric: MetricKey,
+): number | null {
+  return lane[metric] ?? null;
+}
+
+export function metricLabel(
+  lane: LatencyProfileLaneLike,
+  metric: MetricKey,
+): string {
   if (metric === "center")
     return lane.centerKind === "result" ? "Result" : "Avg";
   return METRIC_LABELS[metric];
 }
 
-function centerLabel(lane: LatencyLane): string {
+function centerLabel(lane: LatencyProfileLaneLike): string {
   return lane.center == null
     ? ""
     : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
@@ -74,7 +121,7 @@ function centerLabel(lane: LatencyLane): string {
 
 // The present metrics in label order, dropping any the lane has not measured.
 export function entries(
-  lane: LatencyLane,
+  lane: LatencyProfileLaneLike,
 ): { metric: MetricKey; value: number }[] {
   return METRIC_ORDER.flatMap((metric) => {
     const value = metricValue(lane, metric);
@@ -84,7 +131,7 @@ export function entries(
 
 // The measured metric whose value sits closest to a hovered position.
 export function nearestMetric(
-  lane: LatencyLane,
+  lane: LatencyProfileLaneLike,
   target: number,
 ): MetricKey | null {
   return entries(lane).reduce<MetricKey | null>((best, entry) => {
@@ -97,7 +144,10 @@ export function nearestMetric(
 }
 
 // Secondary line under the hovered metric: the band it belongs to, or the lane's center as a fallback anchor.
-export function hoverContext(lane: LatencyLane, metric: MetricKey): string {
+export function hoverContext(
+  lane: LatencyProfileLaneLike,
+  metric: MetricKey,
+): string {
   if (metric === "p10" || metric === "p90") {
     if (lane.p10 == null || lane.p90 == null) return "";
     return `P10–P90 ${fmtMs(lane.p10)} – ${fmtMs(lane.p90)}`;

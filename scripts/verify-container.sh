@@ -133,8 +133,11 @@ while IFS= read -r path; do
     rm -f "$headers" "$body"
 done < "$tmp/client-assets.txt"
 
-curl -fsS "$base/settings/" -o "$tmp/spa-route.html"
-grep -qi '<div id="app"' "$tmp/spa-route.html"
+curl -fsS "$base/#/settings" -o "$tmp/hash-route.html"
+grep -qi '<div id="app"' "$tmp/hash-route.html"
+direct_route_status=$(curl -sS -o "$tmp/direct-route.txt" -w '%{http_code}' "$base/settings/")
+test "$direct_route_status" = 404
+! grep -Eqi '<!doctype html|<html|<div id="app"' "$tmp/direct-route.txt"
 missing_status=$(curl -sS -o "$tmp/missing-asset.txt" -w '%{http_code}' "$base/assets/missing.js")
 test "$missing_status" = 404
 ! grep -Eqi '<!doctype html|<html' "$tmp/missing-asset.txt"

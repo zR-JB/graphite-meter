@@ -687,6 +687,12 @@ export const resultCards = (page: Page) => page.locator(".result-card");
 export const gaugeStage = (page: Page) => page.locator(".gauge-panel .stage");
 export const endpointPanel = (page: Page) =>
   page.locator('[aria-label="Endpoint info"]');
+async function waitForPanelOpen(panel: Locator) {
+  await retry(async () => {
+    if ((await panel.state()).every((state) => "inert" in state.attrs))
+      throw new Error("panel is not open");
+  });
+}
 export async function openApp(
   page: Page,
   engine: "dummy" | "real" = "dummy",
@@ -696,15 +702,24 @@ export async function openApp(
   await page.goto(`/?engine=${engine}`);
 }
 export async function openSettings(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "Open settings" }).click();
   const panel = settingsPanel(page);
-  await expect(panel).toBeVisible();
+  if ((await panel.state()).every((state) => "inert" in state.attrs))
+    await page.getByRole("button", { name: "Open settings" }).click();
+  await waitForPanelOpen(panel);
   return panel;
 }
 export async function openEndpointInfo(page: Page): Promise<Locator> {
-  await page.getByRole("button", { name: "Toggle endpoint info" }).click();
   const panel = endpointPanel(page);
-  await expect(panel).toBeVisible();
+  if ((await panel.state()).every((state) => "inert" in state.attrs)) {
+    const direct = page.getByRole("button", { name: "Toggle endpoint info" });
+    if ((await direct.state()).some((state) => state.visible)) {
+      await direct.click();
+    } else {
+      await page.getByRole("button", { name: "More controls" }).click();
+      await page.getByRole("menuitem", { name: /Endpoint info/ }).click();
+    }
+  }
+  await waitForPanelOpen(panel);
   return panel;
 }
 export async function configureSettings(

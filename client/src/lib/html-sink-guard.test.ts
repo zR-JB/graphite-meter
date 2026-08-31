@@ -10,14 +10,27 @@ const ALLOWED = new Set([
   "ICON.bolt",
   "ICON.check",
   "ICON.close",
+  "ICON.columns",
+  "ICON.contrast",
   "ICON.download",
+  "ICON.history",
   "ICON.info",
+  "ICON.more",
+  "ICON.moon",
+  "ICON.ping",
   "ICON.settings",
+  "ICON.sun",
+  "ICON.trash",
   "ICON.upload",
+  "ICON[awayRunIndicator.icon]",
   "THEME_ICON[store.theme]",
-  // Loop variables holding ICON.* only: StageTrack s.icon from the static STAGES table, ResultCards c.icon from its.
+  // Loop variables below hold ICON.* values from static component tables.
   "s.icon",
   "c.icon",
+  "card.icon",
+  "lane.icon",
+  "laneIcons[lane.key]",
+  "columnMeta[column].icon",
 ]);
 
 function svelteFiles(dir: string): string[] {

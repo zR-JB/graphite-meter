@@ -116,13 +116,22 @@ navigable symmetric replacement. See [RFC 9112](https://www.rfc-editor.org/rfc/r
 | `/wt/upload`             | CONNECT      | HTTP/3 WebTransport                  | Client unidirectional streams are upload bytes (`?id=` names the upload); the server opens one stream at establishment carrying the `/upload/progress` records, so the counter rides the connection under test.                 |
 | `/wt/session`            | POST         | selected throughput target, JSON     | Mints the single-use 30 s token an authenticated browser CONNECT carries in its URL, since a WebTransport CONNECT can send neither cookies nor headers. Empty token when auth is off.                                           |
 | `/upload/progress`       | GET / DELETE | selected throughput target, NDJSON   | GET flushes `ready`, then server-timed `progress`, `complete`, or terminal `error` objects; blank lines are heartbeats. DELETE explicitly finalizes the stage after POST lanes stop.                                            |
-| `/` (anything unmatched) | GET          | H1/H1-TLS UI listeners               | The embedded Svelte SPA, with SPA-aware fallback (a missing extensionless path serves `index.html`; a missing path that looks like a hashed asset 404s cleanly instead of serving HTML for it).                                 |
+| `/`                      | GET          | H1/H1-TLS UI listeners               | The embedded Svelte shell. Client surfaces are hash routes; unknown HTTP paths are 404, while known embedded assets remain directly cacheable.                                |
 
 WebTransport is mounted and advertised wherever HTTP/3 is configured. Under authentication the
 boundary authenticates the extended CONNECT before any upgrade runs: native clients send their
 bearer grant, and browsers carry a session-linked single-use token minted at `/wt/session`;
 revoking the auth session unwinds live WebTransport sessions. One session holds one
 request-admission slot for its whole life, where a fetch target takes one per request.
+
+The browser's route state is intentionally client-only: `#/` is the measurement workspace,
+`#/history` is the local result archive, and `#/history/<uuid>` is one saved record. Settings,
+endpoint information, and legal notices use hash surfaces or ordered panel query state;
+they never rely on extensionless HTTP fallback. The index document is dynamic metadata and is sent
+with `Cache-Control: no-store`, while hashed assets remain static.
+Composed state stays readable, for example `#/history?panels=settings,endpoint&dialog=legal`.
+Wide layouts may keep both ordered side panels. Flyout layouts canonicalize to the one panel that is
+actually visible, so closing it returns to the underlying workspace instead of revealing stale UI.
 
 ### Server-authoritative upload accounting
 

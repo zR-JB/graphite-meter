@@ -16,8 +16,9 @@
 
   interface Props {
     running?: boolean;
+    onOpenHistory?: (invoker: HTMLElement) => void;
   }
-  let { running = false }: Props = $props();
+  let { running = false, onOpenHistory }: Props = $props();
 
   function targetOption(
     target:
@@ -108,15 +109,6 @@
   }
   function setAdaptiveEnabled(enabled: boolean) {
     store.config.adaptive.enabled = enabled;
-    applyLiveRunConfig();
-  }
-  function setAdaptiveNumber(
-    key: "minCoverageRatio" | "stabilityThreshold" | "confirmationMs",
-    event: Event,
-  ) {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (!Number.isFinite(value)) return;
-    store.config.adaptive[key] = value;
     applyLiveRunConfig();
   }
   const activeDurationFields = $derived(
@@ -248,43 +240,6 @@
     {/if}
   </section>
 
-  <section class="panel">
-    <h3>Transfer streams</h3>
-    <Switch
-      checked={store.config.transferStreams.mode === "forced"}
-      onToggle={setForcedStreams}
-      disabled={running}
-      label="Force exact stream count"
-      tooltip="Automatic caps HTTP/1.1 at the configured maximum while choosing protocol-safe concurrency for HTTP/2 and HTTP/3. Forced starts the exact count per active direction."
-    />
-    <label>
-      <span
-        >{store.config.transferStreams.mode === "forced"
-          ? "Streams per direction"
-          : "Maximum H1 streams per direction"}</span
-      >
-      <input
-        type="number"
-        min="1"
-        max="128"
-        step="1"
-        disabled={running}
-        bind:value={store.config.transferStreams.count}
-      />
-    </label>
-    {#if store.config.transferStreams.mode === "forced"}
-      <p class="hint">
-        Starts exactly {store.config.transferStreams.count} requests per active direction.
-        Browser connection limits may queue HTTP/1.1 requests.
-      </p>
-    {:else}
-      <p class="hint">
-        Automatic caps HTTP/1.1 at {store.config.transferStreams.count}. HTTP/2
-        and HTTP/3 choose safe multiplexed request counts automatically.
-      </p>
-    {/if}
-  </section>
-
   <h2 class="tier-label">Results</h2>
 
   <section class="panel">
@@ -334,6 +289,38 @@
     </p>
   </section>
 
+  <section class="panel wide">
+    <h3>Result history</h3>
+    <Switch
+      checked={store.savingResults}
+      onToggle={(enabled) =>
+        (store.resultHistoryPreference = enabled ? "enabled" : "disabled")}
+      label="Save completed results on this device"
+    />
+    <a
+      class="history-link"
+      href="#/history"
+      onclick={(event) => {
+        if (!onOpenHistory) return;
+        event.preventDefault();
+        onOpenHistory(event.currentTarget as HTMLElement);
+      }}>View History</a
+    >
+  </section>
+
+  <section class="panel wide">
+    <h3>Wire-rate estimates</h3>
+    <Switch
+      bind:checked={store.showWireEstimates}
+      label="Show estimated wire rate"
+      tooltip={JARGON.wireRate}
+    />
+    <p class="hint">
+      Estimated Ethernet rate from measured protocol bytes and available
+      connection details.
+    </p>
+  </section>
+
   <section class="panel">
     <h3>Gauge scale</h3>
     <Switch
@@ -359,24 +346,6 @@
     </p>
   </section>
 
-  <section class="panel wide">
-    <h3>Wire-rate estimates</h3>
-    <Switch
-      bind:checked={store.showWireEstimates}
-      label="Show estimated wire rate"
-      tooltip={JARGON.wireRate}
-    />
-    <p class="hint">
-      Forward-direction Ethernet estimate from protocol bytes only.
-    </p>
-    <p class="hint">
-      Uses the negotiated browser protocol and authoritative preflight IP family
-      when available. Otherwise it assumes a conservative 1500 B Ethernet path
-      with IPv4, standard TCP options, and no unknown tunnel or VLAN layers.
-      Loopback paths have no physical-wire estimate.
-    </p>
-  </section>
-
   <h2 class="tier-label">Advanced</h2>
 
   <section class="panel">
@@ -386,41 +355,10 @@
       onToggle={setAdaptiveEnabled}
       label="Finish stable stages early"
     />
-    {#if store.config.adaptive.enabled}
-      <div class="fields">
-        <label
-          ><span>Minimum coverage</span><input
-            type="number"
-            min="0.25"
-            max="1"
-            step="0.01"
-            value={store.config.adaptive.minCoverageRatio}
-            oninput={(event) => setAdaptiveNumber("minCoverageRatio", event)}
-          /></label
-        >
-        <label
-          ><span>Stability threshold</span><input
-            type="number"
-            min="0.5"
-            max="0.99"
-            step="0.01"
-            value={store.config.adaptive.stabilityThreshold}
-            oninput={(event) => setAdaptiveNumber("stabilityThreshold", event)}
-          /></label
-        >
-        <label
-          ><span>Confirmation ms</span><input
-            type="number"
-            min="300"
-            max="1500"
-            step="50"
-            value={store.config.adaptive.confirmationMs}
-            oninput={(event) => setAdaptiveNumber("confirmationMs", event)}
-          /></label
-        >
-      </div>
-    {/if}
-    <p class="hint">Stops a stable stage before its full duration expires.</p>
+    <p class="hint">
+      Stability is estimated from the measured samples; a stage ends early when
+      it is stable enough.
+    </p>
   </section>
 
   <section class="panel">
@@ -472,6 +410,43 @@
     <p class="hint">
       Adds the WebTransport datagram card to the connection picker.
     </p>
+  </section>
+
+  <section class="panel">
+    <h3>Transfer streams</h3>
+    <Switch
+      checked={store.config.transferStreams.mode === "forced"}
+      onToggle={setForcedStreams}
+      disabled={running}
+      label="Force exact stream count"
+      tooltip="Automatic caps HTTP/1.1 at the configured maximum while choosing protocol-safe concurrency for HTTP/2 and HTTP/3. Forced starts the exact count per active direction."
+    />
+    <label>
+      <span
+        >{store.config.transferStreams.mode === "forced"
+          ? "Streams per direction"
+          : "Maximum H1 streams per direction"}</span
+      >
+      <input
+        type="number"
+        min="1"
+        max="128"
+        step="1"
+        disabled={running}
+        bind:value={store.config.transferStreams.count}
+      />
+    </label>
+    {#if store.config.transferStreams.mode === "forced"}
+      <p class="hint">
+        Starts exactly {store.config.transferStreams.count} requests per active direction.
+        Browser connection limits may queue HTTP/1.1 requests.
+      </p>
+    {:else}
+      <p class="hint">
+        Automatic caps HTTP/1.1 at {store.config.transferStreams.count}. HTTP/2
+        and HTTP/3 choose safe multiplexed request counts automatically.
+      </p>
+    {/if}
   </section>
 </div>
 
@@ -629,8 +604,7 @@
     background: var(--brand-soft);
     color: var(--brand-strong);
   }
-  .two,
-  .fields {
+  .two {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
     gap: 10px;
@@ -641,6 +615,10 @@
     font-family: var(--font-mono);
     font-size: 10px;
     line-height: 1.55;
+  }
+  .history-link {
+    color: var(--brand-strong);
+    font-size: 12px;
   }
   .caution {
     margin: 0;

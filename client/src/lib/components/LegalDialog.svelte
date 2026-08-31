@@ -5,11 +5,10 @@
 
   interface Props {
     open: boolean;
-    invoker?: HTMLElement | null;
     onClose: () => void;
   }
 
-  let { open, invoker = null, onClose }: Props = $props();
+  let { open, onClose }: Props = $props();
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let data = $state<LegalAbout | null>(null);
 
@@ -39,15 +38,22 @@
 
   function close() {
     onClose();
-    window.setTimeout(() => invoker?.focus(), 0);
   }
 
   function onDialogKeydown(event: KeyboardEvent) {
-    event.stopPropagation();
     if (event.key === "Escape") {
+      event.stopPropagation();
       event.preventDefault();
       close();
+      return;
     }
+    const historyShortcut =
+      event.key.toLowerCase() === "h" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey;
+    if (!historyShortcut) event.stopPropagation();
   }
 
   function componentTitle(component: LegalComponent): string {

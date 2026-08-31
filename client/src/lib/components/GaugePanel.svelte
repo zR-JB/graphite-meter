@@ -557,7 +557,7 @@
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
-        <LatencyProfile bare />
+        <LatencyProfile />
       </div>
     {/if}
   </div>

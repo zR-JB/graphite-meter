@@ -13,6 +13,8 @@
     dockWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
+    onClose?: () => void;
+    onOpenHistory?: (invoker: HTMLElement) => void;
   }
   let {
     open = $bindable(false),
@@ -21,6 +23,8 @@
     dockWidth,
     onResize,
     onResetWidth,
+    onClose,
+    onOpenHistory,
   }: Props = $props();
 
   let resetConfirmOpen = $state(false);
@@ -40,6 +44,7 @@
   {dockWidth}
   {onResize}
   {onResetWidth}
+  {onClose}
   side="left"
   title="Settings"
   kicker="Test & Display"
@@ -47,7 +52,7 @@
   width="min(560px, 94vw)"
 >
   {#key setupResetVersion}
-    <TestSetupPanel running={store.isRunning} />
+    <TestSetupPanel running={store.isRunning} {onOpenHistory} />
   {/key}
   <div class="settings-reset">
     <button
@@ -62,7 +67,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description="Restore test and display settings to the shipped defaults? Your theme, panel layout, and existing test results will be kept."
+  description="Restore test, display, and history-saving settings to their defaults? Your theme, panel layout, and saved results will be kept."
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}

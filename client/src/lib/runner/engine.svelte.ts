@@ -13,6 +13,7 @@ import {
   TransportUnavailableError,
 } from "./RealRunner";
 import { store } from "../state/store.svelte";
+import { canonicalAdaptiveConfig } from "../state/defaults";
 import {
   requireSessionCoverage,
   liveScheduleFitsSession,
@@ -52,6 +53,7 @@ let lastDraftRoleKeys: Record<ConnectionRole, string> = {
 let validating: ConnectionRole[] = [];
 let sessionBudget: SessionBudget | null = null;
 let validationTimer: ReturnType<typeof setTimeout> | null = null;
+
 let validationDueAt = 0;
 let lastValidationAttemptAt = 0;
 let validationFailureCount = 0;
@@ -505,6 +507,7 @@ export function toggleRun() {
     return;
   }
   const cfg = $state.snapshot(store.config);
+  cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive);
   const key = connectionKey(cfg, store.transportDiscovery);
   const startAbort = new AbortController();
   const startSeq = ++pendingStartSeq;
@@ -568,6 +571,7 @@ export function returnToStart() {
 export function applyLiveRunConfig() {
   if (!store.isRunning) return;
   const config = $state.snapshot(store.config);
+  config.adaptive = canonicalAdaptiveConfig(config.adaptive);
   const live: LiveRunConfig = {
     stages: config.stages,
     duration: config.duration,

@@ -11,6 +11,7 @@
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
     onOpenLegal?: (invoker: HTMLElement) => void;
+    onClose?: () => void;
   }
   let {
     open = $bindable(false),
@@ -20,6 +21,7 @@
     onResize,
     onResetWidth,
     onOpenLegal,
+    onClose,
   }: Props = $props();
 </script>
 
@@ -30,6 +32,7 @@
   {dockWidth}
   {onResize}
   {onResetWidth}
+  {onClose}
   side="right"
   title="Endpoint"
   kicker="Info"

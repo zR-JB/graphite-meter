@@ -1,4 +1,5 @@
 import { AxeBuilder } from "./webview";
+import { HISTORY_DB } from "../src/lib/history/dbSchema";
 import {
   configureSettings,
   expect,
@@ -10,6 +11,134 @@ import {
   startTest,
   test,
 } from "./webview";
+
+type TestPage = Parameters<typeof openApp>[0];
+
+async function openWithHistoryDefault(page: TestPage, enabled: boolean) {
+  const index = await Bun.file(
+    new URL("../dist/index.html", import.meta.url),
+  ).text();
+  await page.route("**/index.html*", (route) =>
+    route.fulfill({
+      body: index.replace(
+        "<head>",
+        `<head><meta name="graphite-meter-result-history-default" content="${enabled}">`,
+      ),
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+  );
+  await page.goto("/index.html?engine=dummy");
+}
+
+async function seedRetainedResult(page: TestPage) {
+  await page.evaluate(
+    (input) =>
+      new Promise<void>((resolve, reject) => {
+        const opening = indexedDB.open(input.db.name, input.db.version);
+        opening.onupgradeneeded = () => {
+          const database = opening.result;
+          const results = database.objectStoreNames.contains(
+            input.db.resultsStore,
+          )
+            ? opening.transaction!.objectStore(input.db.resultsStore)
+            : database.createObjectStore(input.db.resultsStore, {
+                keyPath: input.db.resultKeyPath,
+              });
+          if (!results.indexNames.contains(input.db.completedAtIndex))
+            results.createIndex(
+              input.db.completedAtIndex,
+              input.db.completedAtIndex,
+            );
+          if (!database.objectStoreNames.contains(input.db.metadataStore))
+            database.createObjectStore(input.db.metadataStore, {
+              keyPath: input.db.metadataKeyPath,
+            });
+        };
+        opening.onerror = () => reject(opening.error);
+        opening.onsuccess = () => {
+          const database = opening.result;
+          const transaction = database.transaction(
+            input.db.resultsStore,
+            "readwrite",
+          );
+          const results = transaction.objectStore(input.db.resultsStore);
+          results.clear();
+          results.put(input.saved);
+          transaction.oncomplete = () => {
+            database.close();
+            resolve();
+          };
+          transaction.onerror = () => reject(transaction.error);
+        };
+      }),
+    {
+      db: HISTORY_DB,
+      saved: {
+        schemaVersion: 1,
+        id: "00000000-0000-4000-8000-000000000127",
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+        stages: {
+          latency: {
+            status: "not-run",
+            result: null,
+            lanes: {
+              latency: null,
+              download: null,
+              upload: null,
+              bidirectional: null,
+            },
+          },
+          download: { status: "not-run", result: null },
+          upload: { status: "not-run", result: null },
+          bidirectional: { status: "not-run", down: null, up: null },
+        },
+        bufferbloat: null,
+        totalBytes: 0,
+        server: { name: "Reset test", location: null, engine: "dummy" },
+        transport: {
+          throughput: { protocol: null, kind: null },
+          latency: { protocol: null, kind: null },
+        },
+        ipVersion: null,
+        client: { build: "browser-test" },
+        failures: [],
+        wireEstimates: null,
+      },
+    },
+  );
+}
+
+async function takeRetainedResultCount(page: TestPage) {
+  return page.evaluate(
+    (db) =>
+      new Promise<number>((resolve, reject) => {
+        const opening = indexedDB.open(db.name, db.version);
+        opening.onerror = () => reject(opening.error);
+        opening.onsuccess = () => {
+          const database = opening.result;
+          const transaction = database.transaction(
+            db.resultsStore,
+            "readwrite",
+          );
+          const results = transaction.objectStore(db.resultsStore);
+          const request = results.count();
+          transaction.onerror = () => reject(transaction.error);
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const count = request.result;
+            results.clear();
+            transaction.oncomplete = () => {
+              database.close();
+              resolve(count);
+            };
+          };
+        };
+      }),
+    HISTORY_DB,
+  );
+}
 test("settings expose live controls and lock run construction inputs", async ({
   page,
 }) => {
@@ -32,6 +161,40 @@ test("settings expose live controls and lock run construction inputs", async ({
   await expect(
     settings.locator('input[name="throughput-target"]:checked'),
   ).toBeDisabled();
+});
+
+test("settings group result and advanced controls in the requested order", async ({
+  page,
+}) => {
+  await openApp(page);
+  const settings = await openSettings(page);
+  const headings = settings.locator("h3");
+  const order = await headings.evaluateAll((nodes) =>
+    nodes.map((node) => node.textContent?.trim()),
+  );
+  expect(order.indexOf("Result history")).toBeLessThan(
+    order.indexOf("Wire-rate estimates"),
+  );
+  expect(order.indexOf("Wire-rate estimates")).toBeLessThan(
+    order.indexOf("Gauge scale"),
+  );
+  expect(order.indexOf("Transfer streams")).toBeGreaterThan(
+    order.indexOf("Datagram throughput"),
+  );
+  await expect(settings.getByText("Minimum coverage")).toHaveCount(0);
+  await expect(settings.getByText("Stability threshold")).toHaveCount(0);
+  await expect(settings.getByText("Confirmation ms")).toHaveCount(0);
+  await expect(
+    settings.getByRole("link", { name: "View History" }),
+  ).toBeVisible();
+  await expect(
+    settings.getByText(
+      "Estimated Ethernet rate from measured protocol bytes and available connection details.",
+    ),
+  ).toBeVisible();
+  await expect(
+    settings.getByText(/conservative 1500 B Ethernet path/),
+  ).toHaveCount(0);
 });
 test("connection paths stay single-column by default and reflow after a dock resize", async ({
   page,
@@ -133,6 +296,7 @@ test("reset settings confirms, preserves on cancel, and restores defaults", asyn
     .click();
   const reset = settings.getByRole("button", { name: "Reset settings" });
   await reset.scrollIntoViewIfNeeded();
+  await reset.focus();
   await reset.click();
   const dialog = page.getByRole("alertdialog");
   await expectVisible(dialog);
@@ -153,6 +317,7 @@ test("reset settings confirms, preserves on cancel, and restores defaults", asyn
     .analyze();
   expect(accessibility.violations).toEqual([]);
   await dialog.getByRole("button", { name: "Keep settings" }).click();
+  await expect(reset).toBeFocused();
   await expect(settings.getByLabel("Warmup ms")).toHaveValue("1234");
   await reset.click();
   await page
@@ -190,6 +355,54 @@ test("reset settings confirms, preserves on cancel, and restores defaults", asyn
     settings.getByRole("button", { name: "Reset settings" }),
   ).toBeDisabled();
 });
+
+for (const operatorDefault of [false, true]) {
+  test(`reset returns History to operator default ${operatorDefault} and retains results`, async ({
+    page,
+  }) => {
+    await openWithHistoryDefault(page, operatorDefault);
+    const settings = await openSettings(page);
+    const historyToggle = settings.getByLabel(
+      "Save completed results on this device",
+    );
+    if (operatorDefault) await expect(historyToggle).toBeChecked();
+    else await expect(historyToggle).not.toBeChecked();
+
+    await settings
+      .getByText("Save completed results on this device", { exact: true })
+      .click();
+    if (operatorDefault) await expect(historyToggle).not.toBeChecked();
+    else await expect(historyToggle).toBeChecked();
+    await seedRetainedResult(page);
+
+    const reset = settings.getByRole("button", { name: "Reset settings" });
+    await reset.scrollIntoViewIfNeeded();
+    await reset.click();
+    await page
+      .getByRole("alertdialog", { name: "Reset settings?" })
+      .getByRole("button", { name: "Reset settings" })
+      .click();
+
+    if (operatorDefault) await expect(historyToggle).toBeChecked();
+    else await expect(historyToggle).not.toBeChecked();
+    await page.waitForTimeout(350);
+    expect(
+      await page.evaluate(() => {
+        const raw = localStorage.getItem("graphite-meter:v1");
+        return raw ? JSON.parse(raw).resultHistoryPreference : null;
+      }),
+    ).toBe("default");
+    expect(await takeRetainedResultCount(page)).toBe(1);
+    if (operatorDefault)
+      await expect(
+        page.getByRole("button", { name: "Open History" }),
+      ).toBeVisible();
+    else
+      await expect(
+        page.getByRole("button", { name: "Open History" }),
+      ).toHaveCount(0);
+  });
+}
 test("the datagram card follows its selection and announces its caution", async ({
   page,
 }) => {

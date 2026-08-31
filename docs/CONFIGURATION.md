@@ -97,6 +97,7 @@ GM_PUBLIC_ORIGINS=self
 | --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------- |
 | `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Server name in `/preflight`.                                                     |
 | `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Optional location label.                                                         |
+| `GM_RESULT_HISTORY_DEFAULT`              | `--result-history-default`             | `false`          | Resolved browser default for saving completed result summaries locally. |
 | `GM_TRUSTED_PROXIES`                    | none                                   | empty            | Comma-separated proxy CIDRs allowed to supply client-address headers. List the proxy's actual CIDR — a default route (`0.0.0.0/0`, `::/0`) is rejected, since trusting every caller's headers lets any client spoof its address and dodge the rate limits. Invalid CIDRs fail startup. |
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Global concurrent measurement handlers.                                          |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Per-client measurement handlers.                                                 |
@@ -113,6 +114,16 @@ The measurement endpoints are meant to move data fast: a single `/download` stre
 measurement). A deployment reachable from the open internet should therefore either enable
 [authentication](#authentication) or sit behind a proxy/firewall that caps per-client bandwidth and
 connections — otherwise an anonymous client can pull sustained traffic at your expense.
+
+### Local result history
+
+When `GM_RESULT_HISTORY_DEFAULT=true` (or `--result-history-default`) is configured, a new browser
+defaults to saving completed result summaries in its own IndexedDB database. This is a local-only
+browser preference and store: no records are sent to the server. A user can explicitly enable or
+disable saving in Settings; that choice remains in the browser even if the operator later changes
+the default. Operator-default `true` therefore causes completed-result writes before an individual
+browser has made a choice. Aborted or terminal-error runs are never saved, and disabling saving
+pauses future writes without deleting existing records.
 
 ## Authentication
 

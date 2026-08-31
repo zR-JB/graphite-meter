@@ -26,8 +26,13 @@ beforeEach(() => {
   memoryStorage.clear();
 });
 
-const { loadPersisted, savePersisted, defaultPersisted, STORAGE_KEY } =
-  await import("./persistence");
+const {
+  loadPersisted,
+  savePersisted,
+  defaultPersisted,
+  resolveResultHistoryPreference,
+  STORAGE_KEY,
+} = await import("./persistence");
 
 test("no stored value: returns defaults", () => {
   expect(loadPersisted()).toEqual(defaultPersisted());
@@ -38,6 +43,44 @@ test("stored value at the current shape: hydrates as-is", () => {
   snapshot.theme = "light";
   snapshot.unitKind = "bytes";
   expect(loaded(snapshot)).toEqual(snapshot);
+});
+
+test("history preference migrates to default and preserves explicit overrides", () => {
+  const snapshot = defaultPersisted();
+  snapshot.resultHistoryPreference = "enabled";
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  expect(loadPersisted().resultHistoryPreference).toBe("enabled");
+  window.localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ ...snapshot, resultHistoryPreference: "corrupt" }),
+  );
+  expect(loadPersisted().resultHistoryPreference).toBe("default");
+});
+
+test("history preference resolves explicit choices over either operator default", () => {
+  expect(resolveResultHistoryPreference("default", false)).toBe(false);
+  expect(resolveResultHistoryPreference("default", true)).toBe(true);
+  expect(resolveResultHistoryPreference("enabled", false)).toBe(true);
+  expect(resolveResultHistoryPreference("enabled", true)).toBe(true);
+  expect(resolveResultHistoryPreference("disabled", false)).toBe(false);
+  expect(resolveResultHistoryPreference("disabled", true)).toBe(false);
+});
+
+test("history columns default, validate, deduplicate, and preserve order", () => {
+  expect(loadPersisted().historyColumns).toEqual([
+    "download",
+    "upload",
+    "idle",
+    "loaded",
+  ]);
+  expect(
+    loaded({
+      historyColumns: ["bidirectional", "status", "bidirectional", "bogus"],
+    }).historyColumns,
+  ).toEqual(["bidirectional"]);
+  expect(loaded({ historyColumns: [] }).historyColumns).toEqual(
+    defaultPersisted().historyColumns,
+  );
 });
 
 test("older/partial stored shape: missing fields fall back to defaults", () => {
@@ -52,19 +95,52 @@ test("an explicit wire-estimate opt-out survives hydration", () => {
   expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
-test("legacy glide duration migrates once into confirmation duration", () => {
-  expect(
-    loaded({ config: { adaptive: { glideMs: 725 } } }).config.adaptive
-      .confirmationMs,
-  ).toBe(725);
-  expect(loadPersisted().config.adaptive).not.toHaveProperty("glideMs");
+test("legacy adaptive tuning resets every field to canonical defaults", () => {
+  const adaptive = loaded({
+    config: {
+      adaptive: {
+        enabled: false,
+        minCoverageRatio: 0.01,
+        stabilityThreshold: 0.01,
+        maxPhaseReductionRatio: 0.99,
+        minLatencySamples: 1,
+        minTransferSamples: 1,
+        confirmationMs: 1,
+        glideMs: 725,
+      },
+    },
+  }).config.adaptive;
+  expect(adaptive).toEqual({ ...DEFAULT_CONFIG.adaptive, enabled: false });
+  expect(adaptive).not.toHaveProperty("glideMs");
 });
 
-test("confirmation duration wins when both old and new fields exist", () => {
+test("legacy adaptive tuning cannot override canonical defaults", () => {
   expect(
     loaded({ config: { adaptive: { glideMs: 725, confirmationMs: 900 } } })
       .config.adaptive.confirmationMs,
-  ).toBe(900);
+  ).toBe(DEFAULT_CONFIG.adaptive.confirmationMs);
+});
+
+test("saving adaptive settings persists only enabled and restores canonical policy", () => {
+  const snapshot = defaultPersisted();
+  snapshot.config.adaptive = {
+    ...snapshot.config.adaptive,
+    enabled: false,
+    minCoverageRatio: 0.2,
+    stabilityThreshold: 0.5,
+    maxPhaseReductionRatio: 0.9,
+    minLatencySamples: 1,
+    minTransferSamples: 1,
+    confirmationMs: 10,
+  };
+  savePersisted(snapshot);
+  expect(
+    JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).config.adaptive,
+  ).toEqual({ enabled: false });
+  expect(loadPersisted().config.adaptive).toEqual({
+    ...DEFAULT_CONFIG.adaptive,
+    enabled: false,
+  });
 });
 
 test("legacy ping concurrency becomes unloaded cadence with the new loaded default", () => {

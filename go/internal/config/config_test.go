@@ -9,7 +9,7 @@ import (
 
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"GM_H1_ADDR", "GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR", "GM_TLS_CERT", "GM_TLS_KEY", "GM_H1_PUBLIC_ORIGIN", "GM_H1_TLS_PUBLIC_ORIGIN", "GM_H2_PUBLIC_ORIGIN", "GM_H3_PUBLIC_ORIGIN", "GM_ADVERTISED_NATIVE_ENDPOINTS", "GM_PUBLIC_ORIGINS", "GM_PUBLIC_THROUGHPUT_ORIGINS", "GM_PUBLIC_LATENCY_ORIGINS", "GM_SERVER_NAME", "GM_SERVER_LOCATION", "GM_VERBOSE", "GM_TRUSTED_PROXIES"} {
+	for _, key := range []string{"GM_H1_ADDR", "GM_H1_TLS_ADDR", "GM_H2_ADDR", "GM_H3_ADDR", "GM_TLS_CERT", "GM_TLS_KEY", "GM_H1_PUBLIC_ORIGIN", "GM_H1_TLS_PUBLIC_ORIGIN", "GM_H2_PUBLIC_ORIGIN", "GM_H3_PUBLIC_ORIGIN", "GM_ADVERTISED_NATIVE_ENDPOINTS", "GM_PUBLIC_ORIGINS", "GM_PUBLIC_THROUGHPUT_ORIGINS", "GM_PUBLIC_LATENCY_ORIGINS", "GM_SERVER_NAME", "GM_SERVER_LOCATION", "GM_VERBOSE", "GM_RESULT_HISTORY_DEFAULT", "GM_TRUSTED_PROXIES"} {
 		unsetEnv(t, key)
 	}
 }
@@ -53,6 +53,25 @@ func TestLoadAppliesEndpointEnvironment(t *testing.T) {
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadResultHistoryDefault(t *testing.T) {
+	clearConfigEnv(t)
+	if got, err := Load(); err != nil || got.ResultHistoryDefault {
+		t.Fatalf("default result history = %v, err %v; want false", got.ResultHistoryDefault, err)
+	}
+	t.Setenv("GM_RESULT_HISTORY_DEFAULT", "true")
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.ResultHistoryDefault {
+		t.Fatal("GM_RESULT_HISTORY_DEFAULT=true did not enable the default")
+	}
+	t.Setenv("GM_RESULT_HISTORY_DEFAULT", "not-a-bool")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid GM_RESULT_HISTORY_DEFAULT was accepted")
 	}
 }
 

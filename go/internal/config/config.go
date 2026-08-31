@@ -66,17 +66,19 @@ type Config struct {
 	Public                                    PublicOrigins
 	TLSCert, TLSKey                           string
 	ServerName, ServerLocation, EngineVersion string
-	Verbose                                   bool
-	TrustedProxies                            []netip.Prefix
-	MaxActiveMeasurements                     int
-	MaxActiveMeasurementsPerClient            int
-	MaxActiveSessions                         int
-	MaxSessionsPerClient                      int
-	MaxConnections                            int
-	MaxConnectionsPerClient                   int
-	MaxOperationDuration                      time.Duration
-	MaxSessionDuration                        time.Duration
-	Auth                                      AuthConfig
+	// ResultHistoryDefault controls whether new browsers save completed results by default.
+	ResultHistoryDefault           bool
+	Verbose                        bool
+	TrustedProxies                 []netip.Prefix
+	MaxActiveMeasurements          int
+	MaxActiveMeasurementsPerClient int
+	MaxActiveSessions              int
+	MaxSessionsPerClient           int
+	MaxConnections                 int
+	MaxConnectionsPerClient        int
+	MaxOperationDuration           time.Duration
+	MaxSessionDuration             time.Duration
+	Auth                           AuthConfig
 }
 
 func Default() Config {
@@ -140,6 +142,9 @@ func Load() (Config, error) {
 	}
 	var err error
 	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
+		return Config{}, err
+	}
+	if c.ResultHistoryDefault, err = envBool("GM_RESULT_HISTORY_DEFAULT", false); err != nil {
 		return Config{}, err
 	}
 	for _, env := range []struct {
