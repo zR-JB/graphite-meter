@@ -1,5 +1,6 @@
-# TLS overlay from the repository root:
-# docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
+# Native TLS overlay from the repository root. Provide an existing Let's
+# Encrypt-style certificate tree, public hostname, and certificate name:
+# GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIFICATE_TREE=/etc/letsencrypt docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 services:
   graphite-meter:
     ports:
@@ -11,22 +12,11 @@ services:
       GM_H1_TLS_ADDR: ":7247"
       GM_H2_ADDR: ":7248"
       GM_H3_ADDR: ":7249"
-      GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/fullchain.pem
-      GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:-graphite-meter}/privkey.pem
-      GM_H1_TLS_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7247
-      GM_H2_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7248
-      GM_H3_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST}:7249
+      GM_TLS_CERT: /etc/letsencrypt/live/${GM_CERT_NAME:?set GM_CERT_NAME}/fullchain.pem
+      GM_TLS_KEY: /etc/letsencrypt/live/${GM_CERT_NAME:?set GM_CERT_NAME}/privkey.pem
+      GM_H1_TLS_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST:?set GM_PUBLIC_HOST}:7247
+      GM_H2_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST:?set GM_PUBLIC_HOST}:7248
+      GM_H3_PUBLIC_ORIGIN: https://${GM_PUBLIC_HOST:?set GM_PUBLIC_HOST}:7249
     volumes:
       # Mount the complete tree: live/ entries are symlinks into archive/.
-      - letsencrypt:/etc/letsencrypt:ro
-
-  certbot:
-    image: docker.io/certbot/certbot:latest
-    profiles: ["certbot"]
-    volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot-webroot:/var/www/certbot
-
-volumes:
-  letsencrypt:
-  certbot-webroot:
+      - ${GM_CERTIFICATE_TREE:?set GM_CERTIFICATE_TREE}:/etc/letsencrypt:ro

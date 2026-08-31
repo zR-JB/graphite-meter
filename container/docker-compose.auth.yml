@@ -5,8 +5,8 @@
 # It assumes a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL and forwards to the
 # clear HTTP/1.1 listener. The proxy must set X-Real-IP from its connection
 # peer, drop Forwarded and X-Forwarded-For, and overwrite X-Forwarded-Proto and
-# X-Forwarded-Host — see docs/REVERSE_PROXY.md. Variable semantics and the
-# terminal-client grant flow are in docs/CONFIGURATION.md.
+# X-Forwarded-Host — see docs/DEPLOYMENT.md. Variable semantics and the
+# terminal-client grant flow are documented there as well.
 #
 # Edit GM_AUTH_PUBLIC_URL, GM_TRUSTED_PROXIES, and the secret paths at the
 # bottom before starting.

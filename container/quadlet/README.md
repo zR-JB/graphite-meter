@@ -112,9 +112,8 @@ commented block covers a reverse-proxy deployment with
 native TLS listeners directly instead means advertising `http1-tls,http2,http3`
 and giving each `GM_H*_PUBLIC_ORIGIN` that same hostname.
 
-See [CONFIGURATION.md](../../docs/CONFIGURATION.md) for every variable and the
-terminal-client grant flow, and [REVERSE_PROXY.md](../../docs/REVERSE_PROXY.md)
-for the headers a trusted proxy must set.
+See [DEPLOYMENT.md](../../docs/DEPLOYMENT.md) for every variable, the
+terminal-client grant flow, and the headers a trusted proxy must set.
 
 ## Notes
 
