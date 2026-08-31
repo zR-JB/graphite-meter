@@ -911,6 +911,7 @@ test("detail, Legal, and History keyboard routes keep focus on meaningful target
   const row = page.locator(`[data-history-id="${IDS.newest}"]`);
   const heading = page.locator(".result-detail h2");
   const closeResult = page.getByRole("button", { name: "Close result" });
+  await expect(row).toBeVisible();
   await row.focus();
   await row.press("Enter");
   await expect(closeResult).toBeFocused();
