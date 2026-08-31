@@ -13,7 +13,7 @@ Description=Graphite Meter speed-test server
 
 [Container]
 ContainerName=graphite-meter
-# Pin a release for reproducible deploys, e.g. ...:0.1.0 or ...:0.1
+# Pin a release for reproducible deploys, e.g. ...:0.6.0 or ...:0.6
 Image=ghcr.io/zr-jb/graphite-meter:latest
 # Pull new releases automatically via podman-auto-update.timer (only sensible
 # together with the :latest tag above):

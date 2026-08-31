@@ -7,7 +7,7 @@
 # container/docker-compose.build.yml.
 services:
   graphite-meter:
-    # Pin a release for reproducible deploys, e.g. ...:0.1.0 or ...:0.1
+    # Pin a release for reproducible deploys, e.g. ...:0.6.0 or ...:0.6
     image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
       - "7246:7246" # HTTP/1.1 (default)

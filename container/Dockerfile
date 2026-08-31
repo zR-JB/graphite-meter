@@ -5,13 +5,11 @@
 # Build from the REPO ROOT:
 #   docker build -f container/Dockerfile -t graphite-meter:latest .
 #
-# Reserved for a future Go->Rust server swap:
-ARG SERVER_IMPL=go
 ARG BUN_VERSION=1.4.0
-# Stamped into the server EngineVersion and client bundle; release and
-# prerelease builds pass both values.
-ARG VERSION=0.1.0
-ARG CLIENT_VERSION=0.1.0
+# Direct source builds are explicitly development builds. Release and
+# prerelease automation supplies the public server and client versions.
+ARG VERSION=0.0.0-dev
+ARG CLIENT_VERSION
 
 # ---------------------------------------------------------------------------
 # Stage: client — build the Svelte app with bun.
