@@ -29,7 +29,11 @@
   import { authEnabled } from "../auth";
   import { returnToLiveIndicator } from "../history/returnToLive";
   import { HistoryWriteQueue } from "../history/writeQueue";
-  import { historyChanges, isHistoryChange } from "../history/changes";
+  import {
+    broadcastHistory,
+    historyChanges,
+    isHistoryChange,
+  } from "../history/changes";
   import {
     activatePanel,
     appRoute,
@@ -613,10 +617,8 @@
       if (store.historyCandidate?.id === candidate.id)
         store.historyCandidate = null;
       if (!permanentHistoryWarning) store.historyWarning = "";
-      void import("../history/changes").then(({ broadcastHistory }) => {
-        broadcastHistory({ type: "put", id: candidate.id });
-        window.dispatchEvent(new Event("graphite-meter-history-changed"));
-      });
+      broadcastHistory({ type: "put", id: candidate.id });
+      window.dispatchEvent(new Event("graphite-meter-history-changed"));
     },
     (candidate) => {
       if (store.historyCandidate?.id === candidate.id)
