@@ -7,7 +7,7 @@ Let's Encrypt certificate obtained over the Cloudflare DNS-01 challenge:
 
 ## Install
 
-Copy the whole directory into the rootless Quadlet search path — modern Quadlet
+Copy the whole directory into the rootless Quadlet search path - modern Quadlet
 discovers units recursively, and the unit files reference their siblings by
 relative path.
 
@@ -81,18 +81,13 @@ restart is configured.
 To force a safe staging test without consuming production rate limits:
 
 ```sh
-podman run --rm \
-  -v "$PWD/letsencrypt:/etc/letsencrypt:z" \
-  -v "$PWD/log:/var/log/letsencrypt:z" \
-  -v "$PWD/secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z" \
-  docker.io/certbot/dns-cloudflare:latest renew --dry-run \
-  --dns-cloudflare-credentials /run/secrets/cloudflare.ini
+podman run --rm -v "$PWD/letsencrypt:/etc/letsencrypt:z" -v "$PWD/log:/var/log/letsencrypt:z" -v "$PWD/secrets/cloudflare.ini:/run/secrets/cloudflare.ini:ro,z" docker.io/certbot/dns-cloudflare:latest renew --dry-run --dns-cloudflare-credentials /run/secrets/cloudflare.ini
 ```
 
 ## Ports with host networking
 
 `graphite-meter.env` enables all four native listeners on the standard ports
-listed in [CONFIGURATION.md](../../../docs/CONFIGURATION.md#native-listeners),
+listed in [DEPLOYMENT.md](../../../docs/DEPLOYMENT.md#native-listeners),
 and `Network=host` binds them directly on the host. Keep 7246/tcp blocked in
 the firewall if you want TLS-only external access, and do not add
 `PublishPort=` while `Network=host` is set.

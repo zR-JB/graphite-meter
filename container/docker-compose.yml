@@ -1,13 +1,12 @@
-# Graphite Meter — default compose. Pulls the published release image; nothing
+# Graphite Meter - default compose. Pulls the published release image; nothing
 # is built locally. Versions (server binary + web client) are stamped into the
-# image at release time, so there are no build args here — only runtime config.
+# image at release time, so there are no build args here - only runtime config.
 #   docker compose -f container/docker-compose.yml up -d
 #
 # To build from source instead (developers / custom client builds), use
 # container/docker-compose.build.yml.
 services:
   graphite-meter:
-    # Pin a release for reproducible deploys, e.g. ...:0.1.0 or ...:0.1
     image: ghcr.io/zr-jb/graphite-meter:latest
     ports:
       - "7246:7246" # HTTP/1.1 (default)
@@ -20,5 +19,6 @@ services:
       # GM_H1_ADDR: ":7246"              # listen address inside the container
       # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
       # GM_PUBLIC_ORIGINS: "self"
+      # GM_RESULT_HISTORY_DEFAULT: "false" # default browser history preference
       # GM_VERBOSE: "1"                  # per-second server-side throughput log
     restart: unless-stopped

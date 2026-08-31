@@ -5,15 +5,15 @@
 # It assumes a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL and forwards to the
 # clear HTTP/1.1 listener. The proxy must set X-Real-IP from its connection
 # peer, drop Forwarded and X-Forwarded-For, and overwrite X-Forwarded-Proto and
-# X-Forwarded-Host — see docs/REVERSE_PROXY.md. Variable semantics and the
-# terminal-client grant flow are in docs/CONFIGURATION.md.
+# X-Forwarded-Host - see docs/DEPLOYMENT.md. Variable semantics and the
+# terminal-client grant flow are documented there as well.
 #
 # Edit GM_AUTH_PUBLIC_URL, GM_TRUSTED_PROXIES, and the secret paths at the
 # bottom before starting.
 services:
   graphite-meter:
     environment:
-      # Scheme, host, and non-default port only — no path, and never :443. The
+      # Scheme, host, and non-default port only - no path, and never :443. The
       # OIDC redirect URI is derived from it and the origin the proxy
       # reconstructs must match it exactly.
       GM_AUTH_PUBLIC_URL: https://meter.example.com
@@ -39,7 +39,7 @@ services:
       # scopes `openid profile groups`. GM_AUTH_MODE is one line: `password`,
       # `oidc`, or `hybrid`. `oidc` refuses to start until issuer discovery
       # succeeds and replaces the password lines above; `hybrid` retries
-      # discovery in the background with the operator password as a fallback —
+      # discovery in the background with the operator password as a fallback -
       # set GM_AUTH_MODE: hybrid, keep GM_AUTH_PASSWORD_HASH_FILE, and
       # uncomment the OIDC lines below it. Discovery, token exchange, UserInfo,
       # and JWKS are outbound HTTPS calls, and the published image carries

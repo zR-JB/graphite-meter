@@ -4,16 +4,16 @@ Run the published Graphite Meter image in a Tailscale container's network
 namespace without host networking or published ports. The sidecar owns the
 tailnet identity and TLS certificate.
 
-| Traffic | Listener |
-| --- | --- |
-| HTTP/1.1 clear | `80/tcp` |
-| HTTP/1.1 TLS, UI and WSS | `443/tcp` |
-| HTTP/2 measurement | `8443/tcp` |
-| HTTP/3 bootstrap | `8444/tcp` |
-| HTTP/3 measurement | `8444/udp` |
+| Traffic                  | Listener   |
+| ------------------------ | ---------- |
+| HTTP/1.1 clear           | `80/tcp`   |
+| HTTP/1.1 TLS, UI and WSS | `443/tcp`  |
+| HTTP/2 measurement       | `8443/tcp` |
+| HTTP/3 bootstrap         | `8444/tcp` |
+| HTTP/3 measurement       | `8444/udp` |
 
-This deployment deliberately drops the usual 7246–7249 scheme
-([CONFIGURATION.md](../../../docs/CONFIGURATION.md#native-listeners)): the
+This deployment deliberately drops the usual 7246-7249 scheme
+([DEPLOYMENT.md](../../../docs/DEPLOYMENT.md#native-listeners)): the
 sidecar owns the tailnet address and publishes nothing on the host, so the
 listeners are free to take the standard web ports.
 
@@ -44,14 +44,11 @@ install -m 600 graphite-meter-tailnet*.env ~/.config/containers/systemd/
 
 loginctl enable-linger "$USER"
 systemctl --user daemon-reload
-systemd-analyze --user verify \
-  graphite-meter-tailnet-tailscale.service \
-  graphite-meter-tailnet.service
+systemd-analyze --user verify graphite-meter-tailnet-tailscale.service graphite-meter-tailnet.service
 systemctl --user start graphite-meter-tailnet-tailscale.service
 ```
 
 Starting the sidecar starts Graphite Meter after the certificate health check.
-For automatic registry updates, enable `podman-auto-update.timer`.
 
 ## Verify
 

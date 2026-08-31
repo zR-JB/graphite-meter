@@ -669,7 +669,19 @@
   }
   @media (max-width: 759px) and (orientation: portrait) {
     .instrument {
-      --gauge-well-height: clamp(220px, 42svh, 360px);
+      /* A phone benefits more from keeping latency and result cards in the
+         first viewport than from carrying the desktop-sized hero well. */
+      --gauge-well-height: clamp(190px, 24svh, 240px);
+    }
+    .instrument .stage {
+      min-height: 190px;
+    }
+    .canvas,
+    .gauge-ticks,
+    .metric-wrap {
+      /* The 270-degree dial is top-heavy by construction. A small optical
+         shift balances its label clearance in the compact phone well. */
+      transform: translateY(8px);
     }
   }
   /* The gauge well: the deepest recess on the faceplate. */
