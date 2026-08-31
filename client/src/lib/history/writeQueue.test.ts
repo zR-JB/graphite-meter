@@ -174,3 +174,63 @@ test("stale generation rejection resynchronizes without save or warning", async 
   expect(writes).toEqual([other.id]);
   expect(saved).toEqual([other.id]);
 });
+
+test("captured empty generation cannot become a post-clear write", async () => {
+  const other = {
+    ...valid,
+    id: "00000000-0000-4000-8000-000000000004",
+  };
+  let durableGeneration = "";
+  const attempted: Array<{ id: string; generation: string }> = [];
+  const saved: string[] = [];
+  const put = async (
+    record: HistoryRecordV1,
+    _isCurrent: () => boolean,
+    generation: string,
+  ) => {
+    attempted.push({ id: record.id, generation });
+    if (durableGeneration !== generation)
+      throw new StaleHistoryGenerationError(durableGeneration);
+  };
+  const queue = new HistoryWriteQueue(
+    put,
+    async () => undefined,
+    (record) => saved.push(record.id),
+    () => undefined,
+    () => undefined,
+  );
+  queue.enqueue(valid);
+  durableGeneration = "after-clear";
+  await queue.flush();
+  expect(attempted).toEqual([{ id: valid.id, generation: "" }]);
+  expect(saved).toEqual([]);
+
+  queue.enqueue(other);
+  await queue.flush();
+  expect(attempted).toEqual([
+    { id: valid.id, generation: "" },
+    { id: other.id, generation: "after-clear" },
+  ]);
+  expect(saved).toEqual([other.id]);
+});
+
+test("initial empty generation matches absent or empty durable metadata", async () => {
+  const saved: string[] = [];
+  let durableGeneration: string | undefined;
+  const queue = new HistoryWriteQueue(
+    async (_record, _isCurrent, generation) => {
+      if ((durableGeneration ?? "") !== generation)
+        throw new StaleHistoryGenerationError(durableGeneration ?? "");
+    },
+    async () => undefined,
+    (record) => saved.push(record.id),
+    () => undefined,
+    () => undefined,
+  );
+  queue.enqueue(valid);
+  await queue.flush();
+  durableGeneration = "";
+  queue.enqueue({ ...valid, id: "00000000-0000-4000-8000-000000000005" });
+  await queue.flush();
+  expect(saved).toEqual([valid.id, "00000000-0000-4000-8000-000000000005"]);
+});

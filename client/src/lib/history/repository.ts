@@ -99,11 +99,7 @@ export class HistoryRepository {
     let staleGeneration: string | undefined;
     generationRequest.onsuccess = () => {
       const durableGeneration = generationRequest.result?.value;
-      if (
-        generation &&
-        generationRequest.result &&
-        durableGeneration !== generation
-      ) {
+      if (generationRequest.result && durableGeneration !== generation) {
         staleGeneration = durableGeneration ?? "";
         return;
       }

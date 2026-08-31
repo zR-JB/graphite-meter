@@ -3,6 +3,7 @@ import {
   InvalidHistoryRecordError,
   StaleHistoryGenerationError,
 } from "./errors";
+import { currentHistoryGeneration } from "./changes";
 export type HistoryWrite = (
   record: HistoryRecordV1,
   isCurrent: () => boolean,
@@ -27,6 +28,11 @@ export class HistoryWriteQueue {
   ) {}
 
   enqueue(record: HistoryRecordV1): boolean {
+    const observedGeneration = currentHistoryGeneration();
+    if (observedGeneration && observedGeneration !== this.#generation) {
+      this.#generation = observedGeneration;
+      this.#pending = [];
+    }
     if (!isHistoryRecord(record)) {
       this.onPermanentFailure(record);
       return false;

@@ -603,8 +603,7 @@
       const { HistoryRepository } = await import("../history/repository");
       historyRepository ??= new HistoryRepository();
       if (isCurrent()) {
-        if (generation) await historyRepository.put(candidate, generation);
-        else await historyRepository.put(candidate);
+        await historyRepository.put(candidate, generation);
       }
     },
     async (id) => {
