@@ -1,8 +1,21 @@
 import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecordV1 } from "./types";
+import { InvalidHistoryRecordError } from "./errors";
+import {
+  currentHistoryGeneration,
+  nextHistoryGeneration,
+  restoreHistoryGeneration,
+} from "./changes";
+export {
+  broadcastHistory,
+  historyChanges,
+  type HistoryChange,
+} from "./changes";
+export { InvalidHistoryRecordError } from "./errors";
 
 export const HISTORY_DB_NAME = "graphite-meter";
-export const HISTORY_DB_VERSION = 1;
+export const HISTORY_DB_VERSION = 2;
 const STORE = "results";
+const META = "meta";
 const INDEX = "completedAt";
 
 export type HistoryListResult = {
@@ -50,6 +63,8 @@ export function openHistoryDB(): Promise<IDBDatabase> {
         : db.createObjectStore(STORE, { keyPath: "id" });
       if (!store.indexNames.contains(INDEX))
         store.createIndex(INDEX, INDEX, { unique: false });
+      if (!db.objectStoreNames.contains(META))
+        db.createObjectStore(META, { keyPath: "key" });
     };
     opening.onsuccess = () => {
       opening.result.onversionchange = () => opening.result.close();
@@ -65,19 +80,32 @@ export class HistoryRepository {
   async db(): Promise<IDBDatabase> {
     return (this.#db ??= await openHistoryDB());
   }
-  async put(record: HistoryRecordV1): Promise<void> {
-    if (!isHistoryRecord(record)) throw new Error("Invalid history record");
+  async put(
+    record: HistoryRecordV1,
+    generation = currentHistoryGeneration(),
+  ): Promise<void> {
+    if (!isHistoryRecord(record)) throw new InvalidHistoryRecordError();
     const db = await this.db();
-    const tx = db.transaction(STORE, "readwrite");
+    const tx = db.transaction([STORE, META], "readwrite");
     const store = tx.objectStore(STORE);
-    store.put(record);
-    const index = store.index(INDEX);
-    const keysRequest = index.getAllKeys();
-    keysRequest.onsuccess = () => {
-      const keys = keysRequest.result;
-      if (keys.length > HISTORY_LIMIT)
-        for (const key of keys.slice(0, keys.length - HISTORY_LIMIT))
-          store.delete(key);
+    const metadata = tx.objectStore(META);
+    const generationRequest = metadata.get("generation");
+    generationRequest.onsuccess = () => {
+      if (
+        generationRequest.result &&
+        generationRequest.result.value !== generation
+      )
+        return;
+      if (!generationRequest.result)
+        metadata.put({ key: "generation", value: generation });
+      store.put(record);
+      const keysRequest = store.index(INDEX).getAllKeys();
+      keysRequest.onsuccess = () => {
+        const keys = keysRequest.result;
+        if (keys.length > HISTORY_LIMIT)
+          for (const key of keys.slice(0, keys.length - HISTORY_LIMIT))
+            store.delete(key);
+      };
     };
     await transactionDone(tx);
   }
@@ -133,31 +161,24 @@ export class HistoryRepository {
     await transactionDone(tx);
   }
   /** Clear every raw value, including entries that fail the history schema. */
-  async clear(): Promise<void> {
-    const db = await this.db();
-    const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).clear();
-    await transactionDone(tx);
+  async clear(): Promise<string> {
+    const previousGeneration = currentHistoryGeneration();
+    const generation = nextHistoryGeneration();
+    try {
+      const db = await this.db();
+      const tx = db.transaction([STORE, META], "readwrite");
+      tx.objectStore(STORE).clear();
+      tx.objectStore(META).put({ key: "generation", value: generation });
+      await transactionDone(tx);
+    } catch (error) {
+      restoreHistoryGeneration(previousGeneration);
+      throw error;
+    }
+    return generation;
   }
 
   close(): void {
     this.#db?.close();
     this.#db = null;
   }
-}
-
-export type HistoryChange = { type: "put" | "delete" | "clear"; id?: string };
-export function historyChanges(
-  onChange: (change: HistoryChange) => void,
-): () => void {
-  if (typeof BroadcastChannel === "undefined") return () => {};
-  const channel = new BroadcastChannel("graphite-meter-history");
-  channel.onmessage = (event) => onChange(event.data as HistoryChange);
-  return () => channel.close();
-}
-export function broadcastHistory(change: HistoryChange): void {
-  if (typeof BroadcastChannel === "undefined") return;
-  const channel = new BroadcastChannel("graphite-meter-history");
-  channel.postMessage(change);
-  channel.close();
 }

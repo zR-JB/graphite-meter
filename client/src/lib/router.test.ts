@@ -21,6 +21,24 @@ describe("hash router", () => {
     ).toBe("#/history?panels=settings,endpoint&dialog=legal");
   });
 
+  test("friendly routes retain composed panels and dialogs", () => {
+    expect(serializeRoute(parseRoute("#/settings?dialog=legal"))).toBe(
+      "#/?panels=settings&dialog=legal",
+    );
+    expect(serializeRoute(parseRoute("#/endpoint?panels=settings"))).toBe(
+      "#/?panels=endpoint,settings",
+    );
+    expect(
+      serializeRoute(
+        parseRoute(
+          "#/history/00000000-0000-4000-8000-000000000127?panels=settings,settings&dialog=legal",
+        ),
+      ),
+    ).toBe(
+      "#/history/00000000-0000-4000-8000-000000000127?panels=settings&dialog=legal",
+    );
+  });
+
   test("keeps the base workspace while panels and Legal open and close", () => {
     const history = parseRoute(
       "#/history/00000000-0000-4000-8000-000000000127",

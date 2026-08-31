@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -177,7 +178,7 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 	return reg
 }
 
-func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) *http.ServeMux {
+func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) http.Handler {
 	reg := buildRegistry(e, topology, authn)
 	inner := http.NewServeMux()
 	if authn != nil && authn.Enabled() {
@@ -195,7 +196,7 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		inner.Handle("/", spa)
 	}
 	if e.admission == nil {
-		return inner
+		return rejectDotSegments(inner)
 	}
 	var publicOrigin string
 	if authn != nil {
@@ -216,7 +217,19 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
 	}
 	m.Handle("/", inner)
-	return m
+	return rejectDotSegments(m)
+}
+
+func rejectDotSegments(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, segment := range strings.Split(r.URL.Path, "/") {
+			if segment == "." || segment == ".." {
+				http.NotFound(w, r)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {

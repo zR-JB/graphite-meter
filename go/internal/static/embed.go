@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,9 +84,13 @@ func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if name == "" || name == "." {
+		if r.URL.Path == "/" {
 			serveIndexWithMarker(w, r, fsys, marker)
+			return
+		}
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if !fs.ValidPath(name) || name == "." {
+			http.NotFound(w, r)
 			return
 		}
 		if name != "index.html" {

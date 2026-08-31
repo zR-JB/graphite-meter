@@ -106,6 +106,23 @@ func TestH1MountsSPAAndDiscovery(t *testing.T) {
 	}
 }
 
+func TestH1RejectsDotSegmentsBeforeServeMuxCanonicalization(t *testing.T) {
+	e := testEndpoints(t)
+	mux := listenerMuxConfigured(t.Context(), e, muxTopology{spa: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("shell"))
+	}), nil)
+	for _, path := range []string{"/foo/..", "/assets/.."} {
+		recorder := httptest.NewRecorder()
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", path, recorder.Code)
+		}
+		if strings.Contains(recorder.Body.String(), "shell") {
+			t.Errorf("%s reached the SPA handler", path)
+		}
+	}
+}
+
 func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	authn := testPasswordAuth(t, "https://meter.example")
 	e := testEndpoints(t)

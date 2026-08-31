@@ -33,12 +33,16 @@ async function seedRetainedResult(page: TestPage) {
   await page.evaluate(
     (saved) =>
       new Promise<void>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 1);
+        const opening = indexedDB.open("graphite-meter", 2);
         opening.onupgradeneeded = () => {
-          const results = opening.result.createObjectStore("results", {
-            keyPath: "id",
-          });
-          results.createIndex("completedAt", "completedAt");
+          const database = opening.result;
+          const results = database.objectStoreNames.contains("results")
+            ? opening.transaction!.objectStore("results")
+            : database.createObjectStore("results", { keyPath: "id" });
+          if (!results.indexNames.contains("completedAt"))
+            results.createIndex("completedAt", "completedAt");
+          if (!database.objectStoreNames.contains("meta"))
+            database.createObjectStore("meta", { keyPath: "key" });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
@@ -94,7 +98,7 @@ async function takeRetainedResultCount(page: TestPage) {
   return page.evaluate(
     () =>
       new Promise<number>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 1);
+        const opening = indexedDB.open("graphite-meter", 2);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;

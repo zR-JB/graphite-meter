@@ -28,6 +28,8 @@
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
   import { authEnabled } from "../auth";
   import { returnToLiveIndicator } from "../history/returnToLive";
+  import { HistoryWriteQueue } from "../history/writeQueue";
+  import { historyChanges } from "../history/changes";
   import {
     activatePanel,
     appRoute,
@@ -595,41 +597,45 @@
 
   let historyRepository:
     import("../history/repository").HistoryRepository | null = null;
-  const pendingHistoryCandidates: import("../history/types").HistoryRecordV1[] =
-    [];
-  let historyWriteInFlight = false;
-  async function attemptHistoryWrite() {
-    const candidate = pendingHistoryCandidates[0];
-    if (!candidate || historyWriteInFlight) return;
-    historyWriteInFlight = true;
-    let saved = false;
-    try {
-      const { HistoryRepository, broadcastHistory } =
-        await import("../history/repository");
+  let permanentHistoryWarning = false;
+  const historyQueue = new HistoryWriteQueue(
+    async (candidate, isCurrent, generation) => {
+      const { HistoryRepository } = await import("../history/repository");
       historyRepository ??= new HistoryRepository();
-      await historyRepository.put(candidate);
-      if (pendingHistoryCandidates[0]?.id === candidate.id)
-        pendingHistoryCandidates.shift();
+      if (isCurrent()) {
+        if (generation) await historyRepository.put(candidate, generation);
+        else await historyRepository.put(candidate);
+      }
+    },
+    async (id) => {
+      await historyRepository?.delete(id);
+    },
+    (candidate) => {
       if (store.historyCandidate?.id === candidate.id)
         store.historyCandidate = null;
-      store.historyWarning = "";
-      saved = true;
-      broadcastHistory({ type: "put", id: candidate.id });
-      window.dispatchEvent(new Event("graphite-meter-history-changed"));
-    } catch {
+      if (!permanentHistoryWarning) store.historyWarning = "";
+      void import("../history/repository").then(({ broadcastHistory }) => {
+        broadcastHistory({ type: "put", id: candidate.id });
+        window.dispatchEvent(new Event("graphite-meter-history-changed"));
+      });
+    },
+    (candidate) => {
+      if (store.historyCandidate?.id === candidate.id)
+        store.historyCandidate = null;
+      permanentHistoryWarning = true;
+      store.historyWarning =
+        "This result could not be saved because it was malformed.";
+    },
+    () => {
       store.historyWarning =
         "Unable to save this result locally. Future writes will be retried.";
-    } finally {
-      historyWriteInFlight = false;
-      if (saved && pendingHistoryCandidates.length) void attemptHistoryWrite();
-    }
-  }
+    },
+  );
+  const attemptHistoryWrite = () => void historyQueue.flush();
   $effect(() => {
     const candidate = store.historyCandidate;
     if (!candidate) return;
-    if (!pendingHistoryCandidates.some((item) => item.id === candidate.id))
-      pendingHistoryCandidates.push(candidate);
-    void attemptHistoryWrite();
+    historyQueue.enqueue(candidate);
   });
   onMount(() => {
     const retry = () => void attemptHistoryWrite();
@@ -637,11 +643,30 @@
     window.addEventListener("focus", retry);
     window.addEventListener("online", retry);
     document.addEventListener("visibilitychange", retry);
+    const clearHistoryQueue = (generation: string) => {
+      historyQueue.clear(generation);
+      if (store.historyCandidate) store.historyCandidate = null;
+      permanentHistoryWarning = false;
+    };
+    const onHistoryChange = (event: Event) => {
+      const change = (event as CustomEvent).detail;
+      if (change?.type === "clear" && typeof change.generation === "string")
+        clearHistoryQueue(change.generation);
+    };
+    const stopHistoryChanges = historyChanges((change) => {
+      if (change.type === "clear") clearHistoryQueue(change.generation);
+    });
+    window.addEventListener("graphite-meter-history-changed", onHistoryChange);
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("focus", retry);
       window.removeEventListener("online", retry);
       document.removeEventListener("visibilitychange", retry);
+      window.removeEventListener(
+        "graphite-meter-history-changed",
+        onHistoryChange,
+      );
+      stopHistoryChanges();
       historyRepository?.close();
     };
   });

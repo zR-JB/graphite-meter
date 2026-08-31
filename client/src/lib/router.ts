@@ -74,10 +74,19 @@ export function parseRoute(hash: string): Route {
 
   // Friendly routes cover one measurement surface; composites use the query.
   if (path === "/settings")
-    return appRoute({ kind: "measurement" }, ["settings"]);
+    return appRoute(
+      { kind: "measurement" },
+      ["settings", ...overlay.panels],
+      overlay.dialog,
+    );
   if (path === "/endpoint")
-    return appRoute({ kind: "measurement" }, ["endpoint"]);
-  if (path === "/legal") return appRoute({ kind: "measurement" }, [], "legal");
+    return appRoute(
+      { kind: "measurement" },
+      ["endpoint", ...overlay.panels],
+      overlay.dialog,
+    );
+  if (path === "/legal")
+    return appRoute({ kind: "measurement" }, overlay.panels, "legal");
   return { kind: "not-found" };
 }
 

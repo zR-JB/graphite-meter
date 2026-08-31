@@ -209,12 +209,18 @@
     actionError = "";
     try {
       if (action.kind === "clear") {
-        await repository.clear();
+        const generation = await repository.clear();
         records = [];
         malformedCount = 0;
         announcement = "History cleared.";
         if (selectedId) onNavigate(null);
-        broadcastHistory({ type: "clear" });
+        const change = { type: "clear" as const, generation };
+        broadcastHistory(change);
+        window.dispatchEvent(
+          new CustomEvent("graphite-meter-history-changed", {
+            detail: change,
+          }),
+        );
       } else {
         await repository.delete(action.id);
         records = records.filter((record) => record.id !== action.id);
@@ -222,7 +228,8 @@
         if (selectedId === action.id) onNavigate(null);
         broadcastHistory({ type: "delete", id: action.id });
       }
-      window.dispatchEvent(new Event("graphite-meter-history-changed"));
+      if (action.kind !== "clear")
+        window.dispatchEvent(new Event("graphite-meter-history-changed"));
       if (action.kind === "clear") {
         confirmInvoker = null;
         await tick();

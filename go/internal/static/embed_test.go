@@ -63,6 +63,8 @@ func TestHandlerRoutes(t *testing.T) {
 		{name: "missing asset with extension is 404", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
 		{name: "serves nested asset path", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "console.log('nested')"},
 		{name: "cleaned traversal cannot reach a second shell route", path: "/assets/../index.html", wantStatus: http.StatusNotFound},
+		{name: "dot-segment path is not the shell", path: "/foo/..", wantStatus: http.StatusNotFound},
+		{name: "asset dot-segment path is not the shell", path: "/assets/..", wantStatus: http.StatusNotFound},
 		{name: "deep path traversal is not an SPA fallback", path: "/../../../etc/passwd", client: noRedirectClient(), wantStatus: http.StatusNotFound},
 		{name: "unknown trailing slash route is 404", path: "/settings/", client: noRedirectClient(), wantStatus: http.StatusNotFound},
 		{name: "index file is not a second shell route", path: "/index.html", wantStatus: http.StatusNotFound},
@@ -77,6 +79,18 @@ func TestHandlerRoutes(t *testing.T) {
 				t.Fatalf("body = %q, want %q", body, test.wantBody)
 			}
 		})
+	}
+}
+
+func TestHandlerDotSegmentsDoNotServeShell(t *testing.T) {
+	for _, requestPath := range []string{"/foo/..", "/assets/.."} {
+		status, body := handlerResponse(t, nil, noRedirectClient(), requestPath)
+		if status != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", requestPath, status)
+		}
+		if strings.Contains(body, "index page") {
+			t.Errorf("%s served the shell body", requestPath)
+		}
 	}
 }
 

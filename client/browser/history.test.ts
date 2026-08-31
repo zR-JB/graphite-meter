@@ -116,12 +116,16 @@ async function seedHistory(page: TestPage, values: unknown[], notify = true) {
   await page.evaluate(
     (input) =>
       new Promise<void>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 1);
+        const opening = indexedDB.open("graphite-meter", 2);
         opening.onupgradeneeded = () => {
-          const store = opening.result.createObjectStore("results", {
-            keyPath: "id",
-          });
-          store.createIndex("completedAt", "completedAt");
+          const database = opening.result;
+          const store = database.objectStoreNames.contains("results")
+            ? opening.transaction!.objectStore("results")
+            : database.createObjectStore("results", { keyPath: "id" });
+          if (!store.indexNames.contains("completedAt"))
+            store.createIndex("completedAt", "completedAt");
+          if (!database.objectStoreNames.contains("meta"))
+            database.createObjectStore("meta", { keyPath: "key" });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
@@ -214,7 +218,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
   const savedWireRate = await page.evaluate(
     () =>
       new Promise<number | null>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 1);
+        const opening = indexedDB.open("graphite-meter", 2);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const db = opening.result;
@@ -363,7 +367,7 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
   const profile = await page.evaluate(
     () =>
       new Promise<{ nestedMs: number; cachedMs: number }>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 1);
+        const opening = indexedDB.open("graphite-meter", 2);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
@@ -498,7 +502,7 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
 
 test("malformed-only archives keep a raw clear path", async ({ page }) => {
   await openApp(page, "dummy", { width: 900, height: 700 });
-  await seedHistory(page, [{ id: "malformed", unexpected: true }]);
+  await seedHistory(page, [record(IDS.oldest, 1e20)]);
   await openHistory(page);
   await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
   const management = page.getByRole("button", { name: "Archive management" });
@@ -518,7 +522,7 @@ test("malformed-only archives keep a raw clear path", async ({ page }) => {
   const count = await page.evaluate(
     () =>
       new Promise<number>((resolve, reject) => {
-        const request = indexedDB.open("graphite-meter", 1);
+        const request = indexedDB.open("graphite-meter", 2);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const tx = request.result.transaction("results", "readonly");

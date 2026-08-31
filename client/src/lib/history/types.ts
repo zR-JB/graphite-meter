@@ -238,7 +238,7 @@ export function buildHistoryRecord(
   return {
     schemaVersion: 1,
     id: id(),
-    startedAt: result.startedAt,
+    startedAt: Math.trunc(result.startedAt),
     completedAt,
     durationMs: result.durationMs,
     stages: {
@@ -319,6 +319,10 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     typeof candidate === "number" && Number.isFinite(candidate);
   const nonnegative = (candidate: unknown): candidate is number =>
     finite(candidate) && candidate >= 0;
+  const epoch = (candidate: unknown): candidate is number =>
+    Number.isInteger(candidate) &&
+    nonnegative(candidate) &&
+    !Number.isNaN(new Date(candidate).getTime());
   const percentage = (candidate: unknown): candidate is number =>
     nonnegative(candidate) && candidate <= 100;
   const unitInterval = (candidate: unknown): candidate is number =>
@@ -541,8 +545,8 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     if (candidate !== null && !lane(candidate)) return false;
   }
   if (
-    !nonnegative(record.startedAt) ||
-    !nonnegative(record.completedAt) ||
+    !epoch(record.startedAt) ||
+    !epoch(record.completedAt) ||
     record.completedAt < record.startedAt ||
     !nonnegative(record.durationMs) ||
     !nonnegative(record.totalBytes) ||

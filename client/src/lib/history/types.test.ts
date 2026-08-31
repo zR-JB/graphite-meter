@@ -163,3 +163,19 @@ test("rejects malformed nested records before they reach rendering", () => {
   ];
   for (const value of cases) expect(isHistoryRecord(value)).toBe(false);
 });
+
+test("rejects non-date epochs while retaining valid date bounds", () => {
+  const valid = buildHistoryRecord(
+    result,
+    { infra: null, clientBuild: "b", engineVersion: "e" },
+    200,
+  );
+  const maxDate = 8_640_000_000_000_000;
+  expect(
+    isHistoryRecord({ ...valid, startedAt: maxDate, completedAt: maxDate }),
+  ).toBe(true);
+  for (const value of [1e20, maxDate + 1, Number.MAX_SAFE_INTEGER, 1.5, -1]) {
+    expect(isHistoryRecord({ ...valid, startedAt: value })).toBe(false);
+    expect(isHistoryRecord({ ...valid, completedAt: value })).toBe(false);
+  }
+});
