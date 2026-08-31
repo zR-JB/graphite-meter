@@ -16,19 +16,17 @@ This clear HTTP deployment provides fetch-stream throughput and WebSocket latenc
 expose WebTransport in a secure context, so a remote deployment needs HTTPS plus the native
 HTTP/3 listener for WebTransport latency and datagrams.
 
-Pin a release tag instead of `latest` when reproducibility matters.
-
 ## Native listeners
 
 Each native listener has a separate address and advertised public origin. Separate ports let a
 client select a protocol deterministically instead of relying on negotiation.
 
-| Listener | Default | Protocol and purpose |
-| --- | --- | --- |
-| `GM_H1_ADDR` | `:7246` | Clear HTTP/1.1 UI, discovery, fetch transfers, progress, and WebSocket latency. Required. |
-| `GM_H1_TLS_ADDR` | disabled | Dedicated HTTPS HTTP/1.1 fetch transfers and secure WebSocket latency. |
-| `GM_H2_ADDR` | disabled | TLS listener restricted to HTTP/2 for fetch transfers and progress. |
-| `GM_H3_ADDR` | disabled | HTTP/3 over UDP for probes, fetch transfers, progress, and WebTransport. A TCP socket on the same address serves the Alt-Svc bootstrap probe. |
+| Listener         | Default  | Protocol and purpose                                                                                                                          |
+| ---------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GM_H1_ADDR`     | `:7246`  | Clear HTTP/1.1 UI, discovery, fetch transfers, progress, and WebSocket latency. Required.                                                     |
+| `GM_H1_TLS_ADDR` | disabled | Dedicated HTTPS HTTP/1.1 fetch transfers and secure WebSocket latency.                                                                        |
+| `GM_H2_ADDR`     | disabled | TLS listener restricted to HTTP/2 for fetch transfers and progress.                                                                           |
+| `GM_H3_ADDR`     | disabled | HTTP/3 over UDP for probes, fetch transfers, progress, and WebTransport. A TCP socket on the same address serves the Alt-Svc bootstrap probe. |
 
 The conventional native ports are 7246 through 7249. HTTP/3 needs both TCP and UDP port 7249
 through the container, firewall, and network path. Every enabled TLS listener uses the certificate
@@ -64,20 +62,20 @@ path types:
 
 Native public origins must match their protocol:
 
-| Environment | Flag | Purpose |
-| --- | --- | --- |
-| `GM_H1_PUBLIC_ORIGIN` | `--h1-public-origin` | Public `http://` origin of the clear HTTP/1.1 listener. |
-| `GM_H1_TLS_PUBLIC_ORIGIN` | `--h1-tls-public-origin` | Public `https://` origin of the HTTP/1.1 TLS listener. |
-| `GM_H2_PUBLIC_ORIGIN` | `--h2-public-origin` | Public `https://` origin of the HTTP/2 listener. |
-| `GM_H3_PUBLIC_ORIGIN` | `--h3-public-origin` | Public `https://` origin of the HTTP/3 listener. |
+| Environment               | Flag                     | Purpose                                                 |
+| ------------------------- | ------------------------ | ------------------------------------------------------- |
+| `GM_H1_PUBLIC_ORIGIN`     | `--h1-public-origin`     | Public `http://` origin of the clear HTTP/1.1 listener. |
+| `GM_H1_TLS_PUBLIC_ORIGIN` | `--h1-tls-public-origin` | Public `https://` origin of the HTTP/1.1 TLS listener.  |
+| `GM_H2_PUBLIC_ORIGIN`     | `--h2-public-origin`     | Public `https://` origin of the HTTP/2 listener.        |
+| `GM_H3_PUBLIC_ORIGIN`     | `--h3-public-origin`     | Public `https://` origin of the HTTP/3 listener.        |
 
 Public negotiated origins accept `self` or absolute HTTP/HTTPS origins:
 
-| Environment | Flag | Advertised capability |
-| --- | --- | --- |
-| `GM_PUBLIC_ORIGINS` | `--public-origins` | Fetch throughput and WebSocket latency. |
-| `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | Fetch throughput only. |
-| `GM_PUBLIC_LATENCY_ORIGINS` | `--public-latency-origins` | WebSocket latency only. |
+| Environment                    | Flag                          | Advertised capability                   |
+| ------------------------------ | ----------------------------- | --------------------------------------- |
+| `GM_PUBLIC_ORIGINS`            | `--public-origins`            | Fetch throughput and WebSocket latency. |
+| `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | Fetch throughput only.                  |
+| `GM_PUBLIC_LATENCY_ORIGINS`    | `--public-latency-origins`    | WebSocket latency only.                 |
 
 An origin cannot be advertised as both deterministic native and negotiated. Use `self` for the
 origin that served the current page.
@@ -90,12 +88,12 @@ arguments.
 
 ### Identity and presentation
 
-| Environment | Flag | Default | Meaning |
-| --- | --- | --- | --- |
-| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name reported by preflight and shown in clients. |
-| `GM_SERVER_LOCATION` | `--location` | empty | Optional operator-defined location label. |
-| `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false` | Default browser preference for saving completed summaries on that device. |
-| `GM_VERBOSE` | `--verbose` | `false` | Log per-second measurement throughput. |
+| Environment                 | Flag                       | Default          | Meaning                                                                   |
+| --------------------------- | -------------------------- | ---------------- | ------------------------------------------------------------------------- |
+| `GM_SERVER_NAME`            | `--name`                   | `graphite-meter` | Name reported by preflight and shown in clients.                          |
+| `GM_SERVER_LOCATION`        | `--location`               | empty            | Optional operator-defined location label.                                 |
+| `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false`          | Default browser preference for saving completed summaries on that device. |
+| `GM_VERBOSE`                | `--verbose`                | `false`          | Log per-second measurement throughput.                                    |
 
 The browser stores history in its own IndexedDB database. An explicit browser choice overrides
 the operator default. Disabling saving retains existing records, and aborted or terminal-error
@@ -103,31 +101,31 @@ runs are not stored.
 
 ### Listener and endpoint settings
 
-| Environment | Flag | Default |
-| --- | --- | --- |
-| `GM_H1_ADDR` | `--h1-addr` | `:7246` |
-| `GM_H1_TLS_ADDR` | `--h1-tls-addr` | empty |
-| `GM_H2_ADDR` | `--h2-addr` | empty |
-| `GM_H3_ADDR` | `--h3-addr` | empty |
-| `GM_TLS_CERT` | `--tls-cert` | empty |
-| `GM_TLS_KEY` | `--tls-key` | empty |
-| `GM_ADVERTISED_NATIVE_ENDPOINTS` | `--advertised-native-endpoints` | `all` |
+| Environment                      | Flag                            | Default |
+| -------------------------------- | ------------------------------- | ------- |
+| `GM_H1_ADDR`                     | `--h1-addr`                     | `:7246` |
+| `GM_H1_TLS_ADDR`                 | `--h1-tls-addr`                 | empty   |
+| `GM_H2_ADDR`                     | `--h2-addr`                     | empty   |
+| `GM_H3_ADDR`                     | `--h3-addr`                     | empty   |
+| `GM_TLS_CERT`                    | `--tls-cert`                    | empty   |
+| `GM_TLS_KEY`                     | `--tls-key`                     | empty   |
+| `GM_ADVERTISED_NATIVE_ENDPOINTS` | `--advertised-native-endpoints` | `all`   |
 
 `GM_H1_ADDR` cannot be empty. Listener addresses must differ. Enabling any TLS listener requires
 both TLS paths.
 
 ### Admission limits
 
-| Environment | Flag | Default | Meaning |
-| --- | --- | --- | --- |
-| `GM_MAX_ACTIVE_MEASUREMENTS` | `--max-active-measurements` | `256` | Global measurement handlers. |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32` | Measurement handlers per client identity. |
-| `GM_MAX_ACTIVE_SESSIONS` | `--max-active-sessions` | `64` | WebTransport sessions within the global measurement pool. |
-| `GM_MAX_SESSIONS_PER_CLIENT` | `--max-sessions-per-client` | `16` | WebTransport transfer sessions per client identity. |
-| `GM_MAX_CONNECTIONS` | `--max-connections` | `512` | Concurrent TCP and QUIC connections. |
-| `GM_MAX_CONNECTIONS_PER_CLIENT` | `--max-connections-per-client` | `64` | Connections per direct client. |
-| `GM_MAX_OPERATION_DURATION` | `--max-operation-duration` | `5m` | Maximum request-shaped measurement lifetime. |
-| `GM_MAX_SESSION_DURATION` | `--max-session-duration` | `2h` | Maximum WebTransport session lifetime. |
+| Environment                             | Flag                                   | Default | Meaning                                                   |
+| --------------------------------------- | -------------------------------------- | ------- | --------------------------------------------------------- |
+| `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`   | Global measurement handlers.                              |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`    | Measurement handlers per client identity.                 |
+| `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`    | WebTransport sessions within the global measurement pool. |
+| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `16`    | WebTransport transfer sessions per client identity.       |
+| `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `512`   | Concurrent TCP and QUIC connections.                      |
+| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`    | Connections per direct client.                            |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`    | Maximum request-shaped measurement lifetime.              |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`    | Maximum WebTransport session lifetime.                    |
 
 All numeric limits must be positive. Per-client limits cannot exceed their global limit. The
 session pool is part of the measurement pool, and the session duration must be at least the
@@ -150,18 +148,18 @@ accounting. Configure the actual proxy network rather than a broad client networ
 Authentication is off by default. When enabled, it covers the UI, discovery, probes, transfers,
 progress streams, WebSockets, and WebTransport sessions.
 
-| Environment | Flag | Default | Meaning |
-| --- | --- | --- | --- |
-| `GM_AUTH_MODE` | `--auth-mode` | `off` | `off`, `password`, `oidc`, or `hybrid`. |
-| `GM_AUTH_PUBLIC_URL` | `--auth-public-url` | empty | Canonical HTTPS UI origin without a path or explicit `:443`. |
-| `GM_AUTH_PASSWORD_HASH` | none | empty | Inline Argon2id PHC hash. Prefer the file setting. |
-| `GM_AUTH_PASSWORD_HASH_FILE` | `--auth-password-hash-file` | empty | File containing one Argon2id PHC hash. |
-| `GM_AUTH_OIDC_ISSUER` | `--auth-oidc-issuer` | empty | HTTPS OIDC issuer URL. |
-| `GM_AUTH_OIDC_CLIENT_ID` | `--auth-oidc-client-id` | empty | Confidential client ID. |
-| `GM_AUTH_OIDC_CLIENT_SECRET` | none | empty | Inline client secret. Prefer the file setting. |
-| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty | File containing the OIDC client secret. |
-| `GM_AUTH_OIDC_ALLOWED_GROUPS` | `--auth-oidc-allowed-groups` | empty | Required comma-separated, case-sensitive OIDC group allowlist. |
-| `GM_AUTH_OIDC_PROVIDER_NAME` | `--auth-oidc-provider-name` | `Authelia` | Provider label shown on the sign-in page. |
+| Environment                       | Flag                             | Default    | Meaning                                                        |
+| --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------- |
+| `GM_AUTH_MODE`                    | `--auth-mode`                    | `off`      | `off`, `password`, `oidc`, or `hybrid`.                        |
+| `GM_AUTH_PUBLIC_URL`              | `--auth-public-url`              | empty      | Canonical HTTPS UI origin without a path or explicit `:443`.   |
+| `GM_AUTH_PASSWORD_HASH`           | none                             | empty      | Inline Argon2id PHC hash. Prefer the file setting.             |
+| `GM_AUTH_PASSWORD_HASH_FILE`      | `--auth-password-hash-file`      | empty      | File containing one Argon2id PHC hash.                         |
+| `GM_AUTH_OIDC_ISSUER`             | `--auth-oidc-issuer`             | empty      | HTTPS OIDC issuer URL.                                         |
+| `GM_AUTH_OIDC_CLIENT_ID`          | `--auth-oidc-client-id`          | empty      | Confidential client ID.                                        |
+| `GM_AUTH_OIDC_CLIENT_SECRET`      | none                             | empty      | Inline client secret. Prefer the file setting.                 |
+| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty      | File containing the OIDC client secret.                        |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS`     | `--auth-oidc-allowed-groups`     | empty      | Required comma-separated, case-sensitive OIDC group allowlist. |
+| `GM_AUTH_OIDC_PROVIDER_NAME`      | `--auth-oidc-provider-name`      | `Authelia` | Provider label shown on the sign-in page.                      |
 
 Create an operator password hash interactively:
 
@@ -283,8 +281,6 @@ map $http_upgrade $connection_upgrade {
 }
 
 server {
-    # Configure listen and TLS as usual.
-
     location / {
         proxy_pass http://graphite-meter:7246;
         proxy_http_version 1.1;

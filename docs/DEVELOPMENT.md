@@ -28,20 +28,20 @@ just setup
 
 ## Repository layout
 
-| Path | Responsibility |
-| --- | --- |
-| `api/` | JSON schemas and the normative message-bus protocol. |
-| `client/` | Svelte 5 browser client, workers, browser harness, and throughput benchmark. |
-| `go/cmd/graphite-meter` | Server entry point and CLI flags. |
-| `go/cmd/graphite-meter-client` | Native Bubble Tea client. |
-| `go/internal/config` | Server configuration and validation. |
-| `go/internal/endpoint` | Measurement, probe, upload progress, and WebTransport handlers. |
-| `go/internal/server` | Listener ownership, admission, TLS lifecycle, and routing. |
-| `go/internal/transport` | HTTP, WebSocket, and WebTransport session adapters. |
-| `go/internal/static` | Embedded browser assets and index metadata injection. |
-| `container/` | OCI image, Compose examples, and Quadlet units. |
-| `legal/` | Reviewed dependency metadata and generated notices. |
-| `scripts/ci/` | Workflow policy, release verification, and CI helpers. |
+| Path                           | Responsibility                                                               |
+| ------------------------------ | ---------------------------------------------------------------------------- |
+| `api/`                         | JSON schemas and the normative message-bus protocol.                         |
+| `client/`                      | Svelte 5 browser client, workers, browser harness, and throughput benchmark. |
+| `go/cmd/graphite-meter`        | Server entry point and CLI flags.                                            |
+| `go/cmd/graphite-meter-client` | Native Bubble Tea client.                                                    |
+| `go/internal/config`           | Server configuration and validation.                                         |
+| `go/internal/endpoint`         | Measurement, probe, upload progress, and WebTransport handlers.              |
+| `go/internal/server`           | Listener ownership, admission, TLS lifecycle, and routing.                   |
+| `go/internal/transport`        | HTTP, WebSocket, and WebTransport session adapters.                          |
+| `go/internal/static`           | Embedded browser assets and index metadata injection.                        |
+| `container/`                   | OCI image, Compose examples, and Quadlet units.                              |
+| `legal/`                       | Reviewed dependency metadata and generated notices.                          |
+| `scripts/ci/`                  | Workflow policy, release verification, and CI helpers.                       |
 
 ## Measurement architecture
 
@@ -90,13 +90,13 @@ three-step stage lifecycle: prepare, measure, and end.
 
 Workers isolate the hot paths:
 
-| Worker | Responsibility |
-| --- | --- |
-| `download-worker.ts` | Consume and count one fetch download lane. |
-| `upload-worker.ts` | Size and submit finite incompressible upload requests. |
-| `upload-progress-worker.ts` | Parse authoritative server upload progress. |
-| `ping-worker.ts` | Pace WebSocket or WebTransport pings and retain RTT/loss timestamps. |
-| `wt-transfer-worker.ts` | Own a WebTransport session, streams, datagrams, and finalization. |
+| Worker                      | Responsibility                                                       |
+| --------------------------- | -------------------------------------------------------------------- |
+| `download-worker.ts`        | Consume and count one fetch download lane.                           |
+| `upload-worker.ts`          | Size and submit finite incompressible upload requests.               |
+| `upload-progress-worker.ts` | Parse authoritative server upload progress.                          |
+| `ping-worker.ts`            | Pace WebSocket or WebTransport pings and retain RTT/loss timestamps. |
+| `wt-transfer-worker.ts`     | Own a WebTransport session, streams, datagrams, and finalization.    |
 
 The main-thread scheduler is invalidation-driven, visibility-aware, reduced-motion-aware, and
 capped at 30 frames per second. Presentation interpolation never becomes measurement evidence.
@@ -168,12 +168,12 @@ VERSION=0.6.0 just release-build 0.6.0
 
 ### Browser build flags
 
-| Environment | Default | Meaning |
-| --- | --- | --- |
-| `GM_CLIENT_BUILD_PROFILE` | set by the recipe | `dev` or `prod` feature profile. |
-| `GM_CLIENT_ALLOW_DUMMY` | `0` for production recipes | Compile the dummy backend and development controls when `1`. |
-| `GM_CLIENT_REVISION` | current short revision | Source identity for an untagged build. |
-| `VERSION` | empty | Public release version. |
+| Environment               | Default                    | Meaning                                                      |
+| ------------------------- | -------------------------- | ------------------------------------------------------------ |
+| `GM_CLIENT_BUILD_PROFILE` | set by the recipe          | `dev` or `prod` feature profile.                             |
+| `GM_CLIENT_ALLOW_DUMMY`   | `0` for production recipes | Compile the dummy backend and development controls when `1`. |
+| `GM_CLIENT_REVISION`      | current short revision     | Source identity for an untagged build.                       |
+| `VERSION`                 | empty                      | Public release version.                                      |
 
 The real-only production build tree-shakes the dummy backend from the output. Enabling it is for
 development and browser tests, not release publication.

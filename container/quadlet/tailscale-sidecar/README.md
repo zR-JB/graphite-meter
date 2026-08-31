@@ -12,7 +12,7 @@ tailnet identity and TLS certificate.
 | HTTP/3 bootstrap         | `8444/tcp` |
 | HTTP/3 measurement       | `8444/udp` |
 
-This deployment deliberately drops the usual 7246–7249 scheme
+This deployment deliberately drops the usual 7246-7249 scheme
 ([DEPLOYMENT.md](../../../docs/DEPLOYMENT.md#native-listeners)): the
 sidecar owns the tailnet address and publishes nothing on the host, so the
 listeners are free to take the standard web ports.
@@ -49,7 +49,6 @@ systemctl --user start graphite-meter-tailnet-tailscale.service
 ```
 
 Starting the sidecar starts Graphite Meter after the certificate health check.
-For automatic registry updates, enable `podman-auto-update.timer`.
 
 ## Verify
 

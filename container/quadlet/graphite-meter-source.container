@@ -1,4 +1,4 @@
-# Quadlet .container unit — build-from-source variant (developers / custom
+# Quadlet .container unit - build-from-source variant (developers / custom
 # builds, e.g. with the dummy engine compiled in). The image is
 # produced by the sibling graphite-meter.build unit (Image=*.build → builds
 # first, then runs). For a normal deployment use graphite-meter.container,
@@ -11,7 +11,7 @@ Description=Graphite Meter speed-test server (built from source)
 
 [Container]
 ContainerName=graphite-meter
-# Reference the .build unit by filename — Quadlet builds it on demand and adds a
+# Reference the .build unit by filename - Quadlet builds it on demand and adds a
 # dependency on graphite-meter-build.service.
 Image=graphite-meter.build
 
@@ -47,7 +47,7 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_VERBOSE=1
 
 [Service]
-# docker-compose's `restart: unless-stopped` — systemd's closest is always.
+# docker-compose's `restart: unless-stopped` - systemd's closest is always.
 Restart=always
 RestartSec=5
 

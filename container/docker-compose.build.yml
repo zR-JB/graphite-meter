@@ -1,4 +1,4 @@
-# Graphite Meter — build-from-source compose (developers / custom builds).
+# Graphite Meter - build-from-source compose (developers / custom builds).
 # For a normal deployment use the sibling docker-compose.yml, which pulls the
 # published image instead of building.
 #   docker compose -f container/docker-compose.build.yml up --build

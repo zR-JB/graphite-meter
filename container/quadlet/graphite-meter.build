@@ -1,4 +1,4 @@
-# Quadlet .build unit — builds the Graphite Meter production image.
+# Quadlet .build unit - builds the Graphite Meter production image.
 # Referenced by graphite-meter.container via `Image=graphite-meter.build`, so
 # the build runs automatically (as graphite-meter-build.service) before the
 # container starts. Install: see ./README.md.
@@ -15,7 +15,7 @@ ImageTag=localhost/graphite-meter:latest
 # so the context (SetWorkingDirectory) MUST be the repo root, and File= is
 # resolved relative to it.
 #   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host
-#     (quadlet units live in a systemd search dir, not in the repo — see README).
+#     (quadlet units live in a systemd search dir, not in the repo - see README).
 SetWorkingDirectory=/path/to/graphite-meter
 File=container/Dockerfile
 

@@ -45,14 +45,14 @@ varied by more than 13 percent in some repeated cells. Treat magnitudes accordin
 
 ### Highest recorded sustained rates
 
-| Configuration | Download | Upload |
-| --- | ---: | ---: |
-| Chromium, HTTP/1.1 clear, 2 lanes | **49.00 Gbit/s** | **16.95 Gbit/s** |
-| Firefox, HTTP/1.1 clear, fresh process | 9.22 Gbit/s | not recorded |
-| Firefox, HTTP/1.1 clear, settled best lanes | 6.45 Gbit/s | 7.53 Gbit/s |
-| Mozilla Firefox build, HTTP/1.1 clear | 14.52 Gbit/s | not recorded |
-| Native Go client, 1 lane | 71.71 Gbit/s | 42.83 Gbit/s |
-| Native Go client, 8 lanes | **362.59 Gbit/s** | **239.71 Gbit/s** |
+| Configuration                               |          Download |            Upload |
+| ------------------------------------------- | ----------------: | ----------------: |
+| Chromium, HTTP/1.1 clear, 2 lanes           |  **49.00 Gbit/s** |  **16.95 Gbit/s** |
+| Firefox, HTTP/1.1 clear, fresh process      |       9.22 Gbit/s |      not recorded |
+| Firefox, HTTP/1.1 clear, settled best lanes |       6.45 Gbit/s |       7.53 Gbit/s |
+| Mozilla Firefox build, HTTP/1.1 clear       |      14.52 Gbit/s |      not recorded |
+| Native Go client, 1 lane                    |      71.71 Gbit/s |      42.83 Gbit/s |
+| Native Go client, 8 lanes                   | **362.59 Gbit/s** | **239.71 Gbit/s** |
 
 The native result is an upper bound for this machine, not a target for browser clients. The native
 client can configure socket behavior that browser APIs do not expose.
@@ -61,14 +61,14 @@ client can configure socket behavior that browser APIs do not expose.
 
 Loopback, five repeats, best measured lane count:
 
-| Transport | Download | Lanes | Upload | Lanes |
-| --- | ---: | ---: | ---: | ---: |
-| HTTP/1.1 clear | **49.00 Gbit/s** | 2 | **16.95 Gbit/s** | 2 |
-| HTTP/1.1 TLS | 25.45 Gbit/s | 2 | 13.35 Gbit/s | 1 |
-| HTTP/2 | 13.30 Gbit/s | 4 | 9.77 Gbit/s | 4 |
-| HTTP/3 | 2.83 Gbit/s | 1 | 1.66 Gbit/s | 1 |
-| WebTransport streams | 3.01 Gbit/s | 1 | 1.78 Gbit/s | 2 |
-| WebTransport datagrams | 1.62 Gbit/s | 1 | 0.36 Gbit/s | 1 |
+| Transport              |         Download | Lanes |           Upload | Lanes |
+| ---------------------- | ---------------: | ----: | ---------------: | ----: |
+| HTTP/1.1 clear         | **49.00 Gbit/s** |     2 | **16.95 Gbit/s** |     2 |
+| HTTP/1.1 TLS           |     25.45 Gbit/s |     2 |     13.35 Gbit/s |     1 |
+| HTTP/2                 |     13.30 Gbit/s |     4 |      9.77 Gbit/s |     4 |
+| HTTP/3                 |      2.83 Gbit/s |     1 |      1.66 Gbit/s |     1 |
+| WebTransport streams   |      3.01 Gbit/s |     1 |      1.78 Gbit/s |     2 |
+| WebTransport datagrams |      1.62 Gbit/s |     1 |      0.36 Gbit/s |     1 |
 
 These results do not define a universal transport ranking. Firefox reached 10.88 Gbit/s in one
 fresh HTTP/3 screening run and produced a different ordering. Browser engine, browser state,
@@ -78,14 +78,14 @@ proxy behavior, path latency, congestion, encryption, and loss can change the re
 
 Chromium, `lan-fast-lossy`, five repeats:
 
-| Transport | Best download | One lane | Best upload | One lane |
-| --- | ---: | ---: | ---: | ---: |
-| HTTP/1.1 clear | 8.12 Gbit/s at 2 | 6.98 | 8.71 Gbit/s at 1 | 8.71 |
-| HTTP/1.1 TLS | 6.62 Gbit/s at 2 | 5.42 | 7.60 Gbit/s at 1 | 7.60 |
-| HTTP/2 | 4.02 Gbit/s at 1 | 4.02 | 5.90 Gbit/s at 4 | 5.36 |
-| HTTP/3 | 2.75 Gbit/s at 1 | 2.75 | 1.55 Gbit/s at 1 | 1.55 |
-| WebTransport streams | 2.95 Gbit/s at 1 | 2.95 | 1.62 Gbit/s at 1 | 1.62 |
-| WebTransport datagrams | 1.54 Gbit/s | not applicable | 0.36 Gbit/s | not applicable |
+| Transport              |    Best download |       One lane |      Best upload |       One lane |
+| ---------------------- | ---------------: | -------------: | ---------------: | -------------: |
+| HTTP/1.1 clear         | 8.12 Gbit/s at 2 |           6.98 | 8.71 Gbit/s at 1 |           8.71 |
+| HTTP/1.1 TLS           | 6.62 Gbit/s at 2 |           5.42 | 7.60 Gbit/s at 1 |           7.60 |
+| HTTP/2                 | 4.02 Gbit/s at 1 |           4.02 | 5.90 Gbit/s at 4 |           5.36 |
+| HTTP/3                 | 2.75 Gbit/s at 1 |           2.75 | 1.55 Gbit/s at 1 |           1.55 |
+| WebTransport streams   | 2.95 Gbit/s at 1 |           2.95 | 1.62 Gbit/s at 1 |           1.62 |
+| WebTransport datagrams |      1.54 Gbit/s | not applicable |      0.36 Gbit/s | not applicable |
 
 Parallel HTTP/1.1 lanes use separate connections and congestion windows. Multiplexed streams share
 one connection, so additional streams do not provide the same loss resilience. Firefox again
@@ -136,19 +136,19 @@ These are client implementation choices rather than new server configuration req
 The harness starts every native listener, so a local certificate and its SPKI pin are required even
 when filtering to a clear HTTP/1.1 cell. See [Development](DEVELOPMENT.md#local-tls-and-http3).
 
-| Environment | Default | Purpose |
-| --- | --- | --- |
-| `GM_BENCH_SPKI` | required | Base64 SHA-256 SPKI pin for Chromium QUIC. |
-| `BUN_CHROME_PATH` | auto-discovered | Chrome for Testing or Chromium executable. |
-| `GM_BENCH_HOST` | `127.0.0.1` | Server bind and browser destination address. |
-| `GM_BENCH_NETNS` | empty | Run the server through `ip netns exec`. |
-| `GM_BENCH_TLS_CERT` | `.dev-certs/localhost.pem` | TLS leaf certificate. |
-| `GM_BENCH_TLS_KEY` | `.dev-certs/localhost-key.pem` | TLS private key. |
-| `GM_BENCH_ORIGINS` | `h1-clear` | Comma-separated origins to measure. |
-| `GM_BENCH_REPS` | `3` | Repeat rounds per cell. Historical tables used 5. |
-| `GM_BENCH_WARMUP_MS` | `3000` | Discarded warmup before each cell. |
-| `GM_BENCH_MEASURE_MS` | `8000` | Measured window per cell. |
-| `GM_BENCH_SEED` | `1` | Deterministic cell-order seed. |
+| Environment           | Default                        | Purpose                                           |
+| --------------------- | ------------------------------ | ------------------------------------------------- |
+| `GM_BENCH_SPKI`       | required                       | Base64 SHA-256 SPKI pin for Chromium QUIC.        |
+| `BUN_CHROME_PATH`     | auto-discovered                | Chrome for Testing or Chromium executable.        |
+| `GM_BENCH_HOST`       | `127.0.0.1`                    | Server bind and browser destination address.      |
+| `GM_BENCH_NETNS`      | empty                          | Run the server through `ip netns exec`.           |
+| `GM_BENCH_TLS_CERT`   | `.dev-certs/localhost.pem`     | TLS leaf certificate.                             |
+| `GM_BENCH_TLS_KEY`    | `.dev-certs/localhost-key.pem` | TLS private key.                                  |
+| `GM_BENCH_ORIGINS`    | `h1-clear`                     | Comma-separated origins to measure.               |
+| `GM_BENCH_REPS`       | `3`                            | Repeat rounds per cell. Historical tables used 5. |
+| `GM_BENCH_WARMUP_MS`  | `3000`                         | Discarded warmup before each cell.                |
+| `GM_BENCH_MEASURE_MS` | `8000`                         | Measured window per cell.                         |
+| `GM_BENCH_SEED`       | `1`                            | Deterministic cell-order seed.                    |
 
 Run one maintained cell:
 

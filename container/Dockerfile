@@ -1,4 +1,4 @@
-# Graphite Meter — production image.
+# Graphite Meter - production image.
 # Multi-stage: build the Svelte client (bun), then build the Go server with the
 # client embedded, then ship a single static binary on scratch.
 #
@@ -12,7 +12,7 @@ ARG VERSION=0.0.0-dev
 ARG CLIENT_VERSION
 
 # ---------------------------------------------------------------------------
-# Stage: client — build the Svelte app with bun.
+# Stage: client - build the Svelte app with bun.
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:${BUN_VERSION} AS client
 # Build-time client config (override with --build-arg). Defaults to a
@@ -40,7 +40,7 @@ COPY client/ ./
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # ---------------------------------------------------------------------------
-# Stage: server — build the Go binary with the client embedded.
+# Stage: server - build the Go binary with the client embedded.
 # ---------------------------------------------------------------------------
 # Pin the patch release used by CI and the checked-in Go legal snapshot. The
 # floating 1.27 tag can lag the go.mod minimum and fail before the image's
@@ -67,7 +67,7 @@ RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/
 
 # ---------------------------------------------------------------------------
 # Final: a single static binary. The Svelte client is embedded inside it.
-# Config comes from env (GM_*, PUBLIC_*) and/or flags — read natively by the
+# Config comes from env (GM_*, PUBLIC_*) and/or flags - read natively by the
 # binary, so no shell entrypoint is needed (scratch has no shell anyway).
 # ---------------------------------------------------------------------------
 FROM scratch

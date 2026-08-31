@@ -7,7 +7,7 @@ Let's Encrypt certificate obtained over the Cloudflare DNS-01 challenge:
 
 ## Install
 
-Copy the whole directory into the rootless Quadlet search path — modern Quadlet
+Copy the whole directory into the rootless Quadlet search path - modern Quadlet
 discovers units recursively, and the unit files reference their siblings by
 relative path.
 
