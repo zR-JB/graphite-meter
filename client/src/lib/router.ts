@@ -14,6 +14,7 @@ export type AppRoute = {
 export type Route = AppRoute | { kind: "not-found" };
 
 const PANELS: readonly PanelSurface[] = ["settings", "endpoint"];
+const MAX_HASH_LENGTH = 4_096;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -45,7 +46,9 @@ function surfaces(query: string): Pick<AppRoute, "panels" | "dialog"> {
 }
 
 export function parseRoute(hash: string): Route {
+  if (typeof hash !== "string") return { kind: "not-found" };
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  if (raw.length > MAX_HASH_LENGTH) return { kind: "not-found" };
   const [path, query = ""] = raw.split("?", 2);
   const overlay = surfaces(query);
 

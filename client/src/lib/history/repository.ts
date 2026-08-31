@@ -5,21 +5,13 @@ import {
 } from "./errors";
 import {
   currentHistoryGeneration,
+  isHistoryGeneration,
   nextHistoryGeneration,
   restoreHistoryGeneration,
 } from "./changes";
-export {
-  broadcastHistory,
-  historyChanges,
-  type HistoryChange,
-} from "./changes";
-export {
-  InvalidHistoryRecordError,
-  StaleHistoryGenerationError,
-} from "./errors";
 
-export const HISTORY_DB_NAME = "graphite-meter";
-export const HISTORY_DB_VERSION = 2;
+const HISTORY_DB_NAME = "graphite-meter";
+const HISTORY_DB_VERSION = 2;
 const STORE = "results";
 const META = "meta";
 const INDEX = "completedAt";
@@ -99,8 +91,16 @@ export class HistoryRepository {
     let staleGeneration: string | undefined;
     generationRequest.onsuccess = () => {
       const durableGeneration = generationRequest.result?.value;
-      if (generationRequest.result && durableGeneration !== generation) {
-        staleGeneration = durableGeneration ?? "";
+      if (
+        generationRequest.result &&
+        (!isHistoryGeneration(durableGeneration) ||
+          durableGeneration !== generation)
+      ) {
+        staleGeneration = isHistoryGeneration(durableGeneration)
+          ? durableGeneration
+          : nextHistoryGeneration();
+        if (!isHistoryGeneration(durableGeneration)) store.clear();
+        metadata.put({ key: "generation", value: staleGeneration });
         return;
       }
       if (!generationRequest.result)

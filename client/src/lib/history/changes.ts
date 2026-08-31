@@ -3,10 +3,50 @@ export type HistoryChange =
   | { type: "clear"; generation: string };
 
 const GENERATION_KEY = "graphite-meter:history-generation";
+const MAX_GENERATION_LENGTH = 128;
+const GENERATION = /^[A-Za-z0-9._-]+$/;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isHistoryGeneration(value: unknown): value is string {
+  return (
+    value === "" ||
+    (typeof value === "string" &&
+      value.length <= MAX_GENERATION_LENGTH &&
+      GENERATION.test(value))
+  );
+}
+
+export function isHistoryChange(value: unknown): value is HistoryChange {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const change = value as Record<string, unknown>;
+  if (change.type === "clear") {
+    if (
+      !Object.keys(change).every(
+        (key) => key === "type" || key === "generation",
+      )
+    )
+      return false;
+    return (
+      typeof change.generation === "string" &&
+      change.generation !== "" &&
+      isHistoryGeneration(change.generation)
+    );
+  }
+  if (change.type !== "put" && change.type !== "delete") return false;
+  if (!Object.keys(change).every((key) => key === "type" || key === "id"))
+    return false;
+  return (
+    change.id === undefined ||
+    (typeof change.id === "string" && UUID.test(change.id))
+  );
+}
 
 export function currentHistoryGeneration(): string {
   try {
-    return localStorage.getItem(GENERATION_KEY) ?? "";
+    const generation = localStorage.getItem(GENERATION_KEY) ?? "";
+    return isHistoryGeneration(generation) ? generation : "";
   } catch {
     return "";
   }
@@ -39,12 +79,15 @@ export function historyChanges(
 ): () => void {
   if (typeof BroadcastChannel === "undefined") return () => {};
   const channel = new BroadcastChannel("graphite-meter-history");
-  channel.onmessage = (event) => onChange(event.data as HistoryChange);
+  channel.onmessage = (event) => {
+    if (isHistoryChange(event.data)) onChange(event.data);
+  };
   return () => channel.close();
 }
 
 export function broadcastHistory(change: HistoryChange): void {
-  if (typeof BroadcastChannel === "undefined") return;
+  if (typeof BroadcastChannel === "undefined" || !isHistoryChange(change))
+    return;
   const channel = new BroadcastChannel("graphite-meter-history");
   channel.postMessage(change);
   channel.close();

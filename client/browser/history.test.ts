@@ -12,6 +12,7 @@ import {
   test,
   waitForCompletion,
 } from "./webview";
+import { HISTORY_TEST_DB } from "./history-db";
 
 type TestPage = Parameters<typeof openApp>[0];
 
@@ -116,22 +117,26 @@ async function seedHistory(page: TestPage, values: unknown[], notify = true) {
   await page.evaluate(
     (input) =>
       new Promise<void>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 2);
+        const opening = indexedDB.open(input.db.name, input.db.version);
         opening.onupgradeneeded = () => {
           const database = opening.result;
-          const store = database.objectStoreNames.contains("results")
-            ? opening.transaction!.objectStore("results")
-            : database.createObjectStore("results", { keyPath: "id" });
-          if (!store.indexNames.contains("completedAt"))
-            store.createIndex("completedAt", "completedAt");
-          if (!database.objectStoreNames.contains("meta"))
-            database.createObjectStore("meta", { keyPath: "key" });
+          const store = database.objectStoreNames.contains(input.db.results)
+            ? opening.transaction!.objectStore(input.db.results)
+            : database.createObjectStore(input.db.results, {
+                keyPath: input.db.id,
+              });
+          if (!store.indexNames.contains(input.db.index))
+            store.createIndex(input.db.index, input.db.index);
+          if (!database.objectStoreNames.contains(input.db.meta))
+            database.createObjectStore(input.db.meta, {
+              keyPath: input.db.key,
+            });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const db = opening.result;
-          const transaction = db.transaction("results", "readwrite");
-          const store = transaction.objectStore("results");
+          const transaction = db.transaction(input.db.results, "readwrite");
+          const store = transaction.objectStore(input.db.results);
           store.clear();
           for (const item of input.items) store.put(item);
           transaction.oncomplete = () => {
@@ -143,7 +148,7 @@ async function seedHistory(page: TestPage, values: unknown[], notify = true) {
           transaction.onerror = () => reject(transaction.error);
         };
       }),
-    { items: values, notify },
+    { items: values, notify, db: HISTORY_TEST_DB },
   );
 }
 
@@ -216,15 +221,15 @@ test("explicitly enabled completion is reachable in History and stays responsive
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
   await expect(page.locator(".overview-primary")).toContainText("1");
   const savedWireRate = await page.evaluate(
-    () =>
+    (authority) =>
       new Promise<number | null>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 2);
+        const opening = indexedDB.open(authority.name, authority.version);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const db = opening.result;
           const request = db
-            .transaction("results", "readonly")
-            .objectStore("results")
+            .transaction(authority.results, "readonly")
+            .objectStore(authority.results)
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
@@ -234,6 +239,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
           };
         };
       }),
+    HISTORY_TEST_DB,
   );
   expect(savedWireRate).not.toBeNull();
   expect(savedWireRate!).toBeGreaterThan(0);
@@ -365,15 +371,15 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
   await expect(page.locator(".result-row")).toHaveCount(50);
 
   const profile = await page.evaluate(
-    () =>
+    (db) =>
       new Promise<{ nestedMs: number; cachedMs: number }>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 2);
+        const opening = indexedDB.open(db.name, db.version);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
           const request = database
-            .transaction("results", "readonly")
-            .objectStore("results")
+            .transaction(db.results, "readonly")
+            .objectStore(db.results)
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
@@ -421,6 +427,7 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
           };
         };
       }),
+    HISTORY_TEST_DB,
   );
   const elapsed = await page.evaluate(
     (expectedId) =>
@@ -520,16 +527,17 @@ test("malformed-only archives keep a raw clear path", async ({ page }) => {
   await dialog.getByRole("button", { name: "Clear history" }).click();
   await expect(page.getByText("No saved results")).toBeVisible();
   const count = await page.evaluate(
-    () =>
+    (db) =>
       new Promise<number>((resolve, reject) => {
-        const request = indexedDB.open("graphite-meter", 2);
+        const request = indexedDB.open(db.name, db.version);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
-          const tx = request.result.transaction("results", "readonly");
-          const get = tx.objectStore("results").count();
+          const tx = request.result.transaction(db.results, "readonly");
+          const get = tx.objectStore(db.results).count();
           get.onsuccess = () => resolve(get.result);
         };
       }),
+    HISTORY_TEST_DB,
   );
   expect(count).toBe(0);
 });

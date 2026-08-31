@@ -222,6 +222,10 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 
 func rejectDotSegments(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, `\`) {
+			http.NotFound(w, r)
+			return
+		}
 		for _, segment := range strings.Split(r.URL.Path, "/") {
 			if segment == "." || segment == ".." {
 				http.NotFound(w, r)

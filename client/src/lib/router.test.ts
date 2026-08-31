@@ -96,4 +96,10 @@ describe("hash router", () => {
     expect(parseRoute("#/history/not-a-uuid")).toEqual({ kind: "not-found" });
     expect(parseRoute("#/history/%zz")).toEqual({ kind: "not-found" });
   });
+
+  test("rejects oversized hash input before parsing", () => {
+    expect(parseRoute(`#/history?panels=${"settings,".repeat(500)}`)).toEqual({
+      kind: "not-found",
+    });
+  });
 });

@@ -1,11 +1,8 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { ICON } from "../constants";
-  import {
-    broadcastHistory,
-    historyChanges,
-    HistoryRepository,
-  } from "../history/repository";
+  import { HistoryRepository } from "../history/repository";
+  import { broadcastHistory, historyChanges } from "../history/changes";
   import {
     formatHistoryRate,
     formatLatency,
@@ -388,8 +385,8 @@
     if (!previous || id) return;
     void tick().then(() => {
       const target =
-        document.querySelector<HTMLElement>(
-          `[data-history-id="${previous}"]`,
+        [...document.querySelectorAll<HTMLElement>("[data-history-id]")].find(
+          (element) => element.dataset.historyId === previous,
         ) ??
         document.querySelector<HTMLElement>(
           ".history-workspace .close-history",

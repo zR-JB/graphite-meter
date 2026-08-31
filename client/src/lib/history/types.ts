@@ -12,6 +12,8 @@ export const HISTORY_SCHEMA_VERSION = 1 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_FAILURES = 16;
+const MAX_LANE_COUNT = 1_000_000;
 
 export type StageStatus = "complete" | "partial" | "failed" | "not-run";
 export interface FailureSnapshot {
@@ -457,7 +459,8 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
       nonnegativeOrNull(candidate.jitter) &&
       unitInterval(candidate.lossRatio) &&
       Number.isInteger(candidate.count) &&
-      nonnegative(candidate.count)
+      nonnegative(candidate.count) &&
+      candidate.count <= MAX_LANE_COUNT
     );
   };
   const throughputStage = (
@@ -606,6 +609,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     return false;
   if (
     !Array.isArray(record.failures) ||
+    record.failures.length > MAX_FAILURES ||
     record.failures.some(
       (failure) =>
         !isObject(failure) ||

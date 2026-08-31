@@ -4,12 +4,13 @@ import {
   StaleHistoryGenerationError,
 } from "./errors";
 import { currentHistoryGeneration } from "./changes";
-export type HistoryWrite = (
+const MAX_PENDING_HISTORY_WRITES = 128;
+type HistoryWrite = (
   record: HistoryRecordV1,
   isCurrent: () => boolean,
   generation: string,
 ) => Promise<void>;
-export type HistoryRemove = (id: string) => Promise<void>;
+type HistoryRemove = (id: string) => Promise<void>;
 
 type Pending = { record: HistoryRecordV1; generation: string };
 
@@ -39,6 +40,8 @@ export class HistoryWriteQueue {
     }
     if (this.#pending.some((pending) => pending.record.id === record.id))
       return true;
+    if (this.#pending.length >= MAX_PENDING_HISTORY_WRITES)
+      this.#pending.shift();
     this.#pending.push({ record, generation: this.#generation });
     this.#schedule();
     return true;

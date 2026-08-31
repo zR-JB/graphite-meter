@@ -77,11 +77,3 @@ export function sortPreparedHistory(
     })
     .map((entry) => entry.record);
 }
-
-export function sortHistory(
-  records: readonly HistoryRecordV1[],
-  sort: HistorySort,
-  descending = true,
-): HistoryRecordV1[] {
-  return sortPreparedHistory(prepareHistorySort(records), sort, descending);
-}

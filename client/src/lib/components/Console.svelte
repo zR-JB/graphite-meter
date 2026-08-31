@@ -29,7 +29,7 @@
   import { authEnabled } from "../auth";
   import { returnToLiveIndicator } from "../history/returnToLive";
   import { HistoryWriteQueue } from "../history/writeQueue";
-  import { historyChanges } from "../history/changes";
+  import { historyChanges, isHistoryChange } from "../history/changes";
   import {
     activatePanel,
     appRoute,
@@ -613,7 +613,7 @@
       if (store.historyCandidate?.id === candidate.id)
         store.historyCandidate = null;
       if (!permanentHistoryWarning) store.historyWarning = "";
-      void import("../history/repository").then(({ broadcastHistory }) => {
+      void import("../history/changes").then(({ broadcastHistory }) => {
         broadcastHistory({ type: "put", id: candidate.id });
         window.dispatchEvent(new Event("graphite-meter-history-changed"));
       });
@@ -649,7 +649,7 @@
     };
     const onHistoryChange = (event: Event) => {
       const change = (event as CustomEvent).detail;
-      if (change?.type === "clear" && typeof change.generation === "string")
+      if (isHistoryChange(change) && change.type === "clear")
         clearHistoryQueue(change.generation);
     };
     const stopHistoryChanges = historyChanges((change) => {

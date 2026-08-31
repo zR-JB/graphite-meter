@@ -1,4 +1,5 @@
 import { AxeBuilder } from "./webview";
+import { HISTORY_TEST_DB } from "./history-db";
 import {
   configureSettings,
   expect,
@@ -31,26 +32,33 @@ async function openWithHistoryDefault(page: TestPage, enabled: boolean) {
 
 async function seedRetainedResult(page: TestPage) {
   await page.evaluate(
-    (saved) =>
+    (input) =>
       new Promise<void>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 2);
+        const opening = indexedDB.open(input.db.name, input.db.version);
         opening.onupgradeneeded = () => {
           const database = opening.result;
-          const results = database.objectStoreNames.contains("results")
-            ? opening.transaction!.objectStore("results")
-            : database.createObjectStore("results", { keyPath: "id" });
-          if (!results.indexNames.contains("completedAt"))
-            results.createIndex("completedAt", "completedAt");
-          if (!database.objectStoreNames.contains("meta"))
-            database.createObjectStore("meta", { keyPath: "key" });
+          const results = database.objectStoreNames.contains(input.db.results)
+            ? opening.transaction!.objectStore(input.db.results)
+            : database.createObjectStore(input.db.results, {
+                keyPath: input.db.id,
+              });
+          if (!results.indexNames.contains(input.db.index))
+            results.createIndex(input.db.index, input.db.index);
+          if (!database.objectStoreNames.contains(input.db.meta))
+            database.createObjectStore(input.db.meta, {
+              keyPath: input.db.key,
+            });
         };
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
-          const transaction = database.transaction("results", "readwrite");
-          const results = transaction.objectStore("results");
+          const transaction = database.transaction(
+            input.db.results,
+            "readwrite",
+          );
+          const results = transaction.objectStore(input.db.results);
           results.clear();
-          results.put(saved);
+          results.put(input.saved);
           transaction.oncomplete = () => {
             database.close();
             resolve();
@@ -59,51 +67,54 @@ async function seedRetainedResult(page: TestPage) {
         };
       }),
     {
-      schemaVersion: 1,
-      id: "00000000-0000-4000-8000-000000000127",
-      startedAt: 1,
-      completedAt: 2,
-      durationMs: 1,
-      stages: {
-        latency: {
-          status: "not-run",
-          result: null,
-          lanes: {
-            latency: null,
-            download: null,
-            upload: null,
-            bidirectional: null,
+      db: HISTORY_TEST_DB,
+      saved: {
+        schemaVersion: 1,
+        id: "00000000-0000-4000-8000-000000000127",
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+        stages: {
+          latency: {
+            status: "not-run",
+            result: null,
+            lanes: {
+              latency: null,
+              download: null,
+              upload: null,
+              bidirectional: null,
+            },
           },
+          download: { status: "not-run", result: null },
+          upload: { status: "not-run", result: null },
+          bidirectional: { status: "not-run", down: null, up: null },
         },
-        download: { status: "not-run", result: null },
-        upload: { status: "not-run", result: null },
-        bidirectional: { status: "not-run", down: null, up: null },
+        bufferbloat: null,
+        totalBytes: 0,
+        server: { name: "Reset test", location: null, engine: "dummy" },
+        transport: {
+          throughput: { protocol: null, kind: null },
+          latency: { protocol: null, kind: null },
+        },
+        ipVersion: null,
+        client: { build: "browser-test" },
+        failures: [],
+        wireEstimates: null,
       },
-      bufferbloat: null,
-      totalBytes: 0,
-      server: { name: "Reset test", location: null, engine: "dummy" },
-      transport: {
-        throughput: { protocol: null, kind: null },
-        latency: { protocol: null, kind: null },
-      },
-      ipVersion: null,
-      client: { build: "browser-test" },
-      failures: [],
-      wireEstimates: null,
     },
   );
 }
 
 async function takeRetainedResultCount(page: TestPage) {
   return page.evaluate(
-    () =>
+    (db) =>
       new Promise<number>((resolve, reject) => {
-        const opening = indexedDB.open("graphite-meter", 2);
+        const opening = indexedDB.open(db.name, db.version);
         opening.onerror = () => reject(opening.error);
         opening.onsuccess = () => {
           const database = opening.result;
-          const transaction = database.transaction("results", "readwrite");
-          const results = transaction.objectStore("results");
+          const transaction = database.transaction(db.results, "readwrite");
+          const results = transaction.objectStore(db.results);
           const request = results.count();
           transaction.onerror = () => reject(transaction.error);
           request.onerror = () => reject(request.error);
@@ -117,6 +128,7 @@ async function takeRetainedResultCount(page: TestPage) {
           };
         };
       }),
+    HISTORY_TEST_DB,
   );
 }
 test("settings expose live controls and lock run construction inputs", async ({

@@ -83,7 +83,12 @@ func TestHandlerRoutes(t *testing.T) {
 }
 
 func TestHandlerDotSegmentsDoNotServeShell(t *testing.T) {
-	for _, requestPath := range []string{"/foo/..", "/assets/.."} {
+	for _, requestPath := range []string{
+		"/foo/..",
+		"/assets/..",
+		"/foo/%2e%2e",
+		`/foo\..\bar`,
+	} {
 		status, body := handlerResponse(t, nil, noRedirectClient(), requestPath)
 		if status != http.StatusNotFound {
 			t.Errorf("%s status = %d, want 404", requestPath, status)

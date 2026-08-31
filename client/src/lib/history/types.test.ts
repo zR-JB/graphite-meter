@@ -149,6 +149,29 @@ test("rejects malformed nested records before they reach rendering", () => {
     },
     { ...valid, bufferbloat: { ...valid.bufferbloat, grade: "Z" } },
     { ...valid, durationMs: -1 },
+    { ...valid, failures: Array.from({ length: 17 }, () => valid.failures[0]) },
+    {
+      ...valid,
+      stages: {
+        ...valid.stages,
+        latency: {
+          ...valid.stages.latency,
+          lanes: {
+            ...valid.stages.latency.lanes,
+            latency: {
+              min: null,
+              max: null,
+              p10: null,
+              p90: null,
+              center: null,
+              jitter: null,
+              lossRatio: 0,
+              count: 1_000_001,
+            },
+          },
+        },
+      },
+    },
     { ...valid, totalBytes: valid.totalBytes + 1 },
     {
       ...valid,

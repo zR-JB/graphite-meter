@@ -111,7 +111,12 @@ func TestH1RejectsDotSegmentsBeforeServeMuxCanonicalization(t *testing.T) {
 	mux := listenerMuxConfigured(t.Context(), e, muxTopology{spa: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("shell"))
 	}), nil)
-	for _, path := range []string{"/foo/..", "/assets/.."} {
+	for _, path := range []string{
+		"/foo/..",
+		"/assets/..",
+		"/foo/%2e%2e",
+		`/foo\..\bar`,
+	} {
 		recorder := httptest.NewRecorder()
 		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusNotFound {

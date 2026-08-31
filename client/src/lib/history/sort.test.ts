@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   naturalDescending,
   prepareHistorySort,
-  sortHistory,
   sortPreparedHistory,
 } from "./sort";
 import type { HistoryRecordV1 } from "./types";
@@ -64,11 +63,12 @@ test("all missing values sort last and ties are newest first", () => {
     record("missing", 3, null),
     record("new", 2, 10),
   ];
+  const prepared = prepareHistorySort(values);
   expect(
-    sortHistory(values, "download", true).map((value) => value.id),
+    sortPreparedHistory(prepared, "download", true).map((value) => value.id),
   ).toEqual(["new", "old", "missing"]);
   expect(
-    sortHistory(values, "download", false).map((value) => value.id),
+    sortPreparedHistory(prepared, "download", false).map((value) => value.id),
   ).toEqual(["new", "old", "missing"]);
 });
 
@@ -125,7 +125,8 @@ test("each history field sorts in its natural direction and keeps nulls last", (
     increaseMs: 19,
     grade: "A",
   };
-  const natural: [Parameters<typeof sortHistory>[1], string[]][] = [
+  const prepared = prepareHistorySort(values);
+  const natural: [Parameters<typeof sortPreparedHistory>[1], string[]][] = [
     ["date", ["c", "b", "a"]],
     ["download", ["b", "a", "c"]],
     ["upload", ["a", "b", "c"]],
@@ -135,15 +136,15 @@ test("each history field sorts in its natural direction and keeps nulls last", (
   ];
   for (const [field, expected] of natural)
     expect(
-      sortHistory(
-        values,
+      sortPreparedHistory(
+        prepared,
         field,
         field === "idle" || field === "loaded" ? false : true,
       ).map((item) => item.id),
       field,
     ).toEqual(expected);
-  expect(sortHistory(values, "download", false).at(-1)?.id).toBe("c");
-  expect(sortHistory(values, "loaded", false).at(-1)?.id).toBe("c");
+  expect(sortPreparedHistory(prepared, "download", false).at(-1)?.id).toBe("c");
+  expect(sortPreparedHistory(prepared, "loaded", false).at(-1)?.id).toBe("c");
 });
 
 test("prepared sorting extracts each record's active metric once across repeated orders", () => {
