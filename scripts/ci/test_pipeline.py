@@ -564,7 +564,7 @@ class PipelineTests(unittest.TestCase):
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("chrome-version: 152.0.7977.54", "chrome-version: latest"))
+        path.write_text(path.read_text().replace("chrome-version: 152.0.7977.82", "chrome-version: latest"))
         with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
             check_e2e_lifecycle(root)
 

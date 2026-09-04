@@ -50,7 +50,15 @@ async function snapshotGauge(page: Page): Promise<GaugeSnapshot> {
 }
 async function expectCoherentGauge(page: Page): Promise<void> {
   await expect(gaugeStage(page).locator("canvas")).toBeVisible();
-  await page.waitForTimeout(80);
+  await expect
+    .poll(async () => {
+      const gauge = await snapshotGauge(page);
+      return (
+        gauge.backingWidth === gauge.expectedBackingWidth &&
+        gauge.backingHeight === gauge.expectedBackingHeight
+      );
+    })
+    .toBe(true);
   const gauge = await snapshotGauge(page);
   expect(Math.abs(gauge.stageWidth - gauge.canvasWidth)).toBeLessThanOrEqual(2);
   expect(Math.abs(gauge.stageHeight - gauge.canvasHeight)).toBeLessThanOrEqual(

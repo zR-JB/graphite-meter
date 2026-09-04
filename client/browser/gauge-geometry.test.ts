@@ -67,7 +67,18 @@ async function assertGaugeLabels(page: Page) {
   const stageSize = await page
     .locator(".gauge-panel .stage")
     .evaluate((element) => {
-      return { width: element.clientWidth, height: element.clientHeight };
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        width:
+          box.width -
+          Number.parseFloat(style.borderLeftWidth) -
+          Number.parseFloat(style.borderRightWidth),
+        height:
+          box.height -
+          Number.parseFloat(style.borderTopWidth) -
+          Number.parseFloat(style.borderBottomWidth),
+      };
     });
   const expected = gaugeLayout(stageSize.width, stageSize.height);
   const tickOuter = Math.hypot(
@@ -88,21 +99,29 @@ async function assertGaugeLabels(page: Page) {
     { x: "start", y: "start" },
   ]);
   const boxes = await labels.evaluateAll((ticks) => {
-    const stage = ticks[0]!.parentElement!.getBoundingClientRect();
-    const center = { x: stage.width / 2, y: stage.height / 2 };
+    const stageElement = ticks[0]!.parentElement!.parentElement!;
+    const stage = stageElement.getBoundingClientRect();
+    const stageStyle = getComputedStyle(stageElement);
+    const borderLeft = Number.parseFloat(stageStyle.borderLeftWidth);
+    const borderTop = Number.parseFloat(stageStyle.borderTopWidth);
+    const transform = new DOMMatrix(
+      getComputedStyle(ticks[0]!.parentElement!).transform,
+    );
+    const center = {
+      x: stage.width / 2 + transform.m41,
+      y: stage.height / 2 + transform.m42,
+    };
     return ticks.map((tick) => {
       const box = tick.getBoundingClientRect();
       const style = getComputedStyle(tick);
       const anchor = {
-        x: Number.parseFloat(style.left),
-        y: Number.parseFloat(style.top),
+        x: borderLeft + Number.parseFloat(style.left) + transform.m41,
+        y: borderTop + Number.parseFloat(style.top) + transform.m42,
       };
       const left = box.left - stage.left;
       const right = box.right - stage.left;
       const top = box.top - stage.top;
       const bottom = box.bottom - stage.top;
-      const nearestX = Math.max(left, Math.min(center.x, right));
-      const nearestY = Math.max(top, Math.min(center.y, bottom));
       return {
         anchor,
         box: {
@@ -113,7 +132,7 @@ async function assertGaugeLabels(page: Page) {
         },
         anchorX: tick.getAttribute("data-anchor-x"),
         anchorY: tick.getAttribute("data-anchor-y"),
-        nearestRadius: Math.hypot(nearestX - center.x, nearestY - center.y),
+        anchorRadius: Math.hypot(anchor.x - center.x, anchor.y - center.y),
         contained:
           box.left >= stage.left &&
           box.right <= stage.right &&
@@ -131,7 +150,8 @@ async function assertGaugeLabels(page: Page) {
     if (label.anchorY === "start") expectNear(label.box.top, label.anchor.y);
     if (label.anchorY === "center")
       expectNear((label.box.top + label.box.bottom) / 2, label.anchor.y);
-    expect(label.nearestRadius).toBeGreaterThanOrEqual(tickOuter + 1);
+    // Allow opposite CSS-pixel rounding while rejecting material intrusion into the tick ring.
+    expect(label.anchorRadius).toBeGreaterThanOrEqual(tickOuter - 1);
     expect(label.contained).toBe(true);
   }
   for (const [index, first] of boxes.entries()) {

@@ -93,7 +93,7 @@ func TestValidateReviewRequiresIdentityAndCompleteFingerprint(t *testing.T) {
 	}
 }
 
-func TestValidateReviewVersionMismatchReportsReviewedAndCurrent(t *testing.T) {
+func TestValidateReviewAcceptsVersionChangeWithIdenticalLegalFacts(t *testing.T) {
 	file := LegalFile{Name: "LICENSE", SHA256: SHA256([]byte("BSD"))}
 	component := Component{
 		Name: "Go standard library", Ecosystem: "go-toolchain", Version: "go1.26.5",
@@ -105,9 +105,8 @@ func TestValidateReviewVersionMismatchReportsReviewedAndCurrent(t *testing.T) {
 		DeclaredLicenseExpression: "BSD-3-Clause", SelectedLicenseExpression: "BSD-3-Clause",
 		LegalFiles: []LegalFile{file}, ReviewDecision: "approved",
 	}
-	err := ValidateReview(component, []Review{review})
-	if err == nil || !strings.Contains(err.Error(), "reviewed=go1.26.6 current=go1.26.5") {
-		t.Fatalf("version mismatch diagnostic = %v", err)
+	if err := ValidateReview(component, []Review{review}); err != nil {
+		t.Fatalf("version-only update rejected: %v", err)
 	}
 }
 

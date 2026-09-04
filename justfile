@@ -46,7 +46,7 @@ gitleaks_version := trim(shell("cat .gitleaks-version"))
 gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 # Staticcheck 2026.2 is the first release line with Go 1.27 support.
 staticcheck_version := "2026.2.1"
-govulncheck_version := "v1.6.0"
+govulncheck_version := "v1.7.0"
 
 # Set OS-specific path for the Go build cache to remain fully cross-platform
 GOCACHE := env("GOCACHE", if os() == "windows" { env("TEMP") / "graphite-meter-go-build" } else { "/tmp/graphite-meter-go-build" })
@@ -62,7 +62,7 @@ default:
 setup:
     #!/usr/bin/env sh
     set -eu
-    cd client && bun install --frozen-lockfile
+    cd client && bun install --frozen-lockfile --prefer-offline
     cd ../go && go mod download
     cd ..
     just _install-tools
@@ -83,7 +83,7 @@ doctor:
     actual_bun_revision=$(bun --revision 2>/dev/null || echo missing)
     expected_just=$(tr -d '[:space:]' < .just-version)
     actual_just=$(just --version 2>/dev/null | awk '{print $2}')
-    expected_chrome=152.0.7977.54
+    expected_chrome=152.0.7977.82
     ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
     expected_skopeo=1.22.2
     expected_skopeo_digest=sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad

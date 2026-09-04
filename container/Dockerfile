@@ -5,7 +5,7 @@
 # Build from the REPO ROOT:
 #   docker build -f container/Dockerfile -t graphite-meter:latest .
 #
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION=1.4.1
 # Direct source builds are explicitly development builds. Release and
 # prerelease automation supplies the public server and client versions.
 ARG VERSION=0.0.0-dev
@@ -45,7 +45,7 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 # Pin the patch release used by CI and the checked-in Go legal snapshot. The
 # floating 1.27 tag can lag the go.mod minimum and fail before the image's
 # legal files are even staged.
-FROM docker.io/library/golang:1.27.0 AS server
+FROM docker.io/library/golang:1.27.1 AS server
 ARG VERSION
 WORKDIR /src/go
 # Module graph first for caching.

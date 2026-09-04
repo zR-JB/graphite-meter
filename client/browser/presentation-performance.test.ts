@@ -87,10 +87,13 @@ performanceTest(
       await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
     }
     await openApp(page);
-    await page.waitForTimeout(1800);
-    const idle = await draws(page);
-    await page.waitForTimeout(500);
-    expect(await draws(page)).toBe(idle);
+    await expect
+      .poll(async () => {
+        const before = await draws(page);
+        await page.waitForTimeout(500);
+        return (await draws(page)) === before;
+      })
+      .toBe(true);
     await resetMetrics(page);
     await startTest(page);
     await page.waitForTimeout(1200);

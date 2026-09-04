@@ -257,7 +257,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ============================================================
 
 Component: github.com/coreos/go-oidc/v3
-Version: v3.20.0
+Version: v3.21.0
 Source: https://github.com/coreos/go-oidc
 License: Apache-2.0
 Modified by Graphite Meter: no
@@ -516,7 +516,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ============================================================
 
 Component: github.com/go-jose/go-jose/v4
-Version: v4.1.4
+Version: v4.1.5
 Source: https://github.com/go-jose/go-jose
 License: Apache-2.0
 Modified by Graphite Meter: no
@@ -777,7 +777,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ============================================================
 
 Component: github.com/quic-go/quic-go
-Version: v0.61.0
+Version: v0.62.0
 Source: https://github.com/quic-go/quic-go
 License: MIT
 Modified by Graphite Meter: no
@@ -839,7 +839,7 @@ The quic-go project reserves the right to revoke this authorization at any time 
 ============================================================
 
 Component: github.com/quic-go/webtransport-go
-Version: v0.12.0
+Version: v0.13.0
 Source: https://github.com/quic-go/webtransport-go
 License: MIT
 Modified by Graphite Meter: no
@@ -857,7 +857,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ============================================================
 
 Component: golang.org/x/crypto
-Version: v0.55.0
+Version: v0.56.0
 Source: https://go.googlesource.com/crypto
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1210,7 +1210,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: Go standard library
-Version: go1.27.0
+Version: go1.27.1
 Source: https://go.dev/
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1273,7 +1273,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: svelte
-Version: 5.56.10
+Version: 5.57.0
 Source: https://github.com/sveltejs/svelte
 License: MIT
 Modified by Graphite Meter: no

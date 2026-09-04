@@ -722,10 +722,10 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     for required in (
         "browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4",
-        "chrome-version: 152.0.7977.54",
+        "chrome-version: 152.0.7977.82",
         "BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
         "BUN_CHROME_ARGS: --no-sandbox",
-        "GM_EXPECTED_CHROME_VERSION: 152.0.7977.54",
+        "GM_EXPECTED_CHROME_VERSION: 152.0.7977.82",
         "run: cd client && bun run check:webview",
         "webview-browser-failures",
         "webview-e2e-failures",

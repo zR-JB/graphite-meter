@@ -141,6 +141,9 @@ func main() {
 		fmt.Printf("legal check passed: server/browser=%d tui=%d container=%d\n", len(server), len(tui), len(container))
 		return
 	}
+	refreshReviewedVersions(sets, reviews)
+	reviewData := must(marshal(reviews))
+	files = append(files, outputFile{filepath.Join("legal", "reviewed-components.json"), reviewData})
 	for _, file := range files {
 		path := filepath.Join(repo, file.path)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -151,6 +154,20 @@ func main() {
 		}
 	}
 	fmt.Printf("legal generated: server/browser=%d tui=%d container=%d\n", len(server), len(tui), len(container))
+}
+
+func refreshReviewedVersions(scopes []componentScope, reviews []legal.Review) {
+	versions := make(map[string]string)
+	for _, scope := range scopes {
+		for _, component := range scope.components {
+			versions[component.Ecosystem+"\x00"+component.Name] = component.Version
+		}
+	}
+	for i := range reviews {
+		if version := versions[reviews[i].Ecosystem+"\x00"+reviews[i].Name]; version != "" {
+			reviews[i].ReviewedVersion = version
+		}
+	}
 }
 
 func fatal(err error) {

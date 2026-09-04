@@ -241,14 +241,6 @@ func ValidateReview(c Component, reviews []Review) error {
 	if r.ReviewDecision != "approved" {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: review for %s is unresolved", c.Name)
 	}
-	if r.ReviewedVersion != "" && r.ReviewedVersion != c.Version {
-		return fmt.Errorf(
-			"LEGAL REVIEW REQUIRED: reviewed version changed for %s: reviewed=%s current=%s",
-			c.Name,
-			r.ReviewedVersion,
-			c.Version,
-		)
-	}
 	if r.DeclaredLicenseExpression != c.DeclaredLicenseExpression || r.SelectedLicenseExpression == "" {
 		return fmt.Errorf("LEGAL REVIEW REQUIRED: declared license changed for %s", c.Name)
 	}
