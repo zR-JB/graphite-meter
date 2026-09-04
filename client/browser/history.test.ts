@@ -798,9 +798,9 @@ test("wide panels compose over History while narrow routes keep only the visible
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(settingsPanel(page)).toHaveAttribute("inert", "");
   await expect(endpointPanel(page)).toBeVisible();
-  expect(await page.evaluate(() => window.location.hash)).toBe(
-    "#/history?panels=endpoint",
-  );
+  await expect
+    .poll(() => page.evaluate(() => window.location.hash))
+    .toBe("#/history?panels=endpoint");
 
   await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
   expect(await page.evaluate(() => window.location.hash)).toBe("#/history");
@@ -1659,11 +1659,17 @@ test("one inline scroll owner accepts wheel gestures over rows and mobile detail
   await row.click();
   const detailSurface = page.locator(".result-detail .throughput-card").first();
   await detailSurface.scrollIntoViewIfNeeded();
-  await detailSurface.hover();
+  await scrollOwner.evaluate((node) => {
+    node.scrollTop = Math.max(0, node.scrollTop - 64);
+  });
   const beforeDetailWheel = await scrollOwner.evaluate(
     (node) => node.scrollTop,
   );
-  const detailBox = await detailSurface.boundingBox();
+  const detailBox = await scrollOwner.boundingBox();
+  await page.mouse.move(
+    (detailBox?.x ?? 0) + (detailBox?.width ?? 0) / 2,
+    (detailBox?.y ?? 0) + (detailBox?.height ?? 0) / 2,
+  );
   await cdp.send("Input.dispatchMouseEvent", {
     type: "mouseWheel",
     x: (detailBox?.x ?? 0) + (detailBox?.width ?? 0) / 2,

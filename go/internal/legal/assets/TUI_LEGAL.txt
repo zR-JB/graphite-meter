@@ -1199,7 +1199,7 @@ Yasuhiro Matsumoto (a.k.a. mattn)
 ============================================================
 
 Component: github.com/mattn/go-runewidth
-Version: v0.0.28
+Version: v0.0.29
 Source: https://github.com/mattn/go-runewidth
 License: MIT
 Modified by Graphite Meter: no
@@ -1345,7 +1345,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ============================================================
 
 Component: github.com/quic-go/quic-go
-Version: v0.61.0
+Version: v0.62.0
 Source: https://github.com/quic-go/quic-go
 License: MIT
 Modified by Graphite Meter: no
@@ -1407,7 +1407,7 @@ The quic-go project reserves the right to revoke this authorization at any time 
 ============================================================
 
 Component: github.com/quic-go/webtransport-go
-Version: v0.12.0
+Version: v0.13.0
 Source: https://github.com/quic-go/webtransport-go
 License: MIT
 Modified by Graphite Meter: no
@@ -1489,7 +1489,7 @@ SOFTWARE.
 ============================================================
 
 Component: golang.org/x/crypto
-Version: v0.55.0
+Version: v0.56.0
 Source: https://go.googlesource.com/crypto
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1741,7 +1741,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: Go standard library
-Version: go1.27.0
+Version: go1.27.1
 Source: https://go.dev/
 License: BSD-3-Clause
 Modified by Graphite Meter: no

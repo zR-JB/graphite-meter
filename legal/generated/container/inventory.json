@@ -76,7 +76,7 @@
     },
     {
       "name": "github.com/coreos/go-oidc/v3",
-      "version": "v3.20.0",
+      "version": "v3.21.0",
       "ecosystem": "go",
       "source": "https://github.com/coreos/go-oidc",
       "declaredLicenseExpression": "Apache-2.0",
@@ -119,7 +119,7 @@
     },
     {
       "name": "github.com/go-jose/go-jose/v4",
-      "version": "v4.1.4",
+      "version": "v4.1.5",
       "ecosystem": "go",
       "source": "https://github.com/go-jose/go-jose",
       "declaredLicenseExpression": "Apache-2.0",
@@ -161,7 +161,7 @@
     },
     {
       "name": "github.com/quic-go/quic-go",
-      "version": "v0.61.0",
+      "version": "v0.62.0",
       "ecosystem": "go",
       "source": "https://github.com/quic-go/quic-go",
       "declaredLicenseExpression": "MIT",
@@ -185,7 +185,7 @@
     },
     {
       "name": "github.com/quic-go/webtransport-go",
-      "version": "v0.12.0",
+      "version": "v0.13.0",
       "ecosystem": "go",
       "source": "https://github.com/quic-go/webtransport-go",
       "declaredLicenseExpression": "MIT",
@@ -203,7 +203,7 @@
     },
     {
       "name": "golang.org/x/crypto",
-      "version": "v0.55.0",
+      "version": "v0.56.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/crypto",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -346,7 +346,7 @@
     },
     {
       "name": "Go standard library",
-      "version": "go1.27.0",
+      "version": "go1.27.1",
       "ecosystem": "go-toolchain",
       "source": "https://go.dev/",
       "declaredLicenseExpression": "BSD-3-Clause",
@@ -371,7 +371,7 @@
     },
     {
       "name": "svelte",
-      "version": "5.56.10",
+      "version": "5.57.0",
       "ecosystem": "npm",
       "source": "https://github.com/sveltejs/svelte",
       "declaredLicenseExpression": "MIT",

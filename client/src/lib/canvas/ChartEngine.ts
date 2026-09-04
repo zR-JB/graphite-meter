@@ -214,7 +214,7 @@ export class ChartEngine {
     warn: "#c4a568",
     err: "#d89393",
     grid: "rgba(211,219,227,0.05)",
-    textSoft: "#6a717a",
+    textSoft: "#8b929a",
     brand: "#6db0b8",
   };
   constructor(
@@ -356,7 +356,7 @@ export class ChartEngine {
       warn: g("--warn", "#c4a568"),
       err: g("--err", "#d89393"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
-      textSoft: g("--text-soft", "#6a717a"),
+      textSoft: g("--text-soft", "#8b929a"),
       brand: g("--brand", "#6db0b8"),
     };
     this.#invalidateGradients();

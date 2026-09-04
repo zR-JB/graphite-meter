@@ -16,7 +16,9 @@ just ci
 ```
 
 If the component's complete legal-file fingerprint is unchanged, the existing
-review is reusable and only the generated version changes.
+review is reusable; generation refreshes its reviewed version and all shipped
+legal metadata. A changed license expression, notice, or legal-file byte still
+requires maintainer review.
 
 ## New dependency or changed legal facts
 

@@ -131,13 +131,13 @@ jobs:
         name: Install pinned Chrome for Testing
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
         with:
-          chrome-version: 152.0.7977.54
+          chrome-version: 152.0.7977.82
           install-dependencies: true
       - name: Verify pinned Chromium WebView launch
         env:
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GM_EXPECTED_CHROME_VERSION: 152.0.7977.54
+          GM_EXPECTED_CHROME_VERSION: 152.0.7977.82
         run: cd client && bun run check:webview
       - name: Run Chromium WebView browser suite
         env:
@@ -187,13 +187,13 @@ jobs:
         name: Install pinned Chrome for Testing
         uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
         with:
-          chrome-version: 152.0.7977.54
+          chrome-version: 152.0.7977.82
           install-dependencies: true
       - name: Verify pinned Chromium WebView launch
         env:
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GM_EXPECTED_CHROME_VERSION: 152.0.7977.54
+          GM_EXPECTED_CHROME_VERSION: 152.0.7977.82
         run: cd client && bun run check:webview
       - name: Run browser/server transport E2E
         env:

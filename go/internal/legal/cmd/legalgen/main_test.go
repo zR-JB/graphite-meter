@@ -594,6 +594,19 @@ func TestReviewedNestedLegalFilesAreRehashedAndAuthoritative(t *testing.T) {
 	}
 }
 
+func TestRefreshReviewedVersionsOnlyUpdatesDiscoveredComponents(t *testing.T) {
+	reviews := []legal.Review{
+		{Ecosystem: "npm", Name: "used", ReviewedVersion: "1.0.0"},
+		{Ecosystem: "npm", Name: "unused", ReviewedVersion: "2.0.0"},
+	}
+	refreshReviewedVersions([]componentScope{{components: []legal.Component{
+		{Ecosystem: "npm", Name: "used", Version: "1.1.0"},
+	}}}, reviews)
+	if reviews[0].ReviewedVersion != "1.1.0" || reviews[1].ReviewedVersion != "2.0.0" {
+		t.Fatalf("reviewed versions = %#v", reviews)
+	}
+}
+
 func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(repo, "go"), 0o755); err != nil {

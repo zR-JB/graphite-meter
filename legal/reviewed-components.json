@@ -244,7 +244,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/coreos/go-oidc/v3",
-    "reviewedVersion": "v3.20.0",
+    "reviewedVersion": "v3.21.0",
     "upstream": "https://github.com/coreos/go-oidc",
     "declaredLicenseExpression": "Apache-2.0",
     "selectedLicenseExpression": "Apache-2.0",
@@ -312,7 +312,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/go-jose/go-jose/v4",
-    "reviewedVersion": "v4.1.4",
+    "reviewedVersion": "v4.1.5",
     "upstream": "https://github.com/go-jose/go-jose",
     "declaredLicenseExpression": "Apache-2.0",
     "selectedLicenseExpression": "Apache-2.0",
@@ -398,7 +398,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/mattn/go-runewidth",
-    "reviewedVersion": "v0.0.28",
+    "reviewedVersion": "v0.0.29",
     "upstream": "https://github.com/mattn/go-runewidth",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -500,7 +500,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/quic-go/quic-go",
-    "reviewedVersion": "v0.61.0",
+    "reviewedVersion": "v0.62.0",
     "upstream": "https://github.com/quic-go/quic-go",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -526,7 +526,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/quic-go/webtransport-go",
-    "reviewedVersion": "v0.12.0",
+    "reviewedVersion": "v0.13.0",
     "upstream": "https://github.com/quic-go/webtransport-go",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -588,7 +588,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/crypto",
-    "reviewedVersion": "v0.55.0",
+    "reviewedVersion": "v0.56.0",
     "upstream": "https://go.googlesource.com/crypto",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -740,7 +740,7 @@
   {
     "ecosystem": "go-toolchain",
     "name": "Go standard library",
-    "reviewedVersion": "go1.27.0",
+    "reviewedVersion": "go1.27.1",
     "upstream": "https://go.dev/",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -766,7 +766,7 @@
   {
     "ecosystem": "npm",
     "name": "svelte",
-    "reviewedVersion": "5.56.10",
+    "reviewedVersion": "5.57.0",
     "upstream": "https://github.com/sveltejs/svelte",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -802,7 +802,10 @@
       }
     ],
     "modified": false,
-    "artifactScopes": ["server/browser", "container"],
+    "artifactScopes": [
+      "server/browser",
+      "container"
+    ],
     "reviewDecision": "approved",
     "reviewNotes": "The self-hosted webfont is the upstream Instrument Sans family, distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
   },
@@ -820,7 +823,10 @@
       }
     ],
     "modified": false,
-    "artifactScopes": ["server/browser", "container"],
+    "artifactScopes": [
+      "server/browser",
+      "container"
+    ],
     "reviewDecision": "approved",
     "reviewNotes": "The self-hosted webfont identifies Spline Sans Mono version 1.002 and is distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
   },
@@ -838,7 +844,9 @@
       }
     ],
     "modified": false,
-    "artifactScopes": ["container"],
+    "artifactScopes": [
+      "container"
+    ],
     "reviewDecision": "approved",
     "reviewNotes": "The final image preserves /usr/share/doc/ca-certificates/copyright from the exact builder supplying /etc/ssl/certs/ca-certificates.crt. The package contains Debian, Mozilla, and certificate-authority attribution with multiple licenses; the build-time copy is fail-closed and the package copyright file is retained verbatim."
   }
