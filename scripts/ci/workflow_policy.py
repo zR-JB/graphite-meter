@@ -592,13 +592,15 @@ def check_toolchain_consumers(root: pathlib.Path = ROOT) -> None:
         if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun|extractions/setup-just)@", text):
             fail(f"{path.relative_to(root)} must provision project tools through mise")
         if "uses: jdx/mise-action@" in text:
-            blocks = re.findall(r"(?ms)^( +)- (?:name:.*\n\1  )?uses: jdx/mise-action@[^\n]+\n(.*?)(?=^\1- |\Z)", text)
+            blocks = re.findall(r"(?ms)^( +)- (?:name:[^\n]*\n\1  )?uses: jdx/mise-action@[^\n]+\n(.*?)(?=^\1- |\Z)", text)
             if not blocks:
                 fail(f"{path.relative_to(root)} has an unrecognized mise bootstrap")
             for _, block in blocks:
-                for required in (f"version: {pin('tools.mise', root)}", "install_args:", "cache:", "MISE_AUTO_INSTALL: '0'"):
+                for required in (f"version: {pin('tools.mise', root)}", "install_args: --locked ", "cache:", "MISE_AUTO_INSTALL: '0'"):
                     if required not in block:
                         fail(f"{path.relative_to(root)} mise setup must declare {required}")
+                if path.parent.name == "workflows" and ("install_args: --locked python" not in block or "cache: false" not in block):
+                    fail(f"{path.relative_to(root)} trusted Python bootstrap must disable shared caches and install only Python")
     check_toolchain_literals(root)
 
 

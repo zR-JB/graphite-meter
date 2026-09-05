@@ -11,6 +11,11 @@ Install [mise](https://mise.jdx.dev/installing-mise.html) at the exact version i
 standalone checkers. Git, Bash and jq are required; browser suites also need the
 pinned Chrome for Testing version, and container checks need Docker or Podman.
 
+On Windows, install Git for Windows and put its `bash.exe` and `sh.exe` on
+`PATH`. You can invoke mise from PowerShell; tasks using POSIX syntax explicitly
+select Bash or their declared `sh` interpreter. Windows task execution has not
+been verified by the current validation.
+
 Run setup once per checkout:
 
 ```sh

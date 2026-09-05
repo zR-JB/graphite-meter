@@ -55,10 +55,12 @@ description = "Validate workflow structure and trust boundaries"
 run = "python3 scripts/ci/workflow_policy.py"
 
 [tasks.python-check]
+shell = "bash -e -o pipefail -c"
 description = "Type-check Python tools and tests"
 run = 'ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" --extra-search-path scripts/ci --error-on-warning'
 
 [tasks.pipeline-test]
+shell = "bash -e -o pipefail -c"
 description = "Test release and prerelease control-plane behavior"
 run = [
   { task = "python-check" },
@@ -140,6 +142,7 @@ description = "Validate runtime legal closure and generated metadata"
 run = [{ task = "_legal-run", args = ["check"] }]
 
 [tasks.legal-review]
+shell = "bash -e -o pipefail -c"
 description = "Print a legal audit or review template"
 usage = 'arg "[mode]" default="audit"'
 run = 'mise run _legal-run "review-${usage_mode?}"'
@@ -180,6 +183,7 @@ raw = true
 run = "bun run dev"
 
 [tasks.auth-preview]
+shell = "bash -e -o pipefail -c"
 description = "Preview the no-JavaScript login page on loopback"
 dir = "go"
 raw = true
@@ -198,6 +202,7 @@ run = [
 ]
 
 [tasks.client-check-generated]
+shell = "bash -e -o pipefail -c"
 description = "Check schema-derived client type drift"
 run = [
   { task = "client-gen-types" },
@@ -219,6 +224,7 @@ run = [
 ]
 
 [tasks.server-build-prod]
+shell = "bash -e -o pipefail -c"
 description = "Build the stamped production server with embedded client assets"
 run = [
   { task = "client-build-prod" },
@@ -231,6 +237,7 @@ cd go && go build -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal
 ]
 
 [tasks.server-check]
+shell = "bash -e -o pipefail -c"
 description = "Check Go formatting and vet, including the stress harness"
 dir = "go"
 run = [
@@ -245,6 +252,7 @@ dir = "go"
 run = "go test ./..."
 
 [tasks.check-generated]
+shell = "bash -e -o pipefail -c"
 description = "Check embedded authentication asset drift"
 run = [
   "python3 -m scripts.auth_assets",
@@ -306,6 +314,7 @@ dir = "go"
 run = "go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/"
 
 [tasks.bench-wire]
+shell = "bash -e -o pipefail -c"
 description = "Benchmark Go and TypeScript wire codecs"
 run = [
   "cd go && go test ./internal/wire/ -run '^$' -bench 'Decode|Encode' -benchmem -benchtime=2s",
@@ -313,6 +322,7 @@ run = [
 ]
 
 [tasks.bench-throughput]
+shell = "bash -e -o pipefail -c"
 description = "Run selected throughput benchmark cells (manual)"
 dir = "client"
 usage = 'arg "[filter]" default=""'
@@ -402,6 +412,7 @@ run = [
 ]
 
 [tasks.goclient-build]
+shell = "bash -e -o pipefail -c"
 description = "Build the stamped native TUI without browser assets"
 run = '''
 version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
@@ -425,6 +436,7 @@ run = [
 ]
 
 [tasks.prod]
+shell = "bash -e -o pipefail -c"
 description = "Build the production client and run the stamped server"
 raw = true
 run = [

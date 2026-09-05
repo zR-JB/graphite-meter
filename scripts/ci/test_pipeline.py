@@ -543,6 +543,14 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "install_args"):
             check_toolchain_consumers(root)
 
+    def test_trusted_python_bootstrap_cannot_enable_shared_tool_cache(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-publish.yml"
+        path.write_text(path.read_text().replace("cache: false", "cache: true", 1))
+        with self.assertRaisesRegex(PolicyError, "disable shared caches"):
+            check_toolchain_consumers(root)
+
     def test_policy_rejects_unpinned_chrome_version(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
