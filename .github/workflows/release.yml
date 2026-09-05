@@ -42,10 +42,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
         with:
-          python-version-file: .python-version
+          version: 2026.9.1
+          install_args: --locked python
+          cache: false
 
       - name: Download untrusted manual release request
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -88,6 +92,7 @@ jobs:
         with:
           go: 'true'
           go-cache: 'false'
+          cache: 'false'
           bun: 'true'
           client-deps: 'true'
           bun-cache: 'false'
@@ -95,17 +100,17 @@ jobs:
       - name: Generate release legal outputs
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: just legal-generate
+        run: mise run legal-generate
 
       - name: Build exact production client and server
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: just release-build "$VERSION"
+        run: mise run release-build "$VERSION"
 
       - name: Build native artifacts and third-party source
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: just release-artifacts "$VERSION"
+        run: mise run release-artifacts "$VERSION"
 
       - name: Verify exact native artifacts and embedded versions
         env:
@@ -191,10 +196,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
         with:
-          python-version-file: .python-version
+          version: 2026.9.1
+          install_args: --locked python
+          cache: false
 
       - id: recheck
         name: Reconfirm source is still current main with Gate and CodeQL

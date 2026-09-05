@@ -40,10 +40,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
         with:
-          python-version-file: .python-version
+          version: 2026.9.1
+          install_args: --locked python
+          cache: false
 
       - id: resolve
         name: Bind triggering run to trusted current-main request workflow
@@ -90,10 +94,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
         with:
-          python-version-file: .python-version
+          version: 2026.9.1
+          install_args: --locked python
+          cache: false
 
       - id: validate
         name: Recheck request metadata, PR state, Gate, and CodeQL
@@ -167,10 +175,14 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
         with:
-          python-version-file: .python-version
+          version: 2026.9.1
+          install_args: --locked python
+          cache: false
 
       - id: recheck
         name: Reconfirm exact PR head, current main, Gate, and CodeQL

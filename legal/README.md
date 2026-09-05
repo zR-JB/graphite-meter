@@ -16,8 +16,8 @@ and artifact logic stays in Python. The Go runtime package only embeds the
 generated TUI legal report.
 
 All Python tooling and tests are checked with the standalone `ty` binary through
-`just python-check`. `just setup` prepares the version-pinned checker; the
-legal commands themselves need only the Python runtime in `.python-version` and the relevant dependency
+`mise run python-check`. `mise run setup` prepares the version-pinned checker; the
+legal commands themselves need only the Python runtime in `mise.toml` and the relevant dependency
 discovery tools. They perform no package installation or online license lookup.
 
 ## Normal development
@@ -25,14 +25,14 @@ discovery tools. They perform no package installation or online license lookup.
 No legal action is required beyond the normal fast gate:
 
 ```bash
-just check
+mise run check
 ```
 
 ## Routine dependency update
 
 ```bash
-just legal-generate
-just ci
+mise run legal-generate
+mise run ci
 ```
 
 If the component's complete legal-file fingerprint is unchanged, the existing
@@ -46,17 +46,17 @@ For a new dependency or changed legal file, generate the maintainer review
 template first:
 
 ```bash
-just legal-review template
+mise run legal-review template
 ```
 
 For an independent deterministic audit manifest of discovered components:
 
 ```bash
-just legal-review audit
+mise run legal-review audit
 ```
 
 The private generator modes and packaging helpers are not part of the normal
-developer interface. Use `just --list` for the current public command list.
+developer interface. Use `mise tasks` for the current public command list.
 
 Inspect the exact upstream revision and its legal files, then add a reviewed
 record to `reviewed-components.json`, regenerate, and run CI. New components

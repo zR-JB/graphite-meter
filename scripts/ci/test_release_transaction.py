@@ -40,7 +40,7 @@ class ReleaseTransactionTests(unittest.TestCase):
 
     def test_transaction_structure_preserves_last_mile_boundary(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
-        for forbidden in ("actions/checkout@", "uses: ./", "scripts/", "just "):
+        for forbidden in ("actions/checkout@", "uses: ./", "scripts/", "mise "):
             self.assertNotIn(forbidden, text)
         for required in (
             "wait_for_tag_target()",

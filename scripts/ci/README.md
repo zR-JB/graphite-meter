@@ -5,7 +5,7 @@ provenance layer. The intended split is deliberately small:
 
 - workflow YAML owns events, jobs, dependencies, permissions, environments, and
   short publication transactions;
-- `just` owns project build/test commands;
+- `mise` owns pinned tools and project build/test commands;
 - typed, stdlib-only Python in `scripts/ci/` owns trust decisions, GitHub API
   shape validation, provenance checks, and artifact verification.
 
@@ -33,7 +33,7 @@ artifact verification, and staged-hook isolation through their callable boundari
 
 `ci.yml` runs pull-request and main-push checks with read-only repository access.
 The path plan comes from `.github/ci-paths.yml`; project operations use named
-`just` recipes. `Gate` is the single ordinary branch-protection status.
+`mise run` tasks. `Gate` is the single ordinary branch-protection status.
 
 The browser/server transport E2E suite does not keep a Vite development server
 alive beside the test runner. Vite builds the small transport harness once into
@@ -50,7 +50,7 @@ and race to bind the same number later.
    `workflow_dispatch` can be pointed at a selected ref, so the candidate job is
    gated to the repository default branch and has only `contents: read`, no
    secrets/write permission, no shared dependency caches, and no publication path.
-   It checks out only trusted request/build tooling plus the trusted `.bun-version`.
+   It checks out only trusted request/build tooling plus the trusted `mise.toml` and `mise.lock`.
    The raw dispatch SHA reaches only `prerelease.py request-prepare`; after exact
    40-character validation, the trusted OCI action gives that sanitized SHA to
    BuildKit as a public remote Git context. PR files never exist in the runner
@@ -146,7 +146,7 @@ exact artifacts already exist.
 
 ## Policy and tests
 
-`just workflow-check` runs `workflow_policy.py`. It deliberately does **not**
+`mise run workflow-check` runs `workflow_policy.py`. It deliberately does **not**
 mirror GitHub's allowed-action package list or maintain a second action SHA
 database. GitHub repository settings are the authority for which external action
 packages may execute. The local checker only enforces the zero-maintenance
@@ -174,7 +174,7 @@ Other checked invariants include:
 - exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
-`just pipeline-test` type-checks all repository Python tooling with the
+`mise run pipeline-test` type-checks all repository Python tooling with the
 version-pinned standalone `ty` binary, then runs the control-plane and legal
 positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
 Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
@@ -206,25 +206,28 @@ GitHub Settings and workflow YAML each have one non-overlapping responsibility:
 
 When adding a new external action package, review it **and any composite-action
 dependencies it invokes**, add every required package pattern in repository
-Settings, use an exact 40-character SHA in YAML, then run `just workflow-check`
-and `just pipeline-test`. The current `extractions/setup-just` pin invokes the
-separately allowlisted `extractions/setup-crate` package from its pinned composite
-action definition.
+Settings, use an exact 40-character SHA in YAML, then run `mise run workflow-check`
+and `mise run pipeline-test`. The pinned `jdx/mise-action` verifies mise download
+checksums against signed upstream metadata. It installs only the tools explicitly
+selected by each job before saving its tool cache. Go build/module and Bun
+package caches remain separate. Automatic tool installation is disabled in CI,
+so a later task cannot silently add unused toolchains to a narrowly scoped job.
+
 
 
 ## Python development gate
 
-`just python-setup` installs the version-pinned standalone `ty` binary under
-`.tools`. It is part of `just setup` and the CI jobs that run Python tests.
-The scripts use the exact Python patch from `.python-version` and the standard library only:
+`mise run setup` installs the version-pinned standalone `ty` binary through mise.
+CI selects it only in jobs that run Python checks.
+The scripts use the exact Python patch from `mise.toml` and the standard library only:
 there are no Python package dependencies, pip installs, or virtual environments.
 
-`just python-check` checks all scripts and tests and fails on warnings or type
-errors. It runs offline as part of `just pipeline-test` and `just check`; the
+`mise run python-check` checks all scripts and tests and fails on warnings or type
+errors. It runs offline as part of `mise run pipeline-test` and `mise run check`; the
 staged hook uses the same checker against the staged scripts. A regression
-runs the actual recipe with an incorrect annotated return value, then verifies
+runs the actual task with an incorrect annotated return value, then verifies
 that its correction passes. `ty` validates types but does not require every
 function to have annotations; keep the tooling explicitly annotated in review.
 
-Update `tools.ty` in `tools.toml` and rerun `just python-setup` to update the
-checker. Python tooling does not use the client's Bun dependencies.
+Update `aqua:astral-sh/ty` in `mise.toml`, regenerate `mise.lock`, and run
+`mise run setup` to update the checker. Python tooling does not use the client's Bun dependencies.

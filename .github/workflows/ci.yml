@@ -11,6 +11,7 @@ permissions:
   contents: read
 
 env:
+  MISE_AUTO_INSTALL: '0'
   SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2-immutable@sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad
   SKOPEO_VERSION: 1.22.2
 
@@ -49,7 +50,7 @@ jobs:
         run: python3 scripts/ci/workflow_policy.py
 
       - name: Type-check tooling and test pipeline and legal boundaries
-        run: just pipeline-test
+        run: mise run pipeline-test
 
       - id: filter
         name: Determine affected CI areas
@@ -100,7 +101,7 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
       - name: Run deterministic repository gate
-        run: just check
+        run: mise run check
 
   go:
     name: Go race and coverage
@@ -116,7 +117,7 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {go: 'true'}
       - name: Run race detector and coverage floor
-        run: just server-race
+        run: mise run server-race
 
   browser:
     name: Browser (Chromium WebView)
@@ -150,7 +151,7 @@ jobs:
           # this read-only, secret-free job therefore uses Chromium's CI mode.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: just client-browser
+        run: mise run client-browser
       - name: Upload WebView failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -173,7 +174,7 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {go: 'true'}
       - name: Cross-build all supported TUI targets
-        run: just tui-cross-build
+        run: mise run tui-cross-build
 
   integration:
     name: Browser/server E2E
@@ -206,7 +207,7 @@ jobs:
           # See the browser job: the archive has no usable setuid sandbox.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: just client-e2e
+        run: mise run client-e2e
       - name: Upload WebView failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -225,10 +226,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Just
+      - name: Set up mise
         uses: ./.github/actions/setup-project
       - name: Build and verify local container
-        run: just container-smoke
+        run: mise run container-smoke
 
   release:
     name: Release package checks
@@ -244,7 +245,7 @@ jobs:
         uses: ./.github/actions/setup-project
         with: {go: 'true', bun: 'true', client-deps: 'true'}
       - name: Build and verify representative release packages
-        run: just release-check
+        run: mise run release-check
       - name: Verify pinned Skopeo runtime contract
         env:
           SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
@@ -266,8 +267,8 @@ jobs:
         with: {go: 'true', bun: 'true', client-deps: 'true', govulncheck: 'true'}
       - name: Run Go and client vulnerability scans
         run: |
-          just security
-          just client-audit
+          mise run security
+          mise run client-audit
 
   secret-scan:
     name: Secret Scan
@@ -278,10 +279,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Just
+      - name: Set up mise
         uses: ./.github/actions/setup-project
       - name: Scan repository with pinned Gitleaks image
-        run: just secret-scan-ci
+        run: mise run secret-scan-ci
 
   gate:
     name: Gate

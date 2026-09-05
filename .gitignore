@@ -11,7 +11,7 @@ client/bench/results/
 # --- Go module (server + native client) ---
 go/graphite-meter
 go/graphite-meter-client
-# test/coverage artifacts the just recipes and `go test -c` emit
+# test/coverage artifacts mise tasks and `go test -c` emit
 go/cover.out
 .go-cache/
 *.test

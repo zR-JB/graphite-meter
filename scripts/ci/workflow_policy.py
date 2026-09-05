@@ -15,6 +15,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from typing import NoReturn
 
 from toolchains import check as check_toolchain_literals, pin, skopeo_version
@@ -79,7 +80,7 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
         for label, needle in {
             "repository checkout": "actions/checkout@",
             "local action execution": "uses: ./",
-            "Just execution": "just ",
+            "task execution": "mise ",
             "repository script execution": "scripts/",
             "environment wait after final recheck": "environment:",
         }.items():
@@ -132,7 +133,7 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
     for label, needle in {
         "repository checkout": "actions/checkout@",
         "local action execution": "uses: ./",
-        "Just execution": "just ",
+        "task execution": "mise ",
         "repository script execution": "scripts/",
         "package publication permission": "packages: write",
         "third-party release action": "softprops/",
@@ -232,10 +233,11 @@ def check_ci_path_map(root: pathlib.Path = ROOT) -> None:
         fail("CI security paths must include the client manifest, lockfile, and Bun config")
 
     ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    if "just client-audit" not in ci:
+    if "mise run client-audit" not in ci:
         fail("CI security job must run the networked Bun audit")
-    just = (root / "justfile").read_text(encoding="utf-8")
-    if "    just security\n    just client-audit\n" not in just:
+    config = tomllib.loads((root / "mise.toml").read_text(encoding="utf-8"))
+    steps = config["tasks"]["ci"]["run"]
+    if not all({"task": name} in steps for name in ("security", "client-audit")):
         fail("local CI-equivalent gate must run both Go and Bun vulnerability scans")
 
 
@@ -276,7 +278,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "GM_CLIENT_REVISION=${{ inputs.revision }}",
         "github-token: ''",
         "DOCKER_BUILD_RECORD_UPLOAD: 'false'",
-        "bun=$(tr -d '[:space:]' < .bun-version)",
+        "bun=$(python3 scripts/ci/toolchains.py get runtime.bun)",
     ):
         if required not in text:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
@@ -305,10 +307,15 @@ def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
     setup = (root / ".github" / "actions" / "setup-project" / "action.yml").read_text(
         encoding="utf-8"
     )
-    if "no-cache: ${{ inputs.bun-cache != 'true' }}" not in setup:
-        fail(
-            "setup-project must disable setup-bun executable caching when bun-cache is false"
-        )
+    for required in (
+        "cache: ${{ inputs.cache }}",
+        "inputs.go-cache == 'true'",
+        "inputs.bun-cache == 'true'",
+        "MISE_AUTO_INSTALL: '0'",
+        "install_args: --locked ${{ steps.tools.outputs.install-args }}",
+    ):
+        if required not in setup:
+            fail(f"setup-project must preserve explicit tool installs and cache controls: {required}")
 
 
 def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
@@ -329,7 +336,8 @@ def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
     for required in (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "ref: ${{ github.sha }}",
-        ".bun-version",
+        "mise.toml",
+        "mise.lock",
         "uses: ./.github/actions/build-oci",
         "source-sha: ${{ steps.request.outputs.sha }}",
         "client-validate: '1'",
@@ -358,7 +366,7 @@ def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
         "uses: ./source/",
         "run: source/",
         "run: ./source/",
-        "run: just ",
+        "run: mise ",
         "actions: read",
         "checks: read",
         "pull-requests: read",
@@ -442,7 +450,7 @@ def check_release_request_workflow(root: pathlib.Path = ROOT) -> None:
         "repository checkout": "actions/checkout@",
         "local action execution": "uses: ./",
         "repository script execution": "scripts/",
-        "Just execution": "just ",
+        "task execution": "mise ",
         "write permission": ": write",
         "environment approval": "environment:",
         "secret reference": "secrets.",
@@ -492,7 +500,7 @@ def check_release_workflow(root: pathlib.Path = ROOT) -> None:
         if required not in release:
             fail(f"release.yml missing trusted-consumer invariant: {required}")
 
-    if "just release-check" in release:
+    if "mise run release-check" in release:
         fail(
             "stable release build must verify the exact built payload, not rebuild a second "
             "representative release-check payload"
@@ -562,7 +570,9 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
     hook_text = hook.read_text(encoding="utf-8")
     for required in (
         "git show :scripts/ci/precommit.py",
-        'python3 "$tmp"',
+        "git show :mise.toml",
+        "git show :mise.lock",
+        '"$python" -I "$bootstrap/precommit.py"',
     ):
         if required not in hook_text:
             fail(
@@ -576,29 +586,20 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
 
 
 def check_toolchain_consumers(root: pathlib.Path = ROOT) -> None:
-    """Runtime setup consumes native selectors, never another literal version."""
-    selectors = {
-        "go-version-file": "go/go.mod",
-        "bun-version-file": ".bun-version",
-        "python-version-file": ".python-version",
-    }
+    """Mise is the sole executable owner; direct bootstraps retain validated pins."""
     for path in workflow_files(root):
         text = path.read_text(encoding="utf-8")
-        if re.search(r"(?m)(?:^|[\s{])(?:go-version|bun-version|python-version):", text):
-            fail(f"{path.relative_to(root)} must use native toolchain version files")
-        for field, value in re.findall(r"(?m)^\s*(go-version-file|bun-version-file|python-version-file): (.+)$", text):
-            if value != selectors[field]:
-                fail(f"{path.relative_to(root)} must read {field} from {selectors[field]}")
-    setup = (root / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
-    for declaration in (
-        "just=$(python3 scripts/ci/toolchains.py get tools.just)",
-        "just-version: ${{ steps.versions.outputs.just }}",
-        "python-version-file: .python-version",
-        "go-version-file: go/go.mod",
-        "bun-version-file: .bun-version",
-    ):
-        if declaration not in setup:
-            fail(f"setup-project must consume the toolchain owner: {declaration}")
+        if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun|extractions/setup-just)@", text):
+            fail(f"{path.relative_to(root)} must provision project tools through mise")
+        if "uses: jdx/mise-action@" in text:
+            blocks = re.findall(r"(?ms)^( +)- (?:name:.*\n\1  )?uses: jdx/mise-action@[^\n]+\n(.*?)(?=^\1- |\Z)", text)
+            if not blocks:
+                fail(f"{path.relative_to(root)} has an unrecognized mise bootstrap")
+            for _, block in blocks:
+                for required in (f"version: {pin('tools.mise', root)}", "install_args:", "cache:", "MISE_AUTO_INSTALL: '0'"):
+                    if required not in block:
+                        fail(f"{path.relative_to(root)} mise setup must declare {required}")
+    check_toolchain_literals(root)
 
 
 def check_browser_ci(root: pathlib.Path = ROOT) -> None:

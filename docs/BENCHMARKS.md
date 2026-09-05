@@ -153,13 +153,13 @@ when filtering to a clear HTTP/1.1 cell. See [Development](DEVELOPMENT.md#local-
 Run one maintained cell:
 
 ```sh
-GM_BENCH_SPKI='<pin>' just bench-throughput 'h1-clear/down/lanes=2'
+GM_BENCH_SPKI='<pin>' mise run bench-throughput 'h1-clear/down/lanes=2'
 ```
 
 Run the full Chromium matrix:
 
 ```sh
-GM_BENCH_SPKI='<pin>' GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 just bench-throughput
+GM_BENCH_SPKI='<pin>' GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 mise run bench-throughput
 ```
 
 Create a shaped path:
@@ -167,12 +167,12 @@ Create a shaped path:
 ```sh
 sudo client/bench/rig.sh up lan-fast-lossy
 sudo ip netns exec gmbench <server-binary-bound-to-10.77.0.2>
-GM_BENCH_SPKI='<pin>' GM_BENCH_HOST=10.77.0.2 just bench-throughput
+GM_BENCH_SPKI='<pin>' GM_BENCH_HOST=10.77.0.2 mise run bench-throughput
 sudo client/bench/rig.sh down
 ```
 
 Set `GM_BENCH_NETNS` instead when the fixture should start the server inside the namespace.
-`just bench-wire` measures wire-codec cost, and `just stress` measures the server saturation
+`mise run bench-wire` measures wire-codec cost, and `mise run stress` measures the server saturation
 envelope.
 
 ## Limitations
