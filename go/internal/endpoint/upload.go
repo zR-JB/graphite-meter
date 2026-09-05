@@ -79,7 +79,11 @@ func (u *Upload) Handle(s transport.Session) error {
 	}
 
 	if isHTTP {
-		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(uploadReadTimeout))
+		deadline := time.Now().Add(uploadReadTimeout)
+		if requestDeadline, ok := s.Context().Deadline(); ok && requestDeadline.Before(deadline) {
+			deadline = requestDeadline
+		}
+		_ = http.NewResponseController(w).SetReadDeadline(deadline)
 	}
 
 	bufp := scratchPool.Get().(*[]byte)
