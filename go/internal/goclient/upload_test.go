@@ -7,6 +7,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -230,7 +231,7 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
 		enc := jsontext.NewEncoder(w)
-		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
+		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
 		flusher.Flush()
 		ticker := time.Tick(20 * time.Millisecond)
 		for {
@@ -238,11 +239,11 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 			case <-r.Context().Done():
 				return
 			case <-finished:
-				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 				return
 			case <-ticker:
-				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}
 		}
@@ -321,7 +322,7 @@ func newStalledUploadServer() *httptest.Server {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
 		enc := jsontext.NewEncoder(w)
-		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
+		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
 		flusher.Flush()
 		ticker := time.Tick(20 * time.Millisecond)
 		for {
@@ -329,7 +330,7 @@ func newStalledUploadServer() *httptest.Server {
 			case <-r.Context().Done():
 				return
 			case <-ticker:
-				_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
 				flusher.Flush()
 			}
 		}
@@ -387,8 +388,8 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	go func() {
 		defer liveWriter.Close()
 		enc := jsontext.NewEncoder(liveWriter)
-		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
-		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
+		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
+		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
 	}()
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -405,7 +406,7 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 
 	stale, staleWriter := io.Pipe()
 	p.attach(testUploadFeed(stale))
-	if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), uploadProgressEvent{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
+	if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), wire.UploadProgress{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
 		t.Fatalf("write the superseded feed's buffered record: %v", err)
 	}
 	staleWriter.Close()
@@ -630,11 +631,11 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		flusher := w.(http.Flusher)
 		enc := jsontext.NewEncoder(w)
-		_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "ready"})
+		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
 		flusher.Flush()
 		for range recordsPerFeed {
 			n := uint64(served.Add(1))
-			_ = jsonv2.MarshalEncode(enc, uploadProgressEvent{Type: "progress", Bytes: n, Nanos: n})
+			_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: n, Nanos: n})
 			flusher.Flush()
 		}
 		// The handler returns: the request's bound, not the aggregate's.
@@ -785,5 +786,34 @@ func TestUploadFeedReaderOwnsBodyCloseAfterInterruption(t *testing.T) {
 	}
 	if body.concurrentClose.Load() || !body.closed.Load() {
 		t.Fatalf("reader close ownership: concurrent=%v closed=%v", body.concurrentClose.Load(), body.closed.Load())
+	}
+}
+
+func TestUploadProgressRejectsMalformedAndRegressedPairs(t *testing.T) {
+	p := &uploadProgress{ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	body := strings.NewReader(strings.Join([]string{
+		`{"type":"ready"}`,
+		`{"type":"progress","bytes":100,"nanos":10}`,
+		`{"type":"progress","bytes":90,"nanos":20}`,
+		`{"type":"progress","bytes":110,"nanos":9}`,
+		`{"type":"complete","bytes":200}`,
+		`{"type":"complete","bytes":"200","nanos":20}`,
+		`{"type":"complete","bytes":200,"nanos":9}`,
+		`{"type":"progress","bytes":120,"nanos":30}`,
+		"",
+	}, "\n"))
+	done := make(chan struct{})
+	p.read(testUploadFeed(io.NopCloser(body)), done)
+	if n, ns := p.counters(); n != 120 || ns != 30 || p.seq.Load() != 2 {
+		t.Fatalf("accepted receiver pair = (%d, %d), sequence=%d", n, ns, p.seq.Load())
+	}
+}
+
+func TestUploadProgressPreservesExplicitZeroWindow(t *testing.T) {
+	p := &uploadProgress{ready: make(chan error, 1), changed: make(chan struct{}, 1)}
+	body := strings.NewReader("{\"type\":\"ready\"}\n{\"type\":\"complete\",\"bytes\":0,\"nanos\":0}\n")
+	p.read(testUploadFeed(io.NopCloser(body)), make(chan struct{}))
+	if n, ns := p.counters(); n != 0 || ns != 0 || p.seq.Load() != 1 {
+		t.Fatalf("zero window = (%d, %d), sequence=%d", n, ns, p.seq.Load())
 	}
 }

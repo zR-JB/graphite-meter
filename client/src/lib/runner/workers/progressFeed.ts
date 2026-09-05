@@ -1,8 +1,9 @@
 // The server-authoritative upload feed, read the same way whichever transport carries it.
+import { classifyUploadFailure } from "../uploadFailure";
 import {
-  classifyUploadFailure,
-  type UploadRefusalCode,
-} from "../uploadFailure";
+  decodeUploadProgress,
+  type UploadProgressRecord,
+} from "./uploadProgress";
 import type { RecoveryCause } from "../contract";
 
 /** What one feed reports, normalised from the wire records. */
@@ -12,17 +13,10 @@ export type ProgressEvent =
   | { type: "complete"; n: number; t: number }
   | { type: "fatal"; detail: string; cause: RecoveryCause };
 
-/* Carried across reconnects by the caller: a replacement feed for the same upload must not report fewer bytes. */
+/* Carried across reconnects by the caller: a replacement feed must not regress either receiver counter. */
 export interface ProgressFeedState {
   lastN: number;
-}
-
-interface ProgressRecord {
-  type?: string;
-  bytes?: number;
-  nanos?: number;
-  message?: string;
-  code?: UploadRefusalCode;
+  lastT: number;
 }
 
 /* Why a feed stopped. */
@@ -49,12 +43,13 @@ export async function readProgressFeed(
         if (line.length > MAX_RECORD_LENGTH)
           throw new Error("upload progress record exceeds 64 Ki characters");
         if (line.trim() === "") continue; // heartbeat
-        let record: ProgressRecord;
+        let record: UploadProgressRecord | null;
         try {
-          record = JSON.parse(line) as ProgressRecord;
+          record = decodeUploadProgress(JSON.parse(line));
         } catch {
           continue; // a truncated or non-JSON line is never a measurement
         }
+        if (!record) continue;
         if (record.type === "ready") {
           if (opened) continue;
           opened = true;
@@ -70,10 +65,12 @@ export async function readProgressFeed(
           return "fatal";
         }
         if (record.type !== "progress" && record.type !== "complete") continue;
-        const n = Number(record.bytes ?? 0);
-        if (n >= state.lastN) state.lastN = n;
+        const { bytes: n, nanos: t } = record;
+        if (n < state.lastN || t < state.lastT) continue;
+        state.lastN = n;
+        state.lastT = t;
         const event = record.type === "progress" ? "bytes" : "complete";
-        emit({ type: event, n: state.lastN, t: Number(record.nanos ?? 0) });
+        emit({ type: event, n, t });
         if (record.type === "complete") return "complete";
       }
       if (partial.length > MAX_RECORD_LENGTH)

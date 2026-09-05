@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // UploadProgress streams the selected throughput target's authoritative upload counter as NDJSON.
@@ -25,14 +27,6 @@ const (
 	uploadProgressTick      = 100 * time.Millisecond
 	uploadProgressHeartbeat = time.Second
 )
-
-type uploadProgressEvent struct {
-	Type    string `json:"type"`
-	Bytes   uint64 `json:"bytes,omitzero"`
-	Nanos   uint64 `json:"nanos,omitzero"`
-	Message string `json:"message,omitempty"`
-	Code    string `json:"code,omitempty"`
-}
 
 func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	for {
@@ -78,7 +72,7 @@ func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) erro
 	}
 	// NDJSON requires a stateful encoder and one newline-delimited record per event.
 	enc := jsontext.NewEncoder(w)
-	emit := func(event uploadProgressEvent) bool {
+	emit := func(event wire.UploadProgress) bool {
 		if err := json.MarshalEncode(enc, event); err != nil {
 			return false
 		}
@@ -100,18 +94,18 @@ func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) erro
 func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
 	// This WebTransport feed is also NDJSON; retain Encoder framing per record.
 	enc := jsontext.NewEncoder(w)
-	emit := func(event uploadProgressEvent) bool { return json.MarshalEncode(enc, event) == nil }
+	emit := func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }
 
 	e.streamProgress(ctx.Done(), id, owner, emit, func() bool {
 		_, err := w.Write([]byte("\n"))
 		return err == nil
 	}, func(access uploadAccess) {
-		emit(uploadProgressEvent{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
+		emit(wire.UploadProgress{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
 	})
 }
 
 // streamProgress owns the shared aggregate claim and lifecycle for both feed transports.
-func (e *UploadProgress) streamProgress(done <-chan struct{}, id, owner string, emit func(uploadProgressEvent) bool, heartbeat func() bool, refused func(uploadAccess)) {
+func (e *UploadProgress) streamProgress(done <-chan struct{}, id, owner string, emit func(wire.UploadProgress) bool, heartbeat func() bool, refused func(uploadAccess)) {
 	// Watching is not upload activity: a progress stream must never refresh the idle clock.
 	agg, access := e.store.getOrCreateForActivity(id, owner, false)
 	if access != uploadAccessOK {
@@ -120,13 +114,13 @@ func (e *UploadProgress) streamProgress(done <-chan struct{}, id, owner string, 
 	}
 	claim := agg.claimProgress()
 	defer agg.releaseProgress(claim)
-	if !emit(uploadProgressEvent{Type: "ready"}) {
+	if !emit(wire.UploadProgress{Type: "ready"}) {
 		return
 	}
 	runProgress(done, claim, agg, emit, heartbeat)
 }
 
-func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(uploadProgressEvent) bool, heartbeat func() bool) {
+func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
 	tick := time.Tick(uploadProgressTick)
 	beat := time.Tick(uploadProgressHeartbeat)
 	var lastBytes uint64
@@ -144,7 +138,7 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(upl
 			}
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
-			emit(uploadProgressEvent{Type: "complete", Bytes: n, Nanos: elapsed})
+			emit(wire.UploadProgress{Type: "complete", Bytes: n, Nanos: elapsed})
 			return
 		case <-beat:
 			if !heartbeat() {
@@ -155,7 +149,7 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(upl
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
 			if n != lastBytes {
 				lastBytes = n
-				if !emit(uploadProgressEvent{Type: "progress", Bytes: n, Nanos: elapsed}) {
+				if !emit(wire.UploadProgress{Type: "progress", Bytes: n, Nanos: elapsed}) {
 					return
 				}
 			}
