@@ -625,9 +625,9 @@
   }
   .caution {
     margin: 0;
-    padding: 8px 10px;
+    padding: var(--space-2) var(--space-3);
     border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
-    border-radius: var(--radius-sm, 6px);
+    border-radius: var(--r-well);
     background: var(--warn-soft);
     color: var(--text);
     font-family: var(--font-mono);

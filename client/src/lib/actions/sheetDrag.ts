@@ -1,3 +1,5 @@
+import { acquirePageScrollLock } from "./pageScrollLock";
+
 interface SheetDragOptions {
   enabled: boolean;
   backdrop?: HTMLElement;
@@ -33,48 +35,9 @@ export function shouldDismissSheet({
     distance >= 96 && velocity >= 0.85 && releasedAfterMs <= 80;
   return farEnough || recentFlick;
 }
-// Reference counted: several sheets can be mounted at once.
-let pageLockCount = 0;
-let pageBeforeLock:
-  | {
-      scrollY: number;
-      bodyCss: string;
-      rootOverscroll: string;
-    }
-  | undefined;
-// iOS keeps scrolling the page behind a sheet under `overflow: hidden`.
-function lockPage() {
-  pageLockCount++;
-  if (pageLockCount !== 1) return;
-  const body = document.body;
-  pageBeforeLock = {
-    scrollY: window.scrollY,
-    bodyCss: body.style.cssText,
-    rootOverscroll: document.documentElement.style.overscrollBehavior,
-  };
-  document.documentElement.style.overscrollBehavior = "none";
-  Object.assign(body.style, {
-    position: "fixed",
-    top: `-${pageBeforeLock.scrollY}px`,
-    left: "0",
-    right: "0",
-    width: "100%",
-    overflow: "hidden",
-    overscrollBehavior: "none",
-  });
-}
-function unlockPage() {
-  if (!pageLockCount || --pageLockCount) return;
-  const saved = pageBeforeLock;
-  pageBeforeLock = undefined;
-  if (!saved) return;
-  document.body.style.cssText = saved.bodyCss;
-  document.documentElement.style.overscrollBehavior = saved.rootOverscroll;
-  window.scrollTo(0, saved.scrollY);
-}
 export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   let opts = options;
-  let pageLocked = false;
+  let releasePageLock: (() => void) | undefined;
   let resetTimer: number | undefined;
   let gesture:
     | {
@@ -94,10 +57,12 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   const isBottomSheetLayout = () =>
     window.matchMedia("(max-width: 759px) and (orientation: portrait)").matches;
   function setPageLocked(locked: boolean) {
-    if (locked === pageLocked) return;
-    pageLocked = locked;
-    if (locked) lockPage();
-    else unlockPage();
+    if (locked === Boolean(releasePageLock)) return;
+    if (locked) releasePageLock = acquirePageScrollLock();
+    else {
+      releasePageLock?.();
+      releasePageLock = undefined;
+    }
   }
   function reset() {
     window.clearTimeout(resetTimer);

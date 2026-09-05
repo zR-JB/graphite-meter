@@ -403,6 +403,53 @@ for (const operatorDefault of [false, true]) {
       ).toHaveCount(0);
   });
 }
+test("confirmation actions stay reachable in a short viewport and restore scrolling", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 390, height: 844 });
+  const settings = await openSettings(page);
+  const reset = settings.getByRole("button", { name: "Reset settings" });
+  await reset.scrollIntoViewIfNeeded();
+  await reset.focus();
+  await reset.click();
+  const dialog = page.getByRole("alertdialog", { name: "Reset settings?" });
+  await expectVisible(dialog);
+  for (const viewport of [
+    { width: 844, height: 390 },
+    { width: 320, height: 160 },
+    { width: 1440, height: 160 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect
+      .poll(() =>
+        dialog.evaluate((node) => {
+          const box = node.getBoundingClientRect();
+          return (
+            box.top >= 8 &&
+            box.bottom <= innerHeight - 8 &&
+            node.scrollWidth <= node.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+  }
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe(
+    "hidden",
+  );
+  const cancel = dialog.getByRole("button", { name: "Keep settings" });
+  const confirm = dialog.getByRole("button", { name: "Reset settings" });
+  await cancel.focus();
+  await page.keyboard.press("Tab");
+  await expect(confirm).toBeFocused();
+  const actionBox = await confirm.boundingBox();
+  expect(actionBox!.y).toBeGreaterThanOrEqual(8);
+  expect(actionBox!.y + actionBox!.height).toBeLessThanOrEqual(152);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(await page.evaluate(() => document.body.style.overflow)).toBe("");
+  await expect(reset).toBeFocused();
+});
+
 test("the datagram card follows its selection and announces its caution", async ({
   page,
 }) => {

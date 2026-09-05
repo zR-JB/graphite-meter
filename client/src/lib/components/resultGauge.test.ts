@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 import {
+  primaryResultGaugeArc,
   resultGaugeArcs,
   resultGaugeFillTarget,
   resultGaugeHeadPlacements,
@@ -205,4 +206,17 @@ test("result head placement is deterministic and bounded for compact gauge geome
   expect(first.map((placement) => placement.fraction)).toEqual([
     0.42, 0.42, 0.42,
   ]);
+});
+
+test("headline prefers download then upload then bidirectional regardless of speed or paint order", () => {
+  const download = arc("download", "Download", 10);
+  const upload = arc("upload", "Upload", 20);
+  const bidi = arc("bidirectional", "Bidirectional", 30);
+  const arcs = sortResultGaugeArcs([download, upload, bidi]);
+  expect(primaryResultGaugeArc(arcs)).toBe(download);
+  expect(primaryResultGaugeArc([bidi, upload])).toBe(upload);
+  expect(primaryResultGaugeArc([bidi])).toBe(bidi);
+  expect(primaryResultGaugeArc([])).toBeNull();
+  const partial = arc("bidirectional", "Bidirectional upload", 5, true);
+  expect(primaryResultGaugeArc([partial])).toBe(partial);
 });

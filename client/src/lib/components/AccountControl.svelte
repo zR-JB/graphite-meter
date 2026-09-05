@@ -68,7 +68,7 @@
     <button
       class="signout"
       type="submit"
-      title="Sign out"
+      use:tooltip={"Sign out"}
       aria-label={`Sign out ${label}`}
     >
       <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -109,7 +109,7 @@
     height: 20px;
     place-items: center;
     border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border));
-    border-radius: 50%;
+    border-radius: var(--r-full);
     background: var(--brand-soft);
     color: var(--brand-strong);
   }

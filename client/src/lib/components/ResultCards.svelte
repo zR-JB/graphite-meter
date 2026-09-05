@@ -238,6 +238,7 @@
     accessibleNum: string;
     unit: string;
     sub?: string; // per-direction detail (bidirectional only)
+    jitterMs?: number | null;
     wire: CardWire;
   }
 
@@ -322,7 +323,7 @@
             : dash,
         unit: store.unitLabel,
         sub: bidi.has
-          ? `↓ ${fmtSpeed(store.toUnit(bidi.down))}  ↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel}`
+          ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ↑ ${fmtSpeed(store.toUnit(bidi.up))}`
           : bidi.survivingDirection === "down"
             ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ${store.unitLabel} — upload unavailable`
             : bidi.survivingDirection === "up"
@@ -357,6 +358,9 @@
         accessibleNum:
           ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
         unit: ping.active && ping.lost ? "" : "ms",
+        jitterMs: ping.has
+          ? (store.stageResults.latency?.jitterMs ?? null)
+          : undefined,
         wire: null,
       });
     return out;
@@ -399,9 +403,13 @@
       {#if compact && c.active}
         <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
       {/if}
-      {#if c.sub}
-        <div class="sub" aria-hidden={compact && c.active ? "true" : undefined}>
-          {c.sub}
+      {#if c.jitterMs !== undefined}
+        <div class="jitter">
+          <span class="jitter-num"
+            >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}
+            <span class="jitter-unit">ms</span></span
+          >
+          <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
         </div>
       {/if}
       {#if c.wire}
@@ -417,6 +425,11 @@
         </div>
       {/if}
     </div>
+    {#if c.sub}
+      <div class="sub">
+        {c.sub}{#if c.hasVal}<span class="sr-only"> {c.unit}</span>{/if}
+      </div>
+    {/if}
   </article>
 {/snippet}
 
@@ -456,7 +469,7 @@
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--space-3);
+    gap: var(--space-2);
   }
   /* Keep an empty result grid from shifting adjacent content. */
   .result-cards.reserve {
@@ -465,37 +478,54 @@
 
   .result-card {
     min-width: 0;
-    display: flex;
-    flex-direction: column;
+    container: result-card / inline-size;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
     gap: 6px;
     min-height: 64px;
-    padding: var(--space-2);
+    padding: 10px var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      transform var(--dur-hover) var(--ease-out);
+  }
+  .result-card header,
+  .result-readout,
+  .sub {
+    grid-column: 1 / -1;
   }
   .result-readout {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
     min-width: 0;
   }
   @container viz (min-width: 1000px) {
     .result-card {
-      display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: start;
-      gap: 8px;
+      column-gap: var(--space-2);
+      row-gap: 5px;
+    }
+    /* A wide instrument can still hold four narrow cards. Only place the
+       heading beside its value when this card has room for both groups. */
+    @container result-card (min-width: 260px) {
+      .result-card header {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      .result-readout {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+      }
+      .sub {
+        grid-column: 1;
+        grid-row: 2;
+      }
     }
   }
-  .result-card:hover {
-    transform: translateY(-1px);
-    border-color: var(--border-strong);
-  }
+
   .partial {
     margin-left: auto;
     color: var(--err);
@@ -510,36 +540,11 @@
     .result-chip {
       animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
     }
-    .result-card {
-      animation: card-enter var(--dur-slide) var(--ease-out) both;
-    }
-    .result-card:nth-child(1) {
-      animation-delay: 0ms;
-    }
-    .result-card:nth-child(2) {
-      animation-delay: 25ms;
-    }
-    .result-card:nth-child(3) {
-      animation-delay: 50ms;
-    }
-    .result-card:nth-child(4) {
-      animation-delay: 75ms;
-    }
   }
   @keyframes quick-content-enter {
     from {
       opacity: 0.65;
       transform: translateY(2px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @keyframes card-enter {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
     }
     to {
       opacity: 1;
@@ -662,7 +667,8 @@
     letter-spacing: 0.01em;
   }
 
-  .est {
+  .est,
+  .jitter {
     display: flex;
     align-items: baseline;
     gap: 6px;
@@ -671,11 +677,18 @@
     font-variant-numeric: tabular-nums;
     font-size: 12px;
   }
-  .est-num {
+  .est-num,
+  .jitter-num {
     font-weight: 700;
     color: var(--brand-strong);
   }
-  .est-tag {
+  .jitter-unit {
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .est-tag,
+  .jitter-term {
     cursor: help;
     color: var(--text-soft);
     font-size: 10px;
@@ -684,7 +697,8 @@
       color-mix(in srgb, var(--text-soft) 70%, transparent);
     text-underline-offset: 3px;
   }
-  .est-tag:focus-visible {
+  .est-tag:focus-visible,
+  .jitter-term:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
     border-radius: var(--r-well);

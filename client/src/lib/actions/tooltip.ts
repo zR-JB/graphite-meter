@@ -22,14 +22,14 @@ function ensureStyles() {
       position: fixed;
       z-index: 200;
       max-width: min(300px, calc(100vw - 16px));
-      padding: 8px 10px;
+      padding: var(--space-2) var(--space-3);
       border: 1px solid var(--border-strong);
       border-radius: var(--r-chrome);
       background: var(--surface-2);
       color: var(--text);
       box-shadow: var(--shadow-float);
       font-family: var(--font-sans);
-      font-size: 12px;
+      font-size: var(--type-sm);
       line-height: 1.4;
       font-weight: 500;
       letter-spacing: 0;
@@ -65,6 +65,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let touchOpen = false;
   let autoDismissTimer = 0;
   let hoverTimer = 0;
+  let focusFrame = 0;
   // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
@@ -125,6 +126,10 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   }
   function hide() {
     clearHoverTimer();
+    if (focusFrame) {
+      cancelAnimationFrame(focusFrame);
+      focusFrame = 0;
+    }
     if (autoDismissTimer) {
       clearTimeout(autoDismissTimer);
       autoDismissTimer = 0;
@@ -140,7 +145,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       target.removeEventListener(type, listener as EventListener, capture);
   }
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && bubble) {
+    if (event.key === "Escape" && (bubble || focusFrame)) {
       hide();
     }
   }
@@ -164,7 +169,15 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   // Keyboard focus asks for the tip; focus landing from a click does not.
   function onFocus() {
     if (!node.matches(":focus-visible")) return;
-    show();
+    // Let focus reveal and its queued scroll event settle across rendering
+    // before subscribing to dismissal, including resized history details.
+    focusFrame = requestAnimationFrame(() => {
+      focusFrame = requestAnimationFrame(() => {
+        focusFrame = 0;
+        if (document.activeElement === node && node.matches(":focus-visible"))
+          show();
+      });
+    });
   }
   function onBlur() {
     hide();

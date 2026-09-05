@@ -13,7 +13,7 @@ interface ResultGaugeArc {
 export interface ResultGaugeHeadPlacement {
   /** Original result fraction, retained for exact endpoint mapping. */
   fraction: number;
-  /** Compact inward lane; zero is reserved for the primary result. */
+  /** Compact inward lane; zero is reserved for the highest result. */
   lane: number;
   radius: number;
 }
@@ -88,6 +88,18 @@ export function sortResultGaugeArcs(
         a.index - b.index,
     )
     .map(({ arc }) => arc);
+}
+
+/** Keep the headline stable by measurement role, independently of paint order. */
+export function primaryResultGaugeArc(
+  arcs: readonly ResultGaugeArc[],
+): ResultGaugeArc | null {
+  return (
+    arcs.find((arc) => arc.phase === "download") ??
+    arcs.find((arc) => arc.phase === "upload") ??
+    arcs.find((arc) => arc.phase === "bidirectional") ??
+    null
+  );
 }
 
 /** Completion animation is always bounded to the gauge's normalized domain. */

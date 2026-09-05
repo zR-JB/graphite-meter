@@ -112,3 +112,35 @@ test("legal modal remains stable at a narrow reduced-motion viewport", async ({
     await dialog.evaluate((node) => node.getBoundingClientRect().height),
   ).toBeLessThanOrEqual(760);
 });
+
+test("legal focus trap includes the final collapsed disclosure", async ({
+  page,
+}) => {
+  await openApp(page);
+  const endpoint = await openEndpointInfo(page);
+  await endpoint.getByRole("button", { name: "About & legal" }).click();
+  const dialog = page.getByRole("dialog", { name: "About & legal" });
+  await expect(dialog).toContainText("Third-party software");
+  const lastDetails = dialog.locator(".component:last-child details");
+  const lastSummary = lastDetails.locator("summary");
+  const close = dialog.getByRole("button", { name: "Close" });
+  await lastSummary.click();
+  await expect(
+    dialog.locator(".component:last-child details[open]"),
+  ).toHaveCount(0);
+
+  await dialog.locator(".component:nth-last-child(2) a").focus();
+  await page.keyboard.press("Tab");
+  await expect(lastSummary).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(lastSummary).toBeFocused();
+
+  await page.keyboard.press("Enter");
+  await expect(lastDetails).toHaveAttribute("open", "");
+  await page.keyboard.press("Tab");
+  await expect(lastDetails.locator("a")).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(close).toBeFocused();
+});

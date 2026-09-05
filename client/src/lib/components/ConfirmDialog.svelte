@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
+  import { acquirePageScrollLock } from "../actions/pageScrollLock";
 
   interface Props {
     open: boolean;
@@ -25,6 +26,10 @@
   }: Props = $props();
   let wasOpen = false;
   let returnFocus: HTMLElement | null = null;
+
+  $effect(() => {
+    if (open) return acquirePageScrollLock();
+  });
 
   $effect(() => {
     const visible = open;
@@ -92,9 +97,13 @@
     place-items: center;
     padding: var(--space-4);
     background: color-mix(in srgb, var(--canvas) 64%, transparent);
+    overscroll-behavior: contain;
   }
   .confirm-dialog {
     width: min(360px, 100%);
+    max-height: calc(100svh - 2 * var(--space-4));
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--space-4);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
@@ -116,6 +125,7 @@
   }
   .confirm-actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--space-2);
     margin-top: var(--space-4);
@@ -127,11 +137,22 @@
     border-radius: var(--r-chrome);
     font-size: var(--type-sm);
     font-weight: 650;
+    cursor: pointer;
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      background var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
   }
   .ghost-btn {
     border: 1px solid var(--border);
-    background: var(--surface-2);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-tile);
     color: var(--text-muted);
+  }
+  .ghost-btn:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-2);
+    color: var(--text);
   }
   .danger-btn {
     border: 1px solid color-mix(in srgb, var(--err) 55%, var(--border));

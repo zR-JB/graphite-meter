@@ -32,8 +32,17 @@ for (const viewport of [
       const profileBox = profile.getBoundingClientRect();
       const stage = element("#console > section.stage");
       const button = element(".run-button").getBoundingClientRect();
+      const buttonLabel = element(
+        ".run-button-content",
+      ).getBoundingClientRect();
+      const durationTag = element(
+        ".run-button .duration",
+      ).getBoundingClientRect();
       const rail = element(".stage-head").getBoundingClientRect();
       const host = element(".gauge-panel").getBoundingClientRect();
+      const controls = element(".instrument-controls").getBoundingClientRect();
+      const results = element(".results-slot").getBoundingClientRect();
+      const chart = element(".chart").getBoundingClientRect();
       return {
         stageOverflow: stage.scrollHeight - stage.clientHeight,
         profileOverflow: profile.scrollHeight - profile.clientHeight,
@@ -41,13 +50,24 @@ for (const viewport of [
         gaugeHeight: gauge.height,
         pairedHeight: Math.abs(gauge.height - profileBox.height),
         pairedWidth: Math.abs(gauge.width - profileBox.width),
-        buttonCenter: Math.abs(
-          button.left + button.width / 2 - host.left - host.width / 2,
+        buttonLabelCenter: Math.abs(
+          buttonLabel.left +
+            buttonLabel.width / 2 -
+            button.left -
+            button.width / 2,
         ),
-        railCenter: Math.abs(
-          rail.left + rail.width / 2 - host.left - host.width / 2,
+        durationSeparate:
+          durationTag.left >= buttonLabel.right + 8 &&
+          durationTag.right < button.right,
+        controlsCenter: Math.abs(
+          controls.left + controls.width / 2 - host.left - host.width / 2,
         ),
-        controlsSeparated: rail.top >= button.bottom,
+        controlsAligned: Math.abs(rail.top - button.top) <= 1,
+        controlsSeparated: rail.left >= button.right + 16,
+        groupSpacing:
+          button.top - gauge.bottom >= 16 &&
+          results.top - button.bottom >= 16 &&
+          chart.top - results.bottom >= 12,
         lanesInside: [...profile.querySelectorAll(".lane")].every(
           (lane) => lane.getBoundingClientRect().bottom <= profileBox.bottom,
         ),
@@ -74,9 +94,12 @@ for (const viewport of [
     expect(geometry.gaugeHeight).toBeGreaterThanOrEqual(280);
     expect(geometry.pairedHeight).toBeLessThanOrEqual(1);
     expect(geometry.pairedWidth).toBeLessThanOrEqual(1);
-    expect(geometry.buttonCenter).toBeLessThanOrEqual(1);
-    expect(geometry.railCenter).toBeLessThanOrEqual(1);
+    expect(geometry.controlsCenter).toBeLessThanOrEqual(1);
+    expect(geometry.buttonLabelCenter).toBeLessThanOrEqual(1);
+    expect(geometry.durationSeparate).toBe(true);
+    expect(geometry.controlsAligned).toBe(true);
     expect(geometry.controlsSeparated).toBe(true);
+    expect(geometry.groupSpacing).toBe(true);
     expect(geometry.lanesInside).toBe(true);
     expect(geometry.sharedAxis).toBe(1);
     expect(geometry.wireAligned).toBe(true);

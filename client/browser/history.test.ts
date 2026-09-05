@@ -2020,12 +2020,21 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(profile.getByText("Partial accounting")).toBeVisible();
   await expectNoHorizontalOverflow(profile);
+  // ResizeObserver commits the phone inspector after the viewport changes.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(page.locator(".inline-inspector")).toBeVisible();
   await page.evaluate((id) => {
     window.location.hash = `/history/${id}`;
   }, earlierV2.id);
   await expect(profile.getByText("Partial accounting")).toBeVisible();
   await expect(profile).toContainText("Known: 10 resolved");
   await expect(profile).not.toContainText("0 timeouts");
+  await expect(page.locator(".inline-inspector .result-detail")).toBeFocused();
   await profile.getByRole("note").press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("tooltip")).toContainText(

@@ -5,15 +5,20 @@ const FOCUSABLE_SELECTOR = [
   "textarea:not([disabled])",
   "input:not([disabled])",
   "select:not([disabled])",
+  "details > summary:first-of-type",
   '[tabindex]:not([tabindex="-1"])',
 ].join(",");
 export function focusTrap(node: HTMLElement, active = true) {
   let enabled = active;
-  // A null offsetParent means a hidden subtree. Tab cannot reach it, so it stays out of the cycle.
+  // Closed disclosures retain layout boxes; check rendering visibility too.
   function getFocusable(): HTMLElement[] {
     return Array.from(
       node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-    ).filter((el) => !el.hasAttribute("disabled") && el.offsetParent !== null);
+    ).filter(
+      (el) =>
+        !el.hasAttribute("disabled") &&
+        el.checkVisibility({ visibilityProperty: true }),
+    );
   }
   function handleKeydown(event: KeyboardEvent) {
     if (!enabled || event.key !== "Tab") return;

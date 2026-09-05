@@ -304,7 +304,7 @@
             style:top={`${label.y}px`}>{PHASE_LABEL[label.phase]}</span
           >
         {/each}
-        {#each presentation.phaseStats as stat (stat.x + stat.y + stat.bytesPerSec)}
+        {#each presentation.phaseStats as stat (stat.lane)}
           <span
             class="stat-label"
             style:border-color={stat.stroke}
@@ -399,7 +399,7 @@
     white-space: nowrap;
   }
   .plot:focus-visible {
-    outline: 2px solid var(--text);
+    outline: var(--focus-ring);
     outline-offset: 2px;
   }
   .canvas {
@@ -444,7 +444,7 @@
     overflow: hidden;
     padding: 2px 5px;
     border: 1px solid color-mix(in srgb, var(--text-soft) 55%, transparent);
-    border-radius: 4px;
+    border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--text-soft);
     font-size: 9px;
@@ -454,17 +454,17 @@
 
   .chip {
     position: absolute;
-    top: 8px;
+    top: var(--space-2);
     width: 224px;
-    max-width: calc(100% - 16px);
+    max-width: calc(100% - 2 * var(--space-2));
     box-sizing: border-box;
     pointer-events: none;
     min-width: 112px;
-    padding: var(--space-1) var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
-    border-radius: var(--r-well);
+    border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: var(--elev-raised);
+    box-shadow: var(--shadow-float);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
   }

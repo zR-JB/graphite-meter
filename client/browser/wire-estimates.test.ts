@@ -99,3 +99,96 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await tag.dispatchEvent("pointerup", { pointerType: "touch" });
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
+
+test("latency jitter and bidirectional details stay compact when wire estimates are hidden", async ({
+  page,
+}) => {
+  const settings = await prepareApp(
+    page,
+    {
+      "Warmup ms": "0",
+      "Latency ms": "900",
+      "Download ms": "900",
+      "Upload ms": "900",
+    },
+    "dummy",
+    { width: 1440, height: 900 },
+  );
+  await settings
+    .locator("label.switch", {
+      hasText: "Include concurrent download + upload",
+    })
+    .click();
+  await settings.getByLabel("Bidirectional ms").fill("900");
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startAndWait(page);
+  const jitter = page.locator(".result-card .jitter");
+  await expect(jitter).toHaveText("0.0 ms jitter");
+  await expect(
+    page.locator(".terminal-readout.download .terminal-number"),
+  ).toHaveText("320.0");
+  const geometry = () =>
+    resultCards(page).evaluateAll((cards) =>
+      cards.map((card) => {
+        const sub = card.querySelector(".sub")?.getBoundingClientRect();
+        const readout = card
+          .querySelector(".result-readout")!
+          .getBoundingClientRect();
+        const heading = [...card.querySelector("header")!.children].map(
+          (child) => child.getBoundingClientRect(),
+        );
+        return {
+          groupsSeparated:
+            Math.max(...heading.map((box) => box.bottom)) + 5 <= readout.top ||
+            Math.max(...heading.map((box) => box.right)) + 8 <= readout.left,
+          height: card.getBoundingClientRect().height,
+          overflow: card.scrollWidth > card.clientWidth,
+          detailBelowReadout: sub ? sub.bottom - readout.bottom : 0,
+          jitterAlignment: (() => {
+            const jitter = card
+              .querySelector(".jitter-num")
+              ?.getBoundingClientRect();
+            const primary = card
+              .querySelector(".val .num")!
+              .getBoundingClientRect();
+            return jitter ? Math.abs(jitter.left - primary.left) : 0;
+          })(),
+        };
+      }),
+    );
+  // The instrument can be wide while each of its four cards is narrow.
+  // Check the actual heading content, which can collide without scroll overflow.
+  for (const width of [1024, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(async () =>
+        (await geometry()).every((card) => card.groupsSeparated),
+      )
+      .toBe(true);
+  }
+  const before = await geometry();
+  expect(before).toHaveLength(4);
+  expect(
+    before.every(
+      (card) =>
+        card.height <= 70 &&
+        !card.overflow &&
+        card.detailBelowReadout <= 1 &&
+        card.jitterAlignment <= 1,
+    ),
+  ).toBe(true);
+  const preferences = await openSettings(page);
+  await preferences
+    .getByText("Show estimated wire rate", { exact: true })
+    .click();
+  await preferences.getByRole("button", { name: "Close Settings" }).click();
+  await expect(page.locator(".result-card .est")).toHaveCount(0);
+  await expect(jitter).toHaveText("0.0 ms jitter");
+  await expect(page.locator(".result-card .sub")).toContainText(
+    "↓ 320.0 ↑ 64.00",
+  );
+  const after = await geometry();
+  expect(after.map((card) => card.height)).toEqual(
+    before.map((card) => card.height),
+  );
+});

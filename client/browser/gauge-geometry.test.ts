@@ -109,7 +109,12 @@ async function assertGaugeLabels(page: Page) {
     );
     const center = {
       x: stage.width / 2 + transform.m41,
-      y: stage.height / 2 + transform.m42,
+      y:
+        stage.height / 2 +
+        Number.parseFloat(
+          stageStyle.getPropertyValue("--gauge-center-offset"),
+        ) +
+        transform.m42,
     };
     return ticks.map((tick) => {
       const box = tick.getBoundingClientRect();
@@ -368,36 +373,30 @@ test("a windowed desktop fits compact and final cards without token scrolling", 
   await waitForCompletion(page, 10_000);
   await expect(resultCards(page)).toHaveCount(3);
   await expect(page.locator(".metric-wrap .gauge-value")).toHaveCount(0);
-  const terminalResults = page.locator(".metric-wrap .terminal-result");
-  await expect(terminalResults).toHaveCount(2);
+  await expect(page.locator(".metric-wrap .terminal-readout")).toHaveCount(1);
   await expect(
-    page.locator(".terminal-result.download .terminal-number"),
+    page.locator(".terminal-readout.download .terminal-number"),
   ).toHaveText(
     await page.locator(".result-card:has(.ico.dl) .num").innerText(),
   );
-  await expect(
-    page.locator(".terminal-result.upload .terminal-number"),
-  ).toHaveText(
-    await page.locator(".result-card:has(.ico.ul) .num").innerText(),
-  );
-  await expect(page.locator(".terminal-result.bidirectional")).toHaveCount(0);
   await expect(page.locator(".metric-wrap .terminal-unit")).toHaveText(
     /(?:bit|B)\/s$/,
   );
+  await expect(page.locator(".gauge-panel output")).toContainText("Upload");
   const terminalAlignment = await page
-    .locator(".terminal-unit")
-    .evaluate((unit) => {
-      const number = unit.parentElement?.querySelector(
-        ".terminal-result.download .terminal-number",
-      );
-      if (!(number instanceof HTMLElement))
-        throw new Error("missing terminal number");
-      const unitBox = unit.getBoundingClientRect();
+    .locator(".terminal-readout")
+    .evaluate((readout) => {
+      const number = readout.querySelector(".terminal-number")!;
+      const unit = readout.querySelector(".terminal-unit")!;
       const numberBox = number.getBoundingClientRect();
-      return { unitRight: unitBox.right, numberRight: numberBox.right };
+      const unitBox = unit.getBoundingClientRect();
+      return {
+        unitCenter: unitBox.left + unitBox.width / 2,
+        numberCenter: numberBox.left + numberBox.width / 2,
+      };
     });
   expect(
-    Math.abs(terminalAlignment.unitRight - terminalAlignment.numberRight),
+    Math.abs(terminalAlignment.unitCenter - terminalAlignment.numberCenter),
   ).toBeLessThanOrEqual(1);
   await expectStageFits(page);
 });
@@ -424,9 +423,7 @@ for (const viewport of [
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
       }));
-    if (viewport.height === 640)
-      expect(stage.scrollHeight).toBeGreaterThan(stage.clientHeight);
-    else expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+    expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
     const chartContainment = await page.locator(".chart").evaluate((chart) => {
       const plot = chart.querySelector(".plot");
       if (!(plot instanceof HTMLElement)) throw new Error("missing chart plot");

@@ -24,7 +24,7 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
-  import { resultGaugeArcs } from "./resultGauge";
+  import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { preparationFailurePresentation } from "./preparationFailure";
   import { failureDetail } from "./failurePresentation";
   import { ICON } from "../constants";
@@ -38,6 +38,7 @@
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
   const terminalArcs = $derived(resultGaugeArcs(store.result));
+  const headlineArc = $derived(primaryResultGaugeArc(terminalArcs));
   // A one-sided bidirectional partial retains its lane result for diagnostics,
   // but has no truthful combined gauge value.
   const unusableStage = $derived(
@@ -130,12 +131,11 @@
     )
       return EMPTY_DISPLAY;
     if (p === "complete") {
-      if (terminalArcs.length === 1)
+      if (headlineArc)
         return {
-          value: fmtSpeed(gaugeRate(terminalArcs[0].bytesPerSec)),
-          unit: `${gaugeUnit} · ${terminalArcs[0].label}`,
+          value: fmtSpeed(gaugeRate(headlineArc.bytesPerSec)),
+          unit: `${gaugeUnit} · ${headlineArc.label}`,
         };
-      if (terminalArcs.length > 1) return { value: "", unit: gaugeUnit };
       return store.result?.latency
         ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
         : EMPTY_DISPLAY;
@@ -248,21 +248,21 @@
       )
       .join("; "),
   );
-  const terminalSummary = $derived.by(() =>
-    store.phase === "complete" && terminalArcs.length > 1
-      ? terminalArcs.map((arc) => ({
+  const terminalPrimary = $derived.by(() => {
+    const arc = store.phase === "complete" ? headlineArc : null;
+    return arc
+      ? {
+          ...arc,
           value: fmtSpeed(gaugeRate(arc.bytesPerSec)),
           direction:
             arc.phase === "download" || arc.label.endsWith("download")
-              ? "download"
+              ? ("download" as const)
               : arc.phase === "upload" || arc.label.endsWith("upload")
-                ? "upload"
-                : "bidirectional",
-          phase: arc.phase,
-          dashed: arc.dashed,
-        }))
-      : [],
-  );
+                ? ("upload" as const)
+                : ("bidirectional" as const),
+        }
+      : null;
+  });
 
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
@@ -398,8 +398,8 @@
         showValue: !unusableStage,
         valueBytesPerSec: unusableStage
           ? 0
-          : p === "complete" && terminalArcs.length
-            ? terminalArcs[0].bytesPerSec
+          : p === "complete" && headlineArc
+            ? headlineArc.bytesPerSec
             : liveRateValues.transfer,
         scaleBytesPerSec: scale,
         throughputEvidence:
@@ -465,7 +465,11 @@
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
-    <div bind:this={stageEl} class="stage">
+    <div
+      bind:this={stageEl}
+      class="stage"
+      style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
+    >
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       {#if showGaugeTicks}
         <div class="gauge-ticks" aria-hidden="true">
@@ -481,37 +485,37 @@
         </div>
       {/if}
       <div class="metric-wrap">
-        {#if terminalSummary.length}
-          <div class="terminal-readout" aria-hidden="true">
-            <div class="terminal-summary">
-              {#each terminalSummary as item (item.phase)}
-                <span
-                  class="terminal-result {item.phase}"
-                  class:partial={item.dashed}
-                >
-                  <span class="terminal-marker">
-                    {#if item.direction === "download"}
-                      {@html ICON.download}
-                    {:else if item.direction === "upload"}
-                      {@html ICON.upload}
-                    {:else}
-                      {@html ICON.bidirectional}
-                    {/if}
-                  </span>
-                  <span class="terminal-number">{item.value}</span>
-                </span>
-              {/each}
-            </div>
-            <span class="terminal-unit">{display.unit}</span>
+        {#if terminalPrimary}
+          <div
+            class="terminal-readout {terminalPrimary.phase}"
+            class:partial={terminalPrimary.dashed}
+            aria-hidden="true"
+          >
+            <span class="terminal-marker">
+              {#if terminalPrimary.direction === "download"}
+                {@html ICON.download}
+              {:else if terminalPrimary.direction === "upload"}
+                {@html ICON.upload}
+              {:else}
+                {@html ICON.bidirectional}
+              {/if}
+            </span>
+            <span class="terminal-number">{terminalPrimary.value}</span>
+            <span class="terminal-unit">{gaugeUnit}</span>
+            {#if terminalPrimary.dashed}
+              <span class="terminal-partial"
+                >Partial {terminalPrimary.direction}</span
+              >
+            {/if}
           </div>
+        {:else}
+          {#if display.value}<span class="gauge-value" aria-hidden="true"
+              >{display.value}</span
+            >{/if}
+          {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+              >{display.unit}</span
+            >{/if}
         {/if}
-        {#if display.value}<span class="gauge-value" aria-hidden="true"
-            >{display.value}</span
-          >{/if}
-        {#if display.unit && !terminalSummary.length}<span
-            class="gauge-unit"
-            aria-hidden="true">{display.unit}</span
-          >{/if}
         <span class="sr-only"
           >{accessibleDisplay.value} {accessibleDisplay.unit}</span
         >
@@ -539,9 +543,10 @@
       <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
-    <div class="run-slot"><RunButton /></div>
-
-    <div class="stage-head"><StageTrack /></div>
+    <div class="instrument-controls">
+      <div class="run-slot"><RunButton /></div>
+      <div class="stage-head"><StageTrack /></div>
+    </div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
@@ -566,7 +571,7 @@
   .gauge-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
     padding: 0;
     background: transparent;
     /* Query context for .instrument, so a docked panel shrinking this column
@@ -577,7 +582,7 @@
   /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3) var(--space-2);
     flex: 0 0 auto;
     min-height: 0;
     /* One readable gauge size across live and completed states. The profile
@@ -585,8 +590,7 @@
     --gauge-well-height: clamp(280px, 35svh, 360px);
     grid-template:
       "gauge" var(--gauge-well-height)
-      "run" auto
-      "stagehead" auto
+      "controls" auto
       "latency" auto
       / 1fr;
   }
@@ -594,8 +598,7 @@
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "gauge" var(--gauge-well-height)
-      "run" auto
-      "stagehead" auto
+      "controls" auto
       / 1fr;
   }
   /* Wide instruments pair the two readings and their controls in two columns. */
@@ -603,16 +606,14 @@
     .instrument {
       grid-template:
         "gauge latency" minmax(var(--gauge-well-height), auto)
-        "run run" auto
-        "stagehead stagehead" auto
+        "controls controls" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
     /* The gauge keeps its size when latency is disabled. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
-        "run run" auto
-        "stagehead stagehead" auto
+        "controls controls" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
@@ -623,13 +624,6 @@
     }
     .instrument .stage {
       min-height: 280px;
-    }
-    .canvas,
-    .gauge-ticks,
-    .metric-wrap {
-      /* The 270-degree dial is top-heavy by construction. A small optical
-         shift balances its label clearance in the compact phone well. */
-      transform: translateY(8px);
     }
   }
   /* The gauge well: the deepest recess on the faceplate. */
@@ -648,10 +642,28 @@
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
-  /* Start test's slot: RunButton centers itself (width:100%, max-width:320px,
-     align-self:center), so this slot only has to be a flex row. */
+  .instrument-controls {
+    --stage-controls-width: 480px;
+    grid-area: controls;
+    display: grid;
+    gap: var(--space-3);
+    width: 100%;
+    padding-block: var(--space-2);
+    justify-self: center;
+    align-items: center;
+  }
+  .instrument-controls:has(:global(.quad)) {
+    --stage-controls-width: 600px;
+  }
+  @container viz (min-width: 1000px) {
+    .instrument-controls {
+      grid-template-columns: 280px minmax(0, 1fr);
+      column-gap: var(--space-5);
+      max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
+    }
+  }
+  /* The action and editable stages form one centered group on wide screens. */
   .run-slot {
-    grid-area: run;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -690,10 +702,10 @@
     transform: translate(-50%, -50%);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 8.5px;
+    font-size: 9.5px;
     font-weight: 600;
     color: var(--text-soft);
-    opacity: 0.5;
+    opacity: 0.75;
     white-space: nowrap;
     line-height: 1;
   }
@@ -731,6 +743,7 @@
     /* Keeps the number clear of the gauge ring's sides. The inline padding
        also bounds how wide the value grows until cqmin sizing reins it in. */
     padding-inline: 9%;
+    padding-top: calc(2 * var(--gauge-center-offset));
     pointer-events: none;
   }
   /* The hero number: the display face with tabular figures, so a live value
@@ -749,76 +762,59 @@
     white-space: nowrap;
   }
   .terminal-readout {
-    display: grid;
-    justify-items: center;
-    gap: 8px;
-    max-width: 72%;
-  }
-  .terminal-summary {
-    display: grid;
-    gap: 4px;
-    max-width: 100%;
-    font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    font-size: clamp(18px, 7.2cqmin, 30px);
-    font-weight: 600;
-    letter-spacing: var(--track-tight);
-    line-height: 1;
-    white-space: nowrap;
-  }
-  .terminal-result {
     --result-accent: var(--text-soft);
     display: grid;
-    grid-template-columns: 21px minmax(4ch, 1fr);
-    align-items: center;
-    gap: 7px;
+    justify-items: center;
+    gap: clamp(var(--space-2), 2.5cqmin, var(--space-3));
+    max-width: 72%;
+    color: var(--result-accent);
   }
-  .terminal-result.download {
+  .terminal-readout.download {
     --result-accent: var(--phase-download);
   }
-  .terminal-result.upload {
+  .terminal-readout.upload {
     --result-accent: var(--phase-upload);
   }
-  .terminal-result.bidirectional {
+  .terminal-readout.bidirectional {
     --result-accent: var(--phase-bidirectional);
   }
   .terminal-marker {
     display: grid;
     place-items: center;
-    width: 21px;
-    height: 21px;
+    width: clamp(32px, 12cqmin, 42px);
+    height: clamp(32px, 12cqmin, 42px);
     border: 1px solid
-      color-mix(in srgb, var(--result-accent) 30%, var(--border));
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, var(--result-accent) 6%, var(--surface-2));
-    color: var(--result-accent);
+      color-mix(in srgb, var(--result-accent) 28%, var(--border));
+    border-radius: var(--r-full);
     line-height: 1;
   }
   .terminal-marker :global(svg) {
-    width: 13px;
-    height: 13px;
+    width: 58%;
+    height: 58%;
   }
-  .terminal-result.partial .terminal-marker {
+  .terminal-readout.partial .terminal-marker {
     border-style: dashed;
   }
   .terminal-number {
-    min-width: 0;
-    text-align: right;
-    color: var(--result-accent);
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(28px, 14cqmin, 52px);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+    line-height: 1;
+    white-space: nowrap;
   }
   .terminal-unit {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 7px;
-    width: 100%;
     font-family: var(--font-mono);
-    font-size: clamp(10px, 3.1cqmin, 12px);
-    font-weight: 600;
-    letter-spacing: 0.07em;
+    font-size: clamp(var(--type-xs), 3.8cqmin, var(--type-md));
+    font-weight: 500;
     color: var(--text-soft);
     line-height: 1;
+  }
+  .terminal-partial {
+    font-size: var(--type-xs);
+    color: var(--text-muted);
   }
   .gauge-unit {
     margin-top: var(--space-1);
@@ -829,48 +825,22 @@
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .terminal-result {
-      animation: terminal-result-enter var(--dur-slide) var(--ease-out) both;
-    }
-    .terminal-result:nth-child(2) {
-      animation-delay: 35ms;
-    }
-    .terminal-result:nth-child(3) {
-      animation-delay: 70ms;
-    }
-    .terminal-unit {
-      animation: terminal-unit-enter var(--dur-hover) var(--ease-out)
-        var(--dur-hover) both;
-    }
-  }
-  @keyframes terminal-result-enter {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
-    }
-  }
-  @keyframes terminal-unit-enter {
-    from {
-      opacity: 0;
-    }
-  }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect
      the metric's zero-shift baseline. */
   .gauge-notes {
     position: absolute;
-    bottom: 18px;
+    bottom: var(--space-4);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--space-1);
     width: 86%;
     text-align: center;
   }
   .gauge-hint {
-    font-size: 12.5px;
+    font-size: var(--type-sm);
     font-weight: 600;
     line-height: 1.35;
     color: var(--text-muted);
@@ -880,7 +850,7 @@
      the state is unmissable. */
   .gauge-status {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--type-xs);
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -893,22 +863,19 @@
     color: var(--brand-strong);
   }
   .gauge-fail {
-    font-size: 11.5px;
+    font-size: var(--type-sm);
     font-weight: 600;
     line-height: 1.3;
     color: var(--err);
   }
 
-  /* Stage-head block: Test Stages header plus track, placed by the instrument
-     grid (top on mobile, bottom on desktop). Capped to a comfortable measure
-     and centered so it never stretches across a full two-column span. */
+  /* Narrow layouts stack the action and stages in their natural reading order. */
   .stage-head {
-    grid-area: stagehead;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     width: 100%;
-    max-width: 600px;
+    max-width: var(--stage-controls-width);
     justify-self: center;
   }
   /* The instrument has an explicit well height, so result content no longer
@@ -921,5 +888,8 @@
     max-width: none;
     align-self: center;
     min-height: 0;
+  }
+  .results-slot:empty {
+    display: none;
   }
 </style>
