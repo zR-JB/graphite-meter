@@ -86,6 +86,29 @@ a stored percentage is never used to reconstruct a supposedly exact count.
 
 ## Native summaries
 
+Native stages separate transport preparation, warmup, and measurement. Preparation
+is bounded to ten seconds. Every download lane must have an accepted HTTP response
+or WebTransport receive stream; upload lanes must have written request headers or
+opened their streams, with the receiver progress feed subscribed and advancing.
+The latency bus must be open and able to send. A successful latency reply is not a
+readiness requirement, so silent paths can still produce timeout observations.
+All selected directions and loaded-latency participants pass this gate before the
+configured/adaptive warmup starts. Warmup data is excluded from every result.
+
+The shared gate opens the measured phase. Download and latency use client monotonic
+time; upload takes its baseline from the first fresh receiver report after that
+gate. Acquiring that receiver baseline has a separate deadline: the shorter of
+the configured measured duration and ten seconds. If no fresh report arrives,
+the stage fails without an upload summary; baseline acquisition time never
+enters a receiver window. Its exact counter window follows the server progress cadence and server
+clock, rather than mixing client timestamps with server byte counts. Download
+and upload full-window means are received bytes divided by their attributable
+elapsed seconds. A direction failure or caller cancellation stops its siblings;
+nonempty measured throughput windows survive with the stage's original failure
+and an incomplete label. Setup-only bytes never become a partial result, and
+empty interrupted transfer windows do not produce numeric summaries. Cleanup
+finishes before the run's terminal outcome is emitted.
+
 Native latency summaries use received application replies within each measured stage. P50 is the
 midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
 consecutive successful replies in receive order, skipping timeout outcomes and starting a new
