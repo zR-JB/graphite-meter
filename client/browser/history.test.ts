@@ -33,14 +33,13 @@ function record(
   download = 125_000_000,
 ): HistoryRecord {
   const lane = (rate: number) => ({
-    meanBytesPerSec: rate,
     reportedBytesPerSec: rate,
     peakBytesPerSec: rate * 1.08,
     fullAverageBytesPerSec: rate * 0.96,
     method: "full-average" as const,
     totalBytes: 9_999_999_999,
     stabilityPct: 4,
-    packetLossPct: 0.2,
+    probeTimeoutPct: 0.2,
     stabilityScore: 0.94,
     band: "high" as const,
     serverAuthoritative: true,
@@ -52,11 +51,15 @@ function record(
     p90: 24.8,
     center: 14.6,
     jitter: 2.7,
-    lossRatio: 0.01,
-    count: 140,
+    timeoutRatio: 0.01,
+    accountingComplete: true,
+    timeoutCount: 1,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
+    count: 100,
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 3,
     id,
     startedAt: completedAt - 65_432,
     completedAt,
@@ -70,7 +73,7 @@ function record(
           p50Ms: 12.4,
           p95Ms: 27.8,
           jitterMs: 2.2,
-          packetLossPct: 0.4,
+          probeTimeoutPct: 0.4,
           method: "full-average",
           stabilityScore: 0.91,
           band: "high",
@@ -643,11 +646,59 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
   await expect(page.getByText("No saved results")).toBeVisible();
 });
 
-test("malformed-only archives keep a raw clear path", async ({ page }) => {
+test("history skips old formats without rewriting or deleting stored results", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1366, height: 768 });
+  const current = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+  const old = [
+    { ...record(IDS.middle, Date.UTC(2026, 7, 27, 12)), schemaVersion: 1 },
+    { ...record(IDS.oldest, Date.UTC(2026, 7, 26, 12)), schemaVersion: 2 },
+  ];
+  await seedHistory(page, [current, ...old]);
+  await openHistory(page, current.id);
+  await expect(page.locator(".result-row")).toHaveCount(1);
+  await expect(page.locator(".result-detail")).toBeVisible();
+  await expect(
+    page.getByText("2 unsupported or malformed records were ignored."),
+  ).toBeVisible();
+  await page.evaluate((id) => {
+    window.location.hash = `/history/${id}`;
+  }, old[0].id);
+  await expect(page.getByText("Unreadable saved result")).toBeVisible();
+  await expect(page.locator(".result-detail")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText("Unreadable saved result")).toBeVisible();
+  const stored = await page.evaluate(
+    (db) =>
+      new Promise<unknown[]>((resolve, reject) => {
+        const opening = indexedDB.open(db.name, db.version);
+        opening.onerror = () => reject(opening.error);
+        opening.onsuccess = () => {
+          const database = opening.result;
+          const tx = database.transaction(db.resultsStore, "readonly");
+          const get = tx.objectStore(db.resultsStore).getAll();
+          get.onsuccess = () => resolve(get.result);
+          tx.oncomplete = () => database.close();
+        };
+      }),
+    HISTORY_DB,
+  );
+  expect(stored).toEqual([old[1], old[0], current]);
+});
+
+test("unsupported and malformed archives keep an explicit raw clear path", async ({
+  page,
+}) => {
   await openApp(page, "dummy", { width: 900, height: 700 });
-  await seedHistory(page, [record(IDS.oldest, 1e20)]);
+  await seedHistory(page, [
+    record(IDS.oldest, 1e20),
+    { ...record(IDS.middle, Date.UTC(2026, 7, 27, 12)), schemaVersion: 2 },
+  ]);
   await openHistory(page);
-  await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
+  await expect(
+    page.getByText(/2 unsupported or malformed records were ignored/),
+  ).toBeVisible();
   const management = page.getByRole("button", { name: "Archive management" });
   await expect(management).toBeVisible();
   await management.click();
@@ -741,7 +792,9 @@ test("repository repairs corrupt generation metadata without deleting raw rows",
 
   await openHistory(page);
   await expect(page.locator(".result-row")).toHaveCount(2);
-  await expect(page.getByText(/1 malformed record was ignored/)).toBeVisible();
+  await expect(
+    page.getByText(/1 unsupported or malformed record was ignored/),
+  ).toBeVisible();
 });
 
 test("wordmark semantics preserve a live run away from the meter", async ({
@@ -1067,7 +1120,7 @@ test("activating the selected result closes detail without hijacking modified li
   await expect(row).toBeFocused();
 });
 
-test("saved probe timeouts identify their transport and preserve legacy results", async ({
+test("saved probe timeouts identify their transport and preserve exact outcome counts", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
@@ -1075,7 +1128,8 @@ test("saved probe timeouts identify their transport and preserve legacy results"
   webtransport.stages.latency.lanes.download = null;
   webtransport.stages.latency.lanes.upload = {
     ...webtransport.stages.latency.lanes.upload!,
-    lossRatio: 0,
+    timeoutRatio: 0,
+    timeoutCount: 0,
   };
   webtransport.stages.latency.lanes.bidirectional = null;
   const websocket = record(IDS.middle, Date.UTC(2026, 7, 27, 12));
@@ -1117,10 +1171,16 @@ test("saved probe timeouts identify their transport and preserve legacy results"
   );
   await expect(
     probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="latency"]'),
-  ).toHaveAttribute("aria-label", "Idle probe timeouts 1%, 140 resolved");
+  ).toHaveAttribute(
+    "aria-label",
+    "Idle probe timeouts 1%, 100 resolved · 1 timeouts · 0 unresolved · 0 send failures",
+  );
   await expect(
     probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"]'),
-  ).toHaveAttribute("aria-label", "Loaded Up probe timeouts 0%, 140 resolved");
+  ).toHaveAttribute(
+    "aria-label",
+    "Loaded Up probe timeouts 0%, 100 resolved · 0 timeouts · 0 unresolved · 0 send failures",
+  );
   await expect(
     probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"] em'),
   ).toHaveText("0%");
@@ -1925,18 +1985,6 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
   const partial = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
-  partial.schemaVersion = 2;
-  for (const snapshot of [
-    partial.stages.download.result,
-    partial.stages.upload.result,
-    partial.stages.bidirectional.down,
-    partial.stages.bidirectional.up,
-    partial.stages.latency.result,
-  ]) {
-    if (!snapshot) continue;
-    snapshot.probeTimeoutPct = snapshot.packetLossPct ?? null;
-    delete snapshot.packetLossPct;
-  }
   partial.stages.latency.lanes = {
     latency: null,
     upload: null,
@@ -1956,14 +2004,7 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
       accountingComplete: false,
     },
   };
-  const earlierV2 = structuredClone(partial);
-  earlierV2.id = IDS.middle;
-  const earlierLane = earlierV2.stages.latency.lanes.download!;
-  delete earlierLane.accountingComplete;
-  delete earlierLane.timeoutCount;
-  earlierLane.count = 10;
-  earlierLane.timeoutRatio = 0.1;
-  await seedHistory(page, [partial, earlierV2]);
+  await seedHistory(page, [partial]);
   await openHistory(page, partial.id);
   const profile = page.locator(
     '[data-latency-profile][data-variant="compact"]',
@@ -1993,18 +2034,6 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
       ),
   );
   await expect(page.locator(".inline-inspector")).toBeVisible();
-  await page.evaluate((id) => {
-    window.location.hash = `/history/${id}`;
-  }, earlierV2.id);
-  await expect(profile.getByText("Partial accounting")).toBeVisible();
-  await expect(profile).toContainText("Known: 10 resolved");
-  await expect(profile).not.toContainText("0 timeouts");
-  await expect(page.locator(".inline-inspector .result-detail")).toBeFocused();
-  await profile.getByRole("note").press("Tab");
-  await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("tooltip")).toContainText(
-    "predates probe-accounting completeness metadata",
-  );
 });
 
 for (const direction of ["down", "up"] as const) {
@@ -2162,27 +2191,6 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
 }) => {
   await openApp(page, "dummy", { width: 1440, height: 900 });
   const saved = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
-  saved.schemaVersion = 2;
-  for (const snapshot of [
-    saved.stages.download.result,
-    saved.stages.upload.result,
-    saved.stages.bidirectional.down,
-    saved.stages.bidirectional.up,
-    saved.stages.latency.result,
-  ]) {
-    if (!snapshot) continue;
-    snapshot.probeTimeoutPct = snapshot.packetLossPct ?? null;
-    delete snapshot.packetLossPct;
-  }
-  for (const lane of Object.values(saved.stages.latency.lanes)) {
-    if (!lane) continue;
-    delete lane.lossRatio;
-    lane.timeoutRatio = 0;
-    lane.timeoutCount = 0;
-    lane.unresolvedCount = 0;
-    lane.sendFailureCount = 0;
-    lane.accountingComplete = true;
-  }
   saved.stages.latency.lanes.download!.reflectorTiming = {
     sampleCount: 20,
     meanRawRttMs: 18,

@@ -76,7 +76,7 @@ test("timeoutLabel: hidden at zero, extra precision under one percent", () => {
   expect(timeoutLabel(0.05)).toBe("5.0% timeouts");
 });
 
-test("saved datagram loss requires WebTransport latency provenance", () => {
+test("saved probe timeouts require a supported latency transport", () => {
   expect(savedLatencyHasProbeEvidence("webtransport")).toBe(true);
   expect(savedLatencyHasProbeEvidence("websocket")).toBe(true);
   expect(savedLatencyHasProbeEvidence(null)).toBe(false);
@@ -135,10 +135,6 @@ test("incomplete accounting stays visible without turning unknown outcomes into 
   expect(hasProbeAccountingNotice(lane({ unresolvedCount: 2 }))).toBe(true);
 });
 
-test("legacy lane details do not invent missing exact outcome counts", () => {
-  expect(probeAccountingDetails({ count: 140 })).toBe("140 resolved");
-});
-
 test("visible probe counts emphasize replies and retain only nonzero exceptions", () => {
   expect(
     probeAccountingSummary(
@@ -163,8 +159,17 @@ test("visible probe counts emphasize replies and retain only nonzero exceptions"
     replies: "38 replies",
     exceptions: ["2 timeouts", "3 unresolved", "1 send failure"],
   });
-  expect(probeAccountingSummary({ count: 40 })).toEqual({
-    replies: "40 resolved",
+  expect(
+    probeAccountingSummary(
+      lane({
+        count: 0,
+        timeoutCount: null,
+        unresolvedCount: null,
+        sendFailureCount: null,
+      }),
+    ),
+  ).toEqual({
+    replies: "0 resolved",
     exceptions: [],
   });
 });

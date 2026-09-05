@@ -475,7 +475,7 @@
         {#if store.historyWarning}<p>{store.historyWarning}</p>{/if}
         {#if actionError}<p>{actionError}</p>{/if}
         {#if malformedCount}<p>
-            {malformedCount} malformed {malformedCount === 1
+            {malformedCount} unsupported or malformed {malformedCount === 1
               ? "record was"
               : "records were"} ignored.
           </p>{/if}
@@ -721,7 +721,7 @@
           </h2>
           <p>
             {selectedState === "malformed"
-              ? "This record failed the local schema checks and was not rendered."
+              ? "This record uses an unsupported format or failed validation."
               : "It may have been deleted in another tab."}
           </p>
           <button type="button" onclick={closeDetail}>Back to results</button>

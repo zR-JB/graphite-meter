@@ -10,7 +10,7 @@ import type {
 } from "../runner/contract";
 import { createUuid, isUuid } from "../uuid";
 
-const HISTORY_SCHEMA_VERSION = 2 as const;
+const HISTORY_SCHEMA_VERSION = 3 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const HISTORY_FAILURE_STAGES = [
   "latency",
@@ -27,17 +27,13 @@ interface FailureSnapshot {
   reason: Exclude<TerminationReason, "user-abort">;
 }
 export interface ThroughputSnapshot {
-  /** Persisted V1/V2 compatibility alias; the runner has one headline rate. */
-  meanBytesPerSec: number;
   reportedBytesPerSec: number;
   peakBytesPerSec: number;
   fullAverageBytesPerSec: number;
   method: "stable-window" | "full-average";
   totalBytes: number;
   stabilityPct: number;
-  /** V1 compatibility field; new records store probeTimeoutPct. */
-  packetLossPct?: number;
-  probeTimeoutPct?: number | null;
+  probeTimeoutPct: number | null;
   stabilityScore: number;
   band: "low" | "medium" | "high";
   serverAuthoritative: boolean;
@@ -48,9 +44,7 @@ interface LatencySnapshot {
   p50Ms: number | null;
   p95Ms: number | null;
   jitterMs: number | null;
-  /** V1 compatibility field; new records store probeTimeoutPct. */
-  packetLossPct?: number;
-  probeTimeoutPct?: number | null;
+  probeTimeoutPct: number | null;
   method: "stable-window" | "full-average";
   stabilityScore: number;
   band: "low" | "medium" | "high";
@@ -63,14 +57,11 @@ export interface LatencyLaneSnapshot {
   p90: number | null;
   center: number | null;
   jitter: number | null;
-  /** V1 compatibility field. */
-  lossRatio?: number;
-  timeoutRatio?: number | null;
-  /** New V2 writes include this; early V2 and V1 records lack this metadata. */
-  accountingComplete?: boolean;
-  timeoutCount?: number;
-  unresolvedCount?: number;
-  sendFailureCount?: number;
+  timeoutRatio: number | null;
+  accountingComplete: boolean;
+  timeoutCount: number;
+  unresolvedCount: number;
+  sendFailureCount: number;
   count: number;
 }
 type ThroughputTransportKind = Extract<
@@ -82,7 +73,7 @@ type LatencyTransportKind = Extract<
   "websocket" | "webtransport"
 >;
 export interface HistoryRecord {
-  schemaVersion: 1 | typeof HISTORY_SCHEMA_VERSION;
+  schemaVersion: typeof HISTORY_SCHEMA_VERSION;
   id: string;
   startedAt: number;
   completedAt: number;
@@ -149,7 +140,6 @@ function latencyTransportKind(
 function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
   return (
     value && {
-      meanBytesPerSec: value.reportedBytesPerSec,
       reportedBytesPerSec: value.reportedBytesPerSec,
       peakBytesPerSec: value.peakBytesPerSec,
       fullAverageBytesPerSec: value.fullAverageBytesPerSec,
@@ -343,7 +333,8 @@ export function buildHistoryRecord(
 }
 
 export function isHistoryRecord(value: unknown): value is HistoryRecord {
-  if (!isObject(value)) return false;
+  if (!isObject(value) || value.schemaVersion !== HISTORY_SCHEMA_VERSION)
+    return false;
   const record = value as Record<string, unknown>;
   const stage = (candidate: unknown): candidate is StageStatus =>
     candidate === "complete" ||
@@ -449,29 +440,25 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     if (!isObject(candidate)) return false;
     return (
       hasOnly(candidate, [
-        "meanBytesPerSec",
         "reportedBytesPerSec",
         "peakBytesPerSec",
         "fullAverageBytesPerSec",
         "method",
         "totalBytes",
         "stabilityPct",
-        record.schemaVersion === 1 ? "packetLossPct" : "probeTimeoutPct",
+        "probeTimeoutPct",
         "stabilityScore",
         "band",
         "serverAuthoritative",
       ]) &&
-      nonnegative(candidate.meanBytesPerSec) &&
       nonnegative(candidate.reportedBytesPerSec) &&
       nonnegative(candidate.peakBytesPerSec) &&
       nonnegative(candidate.fullAverageBytesPerSec) &&
       method(candidate.method) &&
       nonnegative(candidate.totalBytes) &&
       percentage(candidate.stabilityPct) &&
-      (record.schemaVersion === 1
-        ? percentage(candidate.packetLossPct)
-        : candidate.probeTimeoutPct === null ||
-          percentage(candidate.probeTimeoutPct)) &&
+      (candidate.probeTimeoutPct === null ||
+        percentage(candidate.probeTimeoutPct)) &&
       unitInterval(candidate.stabilityScore) &&
       band(candidate.band) &&
       typeof candidate.serverAuthoritative === "boolean"
@@ -488,28 +475,18 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         "p50Ms",
         "p95Ms",
         "jitterMs",
-        record.schemaVersion === 1 ? "packetLossPct" : "probeTimeoutPct",
+        "probeTimeoutPct",
         "method",
         "stabilityScore",
         "band",
       ]) &&
       nonnegative(candidate.reportedMs) &&
-      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
-        candidate.minMs,
-      ) &&
-      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
-        candidate.p50Ms,
-      ) &&
-      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
-        candidate.p95Ms,
-      ) &&
-      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
-        candidate.jitterMs,
-      ) &&
-      (record.schemaVersion === 1
-        ? percentage(candidate.packetLossPct)
-        : candidate.probeTimeoutPct === null ||
-          percentage(candidate.probeTimeoutPct)) &&
+      nonnegativeOrNull(candidate.minMs) &&
+      nonnegativeOrNull(candidate.p50Ms) &&
+      nonnegativeOrNull(candidate.p95Ms) &&
+      nonnegativeOrNull(candidate.jitterMs) &&
+      (candidate.probeTimeoutPct === null ||
+        percentage(candidate.probeTimeoutPct)) &&
       method(candidate.method) &&
       unitInterval(candidate.stabilityScore) &&
       band(candidate.band)
@@ -525,50 +502,37 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         "p90",
         "center",
         "jitter",
-        ...(record.schemaVersion === 1
-          ? ["lossRatio"]
-          : [
-              "timeoutRatio",
-              "reflectorTiming",
-              "unresolvedCount",
-              "sendFailureCount",
-              "accountingComplete",
-              "timeoutCount",
-            ]),
+        "timeoutRatio",
+        "reflectorTiming",
+        "unresolvedCount",
+        "sendFailureCount",
+        "accountingComplete",
+        "timeoutCount",
         "count",
       ]) &&
-      (candidate.reflectorTiming === undefined ||
-        validReflectorTiming(
-          candidate.reflectorTiming,
-          Number(candidate.count) - Number(candidate.timeoutCount ?? 0),
-        )) &&
       nonnegativeOrNull(candidate.min) &&
       nonnegativeOrNull(candidate.max) &&
       nonnegativeOrNull(candidate.p10) &&
       nonnegativeOrNull(candidate.p90) &&
       nonnegativeOrNull(candidate.center) &&
       nonnegativeOrNull(candidate.jitter) &&
-      (record.schemaVersion === 1
-        ? unitInterval(candidate.lossRatio)
-        : (candidate.timeoutRatio === null ||
-            unitInterval(candidate.timeoutRatio)) &&
-          ((candidate.accountingComplete === undefined &&
-            candidate.timeoutCount === undefined) ||
-            (typeof candidate.accountingComplete === "boolean" &&
-              Number.isSafeInteger(candidate.timeoutCount) &&
-              nonnegative(candidate.timeoutCount) &&
-              nonnegative(candidate.count) &&
-              candidate.timeoutCount <= candidate.count &&
-              candidate.timeoutRatio ===
-                (candidate.count
-                  ? candidate.timeoutCount / candidate.count
-                  : null))) &&
-          Number.isSafeInteger(candidate.unresolvedCount) &&
-          nonnegative(candidate.unresolvedCount) &&
-          Number.isSafeInteger(candidate.sendFailureCount) &&
-          nonnegative(candidate.sendFailureCount)) &&
-      Number.isInteger(candidate.count) &&
-      nonnegative(candidate.count)
+      typeof candidate.accountingComplete === "boolean" &&
+      Number.isSafeInteger(candidate.count) &&
+      nonnegative(candidate.count) &&
+      Number.isSafeInteger(candidate.timeoutCount) &&
+      nonnegative(candidate.timeoutCount) &&
+      candidate.timeoutCount <= candidate.count &&
+      candidate.timeoutRatio ===
+        (candidate.count ? candidate.timeoutCount / candidate.count : null) &&
+      Number.isSafeInteger(candidate.unresolvedCount) &&
+      nonnegative(candidate.unresolvedCount) &&
+      Number.isSafeInteger(candidate.sendFailureCount) &&
+      nonnegative(candidate.sendFailureCount) &&
+      (candidate.reflectorTiming === undefined ||
+        validReflectorTiming(
+          candidate.reflectorTiming,
+          candidate.count - candidate.timeoutCount,
+        ))
     );
   };
   const throughputStage = (
@@ -661,8 +625,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     record.completedAt < record.startedAt ||
     !nonnegative(record.durationMs) ||
     !nonnegative(record.totalBytes) ||
-    (record.schemaVersion !== 1 &&
-      record.schemaVersion !== HISTORY_SCHEMA_VERSION) ||
     !isUuid(record.id)
   )
     return false;
