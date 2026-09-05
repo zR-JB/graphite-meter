@@ -98,7 +98,7 @@ performanceTest(
     await startTest(page);
     await page.waitForTimeout(1200);
     const plot = page.locator(
-      '[role="img"][aria-label="Throughput and latency over time"]',
+      '[role="slider"][aria-label="Throughput and latency over time"]',
     );
     await plot.scrollIntoViewIfNeeded();
     const box = await plot.boundingBox();
