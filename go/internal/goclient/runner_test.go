@@ -711,7 +711,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 }
 
-func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
+func TestFailedTransferStagePreservesPartialLoadedLatencyResult(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ping", echoPingHandler())
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
@@ -755,10 +755,13 @@ func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if samples == 0 {
-		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised the suppression")
+		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised partial results")
 	}
-	if len(results) != 0 {
-		t.Fatalf("failed stage published %d result(s): %+v", len(results), results)
+	if len(results) != 1 || results[0].Latency.Count == 0 || !errors.Is(results[0].Err, err) {
+		t.Fatalf("failed stage did not preserve its partial latency and failure: %+v", results)
+	}
+	if results[0].Elapsed <= 0 || results[0].Elapsed >= 3*time.Second {
+		t.Fatalf("partial elapsed = %v", results[0].Elapsed)
 	}
 }
 

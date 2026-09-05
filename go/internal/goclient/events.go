@@ -70,6 +70,7 @@ type Result struct {
 	ServerAuth bool
 	Latency    LatencyStats
 	Elapsed    time.Duration
+	Err        error // Non-nil marks an incomplete stage summary and preserves its failure.
 }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
@@ -82,6 +83,7 @@ type LatencyStats struct {
 	Unresolved                         int
 	SendFailures                       int
 	TimeoutAfter                       time.Duration
+	Elapsed                            time.Duration
 }
 
 // TimeoutRatio excludes interrupted/unresolved probes and local send failures; an empty population is unavailable.
@@ -91,4 +93,9 @@ func (s LatencyStats) TimeoutRatio() (float64, bool) {
 		return 0, false
 	}
 	return float64(s.Timeouts) / float64(resolved), true
+}
+
+// HasObservations distinguishes a measured partial population from a failure before any probes were measured.
+func (s LatencyStats) HasObservations() bool {
+	return s.Count+s.Timeouts+s.Unresolved+s.SendFailures > 0
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"strings"
 	"testing"
@@ -35,5 +36,30 @@ func TestTimeoutOnlyLoadedResultIsLatency(t *testing.T) {
 	}
 	if isLatencyResult(goclient.Result{Stage: "upload", Direction: goclient.Up}) {
 		t.Fatal("upload result classified as latency")
+	}
+}
+
+func TestIncompleteLatencyResultIsStoredWithoutCompletingTheStage(t *testing.T) {
+	failure := errors.New("latency connection failed")
+	m := newModel(goclient.DefaultConfig())
+	m.stages = []stageProgress{{name: "latency", state: stageMeasuring}}
+	result := goclient.Result{Stage: "latency", Latency: goclient.LatencyStats{Timeouts: 2, Unresolved: 1}, Err: failure}
+	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &result})
+	m.apply(goclient.Event{Kind: goclient.EventError, Err: failure})
+	if len(m.results) != 1 || !errors.Is(m.results[0].Err, failure) || m.stages[0].state != stageStopped || !errors.Is(m.err, failure) {
+		t.Fatalf("partial result lost or marked complete: results=%+v stages=%+v err=%v", m.results, m.stages, m.err)
+	}
+	if got := m.resultsView(120); !strings.Contains(got, "Incomplete: latency connection failed") || !strings.Contains(got, "unresolved 1") {
+		t.Fatalf("missing partial disclosure: %q", got)
+	}
+}
+
+func TestFinalReportRetainsIncompleteLatencyOnFailure(t *testing.T) {
+	failure := errors.New("latency connection failed")
+	m := newModel(goclient.DefaultConfig())
+	m.err = failure
+	m.results = []goclient.Result{{Stage: "latency", Latency: goclient.LatencyStats{Timeouts: 1}, Err: failure}}
+	if got := m.finalReport(); !strings.Contains(got, "Incomplete: latency connection failed") {
+		t.Fatalf("partial failure report was discarded: %q", got)
 	}
 }

@@ -3,6 +3,7 @@ package goclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -354,5 +355,58 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 	}
 	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 {
 		t.Fatalf("late replies became RTT observations: %+v", stats)
+	}
+}
+
+func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
+	for _, reply := range []bool{false, true} {
+		t.Run(fmt.Sprint("reply=", reply), func(t *testing.T) {
+			var accepts atomic.Int64
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if accepts.Add(1) > 1 {
+					w.Header().Set("Graphite-Meter-Auth", "required")
+					w.WriteHeader(http.StatusForbidden)
+					return
+				}
+				conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+				if err != nil {
+					return
+				}
+				defer conn.CloseNow()
+				started := time.Now()
+				timer := time.AfterFunc(400*time.Millisecond, func() { _ = conn.CloseNow() })
+				defer timer.Stop()
+				for {
+					_, msg, err := conn.Read(req.Context())
+					if err != nil {
+						return
+					}
+					f, err := wire.Decode(string(msg))
+					if !reply || err != nil || f.Op != wire.OpPING || time.Since(started) > 100*time.Millisecond {
+						continue
+					}
+					_ = conn.Write(req.Context(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID})))
+				}
+			}))
+			defer srv.Close()
+			var results []Result
+			r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(e Event) {
+				if e.Kind == EventResult {
+					results = append(results, *e.Result)
+				}
+			}}
+			attachTestLatencyTarget(r, srv.URL)
+			err := r.runLatencyStage(t.Context(), "latency", false, 3*time.Second)
+			if err == nil || len(results) != 1 || !errors.Is(results[0].Err, err) {
+				t.Fatalf("error=%v; partial results=%+v", err, results)
+			}
+			stats := results[0].Latency
+			if (stats.Count > 0) != reply || stats.Timeouts == 0 || stats.Unresolved == 0 {
+				t.Fatalf("failure discarded probe outcomes: %+v", stats)
+			}
+			if stats.Elapsed <= 0 || stats.Elapsed >= 3*time.Second || results[0].Elapsed != stats.Elapsed {
+				t.Fatalf("failure reports requested duration rather than measured window: %+v", results[0])
+			}
+		})
 	}
 }

@@ -414,15 +414,14 @@ func (r *runner) fail(err error) error {
 func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bool, duration time.Duration) error {
 	start := r.warmupGate(ctx, stage)
 	stats, err := r.measureLatency(ctx, stage, underLoad, duration, start)
-	if err != nil {
-		return err
-	}
-	if !underLoad && stats.P50 > 0 {
+	if err == nil && !underLoad && stats.P50 > 0 {
 		r.idleRTT = stats.P50
 	}
-	res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}
-	r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(res)})
-	return nil
+	if err == nil || stats.HasObservations() {
+		res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: err}
+		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(res)})
+	}
+	return err
 }
 
 func stageFailed(err error) bool {
@@ -447,11 +446,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	if r.cfg.LoadedLatency {
 		wg.Go(func() {
 			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
-			if err == nil {
-				outcomes <- transferOutcome{result: Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}, latency: true}
-				return
-			}
-			outcomes <- transferOutcome{result: Result{Stage: stage}, err: err, latency: true}
+			outcomes <- transferOutcome{result: Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: err}, err: err, latency: true}
 		})
 	}
 
@@ -460,33 +455,42 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 		remaining++
 	}
 	collected := make([]transferOutcome, 0, remaining)
+	var stageErr error
+	done := ctx.Done()
 	for remaining > 0 {
 		select {
 		case outcome := <-outcomes:
-			if stageFailed(outcome.err) {
+			if stageFailed(outcome.err) && stageErr == nil {
+				stageErr = outcome.err
 				cancelStage()
-				wg.Wait()
-				return outcome.err
 			}
 			collected = append(collected, outcome)
 			remaining--
-		case <-ctx.Done():
+		case <-done:
+			if stageErr == nil {
+				stageErr = ctx.Err()
+			}
 			cancelStage()
-			wg.Wait()
-			return ctx.Err()
+			done = nil
 		}
 	}
 	wg.Wait()
-	if err := ctx.Err(); err != nil {
-		return err
+	if stageErr == nil {
+		stageErr = ctx.Err()
 	}
 	for _, outcome := range collected {
 		if !outcome.latency {
 			continue
 		}
-		if outcome.err == nil {
+		if stageErr != nil {
+			outcome.result.Err = stageErr
+		}
+		if stageErr == nil || outcome.result.Latency.HasObservations() {
 			r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(outcome.result)})
 		}
+	}
+	if stageErr != nil {
+		return stageErr
 	}
 	for _, outcome := range collected {
 		if outcome.latency {

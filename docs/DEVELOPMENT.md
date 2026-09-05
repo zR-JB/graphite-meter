@@ -127,7 +127,10 @@ run. Timeout ratios use only successful replies plus expired probes. At a stage 
 interruption, pending probes whose deadlines have not elapsed are reported as unresolved; local
 send failures are separate. This native cutoff does not add a post-stage drain interval. An empty
 resolved population has no timeout ratio, and timeout-only loaded stages still produce a result.
-These are application probe observations over WebSocket or WebTransport, not TCP/IP packet loss.
+Failed stages retain their measured latency population with an incomplete marker and the original
+failure; the elapsed window records only the measured portion. Failures before any probe was measured
+produce an error without a numeric summary. These are application probe observations over WebSocket
+or WebTransport, not TCP/IP packet loss.
 
 ### Server
 

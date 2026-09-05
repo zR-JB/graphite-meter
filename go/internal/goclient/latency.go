@@ -95,11 +95,9 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	defer func() { conn.Close() }()
 	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 
 	measureCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	pending := make(map[uint32]time.Time)
 	var mu sync.Mutex // guards pending and stats
@@ -112,29 +110,28 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	var readers sync.WaitGroup
 	var measureTimer <-chan time.Time
 	var measuredUntil time.Time // guarded by mu, like pending and stats
-	snapshot := func() LatencyStats {
+	defer func() {
+		cancel()
+		readers.Wait()
+		conn.Close()
+	}()
+	finish := func(failure error) (LatencyStats, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		out := stats.snapshot()
-		out.TimeoutAfter = timeoutAfter
-		return out
-	}
-	finish := func() (LatencyStats, error) {
-		mu.Lock()
+		var elapsed time.Duration
 		if measuring.Load() {
-			now := time.Now()
-			if !measuredUntil.IsZero() && measuredUntil.Before(now) {
-				now = measuredUntil
+			cutoff := time.Now()
+			if measuredUntil.Before(cutoff) {
+				cutoff = measuredUntil
 			}
-			stats.closePending(pending, now, timeoutAfter)
+			elapsed = cutoff.Sub(measuredUntil.Add(-duration))
+			stats.closePending(pending, cutoff, timeoutAfter)
 		}
 		measuring.Store(false)
 		clear(pending)
+		out := stats.snapshot()
+		out.TimeoutAfter, out.Elapsed = timeoutAfter, elapsed
 		mu.Unlock()
-		// Closing owns cancellation; no unbounded control write may hold up the stage's final snapshot.
-		cancel()
-		readers.Wait()
-		return snapshot(), nil
+		return out, failure
 	}
 
 	readLoop := func(bus pingBus) {
@@ -208,7 +205,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		return err
 	}
 	if err := send(); err != nil {
-		return LatencyStats{}, err
+		return finish(err)
 	}
 	for {
 		select {
@@ -223,15 +220,15 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			defer timer.Stop()
 			measureTimer = timer.C
 		case <-measureCtx.Done():
-			return finish()
+			return finish(measureCtx.Err())
 		case <-measureTimer:
-			return finish()
+			return finish(nil)
 		case err := <-recvErr:
 			if measureCtx.Err() != nil {
-				return finish()
+				return finish(measureCtx.Err())
 			}
 			if !everPong.Load() {
-				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", err)
+				return finish(fmt.Errorf("latency channel failed: %w", err))
 			}
 			mu.Lock()
 			if measuring.Load() {
@@ -251,10 +248,10 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, redialDeadline)
 			if dialErr != nil {
-				if measureCtx.Err() != nil || measuring.Load() && !time.Now().Before(measuredUntil) {
-					return finish()
+				if measureCtx.Err() != nil {
+					return finish(measureCtx.Err())
 				}
-				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", dialErr)
+				return finish(fmt.Errorf("latency channel failed: %w", dialErr))
 			}
 			conn, proto = fresh, freshProto
 			mu.Lock()

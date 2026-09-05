@@ -509,6 +509,9 @@ func (m model) resultsView(w int) string {
 				valueStyle.Render(fmtMs(r.Latency.P95)),
 				mutedStyle.Render(latencyOutcomeSummary(r.Latency)),
 			))
+			if r.Err != nil {
+				lines = append(lines, errorStyle.Render("  Incomplete: "+r.Err.Error()))
+			}
 			continue
 		}
 		b := bars[next]
@@ -519,7 +522,7 @@ func (m model) resultsView(w int) string {
 }
 
 func (m model) finalReport() string {
-	if !m.complete || len(m.results) == 0 {
+	if len(m.results) == 0 || !m.complete && m.err == nil {
 		return ""
 	}
 	lipgloss.SetColorProfile(termenv.Ascii)
