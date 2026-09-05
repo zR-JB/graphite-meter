@@ -55,6 +55,8 @@ export class GaugeEngine {
   #track = "#23262b";
   #tick = "#4a5058";
   #surface = "#23262b";
+  #edgeHighlight = "rgba(255, 255, 255, 0.22)";
+  #shadowInk = "5, 7, 9";
   #bandShade: CanvasGradient | null = null;
   #lastPhase: Phase | null = null;
   #sweep = 0;
@@ -140,6 +142,9 @@ export class GaugeEngine {
     this.#track = this.#cssVar("--surface-2", this.#track);
     this.#tick = this.#cssVar("--border-strong", this.#tick);
     this.#surface = this.#cssVar("--surface-inset", this.#surface);
+    this.#edgeHighlight = this.#cssVar("--edge-highlight", this.#edgeHighlight);
+    this.#shadowInk = this.#cssVar("--shadow-ink", this.#shadowInk);
+    this.#bandShade = null;
     for (const phase of ["download", "upload", "bidirectional"] as const)
       this.#resultColors[phase] = this.#cssVar(
         `--phase-${phase}`,
@@ -408,11 +413,17 @@ export class GaugeEngine {
         y,
         layout.radius + width / 2,
       );
-      this.#bandShade.addColorStop(0, "rgba(255, 255, 255, 0.24)");
-      this.#bandShade.addColorStop(0.38, "rgba(255, 255, 255, 0.09)");
-      this.#bandShade.addColorStop(0.5, "rgba(255, 255, 255, 0.18)");
-      this.#bandShade.addColorStop(0.64, "rgba(0, 0, 0, 0.03)");
-      this.#bandShade.addColorStop(1, "rgba(0, 0, 0, 0.08)");
+      this.#bandShade.addColorStop(0, this.#edgeHighlight);
+      this.#bandShade.addColorStop(
+        0.38,
+        `color-mix(in srgb, ${this.#edgeHighlight} 40%, transparent)`,
+      );
+      this.#bandShade.addColorStop(
+        0.5,
+        `color-mix(in srgb, ${this.#edgeHighlight} 80%, transparent)`,
+      );
+      this.#bandShade.addColorStop(0.64, `rgba(${this.#shadowInk}, 0.03)`);
+      this.#bandShade.addColorStop(1, `rgba(${this.#shadowInk}, 0.08)`);
     }
     ctx.strokeStyle = this.#bandShade;
     ctx.stroke();

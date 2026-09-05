@@ -750,7 +750,7 @@
     --result-accent: var(--text-soft);
     display: grid;
     justify-items: center;
-    gap: clamp(7px, 2.5cqmin, 11px);
+    gap: clamp(var(--space-2), 2.5cqmin, var(--space-3));
     max-width: 72%;
     color: var(--result-accent);
   }
@@ -770,7 +770,7 @@
     height: clamp(32px, 12cqmin, 42px);
     border: 1px solid
       color-mix(in srgb, var(--result-accent) 28%, var(--border));
-    border-radius: 50%;
+    border-radius: var(--r-full);
     line-height: 1;
   }
   .terminal-marker :global(svg) {
@@ -792,13 +792,13 @@
   }
   .terminal-unit {
     font-family: var(--font-mono);
-    font-size: clamp(11px, 3.8cqmin, 15px);
+    font-size: clamp(var(--type-xs), 3.8cqmin, var(--type-md));
     font-weight: 500;
     color: var(--text-soft);
     line-height: 1;
   }
   .terminal-partial {
-    font-size: 11px;
+    font-size: var(--type-xs);
     color: var(--text-muted);
   }
   .gauge-unit {
@@ -815,17 +815,17 @@
      the metric's zero-shift baseline. */
   .gauge-notes {
     position: absolute;
-    bottom: 18px;
+    bottom: var(--space-4);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: var(--space-1);
     width: 86%;
     text-align: center;
   }
   .gauge-hint {
-    font-size: 12.5px;
+    font-size: var(--type-sm);
     font-weight: 600;
     line-height: 1.35;
     color: var(--text-muted);
@@ -835,7 +835,7 @@
      the state is unmissable. */
   .gauge-status {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: var(--type-xs);
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -848,7 +848,7 @@
     color: var(--brand-strong);
   }
   .gauge-fail {
-    font-size: 11.5px;
+    font-size: var(--type-sm);
     font-weight: 600;
     line-height: 1.3;
     color: var(--err);

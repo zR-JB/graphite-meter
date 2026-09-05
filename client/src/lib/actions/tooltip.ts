@@ -22,14 +22,14 @@ function ensureStyles() {
       position: fixed;
       z-index: 200;
       max-width: min(300px, calc(100vw - 16px));
-      padding: 8px 10px;
+      padding: var(--space-2) var(--space-3);
       border: 1px solid var(--border-strong);
       border-radius: var(--r-chrome);
       background: var(--surface-2);
       color: var(--text);
       box-shadow: var(--shadow-float);
       font-family: var(--font-sans);
-      font-size: 12px;
+      font-size: var(--type-sm);
       line-height: 1.4;
       font-weight: 500;
       letter-spacing: 0;

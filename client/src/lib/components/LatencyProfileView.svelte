@@ -551,7 +551,7 @@
     gap: var(--space-1);
     min-width: 156px;
     max-width: min(238px, 76vw);
-    padding: 8px 9px;
+    padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
@@ -581,7 +581,7 @@
   }
   .hover-head strong {
     color: var(--text);
-    font: 700 12px var(--font-mono);
+    font: 700 var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
