@@ -83,38 +83,43 @@ for (const viewport of [
   });
 }
 
-test("phone keeps a prominent dial and a natural run-to-stages reading order", async ({
-  page,
-}) => {
-  await openApp(page, "dummy", { width: 390, height: 844 });
-  const settings = await prepareApp(page, "three-stage", "dummy", {
-    width: 390,
-    height: 844,
-  });
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  const boxes = await page.evaluate(() =>
-    [".gauge-panel .stage", ".run-button", ".stage-head", ".latency-panel"].map(
-      (selector) => {
+for (const width of [320, 390]) {
+  test(`phone ${width}px keeps a prominent dial and a natural run-to-stages reading order`, async ({
+    page,
+  }) => {
+    await openApp(page, "dummy", { width, height: 844 });
+    const settings = await prepareApp(page, "three-stage", "dummy", {
+      width,
+      height: 844,
+    });
+    await settings.getByRole("button", { name: "Close Settings" }).click();
+    const boxes = await page.evaluate(() =>
+      [
+        ".gauge-panel .stage",
+        ".run-button",
+        ".stage-head",
+        ".latency-panel",
+      ].map((selector) => {
         const node = document.querySelector(selector);
         if (!node) throw new Error(`missing ${selector}`);
         const box = node.getBoundingClientRect();
         return { top: box.top, bottom: box.bottom, height: box.height };
-      },
-    ),
-  );
-  expect(boxes[0].height).toBeGreaterThanOrEqual(280);
-  for (let i = 1; i < boxes.length; i++)
-    expect(boxes[i].top).toBeGreaterThanOrEqual(boxes[i - 1].bottom);
-  await expect(page.locator(".run-button")).toHaveAttribute(
-    "aria-describedby",
-    "run-duration",
-  );
-  await startTest(page);
-  await waitForCompletion(page, 10000);
-  const labelsFit = await page.evaluate(() =>
-    [...document.querySelectorAll<HTMLElement>(".seg-label")].every(
-      (label) => label.scrollWidth <= label.clientWidth,
-    ),
-  );
-  expect(labelsFit).toBe(true);
-});
+      }),
+    );
+    expect(boxes[0].height).toBeGreaterThanOrEqual(280);
+    for (let i = 1; i < boxes.length; i++)
+      expect(boxes[i].top).toBeGreaterThanOrEqual(boxes[i - 1].bottom);
+    await expect(page.locator(".run-button")).toHaveAttribute(
+      "aria-describedby",
+      "run-duration",
+    );
+    await startTest(page);
+    await waitForCompletion(page, 10000);
+    const labelsFit = await page.evaluate(() =>
+      [
+        ...document.querySelectorAll<HTMLElement>(".seg-label, .lane-label"),
+      ].every((label) => label.scrollWidth <= label.clientWidth),
+    );
+    expect(labelsFit).toBe(true);
+  });
+}

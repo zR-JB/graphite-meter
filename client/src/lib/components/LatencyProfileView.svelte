@@ -368,7 +368,7 @@
   }
   .lane-label {
     min-width: 0;
-    flex: 1;
+    flex: 1 0 auto;
     overflow: hidden;
     color: var(--text-muted);
     font: 800 10px var(--font-mono);
