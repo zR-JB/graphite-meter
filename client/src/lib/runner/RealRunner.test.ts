@@ -243,10 +243,10 @@ test("a WebTransport-only origin is auto's last resort and keeps a fetch view", 
   expect(view.routes.uploadSession).toBe(ROUTES.uploadSession);
 });
 
-test("a legacy latency target without a transport remains a WebSocket bus", () => {
+test("an explicit WebSocket target resolves to a WebSocket bus", () => {
   const catalog = discovery(
     [fetchAd(".", "negotiated")],
-    [{ baseUrl: "." }],
+    [{ baseUrl: ".", transport: "websocket" }],
     "https://meter.test",
     true,
   );

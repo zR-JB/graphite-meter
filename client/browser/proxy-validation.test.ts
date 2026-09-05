@@ -29,7 +29,9 @@ test("proxy discovery does not restart its own validation", async ({
         engineVersion: "test",
         generation: "proxy-generation",
         capabilities: {
-          throughput: [{ baseUrl: ".", protocol: "negotiated" }],
+          throughput: [
+            { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
+          ],
           latency: [],
         },
       },

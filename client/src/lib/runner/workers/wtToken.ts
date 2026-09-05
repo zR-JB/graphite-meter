@@ -1,5 +1,5 @@
 import { readJSONResponse, parseWtToken } from "../../api/decode";
-/* Minting happens in the worker, immediately before each dial, because the token expires in seconds and. */
+/* Mint immediately before dialing because CONNECT tokens expire in seconds. */
 import {
   authenticationRequired,
   redirectForCredentials,
@@ -51,8 +51,8 @@ function reusableToken(url: string): string {
 }
 
 /* Hold a freshly minted token. */
-function hold(url: string, token: string, expires: number | undefined): void {
-  const lifetimeMs = typeof expires === "number" ? expires - Date.now() : 0;
+function hold(url: string, token: string, expires: number): void {
+  const lifetimeMs = expires - Date.now();
   held = {
     url,
     token,

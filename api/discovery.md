@@ -15,13 +15,18 @@ throughput and latency hosts remain valid. Discovery does not grant credential
 access to a new host or alter the existing authentication/redirect policy.
 
 Supported transports and protocols are the enumerations in
-[preflight.schema.json](preflight.schema.json). The legacy omission of transport
-retains fetch-stream for throughput and websocket for latency. Engine version is
-metadata, not a protocol compatibility test. Unknown additive fields are ignored.
+[preflight.schema.json](preflight.schema.json). Version 0.7 requires an explicit
+transport on every target; missing, empty, and unsupported values are rejected.
+Engine version is metadata, not a protocol compatibility test. Unknown additive
+fields are ignored.
 
 Probe evidence must use the published IP-version, source, and negotiated-protocol
 values. IP text is nonempty and bounded to 64 bytes; optional handler occupancy
 requires a nonnegative integer active count and a positive integer maximum.
-Token and upload ID control fields must be nonempty strings of at most 8192 bytes.
+Token and upload ID control fields are strings of at most 8192 bytes. Upload IDs
+and authentication tokens must be nonempty. WebTransport mint responses always
+include `token` and `expires`, a nonnegative safe integer in epoch milliseconds.
+Authentication-off returns `{ "token": "", "expires": 0 }`; expiry-free responses
+are rejected.
 Invalid discovery fails before its target catalog is published; invalid probe
 evidence fails before it is returned to the caller; rejected bodies cannot turn missing evidence into a successful probe.

@@ -15,12 +15,14 @@ const discovery = () => ({
   engineVersion: "dev",
   generation: "a",
   capabilities: {
-    throughput: [{ baseUrl: ".", protocol: "negotiated" }],
-    latency: [{ baseUrl: "https://[::1]:7247" }],
+    throughput: [
+      { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
+    ],
+    latency: [{ baseUrl: "https://[::1]:7247", transport: "websocket" }],
   },
 });
 
-test("discovery preserves independent listeners, self origin, and legacy transport defaults", () => {
+test("discovery preserves independent listeners, self origin, and explicit transports", () => {
   const result = parsePreflight(discovery());
   expect(result.capabilities.throughput[0]).toEqual({
     baseUrl: ".",
@@ -63,14 +65,20 @@ test("discovery bounds lists and metadata and rejects unknown protocols", () => 
     {
       ...discovery(),
       capabilities: {
-        throughput: Array(33).fill({ baseUrl: ".", protocol: "http1" }),
+        throughput: Array(33).fill({
+          baseUrl: ".",
+          transport: "fetch-stream",
+          protocol: "http1",
+        }),
         latency: [],
       },
     },
     {
       ...discovery(),
       capabilities: {
-        throughput: [{ baseUrl: ".", protocol: "http4" }],
+        throughput: [
+          { baseUrl: ".", transport: "fetch-stream", protocol: "http4" },
+        ],
         latency: [],
       },
     },
@@ -134,7 +142,7 @@ test("control reads reject oversize, invalid UTF-8, and trailing documents", asy
     await expect(readJSONResponse(new Response(body))).rejects.toThrow();
 });
 
-test("auth documents validate lifetimes, account fields, and optional finite mint expiry", () => {
+test("auth documents validate lifetimes, account fields, and required finite mint expiry", () => {
   expect(
     parseSessionLifetime({ remainingMs: 0, maximumLifetimeMs: 1 }),
   ).toEqual({ remainingMs: 0, maximumLifetimeMs: 1 });
@@ -156,7 +164,11 @@ test("auth documents validate lifetimes, account fields, and optional finite min
     { ...account, name: "a".repeat(8193) },
   ])
     expect(() => parseAccountSession(value)).toThrow();
-  expect(parseWtToken({ token: "gmw_old" })).toEqual({ token: "gmw_old" });
+  expect(() => parseWtToken({ token: "gmw_old" })).toThrow();
+  expect(parseWtToken({ token: "", expires: 0 })).toEqual({
+    token: "",
+    expires: 0,
+  });
   expect(
     parseWtToken({ token: "gmw_new", expires: 1_800_000_000_000 }),
   ).toEqual({ token: "gmw_new", expires: 1_800_000_000_000 });
@@ -170,4 +182,14 @@ test("auth documents validate lifetimes, account fields, and optional finite min
     Number.MAX_SAFE_INTEGER + 1,
   ])
     expect(() => parseWtToken({ token: "gmw_invalid", expires })).toThrow();
+});
+
+test("discovery requires an explicit supported transport on every target", () => {
+  for (const role of ["throughput", "latency"] as const) {
+    for (const transport of [undefined, null, "", "udp"]) {
+      const value = discovery();
+      Object.assign(value.capabilities[role][0]!, { transport });
+      expect(() => parsePreflight(value)).toThrow();
+    }
+  }
 });
