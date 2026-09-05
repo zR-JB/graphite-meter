@@ -220,6 +220,10 @@ export class RunAccumulator {
     this.#latency[phase].interrupt(count, reason);
   }
 
+  markLatencyAccountingIncomplete(phase: StagePhase): void {
+    this.#latency[phase].markAccountingIncomplete();
+  }
+
   latencySummary(phase: StagePhase): StageLatencySummary | null {
     return this.#latency[phase].snapshot();
   }

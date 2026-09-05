@@ -724,10 +724,13 @@ export class RealBackend implements RunnerBackend {
       return;
     }
     const generation = this.#transferGeneration;
-    return this.#teardownTransfer(generation).then((released) => {
+    const latencyFinished = this.#latency.finish();
+    return Promise.all([
+      this.#teardownTransfer(generation),
+      latencyFinished,
+    ]).then(([released]) => {
       // Ignore completion if abort or a new run took ownership while this stage awaited its terminal record.
       if (!released || generation !== this.#transferGeneration) return;
-      this.#latency.teardown();
       this.#stalled = false;
       this.#transferActivity = null;
     });

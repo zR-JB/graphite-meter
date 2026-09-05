@@ -82,6 +82,7 @@ export interface CoreHost {
     count: number,
     reason: "unresolved" | "send-failed",
   ): void;
+  ingestLatencyAccountingIncomplete(): void;
   /* Account a rotation handoff only in final byte/time reduction. */
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
   /* Server recovery bytes are authoritative but lack a prior checkpoint for a live-rate estimate. */
@@ -695,6 +696,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   ): void {
     if (isMeasuredPhase(this.#phase))
       this.#accum.interruptLatency(this.#phase, count, reason);
+  }
+
+  ingestLatencyAccountingIncomplete(): void {
+    if (isMeasuredPhase(this.#phase)) {
+      this.#accum.markLatencyAccountingIncomplete(this.#phase);
+      this.#emitLatencySummary(this.#phase);
+    }
   }
 
   #emitLatencySummary(stage: TransportRole): void {

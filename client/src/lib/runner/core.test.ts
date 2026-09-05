@@ -664,6 +664,61 @@ test("asynchronous boundary flush completes before stage reduction", async () =>
   );
 });
 
+test("terminal probe accounting reaches the original stage summary before finalization", async () => {
+  const backend = new FakeBackend({ flush: "async" });
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    backend,
+  );
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow });
+  advance(100);
+  expect(core.phase).toBe("download");
+  expect(hasEvent(events, "complete")).toBe(false);
+  core.ingestLatency({ rttMs: 250, lost: true, observedAtMs: fakeNow });
+  core.ingestLatency({
+    rttMs: 30,
+    lost: false,
+    observedAtMs: fakeNow + 20,
+    rttEligible: false,
+  });
+  core.ingestLatencyInterruption(2, "unresolved");
+  backend.flush!();
+  await Promise.resolve();
+  expectComplete(events, (result) => {
+    expect(result.latencyByStage.download).toMatchObject({
+      probeCount: 3,
+      timeoutCount: 1,
+      unresolvedCount: 2,
+      meanMs: 10,
+      p50Ms: 10,
+      jitterPairs: 0,
+    });
+    expect(result.latencyByStage.latency).toBeNull();
+    expect(result.download?.probeTimeoutPct).toBeCloseTo(100 / 3);
+  });
+});
+
+test("a failed terminal worker keeps unknown accounting visible in the final stage summary", async () => {
+  const backend = new FakeBackend({ flush: "async" });
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    backend,
+  );
+  advance(100);
+  core.ingestLatencyAccountingIncomplete();
+  backend.flush!();
+  await Promise.resolve();
+  expectComplete(events, (result) => {
+    expect(result.latencyByStage.download).toMatchObject({
+      accountingComplete: false,
+      probeCount: 0,
+      timeoutCount: 0,
+      unresolvedCount: 0,
+    });
+    expect(result.download?.probeTimeoutPct).toBeNull();
+  });
+});
+
 test("a real sample arriving mid-stall auto-resumes", async () => {
   const { core, events } = await startCore({ duration: { downloadMs: 10000 } });
   core.stall({ reason: "connection-lost" });

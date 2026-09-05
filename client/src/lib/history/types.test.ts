@@ -37,6 +37,7 @@ const result: RunResult = {
     upload: null,
     bidirectional: null,
     download: {
+      accountingComplete: true,
       minMs: 11,
       maxMs: 30,
       p10Ms: 12,

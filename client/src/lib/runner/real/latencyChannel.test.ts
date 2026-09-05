@@ -197,3 +197,167 @@ test("READY cancels the stage channel's warmup establishment deadline", () => {
   expect(failures).toEqual([]);
   channel.teardown();
 });
+
+function finalizingChannel() {
+  const observations: { rttMs: number; rttEligible?: boolean }[] = [];
+  const interruptions: { count: number; reason: string }[] = [];
+  const stalls: string[] = [];
+  let accountingComplete = true;
+  const channel = new LatencyChannel({
+    host: () =>
+      ({
+        config: { pingCadence: "medium", loadedPingCadence: "medium" },
+        ingestLatency(observation: { rttMs: number; rttEligible?: boolean }) {
+          observations.push(observation);
+        },
+        ingestLatencyAccountingIncomplete() {
+          accountingComplete = false;
+        },
+        ingestLatencyInterruption(count: number, reason: string) {
+          interruptions.push({ count, reason });
+        },
+      }) as unknown as CoreHost,
+    target: () => target,
+    stall: (detail) => stalls.push(detail),
+    resume() {},
+  });
+  channel.prime("websocket", true);
+  channel.measure();
+  return {
+    channel,
+    worker: TestWorker.last!,
+    observations,
+    interruptions,
+    stalls,
+    accountingComplete: () => accountingComplete,
+  };
+}
+
+test("stage finalization keeps terminal outcomes until ack and excludes post-load RTTs", async () => {
+  const { channel, worker, observations } = finalizingChannel();
+  let finished = false;
+  const ending = channel.finish().then(() => {
+    finished = true;
+  });
+  const stop = worker.sent.at(-1) as { type: string; cutoffEpochMs: number };
+  expect(stop.type).toBe("stop");
+  await Promise.resolve();
+  expect(finished).toBe(false);
+  expect(worker.terminated).toBe(0);
+  worker.emit({
+    type: "samples",
+    samples: [
+      {
+        rtt: 10,
+        lost: false,
+        sentAtEpochMs: stop.cutoffEpochMs - 20,
+        observedAtEpochMs: stop.cutoffEpochMs - 10,
+      },
+      {
+        rtt: 30,
+        lost: false,
+        sentAtEpochMs: stop.cutoffEpochMs - 10,
+        observedAtEpochMs: stop.cutoffEpochMs + 20,
+      },
+      {
+        rtt: 10,
+        lost: false,
+        sentAtEpochMs: stop.cutoffEpochMs + 1,
+        observedAtEpochMs: stop.cutoffEpochMs + 11,
+      },
+    ],
+  });
+  expect(observations.map((sample) => sample.rttMs)).toEqual([10, 30]);
+  expect(observations.map((sample) => sample.rttEligible)).toEqual([
+    true,
+    false,
+  ]);
+  worker.emit({ type: "stopped" });
+  await ending;
+  expect(finished).toBe(true);
+  expect(worker.terminated).toBe(1);
+});
+
+test("terminal interruption counts use the same submission cutoff as reply outcomes", async () => {
+  const { channel, worker, interruptions } = finalizingChannel();
+  const ending = channel.finish();
+  const { cutoffEpochMs } = worker.sent.at(-1) as { cutoffEpochMs: number };
+  worker.emit({
+    type: "interrupted",
+    sentAtEpochMs: [cutoffEpochMs - 1, cutoffEpochMs + 1],
+    reason: "unresolved",
+  });
+  worker.emit({
+    type: "interrupted",
+    sentAtEpochMs: [cutoffEpochMs],
+    reason: "send-failed",
+  });
+  expect(interruptions).toEqual([
+    { count: 1, reason: "unresolved" },
+    { count: 1, reason: "send-failed" },
+  ]);
+  worker.emit({ type: "stopped" });
+  await ending;
+});
+
+test("abort settles an in-flight drain and prevents its late worker messages reaching a replacement stage", async () => {
+  const { channel, worker, observations, interruptions } = finalizingChannel();
+  const ending = channel.finish();
+  channel.teardown();
+  await ending;
+  channel.prime("websocket", true);
+  worker.emit({
+    type: "samples",
+    samples: [{ rtt: 10, lost: false, observedAtEpochMs: 100 }],
+  });
+  worker.emit({
+    type: "interrupted",
+    sentAtEpochMs: [100],
+    reason: "unresolved",
+  });
+  worker.emit({ type: "stopped" });
+  expect(observations).toEqual([]);
+  expect(interruptions).toEqual([]);
+  expect(TestWorker.last!.terminated).toBe(0);
+  channel.teardown();
+});
+
+test("worker failure settles a drain without manufacturing probe outcomes", async () => {
+  const {
+    channel,
+    worker,
+    observations,
+    interruptions,
+    stalls,
+    accountingComplete,
+  } = finalizingChannel();
+  const ending = channel.finish();
+  worker.onerror?.({ message: "worker crashed" } as ErrorEvent);
+  await ending;
+  expect(worker.terminated).toBe(1);
+  expect(observations).toEqual([]);
+  expect(interruptions).toEqual([]);
+  expect(stalls).toEqual(["worker crashed"]);
+  expect(accountingComplete()).toBe(false);
+});
+
+test("an unresponsive worker cannot hold stage finalization past the acknowledgement deadline", async () => {
+  let deadline!: () => void;
+  let delay = 0;
+  globalThis.setTimeout = ((handler: () => void, ms: number) => {
+    deadline = handler;
+    delay = ms;
+    return 1;
+  }) as unknown as typeof setTimeout;
+  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+  const { channel, worker, observations, stalls, accountingComplete } =
+    finalizingChannel();
+  const ending = channel.finish();
+  expect(delay).toBe(10_250);
+  deadline();
+  await ending;
+  expect(worker.terminated).toBe(1);
+  expect(observations).toEqual([]);
+  expect(stalls).toEqual(["ping worker did not finish its pending probes"]);
+  expect(accountingComplete()).toBe(false);
+});

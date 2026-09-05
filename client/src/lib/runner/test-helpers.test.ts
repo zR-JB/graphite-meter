@@ -58,6 +58,7 @@ export function testHost(
     ingestThroughput() {},
     ingestLatency() {},
     ingestLatencyInterruption() {},
+    ingestLatencyAccountingIncomplete() {},
     recordRecoveryGap() {},
     recordRecoveryBytes() {},
     presentationRate: () => 0,

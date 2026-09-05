@@ -7,6 +7,7 @@ test("latency summaries preserve the raw distribution and consecutive RTT variat
   const stats = new LatencyAccumulator();
   for (const rtt of [10, 100, 10, 100]) stats.observe(rtt, false, 0);
   expect(stats.snapshot()).toEqual({
+    accountingComplete: true,
     probeCount: 4,
     timeoutCount: 0,
     unresolvedCount: 0,
@@ -24,6 +25,21 @@ test("latency summaries preserve the raw distribution and consecutive RTT variat
   const captured = stats.snapshot();
   stats.observe(1_000, false, 0);
   expect(captured?.maxMs).toBe(100);
+});
+
+test("unknown worker outcomes preserve incompleteness without invented counts", () => {
+  const stats = new LatencyAccumulator();
+  stats.markAccountingIncomplete();
+  expect(stats.snapshot()).toMatchObject({
+    accountingComplete: false,
+    probeCount: 0,
+    timeoutCount: 0,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
+  });
+  expect(stats.probeTimeoutPct).toBeNull();
+  stats.observe(10, false, 0);
+  expect(stats.snapshot()?.accountingComplete).toBe(false);
 });
 
 test("timeouts have no RTT and interrupted probes have no timeout verdict", () => {

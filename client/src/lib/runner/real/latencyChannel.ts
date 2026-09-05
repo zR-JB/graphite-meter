@@ -4,21 +4,17 @@ import type { TransportKind } from "../contract";
 import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
 import { httpToWs, throughputTargetKey } from "./backendPure";
-import { pingWorker, type AuthRequiredMsg } from "./workerPool";
+import { pingWorker } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../latencyBuckets";
 import { fixedPingIntervalMs } from "../pingCadence";
-import { pingSampleContextTime, type PingSample } from "../workers/pingSample";
-
-/* The worker owns reconnection and brackets a reconnect window with stall/resume, keeping the channel alive. */
-type PingOutMsg =
-  | { type: "open" }
-  | { type: "ready" }
-  | { type: "samples"; samples: PingSample[] }
-  | { type: "stall"; detail: string }
-  | { type: "resume" }
-  | AuthRequiredMsg;
+import {
+  pingSampleContextTime,
+  PING_STOP_MARGIN_MS,
+  PING_TIMEOUT_CEIL_MS,
+  type PingWorkerEvent,
+} from "../workers/pingSample";
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
 const PING_LOSS_K = 4;
@@ -82,6 +78,12 @@ export class LatencyChannel {
   /* A timeout reports a stall; the runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
   #timeOriginMs: number;
+  #cutoffEpochMs: number | null = null;
+  #finishing: {
+    promise: Promise<void>;
+    resolve: () => void;
+    timer: ReturnType<typeof setTimeout>;
+  } | null = null;
 
   constructor(deps: LatencyChannelDeps) {
     this.#deps = deps;
@@ -90,6 +92,7 @@ export class LatencyChannel {
 
   /* The ping worker owns the bus and the ping algorithm. */
   prime(kind: TransportKind, isLatencyStage = false): void {
+    this.teardown();
     const host = this.#deps.host();
     const cfg = host.config!;
     const channel = this.#deps.target();
@@ -107,6 +110,7 @@ export class LatencyChannel {
         ? PING_REPLY_MAX_IN_FLIGHT
         : PING_MAX_IN_FLIGHT;
 
+    this.#cutoffEpochMs = null;
     this.#active = true;
     // A bus that never establishes reports nothing at all — a hung handshake produces no samples and no stall — so.
     this.#establishTimer = setTimeout(() => {
@@ -115,13 +119,19 @@ export class LatencyChannel {
       this.#deps.stall(detail);
     }, PING_ESTABLISH_TIMEOUT_MS);
     const worker = pingWorker();
-    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
-      this.#onMessage(e.data);
-    worker.onerror = (e: ErrorEvent): void =>
+    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
+      if (this.#worker === worker) this.#onMessage(e.data);
+    };
+    worker.onerror = (e: ErrorEvent): void => {
+      if (this.#worker !== worker) return;
+      this.#deps.host().ingestLatencyAccountingIncomplete();
       this.#onMessage({
         type: "stall",
         detail: e.message || "ping worker error",
       });
+      if (this.#worker === worker) this.teardown();
+    };
+    this.#worker = worker;
     worker.postMessage({
       type: "start",
       url,
@@ -134,12 +144,39 @@ export class LatencyChannel {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
     });
-    this.#worker = worker;
   }
 
   /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
   measure(): void {
     this.#worker?.postMessage({ type: "measure" });
+  }
+
+  /** Stop sends at this clock boundary, then admit terminal outcomes before terminating the worker. */
+  finish(): Promise<void> {
+    if (this.#finishing) return this.#finishing.promise;
+    if (!this.#worker) return Promise.resolve();
+    const worker = this.#worker;
+    this.#clearEstablishTimer();
+    this.#cutoffEpochMs = this.#timeOriginMs + performance.now();
+    let resolve!: () => void;
+    const promise = new Promise<void>((done) => {
+      resolve = done;
+    });
+    const timer = setTimeout(() => {
+      if (this.#worker !== worker) return;
+      this.#deps.host().ingestLatencyAccountingIncomplete();
+      this.#deps.stall("ping worker did not finish its pending probes");
+      if (this.#worker === worker) this.teardown();
+    }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
+    this.#finishing = { promise, resolve, timer };
+    try {
+      worker.postMessage({ type: "stop", cutoffEpochMs: this.#cutoffEpochMs });
+    } catch {
+      this.#deps.host().ingestLatencyAccountingIncomplete();
+      this.#deps.stall("ping worker could not finalize its pending probes");
+      if (this.#worker === worker) this.teardown();
+    }
+    return promise;
   }
 
   /* Stop + terminate the ping worker, which drops its bus without a close frame: the server's read ends with the. */
@@ -150,10 +187,15 @@ export class LatencyChannel {
       this.#worker.terminate();
       this.#worker = null;
     }
+    if (this.#finishing) {
+      clearTimeout(this.#finishing.timer);
+      this.#finishing.resolve();
+      this.#finishing = null;
+    }
   }
 
   /* Handle a message from the ping worker. */
-  #onMessage(msg: PingOutMsg): void {
+  #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
@@ -164,15 +206,39 @@ export class LatencyChannel {
       case "samples": {
         this.#clearEstablishTimer(); // a pong proves the channel works
         const host = this.#deps.host();
-        for (const sample of msg.samples)
+        for (const sample of msg.samples) {
+          if (
+            this.#cutoffEpochMs !== null &&
+            (sample.sentAtEpochMs ?? -Infinity) > this.#cutoffEpochMs
+          )
+            continue;
           host.ingestLatency({
             rttMs: sample.rtt,
             lost: sample.lost,
             observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
+            rttEligible:
+              this.#cutoffEpochMs === null ||
+              sample.observedAtEpochMs <= this.#cutoffEpochMs,
           });
-        if (msg.samples.length) this.#deps.resume();
+        }
+        if (!this.#finishing && msg.samples.some((sample) => !sample.lost))
+          this.#deps.resume();
         break;
       }
+      case "interrupted":
+        this.#deps
+          .host()
+          .ingestLatencyInterruption(
+            msg.sentAtEpochMs.filter(
+              (sentAt) =>
+                this.#cutoffEpochMs === null || sentAt <= this.#cutoffEpochMs,
+            ).length,
+            msg.reason,
+          );
+        break;
+      case "stopped":
+        this.teardown();
+        break;
       case "stall":
         this.#deps.stall(msg.detail);
         break;
@@ -237,7 +303,7 @@ export class IdleKeepalive {
     // A fresh worker's first samples must emit a "connected" edge to un-latch it.
     this.#offline = true;
     const worker = pingWorker();
-    worker.onmessage = (e: MessageEvent<PingOutMsg>): void =>
+    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void =>
       this.#onMessage(e.data);
     worker.onerror = (e: ErrorEvent): void => {
       // A worker dying at load time has no in-worker reconnect loop, usually because the bundle-serving server is down.
@@ -351,7 +417,7 @@ export class IdleKeepalive {
   }
 
   /* Handle a message from the idle ping worker. */
-  #onMessage(msg: PingOutMsg): void {
+  #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
       this.stop();

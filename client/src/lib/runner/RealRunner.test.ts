@@ -414,6 +414,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       message: { type: string; url?: string } & Record<string, unknown>,
     ): void {
       if (this.kind === "ping") pingMessages.push(message);
+      if (this.kind === "ping" && message.type === "stop") {
+        queueMicrotask(() => this.emit({ type: "stopped" }));
+        return;
+      }
       if (message.type !== "start" && message.type !== "measure") return;
       if (message.type === "start" && message.url)
         workerStarts.push({ kind: this.kind, url: message.url });
