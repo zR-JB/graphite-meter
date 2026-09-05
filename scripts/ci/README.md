@@ -24,7 +24,7 @@ them. The control plane intentionally has no Pydantic or other PyPI runtime
 dependency.
 
 Python uses only the standard library; tests also execute Bash and jq to exercise the actual
-privileged workflow logic. `pipeline-test` compiles the Python modules and exercises trust decisions,
+privileged workflow logic. `pipeline-test` type-checks the Python modules and exercises trust decisions,
 artifact verification, and staged-hook isolation through their callable boundaries.
 
 ## Trust boundaries
@@ -174,7 +174,8 @@ Other checked invariants include:
 - exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
-`just pipeline-test` compiles all control-plane Python and runs dependency-free
+`just pipeline-test` type-checks all repository Python tooling with the
+version-pinned standalone `ty` binary, then runs the control-plane and legal
 positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
 Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
 The suite does not duplicate implementation bodies as required source strings. The Git hook is only a two-line launcher
@@ -209,3 +210,21 @@ Settings, use an exact 40-character SHA in YAML, then run `just workflow-check`
 and `just pipeline-test`. The current `extractions/setup-just` pin invokes the
 separately allowlisted `extractions/setup-crate` package from its pinned composite
 action definition.
+
+
+## Python development gate
+
+`just python-setup` installs the version-pinned standalone `ty` binary under
+`.tools`. It is part of `just setup` and the CI jobs that run Python tests.
+The scripts use Python 3.14 from `.python-version` and the standard library only:
+there are no Python package dependencies, pip installs, or virtual environments.
+
+`just python-check` checks all scripts and tests and fails on warnings or type
+errors. It runs offline as part of `just pipeline-test` and `just check`; the
+staged hook uses the same checker against the staged scripts. A regression
+runs the actual recipe with an incorrect annotated return value, then verifies
+that its correction passes. `ty` validates types but does not require every
+function to have annotations; keep the tooling explicitly annotated in review.
+
+Update `ty_version` in `justfile` and rerun `just python-setup` to update the
+checker. Python tooling does not use the client's Bun dependencies.

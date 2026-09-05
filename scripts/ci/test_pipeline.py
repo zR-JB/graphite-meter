@@ -17,7 +17,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
-from github_api import JsonValue
+from github_api import JsonObject, JsonValue
 import precommit
 from precommit import (
     CheckPlan,
@@ -77,7 +77,6 @@ from workflow_policy import (
     check_browser_ci,
     check_privileged_workflows,
     check_runner_labels,
-    check_setup_project_cache_boundary,
     check_skopeo_contract_consistency,
     check_prerelease_request_workflow,
     check_release_request_workflow,
@@ -113,9 +112,12 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(require_current_main("zR-JB/graphite-meter", 101, HEAD, api=fake), MAIN)
 
     def test_stable_release_requires_exact_current_main_tip(self) -> None:
-        self.assertEqual(require_exact_current_main("zR-JB/graphite-meter", MAIN, api=lambda *_a, **_k: {"sha": MAIN}), MAIN)
+        def current_main(path: str, **kwargs: object) -> JsonValue:
+            return {"sha": MAIN}
+
+        self.assertEqual(require_exact_current_main("zR-JB/graphite-meter", MAIN, api=current_main), MAIN)
         with self.assertRaisesRegex(TrustError, "no longer current main"):
-            require_exact_current_main("zR-JB/graphite-meter", OLD_MAIN, api=lambda *_a, **_k: {"sha": MAIN})
+            require_exact_current_main("zR-JB/graphite-meter", OLD_MAIN, api=current_main)
 
     def test_prerelease_publisher_workflow_must_match_current_main(self) -> None:
         workflow_path = ".github/workflows/prerelease-publish.yml"
@@ -806,7 +808,7 @@ class PipelineTests(unittest.TestCase):
 
         manifests = expect_object(index, "test index")["manifests"]
         assert isinstance(manifests, list)
-        bad_missing = {
+        bad_missing: JsonObject = {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
             "manifests": manifests[:-1],
@@ -814,7 +816,7 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(OCIVerificationError, "one provenance attestation"):
             validate_index_descriptors(bad_missing)
 
-        bad_link = {
+        bad_link: JsonObject = {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
             "manifests": [*manifests[:-1], {
@@ -829,7 +831,7 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(OCIVerificationError, "one provenance attestation"):
             validate_index_descriptors(bad_link)
 
-        bad_extra = {
+        bad_extra: JsonObject = {
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
             "manifests": [*manifests, {
@@ -1171,7 +1173,7 @@ class PipelineTests(unittest.TestCase):
     def test_prerelease_request_run_is_bound_to_exact_current_main_and_owner(self) -> None:
         request_run_id = 6001
         workflow = 7001
-        run = {
+        run: JsonObject = {
             "id": request_run_id,
             "workflow_id": workflow,
             "event": "workflow_dispatch",
@@ -1231,7 +1233,7 @@ class PipelineTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        request_run = {
+        request_run: JsonObject = {
             "id": request_run_id,
             "workflow_id": workflow_id,
             "event": "workflow_dispatch",
@@ -1389,6 +1391,27 @@ class PipelineTests(unittest.TestCase):
         path.write_text(text.replace("steps:\n", "steps:\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1))
         with self.assertRaisesRegex(PolicyError, "repository checkout"):
             check_release_request_workflow(root)
+
+class PythonTypeGateTests(unittest.TestCase):
+    def test_python_gate_rejects_a_type_error_and_accepts_its_correction(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / "scripts/ci").mkdir(parents=True)
+            for name in ("justfile", ".python-version", ".gitleaks-version"):
+                shutil.copy2(ROOT / name, root / name)
+            # Run the actual offline recipe with the prepared standalone checker.
+            (root / ".tools").symlink_to(ROOT / ".tools", target_is_directory=True)
+            probe = root / "scripts/type_error_probe.py"
+            command = ["just", "python-check"]
+            probe.write_text('def answer() -> int:\n    return "wrong"\n')
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("type_error_probe.py", result.stdout + result.stderr)
+            self.assertIn("invalid-return-type", result.stdout + result.stderr)
+            probe.write_text('def answer() -> int:\n    return 42\n')
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
 
 class CodeQLCheckOrderingTests(unittest.TestCase):
     def test_overlapping_checks_use_start_order_and_block_unfinished_work(self) -> None:

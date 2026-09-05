@@ -26,8 +26,8 @@ TLS_NAME = re.compile(
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 MAX_STAGED_BYTES = 1024 * 1024
-FULL_GATE_FILES = {"justfile", ".bun-version", ".just-version"}
-PIPELINE_PREFIXES = (".github/", ".githooks/", "scripts/ci/")
+FULL_GATE_FILES = {"justfile", ".bun-version", ".just-version", ".python-version"}
+PIPELINE_PREFIXES = (".github/", ".githooks/", "scripts/")
 LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/")
 LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/package-tui.sh", "scripts/tui-targets.txt"}
 
@@ -78,8 +78,6 @@ def command(
 
 def git_bytes(root: Path, *args: str) -> bytes:
     result = command(("git", *args), cwd=root, capture=True)
-    if result.stdout is None:
-        fail(f"git {' '.join(args)} produced no captured stdout")
     return result.stdout
 
 
@@ -114,7 +112,7 @@ def repository_root() -> Path:
         stderr=subprocess.PIPE,
         check=False,
     )
-    if result.returncode != 0 or result.stdout is None:
+    if result.returncode != 0:
         fail("pre-commit must run inside a Git worktree")
     return Path(result.stdout.decode("utf-8", errors="strict").strip()).resolve()
 
@@ -201,13 +199,13 @@ def plan_checks(paths: tuple[str, ...]) -> CheckPlan:
 
     pipeline = any(path.startswith(PIPELINE_PREFIXES) for path in paths)
     recipes: list[str] = []
-    if any(path.startswith("go/") or path.startswith("client/src/auth/") for path in paths):
+    if any(path.startswith("go/") or path.startswith("client/src/auth/") or path == "scripts/auth_assets.py" for path in paths):
         recipes.append("check-generated")
     if any(path.startswith("go/") for path in paths):
         recipes.extend(("server-check", "server-test"))
     if any(path.startswith("client/") for path in paths):
         recipes.append("client-ci")
-    if any(path.startswith(LEGAL_PREFIXES) or path in LEGAL_FILES for path in paths):
+    if any(path.startswith(LEGAL_PREFIXES) or path.startswith("scripts/legal/") or path in LEGAL_FILES for path in paths):
         recipes.append("legal-check")
     return CheckPlan(pipeline=pipeline, recipes=tuple(dict.fromkeys(recipes)))
 
@@ -273,6 +271,8 @@ def run_staged_checks(root: Path, plan: CheckPlan) -> None:
                     cwd=worktree / "client",
                     env=worktree_env,
                 )
+            if plan.pipeline or "check" in plan.recipes:
+                command(("just", "python-setup"), cwd=worktree, env=worktree_env)
             if plan.pipeline:
                 run_pipeline_checks(worktree, env=worktree_env)
             for recipe in plan.recipes:

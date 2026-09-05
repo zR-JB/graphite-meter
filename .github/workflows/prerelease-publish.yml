@@ -40,6 +40,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
       - id: resolve
         name: Bind triggering run to trusted current-main request workflow
         env:
@@ -84,6 +89,11 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
 
       - id: validate
         name: Recheck request metadata, PR state, Gate, and CodeQL
@@ -156,6 +166,11 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
 
       - id: recheck
         name: Reconfirm exact PR head, current main, Gate, and CodeQL

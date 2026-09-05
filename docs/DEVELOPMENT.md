@@ -12,7 +12,7 @@ Use the versions pinned by the repository:
 - Bun from `.bun-version`;
 - Just from `.just-version`;
 - Git;
-- Python 3, Bash, and jq for the pipeline regression suite;
+- Python 3.14, Bash, and jq for the pipeline regression suite;
 - Chrome for Testing for browser and benchmark suites;
 - Docker or Podman for container validation.
 
@@ -270,3 +270,15 @@ VERSION=0.6.0 just release-check 0.6.0
 
 Publication remains a workflow-controlled operation. Do not create or move release tags as part of
 ordinary documentation or feature work.
+
+
+### Python build tooling
+
+Use Python 3.14 for repository tooling; no pip or Python packages are required.
+`.python-version` selects the minor release locally and in CI; patch updates float.
+`just setup` prepares the version-pinned standalone `ty` binary. `just python-check`
+checks all scripts and their tests; `just pipeline-test`
+combines that check with control-plane and legal regression tests. Legal review,
+inventory rendering and source archives run in Python. Only dependency closure
+discovery invokes Go metadata commands and the Vite build; no legal helper is
+compiled. See `legal/README.md` for the unchanged public legal commands.
