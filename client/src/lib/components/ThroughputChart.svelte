@@ -27,7 +27,44 @@
   let engine: ChartEngine;
   let hover = $state<HoverInfo | null>(null);
   let chartPresentation = $state<ChartPresentation | null>(null);
-  let hoverX: number | null = null;
+  let position = $state<number | null>(null);
+  let retainSelection = false;
+  const componentId = $props.id();
+  const instructionsId = `${componentId}-instructions`;
+  const viewport = $derived(chartPresentation?.layout.viewport);
+  const selectedTime = $derived(
+    (viewport?.tMin ?? 0) +
+      (position ?? 0) * ((viewport?.tMax ?? 0) - (viewport?.tMin ?? 0)),
+  );
+  const hasData = $derived(
+    store.throughput.length > 0 || store.latency.length > 0,
+  );
+  const selectionText = $derived.by(() => {
+    if (!hasData) return "No measurements yet";
+    const details = [
+      `${((hover?.t ?? selectedTime) / 1000).toFixed(1)} seconds`,
+    ];
+    if (!hover) return `${details[0]}, no measurements at this position`;
+    if (hover.bytesPerSec != null)
+      details.push(
+        `rate ${fmtSpeed(store.toUnit(hover.bytesPerSec))} ${store.unitLabel}`,
+      );
+    if (hover.downBytesPerSec != null)
+      details.push(
+        `download ${fmtSpeed(store.toUnit(hover.downBytesPerSec))} ${store.unitLabel}`,
+      );
+    if (hover.upBytesPerSec != null)
+      details.push(
+        `upload ${fmtSpeed(store.toUnit(hover.upBytesPerSec))} ${store.unitLabel}`,
+      );
+    if (hover.rtt != null)
+      details.push(`bucket median latency ${fmtMs(hover.rtt)} milliseconds`);
+    if (hover.pingCount > 0)
+      details.push(
+        `probe timeouts ${hover.lossCount} of ${hover.pingCount} resolved probes in bucket`,
+      );
+    return details.join(", ");
+  });
   let hoverPresentation: PresentationHandle;
   // presentation keeps animating while a render returns true.
   const PARKED = false;
@@ -55,19 +92,82 @@
     engine?.wake();
   });
 
-  function onMove(e: MouseEvent) {
-    hoverX = e.offsetX;
+  function onMove(e: PointerEvent) {
+    if (e.pointerType !== "mouse") return;
+    selectX(
+      e.clientX -
+        (e.currentTarget as HTMLDivElement).getBoundingClientRect().left,
+    );
+  }
+  function selectX(x: number) {
+    if (!chartPresentation || !hasData) return;
+    const { plot } = chartPresentation.layout;
+    position =
+      (Math.max(plot.left, Math.min(plot.right, x)) - plot.left) /
+      (plot.right - plot.left);
     hoverPresentation?.invalidate();
+  }
+  function selectTime(t: number) {
+    if (chartPresentation) selectX(chartPresentation.layout.x(t));
+  }
+  function onKeyDown(e: KeyboardEvent) {
+    if (!viewport || !hasData) return;
+    const step = (viewport.tMax - viewport.tMin) / 100;
+    switch (e.key) {
+      case "ArrowRight":
+      case "ArrowUp":
+        selectTime(selectedTime + step);
+        break;
+      case "ArrowLeft":
+      case "ArrowDown":
+        selectTime(selectedTime - step);
+        break;
+      case "Home":
+        selectTime(viewport.tMin);
+        break;
+      case "End":
+        selectTime(viewport.tMax);
+        break;
+      case "Escape":
+        clearSelection();
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  function onFocus() {
+    retainSelection = true;
+    selectTime(position == null ? (viewport?.tMin ?? 0) : selectedTime);
+  }
+  function onPointerUp(e: PointerEvent) {
+    if (e.pointerType === "mouse") return;
+    plotEl?.focus({ preventScroll: true });
+    retainSelection = true;
+    selectX(
+      e.clientX -
+        (e.currentTarget as HTMLDivElement).getBoundingClientRect().left,
+    );
   }
   // A one-shot repaint, re-armed by invalidate().
   function updateHover() {
-    engine.setHover(hoverX);
+    engine.setHover(
+      position == null ? null : chartPresentation!.layout.x(selectedTime),
+    );
     hover = engine.hoverInfo();
     return PARKED;
   }
-  function onLeave() {
-    hoverX = null;
+  function clearSelection() {
+    position = null;
     hoverPresentation?.invalidate();
+  }
+  function onLeave() {
+    if (!retainSelection) clearSelection();
+  }
+  function onBlur() {
+    retainSelection = false;
+    clearSelection();
   }
 
   onMount(() => {
@@ -94,7 +194,16 @@
           bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
         },
       }),
-      (next) => (chartPresentation = next),
+      (next) => {
+        chartPresentation = next;
+        const { plot } = next.layout;
+        engine.setHover(
+          position == null
+            ? null
+            : plot.left + position * (plot.right - plot.left),
+        );
+        hover = engine.hoverInfo();
+      },
     );
     engine.attach(canvasEl!);
     hoverPresentation = presentation.register(plotEl!, updateHover);
@@ -124,12 +233,26 @@
   <div
     bind:this={plotEl}
     class="plot"
-    role="img"
+    role="slider"
+    tabindex={hasData ? 0 : -1}
     aria-label="Throughput and latency over time"
-    onmousemove={onMove}
-    onmouseleave={onLeave}
+    aria-describedby={instructionsId}
+    aria-disabled={!hasData}
+    aria-valuemin={viewport?.tMin ?? 0}
+    aria-valuemax={viewport?.tMax ?? 0}
+    aria-valuenow={Math.max(
+      viewport?.tMin ?? 0,
+      Math.min(viewport?.tMax ?? 0, selectedTime),
+    )}
+    aria-valuetext={selectionText}
+    onpointermove={onMove}
+    onpointerleave={onLeave}
+    onpointerup={onPointerUp}
+    onkeydown={onKeyDown}
+    onfocus={onFocus}
+    onblur={onBlur}
   >
-    <canvas bind:this={canvasEl} class="canvas"></canvas>
+    <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}
@@ -197,8 +320,7 @@
     {#if hover}
       <div
         class="chip"
-        style="left:{hover.x}px"
-        class:flip={canvasEl && hover.x > canvasEl.clientWidth - 130}
+        style:left={`clamp(8px, ${hover.x + 8}px, calc(100% - 232px))`}
       >
         <div class="chip-row">
           <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
@@ -231,14 +353,21 @@
             <span>median</span><b>{fmtMs(hover.rtt)} ms</b>
           </div>
         {/if}
-        {#if hover.lossCount > 0}
+        {#if hover.pingCount > 0}
           <div class="chip-row">
-            <span>loss</span><b>{hover.lossCount}/{hover.pingCount}</b>
+            <span>probe timeouts</span><b>{hover.lossCount}/{hover.pingCount}</b
+            >
           </div>
         {/if}
       </div>
     {/if}
   </div>
+  <span id={instructionsId} class="sr-only"
+    >Use arrow keys to inspect the timeline, Home and End to jump to its edges,
+    and Escape to dismiss details. On touch screens, tap the chart. Rates are
+    plotted values; latency and probe timeouts describe the nearby display
+    bucket, not whole-run statistics.</span
+  >
 </section>
 
 <style>
@@ -265,6 +394,19 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
     overflow: hidden;
+  }
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .plot:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 2px;
   }
   .canvas {
     position: absolute;
@@ -319,7 +461,9 @@
   .chip {
     position: absolute;
     top: 8px;
-    transform: translateX(8px);
+    width: 224px;
+    max-width: calc(100% - 16px);
+    box-sizing: border-box;
     pointer-events: none;
     min-width: 112px;
     padding: var(--space-1) var(--space-2);
@@ -329,9 +473,6 @@
     box-shadow: var(--elev-raised);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-  }
-  .chip.flip {
-    transform: translateX(-100%) translateX(-8px);
   }
   .chip-row {
     display: flex;
