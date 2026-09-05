@@ -94,7 +94,14 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	if err := lanes.waitStart(ctx, gate.start, progress.errs); err != nil {
 		return Result{}, err
 	}
-	if err := progress.waitNext(ctx, progress.seq.Load(), lanes.errs); err != nil {
+	// A connected feed can remain silent after warmup. Bound acquisition of the
+	// receiver's baseline separately; its wait is not a measured server window.
+	baselineBudget := min(duration, stageReadyTimeout)
+	baselineCtx, cancelBaseline := context.WithTimeoutCause(ctx, baselineBudget,
+		fmt.Errorf("upload receiver baseline unavailable within %v", baselineBudget))
+	err = progress.waitNext(baselineCtx, progress.seq.Load(), lanes.errs)
+	cancelBaseline()
+	if err != nil {
 		return Result{}, err
 	}
 	baselineN, baselineT := progress.counters()

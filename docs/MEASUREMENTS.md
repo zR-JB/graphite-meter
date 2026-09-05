@@ -97,7 +97,10 @@ configured/adaptive warmup starts. Warmup data is excluded from every result.
 
 The shared gate opens the measured phase. Download and latency use client monotonic
 time; upload takes its baseline from the first fresh receiver report after that
-gate. Its exact counter window follows the server progress cadence and server
+gate. Acquiring that receiver baseline has a separate deadline: the shorter of
+the configured measured duration and ten seconds. If no fresh report arrives,
+the stage fails without an upload summary; baseline acquisition time never
+enters a receiver window. Its exact counter window follows the server progress cadence and server
 clock, rather than mixing client timestamps with server byte counts. Download
 and upload full-window means are received bytes divided by their attributable
 elapsed seconds. A direction failure or caller cancellation stops its siblings;

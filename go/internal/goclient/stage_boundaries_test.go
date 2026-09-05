@@ -276,3 +276,71 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 		t.Fatalf("lost progress continued the warmup: measured=%v elapsed=%v", measuring.Load(), time.Since(started))
 	}
 }
+
+func TestUploadSilentFeedAfterWarmupHasBoundedBaseline(t *testing.T) {
+	warmup := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintln(w, `{"uploadId":"silent-feed"}`) })
+	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) })
+	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			return
+		}
+		_, _ = fmt.Fprintln(w, `{"type":"ready"}`)
+		w.(http.Flusher).Flush()
+		ticker := time.Tick(5 * time.Millisecond)
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-warmup:
+				// Keep the connection open, but provide no post-warmup baseline.
+				<-r.Context().Done()
+				return
+			case <-ticker:
+				_, _ = fmt.Fprintln(w, `{"type":"progress","bytes":100,"nanos":10000000}`)
+				w.(http.Flusher).Flush()
+			}
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	measuring := make(chan struct{})
+	var results atomic.Int64
+	cfg := Config{BaseURL: srv.URL, Warmup: 20 * time.Millisecond, UploadBytesPerStream: 32 * 1024}.normalized()
+	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
+		if e.Kind == EventStage && e.Phase == StageWarmup {
+			close(warmup)
+		}
+		if e.Kind == EventResult {
+			results.Add(1)
+		}
+		if e.Kind == EventStage && e.Phase == StageMeasuring {
+			close(measuring)
+		}
+	}}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- r.runTransferStage(ctx, "upload", []Direction{Up}, 50*time.Millisecond) }()
+	select {
+	case <-measuring:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("never reached measuring")
+	}
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "upload receiver baseline unavailable") {
+			t.Fatalf("silent feed cause = %v", err)
+		}
+		if results.Load() != 0 {
+			t.Fatalf("silent feed emitted %d results without a receiver baseline", results.Load())
+		}
+	case <-time.After(300 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("upload remained in post-ready baseline wait beyond six complete measurement windows")
+	}
+}
