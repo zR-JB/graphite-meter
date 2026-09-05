@@ -433,3 +433,55 @@ test("initial empty generation matches absent or empty durable metadata", async 
   await queue.flush();
   expect(saved).toEqual([valid.id, "00000000-0000-4000-8000-000000000005"]);
 });
+
+test("disposing a queue invalidates an in-flight write and suppresses callbacks", async () => {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const callbacks: string[] = [];
+  let current: (() => boolean) | undefined;
+  const queue = new HistoryWriteQueue(
+    async (_record, isCurrent) => {
+      current = isCurrent;
+      entered.resolve();
+      await release.promise;
+    },
+    async () => {
+      callbacks.push("removed");
+    },
+    () => {
+      callbacks.push("saved");
+    },
+    () => {
+      callbacks.push("permanent");
+    },
+    () => {
+      callbacks.push("transient");
+    },
+  );
+  queue.enqueue(valid);
+  await entered.promise;
+  expect(current!()).toBe(true);
+  queue.dispose();
+  expect(current!()).toBe(false);
+  expect(queue.enqueue(candidate(2))).toBe(false);
+  release.resolve();
+  await queue.flush();
+  expect(callbacks).toEqual([]);
+});
+
+test("disposing before a scheduled write prevents repository access", async () => {
+  let writes = 0;
+  const queue = new HistoryWriteQueue(
+    async () => {
+      writes++;
+    },
+    async () => undefined,
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  queue.enqueue(valid);
+  queue.dispose();
+  await queue.flush();
+  expect(writes).toBe(0);
+});
