@@ -77,7 +77,11 @@ export interface CoreHost {
     /** Whether this sample proves every required direction is healthy. */
     provesLiveness?: boolean,
   ): void;
-  ingestLatency(observation: LatencyObservation, underLoad: boolean): void;
+  ingestLatency(observation: LatencyObservation): void;
+  ingestLatencyInterruption(
+    count: number,
+    reason: "unresolved" | "send-failed",
+  ): void;
   /* Account a rotation handoff only in final byte/time reduction. */
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
   /* Server recovery bytes are authoritative but lack a prior checkpoint for a live-rate estimate. */
@@ -151,6 +155,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #stagePreparationId = 0;
   #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
+  #lastLatencySummaryAt = -Infinity;
   #lastThroughputDisplayAt: Record<FlowDirection, number> = {
     down: -Infinity,
     up: -Infinity,
@@ -639,12 +644,17 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     });
   }
 
-  ingestLatency(observation: LatencyObservation, underLoad: boolean): void {
+  ingestLatency(observation: LatencyObservation): void {
     // Only measured phases feed the accumulator; warmup and pre-run pings stay out of results.
     const phase = this.#phase;
     if (!isMeasuredPhase(phase)) return;
     // Loaded pings use another connection and cannot prove transfer bytes still move.
-    if (phase === "latency") this.#noteRealSample();
+    if (
+      phase === "latency" &&
+      !observation.lost &&
+      observation.rttEligible !== false
+    )
+      this.#noteRealSample();
     // Translate the window-clock observation into the runner's measured timeline.
     const wallNow = performance.now();
     const projectedNow =
@@ -657,11 +667,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       ),
     );
     this.#accum.pushLatency(
+      phase,
       observation.rttMs,
-      underLoad,
       observation.lost,
       observedT,
+      this.#continuityId,
+      observation.rttEligible,
     );
+    if (wallNow - this.#lastLatencySummaryAt >= 1_000)
+      this.#emitLatencySummary(phase);
+    if (observation.rttEligible === false) return;
     if (phase === "latency" && this.#updateStability()) this.#tick();
     for (const bucket of this.#latencyBuckets.observe(
       observedT,
@@ -672,6 +687,23 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         type: "latency",
         sample: bucket,
       });
+  }
+
+  ingestLatencyInterruption(
+    count: number,
+    reason: "unresolved" | "send-failed",
+  ): void {
+    if (isMeasuredPhase(this.#phase))
+      this.#accum.interruptLatency(this.#phase, count, reason);
+  }
+
+  #emitLatencySummary(stage: TransportRole): void {
+    this.#lastLatencySummaryAt = performance.now();
+    this.emit({
+      type: "latencySummary",
+      stage,
+      summary: this.#accum.latencySummary(stage),
+    });
   }
 
   #flushLatencyPresentation(): void {
@@ -902,6 +934,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#presentedRate = { down: 0, up: 0 };
     this.#continuityId++;
     this.#accum.beginPhase();
+    this.#lastLatencySummaryAt = -Infinity;
     this.#resetLatencyPresentation();
   }
 
@@ -1003,6 +1036,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #finalizeStage(phase: Phase) {
     const cfg = this.#cfg!;
     this.#flushLatencyPresentation();
+    if (isMeasuredPhase(phase)) this.#emitLatencySummary(phase);
     const failed = this.#stageFailures.has(phase as TransportRole);
     if (phase === "bidirectional") {
       if (cfg.stages.bidirectional && failed)
@@ -1012,11 +1046,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (phase === "latency") {
       if (!cfg.stages.latency || this.#latResult) return;
       this.#latResult = failed
-        ? this.#accum.partialLatencyResult(
-            cfg,
-            this.#backend.idleHintMs?.() ?? 0,
-          )
-        : this.#accum.latencyResult(cfg, this.#backend.idleHintMs?.() ?? 0);
+        ? this.#accum.partialLatencyResult(cfg)
+        : this.#accum.latencyResult(cfg);
       if (this.#latResult)
         this.emit({
           type: "stageResult",
@@ -1066,6 +1097,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         bidirectional,
         latency: this.#latResult,
         bufferbloat: this.#accum.bufferbloatGrade(),
+        latencyByStage: this.#accum.latencySummaries(),
         stageFailures: Object.fromEntries(this.#stageFailures),
         startedAt: Date.now() - actualMs,
         durationMs: actualMs,

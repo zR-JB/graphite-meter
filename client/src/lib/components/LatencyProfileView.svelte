@@ -5,7 +5,7 @@
   import {
     entries,
     hoverContext,
-    lossLabel,
+    timeoutLabel,
     metricLabel,
     metricValue,
     nearestMetric,
@@ -23,7 +23,8 @@
     domain?: LatencyProfileDomain;
     variant?: "bare" | "compact";
     showCurrent?: boolean;
-    showLoss?: boolean;
+    showTimeouts?: boolean;
+    jitterDescription?: string;
     label?: string;
   }
 
@@ -32,7 +33,8 @@
     domain,
     variant = "bare",
     showCurrent = false,
-    showLoss = false,
+    showTimeouts = false,
+    jitterDescription = JARGON.jitter,
     label = "Latency, jitter and loss by phase",
   }: Props = $props();
 
@@ -147,7 +149,9 @@
         ? null
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
-      showLoss && lane.lossRatio > 0 ? lossLabel(lane.lossRatio) : null,
+      showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
+        ? timeoutLabel(lane.timeoutRatio)
+        : null,
       lane.count == null ? null : `${lane.count} samples`,
     ].filter((value): value is string => value !== null);
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
@@ -176,8 +180,8 @@
               : `${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
-          <em class="jit" use:tooltip={JARGON.jitter}
-            >± {fmtMs(lane.jitter)} jit</em
+          <em class="jit" use:tooltip={jitterDescription}
+            >{fmtMs(lane.jitter)} ms variation</em
           >
         {/if}
         <em class="range-label">
@@ -232,10 +236,10 @@
               style={`left:${pos(lane.current, scale)}%`}
             ></i>
           {/if}
-          {#if showLoss && lane.lossRatio > 0}
+          {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
             <i
               class="loss-marker"
-              style={`width:${Math.min(34, Math.max(8, lane.lossRatio * 100))}%`}
+              style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
             ></i>
           {/if}
 
@@ -264,8 +268,8 @@
                   >{hoverContext(lane, hover.metric)}</span
                 >
               {/if}
-              {#if showLoss && lane.lossRatio > 0}
-                <em>{lossLabel(lane.lossRatio)}</em>
+              {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+                <em>{timeoutLabel(lane.timeoutRatio)}</em>
               {/if}
             </span>
           {/if}

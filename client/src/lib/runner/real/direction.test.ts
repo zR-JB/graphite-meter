@@ -75,6 +75,7 @@ function fakeHost(
     fail: (_reason: string, message: string) => record.fails.push(message),
     ingestThroughput: () => {},
     ingestLatency: () => {},
+    ingestLatencyInterruption: () => {},
     emit: () => {},
     stall: () => {},
     resume: () => {},

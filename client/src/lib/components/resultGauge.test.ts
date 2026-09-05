@@ -17,7 +17,7 @@ const throughput = (reportedBytesPerSec: number): ThroughputResult => ({
   method: "full-average",
   stabilityScore: 1,
   band: "high",
-  packetLossPct: 0,
+  probeTimeoutPct: 0,
 });
 
 const result = (overrides: Partial<RunResult>): RunResult => ({
@@ -25,6 +25,12 @@ const result = (overrides: Partial<RunResult>): RunResult => ({
   upload: null,
   bidirectional: null,
   latency: null,
+  latencyByStage: {
+    latency: null,
+    download: null,
+    upload: null,
+    bidirectional: null,
+  },
   bufferbloat: null,
   stageFailures: {},
   startedAt: 0,
@@ -74,7 +80,7 @@ test("terminal gauge skips unavailable stages in every combination", () => {
           p50Ms: 10,
           p95Ms: 12,
           jitterMs: 1,
-          packetLossPct: 0,
+          probeTimeoutPct: 0,
           reportedMs: 10,
           method: "full-average",
           stabilityScore: 1,

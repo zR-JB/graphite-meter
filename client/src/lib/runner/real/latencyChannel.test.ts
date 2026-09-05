@@ -125,7 +125,7 @@ test("stage latency preserves distinct times from one worker batch", () => {
   });
 
   channel.prime("websocket", true);
-  channel.measure(false);
+  channel.measure();
   TestWorker.last!.emit({
     type: "samples",
     samples: [
@@ -154,7 +154,7 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   });
 
   channel.prime("websocket", true);
-  channel.measure(false);
+  channel.measure();
   TestWorker.last!.emit({ type: "resume" });
 
   expect(resumes).toBe(0);
