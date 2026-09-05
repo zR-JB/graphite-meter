@@ -20,6 +20,7 @@ import { kindsForRole } from "./transports";
 
 /* Server route paths, the TS half of a cross-language pin. */
 export const ROUTES = {
+  preflight: "/preflight",
   probe: "/probe",
   download: "/download",
   upload: "/upload",

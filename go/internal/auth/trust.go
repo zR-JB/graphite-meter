@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/subtle"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net"
 	"net/http"
 	"net/netip"
@@ -106,7 +107,7 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 }
 
 func (s *Service) wsPingOriginAllowed(r *http.Request) bool {
-	return r.URL.Path != "/ws/ping" || r.Header.Get("Origin") == s.public.String()
+	return r.URL.Path != route.Ping || r.Header.Get("Origin") == s.public.String()
 }
 
 func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {

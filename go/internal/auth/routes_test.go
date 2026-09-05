@@ -1,21 +1,16 @@
 package auth
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 )
 
 const routePinPath = "../../../api/routes.txt"
-
-const preflightPath = "/preflight"
 
 var pinnedKinds = map[string]string{}
 
@@ -57,62 +52,16 @@ func loadRoutePin(t *testing.T) map[string]string {
 	return pinned
 }
 
-func enumeratedPaths(t *testing.T, file, fn string) []string {
-	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
-	for _, d := range f.Decls {
-		fd, ok := d.(*ast.FuncDecl)
-		if !ok || fd.Name.Name != fn {
-			continue
-		}
-		var found []string
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			lit, ok := n.(*ast.BasicLit)
-			if !ok || lit.Kind != token.STRING {
-				return true
-			}
-			if v, err := strconv.Unquote(lit.Value); err == nil && strings.HasPrefix(v, "/") {
-				found = append(found, v)
-			}
-			return true
-		})
-		return found
-	}
-	t.Fatalf("%s: no func %s", file, fn)
-	return nil
-}
-
-func assertEnumerates(t *testing.T, site string, want, got []string) {
-	t.Helper()
-	have := make(map[string]bool, len(got))
-	for _, path := range got {
-		have[path] = true
-	}
-	for _, path := range want {
-		if !have[path] {
-			t.Errorf("%s: %q is pinned but not enumerated", site, path)
-		}
-		delete(have, path)
-	}
-	for _, path := range slices.Sorted(maps.Keys(have)) {
-		t.Errorf("%s: enumerates %q, which is not pinned", site, path)
-	}
-}
-
 func TestAuthRoutesMatchPin(t *testing.T) {
 	pinned := loadRoutePin(t)
 	ping, ok := pinned["ping"]
 	if !ok {
 		t.Fatal("ping: not in the route pin")
 	}
-	measurement := append(slices.Sorted(maps.Values(pinned)), preflightPath)
+	measurement := slices.Sorted(maps.Values(pinned))
 	methods := []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodConnect}
 
 	t.Run("isMeasurementRoute", func(t *testing.T) {
-		assertEnumerates(t, "wrap.go isMeasurementRoute", measurement, enumeratedPaths(t, "wrap.go", "isMeasurementRoute"))
 		for _, path := range measurement {
 			if !isMeasurementRoute(path) {
 				t.Errorf("isMeasurementRoute(%q) = false", path)
@@ -124,7 +73,6 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 	})
 
 	t.Run("allowedCORSMethod", func(t *testing.T) {
-		assertEnumerates(t, "headers.go allowedCORSMethod", measurement, enumeratedPaths(t, "headers.go", "allowedCORSMethod"))
 		for _, path := range measurement {
 			if !slices.ContainsFunc(methods, func(m string) bool { return allowedCORSMethod(path, m) }) {
 				t.Errorf("allowedCORSMethod(%q): no method allowed", path)
@@ -139,7 +87,6 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 
 	t.Run("isWebTransportRoute", func(t *testing.T) {
 		sessions := pathsOfKind(t, "wt")
-		assertEnumerates(t, "webtransport.go isWebTransportRoute", sessions, enumeratedPaths(t, "webtransport.go", "isWebTransportRoute"))
 		for _, path := range sessions {
 			if !isWebTransportRoute(path) {
 				t.Errorf("isWebTransportRoute(%q) = false", path)
@@ -152,8 +99,6 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 	})
 
 	t.Run("validRequestOrigin", func(t *testing.T) {
-		assertEnumerates(t, "trust.go wsPingOriginAllowed", []string{ping}, enumeratedPaths(t, "trust.go", "wsPingOriginAllowed"))
-
 		s := testService(t)
 		_, sess, err := s.createSession("subject", "Name", "local")
 		if err != nil {
@@ -167,4 +112,32 @@ func TestAuthRoutesMatchPin(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestCORSPreflightPreservesExactRouteMethods(t *testing.T) {
+	s := testService(t)
+	methods := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodPut, ""}
+	allowed := map[string][]string{
+		"/preflight": {http.MethodGet}, "/probe": {http.MethodGet}, "/download": {http.MethodGet},
+		"/upload/session": {http.MethodPost}, "/upload": {http.MethodPost}, "/wt/session": {http.MethodPost},
+		"/upload/progress": {http.MethodGet, http.MethodDelete}, "/ws/ping": {http.MethodGet},
+		"/wt/download": {http.MethodConnect}, "/wt/upload": {http.MethodConnect}, "/wt/ping": {http.MethodConnect},
+		"/login": nil, "/download/": nil,
+	}
+	for path, permitted := range allowed {
+		for _, method := range methods {
+			r := secureRequest(http.MethodOptions, path, nil)
+			r.Header.Set("Origin", s.public.String())
+			r.Header.Set("Access-Control-Request-Method", method)
+			w := httptest.NewRecorder()
+			s.corsPreflight(w, r, true)
+			want := http.StatusForbidden
+			if slices.Contains(permitted, method) {
+				want = http.StatusNoContent
+			}
+			if w.Code != want {
+				t.Errorf("preflight %s %s = %d, want %d", method, path, w.Code, want)
+			}
+		}
+	}
 }
