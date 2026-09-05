@@ -130,7 +130,7 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
       failStage(_stage: string, _reason: string, message: string) {
         failures.push(message);
       },
-      ingestThroughput(dir: string, _rate: number, bytes: number) {
+      ingestThroughput(dir: string, bytes: number) {
         throughput.push({ dir, bytes });
       },
     });

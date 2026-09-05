@@ -44,8 +44,8 @@ jobs:
       - name: Enforce repository and workflow security policy
         run: python3 scripts/ci/workflow_policy.py
 
-      - name: Test privileged release transaction
-        run: python3 scripts/ci/test_release_transaction.py
+      - name: Test pipeline and release boundaries
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
 
       - id: filter
         name: Determine affected CI areas

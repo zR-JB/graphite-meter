@@ -257,9 +257,6 @@ func TestThirdPartySourceBundleHelpers(t *testing.T) {
 	if got := safeName("github.com/example/pkg@v1"); got != "github.com_example_pkg_at_v1" {
 		t.Fatalf("safeName = %q", got)
 	}
-	if _, err := moduleDirectory(t.TempDir(), "missing/module", "v0.0.0"); err == nil {
-		t.Fatal("missing module unexpectedly resolved")
-	}
 	got, err := manualSourceDestination(legal.Provenance{Name: "sample", CorrespondingSource: "third_party/manual/sample"})
 	if err != nil || got != "third_party/manual/sample" {
 		t.Fatalf("manualSourceDestination = %q, %v", got, err)
@@ -623,6 +620,43 @@ func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
 	for _, name := range archive.names {
 		if strings.Contains(name, "cover.out") {
 			t.Fatalf("project build artifact leaked into third-party source archive: %s", name)
+		}
+	}
+}
+
+func TestThirdPartySourceBundleUsesResolvedGoReplacementDirectory(t *testing.T) {
+	source := t.TempDir()
+	const code = "package replacement\nconst Identity = \"local source\"\n"
+	if err := os.WriteFile(filepath.Join(source, "replacement.go"), []byte(code), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A local replacement's filesystem path is not a module name that another
+	// go list -m invocation can resolve. Discovery already supplied this directory.
+	component := legal.Component{Name: "../replacement", Version: "", Ecosystem: "go", SourcePath: source}
+	output := filepath.Join(t.TempDir(), "sources.tar.gz")
+	if err := thirdPartySourceBundle(t.TempDir(), legal.Project{}, "development", []legal.Component{component}, nil, nil, nil, output); err != nil {
+		t.Fatal(err)
+	}
+	archive := readTarGz(t, output)
+	name := "graphite-meter_development_third-party-source/third_party/go/.._replacement_at_/replacement.go"
+	if got := archive.contents[name]; got != code {
+		t.Fatalf("replacement source = %q, want %q", got, code)
+	}
+}
+
+func TestThirdPartySourceBundleRequiresRelativeManualSources(t *testing.T) {
+	repo := t.TempDir()
+	for _, source := range []string{"missing-source", filepath.Join(repo, "container-only-source")} {
+		output := filepath.Join(t.TempDir(), "sources.tar.gz")
+		err := thirdPartySourceBundle(repo, legal.Project{}, "development", nil, nil, nil, []legal.Provenance{{
+			Name: "manual component", LocalPaths: []string{source},
+		}}, output)
+		if filepath.IsAbs(source) {
+			if err != nil {
+				t.Fatalf("container-only absolute source was required locally: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), source) || !strings.Contains(err.Error(), "manual component") {
+			t.Fatalf("missing relative source was not identified: %v", err)
 		}
 	}
 }

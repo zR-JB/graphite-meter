@@ -10,9 +10,8 @@ test("Endpoint Info opens the accessible generated legal modal", async ({
   page,
 }) => {
   let fetches = 0;
-  await page.route("**/legal/about.json", (route) => {
+  await page.route("**/legal/about.json", () => {
     fetches += 1;
-    return route.continue();
   });
   await openApp(page);
   const endpoint = await openEndpointInfo(page);
@@ -83,7 +82,6 @@ test("legal modal reports load failure and Retry can recover", async ({
     if (attempts === 1) {
       return route.fulfill({ status: 503, body: "unavailable" });
     }
-    return route.continue();
   });
   await openApp(page);
   await openEndpointInfo(page);

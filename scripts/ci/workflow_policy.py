@@ -639,7 +639,7 @@ def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
         "Runtime.exceptionThrown",
         "Network.setBlockedURLs",
         "Page.addScriptToEvaluateOnNewDocument",
-        "screenshot",
+        ".screenshot(",
         "document.documentElement.outerHTML",
         "page.close()",
         "Bun.WebView.closeAll()",

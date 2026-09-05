@@ -82,10 +82,7 @@ test("the diagnostics rows agree with the path card above them", async ({
   page,
 }) => {
   const settings = await preparePaths(page, []);
-  test.skip(
-    await page.evaluate(() => typeof WebTransport === "undefined"),
-    "the WebTransport card is disabled without the browser API",
-  );
+  expect(await page.evaluate(() => typeof WebTransport)).toBe("function");
   await expectVisible(settings.getByText("Ready", { exact: true }).first());
   await settings.locator("label", { hasText: "WebTransport · HTTP/3" }).click();
   await expectVisible(settings.getByText("Failed", { exact: true }).first());
@@ -134,7 +131,7 @@ test("each path's Retry names the path it retries", async ({ page }) => {
   const settings = await preparePaths(page, [
     { baseUrl: DEAD_LATENCY_ORIGIN, transport: "websocket" },
   ]);
-  await page.route(`${DEAD_LATENCY_ORIGIN}/**`, (route) => route.abort());
+  await page.blockRequests(`${DEAD_LATENCY_ORIGIN}/**`);
   await expectVisible(
     settings.getByRole("button", { name: "Retry Latency path" }),
   );
@@ -168,7 +165,7 @@ test("a shared HTTP preflight failure fails both paths and Retry stays quiet", a
   );
   await page.route("**/preflight?*", async (route) => {
     if (!reachable) {
-      await route.abort();
+      await route.fulfill({ status: 503 });
       return;
     }
     await route.fulfill({
@@ -218,7 +215,7 @@ test("the readiness badge names a failure over a check in flight", async ({
     if (holdProbe) return new Promise(() => {});
     await route.fulfill({ json: PROBE });
   });
-  await page.route(`${DEAD_LATENCY_ORIGIN}/**`, (route) => route.abort());
+  await page.blockRequests(`${DEAD_LATENCY_ORIGIN}/**`);
   await openApp(page, "real");
   const settings = await openSettings(page);
   const badge = settings.locator(".readiness-badge");
@@ -288,7 +285,7 @@ test("a failed start names the affected path in the gauge", async ({
     persistConfig(false),
   );
   await stubPreflight(page, []);
-  await page.route("**/probe?*", (route) => route.abort());
+  await page.route("**/probe?*", (route) => route.fulfill({ status: 503 }));
   await openApp(page, "real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
   await expect(

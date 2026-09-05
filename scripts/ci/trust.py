@@ -345,7 +345,7 @@ def require_check_run(
     api: APICall = default_api,
 ) -> int:
     pages = api(
-        query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100),
+        query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100, filter="all"),
         paginate=True,
     )
     checks = _flatten_objects(pages, "check_runs")
@@ -375,16 +375,15 @@ def require_check_run(
     if not matches:
         raise TrustError(f"{name}{scope} at {sha} is missing")
 
-    def check_order(check: JsonObject) -> tuple[str, int]:
-        timestamp = ""
-        for key in ("completed_at", "started_at", "created_at"):
-            value = check.get(key)
-            if isinstance(value, str):
-                timestamp = value
-                break
+    def check_order(check: JsonObject) -> tuple[bool, str, int]:
+        # Any unfinished matching check blocks publication, including queued
+        # runs without a start time. Completed retries are ordered by start;
+        # an older slow success must not hide a newer failed attempt.
+        started = check.get("started_at")
         check_id = check.get("id")
         return (
-            timestamp,
+            check.get("status") != "completed",
+            started if isinstance(started, str) else "",
             check_id if isinstance(check_id, int) and not isinstance(check_id, bool) else 0,
         )
 

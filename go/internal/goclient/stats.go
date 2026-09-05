@@ -95,7 +95,7 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 }
 
 type rateStats struct {
-	samples []float64
+	samples int
 	peak    float64
 	total   uint64
 	elapsed time.Duration
@@ -105,7 +105,7 @@ func (s *rateStats) add(v float64) {
 	if v <= 0 {
 		return
 	}
-	s.samples = append(s.samples, v)
+	s.samples++
 	s.peak = max(s.peak, v)
 }
 
@@ -125,7 +125,7 @@ func (s *rateStats) result(stage string, dir Direction, serverAuth bool) Result 
 		MeanBps:    mean,
 		PeakBps:    s.peak,
 		TotalBytes: s.total,
-		Samples:    len(s.samples),
+		Samples:    s.samples,
 		ServerAuth: serverAuth,
 		Elapsed:    s.elapsed,
 	}

@@ -52,8 +52,7 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
   ).toBe(false);
 });
 
-const NO_API =
-  "This browser has no WebTransport API. Chromium and Firefox have it; Safari does not.";
+const NO_API = "WebTransport is unavailable in this browser.";
 const INSECURE_PAGE =
   "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address.";
 

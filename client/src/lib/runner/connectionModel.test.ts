@@ -19,7 +19,7 @@ import {
 } from "./connectionModel";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { estimateLiveCompensation } from "../compensation";
+import { estimateCompensation } from "../compensation";
 const throughput: FetchThroughputTarget = {
   id: "http2",
   origin: "https://meter.test",
@@ -234,9 +234,8 @@ test("automatic wire evidence follows the selected WebTransport mechanism, not f
       selectedThroughputProtocol: "http3",
     });
     const connection = present(cfg, discovery, validation, infra).throughput;
-    const estimate = estimateLiveCompensation(
+    const estimate = estimateCompensation(
       1_000_000,
-      "download",
       connection.browserProtocol,
       connection.target?.tls,
       connection.clientIpVersion,

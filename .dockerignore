@@ -1,13 +1,22 @@
-# Build context is the repo root (docker build -f docker/Dockerfile .). Keep it lean.
+# Build context is the repo root (docker build -f container/Dockerfile .). Keep it lean.
 .git
 **/node_modules
 client/dist
 client/.e2e-dist
 client/.vite
-server/graphite-meter
-server/internal/static/dist
+client/test-results
+client/bench/results
+go/graphite-meter
+go/graphite-meter-client
+go/graphite-meter-client.exe
+go/cover.out
+go/*.test
+go/dist
+go/internal/static/dist
+.go-cache
+.tools
 **/.DS_Store
-the-next-step-will-harmonic-harp.md
+**/__pycache__
 .claude
 
 # Never send local TLS material to the image builder.

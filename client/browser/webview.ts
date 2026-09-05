@@ -42,7 +42,7 @@ function staticServer() {
           routeMatch?.pattern ?? "static",
         );
       if (routeMatch) {
-        const route = new LocalRoute(url.href);
+        const route = new LocalRoute();
         await routeMatch.handler(route);
         if (route.response) return route.response;
       }
@@ -252,17 +252,6 @@ export class Locator {
       element.dispatchEvent(new Event("change", { bubbles: true }));
     }, value);
   }
-  async type(value: string) {
-    await this.click();
-    await this.page.raw.type(value);
-  }
-  async selectOption(value: string) {
-    await this.evaluate((el, selected) => {
-      el.value = selected;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    }, value);
-  }
   async textContent() {
     return (await this.state())[0]?.text ?? null;
   }
@@ -284,10 +273,6 @@ export class Locator {
 type RouteHandler = (route: LocalRoute) => void | Promise<void>;
 class LocalRoute {
   response: Response | undefined;
-  constructor(readonly url: string) {}
-  request() {
-    return { url: () => this.url };
-  }
   async fulfill(options: {
     json?: unknown;
     body?: string;
@@ -308,10 +293,6 @@ class LocalRoute {
       },
     });
   }
-  async abort() {
-    this.response = new Response("aborted", { status: 503 });
-  }
-  async continue() {}
 }
 export class Page {
   readonly raw: Bun.WebView;
@@ -351,6 +332,25 @@ export class Page {
     if (this.initialized) return;
     await this.raw.navigate("about:blank");
     await this.raw.cdp("Runtime.enable");
+    await this.raw.cdp("Network.enable");
+    this.raw.addEventListener("Network.loadingFailed", ((
+      event: MessageEvent<any>,
+    ) => {
+      this.console.push(
+        `network: ${event.data.errorText} (${event.data.type}; ${event.data.blockedReason ?? "unblocked"})`,
+      );
+    }) as EventListener);
+    this.raw.addEventListener("Network.responseReceived", ((
+      event: MessageEvent<any>,
+    ) => {
+      const response = event.data.response;
+      if (response?.status >= 400) {
+        const url = new URL(response.url);
+        this.console.push(
+          `HTTP ${response.status}: ${url.origin}${url.pathname}`,
+        );
+      }
+    }) as EventListener);
     this.storageCleanupScript = await this.raw.cdp(
       "Page.addScriptToEvaluateOnNewDocument",
       { source: "localStorage.clear(); sessionStorage.clear();" },
@@ -406,17 +406,18 @@ export class Page {
     }
   }
   async route(pattern: string, handler: RouteHandler) {
-    if (pattern.startsWith("**")) {
-      localRoutes.push({ owner: this, pattern, handler });
-    } else {
-      void handler;
-      this.blockedPatterns.push(pattern);
-      await this.init();
-      await this.raw.cdp("Network.enable");
-      await this.raw.cdp("Network.setBlockedURLs", {
-        urls: this.blockedPatterns,
-      });
-    }
+    if (!pattern.startsWith("**"))
+      throw new Error(
+        "route() stubs local server paths only; use blockRequests() for browser network failures",
+      );
+    localRoutes.push({ owner: this, pattern, handler });
+  }
+  async blockRequests(pattern: string) {
+    this.blockedPatterns.push(pattern);
+    await this.init();
+    await this.raw.cdp("Network.setBlockedURLs", {
+      urls: this.blockedPatterns,
+    });
   }
   async addInitScript(fn: (...args: any[]) => unknown, arg?: unknown) {
     await this.init();
@@ -483,10 +484,12 @@ export class Page {
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
     const stem = name.replace(/[^a-z0-9_.-]+/gi, "-").slice(0, 100);
-    await Bun.write(
-      resolve(artifacts, `${stem}.png`),
-      await this.raw.screenshot(),
-    );
+    await this.raw
+      .screenshot()
+      .then((bytes) => Bun.write(resolve(artifacts, `${stem}.png`), bytes))
+      .catch((error) =>
+        this.console.push(`screenshot capture failed: ${error}`),
+      );
     const dom = await this.raw
       .evaluate<string>("document.documentElement.outerHTML.slice(0, 50000)")
       .catch(() => "");
@@ -769,16 +772,12 @@ export async function startAndWait(page: Page, timeout = 5_000) {
 }
 type Fixtures = {
   page: Page;
-  browserName: "chromium";
   context: Page["context"];
 };
-class SkipTest extends Error {}
 interface WebViewTest {
   (name: string, fn: (fixtures: Fixtures) => unknown): void;
   describe: typeof describe;
   afterAll: typeof afterAll;
-  skip(condition?: unknown, reason?: string): void;
-  info(): { project: { name: "chromium" } };
 }
 export const test: WebViewTest = Object.assign(
   (name: string, fn: (fixtures: Fixtures) => unknown) =>
@@ -788,14 +787,12 @@ export const test: WebViewTest = Object.assign(
         const page = new Page();
         const fixtures = {
           page,
-          browserName: "chromium" as const,
           context: page.context,
         };
         try {
           await fn(fixtures);
           if (page.errors.length) throw new Error(page.errors.join("\n"));
         } catch (error) {
-          if (error instanceof SkipTest) return;
           await page.artifact(name).catch(() => {});
           throw error;
         } finally {
@@ -807,10 +804,6 @@ export const test: WebViewTest = Object.assign(
   {
     describe,
     afterAll,
-    skip: (condition?: unknown, reason?: string) => {
-      if (condition) throw new SkipTest(reason ?? "skipped");
-    },
-    info: () => ({ project: { name: "chromium" as const } }),
   },
 );
 export class AxeBuilder {

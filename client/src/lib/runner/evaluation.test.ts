@@ -16,7 +16,7 @@ const adaptive: AdaptiveDurationConfig = {
   confirmationMs: 100,
 };
 function push(accum: RunAccumulator, value: number): void {
-  accum.pushThroughput("download", "down", value, value, 1);
+  accum.pushThroughput("download", "down", value, 1);
   const conf = accum.confidence("download");
   accum.trackStableRun("download", conf.score, adaptive);
 }
@@ -56,7 +56,6 @@ function pushBidi(
   accum.pushThroughput(
     "bidirectional",
     direction,
-    value,
     value * duration,
     duration,
     authoritative,
@@ -99,7 +98,6 @@ function descriptiveStability(
     accum.pushThroughput(
       "download",
       "down",
-      rate,
       (rate * durationMs) / 1_000,
       durationMs / 1_000,
     );
@@ -116,7 +114,7 @@ test("descriptive stability is invariant to callback chunking", () => {
   split.reset();
   for (const rate of rates) {
     for (let i = 0; i < 5; i++)
-      split.pushThroughput("download", "down", rate, rate * 0.05, 0.05);
+      split.pushThroughput("download", "down", rate * 0.05, 0.05);
   }
   expect(whole).toBeCloseTo(95, 8);
   expect(split.throughputResult("download", false).stabilityPct).toBeCloseTo(
@@ -198,11 +196,11 @@ test.each([
 test("stable evidence does not select a window unless early completion shortened the stage", () => {
   const accum = fresh();
   for (let i = 0; i < 4; i++) {
-    accum.pushThroughput("download", "down", 100, 100, 1);
+    accum.pushThroughput("download", "down", 100, 1);
     accum.trackStableRun("download", 0, adaptive);
   }
   for (let i = 0; i < 4; i++) {
-    accum.pushThroughput("download", "down", 1000, 1000, 1);
+    accum.pushThroughput("download", "down", 1000, 1);
     accum.trackStableRun("download", 1, adaptive);
   }
   const result = accum.throughputResult("download", false);
@@ -212,17 +210,17 @@ test("stable evidence does not select a window unless early completion shortened
 });
 test("transfer headline weights samples by represented time", () => {
   const accum = fresh();
-  accum.pushThroughput("upload", "up", 100, 10, 0.1);
-  accum.pushThroughput("upload", "up", 10, 10, 1);
+  accum.pushThroughput("upload", "up", 10, 0.1);
+  accum.pushThroughput("upload", "up", 10, 1);
   const result = accum.throughputResult("upload", false);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(20 / 1.1, 6);
   expect(result.fullAverageBytesPerSec).not.toBeCloseTo(55, 6);
 });
 test("the final stable plateau is also weighted by represented time", () => {
   const accum = fresh();
-  accum.pushThroughput("download", "down", 1000, 100, 0.1);
+  accum.pushThroughput("download", "down", 100, 0.1);
   accum.trackStableRun("download", 0, adaptive);
-  accum.pushThroughput("download", "down", 100, 100, 1);
+  accum.pushThroughput("download", "down", 100, 1);
   accum.trackStableRun("download", 1, adaptive);
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
@@ -230,9 +228,9 @@ test("the final stable plateau is also weighted by represented time", () => {
 });
 test("stability first established on the final one-way observation remains reducible", () => {
   const accum = fresh();
-  accum.pushThroughput("upload", "up", 1000, 1000, 1);
+  accum.pushThroughput("upload", "up", 1000, 1);
   accum.trackStableRun("upload", 0, adaptive);
-  accum.pushThroughput("upload", "up", 250, 500, 2, true);
+  accum.pushThroughput("upload", "up", 500, 2, true);
   accum.trackStableRun("upload", 1, adaptive);
   const result = accum.throughputResult("upload", true);
   expect(result.method).toBe("stable-window");
@@ -256,8 +254,8 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
   const downs = [400, 420, 440, 460];
   const ups = [100, 120, 140, 160];
   for (let i = 0; i < downs.length; i++) {
-    accum.pushThroughput("bidirectional", "up", ups[i], ups[i], 1);
-    accum.pushThroughput("bidirectional", "down", downs[i], downs[i], 1);
+    accum.pushThroughput("bidirectional", "up", ups[i], 1);
+    accum.pushThroughput("bidirectional", "down", downs[i], 1);
   }
   const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
@@ -266,15 +264,9 @@ test("bidirectional: interleaved arrival order doesn't cross-contaminate the lan
 test("bidirectional confidence keeps an uneven trailing window aligned", () => {
   const accum = fresh();
   for (let i = 0; i < 32; i++)
-    accum.pushThroughput("bidirectional", "down", i, i * 0.25, 0.25);
+    accum.pushThroughput("bidirectional", "down", i * 0.25, 0.25);
   for (let i = 0; i < 24; i++)
-    accum.pushThroughput(
-      "bidirectional",
-      "up",
-      100 + i,
-      (100 + i) * 0.25,
-      0.25,
-    );
+    accum.pushThroughput("bidirectional", "up", (100 + i) * 0.25, 0.25);
   expect(accum.confidence("bidirectional").sampleCount).toBe(8);
 });
 test("bidirectional confidence rejects non-overlapping restarted lane windows", () => {
@@ -359,12 +351,11 @@ test("partial transfer keeps whole exact evidence only after its named floor", (
   accum.pushThroughput(
     "download",
     "down",
-    1_000,
     700,
     (MIN_PARTIAL_TRANSFER_EVIDENCE_MS - 100) / 1_000,
   );
   expect(accum.partialThroughputResult("download")).toBeNull();
-  accum.pushThroughput("download", "down", 1_000, 100, 0.1);
+  accum.pushThroughput("download", "down", 100, 0.1);
   const result = accum.partialThroughputResult("download");
   expect(result?.method).toBe("full-average");
   expect(result?.totalBytes).toBe(800);
@@ -372,7 +363,7 @@ test("partial transfer keeps whole exact evidence only after its named floor", (
 });
 test("a recovery gap reaches only the final byte/time reduction", () => {
   const accum = fresh();
-  accum.pushThroughput("upload", "up", 1_000, 1_000, 1, true);
+  accum.pushThroughput("upload", "up", 1_000, 1, true);
   const controlSamples = accum.confidence("upload").sampleCount;
   accum.recordRecoveryGap("upload", "up", 1);
   const result = accum.partialThroughputResult("upload");
@@ -412,8 +403,8 @@ test("long latency runs bound confidence while retaining exact result evidence",
 });
 test("partial bidirectional keeps each qualifying lane independently", () => {
   const accum = fresh();
-  accum.pushThroughput("bidirectional", "down", 1_000, 800, 0.8);
-  accum.pushThroughput("bidirectional", "up", 1_000, 799, 0.799);
+  accum.pushThroughput("bidirectional", "down", 800, 0.8);
+  accum.pushThroughput("bidirectional", "up", 799, 0.799);
   const result = accum.partialBidirectionalResult();
   expect(result.down?.reportedBytesPerSec).toBeCloseTo(1_000, 6);
   expect(result.up).toBeNull();

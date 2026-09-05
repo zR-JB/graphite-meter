@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/base64"
-	"io"
 	"io/fs"
 	"net/http"
 	"slices"
@@ -71,13 +70,14 @@ func resultHistoryMarker(enabled bool) []byte {
 	return []byte(`<meta name="graphite-meter-result-history-default" content="` + strconv.FormatBool(enabled) + `">`)
 }
 
-func handlerFor(fsys fs.FS) http.Handler {
-	return handlerForWithMarker(fsys, nil)
-}
-
 // handlerForWithMarker serves the shell only at / and otherwise requires an embedded file.
 func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
 	fileServer := http.FileServer(http.FS(fsys))
+	index, indexErr := fs.ReadFile(fsys, "index.html")
+	if len(marker) != 0 {
+		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
+	}
+	indexLength := strconv.Itoa(len(index))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -85,7 +85,16 @@ func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
 			return
 		}
 		if r.URL.Path == "/" {
-			serveIndexWithMarker(w, r, fsys, marker)
+			if indexErr != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Content-Length", indexLength)
+			if r.Method != http.MethodHead {
+				_, _ = w.Write(index)
+			}
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
@@ -102,47 +111,4 @@ func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
 		}
 		http.NotFound(w, r)
 	})
-}
-
-func serveIndexWithMarker(w http.ResponseWriter, r *http.Request, fsys fs.FS, marker []byte) {
-	if len(marker) != 0 {
-		index, err := fs.ReadFile(fsys, "index.html")
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Length", strconv.Itoa(len(index)))
-		if r.Method == http.MethodHead {
-			return
-		}
-		_, _ = w.Write(index)
-		return
-	}
-	serveIndex(w, r, fsys)
-}
-
-// serveIndex prevents caches from retaining operator-dependent metadata.
-func serveIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {
-	w.Header().Set("Cache-Control", "no-store")
-	f, err := fsys.Open("index.html")
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer f.Close()
-
-	stat, err := f.Stat()
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	rs, ok := f.(io.ReadSeeker)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeContent(w, r, "index.html", stat.ModTime(), rs)
 }

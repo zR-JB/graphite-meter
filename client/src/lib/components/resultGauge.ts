@@ -80,14 +80,9 @@ const arcValue = (value: number): number =>
 export function sortResultGaugeArcs(
   arcs: readonly ResultGaugeArc[],
 ): ResultGaugeArc[] {
-  return arcs
-    .map((arc, index) => ({ arc, index }))
-    .sort(
-      (a, b) =>
-        arcValue(b.arc.bytesPerSec) - arcValue(a.arc.bytesPerSec) ||
-        a.index - b.index,
-    )
-    .map(({ arc }) => arc);
+  return arcs.toSorted(
+    (a, b) => arcValue(b.bytesPerSec) - arcValue(a.bytesPerSec),
+  );
 }
 
 /** Keep the headline stable by measurement role, independently of paint order. */

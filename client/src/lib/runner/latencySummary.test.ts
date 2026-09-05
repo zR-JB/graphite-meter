@@ -100,8 +100,8 @@ test("stage statistics stay separate and the worst loaded median sets added late
   for (let i = 0; i < 100; i++) run.pushLatency("download", 20, false);
   run.pushLatency("upload", 300, false);
   run.pushLatency("upload", 250, true);
-  run.pushThroughput("download", "down", 100, 100, 1);
-  run.pushThroughput("upload", "up", 100, 100, 1);
+  run.pushThroughput("download", "down", 100, 1);
+  run.pushThroughput("upload", "up", 100, 1);
   expect(run.throughputResult("download", false).probeTimeoutPct).toBe(0);
   expect(run.throughputResult("upload", false).probeTimeoutPct).toBe(50);
   expect(run.latencyResult(DEFAULT_CONFIG)).toMatchObject({

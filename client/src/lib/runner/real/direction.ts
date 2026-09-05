@@ -15,7 +15,7 @@ const THROUGHPUT_CADENCE_MS = 60;
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
 const LANE_STAGGER_MS = 75;
 
-/* Each lane reports its own receive elapsed time, so the rate sums matching per-lane terms. */
+/* Collect receiver bytes between direction ticks; lane duration validates each reporting window. */
 interface ClientByteAggregation {
   pendingLaneBytes: number[];
   pendingLaneElapsedSec: number[];
@@ -245,7 +245,7 @@ export class TransferDirection {
     };
   }
 
-  /* Aggregation tick: sum each lane's bytes over that lane's own receive interval into one real sample, zero-byte. */
+  /* Sum received bytes over the direction’s wall-clock window, including zero-byte intervals. */
   #aggregate(aggregation: ClientByteAggregation): void {
     const now = performance.now();
     const durationSec = (now - aggregation.lastAggregateAt) / 1000;
@@ -253,7 +253,6 @@ export class TransferDirection {
     if (durationSec <= 0) return;
     aggregation.lastAggregateAt = now;
     let delta = 0;
-    let bytesPerSec = 0;
     for (let i = 0; i < aggregation.pendingLaneBytes.length; i++) {
       const laneBytes = aggregation.pendingLaneBytes[i] ?? 0;
       const laneSec = aggregation.pendingLaneElapsedSec[i] ?? 0;
@@ -261,13 +260,11 @@ export class TransferDirection {
       aggregation.pendingLaneElapsedSec[i] = 0;
       if (laneBytes <= 0 || laneSec <= 0) continue;
       delta += laneBytes;
-      bytesPerSec += laneBytes / laneSec;
     }
     this.#deps
       .host()
       .ingestThroughput(
         this.dir,
-        bytesPerSec,
         delta,
         durationSec,
         false,

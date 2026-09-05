@@ -234,7 +234,7 @@ test("bytes reported inside one clock tick reach the next aggregate", () => {
   withClock((clock) => {
     const bytes: number[] = [];
     const deps = fakeHost(recording(), clock, {
-      ingestThroughput(_dir: string, _rate: number, delta: number) {
+      ingestThroughput(_dir: string, delta: number) {
         bytes.push(delta);
       },
     });
@@ -264,7 +264,7 @@ test("graceful stop aggregates a lane's final progress report", async () => {
     recording(),
     { now: () => performance.now(), advance: (ms) => setTimeout(() => {}, ms) },
     {
-      ingestThroughput(_dir: string, _rate: number, delta: number) {
+      ingestThroughput(_dir: string, delta: number) {
         bytes.push(delta);
       },
     },

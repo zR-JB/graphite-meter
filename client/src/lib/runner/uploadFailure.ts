@@ -22,8 +22,3 @@ export function classifyUploadFailure(
   if (status === 429 || status === 503) return "capacity-refusal";
   return "protocol-refusal";
 }
-
-/** An upload id rotates only after the server explicitly rejects that id. */
-export function uploadFailureMayRotate(cause: RecoveryCause): boolean {
-  return cause === "unknown-upload-id";
-}

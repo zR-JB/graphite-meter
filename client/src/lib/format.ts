@@ -117,21 +117,6 @@ export function chartThroughputScale(peakBytesPerSec: number): number {
   return ceil125(peakBytesPerSec * 8) / 8;
 }
 
-export function niceCeil(value: number): number {
-  if (value <= 0) return 1;
-  return ceil125(value);
-}
-
-export function quantile(sorted: number[], q: number): number | null {
-  if (!sorted.length) return null;
-  if (sorted.length === 1) return sorted[0];
-  const pos = (sorted.length - 1) * Math.min(1, Math.max(0, q));
-  const lo = Math.floor(pos);
-  const hi = Math.ceil(pos);
-  const weight = pos - lo;
-  return sorted[lo] * (1 - weight) + sorted[hi] * weight;
-}
-
 export function niceStep(span: number): number {
   if (span <= 0) return 1;
   const base = 10 ** Math.floor(Math.log10(span));

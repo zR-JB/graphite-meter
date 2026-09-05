@@ -123,7 +123,6 @@ export class RunAccumulator {
   pushThroughput(
     phase: "download" | "upload" | "bidirectional",
     dir: FlowDirection,
-    _bytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
@@ -447,7 +446,7 @@ export class RunAccumulator {
     };
   }
 
-  /** Reduce latency; `idleFallbackMs` is used only when no usable samples exist. */
+  /** Reduce the measured idle population; absent RTT evidence has no result. */
   latencyResult(
     cfg: RunnerConfig,
     useAdaptive = cfg.adaptive.enabled,

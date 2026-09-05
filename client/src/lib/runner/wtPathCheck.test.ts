@@ -51,23 +51,32 @@ async function withProbeBackend(
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
   const realEntries = performance.getEntriesByName.bind(performance);
   const realWebTransport = globals.WebTransport;
+  const timings: PerformanceResourceTiming[] = [];
   try {
     globals.WebTransport = webTransport;
     Object.defineProperty(globalThis, "location", {
       configurable: true,
       value: new URL(`${WT_ORIGIN}/`),
     });
-    performance.getEntriesByName = () => [];
+    performance.getEntriesByName = (name) =>
+      timings.filter((entry) => entry.name === name);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/preflight")) return Response.json(capabilities);
-      if (url.includes("/probe"))
-        return Response.json({
+      if (url.includes("/probe")) {
+        const response = Response.json({
           clientIp: "127.0.0.1",
           clientIpVersion: 4,
           clientIpSource: "socket",
           protocolNegotiated: "h3",
         });
+        Object.defineProperty(response, "url", { value: url });
+        timings.push({
+          name: url,
+          nextHopProtocol: "h3",
+        } as PerformanceResourceTiming);
+        return response;
+      }
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch;
     const backend = new RealBackend();
@@ -175,6 +184,7 @@ test("a session kind this client cannot drive fails its role before any dial", a
 });
 class HeldWebTransport {
   static readonly live: HeldWebTransport[] = [];
+  static nextDial = Promise.withResolvers<void>();
   readonly ready = Promise.resolve();
   readonly closed = new Promise<void>(() => {});
   readonly incomingUnidirectionalStreams: ReadableStream;
@@ -186,6 +196,8 @@ class HeldWebTransport {
         this.#lanes = controller;
       },
     });
+    HeldWebTransport.nextDial.resolve();
+    HeldWebTransport.nextDial = Promise.withResolvers<void>();
   }
   deliver(): void {
     this.#lanes.enqueue(
@@ -209,11 +221,12 @@ async function withHeldSessions(
   body: (backend: RealBackend) => Promise<void>,
 ): Promise<void> {
   HeldWebTransport.live.length = 0;
+  HeldWebTransport.nextDial = Promise.withResolvers<void>();
   await withProbeBackend(HeldWebTransport, autoConfig, preflight, body);
 }
 async function untilDialled(dials: number): Promise<void> {
-  for (let turn = 0; turn < 100 && HeldWebTransport.live.length < dials; turn++)
-    await Promise.resolve();
+  while (HeldWebTransport.live.length < dials)
+    await HeldWebTransport.nextDial.promise;
   expect(HeldWebTransport.live).toHaveLength(dials);
 }
 test("an aborted WebTransport check aborts the probe, it does not degrade it", async () => {

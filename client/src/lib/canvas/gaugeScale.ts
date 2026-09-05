@@ -58,18 +58,6 @@ export function throughputValueAtFraction(
   return safeScale(scale);
 }
 
-/** Values at the nine fixed angular ticks, including unlabeled interior ticks. */
-export function throughputTickValues(scale: number): number[] {
-  return THROUGHPUT_FRACTION_KNOTS.map((fraction) =>
-    throughputValueAtFraction(fraction, scale),
-  );
-}
-
-/** The fixed tick fractions shared by canvas geometry and throughput values. */
-export function throughputTickFractions(_scale: number): number[] {
-  return [...THROUGHPUT_FRACTION_KNOTS];
-}
-
 function decimalCeiling(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return 1;
   return 10 ** Math.ceil(Math.log10(value));

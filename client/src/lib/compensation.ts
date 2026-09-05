@@ -1,9 +1,5 @@
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
-import type {
-  CompensationTransport,
-  TransportKind,
-  ThroughputResult,
-} from "./runner/contract";
+import type { CompensationTransport, TransportKind } from "./runner/contract";
 import {
   compensationTransportFromProtocol,
   compensationTransportLabel,
@@ -11,7 +7,6 @@ import {
 } from "./runner/protocol";
 
 type CompensationConfidence = "high" | "medium" | "low";
-type CompensationPhase = "download" | "upload";
 
 interface CompensationFactor {
   key: "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
@@ -130,36 +125,8 @@ const WIRE = {
   quicAeadTag: 16,
 } as const;
 
-export function transportFromProtocol(
-  protocol: string | undefined,
-  secure = typeof location !== "undefined" && location.protocol === "https:",
-): CompensationTransport {
-  return compensationTransportFromProtocol(protocol, secure);
-}
-
-export function estimateResultCompensation(
-  result: ThroughputResult | null,
-  phase: CompensationPhase,
-  detectedProtocol?: string,
-  detectedSecure?: boolean,
-  detectedIPVersion?: 4 | 6,
-  detectedClientIP?: string,
-  selectedTransport?: TransportKind,
-): CompensationEstimate {
-  return estimateLiveCompensation(
-    result?.meanBytesPerSec ?? 0,
-    phase,
-    detectedProtocol,
-    detectedSecure,
-    detectedIPVersion,
-    detectedClientIP,
-    selectedTransport,
-  );
-}
-
-export function estimateLiveCompensation(
+export function estimateCompensation(
   bytesPerSec: number,
-  _phase: CompensationPhase,
   detectedProtocol?: string,
   detectedSecure?: boolean,
   detectedIPVersion?: 4 | 6,
@@ -174,7 +141,7 @@ export function estimateLiveCompensation(
     selectedTransport === "webtransport-datagram";
   const transport = webTransport
     ? "http3-quic"
-    : transportFromProtocol(detectedProtocol, secure);
+    : compensationTransportFromProtocol(detectedProtocol, secure);
   // Conservative defaults: 1500 B Ethernet, preflight IP family, standard options, no unknown VLAN/tunnel.
   const mtuBytes = 1_500;
   const ipVersion = detectedIPVersion ?? 4;

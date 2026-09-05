@@ -81,11 +81,9 @@ const performanceMetrics = (page: Page) =>
   });
 performanceTest(
   "canvas work parks when settled or offscreen",
-  async ({ page, browserName, context }) => {
-    if (browserName === "chromium") {
-      const session = await context.newCDPSession(page);
-      await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
-    }
+  async ({ page, context }) => {
+    const session = await context.newCDPSession(page);
+    await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
     await openApp(page);
     await expect
       .poll(async () => {

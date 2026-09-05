@@ -12,6 +12,7 @@ Use the versions pinned by the repository:
 - Bun from `.bun-version`;
 - Just from `.just-version`;
 - Git;
+- Python 3, Bash, and jq for the pipeline regression suite;
 - Chrome for Testing for browser and benchmark suites;
 - Docker or Podman for container validation.
 
@@ -234,6 +235,50 @@ the normal parallel gate.
 
 Browser tests use the repository's Bun.WebView harness and pinned Chrome for Testing. Failed runs
 retain a screenshot, URL, console log, page errors, and a compact DOM snapshot.
+
+For a focused browser iteration, build once and select the affected files:
+
+```sh
+cd client
+bun run build:browser
+bun test browser/gauge-lifecycle.test.ts browser/chart-layout.test.ts --no-orphans --timeout 30000
+```
+
+Rebuild after changing application source. Set `GM_WEBVIEW_DEBUG=1` for browser process and
+request diagnostics; failures are saved under `client/test-results/webview`. Use
+`GM_WEBVIEW_ARTIFACTS` to retain them in a different directory.
+
+`just client-e2e` builds and embeds the current production application, then runs it with a
+real server and ephemeral TLS certificate. The transport matrix verifies both transfer directions
+over clear and TLS HTTP/1.1, HTTP/2, HTTP/3, and WebTransport streams and datagrams. Protocol probes
+check which protocol the listener actually observed. The stubbed browser suite remains the fast
+way to reproduce layout, keyboard, history, and failure states deterministically.
+
+### Worktree verification
+
+Run `just setup` inside each new worktree. Keep its `node_modules`, generated bundles, embedded
+assets, and browser artifacts local to that checkout; Bun's package cache and Go's build cache
+can be shared. Do not symlink another worktree's `node_modules`: its installed graph can disagree
+with the checked-out lockfile. The pre-commit hook also installs from the exact staged lockfile
+inside its disposable worktree before running client or legal checks.
+
+Give simultaneous E2E runs separate port ranges:
+
+```sh
+GM_E2E_PORT_BASE=17256 just client-e2e
+```
+
+The base defaults to 7256 and reserves four consecutive port numbers, including TCP and UDP on
+the last port. Readiness requires the identity of the server started by that fixture; an unrelated
+server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
+
+In restricted environments, `JUST_TEMPDIR=/tmp` selects a writable directory for Just's scripts.
+`GOCACHE` selects the Go build cache; the recipes already default to a temporary cache. Chromium
+also needs writable `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` directories on Linux. Set
+`BUN_CHROME_PATH` to the browser executable when discovery picks the wrong installation. Real
+browser/transport checks require permission to launch browser processes and bind loopback sockets.
+If Bun parallel workers stall before printing test results in a sandbox, use a bounded invocation
+and run the normal parallel gate in an environment that permits those subprocesses.
 
 ### Full gate
 

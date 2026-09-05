@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -225,10 +224,10 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	}
 
 	seen := map[string]bool{}
-	if err := archiveComponentSources(tarWriter, repo, archiveRoot+"/third_party/go/", slices.Concat(server, tui, container), "go", seen); err != nil {
+	if err := archiveComponentSources(tarWriter, archiveRoot+"/third_party/go/", slices.Concat(server, tui, container), "go", seen); err != nil {
 		return err
 	}
-	if err := archiveComponentSources(tarWriter, repo, archiveRoot+"/third_party/npm/", server, "npm", seen); err != nil {
+	if err := archiveComponentSources(tarWriter, archiveRoot+"/third_party/npm/", server, "npm", seen); err != nil {
 		return err
 	}
 	for _, entry := range provenance {
@@ -247,9 +246,6 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 			}
 			path := filepath.Join(repo, filepath.FromSlash(local))
 			if _, err := os.Lstat(path); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
 				return fmt.Errorf("inspect manual source %s for %s: %w", local, entry.Name, err)
 			}
 			if err := addTree(tarWriter, path, base+"/"+filepath.Base(path)); err != nil {
@@ -278,33 +274,19 @@ func thirdPartySourceBundle(repo string, project legal.Project, version string, 
 	return closeArchive()
 }
 
-func archiveComponentSources(writer *tar.Writer, repo, destinationPrefix string, components []legal.Component, ecosystem string, seen map[string]bool) error {
+func archiveComponentSources(writer *tar.Writer, destinationPrefix string, components []legal.Component, ecosystem string, seen map[string]bool) error {
 	for _, component := range components {
 		key := component.Name + "\x00" + component.Version
-		if component.Ecosystem != ecosystem || seen[key] || (ecosystem == "go" && component.Name == "Go standard library") {
+		if component.Ecosystem != ecosystem || seen[key] {
 			continue
 		}
 		seen[key] = true
-		dir := component.SourcePath
-		if ecosystem == "go" {
-			var err error
-			dir, err = moduleDirectory(repo, component.Name, component.Version)
-			if err != nil {
-				return err
-			}
-		} else {
-			dir = cmp.Or(dir, filepath.Join(repo, "client", "node_modules", filepath.FromSlash(component.Name)))
-			if _, err := os.Stat(dir); err != nil {
-				return fmt.Errorf("browser source component %s: %w", component.Name, err)
-			}
+		if component.SourcePath == "" {
+			return fmt.Errorf("source directory unavailable for %s %s@%s", ecosystem, component.Name, component.Version)
 		}
 		destination := destinationPrefix + safeName(component.Name+"@"+component.Version)
-		if err := addTree(writer, dir, destination); err != nil {
-			label := "browser"
-			if ecosystem == "go" {
-				label = "Go"
-			}
-			return fmt.Errorf("archive %s source %s@%s: %w", label, component.Name, component.Version, err)
+		if err := addTree(writer, component.SourcePath, destination); err != nil {
+			return fmt.Errorf("archive %s source %s@%s: %w", ecosystem, component.Name, component.Version, err)
 		}
 	}
 	return nil
@@ -322,23 +304,6 @@ func manualSourceDestination(entry legal.Provenance) (string, error) {
 		return "", fmt.Errorf("invalid corresponding source path for %s: %q", entry.Name, entry.CorrespondingSource)
 	}
 	return clean, nil
-}
-
-func moduleDirectory(repo, name, version string) (string, error) {
-	cmd := exec.Command("go", "list", "-m", "-json", name)
-	cmd.Dir = filepath.Join(repo, "go")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("locate source for %s@%s: %w", name, version, err)
-	}
-	var module struct{ Path, Version, Dir string }
-	if err := json.Unmarshal(out, &module); err != nil {
-		return "", err
-	}
-	if module.Version != version || module.Dir == "" {
-		return "", fmt.Errorf("source version mismatch for %s: got %s, want %s", name, module.Version, version)
-	}
-	return module.Dir, nil
 }
 
 func safeName(value string) string {
@@ -451,6 +416,7 @@ func discoverGo(repo string, reviews []legal.Review, provenance []legal.Provenan
 				component.SelectedLicenseExpression = review.SelectedLicenseExpression
 			}
 		}
+		component.SourcePath = module.dir
 		if module.scope == "server" {
 			server = append(server, component)
 		} else {

@@ -77,7 +77,7 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   engine.destroy();
 });
 
-test("reduced motion snaps the camera to its target and parks", () => {
+test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
   const globals = globalThis as unknown as Record<string, unknown>;
   const previousWindow = globals.window;
   const previousDocument = globals.document;
@@ -124,6 +124,31 @@ test("reduced motion snaps the camera to its target and parks", () => {
     expect(engine.render(116)).toBe(true);
     expect(published.layout.viewport.tMax).toBe(7_000);
     expect(engine.render(132)).toBe(false);
+    current = {
+      ...current,
+      latencyEnabled: true,
+      latency: [
+        {
+          t: 100,
+          startT: 0,
+          endT: 200,
+          medianRttMs: 20,
+          p95RttMs: 20,
+          maxRttMs: 20,
+          firstRttMs: 20,
+          lastRttMs: 20,
+          rttDeltaSumMs: 0,
+          rttDeltaCount: 0,
+          pingCount: 1,
+          lossCount: 0,
+          underLoad: true,
+          phase: "download",
+          continuityId: 1,
+        },
+      ],
+    };
+    engine.wake();
+    expect(engine.render(148)).toBe(false);
     engine.destroy();
   } finally {
     Object.defineProperty(globalThis, "window", {

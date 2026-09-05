@@ -526,7 +526,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       ingestLatencyAccountingIncomplete() {
         incompleteAccounting++;
       },
-      ingestThroughput(_dir, _rate, bytes) {
+      ingestThroughput(_dir, bytes) {
         uploadBytes.push(bytes);
       },
       stall(info) {

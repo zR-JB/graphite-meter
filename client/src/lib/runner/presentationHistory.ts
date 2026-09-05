@@ -52,8 +52,10 @@ function reduceThroughput(
   history: readonly ThroughputSample[],
   width: number,
 ): ThroughputSample[] {
-  const bins = new Map<string, ThroughputSample[]>();
-  const endpoints = new Set<ThroughputSample>();
+  const bins = new Map<
+    string,
+    { min: ThroughputSample; max: ThroughputSample }
+  >();
   const first = new Map<string, ThroughputSample>();
   const last = new Map<string, ThroughputSample>();
   for (const sample of history) {
@@ -62,19 +64,13 @@ function reduceThroughput(
     last.set(series, sample);
     const key = `${series}:${Math.floor(sample.t / width)}`;
     const bin = bins.get(key);
-    if (bin) bin.push(sample);
-    else bins.set(key, [sample]);
+    if (bin) {
+      if (sample.bytesPerSec < bin.min.bytesPerSec) bin.min = sample;
+      if (sample.bytesPerSec > bin.max.bytesPerSec) bin.max = sample;
+    } else bins.set(key, { min: sample, max: sample });
   }
-  for (const sample of first.values()) endpoints.add(sample);
-  for (const sample of last.values()) endpoints.add(sample);
-  const selected = new Set(endpoints);
-  for (const bin of bins.values()) {
-    let min = bin[0];
-    let max = bin[0];
-    for (const sample of bin.slice(1)) {
-      if (sample.bytesPerSec < min.bytesPerSec) min = sample;
-      if (sample.bytesPerSec > max.bytesPerSec) max = sample;
-    }
+  const selected = new Set([...first.values(), ...last.values()]);
+  for (const { min, max } of bins.values()) {
     selected.add(min);
     selected.add(max);
   }

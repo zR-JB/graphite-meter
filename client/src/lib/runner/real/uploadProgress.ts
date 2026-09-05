@@ -310,7 +310,7 @@ export class UploadProgressChannel {
       this.#curveBytes = this.#serverBytes;
       this.#curveNs = serverNs;
     }
-    // Each curve sample is Δbytes over Δserver-elapsed between two frames, so the rate holds at any push cadence and.
+    // Both the byte delta and elapsed interval come from the server’s receiver clock.
     const delta = this.#serverBytes - this.#curveBytes;
     const frameSec = (serverNs - this.#curveNs) / 1e9;
     this.#curveBytes = this.#serverBytes;
@@ -318,7 +318,6 @@ export class UploadProgressChannel {
     if (frameSec > 0) {
       host.ingestThroughput(
         "up",
-        delta / frameSec,
         delta,
         frameSec,
         true,

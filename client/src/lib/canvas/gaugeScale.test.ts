@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   fmtGaugeTick,
   gaugeScaleForPeak,
-  throughputTickValues,
   throughputGaugeFraction,
   throughputValueAtFraction,
   THROUGHPUT_VALUE_KNOTS,
@@ -35,11 +34,6 @@ test("one-gigabit gauge labels use Mbit/s and exact five-label table", () => {
     minimumBitsPerSec: 1_000_000_000,
   });
   expect(scale).toBe(125_000_000);
-  expect(
-    throughputTickValues(scale).map((value) =>
-      rateValueAt(value, "base10", "bits", 2),
-    ),
-  ).toEqual([0, 5, 10, 50, 100, 250, 500, 750, 1000]);
   expect(
     [0, 0.25, 0.5, 0.75, 1].map((fraction) =>
       fmtGaugeTick(

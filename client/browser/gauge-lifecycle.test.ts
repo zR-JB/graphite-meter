@@ -50,16 +50,18 @@ async function snapshotGauge(page: Page): Promise<GaugeSnapshot> {
 }
 async function expectCoherentGauge(page: Page): Promise<void> {
   await expect(gaugeStage(page).locator("canvas")).toBeVisible();
+  let gauge!: GaugeSnapshot;
+  // Resizing clears the backing store; the shared frame scheduler paints later.
   await expect
     .poll(async () => {
-      const gauge = await snapshotGauge(page);
+      gauge = await snapshotGauge(page);
       return (
         gauge.backingWidth === gauge.expectedBackingWidth &&
-        gauge.backingHeight === gauge.expectedBackingHeight
+        gauge.backingHeight === gauge.expectedBackingHeight &&
+        gauge.opaquePixels > 0
       );
     })
     .toBe(true);
-  const gauge = await snapshotGauge(page);
   expect(Math.abs(gauge.stageWidth - gauge.canvasWidth)).toBeLessThanOrEqual(2);
   expect(Math.abs(gauge.stageHeight - gauge.canvasHeight)).toBeLessThanOrEqual(
     2,

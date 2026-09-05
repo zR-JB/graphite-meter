@@ -49,8 +49,8 @@ curl -fsS -o /dev/null "$base/preflight"
 
 curl -fsS "$base/preflight" | tee "$tmp/preflight.json" >/dev/null
 expected_origin="http://127.0.0.1:7246"
-jq -e --arg expected_origin "$expected_origin" '
-  .engineVersion == "0.0.0-ci"
+jq -e --arg expected_origin "$expected_origin" --arg expected_version "$expected_version" '
+  .engineVersion == $expected_version
   and (.generation | type == "string" and length > 0)
   and .capabilities.throughput == [{"baseUrl": $expected_origin, "transport": "fetch-stream", "protocol": "http1"}]
   and .capabilities.latency == [{"baseUrl": $expected_origin, "transport": "websocket"}]

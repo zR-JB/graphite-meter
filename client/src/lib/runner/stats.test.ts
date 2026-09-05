@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { median, weightedMean, weightedMeanAbsoluteDeviation } from "./stats";
+import { median } from "./stats";
 test.each([
   ["median: odd-length list returns the middle value", [3, 1, 2], 2],
   [
@@ -16,13 +16,4 @@ test("median: does not mutate the input array", () => {
   const xs = [3, 1, 2];
   median(xs);
   expect(xs).toEqual([3, 1, 2]);
-});
-test("weighted latency deviation follows represented successful pings", () => {
-  const values = [
-    { value: 10, weight: 9 },
-    { value: 100, weight: 1 },
-  ];
-  const center = weightedMean(values)!;
-  expect(center).toBe(19);
-  expect(weightedMeanAbsoluteDeviation(values, center)).toBeCloseTo(16.2, 10);
 });

@@ -157,7 +157,7 @@ workflow-check:
 [group('check')]
 pipeline-test:
     python3 -m compileall -q scripts/ci
-    python3 scripts/ci/test_pipeline.py
+    python3 -m unittest discover -s scripts/ci -p 'test_*.py'
 
 # Run the same pinned Gitleaks container used by GitHub Actions.
 [group('check')]
@@ -189,12 +189,12 @@ client-ci: client-check-generated
 # Build the client with the development profile.
 [group('build')]
 client-build-dev:
-    bun -e "process.env.GM_CLIENT_BUILD_PROFILE='dev'; process.env.GM_CLIENT_REVISION='{{ revision }}'; delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_BUILD_PROFILE='dev'; process.env.GM_CLIENT_REVISION='{{ revision }}'; delete process.env.VERSION; process.exit(Bun.spawnSync(['bun', 'run', 'build'], { stdout: 'inherit', stderr: 'inherit', cwd: 'client', env: process.env }).exitCode);"
 
 # Build the client with the production profile.
 [group('build')]
 client-build-prod:
-    bun -e "process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_BUILD_PROFILE='prod'; process.env.GM_CLIENT_REVISION='{{ revision }}'; const version='{{ release_version }}'; if (version) process.env.VERSION=version; else delete process.env.VERSION; import { spawnSync } from 'child_process'; spawnSync('bun', ['run', 'build'], { stdio: 'inherit', shell: true, cwd: 'client', env: process.env });"
+    bun -e "process.env.GM_CLIENT_ALLOW_DUMMY='{{ allow_dummy }}'; process.env.GM_CLIENT_BUILD_PROFILE='prod'; process.env.GM_CLIENT_REVISION='{{ revision }}'; const version='{{ release_version }}'; if (version) process.env.VERSION=version; else delete process.env.VERSION; process.exit(Bun.spawnSync(['bun', 'run', 'build'], { stdout: 'inherit', stderr: 'inherit', cwd: 'client', env: process.env }).exitCode);"
 
 # Discover the production browser closure in a temporary Vite output tree and
 # run the single offline legal generator. The scan build always consumes the
@@ -319,7 +319,6 @@ server-build-prod: client-build-prod _embed-client
 
 # Check Go formatting and vet diagnostics. The second vet carries the stress
 # tag so the saturation harness cannot rot outside the gate.
-# Run Go formatting and vet diagnostics.
 [group('check')]
 server-check:
     cd go && unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi
@@ -335,7 +334,6 @@ server-test:
 
 # Regenerate the embedded auth assets and fail if they drift from source. The
 # pre-commit hook and ci.yml both call this recipe.
-# Regenerate embedded auth assets and fail if they drift.
 [group('check')]
 check-generated:
     #!/usr/bin/env sh
@@ -347,7 +345,6 @@ check-generated:
     fi
 
 # Deterministic static analysis. `just setup` prepares this exact binary.
-# Run deterministic static analysis with the pinned binary.
 [group('check')]
 staticcheck:
     #!/usr/bin/env sh
@@ -358,7 +355,6 @@ staticcheck:
     "$staticcheck_dir/staticcheck" ./...
 
 # Network-sensitive vulnerability scanning against the live advisory database.
-# Run the networked vulnerability scan against live advisories.
 [group('check')]
 security:
     #!/usr/bin/env sh
@@ -371,7 +367,6 @@ security:
 # Race-detector tests plus the coverage floor. ci.yml calls this recipe, so the
 # floor is enforced identically locally and in CI. Raise the floor as coverage
 # climbs; never lower it.
-# Run shuffled race tests and enforce the coverage floor.
 [group('check')]
 server-race:
     #!/usr/bin/env sh
@@ -383,9 +378,8 @@ server-race:
     awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' \
         || { echo "coverage ${total}% is below the 75% floor"; exit 1; }
 
-# The stubbed Chromium suite builds the production bundle, then serves it from
+# The stubbed Chromium suite builds with dummy fixtures enabled, then serves from
 # an OS-assigned loopback port owned by the Bun.WebView harness.
-# Run the stubbed Chromium browser suite.
 [group('check')]
 client-browser:
     cd client && bun run test:browser
@@ -393,9 +387,8 @@ client-browser:
 # End to end: boots the server and moves bytes over every real transport from
 # Chromium, through the production lanes. Needs Go and openssl; the certificate is
 # generated per run, so nothing is a prerequisite.
-# Run real transport E2E tests through Chromium and a real server.
 [group('check')]
-client-e2e:
+client-e2e: client-build-prod _embed-client
     #!/usr/bin/env sh
     set -e
     certs=$(mktemp -d)
@@ -416,15 +409,10 @@ client-e2e:
 # Measurement only; not part of ci. Unix only, since the CPU column reads
 # getrusage. Loads the server over kernel TCP and again over userspace QUIC, and
 # once more with the CPU constrained.
-# Server saturation envelope (issue #44): observer RTT percentiles under growing loader concurrency.
-# Measure the server saturation envelope; this is not a CI gate.
 [group('manual')]
 stress:
     cd go && go test -tags stress -run TestSaturationEnvelope -v -timeout 30m -count=1 ./internal/server/
 
-# Excluded from CI. Every benchmark decodes or encodes a PONG; the progress
-# feed's NDJSON is not measured here or anywhere.
-# Ping-bus encoding evidence, Go and TypeScript: why the bus keeps a text codec.
 # Benchmark the Go and TypeScript wire codec implementations.
 [group('manual')]
 bench-wire:
@@ -437,14 +425,11 @@ bench-wire:
 # Needs ../.dev-certs (see docs/DEVELOPMENT.md) on every run, since the config
 # starts all four listeners whatever origins were asked for, and GM_BENCH_SPKI
 # set, or Chromium cannot establish the pinned QUIC connection.
-# Browser throughput matrix against Chromium.
-# Run the long browser throughput benchmark matrix.
 [group('manual')]
 bench-throughput filter="":
     cd client && GM_BENCH_FILTER={{ quote(filter) }} bun run test:bench
 
 # Build every supported native TUI target from one warmed Go setup.
-# Cross-build every supported native TUI target from one Go setup.
 [group('check')]
 tui-cross-build:
     #!/usr/bin/env sh
@@ -458,7 +443,6 @@ tui-cross-build:
     done < scripts/tui-targets.txt
 
 # Verify distributable package and third-party-source invariants without publishing.
-# Verify representative release packages and the split source offer.
 [group('release')]
 release-check version="development":
     #!/usr/bin/env sh
@@ -477,7 +461,6 @@ release-build version="development":
     VERSION="{{ version }}" just server-build-prod
 
 # Build all stable release artifacts into go/dist without publishing them.
-# Build all versioned release artifacts, third-party source, and checksums.
 [group('release')]
 release-artifacts version="development":
     #!/usr/bin/env sh
@@ -536,7 +519,6 @@ ci:
 
 # Build only the native Go Bubble Tea client. Does not build or stage the Svelte app.
 # Stamped with the same `version` as server-build-prod (see the fallback tiers above).
-# Build the standalone native TUI client.
 [group('build')]
 goclient-build:
     cd go && go build \
@@ -573,7 +555,6 @@ prod: client-build-prod _embed-client
 # --- Container (Docker/Podman) ---
 
 # Build the production image (single static binary)
-# Build the production container image.
 [group('build')]
 container-build:
     #!/usr/bin/env sh

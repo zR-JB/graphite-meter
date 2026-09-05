@@ -26,7 +26,7 @@
   let plotEl = $state<HTMLDivElement>();
   let engine: ChartEngine;
   let hover = $state<HoverInfo | null>(null);
-  let chartPresentation = $state<ChartPresentation | null>(null);
+  let chartPresentation = $state.raw<ChartPresentation | null>(null);
   let position = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
@@ -66,9 +66,6 @@
     return details.join(", ");
   });
   let hoverPresentation: PresentationHandle;
-  // presentation keeps animating while a render returns true.
-  const PARKED = false;
-
   // Invalidate only for state read by ChartEngine.
   $effect(() => {
     void store.phase;
@@ -156,7 +153,7 @@
       position == null ? null : chartPresentation!.layout.x(selectedTime),
     );
     hover = engine.hoverInfo();
-    return PARKED;
+    return false;
   }
   function clearSelection() {
     position = null;

@@ -38,7 +38,7 @@ func badArgs(text string) error { return &DecodeError{Code: ErrBadArgs, Text: te
 
 // Decode parses one on-wire message into a Frame by slicing on ','.
 func Decode(msg string) (Frame, error) {
-	op, rest := cut(msg, ',')
+	op, rest, _ := strings.Cut(msg, ",")
 
 	switch op {
 	case OpREADY:
@@ -47,28 +47,28 @@ func Decode(msg string) (Frame, error) {
 		return Frame{Op: OpBYE}, nil
 
 	case OpPING:
-		id, ok := parseU32(rest)
-		if !ok {
+		id, err := strconv.ParseUint(rest, 10, 32)
+		if err != nil {
 			return Frame{}, badArgs("PING id")
 		}
-		return Frame{Op: OpPING, ID: id}, nil
+		return Frame{Op: OpPING, ID: uint32(id)}, nil
 
 	case OpPONG:
 		// rest = "<id>;TIME,<nanos>"
-		idStr, tail := cut(rest, ';')
-		id, ok := parseU32(idStr)
-		if !ok {
+		idStr, tail, _ := strings.Cut(rest, ";")
+		id, err := strconv.ParseUint(idStr, 10, 32)
+		if err != nil {
 			return Frame{}, badArgs("PONG id")
 		}
-		key, nanosStr := cut(tail, ',')
+		key, nanosStr, _ := strings.Cut(tail, ",")
 		if key != timeField {
 			return Frame{}, badArgs("PONG TIME")
 		}
-		nanos, ok := parseU64(nanosStr)
-		if !ok {
+		nanos, err := strconv.ParseUint(nanosStr, 10, 64)
+		if err != nil {
 			return Frame{}, badArgs("PONG nanos")
 		}
-		return Frame{Op: OpPONG, ID: id, Nanos: nanos}, nil
+		return Frame{Op: OpPONG, ID: uint32(id), Nanos: nanos}, nil
 
 	case OpHI:
 		if rest == "" {
@@ -77,7 +77,7 @@ func Decode(msg string) (Frame, error) {
 		return Frame{Op: OpHI, Proto: rest}, nil
 
 	case OpERR:
-		code, text := cut(rest, ',')
+		code, text, _ := strings.Cut(rest, ",")
 		if code == "" {
 			return Frame{}, badArgs("ERR code")
 		}
@@ -96,9 +96,9 @@ func Encode(f Frame) string {
 	case OpBYE:
 		return OpBYE
 	case OpPING:
-		return OpPING + "," + u32(f.ID)
+		return OpPING + "," + strconv.FormatUint(uint64(f.ID), 10)
 	case OpPONG:
-		return OpPONG + "," + u32(f.ID) + ";" + timeField + "," + u64(f.Nanos)
+		return OpPONG + "," + strconv.FormatUint(uint64(f.ID), 10) + ";" + timeField + "," + strconv.FormatUint(f.Nanos, 10)
 	case OpHI:
 		return OpHI + "," + f.Proto
 	case OpERR:
@@ -107,30 +107,3 @@ func Encode(f Frame) string {
 		return ""
 	}
 }
-
-// cut splits s at the first occurrence of sep into (before, after).
-func cut(s string, sep byte) (before, after string) {
-	if before, after, found := strings.Cut(s, string(sep)); found {
-		return before, after
-	}
-	return s, ""
-}
-
-func parseU32(s string) (uint32, bool) {
-	n, err := strconv.ParseUint(s, 10, 32)
-	if err != nil {
-		return 0, false
-	}
-	return uint32(n), true
-}
-
-func parseU64(s string) (uint64, bool) {
-	n, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return n, true
-}
-
-func u32(v uint32) string { return strconv.FormatUint(uint64(v), 10) }
-func u64(v uint64) string { return strconv.FormatUint(v, 10) }

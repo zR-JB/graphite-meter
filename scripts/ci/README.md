@@ -23,7 +23,8 @@ objects, arrays, strings, integers, and optional values before policy code uses
 them. The control plane intentionally has no Pydantic or other PyPI runtime
 dependency.
 
-All Python functions are required by the regression suite to annotate every
+Python uses only the standard library; tests also execute Bash and jq to exercise the actual
+privileged workflow logic. All Python functions are required by the regression suite to annotate every
 parameter and return value, and `type: ignore` is rejected. `pipeline-test` also
 compiles every `scripts/ci/*.py` module before running tests.
 
@@ -178,7 +179,10 @@ Other checked invariants include:
 positive and negative regression tests. The Git hook is only a two-line launcher
 for `scripts/ci/precommit.py`; Just no longer contains a second hook implementation.
 The typed hook records the exact staged Git tree, materializes that tree in a
-disposable detached worktree, and runs selected component checks there. Deleted
+disposable detached worktree, installs client dependencies from that tree's frozen lockfile when
+needed, and runs selected component checks there. Prepared tool binaries can be shared; the
+working tree's `node_modules` cannot substitute for staged dependencies. Protocol/schema edits
+under `api/` select the complete deterministic gate. Deleted
 paths and the old side of renames participate in check planning, so removing or
 renaming a workflow cannot skip pipeline validation. Gitleaks still scans the
 staged index directly. This prevents an unstaged local fix from making a broken

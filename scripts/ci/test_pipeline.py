@@ -386,6 +386,9 @@ class PipelineTests(unittest.TestCase):
                 exact_file_set(root, {"candidate.json"}, "candidate")
 
     def test_precommit_plan_uses_exact_component_gates(self) -> None:
+        for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt"):
+            with self.subTest(path=path):
+                self.assertEqual(plan_checks((path,)), CheckPlan(pipeline=False, recipes=("check",)))
         self.assertEqual(
             plan_checks(("go/internal/server/listeners.go",)),
             CheckPlan(
@@ -450,6 +453,9 @@ class PipelineTests(unittest.TestCase):
                 text=True,
             ).stdout.strip()
             worktree = pathlib.Path(td) / "staged"
+            stale_dependencies = repo / "client" / "node_modules"
+            stale_dependencies.mkdir(parents=True)
+            (stale_dependencies / "unstaged-only.js").write_text("throw new Error('wrong dependency tree');\n")
             poisoned = {
                 "GIT_DIR": ".git",
                 "GIT_WORK_TREE": ".",
@@ -464,6 +470,7 @@ class PipelineTests(unittest.TestCase):
                 prepare_staged_worktree(repo, tree, worktree, env=clean_env)
 
             try:
+                self.assertFalse((worktree / "client" / "node_modules").exists())
                 self.assertEqual(
                     (worktree / "tracked.txt").read_text(encoding="utf-8"),
                     "staged snapshot\n",
@@ -556,7 +563,7 @@ class PipelineTests(unittest.TestCase):
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / "client/browser/webview.ts"
-        path.write_text(path.read_text().replace("screenshot", "capture", 1))
+        path.write_text(path.read_text().replace(".screenshot(", ".capture(", 1))
         with self.assertRaisesRegex(PolicyError, "diagnostic invariant"):
             check_e2e_lifecycle(root)
 
@@ -1640,6 +1647,53 @@ class PipelineTests(unittest.TestCase):
 
     def test_prerelease_control_plane_includes_stable_request_workflow(self) -> None:
         self.assertIn(".github/workflows/release-request.yml", PRERELEASE_CI_CONTROL_PLANE)
+
+
+class CodeQLCheckOrderingTests(unittest.TestCase):
+    def test_overlapping_checks_use_start_order_and_block_unfinished_work(self) -> None:
+        workflow = (ROOT / ".github/workflows/_publish-oci.yml").read_text(encoding="utf-8")
+        expression = workflow.split("latest_codeql=$(jq -c --argjson pr \"$PR_NUMBER\" '", 1)[1].split("' <<<\"$check_pages\")", 1)[0]
+        self.assertIn("check-runs?per_page=100&filter=all", workflow)
+        for status, conclusion, started, completed, allowed in (
+            ("in_progress", None, "2026-09-05T10:04:00Z", None, False),
+            ("queued", None, None, None, False),
+            ("completed", "failure", "2026-09-05T10:04:00Z", "2026-09-05T10:04:30Z", False),
+            ("completed", "success", "2026-09-05T10:04:00Z", "2026-09-05T10:04:30Z", True),
+        ):
+            with self.subTest(status=status, conclusion=conclusion):
+                common: dict[str, JsonValue] = {
+                    "name": "CodeQL", "app": {"slug": "github-advanced-security"},
+                    "pull_requests": [{"number": 101}],
+                }
+                pages: JsonValue = [{"check_runs": [
+                    {**common, "id": 41, "status": "completed", "conclusion": "success",
+                     "started_at": "2026-09-05T10:00:00Z", "completed_at": "2026-09-05T10:05:00Z"},
+                    {**common, "id": 42, "status": status, "conclusion": conclusion,
+                     "started_at": started, "completed_at": completed},
+                ]}]
+
+                def api(path: str, **_: object) -> JsonValue:
+                    self.assertIn("filter=all", path)
+                    return pages
+
+                if allowed:
+                    self.assertEqual(require_check_run(
+                        "example/repo", HEAD, name="CodeQL", app_slug="github-advanced-security",
+                        pr_number=101, api=api,
+                    ), 42)
+                else:
+                    with self.assertRaises(TrustError):
+                        require_check_run(
+                            "example/repo", HEAD, name="CodeQL", app_slug="github-advanced-security",
+                            pr_number=101, api=api,
+                        )
+                # Execute the real privileged workflow's selector on the same
+                # fixtures so Python and the checkout-free final recheck agree.
+                result = subprocess.run(
+                    ["jq", "-c", "--argjson", "pr", "101", expression + " | .id"],
+                    input=json.dumps(pages), text=True, capture_output=True, check=True,
+                )
+                self.assertEqual(result.stdout.strip(), "42")
 
 
 if __name__ == "__main__":

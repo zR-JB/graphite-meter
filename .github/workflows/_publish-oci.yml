@@ -163,12 +163,12 @@ jobs:
               }
 
             check_pages=$(gh api --paginate --slurp \
-              "repos/$REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100")
+              "repos/$REPOSITORY/commits/$SOURCE_SHA/check-runs?per_page=100&filter=all")
             latest_codeql=$(jq -c --argjson pr "$PR_NUMBER" '
               [.[] | .check_runs[]?
                 | select(.name == "CodeQL" and .app.slug == "github-advanced-security")
                 | select(([.pull_requests[]?.number | select(. == $pr)] | length) == 1)]
-              | sort_by((.completed_at // .started_at // .created_at // ""), (.id // 0))
+              | sort_by((.status != "completed"), (.started_at // ""), (.id // 0))
               | last // empty
             ' <<<"$check_pages")
             [[ -n "$latest_codeql" ]] && jq -e --argjson id "$EXPECTED_CODEQL_CHECK_ID" \

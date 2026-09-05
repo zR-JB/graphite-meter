@@ -26,6 +26,7 @@ import {
   parseResponseToken,
 } from "../api/decode";
 import { BUILD } from "../buildenv";
+import { resourceProtocol } from "./real/resourceTiming";
 import {
   authenticatedFetch,
   authEnabled,
@@ -477,10 +478,7 @@ export class RealBackend implements RunnerBackend {
           if (!probeRes.ok)
             throw new Error(`probe returned HTTP ${probeRes.status}`);
           pathProbe = parseProbe(await readJSONResponse(probeRes));
-          const timing = performance
-            .getEntriesByName(probeRes.url, "resource")
-            .at(-1) as PerformanceResourceTiming | undefined;
-          firstHopProtocol = timing?.nextHopProtocol || undefined;
+          firstHopProtocol = await resourceProtocol(probeRes.url, probeSignal);
           if (
             selected.protocol !== "http3" ||
             browserProtocolMatchesTarget(selected, firstHopProtocol)

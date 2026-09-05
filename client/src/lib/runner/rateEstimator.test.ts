@@ -160,7 +160,6 @@ test("irregular callback cadence preserves equivalent presentation and final red
         accumulator.pushThroughput(
           "download",
           "down",
-          segment.rate,
           bytes,
           durationMs / 1_000,
         );

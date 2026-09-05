@@ -15,7 +15,6 @@
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
-  import { authoritativeTransferAnnouncement } from "./gaugeAccessibility";
   import {
     LiveRateAnimator,
     type LiveRateValues,
@@ -227,19 +226,13 @@
       store.phase === "upload" ||
       store.phase === "bidirectional"
     )
-      return authoritativeTransferAnnouncement({
-        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
-        visualBytesPerSec: store.visualTransferBytesPerSec,
-        toUnit: gaugeRate,
+      return {
+        value: fmtSpeed(gaugeRate(store.liveTransferBytesPerSec)),
         unit: gaugeUnit,
-      });
+      };
     return display;
   });
 
-  // The hero value may ease toward a presentation-only upload hint. Keep its
-  // visible text out of the accessibility tree; assistive technology receives
-  // the same authoritative value used by the live announcement instead.
-  const accessibleDisplay = $derived(announcementDisplay);
   const terminalAnnouncement = $derived(
     terminalArcs
       .map(
@@ -517,7 +510,7 @@
             >{/if}
         {/if}
         <span class="sr-only"
-          >{accessibleDisplay.value} {accessibleDisplay.unit}</span
+          >{announcementDisplay.value} {announcementDisplay.unit}</span
         >
         {#if hint || status || preparationFailure || failNotes.length}
           <div class="gauge-notes">

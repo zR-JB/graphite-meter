@@ -36,7 +36,7 @@
   let { selectedId, onNavigate, onClose }: Props = $props();
   const repository = new HistoryRepository();
   let loadState = $state<"loading" | "ready" | "error">("loading");
-  let records = $state<HistoryRecord[]>([]);
+  let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
