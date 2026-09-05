@@ -46,7 +46,7 @@ export function gaugeLayout(width: number, height: number): GaugeLayout {
     36,
     Math.min(
       safeWidth * 0.37,
-      (safeWidth / 2 - 20) / 1.145,
+      (safeWidth / 2 - 25) / 1.145,
       ((safeHeight - 42) / (1 + Math.SQRT1_2) - 11) / 1.145,
     ),
   );

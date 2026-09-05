@@ -456,7 +456,7 @@
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--space-3);
+    gap: var(--space-2);
   }
   /* Keep an empty result grid from shifting adjacent content. */
   .result-cards.reserve {
@@ -469,19 +469,16 @@
     flex-direction: column;
     gap: 6px;
     min-height: 64px;
-    padding: var(--space-2);
+    padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      transform var(--dur-hover) var(--ease-out);
   }
   .result-readout {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 5px;
     min-width: 0;
   }
   @container viz (min-width: 1000px) {
@@ -491,10 +488,6 @@
       align-items: start;
       gap: 8px;
     }
-  }
-  .result-card:hover {
-    transform: translateY(-1px);
-    border-color: var(--border-strong);
   }
   .partial {
     margin-left: auto;
@@ -510,36 +503,11 @@
     .result-chip {
       animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
     }
-    .result-card {
-      animation: card-enter var(--dur-slide) var(--ease-out) both;
-    }
-    .result-card:nth-child(1) {
-      animation-delay: 0ms;
-    }
-    .result-card:nth-child(2) {
-      animation-delay: 25ms;
-    }
-    .result-card:nth-child(3) {
-      animation-delay: 50ms;
-    }
-    .result-card:nth-child(4) {
-      animation-delay: 75ms;
-    }
   }
   @keyframes quick-content-enter {
     from {
       opacity: 0.65;
       transform: translateY(2px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @keyframes card-enter {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
     }
     to {
       opacity: 1;
