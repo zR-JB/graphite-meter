@@ -408,7 +408,6 @@ export class RunAccumulator {
     const band = bandForState(stableStart >= 0, finalScore);
     if (lane.evidenceMs <= 0) {
       return {
-        meanBytesPerSec: 0,
         peakBytesPerSec: 0,
         stabilityPct: 0,
         totalBytes: lane.bytes,
@@ -439,7 +438,6 @@ export class RunAccumulator {
         : 0;
 
     return {
-      meanBytesPerSec: reported,
       peakBytesPerSec: lane.peakBytesPerSec,
       stabilityPct: descriptiveStability * 100,
       totalBytes: lane.bytes,

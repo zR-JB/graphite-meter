@@ -7,8 +7,8 @@
 /go/go.sum                 @zR-JB
 /client/bun.lock           @zR-JB
 /.bun-version              @zR-JB
-/.just-version             @zR-JB
-/.gitleaks-version         @zR-JB
+/.python-version           @zR-JB
+/tools.toml                @zR-JB
 /legal/                    @zR-JB
 /LICENSE                   @zR-JB
 /COPYRIGHT                 @zR-JB

@@ -17,7 +17,7 @@ generated TUI legal report.
 
 All Python tooling and tests are checked with the standalone `ty` binary through
 `just python-check`. `just setup` prepares the version-pinned checker; the
-legal commands themselves need only Python 3.14 and the relevant dependency
+legal commands themselves need only the Python runtime in `.python-version` and the relevant dependency
 discovery tools. They perform no package installation or online license lookup.
 
 ## Normal development

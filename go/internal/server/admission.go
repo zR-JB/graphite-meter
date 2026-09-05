@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
+	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
@@ -161,18 +162,11 @@ func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
 }
 
 func setAdmissionHeaders(w http.ResponseWriter, r *http.Request, publicOrigin string) {
-	h := w.Header()
 	if _, ok := auth.PrincipalFromContext(r.Context()); ok {
 		if publicOrigin != "" && r.Header.Get("Origin") == publicOrigin {
-			h.Set("Access-Control-Allow-Origin", publicOrigin)
-			h.Set("Access-Control-Allow-Credentials", "true")
-			h.Set("Timing-Allow-Origin", publicOrigin)
-			h.Add("Vary", "Origin")
+			cors.Response(w.Header(), publicOrigin)
 		}
 		return
 	}
-	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "*")
-	h.Set("Timing-Allow-Origin", "*")
+	cors.Measurement(w.Header(), "")
 }

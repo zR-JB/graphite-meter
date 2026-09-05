@@ -247,5 +247,8 @@ func TestCorsPreflight(t *testing.T) {
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("%s: code=%d, want 403", name, rr.Code)
 		}
+		if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("%s: refused preflight exposes origin %q", name, got)
+		}
 	}
 }

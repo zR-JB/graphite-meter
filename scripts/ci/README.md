@@ -216,7 +216,7 @@ action definition.
 
 `just python-setup` installs the version-pinned standalone `ty` binary under
 `.tools`. It is part of `just setup` and the CI jobs that run Python tests.
-The scripts use Python 3.14 from `.python-version` and the standard library only:
+The scripts use the exact Python patch from `.python-version` and the standard library only:
 there are no Python package dependencies, pip installs, or virtual environments.
 
 `just python-check` checks all scripts and tests and fails on warnings or type
@@ -226,5 +226,5 @@ runs the actual recipe with an incorrect annotated return value, then verifies
 that its correction passes. `ty` validates types but does not require every
 function to have annotations; keep the tooling explicitly annotated in review.
 
-Update `ty_version` in `justfile` and rerun `just python-setup` to update the
+Update `tools.ty` in `tools.toml` and rerun `just python-setup` to update the
 checker. Python tooling does not use the client's Bun dependencies.

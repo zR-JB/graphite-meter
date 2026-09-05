@@ -168,12 +168,12 @@ test.each([
   const result = trace.accum.throughputResult("download", useAdaptive);
   expect(result.method).toBe(method as typeof result.method);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(mean(trace.samples), 6);
-  expect(result.meanBytesPerSec).toBeCloseTo(
+  expect(result.reportedBytesPerSec).toBeCloseTo(
     expected ?? result.fullAverageBytesPerSec,
     6,
   );
   if (expected !== undefined)
-    expect(result.meanBytesPerSec).not.toBeCloseTo(1000, 0);
+    expect(result.reportedBytesPerSec).not.toBeCloseTo(1000, 0);
 });
 test("transfer headline weights samples by represented time", () => {
   const accum = fresh();
@@ -191,7 +191,7 @@ test("the final stable plateau is also weighted by represented time", () => {
   accum.trackStableRun("download", 1, adaptive);
   const result = accum.throughputResult("download", true);
   expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(100, 6);
+  expect(result.reportedBytesPerSec).toBeCloseTo(100, 6);
 });
 test("stability first established on the final one-way observation remains reducible", () => {
   const accum = fresh();
@@ -201,7 +201,7 @@ test("stability first established on the final one-way observation remains reduc
   accum.trackStableRun("upload", 1, adaptive);
   const result = accum.throughputResult("upload", true);
   expect(result.method).toBe("stable-window");
-  expect(result.meanBytesPerSec).toBeCloseTo(250, 6);
+  expect(result.reportedBytesPerSec).toBeCloseTo(250, 6);
   expect(result.fullAverageBytesPerSec).toBeCloseTo(500, 6);
   expect(result.serverAuthoritative).toBe(true);
 });
@@ -262,8 +262,8 @@ test("bidirectional final plateau aligns each interleaved lane to shared stabili
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");
   expect(result.up.method).toBe("stable-window");
-  expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
-  expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
+  expect(result.down.reportedBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.reportedBytesPerSec).toBeCloseTo(300, 6);
 });
 test("bidirectional stable evidence also requires actual early completion", () => {
   const accum = fresh();
@@ -290,8 +290,8 @@ test("final bidirectional observation preserves the opening evidence in both lan
   const result = accum.bidirectionalResult(true);
   expect(result.down.method).toBe("stable-window");
   expect(result.up.method).toBe("stable-window");
-  expect(result.down.meanBytesPerSec).toBeCloseTo(500, 6);
-  expect(result.up.meanBytesPerSec).toBeCloseTo(300, 6);
+  expect(result.down.reportedBytesPerSec).toBeCloseTo(500, 6);
+  expect(result.up.reportedBytesPerSec).toBeCloseTo(300, 6);
 });
 test("bidirectional: shared stability degrades when either lane alone turns erratic", () => {
   const stable = fresh();

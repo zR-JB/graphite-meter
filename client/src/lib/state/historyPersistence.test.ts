@@ -9,7 +9,6 @@ import { LatencyAccumulator } from "../runner/latencySummary";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
 
 const throughput: ThroughputResult = {
-  meanBytesPerSec: 12_500_000,
   reportedBytesPerSec: 12_500_000,
   peakBytesPerSec: 13_000_000,
   fullAverageBytesPerSec: 12_000_000,
@@ -156,7 +155,7 @@ test("wire snapshots are independent of their display preference", async () => {
     const hiddenWireCandidate = store.historyCandidate;
     expect(
       hiddenWireCandidate?.wireEstimates?.downloadBytesPerSec,
-    ).toBeGreaterThan(throughput.meanBytesPerSec);
+    ).toBeGreaterThan(throughput.reportedBytesPerSec);
     expect(hiddenWireCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
     expect(
       hiddenWireCandidate?.wireEstimates?.bidirectionalBytesPerSec,
@@ -176,7 +175,7 @@ test("wire snapshots are independent of their display preference", async () => {
     store.ingest({ type: "complete", result: result() });
     expect(
       store.historyCandidate?.wireEstimates?.downloadBytesPerSec,
-    ).toBeGreaterThan(throughput.meanBytesPerSec);
+    ).toBeGreaterThan(throughput.reportedBytesPerSec);
     expect(store.historyCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
     expect(JSON.stringify(store.historyCandidate)).not.toContain("127.0.0.1");
   } finally {

@@ -1,5 +1,5 @@
 # Graphite Meter — monorepo task runner.
-# Requires: Bun `.bun-version`, Go `go/go.mod`, and Just `.just-version`.
+# Requires: Bun `.bun-version`, Go `go/go.mod`, and Just `tools.toml`.
 # (https://github.com/casey/just)
 #
 # Naming: `<component>-<verb>`, where verb is one of:
@@ -42,12 +42,12 @@ version := if release_version == "" { revision } else { release_version }
 # release version and must not appear as legal source-version metadata.
 legal_version := env("VERSION", "development")
 tools_dir := ".tools"
-gitleaks_version := trim(shell("cat .gitleaks-version"))
-gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
-# Staticcheck 2026.2 is the first release line with Go 1.27 support.
-staticcheck_version := "2026.2.1"
-govulncheck_version := "v1.7.0"
-ty_version := "0.0.78"
+gitleaks_version := shell("python3 scripts/ci/toolchains.py get tools.gitleaks")
+gitleaks_image := shell("python3 scripts/ci/toolchains.py get images.gitleaks")
+staticcheck_version := shell("python3 scripts/ci/toolchains.py get tools.staticcheck")
+govulncheck_version := shell("python3 scripts/ci/toolchains.py get tools.govulncheck")
+ty_version := shell("python3 scripts/ci/toolchains.py get tools.ty")
+python_language := shell("python3 scripts/ci/toolchains.py python-target")
 ty_binary := tools_dir / ("ty-" + ty_version) / if os() == "windows" { "ty.exe" } else { "ty" }
 
 CGO_ENABLED := "0"
@@ -73,60 +73,17 @@ setup:
 # Report and validate local, CI, and Docker toolchain drift.
 [group('setup')]
 doctor:
-    #!/usr/bin/env sh
-    set -eu
-    fail=0
-    expected_go=go$(sed -n 's/^go[[:space:]]\+//p' go/go.mod | head -1)
-    actual_go=$(cd go && go env GOVERSION 2>/dev/null || echo unknown)
-    actual_go=${actual_go%%[-	 ]*}
-    expected_bun=$(tr -d '[:space:]' < .bun-version)
-    actual_bun=$(bun --version 2>/dev/null || echo missing)
-    actual_bun_revision=$(bun --revision 2>/dev/null || echo missing)
-    expected_just=$(tr -d '[:space:]' < .just-version)
-    actual_just=$(just --version 2>/dev/null | awk '{print $2}')
-    expected_python=$(cat .python-version)
-    actual_python=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-    expected_chrome=152.0.7977.82
-    ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
-    expected_skopeo=1.22.2
-    expected_skopeo_digest=sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad
-    ci_skopeo_versions=$(sed -n 's/^[[:space:]]*SKOPEO_VERSION:[[:space:]]*\([0-9][0-9.]*\)$/\1/p' .github/workflows/*.yml | sort -u)
-    ci_skopeo_digests=$(sed -n 's/.*quay.io\/containers\/skopeo:v1.22.2-immutable@\(sha256:[0-9a-f]*\).*/\1/p' .github/workflows/*.yml | sort -u)
-    docker_go=$(sed -n 's/^FROM docker.io\/library\/golang:\([^ ]*\) AS server$/\1/p' container/Dockerfile | head -1)
-    docker_bun=$(sed -n 's/^ARG BUN_VERSION=//p' container/Dockerfile | head -1)
-    echo "expected Go: ${expected_go:-missing}"
-    echo "actual Go:   ${actual_go:-missing}"
-    echo "expected Bun: ${expected_bun:-missing}"
-    echo "actual Bun:   ${actual_bun:-missing} (${actual_bun_revision:-missing})"
-    echo "expected Just: ${expected_just:-missing}"
-    echo "actual Just:   ${actual_just:-missing}"
-    echo "Python: $actual_python (expected $expected_python)"
-    echo "Docker Go builder: ${docker_go:-missing}"
-    echo "Docker Bun fallback: ${docker_bun:-missing}"
-    echo "CI Chrome for Testing: ${ci_chrome:-missing}"
-    echo "CI Skopeo: ${ci_skopeo_versions:-missing} (${ci_skopeo_digests:-missing})"
-    [ "$actual_python" = "$expected_python" ] || { echo "doctor: Python version mismatch" >&2; fail=1; }
-    [ "$actual_go" = "$expected_go" ] || { echo "doctor: Go toolchain mismatch" >&2; fail=1; }
-    [ "$actual_bun" = "$expected_bun" ] || { echo "doctor: Bun version mismatch" >&2; fail=1; }
-    [ "$actual_just" = "$expected_just" ] || { echo "doctor: Just version mismatch" >&2; fail=1; }
-    [ "$docker_go" = "${expected_go#go}" ] || { echo "doctor: Docker Go builder disagrees with go.mod" >&2; fail=1; }
-    [ "$docker_bun" = "$expected_bun" ] || { echo "doctor: Docker Bun fallback disagrees with .bun-version" >&2; fail=1; }
-    [ "$ci_chrome" = "$expected_chrome" ] || { echo "doctor: Chrome for Testing pin mismatch" >&2; fail=1; }
-    [ "$ci_skopeo_versions" = "$expected_skopeo" ] || { echo "doctor: Skopeo version mismatch" >&2; fail=1; }
-    [ "$ci_skopeo_digests" = "$expected_skopeo_digest" ] || { echo "doctor: Skopeo digest mismatch" >&2; fail=1; }
-    hardcoded=$(grep -RInE --include='*.yml' --include='*.yaml' '^[[:space:]]*(go-version|bun-version):' .github/workflows 2>/dev/null || true)
-    if [ -n "$hardcoded" ]; then
-        echo "doctor: hard-coded CI toolchain declarations found outside setup-project:" >&2
-        echo "$hardcoded" >&2
-        fail=1
-    fi
-    gitleaks_path="{{ tools_dir }}/gitleaks-{{ gitleaks_version }}/gitleaks"
-    if [ -x "$gitleaks_path" ]; then
-        echo "Gitleaks: $($gitleaks_path version 2>/dev/null || echo installed)"
-    else
-        echo "Gitleaks: missing (run just setup; required by pre-commit)"
-    fi
-    exit "$fail"
+    python3 scripts/ci/toolchains.py doctor
+
+# Validate literal Docker/workflow pins required before repository code can run.
+[group('check')]
+toolchain-check:
+    python3 scripts/ci/toolchains.py check
+
+# Update required literals after editing native runtime selectors or tools.toml.
+[group('setup')]
+toolchain-sync:
+    python3 scripts/ci/toolchains.py sync
 
 [private]
 _install-tools staticcheck="true" govulncheck="true" gitleaks="true":
@@ -171,7 +128,7 @@ python-setup:
 # Check every Python tool and test; fail on warnings as well as type errors.
 [group('check')]
 python-check:
-    "{{ ty_binary }}" check scripts --python-version $(cat .python-version) --extra-search-path scripts/ci --error-on-warning
+    "{{ ty_binary }}" check scripts --python-version {{ python_language }} --extra-search-path scripts/ci --error-on-warning
 
 # Run release/prerelease control-plane regressions.
 [group('check')]

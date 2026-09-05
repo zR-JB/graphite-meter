@@ -27,6 +27,7 @@ interface FailureSnapshot {
   reason: Exclude<TerminationReason, "user-abort">;
 }
 export interface ThroughputSnapshot {
+  /** Persisted V1/V2 compatibility alias; the runner has one headline rate. */
   meanBytesPerSec: number;
   reportedBytesPerSec: number;
   peakBytesPerSec: number;
@@ -148,7 +149,7 @@ function latencyTransportKind(
 function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
   return (
     value && {
-      meanBytesPerSec: value.meanBytesPerSec,
+      meanBytesPerSec: value.reportedBytesPerSec,
       reportedBytesPerSec: value.reportedBytesPerSec,
       peakBytesPerSec: value.peakBytesPerSec,
       fullAverageBytesPerSec: value.fullAverageBytesPerSec,

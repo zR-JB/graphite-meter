@@ -4,7 +4,6 @@ import type { RunResult } from "../runner/contract";
 import { testPreparedPaths } from "../runner/test-helpers.test";
 
 const throughput = {
-  meanBytesPerSec: 100,
   peakBytesPerSec: 120,
   stabilityPct: 3,
   totalBytes: 400,
@@ -88,7 +87,12 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(record.server).toEqual({ name: "edge", location: "EU", engine: "e" });
   expect(record.transport.throughput.protocol).toBe("h2");
   expect(record.completedAt).toBe(200);
-  expect(record.stages.download.result?.peakBytesPerSec).toBe(120);
+  expect(record.stages.download.result).toMatchObject({
+    meanBytesPerSec: 100,
+    reportedBytesPerSec: 100,
+    fullAverageBytesPerSec: 90,
+    peakBytesPerSec: 120,
+  });
   expect(record.stages.bidirectional.status).toBe("partial");
   expect(record.wireEstimates?.downloadBytesPerSec).toBe(101);
   expect(record.wireEstimates?.uploadBytesPerSec).toBeNull();

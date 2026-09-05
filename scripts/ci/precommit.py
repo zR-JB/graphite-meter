@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, NoReturn, Sequence
@@ -26,7 +27,7 @@ TLS_NAME = re.compile(
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 MAX_STAGED_BYTES = 1024 * 1024
-FULL_GATE_FILES = {"justfile", ".bun-version", ".just-version", ".python-version"}
+FULL_GATE_FILES = {"justfile", ".bun-version", ".python-version", "tools.toml"}
 PIPELINE_PREFIXES = (".github/", ".githooks/", "scripts/")
 LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/")
 LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/package-tui.sh", "scripts/tui-targets.txt"}
@@ -282,7 +283,14 @@ def run_staged_checks(root: Path, plan: CheckPlan) -> None:
 
 
 def run_gitleaks(root: Path) -> None:
-    version = git_text(root, "show", ":.gitleaks-version")
+    try:
+        manifest = tomllib.loads(git_text(root, "show", ":tools.toml"))
+    except tomllib.TOMLDecodeError as exc:
+        raise PrecommitError(f"invalid staged tools.toml: {exc}") from exc
+    tools = manifest.get("tools")
+    version = tools.get("gitleaks") if isinstance(tools, dict) else None
+    if not isinstance(version, str) or re.fullmatch(r"v\d+\.\d+\.\d+", version) is None:
+        fail("staged tools.toml must pin tools.gitleaks to an exact version")
     binary = root / ".tools" / f"gitleaks-{version}" / "gitleaks"
     if not binary.is_file() or not os.access(binary, os.X_OK):
         fail(f"pinned Gitleaks {version} is missing; run `just setup`")

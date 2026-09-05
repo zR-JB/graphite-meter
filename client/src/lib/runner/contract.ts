@@ -192,13 +192,14 @@ export interface RunResult {
 type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {
-  meanBytesPerSec: number; // == reportedBytesPerSec, the headline value
   peakBytesPerSec: number;
   /** Fixed-time-bucket coefficient-of-variation descriptor (0..100). */
   stabilityPct: number;
   totalBytes: number;
-  reportedBytesPerSec: number; // effective bytes / represented time
-  fullAverageBytesPerSec: number; // same effective whole-window rate
+  /** Headline bytes/second from the selected full or stable measurement window. */
+  reportedBytesPerSec: number;
+  /** Effective bytes/second across the full measurement window, including pre-plateau evidence. */
+  fullAverageBytesPerSec: number;
   method: ResultMethod;
   stabilityScore: number; // stability (0..1) at the moment the phase ends
   band: StabilityBand;

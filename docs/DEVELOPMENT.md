@@ -10,9 +10,9 @@ Use the versions pinned by the repository:
 
 - Go from `go/go.mod`;
 - Bun from `.bun-version`;
-- Just from `.just-version`;
+- Just from `tools.toml` (`tools.just`);
 - Git;
-- Python 3.14, Bash, and jq for the pipeline regression suite;
+- Python from `.python-version`, Bash, and jq for the pipeline regression suite;
 - Chrome for Testing for browser and benchmark suites;
 - Docker or Podman for container validation.
 
@@ -275,11 +275,40 @@ ordinary documentation or feature work.
 
 ### Python build tooling
 
-Use Python 3.14 for repository tooling; no pip or Python packages are required.
-`.python-version` selects the minor release locally and in CI; patch updates float.
+Use the exact Python patch in `.python-version` for repository tooling locally and in CI.
+No pip or Python packages are required.
 `just setup` prepares the version-pinned standalone `ty` binary. `just python-check`
 checks all scripts and their tests; `just pipeline-test`
 combines that check with control-plane and legal regression tests. Legal review,
 inventory rendering and source archives run in Python. Only dependency closure
 discovery invokes Go metadata commands and the Vite build; no legal helper is
 compiled. See `legal/README.md` for the unchanged public legal commands.
+
+
+### Toolchain ownership and updates
+
+| Pin | Owner | Consumers |
+| --- | --- | --- |
+| Go compiler | `go/go.mod` | Go, CI setup, validated Docker builder default |
+| Bun runtime | `.bun-version` | CI setup, local doctor, container build arguments and validated default |
+| Python runtime | `.python-version` | CI setup, local doctor; ty uses its major/minor language level |
+| Standalone Just, Gitleaks, staticcheck, govulncheck, ty | `tools.toml` `[tools]` | Setup, Just recipes, staged Gitleaks hook |
+| Chrome for Testing | `tools.toml` `[browser]` | CI install and browser identity check through setup-project outputs |
+| Utility container images | `tools.toml` `[images]` | Secret scan, validated build/publication workflow literals |
+| Go dependencies | `go/go.mod` and `go/go.sum` | Go module resolution and checksum verification |
+| Browser dependencies | `client/package.json` and `client/bun.lock` | Frozen Bun installs; package ranges express allowed updates |
+| External GitHub Actions | Their `uses:` SHA in YAML | GitHub's workflow loader; policy requires immutable refs |
+
+`tools.toml` contains data only, read with Python's standard-library TOML parser.
+To select the bootstrap Just version before Just is installed, run
+`python3 scripts/ci/toolchains.py get tools.just`. No additional tool manager is needed.
+
+Edit the owner, run `just toolchain-sync`, then `just setup` and `just check`.
+Sync updates only literals required before repository code can execute: Docker
+builder defaults and immutable QEMU/Skopeo workflow references. The no-checkout
+publication jobs keep their image references in trusted workflow source;
+loading repository code with their credentials would change that boundary.
+`just toolchain-check` rejects drift, and `just doctor` checks installed runtimes.
+Direct `docker build -f container/Dockerfile .` remains supported with the same
+validated defaults. Language dependency upgrades use their native package commands
+and update the corresponding lock/checksum files; tool pins are not package locks.
