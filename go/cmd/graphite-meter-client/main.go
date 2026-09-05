@@ -61,8 +61,10 @@ func main() {
 	}
 	cfg.PingInterval = interval
 
-	p := tea.NewProgram(newModel(cfg), tea.WithFPS(30), tea.WithAltScreen())
+	m := newModel(cfg)
+	p := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen())
 	final, err := p.Run()
+	m.shutdown()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
 		os.Exit(1)
