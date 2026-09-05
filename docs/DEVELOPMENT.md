@@ -4,6 +4,18 @@ Graphite Meter is a Go monorepo with an embedded Svelte browser client and a nat
 client. The Go module owns the server, wire implementation, native client, generated legal data,
 and the static browser bundle used by release builds.
 
+[Project overview](../README.md) · [Deployment](DEPLOYMENT.md) · [Measurement definitions](MEASUREMENTS.md)
+
+## Start here
+
+1. [Prepare the pinned toolchain](#prerequisites) once per checkout.
+2. Run `mise run dev` and open <http://localhost:7246>.
+3. Make a focused change and run the relevant [verification commands](#validation).
+4. Run `mise run check` before committing; keep the installed commit hook enabled.
+
+Use [the protocol references](../api/discovery.md) when changing client/server contracts and
+[CI and release policy](../scripts/ci/README.md) when changing publication behavior.
+
 ## Prerequisites
 
 Install [mise](https://mise.jdx.dev/installing-mise.html) at the exact version in
@@ -38,15 +50,15 @@ List project commands with `mise tasks`.
 
 ## Repository layout
 
-| Path | Responsibility |
-| --- | --- |
-| `api/` | Shared schemas and protocol specifications. |
-| `client/` | Svelte browser client, workers, and browser verification. |
-| `go/cmd/` | Server and native client entry points. |
+| Path           | Responsibility                                                     |
+| -------------- | ------------------------------------------------------------------ |
+| `api/`         | Shared schemas and protocol specifications.                        |
+| `client/`      | Svelte browser client, workers, and browser verification.          |
+| `go/cmd/`      | Server and native client entry points.                             |
 | `go/internal/` | Server, transport, measurement, and embedded-asset implementation. |
-| `container/` | Container build and deployment examples. |
-| `legal/` | Reviewed dependency metadata and generated notices. |
-| `scripts/ci/` | CI and release verification. |
+| `container/`   | Container build and deployment examples.                           |
+| `legal/`       | Reviewed dependency metadata and generated notices.                |
+| `scripts/ci/`  | CI and release verification.                                       |
 
 ## Architecture
 
@@ -110,17 +122,17 @@ mise run goclient-build
 Build a release-profile server with the production browser client embedded:
 
 ```sh
-VERSION=0.6.0 mise run release-build 0.6.0
+VERSION=0.7.0 mise run release-build 0.7.0
 ```
 
 ### Browser build flags
 
-| Environment               | Default                    | Meaning                                                      |
-| ------------------------- | -------------------------- | ------------------------------------------------------------ |
+| Environment               | Default                  | Meaning                                                      |
+| ------------------------- | ------------------------ | ------------------------------------------------------------ |
 | `GM_CLIENT_BUILD_PROFILE` | set by the task          | `dev` or `prod` feature profile.                             |
 | `GM_CLIENT_ALLOW_DUMMY`   | `0` for production tasks | Compile the dummy backend and development controls when `1`. |
-| `GM_CLIENT_REVISION`      | current short revision     | Source identity for an untagged build.                       |
-| `VERSION`                 | empty                      | Public release version.                                      |
+| `GM_CLIENT_REVISION`      | current short revision   | Source identity for an untagged build.                       |
+| `VERSION`                 | empty                    | Public release version.                                      |
 
 The real-only production build tree-shakes the dummy backend from the output. Enabling it is for
 development and browser tests, not release publication.
@@ -192,7 +204,6 @@ The base defaults to 7256 and reserves four consecutive port numbers, including 
 the last port. Readiness requires the identity of the server started by that fixture; an unrelated
 server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
 
-In restricted environments, `JUST_TEMPDIR=/tmp` selects a writable directory for Just's scripts.
 Go uses its standard build cache, cached per CI job. In a restricted environment,
 set `GOCACHE` to a writable directory if needed. Chromium
 also needs writable `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` directories on Linux. Set
@@ -281,12 +292,11 @@ promotion.
 Run the local release gate with an explicit candidate version:
 
 ```sh
-VERSION=0.6.0 mise run release-check 0.6.0
+VERSION=0.7.0 mise run release-check 0.7.0
 ```
 
 Publication remains a workflow-controlled operation. Do not create or move release tags as part of
 ordinary documentation or feature work.
-
 
 ### Python build tooling
 
@@ -297,21 +307,20 @@ checks all scripts and their tests; `mise run pipeline-test`
 combines that check with control-plane and legal regression tests. Legal review,
 inventory rendering and source archives run in Python. Only dependency closure
 discovery invokes Go metadata commands and the Vite build; no legal helper is
-compiled. See `legal/README.md` for the unchanged public legal commands.
-
+compiled. See the [legal pipeline](../legal/README.md) for the public legal commands.
 
 ### Toolchain ownership and updates
 
-| Pin | Owner | Consumers |
-| --- | --- | --- |
-| Go, Bun, Python and standalone checkers | `mise.toml` `[tools]` | Local setup/tasks, CI, staged commit checks |
-| Tool downloads | `mise.lock` | Exact resolved artifacts and supported checksums |
-| Mise bootstrap | `mise.toml` `vars.mise_version` | Validated literal in the SHA-pinned CI action |
-| Chrome for Testing | `mise.toml` `vars.browser_chrome` | CI install and browser identity verification |
-| Utility container images | `mise.toml` `vars.image_*` | Secret scan and validated build/publication literals |
-| Go dependencies | `go/go.mod` and `go/go.sum` | Native module resolution and checksum verification |
-| Browser dependencies | `client/package.json` and `client/bun.lock` | Frozen Bun installs |
-| External GitHub Actions | Their `uses:` SHA in YAML | GitHub's workflow loader; immutable refs required |
+| Pin                                     | Owner                                       | Consumers                                            |
+| --------------------------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| Go, Bun, Python and standalone checkers | `mise.toml` `[tools]`                       | Local setup/tasks, CI, staged commit checks          |
+| Tool downloads                          | `mise.lock`                                 | Exact resolved artifacts and supported checksums     |
+| Mise bootstrap                          | `mise.toml` `vars.mise_version`             | Validated literal in the SHA-pinned CI action        |
+| Chrome for Testing                      | `mise.toml` `vars.browser_chrome`           | CI install and browser identity verification         |
+| Utility container images                | `mise.toml` `vars.image_*`                  | Secret scan and validated build/publication literals |
+| Go dependencies                         | `go/go.mod` and `go/go.sum`                 | Native module resolution and checksum verification   |
+| Browser dependencies                    | `client/package.json` and `client/bun.lock` | Frozen Bun installs                                  |
+| External GitHub Actions                 | Their `uses:` SHA in YAML                   | GitHub's workflow loader; immutable refs required    |
 
 Edit the owning pin, regenerate `mise.lock` with `mise lock`, then run
 `mise run toolchain-sync`, `mise run setup` and `mise run check`. Tool downloads

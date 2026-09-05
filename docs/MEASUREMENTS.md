@@ -4,6 +4,21 @@ Graphite Meter measures an application path. Browser or native-client scheduling
 server work, protocol queues, and the network all affect that path. Results do not
 isolate ICMP latency, directional IP loss, or a physical link's capacity.
 
+## Reading a result
+
+| Result                 | Unit and population                                                                                         | When evidence is missing                                                   |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Download / upload      | Payload bytes per second over a receiver measurement window, displayed in your chosen rate unit.            | No valid receiver window means no rate.                                    |
+| Idle / loaded latency  | Milliseconds for successful in-window replies, separately for each stage.                                   | No eligible replies means no RTT descriptor.                               |
+| RTT variation (jitter) | Mean absolute change between consecutive comparable replies, in milliseconds.                               | Fewer than two comparable replies means no estimate.                       |
+| Probe timeouts         | Expired probes divided by replies plus timeouts, shown as a percentage.                                     | No resolved probes means unavailable; unresolved attempts remain separate. |
+| Paired server timing   | Raw RTT, server handling, and adjusted RTT means over the same valid pairs, in milliseconds in the browser. | No valid pair means no diagnostic.                                         |
+
+Start with throughput and the difference between idle and loaded latency. Use counts and
+completeness to judge the available evidence. Full definitions follow:
+[throughput](#throughput), [browser summaries](#browser-summaries-version-2),
+[server timing](#paired-server-timing-diagnostics), and [native summaries](#native-summaries).
+
 ## Throughput
 
 Download counts payload bytes consumed by the receiving client. Upload counts
@@ -83,6 +98,8 @@ cadence and elapsed time alone.
   zero; thresholds are A ≤5 ms, B ≤30 ms, C ≤60 ms, D ≤200 ms, otherwise F. This is
   an application responsiveness descriptor, not proof of a particular queueing cause.
 
+## Saved history
+
 Graphite Meter 0.7 accepts only saved history schema version 3. Versions 1 and 2
 are unsupported: existing entries remain in browser storage but are skipped and
 reported as unsupported or malformed. They are neither migrated nor reinterpreted;
@@ -160,7 +177,6 @@ failure; the elapsed window records only the measured portion. Failures before a
 produce an error without a numeric summary. These are application probe observations over WebSocket
 or WebTransport, not TCP/IP packet loss.
 
-
 Native raw RTT ends immediately after the message adapter receives the reply,
 before wire decoding, so metadata parsing cannot inflate it. A stage's
 `ReflectorTiming` contains paired count and mean raw RTT, server handling, and
@@ -170,3 +186,5 @@ remains unchanged. Unrepresentable or greater-than-RTT durations leave the raw
 result intact and omit only the paired diagnostic. Missing or malformed wire
 fields invalidate the reply as a protocol error. Version 0.6 and 0.7 peers must
 not be mixed.
+
+Return to the [project overview](../README.md) or [deployment guide](DEPLOYMENT.md).

@@ -4,6 +4,11 @@ Every upload belongs to a server-minted, owner-bound measurement session. Client
 must update alongside the server for 0.7: HTTP uploads without an ID are rejected,
 and counter records always contain explicit `bytes` and `nanos` fields.
 
+Read this when implementing receiver-authoritative upload accounting. The [discovery boundary](discovery.md)
+defines control-response validation; the [wire protocol](wire.md#webtransport-routes) defines
+WebTransport routing. [Measurement definitions](../docs/MEASUREMENTS.md#throughput) distinguish
+receiver windows from presentation.
+
 ## Session and data ownership
 
 1. `POST /upload/session` returns `{"uploadId":"..."}`. The caller uses that ID
@@ -33,12 +38,12 @@ See [upload refusal codes](uploadrefusals.txt) for the shared classifications.
 
 Each record is a JSON object followed by a newline. Blank lines are heartbeats.
 
-| `type` | Fields | Meaning |
-| --- | --- | --- |
-| `ready` | none | The feed is attached; this does not prove byte delivery. |
-| `progress` | `bytes`, `nanos` | One cumulative receiver observation. |
-| `complete` | `bytes`, `nanos` | Final receiver observation after finalization and lane drain. |
-| `error` | optional string `code`, `message` | Explicit refusal; no counter observation. |
+| `type`     | Fields                            | Meaning                                                       |
+| ---------- | --------------------------------- | ------------------------------------------------------------- |
+| `ready`    | none                              | The feed is attached; this does not prove byte delivery.      |
+| `progress` | `bytes`, `nanos`                  | One cumulative receiver observation.                          |
+| `complete` | `bytes`, `nanos`                  | Final receiver observation after finalization and lane drain. |
+| `error`    | optional string `code`, `message` | Explicit refusal; no counter observation.                     |
 
 `bytes` is the number of payload bytes received across this upload aggregate's
 lanes. `nanos` is elapsed time in nanoseconds on the receiver's monotonic clock,

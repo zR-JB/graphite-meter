@@ -4,6 +4,8 @@ Run the published Graphite Meter image in a Tailscale container's network
 namespace without host networking or published ports. The sidecar owns the
 tailnet identity and TLS certificate.
 
+[Deployment overview](../../../docs/DEPLOYMENT.md) · [Basic Quadlet](../README.md) · [Public native TLS](../graphite-meter-tls/README.md)
+
 | Traffic                  | Listener   |
 | ------------------------ | ---------- |
 | HTTP/1.1 clear           | `80/tcp`   |
@@ -22,7 +24,10 @@ listeners are free to take the standard web ports.
 Requirements are Linux with `/dev/net/tun`, systemd, a recent Podman release,
 tailnet HTTPS certificates, and policy access to the ports above.
 
+From the repository root, enter this example directory before preparing the files:
+
 ```sh
+cd container/quadlet/tailscale-sidecar
 cp graphite-meter-tailnet.env.example graphite-meter-tailnet.env
 cp graphite-meter-tailnet-tailscale.env.example graphite-meter-tailnet-tailscale.env
 chmod 600 graphite-meter-tailnet*.env
@@ -72,3 +77,13 @@ curl -v --http3-only https://graphite-meter.example-tailnet.ts.net:8444/probe
 The last command requires an HTTP/3-capable curl. If curl stalls while a browser
 reports `protocolNegotiated: h3`, cross-check with another HTTP/3 client because
 implementations can behave differently on the same path.
+
+## Updates and measurement scope
+
+Update the Graphite Meter image and native clients together for 0.7; see the
+[upgrade notes](../../../docs/DEPLOYMENT.md#upgrading-to-07). The Tailscale identity and certificate
+state live in the supplied volumes and are separate from browser-local result history.
+
+Results include the tailnet path and its tunnel overhead. They should not be read as direct
+physical-link capacity; the optional wire estimate cannot account for unknown encapsulation.
+See [measurement definitions](../../../docs/MEASUREMENTS.md).
