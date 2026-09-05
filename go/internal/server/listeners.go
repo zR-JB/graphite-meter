@@ -23,6 +23,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -35,19 +36,6 @@ const (
 	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
 	browserH3UniStreams              = 3
 	wtLaneCreditHeadroom             = 4
-)
-
-const (
-	routeProbe          = "/probe"
-	routeDownload       = "/download"
-	routeUpload         = "/upload"
-	routeUploadSession  = "/upload/session"
-	routeUploadProgress = "/upload/progress"
-	routeWTSession      = "/wt/session"
-	routePing           = "/ws/ping"
-	routeWTDownload     = "/wt/download"
-	routeWTUpload       = "/wt/upload"
-	routeWTPing         = "/wt/ping"
 )
 
 type endpoints struct {
@@ -147,12 +135,12 @@ func (e protocolEndpoint) HandleHTTP(w http.ResponseWriter, r *http.Request) err
 func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *endpoint.Registry {
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
-		reg.RegisterHTTP("/preflight", e.preflight)
+		reg.RegisterHTTP(route.Preflight, e.preflight)
 	}
 	if topology.bootstrap {
-		reg.RegisterHTTP(routeProbe, e.bootstrapProbe)
+		reg.RegisterHTTP(route.Probe, e.bootstrapProbe)
 	} else {
-		reg.RegisterHTTP(routeProbe, e.probe)
+		reg.RegisterHTTP(route.Probe, e.probe)
 	}
 	if topology.transfers {
 		register := func(path string, h endpoint.HTTPHandler) {
@@ -161,23 +149,23 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 			}
 			reg.RegisterHTTP(path, h)
 		}
-		register(routeDownload, e.download)
-		register(routeUploadSession, e.uploadSession)
+		register(route.Download, e.download)
+		register(route.UploadSession, e.uploadSession)
 		var minter endpoint.WTTokenMinter
 		if authn != nil && authn.Enabled() {
 			minter = authn.MintWebTransportSessionToken
 		}
-		register(routeWTSession, endpoint.NewWTSession(minter))
-		register(routeUpload, e.upload)
-		register(routeUploadProgress, e.uploadProgress)
+		register(route.WTSession, endpoint.NewWTSession(minter))
+		register(route.Upload, e.upload)
+		register(route.UploadProgress, e.uploadProgress)
 	}
 	if topology.latency {
-		reg.RegisterWS(routePing, e.ping)
+		reg.RegisterWS(route.Ping, e.ping)
 	}
 	if topology.wt != nil {
-		reg.RegisterWT(routeWTDownload, endpoint.NewWTDownload(e.download, e.wtIdleBound))
-		reg.RegisterWT(routeWTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies, e.wtIdleBound))
-		reg.RegisterWT(routeWTPing, endpoint.NewWTPing(e.ping, e.wtIdleBound))
+		reg.RegisterWT(route.WTDownload, endpoint.NewWTDownload(e.download, e.wtIdleBound))
+		reg.RegisterWT(route.WTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies, e.wtIdleBound))
+		reg.RegisterWT(route.WTPing, endpoint.NewWTPing(e.ping, e.wtIdleBound))
 	}
 	return reg
 }
@@ -206,19 +194,11 @@ func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopolo
 	if authn != nil {
 		publicOrigin = authn.PublicOrigin()
 	}
-	var wrapped []string
-	if topology.transfers {
-		wrapped = append(wrapped, routeDownload, routeUpload, routeUploadProgress)
-	}
-	if topology.latency {
-		wrapped = append(wrapped, routePing)
-	}
-	if topology.wt != nil {
-		wrapped = append(wrapped, routeWTDownload, routeWTUpload, routeWTPing)
-	}
 	m := http.NewServeMux()
-	for _, path := range wrapped {
-		m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
+	for path := range reg.Kinds() {
+		if spec, ok := route.Lookup(path); ok && spec.Admission != route.Unmetered {
+			m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
+		}
 	}
 	m.Handle("/", inner)
 	return rejectDotSegments(m)

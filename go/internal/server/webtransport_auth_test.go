@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/quic-go/webtransport-go"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -18,7 +19,7 @@ import (
 // mintWTToken asks /wt/session for one CONNECT token as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+routeWTSession, nil)
+	req, _ := http.NewRequest(http.MethodPost, s.origin+route.WTSession, nil)
 	req.Header.Set("Origin", s.origin)
 	req.Header.Set("X-CSRF-Token", s.csrf.Value)
 	req.AddCookie(s.session)
@@ -55,7 +56,7 @@ func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	target := s.h3URL + routeWTPing + query
+	target := s.h3URL + route.WTPing + query
 	for {
 		res, sess, err := d.Dial(ctx, target, hdr)
 		if err == nil {
