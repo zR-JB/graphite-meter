@@ -265,3 +265,47 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     });
   }
 });
+
+test("equal simultaneous result labels retain distinct lane identities", () => {
+  let current = data({
+    phase: "complete",
+    timelineT: 2_000,
+    throughput: (["down", "up"] as const).flatMap((dir) =>
+      [500, 1_500].map((t) => ({
+        t,
+        bytesPerSec: 100_000,
+        bytesCumulative: t * 100,
+        dir,
+        phase: "bidirectional" as const,
+        continuityId: 0,
+      })),
+    ),
+    resultRates: { bidiDown: 100_000, bidiUp: 100_000 },
+  });
+  let published!: ChartPresentation;
+  const engine = new ChartEngine(
+    () => current,
+    (next) => (published = next),
+  );
+  engine.render(100);
+  expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
+    "bidiDown",
+    "bidiUp",
+  ]);
+  const [down, up] = published.phaseStats;
+  expect(down!.x).toBe(up!.x);
+  expect(down!.y).toBe(up!.y);
+  expect(down!.bytesPerSec).toBe(up!.bytesPerSec);
+
+  current = {
+    ...current,
+    resultRates: { bidiDown: 200_000, bidiUp: 100_000 },
+  };
+  engine.wake();
+  engine.render(116);
+  expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
+    "bidiDown",
+    "bidiUp",
+  ]);
+  engine.destroy();
+});

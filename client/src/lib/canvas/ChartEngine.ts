@@ -68,6 +68,7 @@ export interface HoverInfo {
 }
 /** Per-lane finalized result overlay drawn in result mode. */
 interface PhaseStat {
+  lane: ThroughputLane;
   t0: number;
   t1: number;
   bytesPerSec: number;
@@ -94,6 +95,7 @@ export interface ChartPresentation {
   hasThroughputScale: boolean;
   phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
   phaseStats: ReadonlyArray<{
+    lane: ThroughputLane;
     bytesPerSec: number;
     stroke: string;
     x: number;
@@ -544,6 +546,7 @@ export class ChartEngine {
           const y = this.#layout.throughputY(stat.bytesPerSec);
           return [
             {
+              lane: stat.lane,
               bytesPerSec: stat.bytesPerSec,
               stroke: stat.stroke,
               x: Math.min(x0 + 3, plot.right - 130),
@@ -670,6 +673,7 @@ export class ChartEngine {
       const bytesPerSec = this.#get().resultRates[key];
       if (seg.length < 2 || bytesPerSec == null) continue;
       out.push({
+        lane: key,
         t0: seg[0].t,
         t1: seg[seg.length - 1].t,
         bytesPerSec,

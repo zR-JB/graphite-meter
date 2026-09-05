@@ -304,7 +304,7 @@
             style:top={`${label.y}px`}>{PHASE_LABEL[label.phase]}</span
           >
         {/each}
-        {#each presentation.phaseStats as stat (stat.x + stat.y + stat.bytesPerSec)}
+        {#each presentation.phaseStats as stat (stat.lane)}
           <span
             class="stat-label"
             style:border-color={stat.stroke}
