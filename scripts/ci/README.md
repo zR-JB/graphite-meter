@@ -24,7 +24,7 @@ them. The control plane intentionally has no Pydantic or other PyPI runtime
 dependency.
 
 Python uses only the standard library; tests also execute Bash and jq to exercise the actual
-privileged workflow logic. `pipeline-test` compiles the Python modules and exercises trust decisions,
+privileged workflow logic. `pipeline-test` strictly type-checks the Python modules and exercises trust decisions,
 artifact verification, and staged-hook isolation through their callable boundaries.
 
 ## Trust boundaries
@@ -174,7 +174,8 @@ Other checked invariants include:
 - exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
-`just pipeline-test` compiles all control-plane Python and runs dependency-free
+`just pipeline-test` strictly type-checks all repository Python tooling with the
+hash-pinned mypy environment, then runs the control-plane and legal
 positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
 Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
 The suite does not duplicate implementation bodies as required source strings. The Git hook is only a two-line launcher
@@ -209,3 +210,22 @@ Settings, use an exact 40-character SHA in YAML, then run `just workflow-check`
 and `just pipeline-test`. The current `extractions/setup-just` pin invokes the
 separately allowlisted `extractions/setup-crate` package from its pinned composite
 action definition.
+
+
+## Python development gate
+
+`just python-setup` installs the checker and its hash-locked dependencies from
+`scripts/requirements-dev.txt` into `.tools/python`. It is part of `just setup`
+and the CI jobs that run Python tests. Runtime CI/legal scripts remain
+standard-library-only and require Python 3.14 (selected by `.python-version`).
+
+`just python-check` checks every Python file under `scripts` with `mypy.ini`
+strict mode, including tests. It is an offline prerequisite of `just
+pipeline-test` and the normal `just check` gate. Staged hooks prepare tools from
+the staged requirements before checking the staged scripts. An executable gate
+regression verifies that an incorrect annotated return value fails and its
+correction passes. Python syntax compilation alone is not a type check.
+
+To update the checker, change `scripts/requirements-dev.in`, regenerate the
+hash lock using the command recorded at the top of `requirements-dev.txt`, and
+run `just python-setup` followed by `just pipeline-test`.

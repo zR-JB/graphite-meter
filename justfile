@@ -66,6 +66,7 @@ setup:
     cd ../go && go mod download
     cd ..
     just _install-tools
+    just python-setup
     git config core.hooksPath .githooks
     just doctor
 
@@ -83,6 +84,8 @@ doctor:
     actual_bun_revision=$(bun --revision 2>/dev/null || echo missing)
     expected_just=$(tr -d '[:space:]' < .just-version)
     actual_just=$(just --version 2>/dev/null | awk '{print $2}')
+    expected_python=$(cat .python-version)
+    actual_python=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
     expected_chrome=152.0.7977.82
     ci_chrome=$(sed -n 's/^[[:space:]]*chrome-version:[[:space:]]*//p' .github/workflows/ci.yml | sort -u)
     expected_skopeo=1.22.2
@@ -97,10 +100,12 @@ doctor:
     echo "actual Bun:   ${actual_bun:-missing} (${actual_bun_revision:-missing})"
     echo "expected Just: ${expected_just:-missing}"
     echo "actual Just:   ${actual_just:-missing}"
+    echo "Python: $actual_python (expected $expected_python)"
     echo "Docker Go builder: ${docker_go:-missing}"
     echo "Docker Bun fallback: ${docker_bun:-missing}"
     echo "CI Chrome for Testing: ${ci_chrome:-missing}"
     echo "CI Skopeo: ${ci_skopeo_versions:-missing} (${ci_skopeo_digests:-missing})"
+    [ "$actual_python" = "$expected_python" ] || { echo "doctor: Python version mismatch" >&2; fail=1; }
     [ "$actual_go" = "$expected_go" ] || { echo "doctor: Go toolchain mismatch" >&2; fail=1; }
     [ "$actual_bun" = "$expected_bun" ] || { echo "doctor: Bun version mismatch" >&2; fail=1; }
     [ "$actual_just" = "$expected_just" ] || { echo "doctor: Just version mismatch" >&2; fail=1; }
@@ -153,11 +158,21 @@ _install-tools staticcheck="true" govulncheck="true" gitleaks="true":
 workflow-check:
     python3 scripts/ci/workflow_policy.py
 
-# Run dependency-free release/prerelease control-plane regressions.
+# Prepare hash-pinned Python type-checking tools; runtime scripts use the standard library.
+[group('setup')]
+python-setup:
+    python3 scripts/python_tools.py setup
+
+# Check every Python tool and test with strict static typing.
 [group('check')]
-pipeline-test:
-    python3 -m compileall -q scripts/ci
+python-check:
+    python3 scripts/python_tools.py check
+
+# Run release/prerelease control-plane regressions.
+[group('check')]
+pipeline-test: python-check
     python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+    python3 -m unittest discover -s scripts/legal -t .
 
 # Run the same pinned Gitleaks container used by GitHub Actions.
 [group('check')]
@@ -209,8 +224,7 @@ _legal-run mode="check":
     cd client
     GM_LEGAL_SCAN_OUT="$scan" GM_LEGAL_SCAN_DIR="$out" bun run build:bundle -- --outDir "$out"
     cd ..
-    cd go
-    VERSION='{{ legal_version }}' GM_LEGAL_SCAN_MODULES="$scan" go run ./internal/legal/cmd/legalgen -mode '{{ mode }}' -repo ..
+    VERSION='{{ legal_version }}' GM_LEGAL_SCAN_MODULES="$scan" python3 -m scripts.legal --mode '{{ mode }}'
 
 # Regenerate reviewed legal outputs after an approved change.
 [group('legal')]
@@ -338,7 +352,7 @@ server-test:
 check-generated:
     #!/usr/bin/env sh
     set -e
-    (cd go/internal/auth && go run ./cmd/authassets)
+    python3 -m scripts.auth_assets
     if ! git diff --quiet -- go/internal/auth/assets_generated.go; then
         echo "assets_generated.go is stale; run 'go generate ./internal/auth' and commit the result"
         exit 1
@@ -448,7 +462,7 @@ release-check version="development":
     #!/usr/bin/env sh
     set -eu
     VERSION="{{ version }}" just legal-check
-    (cd go && go test ./internal/legal/...)
+    python3 -m unittest discover -s scripts/legal -t .
     VERSION="{{ version }}" just release-build "{{ version }}"
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT

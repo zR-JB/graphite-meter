@@ -41,11 +41,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Python verification tools
+        uses: ./.github/actions/setup-project
+        with: {python: 'true'}
+
       - name: Enforce repository and workflow security policy
         run: python3 scripts/ci/workflow_policy.py
 
-      - name: Test pipeline and release boundaries
-        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - name: Type-check tooling and test pipeline and legal boundaries
+        run: just pipeline-test
 
       - id: filter
         name: Determine affected CI areas
@@ -94,7 +98,7 @@ jobs:
         with: {persist-credentials: false}
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
+        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
       - name: Run deterministic repository gate
         run: just check
 

@@ -178,19 +178,19 @@ def archive_names(path: Path) -> set[str]:
             raise VerificationError(f"cannot inspect {path}: {exc}") from exc
     if path.suffix == ".zip":
         try:
-            with zipfile.ZipFile(path) as archive:
-                for member in archive.infolist():
-                    require_safe_archive_name(path, member.filename)
-                    mode = member.external_attr >> 16
+            with zipfile.ZipFile(path) as zip_archive:
+                for zip_member in zip_archive.infolist():
+                    require_safe_archive_name(path, zip_member.filename)
+                    mode = zip_member.external_attr >> 16
                     file_type = stat.S_IFMT(mode)
                     if file_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
                         raise VerificationError(
-                            f"{path.name} contains unsupported special entry: {member.filename!r}"
+                            f"{path.name} contains unsupported special entry: {zip_member.filename!r}"
                         )
-                    normalized = member.filename.rstrip("/")
+                    normalized = zip_member.filename.rstrip("/")
                     if normalized in names:
                         raise VerificationError(
-                            f"{path.name} contains duplicate archive entry: {member.filename!r}"
+                            f"{path.name} contains duplicate archive entry: {zip_member.filename!r}"
                         )
                     names.add(normalized)
                 return names

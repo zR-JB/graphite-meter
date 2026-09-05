@@ -1,6 +1,10 @@
 name: Setup Graphite Meter project
 description: Set up the pinned project toolchain and optional dependencies
 inputs:
+  python:
+    description: Prepare hash-pinned Python type-checking tools
+    required: false
+    default: 'false'
   go:
     description: Set up Go from go/go.mod
     required: false
@@ -36,6 +40,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Set up Python
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version-file: .python-version
+
     - id: just-version
       name: Read Just version
       shell: bash
@@ -104,3 +113,8 @@ runs:
       if: inputs.gitleaks == 'true'
       shell: bash
       run: just _install-tools false false true
+
+    - name: Prepare pinned Python tools
+      if: inputs.python == 'true'
+      shell: bash
+      run: just python-setup
