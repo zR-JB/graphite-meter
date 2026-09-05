@@ -3,8 +3,6 @@ package endpoint
 import (
 	"encoding/json/v2"
 	"net/http"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // UploadSession mints the short-lived upload correlation token.
@@ -21,13 +19,7 @@ func NewUploadSession(store *UploadStore) *UploadSession {
 	return &UploadSession{store: store}
 }
 
-func (u *UploadSession) ID() string { return "upload-session" }
-
-func (u *UploadSession) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (u *UploadSession) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return nil

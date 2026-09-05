@@ -12,7 +12,7 @@ import (
 	"github.com/coder/websocket"
 )
 
-func TestWebSocketSession(t *testing.T) {
+func TestWebSocketBus(t *testing.T) {
 	srvErrs := make(chan error, 16)
 	srvDone := make(chan struct{})
 
@@ -29,34 +29,7 @@ func TestWebSocketSession(t *testing.T) {
 		// CloseNow skips the close handshake: the client sends no close frame.
 		defer conn.CloseNow()
 
-		check := func(cond bool, format string, args ...any) {
-			if !cond {
-				srvErrs <- fmt.Errorf(format, args...)
-			}
-		}
-
-		sess := NewWebSocketSession(r.Context(), conn, r.URL.Query())
-
-		check(sess.Proto() == ProtoWS, "Proto() = %v, want ProtoWS", sess.Proto())
-
-		if _, _, ok := sess.HTTP(); ok {
-			srvErrs <- fmt.Errorf("HTTP() ok = true, want false")
-		}
-
-		if _, err := sess.OpenDownloadSink(); err != ErrUnsupported {
-			srvErrs <- fmt.Errorf("OpenDownloadSink() err = %v, want ErrUnsupported", err)
-		}
-
-		if _, err := sess.OpenUploadSource(); err != ErrUnsupported {
-			srvErrs <- fmt.Errorf("OpenUploadSource() err = %v, want ErrUnsupported", err)
-		}
-
-		bus, ok := sess.Bus()
-		check(ok, "Bus() ok = false, want true")
-		if bus == nil {
-			srvErrs <- fmt.Errorf("Bus() returned a nil bus")
-			return
-		}
+		bus := NewWebSocketBus(r.Context(), conn)
 
 		msg, err := bus.Recv()
 		if err != nil {

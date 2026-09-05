@@ -767,7 +767,9 @@ type wtObservedSession struct{ lanes, live, peak int }
 
 // wtLaneCounter wraps a transfer endpoint and records what the server itself saw on the WebTransport side of it.
 type wtLaneCounter struct {
-	endpoint.Endpoint
+	endpoint.HTTPHandler
+	download endpoint.DownloadHandler
+	upload   endpoint.UploadHandler
 	// cut, when set, limits how long each WebTransport lane may carry bytes.
 	cut func(lane int) time.Duration
 
@@ -777,18 +779,21 @@ type wtLaneCounter struct {
 	lanes    int
 }
 
-func (c *wtLaneCounter) Handle(s transport.Session) error {
-	if s.Proto() != transport.ProtoWebTransport {
-		return c.Endpoint.Handle(s)
-	}
-	obs, lane := c.enterLane(s.Context())
+func (c *wtLaneCounter) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
+	obs, _ := c.enterLane(ctx)
+	defer c.leaveLane(obs)
+	return c.download.HandleDownload(ctx, n, sink)
+}
+
+func (c *wtLaneCounter) HandleUpload(ctx context.Context, id, owner string, src io.Reader) (int64, error) {
+	obs, lane := c.enterLane(ctx)
 	defer c.leaveLane(obs)
 	if c.cut != nil {
 		if window := c.cut(lane); window > 0 {
-			return c.Endpoint.Handle(cutLaneSession{Session: s, until: time.Now().Add(window)})
+			src = &deadlineSource{src: src, until: time.Now().Add(window)}
 		}
 	}
-	return c.Endpoint.Handle(s)
+	return c.upload.HandleUpload(ctx, id, owner, src)
 }
 
 func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int) {
@@ -832,28 +837,6 @@ func (c *wtLaneCounter) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.byCtx, c.sessions, c.lanes = nil, nil, 0
-}
-
-// cutLaneSession serves a lane's source only until its deadline.
-type cutLaneSession struct {
-	transport.Session
-	until time.Time
-}
-
-func (s cutLaneSession) OpenUploadSource() (io.Reader, error) {
-	src, err := s.Session.OpenUploadSource()
-	if err != nil {
-		return nil, err
-	}
-	return &deadlineSource{src: src, until: s.until}, nil
-}
-
-// ClientOwner is not part of transport.Session, so embedding one does not carry it.
-func (s cutLaneSession) ClientOwner() string {
-	if owner, ok := s.Session.(interface{ ClientOwner() string }); ok {
-		return owner.ClientOwner()
-	}
-	return ""
 }
 
 type deadlineSource struct {
@@ -942,7 +925,8 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 	t.Parallel()
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		down.Endpoint, up.Endpoint = e.download, e.upload
+		down.HTTPHandler, down.download = e.download, e.download
+		up.HTTPHandler, up.upload = e.upload, e.upload
 		e.download, e.upload = down, up
 	})
 
@@ -1021,7 +1005,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 		return 700 * time.Millisecond
 	}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		up.Endpoint = e.upload
+		up.HTTPHandler, up.upload = e.upload, e.upload
 		e.upload = up
 	})
 
