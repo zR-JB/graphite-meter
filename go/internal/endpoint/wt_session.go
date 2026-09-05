@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // WTTokenMinter mints a CONNECT token for an authenticated session and classifies refusal.
@@ -20,18 +19,12 @@ type WTSession struct {
 // NewWTSession builds the mint endpoint. mint may be nil (authentication off).
 func NewWTSession(mint WTTokenMinter) *WTSession { return &WTSession{mint: mint} }
 
-func (e *WTSession) ID() string { return "wt-session" }
-
 type wtSessionResponse struct {
 	Token   string `json:"token"`
 	Expires int64  `json:"expires,omitzero"`
 }
 
-func (e *WTSession) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (e *WTSession) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return nil

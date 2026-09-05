@@ -7,12 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // testBlockSize is a realistic download-block size for the wrap-around tests (matches the server's 256 KiB block).
@@ -134,15 +131,10 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 	for _, blockSize := range []int{64 << 10, 256 << 10, 1 << 20} {
 		b.Run(strconv.Itoa(blockSize), func(b *testing.B) {
 			download := NewDownload(randomBlock(blockSize), nil)
-			session := &fakeSession{
-				ctx:   b.Context(),
-				query: "bytes=" + strconv.Itoa(size),
-				sink:  io.Discard,
-			}
 			b.SetBytes(size)
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := download.Handle(session); err != nil {
+				if err := download.HandleDownload(b.Context(), size, io.Discard); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -157,9 +149,8 @@ func TestDownloadContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	// The sink cancels the context after the first write and keeps counting.
 	sink := &cancelOnWrite{cancel: cancel}
-	s := &fakeSession{ctx: ctx, query: "bytes=" + strconv.Itoa(10<<20), sink: sink}
 
-	if err := dl.Handle(s); err != nil {
+	if err := dl.HandleDownload(ctx, 10<<20, sink); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	if sink.n >= int64(10<<20) {
@@ -183,23 +174,6 @@ func (c *cancelOnWrite) Write(p []byte) (int, error) {
 	c.n += int64(len(p))
 	return len(p), nil
 }
-
-// fakeSession is a minimal transport.Session exposing only what Download.Handle uses: Context, Query.
-type fakeSession struct {
-	ctx   context.Context
-	query string
-	sink  io.Writer
-}
-
-func (f *fakeSession) Context() context.Context                         { return f.ctx }
-func (f *fakeSession) Query() (v url.Values)                            { v, _ = url.ParseQuery(f.query); return }
-func (f *fakeSession) Proto() transport.Proto                           { return transport.ProtoH1 }
-func (f *fakeSession) HTTP() (http.ResponseWriter, *http.Request, bool) { return nil, nil, false }
-func (f *fakeSession) OpenDownloadSink() (io.Writer, error) {
-	return f.sink, nil
-}
-func (f *fakeSession) OpenUploadSource() (io.Reader, error) { return nil, transport.ErrUnsupported }
-func (f *fakeSession) Bus() (transport.MessageBus, bool)    { return nil, false }
 
 func BenchmarkDownloadThroughput(b *testing.B) {
 	srv, _ := newDownloadServer(testBlockSize)

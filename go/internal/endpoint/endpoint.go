@@ -1,10 +1,30 @@
-// Package endpoint holds the pluggable measurement modules and the registry that mounts them.
+// Package endpoint implements HTTP routes and shared measurement operations.
 package endpoint
 
-import "github.com/zR-JB/graphite-meter/go/internal/transport"
+import (
+	"context"
+	"io"
+	"net/http"
 
-// Endpoint is one measurement module (preflight, download, upload, latency).
-type Endpoint interface {
-	ID() string
-	Handle(s transport.Session) error
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
+)
+
+// HTTPHandler handles one request; the registry supplies common response headers and error reporting.
+type HTTPHandler interface {
+	HandleHTTP(http.ResponseWriter, *http.Request) error
+}
+
+// MessageHandler processes a transport-owned message channel until it closes.
+type MessageHandler interface {
+	HandleMessages(context.Context, transport.MessageBus) error
+}
+
+// DownloadHandler produces a bounded byte stream. The adapter owns stream cancellation and closure.
+type DownloadHandler interface {
+	HandleDownload(context.Context, int64, io.Writer) error
+}
+
+// UploadHandler counts received bytes for an explicitly identified owner. The adapter owns I/O cancellation.
+type UploadHandler interface {
+	HandleUpload(context.Context, string, string, io.Reader) (int64, error)
 }
