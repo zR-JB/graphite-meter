@@ -1,9 +1,10 @@
 package endpoint
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"strconv"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // Download streams incompressible random bytes for the client's download measurement.
@@ -22,29 +23,21 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-func (d *Download) ID() string { return "download" }
+// HandleHTTP sets the response framing before streaming bytes.
+func (d *Download) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+	n := parseBytes(r.URL.Query().Get("bytes"))
+	h := w.Header()
+	h.Set("Content-Type", "application/octet-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Length", strconv.FormatInt(n, 10))
+	return d.HandleDownload(r.Context(), n, w)
+}
 
-// Handle streams ?bytes= of the shared block into the session's download sink, wrapping at the block end.
-func (d *Download) Handle(s transport.Session) error {
-	n := parseBytes(s.Query().Get("bytes"))
-
-	// HTTP response setup is transport-specific; the byte streaming below is not.
-	if w, _, ok := s.HTTP(); ok {
-		h := w.Header()
-		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Cache-Control", "no-store")
-		h.Set("Content-Length", strconv.FormatInt(n, 10))
-	}
-
-	sink, err := s.OpenDownloadSink()
-	if err != nil {
-		return err
-	}
-
+// HandleDownload repeats the shared random block into the supplied sink.
+func (d *Download) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
 	d.meter.Open()
 	defer d.meter.Close()
 
-	ctx := s.Context()
 	block := d.block
 	blockLen := int64(len(block))
 	var off int64

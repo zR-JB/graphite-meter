@@ -137,9 +137,15 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			var out struct {
 				Token string `json:"token"`
 			}
-			_ = json.UnmarshalRead(res.Body, &out)
+			decodeErr := readControlJSON(res.Body, &out)
 			_ = res.Body.Close()
-			if res.StatusCode == http.StatusOK && out.Token != "" {
+			if res.StatusCode == http.StatusOK {
+				if decodeErr != nil {
+					return "", fmt.Errorf("invalid client approval response: %w", decodeErr)
+				}
+				if out.Token == "" || len(out.Token) > 8192 {
+					return "", errors.New("invalid client approval token")
+				}
 				return out.Token, nil
 			}
 			if res.StatusCode != http.StatusAccepted {

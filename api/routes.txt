@@ -14,15 +14,10 @@
 # file is what keeps the tables byte-identical. Every route test loads THIS file
 # as its fixture:
 #   Go — go/internal/server/routes_test.go (listeners.go + wire/preflight.go)
-#   Go — go/internal/auth/routes_test.go (the enforcement boundary's own lists)
+#   Go — go/internal/auth/routes_test.go (credential and CORS boundaries)
 #   TS — client/src/lib/runner/real/routes.test.ts (backendPure.ts ROUTES)
 #
-# /preflight is the one deliberate omission. It is mounted on every discovery
-# listener, but it is requested through no route table, so both Go route tests
-# handle it by name instead of pinning it here: server/routes_test.go skips the
-# path, and auth/routes_test.go carries it as preflightPath. Its absence below
-# is the documented exception, not a missing row.
-
+preflight | /preflight | http
 probe | /probe | http
 download | /download | http
 upload | /upload | http

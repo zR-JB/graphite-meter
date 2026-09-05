@@ -151,7 +151,7 @@ func newWTLatencyServer(t *testing.T) *httptest.Server {
 		origin := "http://" + r.Host
 		wtPing := testChannel("wt-ping", origin, false)
 		wtPing.Transport, wtPing.Protocol = wire.TransportWebTransport, "http3"
-		_ = json.MarshalWrite(w, wire.Preflight{Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{wtPing},
 		}})
@@ -193,13 +193,13 @@ func TestPrepareAcceptsAWideCadenceAfterWebTransportFallsBack(t *testing.T) {
 		ws := testChannel("ws", origin, false)
 		wt := testChannel("wt", origin, false)
 		wt.Transport, wt.Protocol = wire.TransportWebTransport, "http3"
-		_ = json.MarshalWrite(w, wire.Preflight{Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("fetch", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{ws, wt},
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
 	})
 	mux.Handle("/ws/ping", echoPingHandler())
 	srv := httptest.NewServer(mux)

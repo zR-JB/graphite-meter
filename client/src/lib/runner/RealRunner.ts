@@ -19,7 +19,12 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import type { Preflight } from "../api/preflight";
-import type { Probe } from "../api/probe";
+import {
+  readJSONResponse,
+  parsePreflight,
+  parseProbe,
+  parseResponseToken,
+} from "../api/decode";
 import { BUILD } from "../buildenv";
 import {
   authenticatedFetch,
@@ -224,67 +229,74 @@ export class RealBackend implements RunnerBackend {
     this.#discoveryProtocol = undefined;
 
     const { pf, discovery } = await this.#fetchDiscovery(epoch, signal);
-    // Carrying a role over is only sound while the server advertises the same targets it did last time.
-    if (previous?.discoveryGeneration !== pf.generation) role = undefined;
+    try {
+      // Carrying a role over is only sound while the server advertises the same targets it did last time.
+      if (previous?.discoveryGeneration !== pf.generation) role = undefined;
 
-    const selected = this.#selectThroughputRole(
-      config,
-      discovery,
-      pf,
-      previous,
-      role,
-    );
-    const needsLatency = this.#selectLatencyRole(
-      config,
-      discovery,
-      previous,
-      role,
-    );
+      const selected = this.#selectThroughputRole(
+        config,
+        discovery,
+        pf,
+        previous,
+        role,
+      );
+      const needsLatency = this.#selectLatencyRole(
+        config,
+        discovery,
+        previous,
+        role,
+      );
 
-    const { pathProbe, firstHopProtocol } = await this.#probeThroughputPath(
-      selected,
-      previous,
-      role,
-      signal,
-    );
-    this.#assertCurrentProbe(epoch);
-    const latencyPathProbe = await this.#probeLatencyPath(
-      previous,
-      role,
-      needsLatency,
-      signal,
-    );
-    this.#assertCurrentProbe(epoch);
-
-    if (needsLatency && role !== "throughput") {
-      await this.#verifyLatencyChannel(discovery, config, signal);
+      const { pathProbe, firstHopProtocol } = await this.#probeThroughputPath(
+        selected,
+        previous,
+        role,
+        signal,
+      );
       this.#assertCurrentProbe(epoch);
+      const latencyPathProbe = await this.#probeLatencyPath(
+        previous,
+        role,
+        needsLatency,
+        signal,
+      );
+      this.#assertCurrentProbe(epoch);
+
+      if (needsLatency && role !== "throughput") {
+        await this.#verifyLatencyChannel(discovery, config, signal);
+        this.#assertCurrentProbe(epoch);
+      }
+
+      await this.#commitThroughputTransport(
+        config,
+        pf,
+        previous,
+        role,
+        epoch,
+        signal,
+      );
+
+      // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
+      const probeRtts =
+        needsLatency && role !== "throughput"
+          ? await this.#idle.collectRtts(signal)
+          : [];
+      this.#assertCurrentProbe(epoch);
+
+      const info = this.#assembleInfra(pf, previous, selected, {
+        throughput: pathProbe,
+        latency: latencyPathProbe,
+        firstHopProtocol,
+        probeRtts,
+      });
+      info.discovery = discovery;
+      this.#probeInfo = info;
+      return info;
+    } catch (cause) {
+      if (cause instanceof TransportUnavailableError)
+        cause.discovery = discovery;
+      throw cause;
     }
-
-    await this.#commitThroughputTransport(
-      config,
-      pf,
-      previous,
-      role,
-      epoch,
-      signal,
-    );
-
-    // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
-    const probeRtts =
-      needsLatency && role !== "throughput"
-        ? await this.#idle.collectRtts(signal)
-        : [];
-    this.#assertCurrentProbe(epoch);
-
-    const info = this.#assembleInfra(pf, previous, selected, {
-      throughput: pathProbe,
-      latency: latencyPathProbe,
-      firstHopProtocol,
-      probeRtts,
-    });
-    this.#probeInfo = info;
-    return info;
   }
 
   /* Reads as an abort, which is what supersession is to the older caller. */
@@ -310,7 +322,7 @@ export class RealBackend implements RunnerBackend {
         signal,
       });
       if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
-      pf = (await res.json()) as Preflight;
+      pf = parsePreflight(await readJSONResponse(res));
       origin = new URL(res.url, location.href).origin;
       // Resource Timing exposes nextHopProtocol cross-origin only when the response carries Timing-Allow-Origin.
       nextHopProtocol = (
@@ -337,7 +349,6 @@ export class RealBackend implements RunnerBackend {
       server: pf.server,
       fetchedAt: Date.now(),
     });
-    this.#host?.emit({ type: "transportDiscovery", discovery });
     return { pf, discovery };
   }
 
@@ -465,7 +476,7 @@ export class RealBackend implements RunnerBackend {
           });
           if (!probeRes.ok)
             throw new Error(`probe returned HTTP ${probeRes.status}`);
-          pathProbe = (await probeRes.json()) as Probe;
+          pathProbe = parseProbe(await readJSONResponse(probeRes));
           const timing = performance
             .getEntriesByName(probeRes.url, "resource")
             .at(-1) as PerformanceResourceTiming | undefined;
@@ -538,7 +549,7 @@ export class RealBackend implements RunnerBackend {
         });
         if (!latencyRes.ok)
           throw new Error(`latency probe returned HTTP ${latencyRes.status}`);
-        latencyPathProbe = (await latencyRes.json()) as Probe;
+        latencyPathProbe = parseProbe(await readJSONResponse(latencyRes));
       } catch (cause) {
         await classifyAuthenticationFailure(signal);
         throw new TransportUnavailableError("latency probe request failed", {
@@ -703,26 +714,28 @@ export class RealBackend implements RunnerBackend {
 
   /* `underLoad` marks pings taken while the stage moves bytes (bufferbloat). */
   onStageMeasure(activity: PhaseActivity): void {
-    const underLoad = activity.transfer.length > 0;
     // A direction missing here failed to prime, and has nothing to measure.
     for (const dir of activity.transfer) this.#lanes[dir]?.measure();
-    if (needsPings(activity)) this.#latency.measure(underLoad);
+    if (needsPings(activity)) this.#latency.measure();
   }
 
   onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {
     if (!flush) {
       this.#discardTransfer();
-      this.#latency.teardown();
+      this.#latency.discard();
       // Reset the stage stall latch; otherwise later healthy bytes cannot refresh the core watchdog.
       this.#stalled = false;
       this.#transferActivity = null;
       return;
     }
     const generation = this.#transferGeneration;
-    return this.#teardownTransfer(generation).then((released) => {
+    const latencyFinished = this.#latency.finish();
+    return Promise.all([
+      this.#teardownTransfer(generation),
+      latencyFinished,
+    ]).then(([released]) => {
       // Ignore completion if abort or a new run took ownership while this stage awaited its terminal record.
       if (!released || generation !== this.#transferGeneration) return;
-      this.#latency.teardown();
       this.#stalled = false;
       this.#transferActivity = null;
     });
@@ -815,9 +828,11 @@ export class RealBackend implements RunnerBackend {
             ok: false,
             detail: `webtransport token mint refused (${minted.status})`,
           };
-        const body = (await minted.json()) as { token?: unknown };
-        if (typeof body.token === "string" && body.token !== "")
-          url += `&token=${encodeURIComponent(body.token)}`;
+        const token = parseResponseToken(
+          await readJSONResponse(minted),
+          "token",
+        );
+        url += `&token=${encodeURIComponent(token)}`;
       }
       const session = new WebTransport(url);
       // A session that never establishes rejects `closed` as well as `ready`.
@@ -1045,11 +1060,7 @@ export class RealBackend implements RunnerBackend {
       });
       if (!res.ok)
         throw new Error(`upload session returned HTTP ${res.status}`);
-      const body = (await res.json()) as { uploadId?: unknown };
-      if (typeof body.uploadId !== "string" || body.uploadId === "") {
-        throw new Error("upload session returned no uploadId");
-      }
-      return body.uploadId;
+      return parseResponseToken(await readJSONResponse(res), "uploadId");
     } catch (cause) {
       await classifyAuthenticationFailure(ctl.signal);
       throw cause;

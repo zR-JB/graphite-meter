@@ -414,6 +414,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       message: { type: string; url?: string } & Record<string, unknown>,
     ): void {
       if (this.kind === "ping") pingMessages.push(message);
+      if (this.kind === "ping" && message.type === "stop") {
+        queueMicrotask(() => this.emit({ type: "stopped" }));
+        return;
+      }
       if (message.type !== "start" && message.type !== "measure") return;
       if (message.type === "start" && message.url)
         workerStarts.push({ kind: this.kind, url: message.url });
@@ -507,6 +511,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       bidirectionalMs: 1,
     };
     const failures: string[] = [];
+    let incompleteAccounting = 0;
     const discoveries: import("./contract").TransportDiscovery[] = [];
     const uploadBytes: number[] = [];
     const stalls: StallInfo[] = [];
@@ -518,6 +523,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       failStage(_stage, _reason, message) {
         failures.push(message);
       },
+      ingestLatencyAccountingIncomplete() {
+        incompleteAccounting++;
+      },
       ingestThroughput(_dir, _rate, bytes) {
         uploadBytes.push(bytes);
       },
@@ -527,17 +535,26 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     });
     const backend = new RealBackend();
     backend.attach(host);
-    const firstProbe = await probeWithRtts(backend.probe(config), 3);
+    const probe = async () => {
+      try {
+        const info = await backend.probe(config);
+        discoveries.push(info.discovery!);
+        return info;
+      } catch (cause) {
+        if (cause instanceof TransportUnavailableError && cause.discovery)
+          discoveries.push(cause.discovery);
+        throw cause;
+      }
+    };
+    const firstProbe = await probeWithRtts(probe(), 3);
     expect(firstProbe.preTestPingMs).toBe(3);
     config.transports.throughputTarget = "https://meter.test:7249";
-    await expect(backend.probe(config)).rejects.toBeInstanceOf(
-      TransportUnavailableError,
-    );
+    await expect(probe()).rejects.toBeInstanceOf(TransportUnavailableError);
     expect(
       discoveries.at(-1)?.throughput["https://meter.test:7248"].state,
     ).toBe("advertised");
     config.transports.throughputTarget = "http://meter.test:7246";
-    const info = await probeWithRtts(backend.probe(config), 5);
+    const info = await probeWithRtts(probe(), 5);
     expect(pingMessages).toContainEqual({
       type: "measure",
       intervalMs: 1000,
@@ -641,6 +658,11 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     });
     expect(stalls.at(-1)?.transport).toBe("fetch-stream");
     await backend.onStageEnd(loaded);
+    expect(incompleteAccounting).toBe(0);
+    backend.onStageBegin(loaded);
+    backend.onStageMeasure(loaded);
+    backend.onStageEnd(loaded, false);
+    expect(incompleteAccounting).toBe(1);
     started.length = 0;
     uploadBytes.length = 0;
     const preparation = backend.onStageBegin({
@@ -913,15 +935,16 @@ test("a superseded probe does not publish its discovery", async () => {
     const superseded = backend.probe(probeConfig(false));
     for (let turn = 0; turn < 20 && preflights < 1; turn++)
       await Promise.resolve();
-    await backend.probe(probeConfig(false));
-    expect(discoveries).toHaveLength(1);
+    const prepared = await backend.probe(probeConfig(false));
+    expect(prepared.discovery?.generation).toBe(preflightDocument.generation);
+    expect(discoveries).toHaveLength(0);
     releaseFirst();
     const outcome = await superseded.then(
       () => "resolved",
       (cause: unknown) => (cause as Error).message,
     );
     expect(outcome).toBe("probe superseded");
-    expect(discoveries).toHaveLength(1);
+    expect(discoveries).toHaveLength(0);
   } finally {
     restore();
   }

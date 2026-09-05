@@ -1,4 +1,4 @@
-import type { HistoryRecordV1 } from "./types";
+import type { HistoryRecord } from "./types";
 export type HistorySort =
   "date" | "download" | "upload" | "bidirectional" | "idle" | "loaded";
 export const HISTORY_SORTS: readonly HistorySort[] = [
@@ -21,7 +21,7 @@ export function naturalDescending(sort: HistorySort): boolean {
   return sort !== "idle" && sort !== "loaded";
 }
 
-function value(record: HistoryRecordV1, sort: HistorySort): number | null {
+function value(record: HistoryRecord, sort: HistorySort): number | null {
   if (sort === "date") return record.completedAt;
   if (sort === "download")
     return record.stages.download.result?.reportedBytesPerSec ?? null;
@@ -38,7 +38,7 @@ function value(record: HistoryRecordV1, sort: HistorySort): number | null {
 }
 
 interface PreparedHistoryRecord {
-  record: HistoryRecordV1;
+  record: HistoryRecord;
   id: string;
   completedAt: number;
   keys: Record<HistorySort, number | null>;
@@ -46,7 +46,7 @@ interface PreparedHistoryRecord {
 
 /** Extract every numeric key once when the repository snapshot changes. */
 export function prepareHistorySort(
-  records: readonly HistoryRecordV1[],
+  records: readonly HistoryRecord[],
 ): PreparedHistoryRecord[] {
   return records.map((record) => ({
     record,
@@ -62,7 +62,7 @@ export function sortPreparedHistory(
   prepared: readonly PreparedHistoryRecord[],
   sort: HistorySort,
   descending = true,
-): HistoryRecordV1[] {
+): HistoryRecord[] {
   return [...prepared]
     .sort((a, b) => {
       const av = a.keys[sort];

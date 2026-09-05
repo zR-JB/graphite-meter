@@ -7,7 +7,8 @@
     LatencyTarget,
     WebTransportThroughputTarget,
   } from "../../api/endpoints";
-  import { applyLiveRunConfig } from "../../runner/engine.svelte";
+  import { getApplicationController } from "../../runner/controllerContext";
+  const controller = getApplicationController();
   import { describeTarget } from "../../runner/real/targetPresentation";
   import { panelReadiness } from "../../runner/connectionModel";
   import { JARGON, tooltip } from "../../actions/tooltip";
@@ -93,23 +94,25 @@
   function setPreset(preset: Preset) {
     durationMode = preset;
     if (preset !== "custom") {
-      store.config.duration = { ...DURATION_PRESETS[preset] };
-      applyLiveRunConfig();
+      controller.configureRun({ duration: { ...DURATION_PRESETS[preset] } });
     }
   }
   function setDuration(key: DurationKey, event: Event) {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     if (!Number.isFinite(value) || value < 0) return;
-    store.config.duration[key] = value;
-    applyLiveRunConfig();
+    controller.configureRun({
+      duration: { ...store.config.duration, [key]: value },
+    });
   }
   function setBidirectional(enabled: boolean) {
-    store.config.stages.bidirectional = enabled;
-    applyLiveRunConfig();
+    controller.configureRun({
+      stages: { ...store.config.stages, bidirectional: enabled },
+    });
   }
   function setAdaptiveEnabled(enabled: boolean) {
-    store.config.adaptive.enabled = enabled;
-    applyLiveRunConfig();
+    controller.configureRun({
+      adaptive: { ...store.config.adaptive, enabled },
+    });
   }
   const activeDurationFields = $derived(
     store.config.stages.bidirectional
@@ -396,10 +399,10 @@
            status rather than an alert — nothing has gone wrong — and its point
            is carried by the leading sentence, not only by the warn colour. -->
       <p class="caution" role="status">
-        <strong>Measures loss, not link speed.</strong> Datagrams are never resent,
-        so whatever goes missing is real packet loss — which is the point of this
-        mode. Expect a lower rate than the stream card, upload especially: browsers
-        hand over one datagram per call.
+        <strong>Measures application datagram delivery.</strong> Datagrams are not
+        retransmitted. Missing deliveries can come from network or endpoint queues;
+        they do not identify physical packet loss. Expect a lower received rate than
+        stream transfers, especially for browser uploads.
       </p>
     {/if}
     <Switch

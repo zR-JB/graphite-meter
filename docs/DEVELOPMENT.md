@@ -37,7 +37,7 @@ just setup
 | `go/internal/config`           | Server configuration and validation.                                         |
 | `go/internal/endpoint`         | Measurement, probe, upload progress, and WebTransport handlers.              |
 | `go/internal/server`           | Listener ownership, admission, TLS lifecycle, and routing.                   |
-| `go/internal/transport`        | HTTP, WebSocket, and WebTransport session adapters.                          |
+| `go/internal/transport`        | HTTP protocol evidence, message channels, and QUIC I/O cancellation.                          |
 | `go/internal/static`           | Embedded browser assets and index metadata injection.                        |
 | `container/`                   | OCI image, Compose examples, and Quadlet units.                              |
 | `legal/`                       | Reviewed dependency metadata and generated notices.                          |
@@ -47,6 +47,12 @@ just setup
 
 The server and both clients share routes and wire contracts but retain separate measurement
 engines. The protocol definitions in `api/` are the boundary between them.
+
+HTTP routes receive the request and response writer directly. WebSocket and WebTransport
+adapters own connection lifetime and supply message channels or byte readers/writers to shared
+measurement operations. Upload adapters pass the authenticated request or CONNECT owner explicitly;
+refused lanes are rejected before their bytes are read. The shared upload loop retains receiver-side
+chunk accounting, while each adapter owns deadlines, stream closure, and transport-specific responses.
 
 ### Authoritative accounting
 
@@ -134,9 +140,12 @@ or WebTransport, not TCP/IP packet loss.
 
 ### Server
 
-Endpoints are implemented against a shared session interface and can run through HTTP,
-WebSockets, or WebTransport without duplicating measurement logic. Separate native listeners make
-HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
+HTTP handlers own request and response behavior. WebSocket and WebTransport adapters own
+connection lifetimes and cancellation, while sharing focused message, download, and upload
+operations. Upload ownership is passed explicitly from the authenticated request or CONNECT.
+Separate native listeners make HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
+The fixed route catalog supplies transport, admission, and authenticated CORS-method metadata.
+Listener setup selects concrete handlers and protocol gates; admission wraps the registered routes.
 
 Admission limits bound active handlers, sessions, and connections. WebTransport sessions consume
 part of the global measurement pool rather than extending it. The server intentionally does not

@@ -5,7 +5,7 @@ import {
   StaleHistoryGenerationError,
 } from "./errors";
 import { historyChanges } from "./changes";
-import type { HistoryRecordV1 } from "./types";
+import type { HistoryRecord } from "./types";
 
 const valid = {
   schemaVersion: 1,
@@ -39,9 +39,9 @@ const valid = {
   client: { build: "b" },
   failures: [],
   wireEstimates: null,
-} satisfies HistoryRecordV1;
+} satisfies HistoryRecord;
 
-function candidate(index: number): HistoryRecordV1 {
+function candidate(index: number): HistoryRecord {
   return {
     ...valid,
     id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
@@ -62,7 +62,7 @@ test("permanent candidates are dropped while later valid candidates proceed", as
     (record) => dropped.push(record.id),
     () => undefined,
   );
-  queue.enqueue({ ...valid, id: "bad" } as unknown as HistoryRecordV1);
+  queue.enqueue({ ...valid, id: "bad" } as unknown as HistoryRecord);
   queue.enqueue(valid);
   await queue.flush();
   expect(dropped).toEqual(["bad"]);
@@ -383,7 +383,7 @@ test("captured empty generation cannot become a post-clear write", async () => {
   const attempted: Array<{ id: string; generation: string }> = [];
   const saved: string[] = [];
   const put = async (
-    record: HistoryRecordV1,
+    record: HistoryRecord,
     _isCurrent: () => boolean,
     generation: string,
   ) => {
@@ -432,4 +432,56 @@ test("initial empty generation matches absent or empty durable metadata", async 
   queue.enqueue({ ...valid, id: "00000000-0000-4000-8000-000000000005" });
   await queue.flush();
   expect(saved).toEqual([valid.id, "00000000-0000-4000-8000-000000000005"]);
+});
+
+test("disposing a queue invalidates an in-flight write and suppresses callbacks", async () => {
+  const entered = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const callbacks: string[] = [];
+  let current: (() => boolean) | undefined;
+  const queue = new HistoryWriteQueue(
+    async (_record, isCurrent) => {
+      current = isCurrent;
+      entered.resolve();
+      await release.promise;
+    },
+    async () => {
+      callbacks.push("removed");
+    },
+    () => {
+      callbacks.push("saved");
+    },
+    () => {
+      callbacks.push("permanent");
+    },
+    () => {
+      callbacks.push("transient");
+    },
+  );
+  queue.enqueue(valid);
+  await entered.promise;
+  expect(current!()).toBe(true);
+  queue.dispose();
+  expect(current!()).toBe(false);
+  expect(queue.enqueue(candidate(2))).toBe(false);
+  release.resolve();
+  await queue.flush();
+  expect(callbacks).toEqual([]);
+});
+
+test("disposing before a scheduled write prevents repository access", async () => {
+  let writes = 0;
+  const queue = new HistoryWriteQueue(
+    async () => {
+      writes++;
+    },
+    async () => undefined,
+    () => undefined,
+    () => undefined,
+    () => undefined,
+  );
+  queue.enqueue(valid);
+  queue.dispose();
+  await queue.flush();
+  expect(writes).toBe(0);
 });

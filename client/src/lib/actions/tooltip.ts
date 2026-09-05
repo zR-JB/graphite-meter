@@ -227,15 +227,15 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
 }
 export const JARGON = {
   bufferbloat:
-    "Bufferbloat: extra delay that piles up when your connection is busy. A grade of A means it stays responsive under load; D or F means calls and games may lag during big downloads.",
+    "Added latency under load: the largest measured stage median increase over idle. The grade summarizes that application round-trip delay; it includes browser, server, and network scheduling.",
   jitter:
-    "Jitter: how much your ping bounces around from moment to moment. Lower is steadier — high jitter can make video calls choppy.",
+    "RTT variation: the average absolute difference between consecutive successful replies in the same measurement segment. Lower is steadier. Timeouts carry no RTT.",
   p95: "P95: 95% of your pings were at or below this value. It captures the occasional slow spike rather than the typical case.",
   p50: "P50 (median): half your pings were faster than this, half slower — the typical ping.",
   p10: "P10: 10% of pings were at or below this — your best, quietest moments.",
   p90: "P90: 90% of pings were at or below this — captures the slower spikes.",
-  packetLoss:
-    "Packet loss: the share of test pings that never came back. Even a few percent can stutter calls and streams.",
+  probeTimeouts:
+    "Probe timeouts: the share of resolved application probes whose reply deadline expired. This does not identify physical or directional IP packet loss. Interrupted probes and locally rejected sends are excluded.",
   wireRate:
     "Estimated forward-path physical-link occupancy for measured application bytes.",
   stability:

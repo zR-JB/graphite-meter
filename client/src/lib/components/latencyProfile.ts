@@ -46,7 +46,12 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   label: string;
   tone: LatencyProfileTone;
   jitter: number | null;
-  lossRatio: number;
+  timeoutRatio: number | null;
+  accountingComplete?: boolean | null;
+  accountingLegacy?: boolean;
+  timeoutCount?: number | null;
+  unresolvedCount?: number | null;
+  sendFailureCount?: number | null;
   count?: number;
   active?: boolean;
 }
@@ -84,17 +89,15 @@ export function tickLabel(v: number): string {
   return v <= 0 ? "0" : fmtMs(v);
 }
 
-// Sub-1% loss keeps a second decimal so a rare drop is still legible.
-export function lossLabel(ratio: number): string {
+// Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
+export function timeoutLabel(ratio: number): string {
   if (ratio <= 0) return "";
-  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% loss`;
+  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% timeouts`;
 }
 
-/** Saved probe loss is datagram-loss evidence only on the datagram-backed WT bus. */
-export function savedLatencyHasDatagramLossEvidence(
-  kind: string | null,
-): boolean {
-  return kind === "webtransport";
+/** Both supported latency transports provide application probe timeout evidence. */
+export function savedLatencyHasProbeEvidence(kind: string | null): boolean {
+  return kind === "webtransport" || kind === "websocket";
 }
 
 export function metricValue(
@@ -160,4 +163,57 @@ export function hoverContext(
     return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
   }
   return centerLabel(lane);
+}
+
+const PARTIAL_ACCOUNTING_HELP =
+  "Worker shutdown could not account for all probes. Shown counts cover known outcomes only; additional outcomes are unknown.";
+
+export function probeAccountingDetails(
+  lane: Pick<
+    LatencyProfileViewLane,
+    | "count"
+    | "timeoutCount"
+    | "unresolvedCount"
+    | "sendFailureCount"
+    | "accountingComplete"
+  >,
+): string {
+  const counts = [
+    lane.count == null ? null : `${lane.count} resolved`,
+    lane.timeoutCount == null ? null : `${lane.timeoutCount} timeouts`,
+    lane.unresolvedCount == null ? null : `${lane.unresolvedCount} unresolved`,
+    lane.sendFailureCount == null
+      ? null
+      : `${lane.sendFailureCount} send failures`,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(" · ");
+  return lane.accountingComplete === false
+    ? `Known: ${counts}. Additional outcomes unknown.`
+    : counts;
+}
+
+export function hasProbeAccountingNotice(
+  lane: Pick<
+    LatencyProfileViewLane,
+    | "accountingComplete"
+    | "timeoutCount"
+    | "unresolvedCount"
+    | "sendFailureCount"
+  >,
+): boolean {
+  return (
+    lane.accountingComplete === false ||
+    (lane.timeoutCount ?? 0) > 0 ||
+    (lane.unresolvedCount ?? 0) > 0 ||
+    (lane.sendFailureCount ?? 0) > 0
+  );
+}
+
+export function probeAccountingHelp(
+  lane: Pick<LatencyProfileViewLane, "accountingLegacy">,
+): string {
+  return lane.accountingLegacy
+    ? "This saved result predates probe-accounting completeness metadata. Exact timeout counts and any missing outcomes are unknown."
+    : PARTIAL_ACCOUNTING_HELP;
 }

@@ -17,7 +17,7 @@
   } from "../history/sort";
   import {
     HISTORY_LIMIT,
-    type HistoryRecordV1,
+    type HistoryRecord,
     type StageStatus,
   } from "../history/types";
   import type { HistoryColumn } from "../state/persistence";
@@ -36,7 +36,7 @@
   let { selectedId, onNavigate, onClose }: Props = $props();
   const repository = new HistoryRepository();
   let loadState = $state<"loading" | "ready" | "error">("loading");
-  let records = $state<HistoryRecordV1[]>([]);
+  let records = $state<HistoryRecord[]>([]);
   let malformedCount = $state(0);
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
@@ -161,7 +161,7 @@
     onNavigate(null);
   }
 
-  function activate(record: HistoryRecordV1, keyboard: boolean) {
+  function activate(record: HistoryRecord, keyboard: boolean) {
     if (selectedId === record.id) {
       closeDetail();
       return;
@@ -258,7 +258,7 @@
       });
   }
 
-  function partial(record: HistoryRecordV1): boolean {
+  function partial(record: HistoryRecord): boolean {
     return (
       record.failures.length > 0 ||
       [
@@ -284,7 +284,7 @@
     return value == null ? stageStatusLabel(status) : rate(value);
   }
 
-  function bidiRate(record: HistoryRecordV1): string {
+  function bidiRate(record: HistoryRecord): string {
     const result = record.stages.bidirectional;
     return result.down && result.up
       ? rate(result.down.reportedBytesPerSec + result.up.reportedBytesPerSec)
@@ -293,7 +293,7 @@
         : stageStatusLabel(result.status);
   }
 
-  function loadedMetric(record: HistoryRecordV1): string {
+  function loadedMetric(record: HistoryRecord): string {
     if (record.bufferbloat) return formatLatency(record.bufferbloat.loadedMs);
     const transferStatuses = [
       record.stages.download.status,
@@ -309,7 +309,7 @@
   }
 
   interface HistoryRowView {
-    record: HistoryRecordV1;
+    record: HistoryRecord;
     exactDate: string;
     primaryDate: string;
     secondaryDate: string;
@@ -318,7 +318,7 @@
     ariaLabel: string;
   }
 
-  function historyRow(record: HistoryRecordV1): HistoryRowView {
+  function historyRow(record: HistoryRecord): HistoryRowView {
     const exactDate = fullDate(record.completedAt);
     const recentDate = formatRecentCompletion(record.completedAt, renderedAt);
     const metrics: Record<HistoryColumn, string> = {

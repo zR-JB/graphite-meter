@@ -12,7 +12,6 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -31,12 +30,7 @@ func NewPreflight(cfg *config.Config) *Preflight {
 	return &Preflight{cfg: cfg, generation: hex.EncodeToString(id[:])}
 }
 
-func (p *Preflight) ID() string { return "preflight" }
-func (p *Preflight) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (p *Preflight) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	return json.MarshalWrite(w, p.build(r))
