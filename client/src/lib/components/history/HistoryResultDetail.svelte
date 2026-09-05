@@ -16,6 +16,7 @@
     savedLatencyHasProbeEvidence,
     probeAccountingHelp,
     probeAccountingDetails,
+    probeAccountingSummary,
     hasProbeAccountingNotice,
     type LatencyProfileViewLane,
     type LatencyProfileTone,
@@ -178,6 +179,7 @@
                     lane.timeoutRatio == null ? null : lane.timeoutRatio * 100,
                   ),
             details: probeAccountingDetails(lane),
+            counts: probeAccountingSummary(lane),
           }))
       : [],
   );
@@ -384,7 +386,7 @@
           class="section-help"
           role="note"
           aria-label="About probe timeouts"
-          use:tooltip={"Application probes whose reply deadline expired. WebTransport uses datagrams; WebSocket uses a reliable stream. Neither identifies physical or directional IP packet loss. Interrupted and locally rejected sends are excluded."}
+          use:tooltip={"No reply arrived before the probe deadline.\n\nThis measures application replies, not IP packet loss.\nUnresolved probes and failed sends are counted separately."}
           >{@html ICON.info}</span
         >
       </header>
@@ -397,7 +399,7 @@
             <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
             <span>
               <strong>{lane.label}</strong>
-              <small>{lane.details}</small>
+              <small class="reply-count">{lane.counts.replies}</small>
               {#if lane.accountingComplete === false}
                 <small role="note" use:tooltip={probeAccountingHelp(lane)}
                   >Partial accounting</small
@@ -405,6 +407,13 @@
               {/if}
             </span>
             <em>{lane.value}</em>
+            {#if lane.counts.exceptions.length}
+              <div class="probe-exceptions">
+                {#each lane.counts.exceptions as detail}
+                  <span>{detail}</span>
+                {/each}
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>
@@ -708,7 +717,7 @@
   }
   .probe-timeouts-lanes {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
     gap: var(--space-2);
     list-style: none;
   }
@@ -719,8 +728,10 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-    padding: 8px;
-    border-top: 1px solid color-mix(in srgb, var(--tone) 40%, var(--border));
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-top-color: color-mix(in srgb, var(--tone) 40%, var(--border));
+    border-radius: var(--r-well);
     background: var(--surface-1);
   }
   .probe-timeouts-lanes li > span:not(.phase-icon) {
@@ -736,6 +747,18 @@
   .probe-timeouts-lanes small {
     color: var(--text-muted);
     font: 500 9px var(--font-mono);
+  }
+  .probe-timeouts-lanes .reply-count {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+  .probe-exceptions {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+    color: var(--warn);
+    font: 500 11px/1.4 var(--font-mono);
   }
   .probe-timeouts-lanes em {
     color: var(--tone);

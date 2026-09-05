@@ -41,6 +41,24 @@
     label = "Latency, jitter and probe timeouts by phase",
   }: Props = $props();
 
+  let motion = $state(false);
+  function attachMotion(node: HTMLElement) {
+    let intersecting = false;
+    const update = () => {
+      motion = intersecting && !document.hidden;
+    };
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = entry.isIntersecting;
+      update();
+    });
+    observer.observe(node);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", update);
+    };
+  }
+
   const scale = $derived(domain ?? profileDomain(lanes));
   const ticks = $derived([
     scale.min,
@@ -165,6 +183,8 @@
 <div
   class="lanes"
   data-latency-profile
+  data-motion={motion && variant === "bare"}
+  {@attach variant === "bare" && attachMotion}
   data-variant={variant}
   role="group"
   aria-label={label}
@@ -187,8 +207,8 @@
               ? "unavailable"
               : "waiting"
             : lane.centerKind === "average"
-              ? `avg ${fmtMs(lane.center)} ms`
-              : `${fmtMs(lane.center)} ms`}</strong
+              ? `mean ${fmtMs(lane.center)} ms`
+              : `median ${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
           <em class="jit" use:tooltip={jitterDescription}
@@ -231,42 +251,52 @@
           }}
           onkeydown={(event) => onTrackKey(event, lane)}
         >
-          {#if lane.min != null && lane.max != null}
-            <span
-              class="range"
-              style={`left:${pos(lane.min, scale)}%;width:${rangeWidth(lane.min, lane.max, scale)}%`}
-            ></span>
-          {/if}
-          {#if lane.p10 != null && lane.p90 != null}
-            <span
-              class="band"
-              style={`left:${pos(lane.p10, scale)}%;width:${rangeWidth(lane.p10, lane.p90, scale)}%`}
-            ></span>
-          {/if}
-          {#if lane.center != null}
-            <i class="center-marker" style={`left:${pos(lane.center, scale)}%`}
-            ></i>
-          {/if}
-          {#if showCurrent && lane.current != null}
-            <i
-              class="current-marker"
-              style={`left:${pos(lane.current, scale)}%`}
-            ></i>
-          {/if}
-          {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-            <i
-              class="timeout-marker"
-              style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
-            ></i>
-          {/if}
-
+          <span class="profile-artwork" aria-hidden="true">
+            {#if lane.min != null && lane.max != null}
+              <span
+                class="range"
+                style:transform={`translateX(${pos(lane.min, scale)}%) scaleX(${rangeWidth(lane.min, lane.max, scale) / 100})`}
+              ></span>
+              <span
+                class="position"
+                style:transform={`translateX(${pos(lane.min, scale)}%)`}
+                ><i class="range-cap"></i></span
+              >
+              <span
+                class="position"
+                style:transform={`translateX(${pos(lane.max, scale)}%)`}
+                ><i class="range-cap"></i></span
+              >
+            {/if}
+            {#if lane.p10 != null && lane.p90 != null}
+              <span
+                class="band"
+                style:transform={`translateX(${pos(lane.p10, scale)}%) scaleX(${rangeWidth(lane.p10, lane.p90, scale) / 100})`}
+              ></span>
+            {/if}
+            {#if lane.center != null}
+              <span
+                class="position"
+                style:transform={`translateX(${pos(lane.center, scale)}%)`}
+                ><i class="center-marker"></i></span
+              >
+            {/if}
+            {#if showCurrent && lane.current != null}
+              <span
+                class="position"
+                style:transform={`translateX(${pos(lane.current, scale)}%)`}
+                ><i class="current-marker"></i></span
+              >
+            {/if}
+            {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+              <i
+                class="timeout-marker"
+                style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
+              ></i>
+            {/if}
+          </span>
           {#if hover?.key === lane.key && hoverValue != null}
             <span class="guide" style={`left:${pos(hoverValue, scale)}%`}
-            ></span>
-            <span
-              class="pin"
-              class:center={hover.metric === "center"}
-              style={`left:${pos(hoverValue, scale)}%`}
             ></span>
             <span
               class="hover-card"
@@ -311,7 +341,7 @@
   }
   .lanes {
     display: grid;
-    gap: 6px;
+    gap: var(--profile-lane-gap, 6px);
     min-width: 0;
     padding: 0;
   }
@@ -422,7 +452,7 @@
   }
   .track {
     position: relative;
-    height: 30px;
+    height: var(--profile-track-height, 30px);
     width: 100%;
     padding: 0;
     overflow: visible;
@@ -444,45 +474,66 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
+  .profile-artwork {
+    position: absolute;
+    inset: 0;
+    overflow: clip;
+    border-radius: inherit;
+    pointer-events: none;
+  }
   .range,
   .band,
+  .position,
+  .range-cap,
   .center-marker,
   .current-marker,
   .timeout-marker {
     position: absolute;
   }
+  /* Static, full-width artwork moves on compositor transforms. Fixed-size
+     marks have a full-width position wrapper so percentages use the track. */
+  .range,
+  .band,
+  .position {
+    left: 0;
+    width: 100%;
+    transform-origin: left center;
+    pointer-events: none;
+  }
+  .position {
+    inset-block: 0;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .lanes[data-motion="true"] .range,
+    .lanes[data-motion="true"] .band,
+    .lanes[data-motion="true"] .position {
+      transition: transform 220ms var(--ease-out);
+    }
+  }
   .range {
-    top: 13px;
+    top: calc(50% - 2px);
     height: 5px;
-    min-width: 10px;
     border-radius: var(--r-full);
     background: color-mix(in srgb, var(--text-soft) 40%, transparent);
   }
-  .range::before,
-  .range::after {
-    position: absolute;
-    top: -7px;
+  .range-cap {
+    left: 0;
+    top: 18%;
+    bottom: 18%;
     width: 1px;
-    height: 19px;
-    content: "";
+    transform: translateX(-50%);
     background: color-mix(in srgb, var(--text-soft) 64%, transparent);
   }
-  .range::before {
-    left: 0;
-  }
-  .range::after {
-    right: 0;
-  }
   .band {
-    top: 6px;
-    height: 18px;
-    min-width: 8px;
+    top: 20%;
+    height: 60%;
     border-radius: var(--r-full);
     background: color-mix(in srgb, var(--tone) 28%, transparent);
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 30%, transparent);
   }
   .center-marker,
   .current-marker {
+    left: 0;
     transform: translateX(-50%);
   }
   .center-marker {
@@ -493,8 +544,8 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
   }
   .current-marker {
-    top: 9px;
-    bottom: 9px;
+    top: calc(50% - 5px);
+    height: 10px;
     width: 10px;
     border: 2px solid var(--surface-1);
     border-radius: var(--r-full);
@@ -524,24 +575,6 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
     transform: translateX(-50%);
-  }
-  .pin {
-    position: absolute;
-    z-index: 5;
-    top: 50%;
-    width: 11px;
-    height: 11px;
-    border: 2px solid var(--surface-1);
-    border-radius: var(--r-full);
-    background: var(--tone);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 22%, transparent);
-    pointer-events: none;
-    transform: translate(-50%, -50%);
-  }
-  .pin.center {
-    width: 8px;
-    border-radius: var(--r-well);
-    background: var(--text);
   }
   .hover-card {
     position: absolute;
@@ -606,11 +639,6 @@
   .lanes[data-variant="compact"] .range {
     top: 10px;
   }
-  .lanes[data-variant="compact"] .range::before,
-  .lanes[data-variant="compact"] .range::after {
-    top: -5px;
-    height: 15px;
-  }
   .lanes[data-variant="compact"] .band {
     top: 4px;
     height: 14px;
@@ -618,10 +646,6 @@
   .lanes[data-variant="compact"] .center-marker {
     top: 3px;
     bottom: 3px;
-  }
-  .lanes[data-variant="compact"] .current-marker {
-    top: 6px;
-    bottom: 6px;
   }
   @media (max-width: 759px) {
     .lane-meta {

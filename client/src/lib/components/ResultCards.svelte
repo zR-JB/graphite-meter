@@ -247,6 +247,17 @@
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-2);
     min-height: 64px;
+    max-width: 960px;
+    margin-inline: auto;
+  }
+  .result-cards:has(> :last-child:nth-child(4)) {
+    max-width: 1180px;
+  }
+  .result-cards:has(> :last-child:nth-child(1)) {
+    max-width: 320px;
+  }
+  .result-cards:has(> :last-child:nth-child(2)) {
+    max-width: 640px;
   }
 
   .result-card {
@@ -477,6 +488,9 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
+    width: 100%;
+    max-width: 600px;
+    margin-inline: auto;
   }
   .result-chip {
     display: flex;

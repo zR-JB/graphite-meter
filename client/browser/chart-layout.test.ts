@@ -83,19 +83,28 @@ test("chart inspector exposes the same bucket details to keyboard and touch", as
   await plot.press("Home");
   await expect(plot).toHaveAttribute("aria-valuenow", "0");
   await plot.press("ArrowRight");
-  expect(Number(await plot.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+  await expect
+    .poll(async () => Number(await plot.getAttribute("aria-valuenow")))
+    .toBeGreaterThan(0);
   await plot.press("End");
-  expect(await plot.getAttribute("aria-valuenow")).toBe(
-    await plot.getAttribute("aria-valuemax"),
-  );
+  // Read both bounds in one DOM turn: the terminal chart extent can change after completion.
+  await expect
+    .poll(() =>
+      plot.evaluate(
+        (element) =>
+          element.getAttribute("aria-valuenow") ===
+          element.getAttribute("aria-valuemax"),
+      ),
+    )
+    .toBe(true);
   // Inspect the same measured latency bucket with keyboard and touch.
   for (let i = 0; i < 40; i++) await plot.press("ArrowLeft");
   await expect(plot.locator(".chip")).toBeVisible();
   await expect(plot).toHaveAttribute(
     "aria-valuetext",
-    /bucket median latency.*probe timeouts/,
+    /RTT median.*probe timeouts/,
   );
-  await expect(plot.locator(".chip")).toContainText("bucket median");
+  await expect(plot.locator(".chip")).toContainText("RTT median");
   await expect(plot.locator(".chip")).not.toContainText("probe timeouts");
   // Capture the committed DOM after the final keyboard selection.
   await page.evaluate(
@@ -104,22 +113,36 @@ test("chart inspector exposes the same bucket details to keyboard and touch", as
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
-  const keyboardText = await plot.getAttribute("aria-valuetext");
-  const fraction = await plot.evaluate(
-    (el) =>
-      Number(el.getAttribute("aria-valuenow")) /
-      Number(el.getAttribute("aria-valuemax")),
-  );
+  const keyboard = await plot.evaluate((element) => {
+    const guide = element.querySelector(".inspection-guide")!;
+    return {
+      text: element.getAttribute("aria-valuetext"),
+      fraction:
+        Number(element.getAttribute("aria-valuenow")) /
+        Number(element.getAttribute("aria-valuemax")),
+      // Reuse the rendered position; outer plot borders are not part of the canvas width.
+      x: new DOMMatrixReadOnly(getComputedStyle(guide).transform).m41,
+    };
+  });
   await plot.press("Escape");
   await expect(plot.locator(".chip")).toHaveCount(0);
   const box = await plot.boundingBox();
   await plot.dispatchEvent("pointerup", {
     pointerType: "touch",
-    clientX: box!.x + 46 + fraction * (box!.width - 92),
+    clientX: box!.x + keyboard.x,
     clientY: box!.y + 50,
   });
   await expect(plot.locator(".chip")).toBeVisible();
-  await expect(plot).toHaveAttribute("aria-valuetext", keyboardText!);
+  await expect
+    .poll(() =>
+      plot.evaluate(
+        (element) =>
+          Number(element.getAttribute("aria-valuenow")) /
+          Number(element.getAttribute("aria-valuemax")),
+      ),
+    )
+    .toBeCloseTo(keyboard.fraction, 4);
+  await expect(plot).toHaveAttribute("aria-valuetext", keyboard.text!);
   await plot.dispatchEvent("pointerleave", { pointerType: "touch" });
   await expect(plot.locator(".chip")).toBeVisible();
   const untouched = await plot.evaluate((element) => {
