@@ -37,10 +37,6 @@ inputs:
     description: Include pinned govulncheck
     required: false
     default: 'false'
-  gitleaks:
-    description: Include pinned Gitleaks
-    required: false
-    default: 'false'
 outputs:
   chrome-version:
     description: Exact Chrome for Testing version from mise.toml
@@ -57,7 +53,6 @@ runs:
         INCLUDE_BUN: ${{ inputs.bun }}
         INCLUDE_STATICCHECK: ${{ inputs.staticcheck }}
         INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
-        INCLUDE_GITLEAKS: ${{ inputs.gitleaks }}
       run: |
         tools=(python)
         if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
@@ -65,7 +60,6 @@ runs:
         if [[ "$INCLUDE_PYTHON_TOOLS" == true ]]; then tools+=(aqua:astral-sh/ty); fi
         if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(aqua:dominikh/go-tools/staticcheck); fi
         if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
-        if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
         printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
 
     - name: Install pinned mise toolchain

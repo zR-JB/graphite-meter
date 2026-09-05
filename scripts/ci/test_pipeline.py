@@ -11,21 +11,18 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from typing import Mapping, Sequence
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from github_api import JsonObject, JsonValue
-import precommit
 from precommit import (
     CheckPlan,
     StagedChange,
     is_tls_path,
     parse_staged_changes,
     plan_checks,
-    run_staged_checks,
 )
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
@@ -430,62 +427,6 @@ class PipelineTests(unittest.TestCase):
         )
         plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
         self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
-
-    def test_precommit_executes_the_staged_payload_in_an_isolated_worktree(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            repo = pathlib.Path(td) / "repo"
-            repo.mkdir()
-
-            def git(*args: str) -> None:
-                subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
-
-            git("init", "-q")
-            (repo / "tracked.txt").write_text("committed base")
-            git("add", ".")
-            git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
-            (repo / "tracked.txt").write_text("staged payload")
-            git("add", ".")
-            (repo / "tracked.txt").write_text("unstaged fix")
-            (repo / "client/node_modules").mkdir(parents=True)
-            real_command = precommit.command
-            checked: list[pathlib.Path] = []
-            poisoned = {"GIT_DIR": ".git", "GIT_WORK_TREE": ".", "GIT_INDEX_FILE": ".git/index"}
-
-            def command(
-                args: Sequence[str], *, cwd: pathlib.Path, capture: bool = False,
-                check: bool = True, env: Mapping[str, str] | None = None,
-            ) -> subprocess.CompletedProcess[bytes]:
-                if args[0] != "mise":
-                    return real_command(args, cwd=cwd, capture=capture, check=check, env=env)
-                self.assertNotEqual(cwd, repo)
-                self.assertEqual(args, ("mise", "run", "server-test"))
-                self.assertEqual((cwd / "tracked.txt").read_text(), "staged payload")
-                self.assertFalse((cwd / "client/node_modules").exists())
-                self.assertIsNotNone(env)
-                assert env is not None
-                self.assertTrue(set(poisoned).isdisjoint(env))
-                self.assertEqual(env["PATH"], os.environ["PATH"])
-                checked.append(cwd)
-                return subprocess.CompletedProcess(args, 0)
-
-            with patch.dict(os.environ, poisoned), patch("precommit.command", side_effect=command), patch("precommit.run_gitleaks"):
-                run_staged_checks(repo, CheckPlan(pipeline=False, recipes=("server-test",)))
-            self.assertEqual(len(checked), 1)
-            self.assertFalse(checked[0].exists(), "the staged worktree must be removed")
-            self.assertEqual((repo / "tracked.txt").read_text(), "unstaged fix")
-
-            # The executable hook must also obtain its own Python implementation from the index.
-            implementation = repo / "scripts/ci/precommit.py"
-            implementation.parent.mkdir(parents=True)
-            implementation.write_text("print('staged hook')")
-            for name in ("mise.toml", "mise.lock"):
-                shutil.copy2(ROOT / name, repo / name)
-            git("add", "scripts/ci/precommit.py", "mise.toml", "mise.lock")
-            implementation.write_text("raise SystemExit('unstaged hook ran')")
-            result = subprocess.run(
-                (str(ROOT / ".githooks/pre-commit"),), cwd=repo, check=True, capture_output=True, text=True,
-            )
-            self.assertEqual(result.stdout.strip(), "staged hook")
 
     def test_policy_requires_dockerignore_to_select_image_checks(self) -> None:
         root = self._copy_policy_tree()

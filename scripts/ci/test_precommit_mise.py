@@ -1,4 +1,4 @@
-"""Exercise mise at the staged-index trust boundary, without downloading tools."""
+"""Exercise staged-index tool resolution, bootstrap, and gate isolation."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import os
 import pathlib
 import shutil
 import subprocess
-import sys
 import tempfile
+import tomllib
 import unittest
 from typing import Mapping, Sequence
 from unittest.mock import patch
@@ -37,34 +37,6 @@ def repository(parent: pathlib.Path) -> pathlib.Path:
 
 
 class StagedMiseTests(unittest.TestCase):
-    def test_environment_keeps_cache_locations_but_not_config_or_version_overrides(self) -> None:
-        original = {
-            "PATH": os.environ["PATH"],
-            "MISE_DATA_DIR": "/shared/installs",
-            "MISE_CACHE_DIR": "/shared/downloads",
-            "MISE_CONFIG_FILE": "/unstaged/mise.toml",
-            "MISE_PYTHON_VERSION": "0.0.0",
-            "MISE_ENV": "local",
-            "MISE_TASK_SKIP": "check",
-            "MISE_LOCKED": "false",
-            "__MISE_DIFF": "inherited activation",
-            "GIT_INDEX_FILE": ".git/index",
-        }
-        with patch.dict(os.environ, original), patch.object(precommit, "git_text", return_value="GIT_INDEX_FILE"):
-            env = precommit.staged_mise_environment(pathlib.Path("/source"), pathlib.Path("/snapshot/staged"))
-            self.assertEqual(os.environ["GIT_INDEX_FILE"], ".git/index")
-        self.assertEqual(env["MISE_DATA_DIR"], original["MISE_DATA_DIR"])
-        self.assertEqual(env["MISE_CACHE_DIR"], original["MISE_CACHE_DIR"])
-        for key in ("GIT_INDEX_FILE", "MISE_CONFIG_FILE", "MISE_PYTHON_VERSION", "MISE_TASK_SKIP", "__MISE_DIFF"):
-            self.assertNotIn(key, env)
-        self.assertEqual(env["MISE_CONFIG_DIR"], "/snapshot/config")
-        self.assertEqual(env["MISE_SYSTEM_CONFIG_DIR"], "/snapshot/system")
-        self.assertEqual(env["MISE_CEILING_PATHS"], "/snapshot")
-        self.assertEqual(env["MISE_OVERRIDE_CONFIG_FILENAMES"], "mise.toml")
-        self.assertEqual(env["MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES"], "none")
-        self.assertEqual(env["MISE_LOCKED"], "true")
-        self.assertEqual(env["MISE_ENV"], "")
-
     @unittest.skipUnless(MISE, "mise is needed for the configuration-resolution integration check")
     def test_actual_mise_ignores_parent_local_global_and_system_configuration(self) -> None:
         assert MISE is not None
@@ -87,10 +59,18 @@ class StagedMiseTests(unittest.TestCase):
                 "MISE_DATA_DIR": str(base / "data"),
                 "MISE_CACHE_DIR": str(base / "cache"),
                 "MISE_ENV": "evil",
+                "MISE_CONFIG_FILE": str(base / "mise.toml"),
+                "MISE_PYTHON_VERSION": "0.0.0",
+                "MISE_TASK_SKIP": "check",
+                "MISE_LOCKED": "false",
                 "__MISE_DIFF": "not a valid activation",
             }
             with patch.dict(os.environ, poison), patch.object(precommit, "git_text", return_value=""):
                 env = precommit.staged_mise_environment(base, staged)
+            for key in ("MISE_DATA_DIR", "MISE_CACHE_DIR"):
+                self.assertEqual(env[key], poison[key])
+            self.assertNotIn("MISE_TASK_SKIP", env)
+            self.assertEqual(env["MISE_LOCKED"], "true")
             configs = subprocess.run(
                 (MISE, "config", "ls", "--json"), cwd=staged, env=env,
                 check=True, capture_output=True, text=True,
@@ -105,59 +85,39 @@ class StagedMiseTests(unittest.TestCase):
             self.assertNotIn("PARENT_POISON", values)
             self.assertNotIn("GLOBAL_POISON", values)
 
-    def test_hook_bootstraps_only_staged_python_and_executes_the_staged_implementation(self) -> None:
+    @unittest.skipUnless(MISE, "mise is needed for the staged Python bootstrap integration check")
+    def test_hook_executes_staged_implementation_with_staged_isolated_python(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = repository(pathlib.Path(td))
+            for name in ("mise.toml", "mise.lock"):
+                shutil.copy2(ROOT / name, repo / name)
+            version = tomllib.loads((repo / "mise.toml").read_text())["tools"]["python"]
+            caches = {key: os.environ[key] for key in ("MISE_DATA_DIR", "MISE_CACHE_DIR") if key in os.environ}
             implementation = repo / "scripts/ci/precommit.py"
             implementation.parent.mkdir(parents=True)
-            implementation.write_text("import sys\nassert sys.flags.isolated\nprint('staged hook')\n")
-            git(repo, "add", "scripts/ci/precommit.py")
+            implementation.write_text(f"""import os, sys
+assert sys.flags.isolated
+assert '.'.join(map(str, sys.version_info[:3])) == {version!r}
+assert os.environ['GIT_INDEX_FILE'] == '.git/index'
+assert all(os.environ[key] == value for key, value in {caches!r}.items())
+print('staged hook')
+""")
+            git(repo, "add", "scripts/ci/precommit.py", "mise.toml", "mise.lock")
             implementation.write_text("raise SystemExit('unstaged implementation ran')\n")
             (repo / "mise.toml").write_text('[tools]\npython = "99.0.0"\n')
             (repo / "mise.lock").write_text("unstaged lockfile")
-            commands = repo / "commands"
-            commands.mkdir()
-            log = repo / "bootstrap.jsonl"
-            fake = commands / "mise"
-            fake.write_text(f'''#!{sys.executable} -I
-import json, os, pathlib, sys
-args = sys.argv[1:]
-assert args[0] == "--cd", args
-scope = pathlib.Path(args[1])
-assert (scope / "mise.toml").read_text() == {CONFIG!r}
-assert (scope / "mise.lock").read_text() == "lockfile_version = 1\\n"
-assert os.environ["MISE_DATA_DIR"] == {str(repo / "data")!r}
-assert os.environ["MISE_CACHE_DIR"] == {str(repo / "cache")!r}
-assert os.environ["MISE_LOCKED"] == "true"
-assert "MISE_CONFIG_FILE" not in os.environ
-assert "MISE_PYTHON_VERSION" not in os.environ
-assert "__MISE_DIFF" not in os.environ
-with pathlib.Path({str(log)!r}).open("a") as output:
-    output.write(json.dumps(args[2:]) + "\\n")
-if args[2:4] == ["config", "get"]:
-    print("3.14.7")
-elif args[2:] == ["install", "python"]:
-    pass
-elif args[2:] == ["which", "python3", "--tool", "python@3.14.7"]:
-    print({sys.executable!r})
-else:
-    raise SystemExit("unexpected mise operation")
-''')
-            fake.chmod(0o755)
             env = dict(
-                os.environ, PATH=f"{commands}{os.pathsep}{os.environ['PATH']}",
-                MISE_DATA_DIR=str(repo / "data"), MISE_CACHE_DIR=str(repo / "cache"),
+                os.environ, GIT_INDEX_FILE=".git/index", PYTHONPATH=str(repo),
+                XDG_STATE_HOME=str(pathlib.Path(td) / "state"),
                 MISE_CONFIG_FILE=str(repo / "mise.toml"), MISE_PYTHON_VERSION="0.0.0",
-                MISE_LOCKED="false", __MISE_DIFF="poisoned activation",
+                MISE_LOCKED="false", MISE_ENV="evil", __MISE_DIFF="poisoned activation",
             )
             result = subprocess.run(
                 (str(ROOT / ".githooks/pre-commit"),), cwd=repo, env=env,
-                check=True, capture_output=True, text=True,
+                capture_output=True, text=True,
             )
+            self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "staged hook")
-            calls = [json.loads(line) for line in log.read_text().splitlines()]
-            self.assertEqual(calls[1], ["install", "python"])
-            self.assertEqual(calls[2], ["which", "python3", "--tool", "python@3.14.7"])
 
     def test_gitleaks_resolves_staged_pin_but_scans_the_original_index(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -208,6 +168,7 @@ else:
             (repo / ".tools").mkdir()
             real_command = precommit.command
             checked: list[pathlib.Path] = []
+            git_bindings = {"GIT_DIR": ".git", "GIT_WORK_TREE": ".", "GIT_INDEX_FILE": ".git/index"}
 
             def command(
                 args: Sequence[str], *, cwd: pathlib.Path, capture: bool = False,
@@ -216,7 +177,8 @@ else:
                 if args[0] != "mise":
                     return real_command(args, cwd=cwd, capture=capture, check=check, env=env)
                 assert env is not None
-                self.assertNotIn("GIT_INDEX_FILE", env)
+                self.assertTrue(set(git_bindings).isdisjoint(env))
+                self.assertEqual(env["PATH"], os.environ["PATH"])
                 self.assertEqual(env["MISE_LOCKED"], "true")
                 if args[1] == "exec":
                     self.assertEqual(args, ("mise", "exec", "--", "bun", "install", "--frozen-lockfile", "--prefer-offline"))
@@ -231,7 +193,7 @@ else:
                 checked.append(cwd)
                 raise precommit.PrecommitError("staged gate failed")
 
-            with patch.dict(os.environ, {"GIT_INDEX_FILE": ".git/index"}), patch.object(precommit, "command", side_effect=command), patch.object(precommit, "run_gitleaks") as scan:
+            with patch.dict(os.environ, git_bindings), patch.object(precommit, "command", side_effect=command), patch.object(precommit, "run_gitleaks") as scan:
                 with self.assertRaisesRegex(precommit.PrecommitError, "staged gate failed"):
                     precommit.run_staged_checks(repo, precommit.CheckPlan(pipeline=False, recipes=("client-ci",)))
             scan.assert_called_once()

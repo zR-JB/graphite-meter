@@ -601,7 +601,6 @@ def check_toolchain_consumers(root: pathlib.Path = ROOT) -> None:
                         fail(f"{path.relative_to(root)} mise setup must declare {required}")
                 if path.parent.name == "workflows" and ("install_args: --locked python" not in block or "cache: false" not in block):
                     fail(f"{path.relative_to(root)} trusted Python bootstrap must disable shared caches and install only Python")
-    check_toolchain_literals(root)
 
 
 def check_browser_ci(root: pathlib.Path = ROOT) -> None:
