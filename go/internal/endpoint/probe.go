@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"encoding/json/v2"
+	"net/http"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -23,14 +24,8 @@ func NewProbe(cfg *config.Config, bootstrapPort string, load LoadFunc) *Probe {
 	return &Probe{cfg: cfg, bootstrapPort: bootstrapPort, load: load}
 }
 
-func (p *Probe) ID() string { return "probe" }
-
-func (p *Probe) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
-	if p.bootstrapPort != "" && s.Proto() == transport.ProtoH1 {
+func (p *Probe) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+	if p.bootstrapPort != "" && transport.HTTPProtocol(r) == transport.ProtoH1 {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")
 	}
@@ -39,7 +34,7 @@ func (p *Probe) Handle(s transport.Session) error {
 	w.Header().Set("Cache-Control", "no-store")
 	probe := wire.Probe{
 		ClientIP: client.Addr.String(), ClientIPVersion: client.Version,
-		ClientIPSource: string(client.Source), ProtocolNegotiated: string(s.Proto()),
+		ClientIPSource: string(client.Source), ProtocolNegotiated: string(transport.HTTPProtocol(r)),
 	}
 	if p.load != nil {
 		active, max := p.load()

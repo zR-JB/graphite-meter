@@ -1,6 +1,7 @@
 package endpoint
 
 import (
+	"context"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -15,15 +16,8 @@ type Ping struct{}
 // NewPing builds the latency endpoint.
 func NewPing() *Ping { return &Ping{} }
 
-func (p *Ping) ID() string { return "latency" }
-
-// Handle runs the echo loop on the session's message bus: Recv → decode → reply.
-func (p *Ping) Handle(s transport.Session) error {
-	bus, ok := s.Bus()
-	if !ok {
-		return transport.ErrUnsupported
-	}
-
+// HandleMessages runs the echo loop; the adapter owns the channel lifetime.
+func (p *Ping) HandleMessages(_ context.Context, bus transport.MessageBus) error {
 	for {
 		msg, err := bus.Recv()
 		if err != nil {

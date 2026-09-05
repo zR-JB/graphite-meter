@@ -16,26 +16,22 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-func wsAdapter(parent context.Context, e Endpoint) http.Handler {
+func wsAdapter(parent context.Context, e MessageHandler) http.Handler {
 	return wsAdapterWithOrigin(parent, e, "")
 }
-func httpAdapter(e Endpoint) http.Handler { return httpAdapterWithOrigin(e, "") }
+func httpAdapter(e HTTPHandler) http.Handler { return httpAdapterWithOrigin(e, "") }
 
 /* ---- test doubles ---- */
 
 // echoEndpoint writes its id into the response (HTTP) or bus (WS).
 type echoEndpoint struct{ id string }
 
-func (e *echoEndpoint) ID() string { return e.id }
-func (e *echoEndpoint) Handle(s transport.Session) error {
-	if w, _, ok := s.HTTP(); ok {
-		_, _ = w.Write([]byte(e.id)) // test double: a failed write shows up as a body mismatch
-		return nil
-	}
-	if bus, ok := s.Bus(); ok {
-		return bus.Send(e.id)
-	}
+func (e *echoEndpoint) HandleHTTP(w http.ResponseWriter, _ *http.Request) error {
+	_, _ = w.Write([]byte(e.id))
 	return nil
+}
+func (e *echoEndpoint) HandleMessages(_ context.Context, bus transport.MessageBus) error {
+	return bus.Send(e.id)
 }
 
 // countingEndpoint is a call-counting, error-injecting Endpoint stub for httpAdapter/wsAdapter tests.
@@ -44,8 +40,12 @@ type countingEndpoint struct {
 	err   error
 }
 
-func (e *countingEndpoint) ID() string { return "counting" }
-func (e *countingEndpoint) Handle(s transport.Session) error {
+func (e *countingEndpoint) HandleHTTP(http.ResponseWriter, *http.Request) error {
+	e.calls.Add(1)
+	return e.err
+}
+
+func (e *countingEndpoint) HandleMessages(context.Context, transport.MessageBus) error {
 	e.calls.Add(1)
 	return e.err
 }
@@ -55,9 +55,8 @@ type blockingEndpoint struct {
 	unblocked chan struct{}
 }
 
-func (e *blockingEndpoint) ID() string { return "blocking" }
-func (e *blockingEndpoint) Handle(s transport.Session) error {
-	<-s.Context().Done()
+func (e *blockingEndpoint) HandleMessages(ctx context.Context, _ transport.MessageBus) error {
+	<-ctx.Done()
 	close(e.unblocked)
 	return nil
 }
@@ -65,12 +64,7 @@ func (e *blockingEndpoint) Handle(s transport.Session) error {
 // drainEndpoint reads the bus until it errors, the shape every bus endpoint has.
 type drainEndpoint struct{}
 
-func (e *drainEndpoint) ID() string { return "drain" }
-func (e *drainEndpoint) Handle(s transport.Session) error {
-	bus, ok := s.Bus()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (e *drainEndpoint) HandleMessages(_ context.Context, bus transport.MessageBus) error {
 	for {
 		if _, err := bus.Recv(); err != nil {
 			return nil
