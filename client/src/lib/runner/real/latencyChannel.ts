@@ -2,7 +2,11 @@
 import type { CoreHost } from "../core";
 import type { RunnerEvent, TransportKind } from "../contract";
 import type { LatencyTarget } from "../../api/endpoints";
-import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
+import {
+  authEnabled,
+  csrfHeader,
+  reportAuthenticationRequired,
+} from "../../auth";
 import { httpToWs } from "./backendPure";
 import { pingWorker } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
@@ -206,7 +210,7 @@ export class LatencyChannel {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
-      redirectToLogin();
+      reportAuthenticationRequired();
       return;
     }
     switch (msg.type) {
@@ -420,7 +424,7 @@ export class IdleKeepalive {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
       this.stop();
-      redirectToLogin();
+      reportAuthenticationRequired();
       return;
     }
     switch (msg.type) {

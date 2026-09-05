@@ -71,3 +71,67 @@ describe("sessionAuthenticationRequired", () => {
     expect(called).toBe(false);
   });
 });
+
+test("auth classification reads only headers and cancels the unused body", async () => {
+  let canceled = false;
+  const response = new Response(
+    new ReadableStream({
+      cancel() {
+        canceled = true;
+      },
+    }),
+    {
+      status: 403,
+      headers: { "Graphite-Meter-Auth": "required" },
+    },
+  );
+  expect(
+    await sessionAuthenticationRequired(
+      "https://meter.test",
+      undefined,
+      async () => response,
+    ),
+  ).toBe(true);
+  expect(canceled).toBe(true);
+});
+
+test("canceling a classification aborts its request without reporting expiry", async () => {
+  const caller = new AbortController();
+  let requestSignal: AbortSignal | null = null;
+  const pending = sessionAuthenticationRequired(
+    "https://meter.test",
+    caller.signal,
+    async (_input, init) => {
+      requestSignal = init!.signal!;
+      return new Promise<Response>((_resolve, reject) =>
+        requestSignal!.addEventListener("abort", () =>
+          reject(new Error("aborted")),
+        ),
+      );
+    },
+  );
+  caller.abort();
+  expect(await pending).toBe(false);
+  expect(requestSignal!.aborted).toBe(true);
+});
+
+test("an explicit auth marker survives failure while discarding its body", async () => {
+  const response = new Response(
+    new ReadableStream({
+      cancel() {
+        throw new Error("body failed");
+      },
+    }),
+    {
+      status: 403,
+      headers: { "Graphite-Meter-Auth": "required" },
+    },
+  );
+  expect(
+    await sessionAuthenticationRequired(
+      "https://meter.test",
+      undefined,
+      async () => response,
+    ),
+  ).toBe(true);
+});

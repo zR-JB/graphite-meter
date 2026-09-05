@@ -18,6 +18,7 @@ import type {
 import { canonicalAdaptiveConfig } from "../state/defaults";
 import {
   requireSessionCoverage,
+  AUTHENTICATION_REQUIRED_EVENT,
   liveScheduleFitsSession,
   SessionCoverageError,
   type SessionBudget,
@@ -294,9 +295,23 @@ export function createApplicationController(
     }
   }
 
+  function onAuthenticationRequired(event: Event) {
+    if (!booted) return;
+    const reason =
+      event instanceof CustomEvent && event.detail === "renew"
+        ? "renew"
+        : "expired";
+    dispose();
+    location.replace(`/login?reason=${reason}`);
+  }
+
   async function boot() {
     if (booted) return;
     booted = true;
+    window.addEventListener(
+      AUTHENTICATION_REQUIRED_EVENT,
+      onAuthenticationRequired,
+    );
     store.engineInfo = describe();
     online = typeof navigator === "undefined" ? null : navigator.onLine;
     let draftKeys = CONNECTION_ROLES.map((role) =>
@@ -478,6 +493,10 @@ export function createApplicationController(
 
   function dispose() {
     booted = false;
+    window.removeEventListener(
+      AUTHENTICATION_REQUIRED_EVENT,
+      onAuthenticationRequired,
+    );
     disposeDraft?.();
     cancelPendingStart();
     validation?.abort.abort();

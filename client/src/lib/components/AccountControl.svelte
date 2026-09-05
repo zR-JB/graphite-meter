@@ -1,15 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { authenticatedFetch } from "../auth";
+  import { readJSONResponse, parseAccountSession } from "../api/decode";
   import { tooltip } from "../actions/tooltip";
 
-  type Session = {
-    name: string;
-    provider: string;
-    expires: string;
-    csrf: string;
-  };
-  let session = $state<Session | null>(null);
+  let session = $state<ReturnType<typeof parseAccountSession> | null>(null);
 
   const label = $derived(
     session?.provider === "local" ? "Local operator" : (session?.name ?? ""),
@@ -20,18 +15,29 @@
       : (session?.provider ?? ""),
   );
 
-  // authenticatedFetch redirects only on a 403 carrying the
-  // Graphite-Meter-Auth marker. A bare 403 from a proxy or WAF is not an
-  // expired session: treating it as one loops through /login.
-  onMount(async () => {
-    try {
-      const response = await authenticatedFetch("/auth/session", {
-        cache: "no-store",
-      });
-      if (response.ok) session = (await response.json()) as Session;
-    } catch {
-      // Leave the control unrendered; the runner surfaces connectivity loss.
-    }
+  onMount(() => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    void (async () => {
+      try {
+        const response = await authenticatedFetch("/auth/session", {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (response.ok) {
+          const parsed = parseAccountSession(await readJSONResponse(response));
+          if (!controller.signal.aborted) session = parsed;
+        }
+      } catch {
+        // Leave the control unrendered; the runner surfaces connectivity loss.
+      } finally {
+        clearTimeout(timeout);
+      }
+    })();
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
   });
 </script>
 

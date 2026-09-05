@@ -14,7 +14,7 @@ import {
   readJSONResponse,
   parsePreflight,
   parseProbe,
-  parseResponseToken,
+  parseWtToken,
 } from "../../api/decode";
 import {
   authenticatedFetch,
@@ -329,7 +329,7 @@ async function verifyWtThroughput(
       );
       if (!minted.ok)
         throw new Error(`webtransport token mint refused (${minted.status})`);
-      url += `&token=${encodeURIComponent(parseResponseToken(await readJSONResponse(minted), "token"))}`;
+      url += `&token=${encodeURIComponent(parseWtToken(await readJSONResponse(minted)).token)}`;
     }
     signal.throwIfAborted();
     const session = new WebTransport(url);

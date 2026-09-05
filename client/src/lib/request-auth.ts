@@ -33,9 +33,13 @@ export async function sessionAuthenticationRequired(
       cache: "no-store",
       credentials: "include",
       redirect: "error",
-      signal: controller.signal,
+      signal: localSignal
+        ? AbortSignal.any([localSignal, controller.signal])
+        : controller.signal,
     });
-    return authenticationRequired(response);
+    const required = authenticationRequired(response);
+    await response.body?.cancel().catch(() => {});
+    return !localSignal?.aborted && required;
   } catch {
     // Transport failure, refused redirect, and timeout are not expiry evidence.
     return false;

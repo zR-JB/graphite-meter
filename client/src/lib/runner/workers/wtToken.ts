@@ -1,3 +1,4 @@
+import { readJSONResponse, parseWtToken } from "../../api/decode";
 /* Minting happens in the worker, immediately before each dial, because the token expires in seconds and. */
 import {
   authenticationRequired,
@@ -50,7 +51,7 @@ function reusableToken(url: string): string {
 }
 
 /* Hold a freshly minted token. */
-function hold(url: string, token: string, expires: unknown): void {
+function hold(url: string, token: string, expires: number | undefined): void {
   const lifetimeMs = typeof expires === "number" ? expires - Date.now() : 0;
   held = {
     url,
@@ -65,7 +66,7 @@ export async function mintWtToken(
   mint?: WtMint,
   signal?: AbortSignal,
 ): Promise<WtToken> {
-  if (!mint) return { token: "", authRequired: false };
+  if (!mint || signal?.aborted) return { token: "", authRequired: false };
   const reused = reusableToken(mint.url);
   if (reused !== "") return { token: reused, authRequired: false };
   const controller = new AbortController();
@@ -84,9 +85,8 @@ export async function mintWtToken(
     });
     if (!res.ok)
       return { token: "", authRequired: authenticationRequired(res) };
-    const body = (await res.json()) as { token?: unknown; expires?: unknown };
-    const token = typeof body.token === "string" ? body.token : "";
-    if (token !== "") hold(mint.url, token, body.expires);
+    const { token, expires } = parseWtToken(await readJSONResponse(res));
+    hold(mint.url, token, expires);
     return { token, authRequired: false };
   } catch {
     return { token: "", authRequired: false };

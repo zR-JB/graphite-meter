@@ -4,6 +4,9 @@ import {
   parsePreflight,
   parseProbe,
   parseResponseToken,
+  parseSessionLifetime,
+  parseAccountSession,
+  parseWtToken,
   readJSONResponse,
 } from "./decode";
 
@@ -129,4 +132,42 @@ test("control reads reject oversize, invalid UTF-8, and trailing documents", asy
     new Uint8Array([34, 255, 34]),
   ])
     await expect(readJSONResponse(new Response(body))).rejects.toThrow();
+});
+
+test("auth documents validate lifetimes, account fields, and optional finite mint expiry", () => {
+  expect(
+    parseSessionLifetime({ remainingMs: 0, maximumLifetimeMs: 1 }),
+  ).toEqual({ remainingMs: 0, maximumLifetimeMs: 1 });
+  for (const value of [
+    null,
+    [],
+    { remainingMs: 2, maximumLifetimeMs: 1 },
+    { remainingMs: 0, maximumLifetimeMs: Infinity },
+  ])
+    expect(() => parseSessionLifetime(value)).toThrow();
+  const account = { name: "", provider: "local", csrf: "token" };
+  expect(
+    parseAccountSession({ ...account, expires: "unused", extra: "unused" }),
+  ).toEqual(account);
+  for (const value of [
+    null,
+    [],
+    { ...account, csrf: "" },
+    { ...account, name: "a".repeat(8193) },
+  ])
+    expect(() => parseAccountSession(value)).toThrow();
+  expect(parseWtToken({ token: "gmw_old" })).toEqual({ token: "gmw_old" });
+  expect(
+    parseWtToken({ token: "gmw_new", expires: 1_800_000_000_000 }),
+  ).toEqual({ token: "gmw_new", expires: 1_800_000_000_000 });
+  for (const expires of [
+    null,
+    "soon",
+    -1,
+    1.5,
+    Infinity,
+    NaN,
+    Number.MAX_SAFE_INTEGER + 1,
+  ])
+    expect(() => parseWtToken({ token: "gmw_invalid", expires })).toThrow();
 });
