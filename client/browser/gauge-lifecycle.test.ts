@@ -14,7 +14,7 @@ async function expectCoherentGauge(page: Page): Promise<void> {
   await expect(gaugeStage(page).locator(".gauge-dial")).toBeVisible();
   await expect
     .poll(() =>
-      gaugeStage(page).evaluate((stage) => {
+      gaugeStage(page).evaluate((stage: HTMLElement) => {
         const dial = stage.querySelector(".gauge-dial .dial-art");
         if (!(dial instanceof SVGSVGElement)) return false;
         const stageBox = stage.getBoundingClientRect();
@@ -25,6 +25,11 @@ async function expectCoherentGauge(page: Page): Promise<void> {
             getComputedStyle(path).stroke !== "none" &&
             path.getTotalLength() > 0,
         );
+        const endCap = stage.querySelector<SVGCircleElement>(".sweep-end-cap")!;
+        const arcWidth = Number(
+          stage.querySelector(".rotor path")!.getAttribute("stroke-width"),
+        );
+        const headBox = endCap.ownerSVGElement!.viewBox.baseVal;
         const bounds = dial.getBBox();
         return (
           Math.abs(stageBox.width - box.width) <= 2 &&
@@ -32,6 +37,9 @@ async function expectCoherentGauge(page: Page): Promise<void> {
           Math.abs(viewBox.width - box.width) <= 1 &&
           Math.abs(viewBox.height - box.height) <= 1 &&
           painted.length >= 10 &&
+          Math.abs(endCap.r.baseVal.value - arcWidth / 2) < 0.0001 &&
+          headBox.width > arcWidth &&
+          headBox.height > arcWidth &&
           bounds.x >= 0 &&
           bounds.y >= 0 &&
           bounds.x + bounds.width <= viewBox.width &&
@@ -63,12 +71,12 @@ for (const viewport of [
       mobile: false,
     });
     await expectCoherentGauge(page);
-    await gaugeStage(page).evaluate((stage) => {
+    await gaugeStage(page).evaluate((stage: HTMLElement) => {
       stage.setAttribute("data-test-hidden", "true");
       (stage as HTMLElement).style.display = "none";
     });
     await page.waitForTimeout(80);
-    await gaugeStage(page).evaluate((stage) => {
+    await gaugeStage(page).evaluate((stage: HTMLElement) => {
       stage.removeAttribute("data-test-hidden");
       (stage as HTMLElement).style.removeProperty("display");
     });

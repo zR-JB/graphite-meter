@@ -39,6 +39,9 @@
     );
     return close ? Math.min(4, radius) : radius;
   });
+  const headExtent = $derived(
+    Math.max(headRadius + 1.5, layout.arcWidth / 2 + 0.5),
+  );
   const placements = $derived(
     resultGaugeHeadPlacements(
       input.resultArcs.map((arc) => arc.fraction),
@@ -340,12 +343,13 @@
       style:top={`${layout.center.y}px`}
     >
       <svg
-        style:left={`${layout.radius - headRadius - 1.5}px`}
-        style:top={`${-headRadius - 1.5}px`}
-        width={headRadius * 2 + 3}
-        height={headRadius * 2 + 3}
-        viewBox={`${-headRadius - 1.5} ${-headRadius - 1.5} ${headRadius * 2 + 3} ${headRadius * 2 + 3}`}
+        style:left={`${layout.radius - headExtent}px`}
+        style:top={`${-headExtent}px`}
+        width={headExtent * 2}
+        height={headExtent * 2}
+        viewBox={`${-headExtent} ${-headExtent} ${headExtent * 2} ${headExtent * 2}`}
       >
+        <circle class="sweep-end-cap" r={layout.arcWidth / 2} fill={accent} />
         <circle
           r={headRadius + 0.75}
           fill={accent}
