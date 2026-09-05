@@ -75,7 +75,6 @@ function targets(value: unknown): unknown[] {
   return value;
 }
 
-/** Missing transport is the supported pre-transport wire default. */
 export function parsePreflight(value: unknown): Preflight {
   const input = record(value);
   const server = record(input.server);
@@ -94,10 +93,11 @@ export function parsePreflight(value: unknown): Preflight {
         const target = record(value);
         return {
           baseUrl: origin(target.baseUrl),
-          transport: member(
-            target.transport === undefined ? "fetch-stream" : target.transport,
-            ["fetch-stream", "webtransport", "webtransport-datagram"],
-          ),
+          transport: member(target.transport, [
+            "fetch-stream",
+            "webtransport",
+            "webtransport-datagram",
+          ]),
           protocol: member(target.protocol, [
             "http1",
             "http2",
@@ -110,10 +110,7 @@ export function parsePreflight(value: unknown): Preflight {
         const target = record(value);
         return {
           baseUrl: origin(target.baseUrl),
-          transport: member(
-            target.transport === undefined ? "websocket" : target.transport,
-            ["websocket", "webtransport"],
-          ),
+          transport: member(target.transport, ["websocket", "webtransport"]),
         };
       }),
     },
@@ -190,15 +187,14 @@ export function parseAccountSession(value: unknown): {
   };
 }
 
-/** Older mints may omit expiry; those tokens can be dialed once but are not cached. */
+/** Mint expiry is an epoch-millisecond integer; authentication-off uses zero. */
 export function parseWtToken(value: unknown): {
   token: string;
-  expires?: number;
+  expires: number;
 } {
   const input = record(value);
-  const token = parseResponseToken(input, "token");
+  const token = string(input.token, 8192, true);
   const { expires } = input;
-  if (expires === undefined) return { token };
   if (
     typeof expires !== "number" ||
     !Number.isSafeInteger(expires) ||

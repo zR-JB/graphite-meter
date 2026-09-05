@@ -75,22 +75,20 @@ func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 	}
 }
 
-// api/wire.md calls `transport` a required field but keeps a back-compat path for documents written before it existed.
-func TestTargetsWithoutATransportKeepTheirLegacyDefault(t *testing.T) {
-	var throughput ThroughputTarget
-	if err := json.Unmarshal([]byte(`{"baseUrl":"https://speed.example:7246","protocol":"http2"}`), &throughput); err != nil {
-		t.Fatalf("unmarshal throughput: %v", err)
-	}
-	if got := throughput.Transport; got != TransportFetchStream {
-		t.Errorf("throughput transport = %q, want the pre-transport default %q", got, TransportFetchStream)
-	}
-
-	var latency LatencyTarget
-	if err := json.Unmarshal([]byte(`{"baseUrl":"https://speed.example:7246"}`), &latency); err != nil {
-		t.Fatalf("unmarshal latency: %v", err)
-	}
-	if got := latency.Transport; got != TransportWebSocket {
-		t.Errorf("latency transport = %q, want the pre-transport default %q", got, TransportWebSocket)
+func TestTargetsRequireExplicitTransport(t *testing.T) {
+	for _, transport := range []string{"", "null", `""`, `"udp"`} {
+		field := ""
+		if transport != "" {
+			field = `,"transport":` + transport
+		}
+		var throughput ThroughputTarget
+		if err := json.Unmarshal([]byte(`{"baseUrl":".","protocol":"http2"`+field+`}`), &throughput); err == nil {
+			t.Fatalf("accepted throughput transport %q", transport)
+		}
+		var latency LatencyTarget
+		if err := json.Unmarshal([]byte(`{"baseUrl":"."`+field+`}`), &latency); err == nil {
+			t.Fatalf("accepted latency transport %q", transport)
+		}
 	}
 }
 
@@ -124,7 +122,6 @@ func TestLatencyTargetProtocolFollowsItsTransport(t *testing.T) {
 	for transport, want := range map[string]string{
 		TransportWebSocket:    "http1",
 		TransportWebTransport: "http3",
-		"":                    "http1",
 	} {
 		var target LatencyTarget
 		document := `{"baseUrl":"https://speed.example:7246","transport":"` + transport + `"}`
@@ -158,7 +155,7 @@ func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 
 func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 	for _, origin := range []string{"https://u:p@example.com", "https://example.com/", "https://example.com/path", "https://example.com?", "https://example.com#", "//example.com", "ftp://example.com", "https://example.com:99999"} {
-		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1"})
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1", "transport": TransportFetchStream})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -167,14 +164,14 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 			t.Errorf("accepted origin %q", origin)
 		}
 	}
-	for _, document := range []string{`{"baseUrl":".","protocol":"http4"}`, `{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
+	for _, document := range []string{`{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`, `{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
 		var target ThroughputTarget
 		if err := json.Unmarshal([]byte(document), &target); err == nil {
 			t.Errorf("accepted target %s", document)
 		}
 	}
 	for _, origin := range []string{".", "https://[::1]:7247", "http://other.example:7246"} {
-		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1"})
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1", "transport": TransportFetchStream})
 		if err != nil {
 			t.Fatal(err)
 		}

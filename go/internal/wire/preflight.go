@@ -2,7 +2,6 @@
 package wire
 
 import (
-	"cmp"
 	"encoding/json/v2"
 	"fmt"
 	"net/url"
@@ -104,7 +103,6 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	raw.Transport = cmp.Or(raw.Transport, TransportFetchStream)
 	if raw.Transport != TransportFetchStream && raw.Transport != TransportWebTransport && raw.Transport != TransportWebTransportDatagram {
 		return fmt.Errorf("unsupported throughput transport %q", raw.Transport)
 	}
@@ -129,7 +127,6 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	if err != nil {
 		return err
 	}
-	raw.Transport = cmp.Or(raw.Transport, TransportWebSocket)
 	if raw.Transport != TransportWebSocket && raw.Transport != TransportWebTransport {
 		return fmt.Errorf("unsupported latency transport %q", raw.Transport)
 	}

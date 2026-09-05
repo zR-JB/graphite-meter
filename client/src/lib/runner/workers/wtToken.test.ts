@@ -19,7 +19,7 @@ function captureFetch(): {
     got?: RequestInit,
   ) => {
     init = got;
-    return Response.json({ token: "gmw_abc" });
+    return Response.json({ token: "gmw_abc", expires: 0 });
   }) as unknown as typeof fetch);
   return { init: () => init, restore };
 }
@@ -52,7 +52,7 @@ test("a bare refusal is a retry, not a login", async () => {
 });
 
 test("a minted token comes back with no auth verdict", async () => {
-  await expectMint(Response.json({ token: "gmw_abc" }), {
+  await expectMint(Response.json({ token: "gmw_abc", expires: 0 }), {
     token: "gmw_abc",
     authRequired: false,
   });
@@ -239,7 +239,7 @@ test("malformed mint tokens and overflowing JSON expiry are refused without inve
   }
 });
 
-test("legacy expiry-free mint responses are not reused", async () => {
+test("expiry-free mint responses are rejected", async () => {
   let calls = 0;
   const restore = stubFetch((async () => {
     calls++;
@@ -247,8 +247,8 @@ test("legacy expiry-free mint responses are not reused", async () => {
   }) as unknown as typeof fetch);
   try {
     const mint = { url: "https://meter.test/legacy" };
-    expect((await mintWtToken(mint)).token).toBe("gmw_legacy");
-    expect((await mintWtToken(mint)).token).toBe("gmw_legacy");
+    expect((await mintWtToken(mint)).token).toBe("");
+    expect((await mintWtToken(mint)).token).toBe("");
     expect(calls).toBe(2);
   } finally {
     restore();

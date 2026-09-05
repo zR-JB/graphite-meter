@@ -21,7 +21,7 @@ func NewWTSession(mint WTTokenMinter) *WTSession { return &WTSession{mint: mint}
 
 type wtSessionResponse struct {
 	Token   string `json:"token"`
-	Expires int64  `json:"expires,omitzero"`
+	Expires int64  `json:"expires"`
 }
 
 func (e *WTSession) HandleHTTP(w http.ResponseWriter, r *http.Request) error {

@@ -124,12 +124,7 @@ export function classifyTransportDiscovery(
   throughputEndpoints: (
     ThroughputEndpoint | FetchThroughputTarget | WebTransportThroughputTarget
   )[],
-  latencyEndpoints: (
-    | (Omit<LatencyEndpoint, "transport"> & {
-        transport?: LatencyEndpoint["transport"];
-      })
-    | LatencyTarget
-  )[],
+  latencyEndpoints: (LatencyEndpoint | LatencyTarget)[],
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
@@ -145,8 +140,7 @@ export function classifyTransportDiscovery(
 
   const throughput: TransportDiscovery["throughput"] = {};
   for (const endpoint of throughputEndpoints) {
-    // An absent one is the original contract's fetch stream, which the Go decoder assumes too; dropping it would.
-    const mechanism: string = endpoint.transport ?? "fetch-stream";
+    const mechanism: string = endpoint.transport;
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (throughput[origin] ??= {
@@ -193,8 +187,7 @@ export function classifyTransportDiscovery(
 
   const latency: TransportDiscovery["latency"] = {};
   for (const endpoint of latencyEndpoints) {
-    // An absent mechanism is the original wire contract's WebSocket bus.
-    const mechanism: string = endpoint.transport ?? "websocket";
+    const mechanism: string = endpoint.transport;
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (latency[origin] ??= { state: stateOf(origin), targets: [] });
