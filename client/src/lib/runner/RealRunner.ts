@@ -19,7 +19,12 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import type { Preflight } from "../api/preflight";
-import type { Probe } from "../api/probe";
+import {
+  readJSONResponse,
+  parsePreflight,
+  parseProbe,
+  parseResponseToken,
+} from "../api/decode";
 import { BUILD } from "../buildenv";
 import {
   authenticatedFetch,
@@ -310,7 +315,7 @@ export class RealBackend implements RunnerBackend {
         signal,
       });
       if (!res.ok) throw new Error(`preflight returned HTTP ${res.status}`);
-      pf = (await res.json()) as Preflight;
+      pf = parsePreflight(await readJSONResponse(res));
       origin = new URL(res.url, location.href).origin;
       // Resource Timing exposes nextHopProtocol cross-origin only when the response carries Timing-Allow-Origin.
       nextHopProtocol = (
@@ -465,7 +470,7 @@ export class RealBackend implements RunnerBackend {
           });
           if (!probeRes.ok)
             throw new Error(`probe returned HTTP ${probeRes.status}`);
-          pathProbe = (await probeRes.json()) as Probe;
+          pathProbe = parseProbe(await readJSONResponse(probeRes));
           const timing = performance
             .getEntriesByName(probeRes.url, "resource")
             .at(-1) as PerformanceResourceTiming | undefined;
@@ -538,7 +543,7 @@ export class RealBackend implements RunnerBackend {
         });
         if (!latencyRes.ok)
           throw new Error(`latency probe returned HTTP ${latencyRes.status}`);
-        latencyPathProbe = (await latencyRes.json()) as Probe;
+        latencyPathProbe = parseProbe(await readJSONResponse(latencyRes));
       } catch (cause) {
         await classifyAuthenticationFailure(signal);
         throw new TransportUnavailableError("latency probe request failed", {
@@ -815,9 +820,11 @@ export class RealBackend implements RunnerBackend {
             ok: false,
             detail: `webtransport token mint refused (${minted.status})`,
           };
-        const body = (await minted.json()) as { token?: unknown };
-        if (typeof body.token === "string" && body.token !== "")
-          url += `&token=${encodeURIComponent(body.token)}`;
+        const token = parseResponseToken(
+          await readJSONResponse(minted),
+          "token",
+        );
+        url += `&token=${encodeURIComponent(token)}`;
       }
       const session = new WebTransport(url);
       // A session that never establishes rejects `closed` as well as `ready`.
@@ -1045,11 +1052,7 @@ export class RealBackend implements RunnerBackend {
       });
       if (!res.ok)
         throw new Error(`upload session returned HTTP ${res.status}`);
-      const body = (await res.json()) as { uploadId?: unknown };
-      if (typeof body.uploadId !== "string" || body.uploadId === "") {
-        throw new Error("upload session returned no uploadId");
-      }
-      return body.uploadId;
+      return parseResponseToken(await readJSONResponse(res), "uploadId");
     } catch (cause) {
       await classifyAuthenticationFailure(ctl.signal);
       throw cause;

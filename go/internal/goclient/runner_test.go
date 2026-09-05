@@ -239,7 +239,7 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		origin := "http://" + r.Host
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
 		}})
@@ -314,7 +314,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
-			Server: wire.ServerInfo{Name: "proxy"},
+			Generation: "test", Server: wire.ServerInfo{Name: "proxy"},
 			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("http2", origin, "http2", true),
 			}},
@@ -394,7 +394,7 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
-			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+			Generation: "test", Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("one", "http://one.example", "negotiated", false),
 				testTransfer("two", "http://two.example", "negotiated", false),
 			}},
