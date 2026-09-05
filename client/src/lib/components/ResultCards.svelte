@@ -3,7 +3,7 @@
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
-  import { bidirectionalResultPresentation } from "./bidirectionalResult";
+  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { LiveRateValues } from "../presentation/liveRateAnimator";
   import { compensationTooltip } from "../compensation";
 
@@ -27,11 +27,13 @@
     },
     { key: "latency", icon: ICON.ping, accent: "pg", label: "Ping" },
   ] as const;
+  const bidirectionalEvidence = $derived(
+    store.result?.bidirectional ?? store.error?.partial?.bidirectional,
+  );
   const bidirectional = $derived(
     bidirectionalResultPresentation(
-      store.result?.bidirectional ??
-        store.error?.partial?.bidirectional ??
-        null,
+      bidirectionalEvidence?.down?.reportedBytesPerSec,
+      bidirectionalEvidence?.up?.reportedBytesPerSec,
     ),
   );
 
@@ -111,15 +113,14 @@
               const { down, up, combinedBytesPerSec, survivingDirection } =
                 bidirectional;
               stabilityPct =
-                down && up
-                  ? Math.min(down.stabilityPct, up.stabilityPct)
+                bidirectionalEvidence?.down && bidirectionalEvidence.up
+                  ? Math.min(
+                      bidirectionalEvidence.down.stabilityPct,
+                      bidirectionalEvidence.up.stabilityPct,
+                    )
                   : undefined;
-              const downText = fmtSpeed(
-                store.toUnit(down?.reportedBytesPerSec ?? 0),
-              );
-              const upText = fmtSpeed(
-                store.toUnit(up?.reportedBytesPerSec ?? 0),
-              );
+              const downText = fmtSpeed(store.toUnit(down ?? 0));
+              const upText = fmtSpeed(store.toUnit(up ?? 0));
               sub =
                 combinedBytesPerSec !== null
                   ? `↓ ${downText} ↑ ${upText}`

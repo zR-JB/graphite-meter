@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import { ICON } from "../constants";
   import { HistoryRepository } from "../history/repository";
   import { broadcastHistory, historyChanges } from "../history/changes";
@@ -286,11 +287,15 @@
 
   function bidiRate(record: HistoryRecord): string {
     const result = record.stages.bidirectional;
-    return result.down && result.up
-      ? rate(result.down.reportedBytesPerSec + result.up.reportedBytesPerSec)
-      : result.status === "partial"
-        ? "One lane"
-        : stageStatusLabel(result.status);
+    const model = bidirectionalResultPresentation(
+      result.down?.reportedBytesPerSec,
+      result.up?.reportedBytesPerSec,
+    );
+    if (model.combinedBytesPerSec != null)
+      return rate(model.combinedBytesPerSec);
+    if (model.survivingDirection)
+      return model.survivingDirection === "down" ? "Down only" : "Up only";
+    return stageStatusLabel(result.status);
   }
 
   function loadedMetric(record: HistoryRecord): string {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tooltip } from "../../actions/tooltip";
+  import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
   import { ICON } from "../../constants";
   import {
     formatDuration,
@@ -88,21 +89,28 @@
   function bidirectionalCard(): ThroughputCard | null {
     const stage = record.stages.bidirectional;
     if (!stage.down && !stage.up) return null;
-    const complete = stage.down && stage.up;
-    const measuredLane = stage.down ?? stage.up!;
+    const model = bidirectionalResultPresentation(
+      stage.down?.reportedBytesPerSec,
+      stage.up?.reportedBytesPerSec,
+    );
+    const direction = model.survivingDirection;
     const directions = [
       stage.down ? `Down ${rate(stage.down.reportedBytesPerSec)}` : null,
       stage.up ? `Up ${rate(stage.up.reportedBytesPerSec)}` : null,
     ].filter((value): value is string => value !== null);
     return {
       key: "bidirectional",
-      label: "Bidirectional",
+      label: direction
+        ? `Bidirectional ${direction === "down" ? "download" : "upload"}`
+        : "Bidirectional",
       icon: ICON.bidirectional,
       tone: "bidirectional",
-      value: complete
-        ? rate(stage.down!.reportedBytesPerSec + stage.up!.reportedBytesPerSec)
-        : rate(measuredLane.reportedBytesPerSec),
-      detail: directions.join(" · "),
+      value: rate(
+        model.combinedBytesPerSec ?? (direction ? model[direction] : null),
+      ),
+      detail: direction
+        ? "One lane completed · combined result unavailable"
+        : directions.join(" · "),
     };
   }
 
