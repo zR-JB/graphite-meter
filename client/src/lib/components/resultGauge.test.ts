@@ -8,7 +8,6 @@ import {
 } from "./resultGauge";
 
 const throughput = (reportedBytesPerSec: number): ThroughputResult => ({
-  meanBytesPerSec: reportedBytesPerSec,
   peakBytesPerSec: reportedBytesPerSec,
   stabilityPct: 100,
   totalBytes: reportedBytesPerSec,
