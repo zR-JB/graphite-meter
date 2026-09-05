@@ -83,14 +83,17 @@ cadence and elapsed time alone.
   zero; thresholds are A ≤5 ms, B ≤30 ms, C ≤60 ms, D ≤200 ms, otherwise F. This is
   an application responsiveness descriptor, not proof of a particular queueing cause.
 
-Version 1 saved browser results remain readable. They retain their stored values
-and are marked as legacy calculations because profiles used bucket-derived
-estimates and some timeout populations were selectively sampled. They cannot be
-reconstructed into version 2 raw measurements.
+Graphite Meter 0.7 accepts only saved history schema version 3. Versions 1 and 2
+are unsupported: existing entries remain in browser storage but are skipped and
+reported as unsupported or malformed. They are neither migrated nor reinterpreted;
+clearing history remains an explicit user action. New results retain the usual
+2,000-entry limit.
 
-Early Version 2 snapshots without accounting-completeness metadata remain
-readable. They are shown as partial accounting with unknown exact timeout counts;
-a stored percentage is never used to reconstruct a supposedly exact count.
+Version 3 stores one selected throughput headline, `reportedBytesPerSec`, alongside
+the distinct full-window average and peak. Each saved latency lane requires exact
+known probe counts and accounting-completeness metadata. Missing measurements stay
+null; incomplete accounting remains explicit. Optional paired reflector timing is
+absent when no valid diagnostic pairs were measured, independently of format version.
 
 ## Paired server timing diagnostics
 

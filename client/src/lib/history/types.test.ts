@@ -88,7 +88,6 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(record.transport.throughput.protocol).toBe("h2");
   expect(record.completedAt).toBe(200);
   expect(record.stages.download.result).toMatchObject({
-    meanBytesPerSec: 100,
     reportedBytesPerSec: 100,
     fullAverageBytesPerSec: 90,
     peakBytesPerSec: 120,
@@ -108,38 +107,23 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(isHistoryRecord({ ...record, id: "bad" })).toBe(false);
 });
 
-test("V1 records remain readable while V2 fields cannot be mislabeled as legacy", () => {
+test("accepts only the current history schema and rejects obsolete fields", () => {
   const record = buildHistoryRecord(
     result,
     { paths: null, clientBuild: "b" },
     200,
   );
-  expect(record.schemaVersion).toBe(2);
-  expect(isHistoryRecord({ ...record, schemaVersion: 1 })).toBe(false);
-  const legacy = structuredClone(record);
-  legacy.schemaVersion = 1;
-  for (const snapshot of [
-    legacy.stages.download.result,
-    legacy.stages.upload.result,
-    legacy.stages.bidirectional.down,
-    legacy.stages.bidirectional.up,
-    legacy.stages.latency.result,
-  ]) {
-    if (!snapshot) continue;
-    snapshot.packetLossPct = snapshot.probeTimeoutPct ?? 0;
-    delete snapshot.probeTimeoutPct;
+  expect(record.schemaVersion).toBe(3);
+  for (const schemaVersion of [undefined, 1, 2, 4])
+    expect(isHistoryRecord({ ...record, schemaVersion })).toBe(false);
+  for (const obsolete of ["meanBytesPerSec", "packetLossPct"]) {
+    const saved = structuredClone(record);
+    Object.assign(saved.stages.download.result!, { [obsolete]: 0 });
+    expect(isHistoryRecord(saved)).toBe(false);
   }
-  for (const lane of Object.values(legacy.stages.latency.lanes)) {
-    if (!lane) continue;
-    lane.lossRatio = lane.timeoutRatio ?? 0;
-    delete lane.timeoutRatio;
-    delete lane.accountingComplete;
-    delete lane.timeoutCount;
-    delete lane.unresolvedCount;
-    delete lane.sendFailureCount;
-  }
-  expect(isHistoryRecord(legacy)).toBe(true);
-  expect(isHistoryRecord({ ...legacy, schemaVersion: 2 })).toBe(false);
+  const obsoleteLane = structuredClone(record);
+  Object.assign(obsoleteLane.stages.latency.lanes.download!, { lossRatio: 0 });
+  expect(isHistoryRecord(obsoleteLane)).toBe(false);
 });
 
 test("rejects malformed nested records before they reach rendering", () => {
@@ -305,7 +289,7 @@ test("rejects non-date epochs while retaining valid date bounds", () => {
   }
 });
 
-test("V2 persists partial accounting and exact known outcome counts", () => {
+test("current history persists partial accounting and exact known outcome counts", () => {
   const partial = structuredClone(result);
   partial.latencyByStage.download = {
     ...partial.latencyByStage.download!,
@@ -328,16 +312,29 @@ test("V2 persists partial accounting and exact known outcome counts", () => {
     sendFailureCount: 4,
   });
   expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
-  for (const field of ["accountingComplete", "timeoutCount"] as const) {
+  for (const field of [
+    "accountingComplete",
+    "timeoutCount",
+    "timeoutRatio",
+    "unresolvedCount",
+    "sendFailureCount",
+    "count",
+  ]) {
     const missing = structuredClone(saved);
-    delete missing.stages.latency.lanes.download![field];
+    delete (
+      missing.stages.latency.lanes.download! as unknown as Record<
+        string,
+        unknown
+      >
+    )[field];
     expect(isHistoryRecord(missing)).toBe(false);
   }
-  const earlierV2 = structuredClone(saved);
-  delete earlierV2.stages.latency.lanes.download!.accountingComplete;
-  delete earlierV2.stages.latency.lanes.download!.timeoutCount;
-  expect(isHistoryRecord(earlierV2)).toBe(true);
-  expect(earlierV2.stages.latency.lanes.download!.timeoutCount).toBeUndefined();
+  const missingMetadata = structuredClone(saved);
+  const incomplete = missingMetadata.stages.latency.lanes
+    .download! as unknown as Record<string, unknown>;
+  delete incomplete.accountingComplete;
+  delete incomplete.timeoutCount;
+  expect(isHistoryRecord(missingMetadata)).toBe(false);
   saved.stages.latency.lanes.download!.timeoutCount = 4;
   expect(isHistoryRecord(saved)).toBe(false);
 });

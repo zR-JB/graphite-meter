@@ -14,7 +14,7 @@
   import {
     LATENCY_LANES,
     savedLatencyHasProbeEvidence,
-    probeAccountingHelp,
+    PARTIAL_ACCOUNTING_HELP,
     probeAccountingDetails,
     probeAccountingSummary,
     hasProbeAccountingNotice,
@@ -51,10 +51,7 @@
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
     Object.values(record.stages.latency.lanes).some(
-      (lane) =>
-        lane != null &&
-        record.schemaVersion === 2 &&
-        lane.accountingComplete !== true,
+      (lane) => lane != null && !lane.accountingComplete,
     ) ||
       record.failures.length > 0 ||
       [
@@ -146,14 +143,6 @@
                 meta.key === "latency"
                   ? ("result" as const)
                   : ("average" as const),
-              accountingComplete:
-                record.schemaVersion === 2
-                  ? (snapshot.accountingComplete ?? false)
-                  : undefined,
-              accountingLegacy:
-                record.schemaVersion === 2 &&
-                snapshot.accountingComplete === undefined,
-              timeoutRatio: snapshot.timeoutRatio ?? snapshot.lossRatio ?? null,
             },
           ]
         : [];
@@ -355,19 +344,9 @@
           lanes={latencyProfiles}
           variant="compact"
           label="Saved latency distributions"
-          jitterDescription={record.schemaVersion === 1
-            ? "Legacy variation estimate calculated from chart-bucket medians; it is not comparable to the current raw-reply calculation."
-            : undefined}
         />
       </div>
     </section>
-  {/if}
-
-  {#if record.schemaVersion === 1}
-    <p class="detail-section">
-      Legacy measurement: latency profiles and timeout percentages use the
-      earlier calculation.
-    </p>
   {/if}
 
   {#if probeTimeoutLanes.length}
@@ -401,7 +380,7 @@
               <strong>{lane.label}</strong>
               <small class="reply-count">{lane.counts.replies}</small>
               {#if lane.accountingComplete === false}
-                <small role="note" use:tooltip={probeAccountingHelp(lane)}
+                <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
                   >Partial accounting</small
                 >
               {/if}

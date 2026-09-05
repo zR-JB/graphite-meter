@@ -16,14 +16,13 @@ function record(
     down == null
       ? null
       : {
-          meanBytesPerSec: down,
           reportedBytesPerSec: down,
           peakBytesPerSec: down,
           fullAverageBytesPerSec: down,
           method: "full-average" as const,
           totalBytes: 1,
           stabilityPct: 0,
-          packetLossPct: 0,
+          probeTimeoutPct: 0,
           stabilityScore: 1,
           band: "high" as const,
           serverAuthoritative: false,
@@ -88,7 +87,7 @@ test("each history field sorts in its natural direction and keeps nulls last", (
       p50Ms: 2,
       p95Ms: 3,
       jitterMs: 1,
-      packetLossPct: 0,
+      probeTimeoutPct: 0,
       method: "full-average",
       stabilityScore: 1,
       band: "high",

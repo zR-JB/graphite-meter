@@ -55,12 +55,11 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   tone: LatencyProfileTone;
   jitter: number | null;
   timeoutRatio: number | null;
-  accountingComplete?: boolean | null;
-  accountingLegacy?: boolean;
-  timeoutCount?: number | null;
-  unresolvedCount?: number | null;
-  sendFailureCount?: number | null;
-  count?: number;
+  accountingComplete: boolean | null;
+  timeoutCount: number | null;
+  unresolvedCount: number | null;
+  sendFailureCount: number | null;
+  count: number;
   active?: boolean;
 }
 
@@ -173,7 +172,7 @@ export function hoverContext(
   return centerLabel(lane);
 }
 
-const PARTIAL_ACCOUNTING_HELP =
+export const PARTIAL_ACCOUNTING_HELP =
   "Worker shutdown could not account for all probes. Shown counts cover known outcomes only; additional outcomes are unknown.";
 
 export function probeAccountingDetails(
@@ -187,7 +186,7 @@ export function probeAccountingDetails(
   >,
 ): string {
   const counts = [
-    lane.count == null ? null : `${lane.count} resolved`,
+    `${lane.count} resolved`,
     lane.timeoutCount == null ? null : `${lane.timeoutCount} timeouts`,
     lane.unresolvedCount == null ? null : `${lane.unresolvedCount} unresolved`,
     lane.sendFailureCount == null
@@ -218,14 +217,6 @@ export function hasProbeAccountingNotice(
   );
 }
 
-export function probeAccountingHelp(
-  lane: Pick<LatencyProfileViewLane, "accountingLegacy">,
-): string {
-  return lane.accountingLegacy
-    ? "This saved result predates probe-accounting completeness metadata. Exact timeout counts and any missing outcomes are unknown."
-    : PARTIAL_ACCOUNTING_HELP;
-}
-
 /** Compact visible counts; complete accounting stays available to assistive technology. */
 export function probeAccountingSummary(
   lane: Pick<
@@ -234,16 +225,11 @@ export function probeAccountingSummary(
   >,
 ): { replies: string; exceptions: string[] } {
   const count = lane.count;
-  const replied =
-    count == null || lane.timeoutCount == null
-      ? null
-      : count - lane.timeoutCount;
+  const replied = lane.timeoutCount == null ? null : count - lane.timeoutCount;
   return {
     replies:
       replied == null
-        ? count == null
-          ? ""
-          : `${count} resolved`
+        ? `${count} resolved`
         : `${replied} ${replied === 1 ? "reply" : "replies"}`,
     exceptions: [
       (lane.timeoutCount ?? 0) > 0

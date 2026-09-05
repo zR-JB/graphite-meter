@@ -70,7 +70,7 @@ test("UI and history use the raw stage summary even when chart samples disagree"
     const completed = result();
     completed.latencyByStage.download = raw.snapshot();
     store.ingest({ type: "complete", result: completed });
-    expect(store.historyCandidate?.schemaVersion).toBe(2);
+    expect(store.historyCandidate?.schemaVersion).toBe(3);
     expect(store.historyCandidate?.stages.latency.lanes.download).toMatchObject(
       { min: 10, p90: 100, jitter: 90, count: 4, timeoutRatio: 0 },
     );

@@ -4,7 +4,7 @@
   import { fmtMs } from "../format";
   import {
     entries,
-    probeAccountingHelp,
+    PARTIAL_ACCOUNTING_HELP,
     probeAccountingDetails,
     hasProbeAccountingNotice,
     hoverContext,
@@ -28,7 +28,6 @@
     variant?: "bare" | "compact";
     showCurrent?: boolean;
     showTimeouts?: boolean;
-    jitterDescription?: string;
     label?: string;
   }
 
@@ -38,7 +37,6 @@
     variant = "bare",
     showCurrent = false,
     showTimeouts = false,
-    jitterDescription = JARGON.jitter,
     label = "Latency, jitter and probe timeouts by phase",
   }: Props = $props();
 
@@ -214,7 +212,7 @@
         <span class="lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
-            ? lane.accountingComplete === false || (lane.count ?? 0) > 0
+            ? lane.accountingComplete === false || lane.count > 0
               ? "unavailable"
               : "waiting"
             : lane.centerKind === "average"
@@ -222,7 +220,7 @@
               : `median ${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
-          <em class="jit" use:tooltip={jitterDescription}
+          <em class="jit" use:tooltip={JARGON.jitter}
             >{fmtMs(lane.jitter)} ms jitter</em
           >
         {/if}
@@ -239,7 +237,7 @@
             <span
               class="accounting-warning"
               role="note"
-              use:tooltip={probeAccountingHelp(lane)}>Partial accounting</span
+              use:tooltip={PARTIAL_ACCOUNTING_HELP}>Partial accounting</span
             >
           {/if}
           <span>{probeAccountingDetails(lane)}</span>
