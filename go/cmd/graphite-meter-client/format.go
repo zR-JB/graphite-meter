@@ -183,7 +183,7 @@ func rateLine(name string, rate, scale float64, w int) string {
 func latencyLine(s goclient.LatencySample, lostStreak int) string {
 	if s.RTT <= 0 {
 		if lostStreak > 0 {
-			return labelStyle.Render("latency ") + errorStyle.Render("timeout")
+			return labelStyle.Render("latency ") + errorStyle.Render("probe timeout")
 		}
 		return labelStyle.Render("latency ") + mutedStyle.Render("waiting")
 	}
@@ -194,9 +194,9 @@ func latencyLine(s goclient.LatencySample, lostStreak int) string {
 	line := labelStyle.Render("latency ") + valueStyle.Render(fmtMs(s.RTT)) + mutedStyle.Render(load)
 	switch {
 	case lostStreak >= 3:
-		line += errorStyle.Render("  timeout ×" + fmt.Sprint(lostStreak))
+		line += errorStyle.Render("  probe timeout ×" + fmt.Sprint(lostStreak))
 	case lostStreak > 0:
-		line += warnStyle.Render(fmt.Sprintf("  %d lost", lostStreak))
+		line += warnStyle.Render(fmt.Sprintf("  probe timeout ×%d", lostStreak))
 	}
 	return line
 }
@@ -263,4 +263,23 @@ func clamp(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+func latencyOutcomeSummary(s goclient.LatencyStats) string {
+	variation := "--"
+	if s.JitterPairs > 0 {
+		variation = fmt.Sprintf("%.2f ms", float64(s.Jitter)/float64(time.Millisecond))
+	}
+	timeouts := "-- (no resolved probes)"
+	if ratio, ok := s.TimeoutRatio(); ok {
+		timeouts = fmt.Sprintf("%.1f%% (%d/%d)", ratio*100, s.Timeouts, s.Count+s.Timeouts)
+	}
+	out := "RTT variation " + variation + "  probe timeouts " + timeouts
+	if s.Unresolved > 0 {
+		out += fmt.Sprintf("  unresolved %d", s.Unresolved)
+	}
+	if s.SendFailures > 0 {
+		out += fmt.Sprintf("  send failures %d", s.SendFailures)
+	}
+	return out
 }
