@@ -37,7 +37,7 @@ just setup
 | `go/internal/config`           | Server configuration and validation.                                         |
 | `go/internal/endpoint`         | Measurement, probe, upload progress, and WebTransport handlers.              |
 | `go/internal/server`           | Listener ownership, admission, TLS lifecycle, and routing.                   |
-| `go/internal/transport`        | HTTP, WebSocket, and WebTransport session adapters.                          |
+| `go/internal/transport`        | HTTP protocol evidence, message channels, and QUIC I/O cancellation.                          |
 | `go/internal/static`           | Embedded browser assets and index metadata injection.                        |
 | `container/`                   | OCI image, Compose examples, and Quadlet units.                              |
 | `legal/`                       | Reviewed dependency metadata and generated notices.                          |
@@ -47,6 +47,12 @@ just setup
 
 The server and both clients share routes and wire contracts but retain separate measurement
 engines. The protocol definitions in `api/` are the boundary between them.
+
+HTTP routes receive the request and response writer directly. WebSocket and WebTransport
+adapters own connection lifetime and supply message channels or byte readers/writers to shared
+measurement operations. Upload adapters pass the authenticated request or CONNECT owner explicitly;
+refused lanes are rejected before their bytes are read. The shared upload loop retains receiver-side
+chunk accounting, while each adapter owns deadlines, stream closure, and transport-specific responses.
 
 ### Authoritative accounting
 

@@ -1,14 +1,14 @@
 package endpoint
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // Upload sinks the client's streamed bytes for the upload measurement.
@@ -25,8 +25,6 @@ const uploadReadTimeout = 120 * time.Second
 func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upload {
 	return &Upload{meter: meter, store: store, trusted: optionalPrefixes(trusted)}
 }
-
-func (u *Upload) ID() string { return "upload" }
 
 const uploadBufSize = 256 * 1024
 
@@ -49,61 +47,42 @@ func (s discardSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Handle drains the upload source, counting bytes.
-func (u *Upload) Handle(s transport.Session) error {
-	w, _, isHTTP := s.HTTP()
-	// A server-minted ?id= joins this POST to its test's shared aggregate.
-	var agg *uploadAgg
-	if u.store != nil {
-		id := s.Query().Get("id")
-		if id != "" {
-			owner := sessionOwner(s, u.trusted)
-			a, access := u.store.getOrCreateFor(id, owner)
-			if access != uploadAccessOK {
-				if !isHTTP {
-					// A stream carries no status line, so the refusal is the return value.
-					return &uploadRefusalError{access: access}
-				}
-				writeUploadAccessError(w, access)
-				return nil
-			}
-			agg = a
-			agg.changePosts(1)
-			defer agg.changePosts(-1)
-		}
+// HandleHTTP owns HTTP deadlines, refusal status, and the final byte response.
+func (u *Upload) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+	deadline := time.Now().Add(uploadReadTimeout)
+	if requestDeadline, ok := r.Context().Deadline(); ok && requestDeadline.Before(deadline) {
+		deadline = requestDeadline
 	}
-
-	src, err := s.OpenUploadSource()
+	_ = http.NewResponseController(w).SetReadDeadline(deadline)
+	n, err := u.HandleUpload(r.Context(), r.URL.Query().Get("id"), ClientKey(r, u.trusted), r.Body)
 	if err != nil {
-		return err
-	}
-
-	if isHTTP {
-		deadline := time.Now().Add(uploadReadTimeout)
-		if requestDeadline, ok := s.Context().Deadline(); ok && requestDeadline.Before(deadline) {
-			deadline = requestDeadline
+		if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
+			writeUploadAccessError(w, refusal.access)
 		}
-		_ = http.NewResponseController(w).SetReadDeadline(deadline)
+		return nil // A failed body read means the client aborted its lane.
 	}
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)
+	return nil
+}
 
+// HandleUpload joins the owner's aggregate before reading, and records receiver-side chunks and timing.
+func (u *Upload) HandleUpload(_ context.Context, id, owner string, src io.Reader) (int64, error) {
+	var agg *uploadAgg
+	if u.store != nil && id != "" {
+		a, access := u.store.getOrCreateFor(id, owner)
+		if access != uploadAccessOK {
+			return 0, &uploadRefusalError{access: access}
+		}
+		agg = a
+		agg.changePosts(1)
+		defer agg.changePosts(-1)
+	}
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
-
 	u.meter.Open()
 	defer u.meter.Close()
-
-	n, copyErr := io.CopyBuffer(discardSink{meter: u.meter, agg: agg}, src, *bufp)
-	if copyErr != nil {
-		// The client aborted the stream, the common case here.
-		return nil
-	}
-
-	if isHTTP {
-		h := w.Header()
-		h.Set("Content-Type", "application/json")
-		h.Set("Cache-Control", "no-store")
-		// A body write failure means the client is gone and there is nowhere to report it.
-		_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)
-	}
-	return nil
+	return io.CopyBuffer(discardSink{meter: u.meter, agg: agg}, src, *bufp)
 }
