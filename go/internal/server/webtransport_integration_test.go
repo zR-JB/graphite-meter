@@ -21,6 +21,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -538,7 +539,7 @@ func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
 	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
 		// Dial and then send nothing.
-		dialWT(t, wtTransport, base+routeWTPing)
+		dialWT(t, wtTransport, base+route.WTPing)
 	})
 }
 
@@ -547,7 +548,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	s := newAuthenticatedStack(t)
 
 	foreign := http.Header{"Origin": {"https://attacker.example"}}
-	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
+	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
 	if err == nil {
 		_ = sess.CloseWithError(0, "")
 		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
@@ -560,7 +561,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	}
 
 	// The control: the same credential, the same wtTransport and the same header, and only the origin canonical.
-	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
+	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
 	if err != nil {
 		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
 	}

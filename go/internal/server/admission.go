@@ -9,6 +9,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 type requestAdmission struct {
@@ -27,11 +28,13 @@ func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int,
 }
 
 func isSessionRoute(path string) bool {
-	return path == routeWTDownload || path == routeWTUpload
+	spec, ok := route.Lookup(path)
+	return ok && spec.Admission == route.Session
 }
 
 func isChannelRoute(path string) bool {
-	return path == routePing || path == routeWTPing || isSessionRoute(path)
+	spec, ok := route.Lookup(path)
+	return ok && spec.Kind != route.HTTP
 }
 
 func (a *requestAdmission) lifetimeFor(path string) time.Duration {

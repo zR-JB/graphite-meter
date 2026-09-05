@@ -18,6 +18,7 @@ export class HistoryWriteQueue {
   #generation = "";
   #drain = Promise.resolve();
   #scheduled = false;
+  #disposed = false;
 
   constructor(
     private readonly write: HistoryWrite,
@@ -28,6 +29,7 @@ export class HistoryWriteQueue {
   ) {}
 
   enqueue(record: HistoryRecord): boolean {
+    if (this.#disposed) return false;
     const observedGeneration = currentHistoryGeneration();
     if (observedGeneration && observedGeneration !== this.#generation) {
       if (isRepairHistoryGeneration(observedGeneration))
@@ -43,6 +45,11 @@ export class HistoryWriteQueue {
     this.#pending.push({ record, generation: this.#generation });
     this.#schedule();
     return true;
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#pending = [];
   }
 
   clear(generation: string): void {
@@ -70,7 +77,7 @@ export class HistoryWriteQueue {
   }
 
   async #run(): Promise<void> {
-    while (this.#pending.length) {
+    while (!this.#disposed && this.#pending.length) {
       const pending = this.#pending[0];
       if (pending.generation !== this.#generation) {
         this.#pending.shift();
@@ -79,9 +86,10 @@ export class HistoryWriteQueue {
       try {
         await this.write(
           pending.record,
-          () => pending.generation === this.#generation,
+          () => !this.#disposed && pending.generation === this.#generation,
           pending.generation,
         );
+        if (this.#disposed) return;
         this.#pending.shift();
         if (pending.generation !== this.#generation) {
           await this.remove(pending.record.id).catch(() => undefined);
@@ -89,6 +97,7 @@ export class HistoryWriteQueue {
         }
         this.onSaved(pending.record);
       } catch (error) {
+        if (this.#disposed) return;
         if (error instanceof StaleHistoryGenerationError) {
           if (pending.generation !== this.#generation) continue;
           const observedGeneration = currentHistoryGeneration();
