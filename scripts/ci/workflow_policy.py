@@ -17,11 +17,10 @@ import subprocess
 import sys
 from typing import NoReturn
 
+from toolchains import check as check_toolchain_literals, pin, skopeo_version
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXPECTED_SKOPEO_IMAGE = (
-    "quay.io/containers/skopeo:v1.22.2-immutable@"
-    "sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad"
-)
+
 USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(\S+)\s*(?:#.*)?$")
 LOCAL_ACTION = re.compile(r"^\./[A-Za-z0-9_./-]+$")
 PINNED_ACTION = re.compile(
@@ -94,7 +93,7 @@ def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
             fail(f"{name} must execute Skopeo through the exact \"$SKOPEO_IMAGE\" runtime")
         if not re.search(
             r"(?m)^    env:\n"
-            r"      SKOPEO_IMAGE: " + re.escape(EXPECTED_SKOPEO_IMAGE) + r"$",
+            r"      SKOPEO_IMAGE: " + re.escape(pin("images.skopeo", root)) + r"$",
             text,
         ):
             fail(
@@ -201,12 +200,12 @@ def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
             if line.lstrip().startswith("SKOPEO_IMAGE:")
         ]
         verifier = name in ("ci.yml", "release.yml", "prerelease-publish.yml")
-        expected_images = [EXPECTED_SKOPEO_IMAGE]
+        expected_images = [pin("images.skopeo", root)]
         if verifier:
             expected_images.append("${{ env.SKOPEO_IMAGE }}")
         if images != expected_images:
             fail(f"{name} has a non-exact SKOPEO_IMAGE assignment")
-        if verifier and "SKOPEO_VERSION: 1.22.2" not in text:
+        if verifier and ("SKOPEO_VERSION: " + skopeo_version(root)) not in text:
             fail(f"{name} is missing the exact SKOPEO_VERSION declaration")
         if not verifier and "SKOPEO_VERSION" in text:
             fail(f"{name} must not declare SKOPEO_VERSION")
@@ -576,16 +575,45 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
         fail(".githooks/pre-commit must remain executable")
 
 
+def check_toolchain_consumers(root: pathlib.Path = ROOT) -> None:
+    """Runtime setup consumes native selectors, never another literal version."""
+    selectors = {
+        "go-version-file": "go/go.mod",
+        "bun-version-file": ".bun-version",
+        "python-version-file": ".python-version",
+    }
+    for path in workflow_files(root):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"(?m)(?:^|[\s{])(?:go-version|bun-version|python-version):", text):
+            fail(f"{path.relative_to(root)} must use native toolchain version files")
+        for field, value in re.findall(r"(?m)^\s*(go-version-file|bun-version-file|python-version-file): (.+)$", text):
+            if value != selectors[field]:
+                fail(f"{path.relative_to(root)} must read {field} from {selectors[field]}")
+    setup = (root / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
+    for declaration in (
+        "just=$(python3 scripts/ci/toolchains.py get tools.just)",
+        "just-version: ${{ steps.versions.outputs.just }}",
+        "python-version-file: .python-version",
+        "go-version-file: go/go.mod",
+        "bun-version-file: .bun-version",
+    ):
+        if declaration not in setup:
+            fail(f"setup-project must consume the toolchain owner: {declaration}")
+
+
 def check_browser_ci(root: pathlib.Path = ROOT) -> None:
     """Keep browser identity and process cleanup explicit; suites verify the harness itself."""
     ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (\S+)$", ci)
+    expected = "${{ steps.toolchain.outputs.chrome-version }}"
+    versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (.+)$", ci)
+    setup = (root / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
     if (
-        len(versions) != 4
-        or len(set(versions)) != 1
-        or not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", versions[0])
+        versions != [expected] * 4
+        or ci.count("      - id: toolchain\n") != 2
+        or "chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)" not in setup
+        or "value: ${{ steps.versions.outputs.chrome }}" not in setup
     ):
-        fail("both browser jobs must install and verify the same pinned Chromium version")
+        fail("both browser jobs must install and verify the manifest-pinned Chromium version")
     if ci.count("run: cd client && bun run check:webview") != 2:
         fail("each browser job must perform the runtime launch preflight")
     scripts = json.loads((root / "client/package.json").read_text(encoding="utf-8"))["scripts"]
@@ -627,6 +655,11 @@ def check_certificates(root: pathlib.Path = ROOT) -> None:
 
 
 def check_repository(root: pathlib.Path = ROOT) -> None:
+    try:
+        check_toolchain_literals(root)
+    except (ValueError, OSError) as exc:
+        fail(str(exc))
+    check_toolchain_consumers(root)
     check_external_action_shas(root)
     check_privileged_workflows(root)
     check_skopeo_contract_consistency(root)
