@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 // Preflight is the discovery document a server serves at /preflight: who it is and which measurement targets it offers.
@@ -77,15 +79,15 @@ type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 // DefaultThroughputRoutes returns the paths a discovered target serves.
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
-		Probe: "/probe", Download: "/download", Upload: "/upload",
-		UploadSession: "/upload/session", UploadProgress: "/upload/progress",
-		WTSession: "/wt/session", WTDownload: "/wt/download", WTUpload: "/wt/upload",
+		Probe: route.Probe, Download: route.Download, Upload: route.Upload,
+		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress,
+		WTSession: route.WTSession, WTDownload: route.WTDownload, WTUpload: route.WTUpload,
 	}
 }
 
 // DefaultLatencyRoutes returns the latency-target counterpart of DefaultThroughputRoutes, pinned the same way.
 func DefaultLatencyRoutes() LatencyRoutes {
-	return LatencyRoutes{Probe: "/probe", Ping: "/ws/ping", WTSession: "/wt/session", WTPing: "/wt/ping"}
+	return LatencyRoutes{Probe: route.Probe, Ping: route.Ping, WTSession: route.WTSession, WTPing: route.WTPing}
 }
 
 // UnmarshalJSON reads the wire shape and derives the client-side fields.

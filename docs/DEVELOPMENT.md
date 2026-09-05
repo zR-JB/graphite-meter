@@ -127,6 +127,8 @@ HTTP handlers own request and response behavior. WebSocket and WebTransport adap
 connection lifetimes and cancellation, while sharing focused message, download, and upload
 operations. Upload ownership is passed explicitly from the authenticated request or CONNECT.
 Separate native listeners make HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
+The fixed route catalog supplies transport, admission, and authenticated CORS-method metadata.
+Listener setup selects concrete handlers and protocol gates; admission wraps the registered routes.
 
 Admission limits bound active handlers, sessions, and connections. WebTransport sessions consume
 part of the global measurement pool rather than extending it. The server intentionally does not

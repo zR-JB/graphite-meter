@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
 
@@ -96,18 +97,6 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 }
 
 func allowedCORSMethod(path, method string) bool {
-	switch path {
-	case "/preflight", "/probe", "/download":
-		return method == http.MethodGet
-	case "/upload/session", "/upload", "/wt/session":
-		return method == http.MethodPost
-	case "/upload/progress":
-		return method == http.MethodGet || method == http.MethodDelete
-	case "/ws/ping":
-		return method == http.MethodGet
-	// Session establishment is extended CONNECT; a browser never preflights it.
-	case "/wt/download", "/wt/upload", "/wt/ping":
-		return method == http.MethodConnect
-	}
-	return false
+	spec, ok := route.Lookup(path)
+	return ok && spec.AllowsCORSMethod(method)
 }

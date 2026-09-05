@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
@@ -387,5 +388,59 @@ func TestRunServicesReturnsAndStopsOnListenerError(t *testing.T) {
 	}
 	if !survivorStopped {
 		t.Fatal("a listener failure did not shut the surviving service down")
+	}
+}
+
+func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
+	e := testEndpoints(t)
+	e.admission = newRequestAdmission(1, 2, 1, 2, time.Minute, time.Hour)
+	release, status := e.admission.acquire("occupied", "")
+	if status != 0 {
+		t.Fatalf("occupy slot: %d", status)
+	}
+	defer release()
+	h := listenerMuxConfigured(t.Context(), e, muxTopology{discovery: true, latency: true, transfers: true, wt: &webtransport.Server{}}, nil, nil)
+	for _, path := range []string{"/download", "/upload", "/upload/progress", "/ws/ping", "/wt/download", "/wt/upload", "/wt/ping"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" {
+			t.Errorf("saturated %s = %d, want admission refusal", path, w.Code)
+		}
+	}
+	for method, paths := range map[string][]string{
+		http.MethodGet:     {"/preflight", "/probe"},
+		http.MethodPost:    {"/upload/session", "/wt/session"},
+		http.MethodOptions: {"/download", "/upload", "/upload/progress"},
+	} {
+		for _, path := range paths {
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			want := http.StatusOK
+			if method == http.MethodOptions {
+				want = http.StatusNoContent
+			}
+			if w.Code != want {
+				t.Errorf("unmetered %s %s = %d, want %d", method, path, w.Code, want)
+			}
+		}
+	}
+	bootstrap := listenerMuxConfigured(t.Context(), e, muxTopology{bootstrap: true}, nil, nil)
+	for _, path := range []string{"/download", "/ws/ping", "/wt/upload"} {
+		w := httptest.NewRecorder()
+		bootstrap.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusNotFound {
+			t.Errorf("unmounted %s = %d, want 404", path, w.Code)
+		}
+	}
+}
+
+func TestRouteMetadataPreservesPublicHEADHandling(t *testing.T) {
+	h := listenerMuxConfigured(t.Context(), testEndpoints(t), muxTopology{discovery: true, transfers: true}, nil, nil)
+	for _, path := range []string{"/preflight", "/probe", "/download?bytes=0"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodHead, path, nil))
+		if w.Code != http.StatusOK {
+			t.Errorf("HEAD %s = %d, want 200", path, w.Code)
+		}
 	}
 }
