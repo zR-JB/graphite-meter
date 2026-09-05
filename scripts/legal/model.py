@@ -126,9 +126,9 @@ class Review:
     upstream: str = ''
     declaredLicenseExpression: str = ''
     selectedLicenseExpression: str = ''
-    legalFiles: list[LegalFile] = field(default_factory=list)
+    legalFiles: list[LegalFile] = field(default_factory=list[LegalFile])
     modified: bool = False
-    artifactScopes: list[str] = field(default_factory=list)
+    artifactScopes: list[str] = field(default_factory=list[str])
     reviewDecision: str = ''
     reviewNotes: str = ''
 
@@ -168,10 +168,10 @@ class Provenance:
     modified: bool = False
     modificationNote: str = ''
     modificationDate: str = ''
-    artifactScopes: list[str] = field(default_factory=list)
-    localPaths: list[str] = field(default_factory=list)
-    localArtifacts: list[LocalArtifact] = field(default_factory=list)
-    localLegalFiles: list[LegalFile] = field(default_factory=list)
+    artifactScopes: list[str] = field(default_factory=list[str])
+    localPaths: list[str] = field(default_factory=list[str])
+    localArtifacts: list[LocalArtifact] = field(default_factory=list[LocalArtifact])
+    localLegalFiles: list[LegalFile] = field(default_factory=list[LegalFile])
     correspondingSource: str = ''
     reviewNotes: str = ''
 
@@ -207,8 +207,8 @@ class Component:
     declaredLicenseExpression: str = ''
     selectedLicenseExpression: str = ''
     modified: bool = False
-    legalTexts: list[LegalFile] = field(default_factory=list)
-    notices: list[LegalFile] = field(default_factory=list)
+    legalTexts: list[LegalFile] = field(default_factory=list[LegalFile])
+    notices: list[LegalFile] = field(default_factory=list[LegalFile])
     source_path: Path | None = None
 
     def json(self) -> dict[str, Json]:

@@ -4,7 +4,6 @@ workflow: &workflow
   - '.github/ci-paths.yml'
   - '.githooks/**'
   - 'scripts/**'
-  - 'mypy.ini'
   - 'justfile'
   - '.bun-version'
   - '.just-version'

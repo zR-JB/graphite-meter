@@ -2,7 +2,7 @@ name: Setup Graphite Meter project
 description: Set up the pinned project toolchain and optional dependencies
 inputs:
   python:
-    description: Prepare hash-pinned Python type-checking tools
+    description: Prepare the version-pinned standalone Python type checker
     required: false
     default: 'false'
   go:

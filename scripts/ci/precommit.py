@@ -26,7 +26,7 @@ TLS_NAME = re.compile(
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 MAX_STAGED_BYTES = 1024 * 1024
-FULL_GATE_FILES = {"justfile", ".bun-version", ".just-version", ".python-version", "mypy.ini", "scripts/requirements-dev.in", "scripts/requirements-dev.txt"}
+FULL_GATE_FILES = {"justfile", ".bun-version", ".just-version", ".python-version"}
 PIPELINE_PREFIXES = (".github/", ".githooks/", "scripts/")
 LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/")
 LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/package-tui.sh", "scripts/tui-targets.txt"}
@@ -78,8 +78,6 @@ def command(
 
 def git_bytes(root: Path, *args: str) -> bytes:
     result = command(("git", *args), cwd=root, capture=True)
-    if result.stdout is None:
-        fail(f"git {' '.join(args)} produced no captured stdout")
     return result.stdout
 
 
@@ -114,7 +112,7 @@ def repository_root() -> Path:
         stderr=subprocess.PIPE,
         check=False,
     )
-    if result.returncode != 0 or result.stdout is None:
+    if result.returncode != 0:
         fail("pre-commit must run inside a Git worktree")
     return Path(result.stdout.decode("utf-8", errors="strict").strip()).resolve()
 

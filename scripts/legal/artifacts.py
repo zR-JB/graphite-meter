@@ -41,7 +41,7 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
         files[base + '/inventory.json'] = marshal({'schemaVersion': 1, 'scope': name, 'components': [item.json() for item in components]})
         files[base + '/THIRD_PARTY_NOTICES.txt'] = notices(components).encode()
         files[base + '/SOURCE.txt'] = (source_url + '\n').encode()
-    about_components = []
+    about_components: list[dict[str, Json]] = []
     for component in scopes['server/browser']:
         value = component.json()
         del value['legalTexts'], value['notices']
@@ -63,7 +63,7 @@ def render(repo: Path, project: Project, version: str, scopes: dict[str, list[Co
 def review_template(scopes: dict[str, list[Component]]) -> bytes:
     seen = {(item.ecosystem, item.name): item for items in scopes.values() for item in items}
     # The legacy template used maps rather than records, hence sorted keys.
-    result = []
+    result: list[dict[str, Json]] = []
     for component in sorted(seen.values(), key=component_key):
         value: dict[str, Json] = {
             'ecosystem': component.ecosystem, 'name': component.name, 'reviewedVersion': component.version,

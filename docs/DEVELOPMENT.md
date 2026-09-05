@@ -274,10 +274,10 @@ ordinary documentation or feature work.
 
 ### Python build tooling
 
-Use Python 3.14 (including its `venv`/pip support) for repository tooling.
+Use Python 3.14 for repository tooling; no pip or Python packages are required.
 `.python-version` selects the minor release locally and in CI; patch updates float.
-`just setup` prepares the hash-pinned mypy environment. `just python-check`
-checks all scripts and their tests with strict typing; `just pipeline-test`
+`just setup` prepares the version-pinned standalone `ty` binary. `just python-check`
+checks all scripts and their tests; `just pipeline-test`
 combines that check with control-plane and legal regression tests. Legal review,
 inventory rendering and source archives run in Python. Only dependency closure
 discovery invokes Go metadata commands and the Vite build; no legal helper is

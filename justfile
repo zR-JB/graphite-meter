@@ -47,6 +47,8 @@ gitleaks_image := "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16
 # Staticcheck 2026.2 is the first release line with Go 1.27 support.
 staticcheck_version := "2026.2.1"
 govulncheck_version := "v1.7.0"
+ty_version := "0.0.78"
+ty_binary := tools_dir / ("ty-" + ty_version) / if os() == "windows" { "ty.exe" } else { "ty" }
 
 # Set OS-specific path for the Go build cache to remain fully cross-platform
 GOCACHE := env("GOCACHE", if os() == "windows" { env("TEMP") / "graphite-meter-go-build" } else { "/tmp/graphite-meter-go-build" })
@@ -158,15 +160,20 @@ _install-tools staticcheck="true" govulncheck="true" gitleaks="true":
 workflow-check:
     python3 scripts/ci/workflow_policy.py
 
-# Prepare hash-pinned Python type-checking tools; runtime scripts use the standard library.
+# Install the version-pinned standalone Python type checker; no package manager needed.
 [group('setup')]
 python-setup:
-    python3 scripts/python_tools.py setup
+    #!/usr/bin/env sh
+    set -eu
+    if [ ! -x "{{ ty_binary }}" ]; then
+        curl -fsSL "https://github.com/astral-sh/ty/releases/download/{{ ty_version }}/ty-installer.sh" | TY_UNMANAGED_INSTALL="$PWD/{{ tools_dir }}/ty-{{ ty_version }}" sh
+    fi
+    "{{ ty_binary }}" --version
 
-# Check every Python tool and test with strict static typing.
+# Check every Python tool and test; fail on warnings as well as type errors.
 [group('check')]
 python-check:
-    python3 scripts/python_tools.py check
+    "{{ ty_binary }}" check scripts --python-version $(cat .python-version) --extra-search-path scripts/ci --error-on-warning
 
 # Run release/prerelease control-plane regressions.
 [group('check')]

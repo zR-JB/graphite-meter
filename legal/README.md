@@ -15,8 +15,8 @@ therefore requires changing its dependency discovery adapter, while the review
 and artifact logic stays in Python. The Go runtime package only embeds the
 generated TUI legal report.
 
-All Python tooling and tests pass strict static checking through `just
-python-check`. `just setup` prepares the hash-pinned development checker; the
+All Python tooling and tests are checked with the standalone `ty` binary through
+`just python-check`. `just setup` prepares the version-pinned checker; the
 legal commands themselves need only Python 3.14 and the relevant dependency
 discovery tools. They perform no package installation or online license lookup.
 

@@ -77,7 +77,6 @@ from workflow_policy import (
     check_browser_ci,
     check_privileged_workflows,
     check_runner_labels,
-    check_setup_project_cache_boundary,
     check_skopeo_contract_consistency,
     check_prerelease_request_workflow,
     check_release_request_workflow,
@@ -1397,19 +1396,18 @@ class PythonTypeGateTests(unittest.TestCase):
     def test_python_gate_rejects_a_type_error_and_accepts_its_correction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            (root / "scripts").mkdir()
-            for name in ("scripts/python_tools.py", "scripts/requirements-dev.txt", "mypy.ini"):
+            (root / "scripts/ci").mkdir(parents=True)
+            for name in ("justfile", ".python-version", ".gitleaks-version"):
                 shutil.copy2(ROOT / name, root / name)
-            # Reuse the exact prepared tools, as the staged hook does. No network
-            # or package installation is involved in running the type gate.
+            # Run the actual offline recipe with the prepared standalone checker.
             (root / ".tools").symlink_to(ROOT / ".tools", target_is_directory=True)
             probe = root / "scripts/type_error_probe.py"
-            command = [sys.executable, str(root / "scripts/python_tools.py"), "check"]
+            command = ["just", "python-check"]
             probe.write_text('def answer() -> int:\n    return "wrong"\n')
             result = subprocess.run(command, cwd=root, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("type_error_probe.py", result.stdout)
-            self.assertIn("return-value", result.stdout)
+            self.assertIn("type_error_probe.py", result.stdout + result.stderr)
+            self.assertIn("invalid-return-type", result.stdout + result.stderr)
             probe.write_text('def answer() -> int:\n    return 42\n')
             result = subprocess.run(command, cwd=root, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

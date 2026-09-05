@@ -24,7 +24,7 @@ them. The control plane intentionally has no Pydantic or other PyPI runtime
 dependency.
 
 Python uses only the standard library; tests also execute Bash and jq to exercise the actual
-privileged workflow logic. `pipeline-test` strictly type-checks the Python modules and exercises trust decisions,
+privileged workflow logic. `pipeline-test` type-checks the Python modules and exercises trust decisions,
 artifact verification, and staged-hook isolation through their callable boundaries.
 
 ## Trust boundaries
@@ -174,8 +174,8 @@ Other checked invariants include:
 - exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
-`just pipeline-test` strictly type-checks all repository Python tooling with the
-hash-pinned mypy environment, then runs the control-plane and legal
+`just pipeline-test` type-checks all repository Python tooling with the
+version-pinned standalone `ty` binary, then runs the control-plane and legal
 positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
 Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
 The suite does not duplicate implementation bodies as required source strings. The Git hook is only a two-line launcher
@@ -214,18 +214,17 @@ action definition.
 
 ## Python development gate
 
-`just python-setup` installs the checker and its hash-locked dependencies from
-`scripts/requirements-dev.txt` into `.tools/python`. It is part of `just setup`
-and the CI jobs that run Python tests. Runtime CI/legal scripts remain
-standard-library-only and require Python 3.14 (selected by `.python-version`).
+`just python-setup` installs the version-pinned standalone `ty` binary under
+`.tools`. It is part of `just setup` and the CI jobs that run Python tests.
+The scripts use Python 3.14 from `.python-version` and the standard library only:
+there are no Python package dependencies, pip installs, or virtual environments.
 
-`just python-check` checks every Python file under `scripts` with `mypy.ini`
-strict mode, including tests. It is an offline prerequisite of `just
-pipeline-test` and the normal `just check` gate. Staged hooks prepare tools from
-the staged requirements before checking the staged scripts. An executable gate
-regression verifies that an incorrect annotated return value fails and its
-correction passes. Python syntax compilation alone is not a type check.
+`just python-check` checks all scripts and tests and fails on warnings or type
+errors. It runs offline as part of `just pipeline-test` and `just check`; the
+staged hook uses the same checker against the staged scripts. A regression
+runs the actual recipe with an incorrect annotated return value, then verifies
+that its correction passes. `ty` validates types but does not require every
+function to have annotations; keep the tooling explicitly annotated in review.
 
-To update the checker, change `scripts/requirements-dev.in`, regenerate the
-hash lock using the command recorded at the top of `requirements-dev.txt`, and
-run `just python-setup` followed by `just pipeline-test`.
+Update `ty_version` in `justfile` and rerun `just python-setup` to update the
+checker. Python tooling does not use the client's Bun dependencies.

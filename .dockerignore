@@ -35,6 +35,3 @@ go/internal/static/dist
 **/*.pkcs8
 **/*.jks
 **/*.keystore
-
-# Python static checker cache
-.mypy_cache/
