@@ -174,7 +174,11 @@ test("wire snapshots are independent of their display preference", async () => {
     loopback.latency!.probe.clientIp = "127.0.0.1";
     store.activePaths = loopback;
     store.ingest({ type: "complete", result: result() });
-    expect(store.historyCandidate?.wireEstimates).toBeNull();
+    expect(
+      store.historyCandidate?.wireEstimates?.downloadBytesPerSec,
+    ).toBeGreaterThan(throughput.meanBytesPerSec);
+    expect(store.historyCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
+    expect(JSON.stringify(store.historyCandidate)).not.toContain("127.0.0.1");
   } finally {
     store.reset();
     store.resultHistoryPreference = previousPreference;

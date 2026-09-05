@@ -145,12 +145,12 @@
             hasValue &&
             status === "complete" &&
             compensation &&
-            (!compensation.available || compensation.totalMultiplier >= 1.005)
+            compensation.totalMultiplier >= 1.005
               ? {
                   tooltip: compensationTooltip(compensation),
-                  num: compensation.available
-                    ? fmtSpeed(store.toUnit(compensation.estimatedBytesPerSec))
-                    : null,
+                  num: fmtSpeed(
+                    store.toUnit(compensation.estimatedBytesPerSec),
+                  ),
                   pct: `+${((compensation.totalMultiplier - 1) * 100).toFixed(1)}%`,
                 }
               : null;
@@ -197,14 +197,10 @@
       {/if}
       {#if c.wire}
         <div class="est">
-          {#if c.wire.num !== null}
-            <span class="est-num">{c.wire.num}</span>
-            <span class="est-tag" use:tooltip={c.wire.tooltip}
-              >wire {c.wire.pct}</span
-            >
-          {:else}
-            <span class="est-tag" use:tooltip={c.wire.tooltip}>wire n/a</span>
-          {/if}
+          <span class="est-num">{c.wire.num}</span>
+          <span class="est-tag" use:tooltip={c.wire.tooltip}
+            >wire {c.wire.pct}</span
+          >
         </div>
       {/if}
     </div>
