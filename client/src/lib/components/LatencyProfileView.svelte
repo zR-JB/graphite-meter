@@ -188,27 +188,12 @@
   role="group"
   aria-label={label}
 >
-  <div class="ticks" aria-hidden="true">
-    {#each ticks as tick, index (index)}
-      <span style={`left:${pos(tick, scale)}%`}>{tickLabel(tick)} ms</span>
-    {/each}
-  </div>
   {#each lanes as lane (lane.key)}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
-        {#if lane.reflectorTiming}
-          <span
-            class="lane-icon timing-info"
-            role="img"
-            aria-label={`${lane.label}: server timing, ${lane.reflectorTiming.sampleCount} paired replies`}
-            use:tooltip={reflectorTimingDescription(lane.reflectorTiming)}
-            >{@html ICON.info}</span
-          >
-        {:else}
-          <span class="lane-icon" aria-hidden="true"
-            >{@html laneIcons[lane.key]}</span
-          >
-        {/if}
+        <span class="lane-icon" aria-hidden="true"
+          >{@html laneIcons[lane.key]}</span
+        >
         <span class="lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
@@ -219,6 +204,15 @@
               ? `mean ${fmtMs(lane.center)} ms`
               : `median ${fmtMs(lane.center)} ms`}</strong
         >
+        {#if lane.reflectorTiming}
+          <span
+            class="timing-info"
+            role="img"
+            aria-label={`${lane.label}: server timing`}
+            use:tooltip={reflectorTimingDescription(lane.reflectorTiming)}
+            >{@html ICON.info}</span
+          >
+        {/if}
         {#if lane.jitter != null}
           <em class="jit" use:tooltip={JARGON.jitter}
             >{fmtMs(lane.jitter)} ms jitter</em
@@ -244,6 +238,13 @@
         </p>
       {/if}
       <div class="strip">
+        <div class="ticks" aria-hidden="true">
+          {#each ticks as tick, index (index)}
+            <span style={`left:${pos(tick, scale)}%`}
+              >{tickLabel(tick)}{index === 2 ? " ms" : ""}</span
+            >
+          {/each}
+        </div>
         <button
           type="button"
           class="track"
@@ -337,7 +338,14 @@
 
 <style>
   .timing-info {
+    display: inline-flex;
+    flex: none;
+    color: var(--text-muted);
     cursor: help;
+  }
+  .timing-info :global(svg) {
+    width: 12px;
+    height: 12px;
   }
   .timing-info:focus-visible {
     outline: var(--focus-ring);
@@ -371,6 +379,14 @@
     border-radius: var(--r-well);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
+  }
+  @media (max-height: 800px) {
+    .lanes[data-variant="bare"] {
+      gap: var(--space-1);
+    }
+    .lanes[data-variant="bare"] .lane {
+      padding-block: var(--space-1);
+    }
   }
   .lane[data-tone="download"] {
     --tone: var(--phase-download);
@@ -449,7 +465,7 @@
   .ticks {
     position: relative;
     height: 13px;
-    margin: 0 calc(var(--space-3) + 1px);
+    margin: 0 1px;
   }
   .ticks span {
     position: absolute;
@@ -595,7 +611,7 @@
   .hover-card {
     position: absolute;
     z-index: 10;
-    top: 50%;
+    top: calc(50% - 12px);
     display: grid;
     gap: var(--space-1);
     min-width: 156px;
@@ -604,7 +620,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: var(--shadow-float);
+    box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
     pointer-events: none;
     transform: translateY(-50%);
   }

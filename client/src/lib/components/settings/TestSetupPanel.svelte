@@ -178,8 +178,7 @@
       </span>
     </div>
     <p class="intro">
-      Throughput carries downloads, uploads, and upload progress. Latency uses
-      its own independently selected path.
+      Choose separate paths for speed and latency measurements.
     </p>
     <ConnectionPicker
       role="throughput"
@@ -287,9 +286,7 @@
         </div>
       </div>
     </div>
-    <p class="hint">
-      Applies to every displayed rate; measurement values are unchanged.
-    </p>
+    <p class="hint">Applies to all displayed rates.</p>
   </section>
 
   <section class="panel wide">
@@ -343,9 +340,12 @@
       </label>
     {/if}
     <p class="hint">
-      The chart keeps this exact ceiling; the gauge rounds to a readable scale.
-      Automatic chart scaling follows the measured peak, while the gauge starts
-      at 1 Gbit/s and grows by decimal decades.
+      {#if vizAuto}
+        The chart follows the measured peak. The gauge starts at 1 Gbit/s and
+        grows in powers of ten.
+      {:else}
+        Sets the chart ceiling; the gauge rounds up to a readable scale.
+      {/if}
     </p>
   </section>
 
@@ -358,10 +358,6 @@
       onToggle={setAdaptiveEnabled}
       label="Finish stable stages early"
     />
-    <p class="hint">
-      Stability is estimated from the measured samples; a stage ends early when
-      it is stable enough.
-    </p>
   </section>
 
   <section class="panel">
@@ -422,7 +418,7 @@
       onToggle={setForcedStreams}
       disabled={running}
       label="Force exact stream count"
-      tooltip="Automatic caps HTTP/1.1 at the configured maximum while choosing protocol-safe concurrency for HTTP/2 and HTTP/3. Forced starts the exact count per active direction."
+      tooltip="Automatic chooses concurrency for the protocol, capped by your maximum on HTTP/1.1. Forced uses the exact count per direction."
     />
     <label>
       <span

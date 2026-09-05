@@ -27,7 +27,7 @@ function ensureStyles() {
       border-radius: var(--r-chrome);
       background: var(--surface-2);
       color: var(--text);
-      box-shadow: var(--shadow-float);
+      box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
       font-family: var(--font-sans);
       font-size: var(--type-sm);
       line-height: 1.4;
@@ -240,28 +240,23 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
 }
 export const JARGON = {
   bufferbloat:
-    "Added latency under load: the largest measured stage median increase over idle. The grade summarizes that application round-trip delay; it includes browser, server, and network scheduling.",
+    "Largest stage median RTT increase over idle. Includes browser, server and network delay.",
   jitter:
-    "RTT variation: the average absolute difference between consecutive successful replies in the same measurement segment. Lower is steadier. Timeouts carry no RTT.",
-  p95: "P95: 95% of your pings were at or below this value. It captures the occasional slow spike rather than the typical case.",
-  p50: "P50 (median): half your pings were faster than this, half slower — the typical ping.",
-  p10: "P10: 10% of pings were at or below this — your best, quietest moments.",
-  p90: "P90: 90% of pings were at or below this — captures the slower spikes.",
+    "RTT variation: average absolute change between consecutive successful replies in one segment. Lower is steadier; timeouts are excluded.",
+  p95: "95% of successful replies had an RTT at or below this value.",
+  p50: "Median RTT: half of successful replies were faster, half slower.",
+  p10: "10% of successful replies had an RTT at or below this value.",
+  p90: "90% of successful replies had an RTT at or below this value.",
   probeTimeouts:
-    "Probe timeouts: the share of resolved application probes whose reply deadline expired. This does not identify physical or directional IP packet loss. Interrupted probes and locally rejected sends are excluded.",
+    "Timed-out replies as a share of resolved probes, not IP packet loss. Interrupted probes and failed sends are excluded.",
   wireRate:
-    "Estimated forward-path physical-link occupancy for measured application bytes.",
-  stability:
-    "Stability: how steady the speed held during the test. Higher means a flat, consistent line; lower means it fluctuated.",
-  ping: "Ping: the round-trip time for a small message to reach the server and come back. Lower feels snappier.",
+    "Estimated physical-link rate, including forward-path protocol overhead.",
+  stability: "How steady the measured speed was. Higher means less variation.",
+  ping: "Round-trip time to the server and back. Lower is faster.",
   overheadCompensation:
-    "Wire estimation adds only forward-path protocol bytes: Ethernet, IP, transport, TLS/QUIC, and HTTP framing. It uses negotiated protocol and authoritative preflight IP evidence, with conservative defaults when either is unavailable. It never guesses from stability, loss, browser cost, or ramp-up.",
-  unitBits:
-    "Bits per second — Mbit/s, Gbit/s. How internet plans are sold, so this is what you compare against your contract.",
-  unitBytes:
-    "Bytes per second — MB/s, GB/s. How download managers report speed. One byte is eight bits, so these numbers are 8× smaller.",
-  unitDecimal:
-    "SI prefixes, 1000 per step — kbit/s, Mbit/s, Gbit/s. The convention for network rates.",
-  unitBinary:
-    "IEC prefixes, 1024 per step — Kibit/s, Mibit/s, Gibit/s. The convention for memory and file sizes; the same speed reads about 2.4% lower per step than decimal.",
+    "Adds forward-path framing and protocol headers using detected transport and IP, or conservative defaults.",
+  unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
+  unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
+  unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",
+  unitBinary: "Binary prefixes: 1,024 per step (Kibit/s, Mibit/s, Gibit/s).",
 } as const;

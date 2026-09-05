@@ -173,7 +173,7 @@ export function hoverContext(
 }
 
 export const PARTIAL_ACCOUNTING_HELP =
-  "Worker shutdown could not account for all probes. Shown counts cover known outcomes only; additional outcomes are unknown.";
+  "Some probe outcomes are unknown. Counts cover known outcomes only.";
 
 export function probeAccountingDetails(
   lane: Pick<
@@ -249,8 +249,5 @@ export function reflectorTimingDescription(
   timing: ReflectorTimingSummary,
 ): string {
   return `Server timing · ${timing.sampleCount} paired replies
-Mean raw RTT: ${fmtMs(timing.meanRawRttMs)} ms
-Mean server handling: ${fmtMs(timing.meanHandlingMs)} ms
-Mean adjusted RTT: ${fmtMs(timing.meanAdjustedRttMs)} ms
-Only server handling is subtracted.`;
+Mean RTT: ${fmtMs(timing.meanRawRttMs)} ms raw − ${fmtMs(timing.meanHandlingMs)} ms server handling = ${fmtMs(timing.meanAdjustedRttMs)} ms adjusted.`;
 }

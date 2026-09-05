@@ -18,7 +18,7 @@ test("latency artwork retargets finite transforms and settles without widening f
   page,
 }) => {
   const profile = await completedProfile(page);
-  await expect(profile.locator(".current-marker")).toHaveCount(0);
+  await expect(profile.locator(".current-marker")).toHaveCount(1);
   const flat = await profile.evaluate((node) => ({
     rangeWidth: node.querySelector(".range")!.getBoundingClientRect().width,
     capWidths: [...node.querySelectorAll(".range-cap")].map(
@@ -87,6 +87,12 @@ test("latency artwork retargets finite transforms and settles without widening f
   await expect(profile.locator(".hover-card")).toContainText("16.0");
   await expect(profile.locator(".guide")).toBeVisible();
   await expect(profile.locator(".pin")).toHaveCount(0);
+  await expect(profile.locator(".current-marker")).toHaveCount(1);
+  const hoverBox = await profile.locator(".hover-card").boundingBox();
+  const trackBox = await track.boundingBox();
+  expect(hoverBox!.y + hoverBox!.height / 2).toBeLessThan(
+    trackBox!.y + trackBox!.height / 2 - 8,
+  );
 });
 
 test("latency motion snaps for reduced motion and hidden profiles", async ({

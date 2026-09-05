@@ -1162,7 +1162,7 @@ test("saved probe timeouts identify their transport and preserve exact outcome c
   await expect(lossHelp).toHaveAttribute("tabindex", "0");
   await lossHelp.hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    /No reply arrived before the probe deadline\.\s+This measures application replies, not IP packet loss\.\s+Unresolved probes and failed sends are counted separately\./,
+    "No reply before the deadline. Application timeouts, not IP packet loss; unresolved probes and failed sends are separate.",
   );
   await page.mouse.move(0, 0);
   await expect(page.getByRole("tooltip")).toHaveCount(0);
@@ -2018,7 +2018,7 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   await note.press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("tooltip")).toContainText(
-    "Worker shutdown could not account for all probes",
+    "Some probe outcomes are unknown",
   );
   const timeouts = page.locator(".probe-timeouts-section");
   await expect(timeouts).toBeVisible();
@@ -2218,7 +2218,7 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
     const lane = profile.locator('.lane[data-tone="download"]');
     await page.mouse.move(0, 0);
     const control = lane.getByRole("img", {
-      name: "Loaded Down: server timing, 20 paired replies",
+      name: "Loaded Down: server timing",
     });
     await control.focus();
     const diagnostic = page.getByRole("tooltip");
@@ -2227,12 +2227,10 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
       .poll(() => diagnostic.evaluate((node) => getComputedStyle(node).opacity))
       .toBe("1");
     await expect(diagnostic).toContainText("20 paired replies");
-    await expect(diagnostic).toContainText("Mean raw RTT: 18.0 ms");
-    await expect(diagnostic).toContainText("Mean server handling: 3.0 ms");
-    await expect(diagnostic).toContainText("Mean adjusted RTT: 15.0 ms");
-    await expect(diagnostic).toContainText(
-      "Only server handling is subtracted.",
-    );
+    await expect(diagnostic).toContainText("18.0 ms raw");
+    await expect(diagnostic).toContainText("3.0 ms server handling");
+    await expect(diagnostic).toContainText("15.0 ms adjusted");
+    await expect(lane.locator(".lane-icon svg")).toHaveCount(1);
     await expect(control).toHaveAttribute("aria-describedby", /gm-tt-/);
     const box = await diagnostic.boundingBox();
     expect(box!.y).toBeGreaterThanOrEqual(0);

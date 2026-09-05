@@ -309,6 +309,9 @@ test("completed result heads expose authoritative rates through pointer, keyboar
   await expect(heads).toHaveCount(3);
   const download = page.getByRole("img", { name: /^Download / });
   await download.hover();
+  expect(
+    await download.evaluate((node) => getComputedStyle(node).boxShadow),
+  ).toBe("none");
   await expect(page.getByRole("tooltip")).toHaveText(
     /Download\s+320\.0 Mbit\/s/,
   );

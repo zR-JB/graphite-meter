@@ -226,7 +226,7 @@
     if (store.preparing) return "Checking paths";
     switch (store.phase) {
       case "idle":
-        return "Press Start test to start your speed test";
+        return "Ready to measure your connection";
       case "connecting":
         return "Verifying the selected protocol…";
       case "warmup":
@@ -546,7 +546,7 @@
   }
   @media (min-width: 1800px) and (min-height: 1000px) {
     .instrument {
-      --gauge-well-height: clamp(360px, 32svh, 420px);
+      --gauge-well-height: clamp(360px, min(43svh, 32cqw), 560px);
     }
   }
   @media (max-width: 759px) and (orientation: portrait) {
@@ -595,9 +595,13 @@
     --stage-controls-width: 700px;
   }
   @media (max-height: 800px) {
+    .instrument-controls {
+      padding-block: var(--space-1);
+    }
     @container viz (min-width: 1000px) {
       .instrument-controls {
         grid-template-columns: 280px minmax(0, 1fr);
+        align-items: end;
         column-gap: var(--space-5);
         max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
       }
@@ -717,17 +721,11 @@
     place-items: center;
     width: clamp(32px, 12cqmin, 42px);
     height: clamp(32px, 12cqmin, 42px);
-    border: 1px solid
-      color-mix(in srgb, var(--result-accent) 28%, var(--border));
-    border-radius: var(--r-full);
     line-height: 1;
   }
   .terminal-marker :global(svg) {
     width: 58%;
     height: 58%;
-  }
-  .terminal-readout.partial .terminal-marker {
-    border-style: dashed;
   }
   .terminal-number {
     font-family: var(--font-display);
