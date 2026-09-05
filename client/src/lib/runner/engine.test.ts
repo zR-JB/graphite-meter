@@ -48,17 +48,21 @@ async function yieldUntil(done: () => boolean, turns = 10): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 0));
 }
 async function withBootRunner(
-  run: (engine: typeof import("./engine.svelte")) => Promise<void>,
+  run: (
+    engine: import("./engine.svelte").ApplicationController,
+  ) => Promise<void>,
   setup: () => () => void = () => stubBootEnvironment("visible"),
 ): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
-  const engine = await import("./engine.svelte");
+  const { createApplicationController } = await import("./engine.svelte");
+  const { store } = await import("../state/store.svelte");
+  const engine = createApplicationController(store);
   const restoreEnvironment = setup();
   try {
-    await engine.bootRunner();
+    await engine.boot();
     await run(engine);
   } finally {
-    engine.teardownRunner();
+    engine.dispose();
     restoreEnvironment();
     restoreGlobals();
   }
@@ -208,7 +212,8 @@ async function settleMicrotasks(): Promise<void> {
   for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
 type ValidationContext = {
-  engine: typeof import("./engine.svelte");
+  engine: import("./engine.svelte").ApplicationController;
+  runner: RunnerCore;
   environment: ReturnType<typeof stubEventBootEnvironment>;
   probeCalls: () => number;
 };
@@ -225,12 +230,15 @@ async function withValidationRunner(
     return probe();
   };
   const environment = stubEventBootEnvironment("visible", true);
-  const engine = await import("./engine.svelte");
+  const { createApplicationController } = await import("./engine.svelte");
+  const { store } = await import("../state/store.svelte");
+  const runner = new RunnerCore(new RealBackend());
+  const engine = createApplicationController(store, () => runner);
   try {
-    await engine.bootRunner();
-    await run({ engine, environment, probeCalls: () => calls });
+    await engine.boot();
+    await run({ engine, runner, environment, probeCalls: () => calls });
   } finally {
-    engine.teardownRunner();
+    engine.dispose();
     RealBackend.prototype.probe = originalProbe;
     environment.restore();
     restoreGlobals();
@@ -248,7 +256,7 @@ const PROBE_EVIDENCE: InfraInfo = {
   serverLoad: { active: 3, max: 4 },
 };
 test("teardown clears the probe evidence; a run reset keeps it", async () => {
-  await withBootRunner(async ({ teardownRunner }) => {
+  await withBootRunner(async ({ dispose: teardownRunner }) => {
     const { store } = await import("../state/store.svelte");
     store.ingest({ type: "infra", info: PROBE_EVIDENCE });
     store.reset();
@@ -398,7 +406,10 @@ test("bootRunner seeds background activity from the live visibilityState", async
     seeded.push(enabled);
   };
   try {
-    const { bootRunner, teardownRunner } = await import("./engine.svelte");
+    const { createApplicationController } = await import("./engine.svelte");
+    const { store } = await import("../state/store.svelte");
+    const { boot: bootRunner, dispose: teardownRunner } =
+      createApplicationController(store);
     let restore = stubBootEnvironment("hidden");
     await bootRunner();
     teardownRunner();
@@ -427,14 +438,12 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
       }
       return PROBE_EVIDENCE;
     },
-    async ({ engine, probeCalls }) => {
-      const { getRunner } = engine;
+    async ({ runner, probeCalls }) => {
       const { store } = await import("../state/store.svelte");
       expect(probeCalls()).toBe(1);
       expect(store.connectionValidation.throughput.state).toBe("verified");
       expect(store.connectionValidation.latency.state).toBe("verified");
       offline = true;
-      const runner = getRunner() as RunnerCore;
       runner.emit({ type: "connectivity", state: "offline" });
       await yieldUntil(() => probeCalls() >= 2);
       runner.emit({ type: "connectivity", state: "offline" });
@@ -508,15 +517,14 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         if (offline) throw new Error("server unavailable");
         return PROBE_EVIDENCE;
       },
-      async ({ engine, environment, probeCalls }) => {
-        const { getRunner } = engine;
+      async ({ engine, runner, environment, probeCalls }) => {
         expect(probeCalls()).toBe(1);
         expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
         timers.advance(CONNECTION_FRESH_MS);
         await settleMicrotasks();
         expect(probeCalls()).toBe(2);
         offline = true;
-        (getRunner() as RunnerCore).emit({
+        runner.emit({
           type: "connectivity",
           state: "offline",
         });
@@ -542,7 +550,6 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(0);
         await settleMicrotasks();
         expect(probeCalls()).toBe(5);
-        const runner = getRunner() as RunnerCore;
         runner.emit({
           type: "phase",
           transition: { from: "idle", to: "download", stage: "download", t: 0 },
@@ -562,7 +569,7 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         timers.advance(0);
         await settleMicrotasks();
         expect(probeCalls()).toBe(6);
-        engine.teardownRunner();
+        engine.dispose();
         expect(timers.size()).toBe(0);
       },
     );
@@ -616,4 +623,73 @@ test("a rerun stamps a fresh start epoch from every terminal phase", async () =>
     });
     expect(store.startEpoch).toBeGreaterThan(0);
   }
+});
+
+test("a disposed validation cannot restore discovery or evidence", async () => {
+  let release: ((info: InfraInfo) => void) | undefined;
+  let defer = false;
+  await withValidationRunner(
+    () =>
+      defer
+        ? new Promise((resolve) => {
+            release = resolve;
+          })
+        : Promise.resolve(PROBE_EVIDENCE),
+    async ({ engine }) => {
+      const { store } = await import("../state/store.svelte");
+      defer = true;
+      const pending = engine.validateConnections(true);
+      engine.dispose();
+      release!(PROBE_EVIDENCE);
+      await expect(pending).rejects.toThrow("Aborted");
+      expect(store.infra).toBeNull();
+      expect(store.transportDiscovery).toBeNull();
+    },
+  );
+});
+
+test("live configuration rejects invalid plans before changing draft or runner", async () => {
+  await withValidationRunner(
+    async () => PROBE_EVIDENCE,
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      const previous = JSON.parse(JSON.stringify(store.config)) as RunnerConfig;
+      let reconfigured = 0;
+      runner.reconfigure = () => {
+        reconfigured++;
+      };
+      store.activeConfig = JSON.parse(JSON.stringify(previous));
+      runner.emit({
+        type: "phase",
+        transition: { from: "idle", to: "download", stage: "download", t: 0 },
+      });
+      expect(
+        engine.configureRun({
+          duration: { ...previous.duration, uploadMs: -1 },
+        }),
+      ).toBe(false);
+      expect(
+        engine.configureRun({
+          stages: {
+            latency: false,
+            download: false,
+            upload: false,
+            bidirectional: false,
+          },
+        }),
+      ).toBe(false);
+      expect(store.config).toEqual(previous);
+      expect(store.activeConfig).toEqual(previous);
+      expect(reconfigured).toBe(0);
+      const duration = {
+        ...previous.duration,
+        uploadMs: previous.duration.uploadMs + 1000,
+      };
+      expect(engine.configureRun({ duration })).toBe(true);
+      expect(store.config.duration).toEqual(duration);
+      expect(store.activeConfig?.duration).toEqual(duration);
+      expect(reconfigured).toBe(1);
+      store.config = previous;
+    },
+  );
 });

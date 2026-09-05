@@ -3,13 +3,14 @@
   // theme toggle, and docked/flyout layout state.
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
-  import {
-    bootRunner,
+  import { getApplicationController } from "../runner/controllerContext";
+  const {
     cancelPendingStart,
     hasPendingStart,
     returnToStart,
-    teardownRunner,
-  } from "../runner/engine.svelte";
+    toggleRun,
+    dispose: teardownRunner,
+  } = getApplicationController();
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -21,7 +22,6 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
-  import { toggleRun } from "../runner/engine.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
@@ -576,7 +576,6 @@
     window.addEventListener("keydown", onKeydown);
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("graphite-meter-auth-required", onAuthRequired);
-    void bootRunner();
     if (authEnabled)
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
@@ -595,7 +594,6 @@
         "graphite-meter-auth-required",
         onAuthRequired,
       );
-      teardownRunner();
     };
   });
 
