@@ -123,6 +123,10 @@ export interface LatencyLane {
   current: number | null;
   jitter: number | null;
   timeoutRatio: number | null;
+  accountingComplete: boolean | null;
+  timeoutCount: number | null;
+  unresolvedCount: number | null;
+  sendFailureCount: number | null;
   count: number;
   active: boolean;
 }
@@ -768,6 +772,10 @@ class AppStore {
         timeoutRatio: summary?.probeCount
           ? summary.timeoutCount / summary.probeCount
           : null,
+        accountingComplete: summary?.accountingComplete ?? null,
+        timeoutCount: summary?.timeoutCount ?? null,
+        unresolvedCount: summary?.unresolvedCount ?? null,
+        sendFailureCount: summary?.sendFailureCount ?? null,
         count: summary?.probeCount ?? 0,
         active: ["active", "recovering"].includes(
           this.stagePresentation[key].status,

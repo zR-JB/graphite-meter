@@ -47,6 +47,10 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   tone: LatencyProfileTone;
   jitter: number | null;
   timeoutRatio: number | null;
+  accountingComplete?: boolean | null;
+  timeoutCount?: number | null;
+  unresolvedCount?: number | null;
+  sendFailureCount?: number | null;
   count?: number;
   active?: boolean;
 }
@@ -158,4 +162,49 @@ export function hoverContext(
     return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
   }
   return centerLabel(lane);
+}
+
+export const PARTIAL_ACCOUNTING_HELP =
+  "Worker shutdown could not account for all probes. Shown counts cover known outcomes only; additional outcomes are unknown.";
+
+export function probeAccountingDetails(
+  lane: Pick<
+    LatencyProfileViewLane,
+    | "count"
+    | "timeoutCount"
+    | "unresolvedCount"
+    | "sendFailureCount"
+    | "accountingComplete"
+  >,
+): string {
+  const counts = [
+    lane.count == null ? null : `${lane.count} resolved`,
+    lane.timeoutCount == null ? null : `${lane.timeoutCount} timeouts`,
+    lane.unresolvedCount == null ? null : `${lane.unresolvedCount} unresolved`,
+    lane.sendFailureCount == null
+      ? null
+      : `${lane.sendFailureCount} send failures`,
+  ]
+    .filter((value): value is string => value !== null)
+    .join(" · ");
+  return lane.accountingComplete === false
+    ? `Known: ${counts}. Additional outcomes unknown.`
+    : counts;
+}
+
+export function hasProbeAccountingNotice(
+  lane: Pick<
+    LatencyProfileViewLane,
+    | "accountingComplete"
+    | "timeoutCount"
+    | "unresolvedCount"
+    | "sendFailureCount"
+  >,
+): boolean {
+  return (
+    lane.accountingComplete === false ||
+    (lane.timeoutCount ?? 0) > 0 ||
+    (lane.unresolvedCount ?? 0) > 0 ||
+    (lane.sendFailureCount ?? 0) > 0
+  );
 }

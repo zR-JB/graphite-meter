@@ -16,6 +16,9 @@
   import { store } from "../../state/store.svelte";
   import {
     savedLatencyHasProbeEvidence,
+    PARTIAL_ACCOUNTING_HELP,
+    probeAccountingDetails,
+    hasProbeAccountingNotice,
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
@@ -44,9 +47,8 @@
     icon: string;
     tone: LatencyProfileTone;
     value: string;
-    count: number;
-    unresolvedCount: number;
-    sendFailureCount: number;
+    details: string;
+    accountingComplete?: boolean;
   }
 
   let {
@@ -59,7 +61,10 @@
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
-    record.failures.length > 0 ||
+    Object.values(record.stages.latency.lanes).some(
+      (lane) => lane?.accountingComplete === false,
+    ) ||
+      record.failures.length > 0 ||
       [
         record.stages.latency.status,
         record.stages.download.status,
@@ -120,8 +125,11 @@
   );
 
   function usefulLane(lane: LatencyProfileViewLane): boolean {
-    return [lane.min, lane.max, lane.p10, lane.p90, lane.center].some(
-      (value) => value != null,
+    return (
+      hasProbeAccountingNotice(lane) ||
+      [lane.min, lane.max, lane.p10, lane.p90, lane.center].some(
+        (value) => value != null,
+      )
     );
   }
 
@@ -184,7 +192,8 @@
   ): ProbeTimeoutLane | null {
     if (
       !snapshot ||
-      (snapshot.count <= 0 &&
+      (snapshot.accountingComplete !== false &&
+        snapshot.count <= 0 &&
         !snapshot.unresolvedCount &&
         !snapshot.sendFailureCount)
     )
@@ -195,10 +204,12 @@
       label,
       icon,
       tone,
-      value: formatPercent(ratio == null ? null : ratio * 100),
-      count: snapshot.count,
-      unresolvedCount: snapshot.unresolvedCount ?? 0,
-      sendFailureCount: snapshot.sendFailureCount ?? 0,
+      value:
+        snapshot.accountingComplete === false
+          ? "Partial"
+          : formatPercent(ratio == null ? null : ratio * 100),
+      details: probeAccountingDetails(snapshot),
+      accountingComplete: snapshot.accountingComplete,
     };
   }
 
@@ -447,18 +458,17 @@
         {#each probeTimeoutLanes as lane (lane.key)}
           <li
             data-tone={lane.tone}
-            aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.count} resolved`}
+            aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
           >
             <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
             <span>
               <strong>{lane.label}</strong>
-              <small
-                >{lane.count} resolved{lane.unresolvedCount
-                  ? ` · ${lane.unresolvedCount} unresolved`
-                  : ""}{lane.sendFailureCount
-                  ? ` · ${lane.sendFailureCount} send failures`
-                  : ""}</small
-              >
+              <small>{lane.details}</small>
+              {#if lane.accountingComplete === false}
+                <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
+                  >Partial accounting</small
+                >
+              {/if}
             </span>
             <em>{lane.value}</em>
           </li>
