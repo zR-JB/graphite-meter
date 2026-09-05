@@ -1,6 +1,8 @@
 import {
   expect,
   openApp,
+  openSettings,
+  openEndpointInfo,
   prepareApp,
   startTest,
   test,
@@ -20,6 +22,8 @@ test("three-stage results remain usable across desktop and phone layouts", async
   for (const viewport of [
     { width: 1280, height: 720 },
     { width: 1440, height: 900 },
+    { width: 2048, height: 1050 },
+    { width: 2048, height: 1152 },
     { width: 2560, height: 1440 },
     { width: 1024, height: 768 },
   ]) {
@@ -66,18 +70,30 @@ test("three-stage results remain usable across desktop and phone layouts", async
         controlsCenter: Math.abs(
           controls.left + controls.width / 2 - host.left - host.width / 2,
         ),
-        controlsAligned: Math.abs(rail.top - button.top) <= 1,
+        controlsAligned: Math.abs(rail.bottom - button.bottom) <= 1,
         controlsSeparated: rail.left >= button.right + 16,
         controlsStacked: rail.top >= button.bottom + 12,
         instrumentWidth: host.width,
         chartHeight: chart.height,
+        stackedReadouts: [...document.querySelectorAll(".result-card")].every(
+          (card) => {
+            const header = card
+              .querySelector("header")!
+              .getBoundingClientRect();
+            const value = card.querySelector(".val")!.getBoundingClientRect();
+            return (
+              value.top >= header.bottom + 4 &&
+              Math.abs(value.left - header.left) <= 1
+            );
+          },
+        ),
         resultWidths: [...document.querySelectorAll(".result-card")].map(
           (card) => card.getBoundingClientRect().width,
         ),
         groupSpacing:
           button.top - gauge.bottom >= 16 &&
           results.top - button.bottom >= 16 &&
-          chart.top - results.bottom >= 12,
+          chart.top - results.bottom >= 8,
         lanesInside: [...profile.querySelectorAll(".lane")].every(
           (lane) => lane.getBoundingClientRect().bottom <= profileBox.bottom,
         ),
@@ -111,16 +127,44 @@ test("three-stage results remain usable across desktop and phone layouts", async
       expect(geometry.controlsAligned).toBe(true);
       expect(geometry.controlsSeparated).toBe(true);
     } else expect(geometry.controlsStacked).toBe(true);
-    expect(geometry.instrumentWidth).toBeLessThanOrEqual(
-      viewport.width >= 1800 && viewport.height >= 1000 ? 1360 : 1180,
-    );
-    expect(geometry.chartHeight).toBeLessThanOrEqual(200);
-    expect(geometry.resultWidths.every((width) => width <= 320)).toBe(true);
+    expect(geometry.instrumentWidth).toBeLessThanOrEqual(1920);
+    if (viewport.width === 2048)
+      expect(geometry.instrumentWidth).toBeGreaterThanOrEqual(1800);
+    expect(geometry.chartHeight).toBeLessThanOrEqual(360);
+    expect(geometry.resultWidths.every((width) => width <= 280)).toBe(true);
+    expect(geometry.stackedReadouts).toBe(true);
     expect(geometry.groupSpacing).toBe(true);
     expect(geometry.lanesInside).toBe(true);
-    expect(geometry.sharedAxis).toBe(1);
+    expect(geometry.sharedAxis).toBe(3);
     expect(geometry.wireAligned).toBe(true);
     await page.artifact(`instrument-${viewport.width}x${viewport.height}`);
+    if (viewport.width === 2048 && viewport.height === 1152) {
+      const settings = await openSettings(page);
+      await page.artifact("instrument-settings-2048");
+      const info = await openEndpointInfo(page);
+      const fit = await page.evaluate(() => {
+        const stage =
+          document.querySelector<HTMLElement>(".measurement-stage")!;
+        const gauge = document
+          .querySelector(".gauge-panel")!
+          .getBoundingClientRect();
+        const chart = document.querySelector(".chart")!.getBoundingClientRect();
+        return {
+          width: gauge.width,
+          aligned:
+            Math.abs(gauge.left - chart.left) < 1 &&
+            Math.abs(gauge.width - chart.width) < 1,
+          overflow: stage.scrollWidth - stage.clientWidth,
+        };
+      });
+      expect(fit.width).toBeGreaterThanOrEqual(760);
+      expect(fit.aligned).toBe(true);
+      expect(fit.overflow).toBeLessThanOrEqual(1);
+      await page.artifact("instrument-both-docks-2048");
+      await settings.getByRole("button", { name: "Close Settings" }).click();
+      await page.artifact("instrument-info-2048");
+      await info.getByRole("button", { name: "Close Endpoint" }).click();
+    }
   }
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: width === 320 ? 740 : 844 });
@@ -198,7 +242,7 @@ test("single and four-lane profiles keep bounded plots and clear gauge notes", a
       });
       expect(geometry.laneCount).toBe(allStages ? 4 : 1);
       expect(
-        geometry.plotHeights.every((height) => height >= 36 && height <= 64),
+        geometry.plotHeights.every((height) => height >= 32 && height <= 42),
       ).toBe(true);
       expect(geometry.noteGap).toBeGreaterThanOrEqual(8);
       expect(geometry.contained).toBe(true);

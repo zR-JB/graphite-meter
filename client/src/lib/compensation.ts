@@ -312,11 +312,8 @@ export function compensationTooltip(estimate: CompensationEstimate): string {
     source === "fallback" ? "assumed" : "detected";
   return [
     `Estimated Ethernet overhead: +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
-    "",
     `MTU: ${estimate.mtuBytes.toLocaleString("en-US")} bytes (assumed)`,
     `Transport: ${compensationTransportLabel(estimate.transport)} (${sourceLabel(estimate.transportSource)})`,
     `IP: IPv${estimate.ipVersion} (${sourceLabel(estimate.ipVersionSource)})`,
-    "",
-    "Includes framing and protocol headers. Actual wire overhead can differ.",
   ].join("\n");
 }

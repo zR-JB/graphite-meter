@@ -40,16 +40,10 @@
 
 <style>
   .live-profile {
-    --profile-track-height: clamp(36px, 4svh, 48px);
+    --profile-track-height: clamp(32px, 3.5svh, 42px);
     --profile-lane-gap: 8px;
     width: 100%;
     overflow: visible;
-  }
-  @media (min-width: 1800px) and (min-height: 1000px) {
-    .live-profile {
-      --profile-track-height: clamp(48px, 4.5svh, 64px);
-      --profile-lane-gap: 10px;
-    }
   }
   .lane-fail {
     margin: 0 0 var(--space-2);

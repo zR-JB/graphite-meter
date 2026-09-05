@@ -365,7 +365,7 @@
           class="section-help"
           role="note"
           aria-label="About probe timeouts"
-          use:tooltip={"No reply arrived before the probe deadline.\n\nThis measures application replies, not IP packet loss.\nUnresolved probes and failed sends are counted separately."}
+          use:tooltip={"No reply before the deadline. Application timeouts, not IP packet loss; unresolved probes and failed sends are separate."}
           >{@html ICON.info}</span
         >
       </header>
@@ -725,7 +725,8 @@
   }
   .probe-timeouts-lanes small {
     color: var(--text-muted);
-    font: 500 9px var(--font-mono);
+    font: 500 var(--type-xs)/1.4 var(--font-sans);
+    font-variant-numeric: tabular-nums;
   }
   .probe-timeouts-lanes .reply-count {
     margin-top: 3px;
@@ -737,11 +738,13 @@
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-2);
     color: var(--warn);
-    font: 500 11px/1.4 var(--font-mono);
+    font: 500 var(--type-xs)/1.4 var(--font-sans);
+    font-variant-numeric: tabular-nums;
   }
   .probe-timeouts-lanes em {
     color: var(--tone);
-    font: 700 var(--type-sm) var(--font-mono);
+    font: 700 var(--type-sm) var(--font-display);
+    font-variant-numeric: tabular-nums;
     font-style: normal;
   }
   .idle-summary {

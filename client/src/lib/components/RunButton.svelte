@@ -89,7 +89,7 @@
     justify-content: center;
     gap: var(--space-2);
     /* The one pill: the faceplate's single bold element, centered under the
-       gauge. Its lit top edge and brand glow are the only such elevation. */
+       gauge. Its lit top edge keeps the primary action distinct. */
     width: 100%;
     max-width: 320px;
     align-self: center;
@@ -105,7 +105,7 @@
     border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
     box-shadow:
       inset 0 1px 0 var(--edge-highlight),
-      0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
+      0 2px 8px color-mix(in srgb, var(--brand) 10%, transparent);
     cursor: pointer;
     transition:
       transform var(--dur-hover) var(--ease-out),

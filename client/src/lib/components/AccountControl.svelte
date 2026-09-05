@@ -63,7 +63,7 @@
       type="submit"
       name="scope"
       value="all"
-      use:tooltip={"Sign out everywhere — end every session for this account, including ones you can no longer reach"}
+      use:tooltip={"End all sessions for this account"}
       aria-label={`Sign out ${label} everywhere`}
     >
       <svg viewBox="0 0 20 20" aria-hidden="true">

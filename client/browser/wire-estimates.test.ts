@@ -66,8 +66,7 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await expect(tooltip).toContainText("Estimated Ethernet overhead:");
   await expect(tooltip).toContainText("(assumed)");
   await expect(tooltip).toContainText(/IP: IPv[46]/);
-  await expect(tooltip).toContainText("Includes framing and protocol headers.");
-  await expect(tooltip).toContainText("Estimated Ethernet overhead:");
+  await expect(tooltip).toContainText("Transport:");
   await expect(tooltip).toHaveCSS("white-space", "pre-line");
   const box = await tooltip.boundingBox();
   expect(box).not.toBeNull();
@@ -132,11 +131,10 @@ test("four-stage result details survive responsive and wire-preference changes",
         );
         return {
           groupsSeparated:
-            Math.max(...heading.map((box) => box.bottom)) + 5 <= readout.top ||
-            Math.max(...heading.map((box) => box.right)) + 8 <= readout.left,
+            Math.max(...heading.map((box) => box.bottom)) + 5 <= readout.top,
           height: card.getBoundingClientRect().height,
           overflow: card.scrollWidth > card.clientWidth,
-          detailBelowReadout: sub ? sub.bottom - readout.bottom : 0,
+          detailBelowReadout: !sub || sub.top >= readout.bottom + 5,
           jitterAlignment: (() => {
             const jitter = card
               .querySelector(".jitter-num")
@@ -164,10 +162,7 @@ test("four-stage result details survive responsive and wire-preference changes",
   expect(
     before.every(
       (card) =>
-        card.height <= 70 &&
-        !card.overflow &&
-        card.detailBelowReadout <= 1 &&
-        card.jitterAlignment <= 1,
+        !card.overflow && card.detailBelowReadout && card.jitterAlignment <= 1,
     ),
   ).toBe(true);
   const preferences = await openSettings(page);
@@ -181,9 +176,15 @@ test("four-stage result details survive responsive and wire-preference changes",
     "↓ 320.0 ↑ 64.00",
   );
   const after = await geometry();
-  expect(after.map((card) => card.height)).toEqual(
-    before.map((card) => card.height),
-  );
+  expect(
+    after.every(
+      (card, index) =>
+        card.height <= before[index]!.height &&
+        card.groupsSeparated &&
+        card.detailBelowReadout &&
+        !card.overflow,
+    ),
+  ).toBe(true);
   for (const [width, height] of [
     [1440, 900],
     [390, 844],

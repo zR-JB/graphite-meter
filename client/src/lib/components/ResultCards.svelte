@@ -247,22 +247,21 @@
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-2);
     min-height: 64px;
-    max-width: 960px;
+    max-width: 840px;
     margin-inline: auto;
   }
   .result-cards:has(> :last-child:nth-child(4)) {
-    max-width: 1180px;
+    max-width: 1120px;
   }
   .result-cards:has(> :last-child:nth-child(1)) {
-    max-width: 320px;
+    max-width: 280px;
   }
   .result-cards:has(> :last-child:nth-child(2)) {
-    max-width: 640px;
+    max-width: 560px;
   }
 
   .result-card {
     min-width: 0;
-    container: result-card / inline-size;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
@@ -285,31 +284,6 @@
     gap: 5px;
     min-width: 0;
   }
-  @container viz (min-width: 1000px) {
-    .result-card {
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: start;
-      column-gap: var(--space-2);
-      row-gap: 5px;
-    }
-    /* A wide instrument can still hold four narrow cards. Only place the
-       heading beside its value when this card has room for both groups. */
-    @container result-card (min-width: 260px) {
-      .result-card header {
-        grid-column: 1;
-        grid-row: 1;
-      }
-      .result-readout {
-        grid-column: 2;
-        grid-row: 1 / span 2;
-      }
-      .sub {
-        grid-column: 1;
-        grid-row: 2;
-      }
-    }
-  }
-
   .partial {
     margin-left: auto;
     color: var(--err);

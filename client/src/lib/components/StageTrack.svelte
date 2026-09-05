@@ -60,7 +60,9 @@
 </script>
 
 <fieldset class="stage-track" class:quad={bidi !== null}>
-  <legend class="sr-only">Test stages — tap to enable or disable</legend>
+  <legend
+    >Test stages<span class="sr-only"> — tap to enable or disable</span></legend
+  >
   <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
        `{@html s.icon}` sink by its exact expression text. -->
   {#each segments as s (s.key)}
@@ -171,6 +173,15 @@
     margin: 0;
     padding: 0;
     border: 0;
+  }
+  legend {
+    padding: 0;
+    margin-bottom: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .stage-track.quad {
     grid-template-columns: repeat(4, minmax(0, 1fr));

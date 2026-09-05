@@ -153,9 +153,6 @@ test("tooltip reports automatic assumptions", () => {
     "Transport: HTTP/3 QUIC (detected)",
   );
   expect(compensationTooltip(estimate)).toContain(
-    "Actual wire overhead can differ.",
-  );
-  expect(compensationTooltip(estimate)).toContain(
     "Estimated Ethernet overhead:",
   );
 });
