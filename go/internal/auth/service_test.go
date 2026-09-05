@@ -535,17 +535,27 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 		t.Fatalf("code=%d, want 403", rr.Code)
 	}
 }
-func TestAuthRequiredExposesHeadersCrossOrigin(t *testing.T) {
+func TestAuthRequiredExposesHeadersOnlyToDeploymentOrigin(t *testing.T) {
 	s := testService(t)
 	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
-	r := secureRequest("GET", "/download", nil)
-	r.Header.Set("Origin", s.public.String())
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, r)
-	if rr.Header().Get("Access-Control-Allow-Origin") != s.public.String() || !strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "Graphite-Meter-Auth") {
-		t.Fatalf("headers=%v", rr.Header())
+	for _, origin := range []string{s.public.String(), "https://evil.example", ""} {
+		r := secureRequest("GET", "/download", nil)
+		r.Header.Set("Origin", origin)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, r)
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("origin %q: status %d", origin, rr.Code)
+		}
+		if origin == s.public.String() {
+			if rr.Header().Get("Access-Control-Allow-Origin") != origin || !strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "Graphite-Meter-Auth") {
+				t.Fatalf("headers=%v", rr.Header())
+			}
+		} else if rr.Header().Get("Access-Control-Allow-Origin") != "" || rr.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("untrusted origin %q exposed by headers=%v", origin, rr.Header())
+		}
 	}
 }
+
 func TestOffModeReservesAuthRoutes(t *testing.T) {
 	s, _ := New(t.Context(), config.AuthConfig{Mode: "off"}, nil, false)
 	mux := http.NewServeMux()
