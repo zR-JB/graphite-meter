@@ -2,6 +2,7 @@ package endpoint
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -241,6 +242,32 @@ func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	}
 	if got := rec.read.Sub(before); got < uploadReadTimeout || got > uploadReadTimeout+time.Minute {
 		t.Fatalf("read deadline is %v out, want about %v", got, uploadReadTimeout)
+	}
+}
+
+func TestUploadRespectsRequestDeadline(t *testing.T) {
+	for _, remaining := range []time.Duration{-time.Second, time.Second, time.Hour} {
+		t.Run(remaining.String(), func(t *testing.T) {
+			requestDeadline := time.Now().Add(remaining)
+			ctx, cancel := context.WithDeadline(t.Context(), requestDeadline)
+			defer cancel()
+			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/upload", nil)
+			before := time.Now()
+			if err := NewUpload(nil, nil).Handle(transport.NewHTTPSession(rec, req)); err != nil {
+				t.Fatal(err)
+			}
+			if !rec.set || rec.read.After(requestDeadline) {
+				t.Fatalf("read deadline %v exceeds request deadline %v", rec.read, requestDeadline)
+			}
+			if remaining < uploadReadTimeout {
+				if !rec.read.Equal(requestDeadline) {
+					t.Fatalf("read deadline = %v, want %v", rec.read, requestDeadline)
+				}
+			} else if rec.read.Before(before.Add(uploadReadTimeout)) || rec.read.After(time.Now().Add(uploadReadTimeout)) {
+				t.Fatalf("read deadline %v does not retain the upload timeout", rec.read)
+			}
+		})
 	}
 }
 
