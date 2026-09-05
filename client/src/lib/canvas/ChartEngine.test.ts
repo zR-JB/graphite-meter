@@ -218,10 +218,9 @@ test("long history is cached across camera, hover, and glyph frames", () => {
 
     const beforeHover = counts.paths;
     for (let index = 0; index < 20; index++) {
-      engine.setHover(50 + index * 20);
-      engine.render(70 + index);
+      expect(engine.inspect(50 + index * 20)).not.toBeNull();
     }
-    expect(counts.paths - beforeHover).toBeLessThan(500);
+    expect(counts.paths).toBe(beforeHover);
 
     // A camera change rebuilds once; subsequent easing frames only compose it.
     current = { ...current, timelineT: 12_000 };
@@ -278,4 +277,59 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     "bidiUp",
   ]);
   engine.destroy();
+});
+
+test("inspection retains a time position through gaps without inventing latency", () => {
+  const { canvas, counts, restore } = canvasEnvironment(true);
+  try {
+    let current = data({ latencyEnabled: true });
+    let published!: ChartPresentation;
+    const engine = new ChartEngine(
+      () => current,
+      (next) => (published = next),
+    );
+    engine.attach(canvas);
+    engine.render(0);
+    expect(engine.inspect(100)).toBeNull();
+    current = {
+      ...current,
+      latency: [
+        {
+          t: 400,
+          startT: 350,
+          endT: 450,
+          phase: "latency",
+          continuityId: 1,
+          underLoad: false,
+          medianRttMs: null,
+          p95RttMs: null,
+          maxRttMs: null,
+          firstRttMs: null,
+          lastRttMs: null,
+          pingCount: 1,
+          lossCount: 1,
+          rttDeltaSumMs: 0,
+          rttDeltaCount: 0,
+        },
+      ],
+    };
+    engine.wake();
+    engine.render(16);
+    const before = counts.paths;
+    expect(engine.inspect(published.layout.x(400))).toMatchObject({
+      rtt: null,
+      lossCount: 1,
+      pingCount: 1,
+    });
+    expect(engine.inspect(published.layout.x(2_000))).toMatchObject({
+      t: 2_000,
+      rtt: null,
+      lossCount: 0,
+      pingCount: 0,
+    });
+    expect(counts.paths).toBe(before);
+    engine.destroy();
+  } finally {
+    restore();
+  }
 });

@@ -337,6 +337,20 @@
               phase: arc.phase,
               fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
               dashed: arc.dashed,
+              description: [
+                `${arc.label}${arc.dashed ? " — partial" : ""}`,
+                `${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
+                ...(arc.phase === "bidirectional"
+                  ? (["down", "up"] as const).flatMap((direction) => {
+                      const lane = store.result?.bidirectional?.[direction];
+                      return lane
+                        ? [
+                            `${direction === "down" ? "Download" : "Upload"}: ${fmtSpeed(gaugeRate(lane.reportedBytesPerSec))} ${gaugeUnit}`,
+                          ]
+                        : [];
+                    })
+                  : []),
+              ].join("\n"),
             }))
           : [],
     };
@@ -552,7 +566,7 @@
     container-type: size;
   }
   .instrument-controls {
-    --stage-controls-width: 480px;
+    --stage-controls-width: 540px;
     grid-area: controls;
     display: grid;
     gap: var(--space-3);
@@ -562,7 +576,7 @@
     align-items: center;
   }
   .instrument-controls:has(:global(.quad)) {
-    --stage-controls-width: 600px;
+    --stage-controls-width: 700px;
   }
   @container viz (min-width: 1000px) {
     .instrument-controls {

@@ -210,6 +210,9 @@
     color: var(--text);
     transform: translateY(-1px);
   }
+  .seg:active:not(:disabled) {
+    transform: translateY(0);
+  }
   .seg:focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
