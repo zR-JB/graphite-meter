@@ -12,18 +12,19 @@ type laneGroup struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	errs   chan error
+	ready  chan struct{}
 }
 
-func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int) error) *laneGroup {
+func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int, ready func()) error) *laneGroup {
 	laneCtx, cancel := context.WithCancel(ctx)
-	g := &laneGroup{cancel: cancel, errs: make(chan error, streams)}
+	g := &laneGroup{cancel: cancel, errs: make(chan error, streams), ready: make(chan struct{}, streams)}
 	stagger := r.laneStaggerStep(streams)
 	for lane := range streams {
 		g.wg.Go(func() {
 			if !staggerSleep(laneCtx, lane, stagger) {
 				return
 			}
-			if err := body(laneCtx, lane); err != nil {
+			if err := body(laneCtx, lane, sync.OnceFunc(func() { g.ready <- struct{}{} })); err != nil {
 				select {
 				case g.errs <- err:
 				default:
@@ -34,12 +35,22 @@ func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx cont
 	return g
 }
 
-func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}) error {
+func (g *laneGroup) waitReady(ctx context.Context) error {
+	for range cap(g.ready) {
+		if err := g.waitStart(ctx, g.ready, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}, stageErr <-chan error) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case err := <-g.errs:
-		g.stop()
+		return err
+	case err := <-stageErr:
 		return err
 	case <-start:
 		return nil
@@ -54,12 +65,11 @@ func (g *laneGroup) stop() {
 const rateSampleInterval = 100 * time.Millisecond
 
 type rateLoop struct {
-	duration         time.Duration
-	cancelEndsWindow bool
-	laneErr          <-chan error
-	stageErr         <-chan error
-	sample           func(now time.Time, stats *rateStats)
-	window           func(stats *rateStats)
+	duration time.Duration
+	laneErr  <-chan error
+	stageErr <-chan error
+	sample   func(now time.Time, stats *rateStats)
+	window   func(stats *rateStats)
 }
 
 func (l rateLoop) run(ctx context.Context) (rateStats, error) {
@@ -71,23 +81,20 @@ func (l rateLoop) run(ctx context.Context) (rateStats, error) {
 		deadline = timer.C
 	}
 	var stats rateStats
-	finish := func(err error, canceled bool) (rateStats, error) {
+	finish := func(err error) (rateStats, error) {
 		l.window(&stats)
-		if err == nil || canceled && l.cancelEndsWindow {
-			return stats, nil
-		}
 		return stats, err
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return finish(ctx.Err(), true)
+			return finish(context.Cause(ctx))
 		case <-deadline:
-			return finish(nil, false)
+			return finish(nil)
 		case err := <-l.laneErr:
-			return finish(err, false)
+			return finish(err)
 		case err := <-l.stageErr:
-			return finish(err, false)
+			return finish(err)
 		case now := <-ticker:
 			l.sample(now, &stats)
 		}

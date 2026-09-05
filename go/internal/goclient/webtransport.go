@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -259,7 +260,7 @@ func (r *runner) wtDownloadQuery() url.Values {
 	}
 }
 
-func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64) (bool, error) {
+func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64, ready func()) (bool, error) {
 	buf := make([]byte, 1024*1024)
 	progressed := false
 	for ctx.Err() == nil {
@@ -267,6 +268,7 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 		if err != nil {
 			return progressed, laneStopError(ctx, err)
 		}
+		ready()
 		stopOnCancel := transport.UnblockReadsOnDone(ctx, str)
 		stopOnGone := transport.UnblockReadsOnDone(sess.Context(), str)
 		for {
@@ -288,11 +290,12 @@ func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *ato
 	return progressed, nil
 }
 
-func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte) (bool, error) {
+func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte, ready func()) (bool, error) {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
 		return false, laneStopError(ctx, err)
 	}
+	ready()
 	defer str.Close() //nolint:errcheck // the stage is over either way
 	defer transport.UnblockWritesOnDone(ctx, str)()
 	defer transport.UnblockWritesOnDone(sess.Context(), str)()
@@ -319,12 +322,11 @@ func acceptUploadProgressWT(ctx context.Context, sess *wtSession) (*webtransport
 	return str, nil
 }
 
-type wtProgressStream struct{ *webtransport.ReceiveStream }
-
-func (s wtProgressStream) Close() error {
-	s.CancelRead(0)
-	_ = s.SetReadDeadline(time.Now())
-	return nil
+func wtProgressFeed(stream *webtransport.ReceiveStream) *uploadFeed {
+	return &uploadFeed{ReadCloser: io.NopCloser(stream), interrupt: func() {
+		stream.CancelRead(0)
+		_ = stream.SetReadDeadline(time.Now())
+	}}
 }
 
 func laneStopError(ctx context.Context, err error) error {
