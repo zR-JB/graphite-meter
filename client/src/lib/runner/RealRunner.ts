@@ -714,10 +714,9 @@ export class RealBackend implements RunnerBackend {
 
   /* `underLoad` marks pings taken while the stage moves bytes (bufferbloat). */
   onStageMeasure(activity: PhaseActivity): void {
-    const underLoad = activity.transfer.length > 0;
     // A direction missing here failed to prime, and has nothing to measure.
     for (const dir of activity.transfer) this.#lanes[dir]?.measure();
-    if (needsPings(activity)) this.#latency.measure(underLoad);
+    if (needsPings(activity)) this.#latency.measure();
   }
 
   onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {

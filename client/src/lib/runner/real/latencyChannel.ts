@@ -81,8 +81,6 @@ export class LatencyChannel {
   #active = false;
   /* A timeout reports a stall; the runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
-  /* The underLoad tag stamped on forwarded samples (true during a transfer stage's loaded latency). */
-  #underLoad = false;
   #timeOriginMs: number;
 
   constructor(deps: LatencyChannelDeps) {
@@ -109,7 +107,6 @@ export class LatencyChannel {
         ? PING_REPLY_MAX_IN_FLIGHT
         : PING_MAX_IN_FLIGHT;
 
-    this.#underLoad = false;
     this.#active = true;
     // A bus that never establishes reports nothing at all — a hung handshake produces no samples and no stall — so.
     this.#establishTimer = setTimeout(() => {
@@ -141,8 +138,7 @@ export class LatencyChannel {
   }
 
   /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
-  measure(underLoad: boolean): void {
-    this.#underLoad = underLoad;
+  measure(): void {
     this.#worker?.postMessage({ type: "measure" });
   }
 
@@ -169,14 +165,11 @@ export class LatencyChannel {
         this.#clearEstablishTimer(); // a pong proves the channel works
         const host = this.#deps.host();
         for (const sample of msg.samples)
-          host.ingestLatency(
-            {
-              rttMs: sample.rtt,
-              lost: sample.lost,
-              observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
-            },
-            this.#underLoad,
-          );
+          host.ingestLatency({
+            rttMs: sample.rtt,
+            lost: sample.lost,
+            observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
+          });
         if (msg.samples.length) this.#deps.resume();
         break;
       }

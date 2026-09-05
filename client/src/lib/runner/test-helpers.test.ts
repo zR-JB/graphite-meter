@@ -57,6 +57,7 @@ export function testHost(
     failStage() {},
     ingestThroughput() {},
     ingestLatency() {},
+    ingestLatencyInterruption() {},
     recordRecoveryGap() {},
     recordRecoveryBytes() {},
     presentationRate: () => 0,

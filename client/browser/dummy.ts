@@ -165,10 +165,11 @@ export class DummyBackend implements RunnerBackend {
       host.ingestThroughput(direction, rate, rate * seconds, seconds);
     }
     if (!activity.transfer.length || activity.loadedLatency)
-      host.ingestLatency(
-        { rttMs: RTT_MS, lost: false, observedAtMs: performance.now() },
-        activity.loadedLatency,
-      );
+      host.ingestLatency({
+        rttMs: RTT_MS,
+        lost: false,
+        observedAtMs: performance.now(),
+      });
   }
   #stop(): void {
     if (this.#timer !== null) clearTimeout(this.#timer);

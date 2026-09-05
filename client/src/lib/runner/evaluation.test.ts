@@ -393,20 +393,20 @@ test("replacement checkpoint bytes enter only the exact final reduction", () => 
 test("partial latency needs named outcome and success evidence floors", () => {
   const accum = fresh();
   for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++)
-    accum.pushLatency(20, false, i > 0, i * 100);
-  expect(accum.partialLatencyResult(DEFAULT_CONFIG, 0)).toBeNull();
-  accum.pushLatency(21, false, false, 200);
-  const result = accum.partialLatencyResult(DEFAULT_CONFIG, 0);
+    accum.pushLatency("latency", 20, i > 0, i * 100);
+  expect(accum.partialLatencyResult(DEFAULT_CONFIG)).toBeNull();
+  accum.pushLatency("latency", 21, false, 200);
+  const result = accum.partialLatencyResult(DEFAULT_CONFIG);
   expect(result?.method).toBe("full-average");
   expect(result?.reportedMs).toBeCloseTo(20.5, 6);
 });
 test("long latency runs bound confidence while retaining exact result evidence", () => {
   const accum = fresh();
   for (let i = 0; i < 20_000; i++)
-    accum.pushLatency(10 + (i % 5), false, i % 10 === 0, i * 250);
+    accum.pushLatency("latency", 10 + (i % 5), i % 10 === 0, i * 250);
   expect(accum.confidence("latency").sampleCount).toBe(16);
-  const result = accum.latencyResult(DEFAULT_CONFIG, 0);
-  expect(result.packetLossPct).toBe(10);
+  const result = accum.latencyResult(DEFAULT_CONFIG)!;
+  expect(result.probeTimeoutPct).toBe(10);
   expect(result.minMs).toBe(10);
   expect(result.p95Ms).toBe(14);
 });
@@ -420,8 +420,8 @@ test("partial bidirectional keeps each qualifying lane independently", () => {
 });
 test("bufferbloat is unavailable without both idle and loaded latency evidence", () => {
   const accum = fresh();
-  accum.pushLatency(20, false, false);
+  accum.pushLatency("latency", 20, false);
   expect(accum.bufferbloatGrade()).toBeNull();
-  accum.pushLatency(40, true, false);
+  accum.pushLatency("download", 40, false);
   expect(accum.bufferbloatGrade()?.increaseMs).toBe(20);
 });

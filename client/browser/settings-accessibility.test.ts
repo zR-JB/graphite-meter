@@ -414,13 +414,13 @@ test("the datagram card follows its selection and announces its caution", async 
   });
   const caution = settings
     .getByRole("status")
-    .filter({ hasText: "not link speed" });
+    .filter({ hasText: "Measures application datagram delivery" });
   const toggle = settings.getByText("Datagram throughput (experimental)");
   await expect(card).toHaveCount(0);
   await expect(caution).toHaveCount(0);
   await toggle.click();
   await expect(card).toHaveCount(1);
-  await expect(caution).toContainText("Datagrams are never resent");
+  await expect(caution).toContainText("Datagrams are not retransmitted");
   await card.click();
   await expect(card.locator("input")).toBeChecked();
   await toggle.click();

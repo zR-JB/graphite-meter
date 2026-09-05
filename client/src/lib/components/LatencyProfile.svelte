@@ -36,7 +36,7 @@
     </p>
   {/if}
 
-  <LatencyProfileView {lanes} variant="bare" showCurrent showLoss />
+  <LatencyProfileView {lanes} variant="bare" showCurrent showTimeouts />
 </section>
 
 <style>
