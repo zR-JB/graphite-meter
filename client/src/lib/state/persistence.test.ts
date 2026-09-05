@@ -45,7 +45,7 @@ test("stored value at the current shape: hydrates as-is", () => {
   expect(loaded(snapshot)).toEqual(snapshot);
 });
 
-test("history preference migrates to default and preserves explicit overrides", () => {
+test("invalid history preference falls back to default and preserves explicit overrides", () => {
   const snapshot = defaultPersisted();
   snapshot.resultHistoryPreference = "enabled";
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -83,7 +83,7 @@ test("history columns default, validate, deduplicate, and preserve order", () =>
   );
 });
 
-test("older/partial stored shape: missing fields fall back to defaults", () => {
+test("partial stored shape: missing fields fall back to defaults", () => {
   const result = loaded({ theme: "light" });
   expect(result.theme).toBe("light");
   expect(result.unitBase).toBe("base10");
@@ -95,7 +95,7 @@ test("an explicit wire-estimate opt-out survives hydration", () => {
   expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
-test("legacy adaptive tuning resets every field to canonical defaults", () => {
+test("stored adaptive tuning cannot override internal policy", () => {
   const adaptive = loaded({
     config: {
       adaptive: {
@@ -136,9 +136,9 @@ test("saving adaptive settings persists only enabled and restores canonical poli
   });
 });
 
-test("legacy ping concurrency becomes unloaded cadence with the new loaded default", () => {
+test("obsolete ping concurrency is ignored", () => {
   const config = loaded({ config: { pingConcurrency: "slow" } }).config;
-  expect(config.pingCadence).toBe("slow");
+  expect(config.pingCadence).toBe(DEFAULT_CONFIG.pingCadence);
   expect(config.loadedPingCadence).toBe("medium");
   expect(config).not.toHaveProperty("pingConcurrency");
 });
@@ -150,13 +150,13 @@ test("new installations use reply-driven unloaded and medium loaded cadence", ()
   });
 });
 
-test("old instant cadences migrate to reply-driven", () => {
+test("obsolete instant cadences fall back to current defaults", () => {
   expect(
     loaded({ config: { pingCadence: "instant", loadedPingCadence: "instant" } })
       .config,
   ).toMatchObject({
     pingCadence: "reply-driven",
-    loadedPingCadence: "reply-driven",
+    loadedPingCadence: "medium",
   });
 });
 
@@ -167,13 +167,13 @@ test("obsolete endpoint override cannot restore the old listener port", () => {
   expect(loadPersisted().config).not.toHaveProperty("endpoint");
 });
 
-test("legacy parallel-stream ceiling migrates into automatic policy", () => {
+test("obsolete parallel-stream ceiling is ignored", () => {
   expect(
     loaded({ config: { parallelStreams: 2 } }).config.transferStreams,
-  ).toEqual({ mode: "auto", count: 2 });
+  ).toEqual(DEFAULT_CONFIG.transferStreams);
 });
 
-test("legacy role bindings migrate and obsolete progress selection is dropped", () => {
+test("obsolete transport role bindings and progress selection are ignored", () => {
   expect(
     loaded({
       config: {
@@ -231,6 +231,18 @@ test("obsolete compensation settings are discarded without hydration", () => {
 test("savePersisted round-trips through loadPersisted", () => {
   const snapshot = defaultPersisted();
   snapshot.dockWidth = { left: 250, right: 500 };
+  savePersisted(snapshot);
+  expect(loadPersisted()).toEqual(snapshot);
+});
+
+test("current target identifiers round-trip without historical alias rewriting", () => {
+  const snapshot = defaultPersisted();
+  snapshot.config.transports = {
+    throughputTarget: "http1-clear",
+    latencyTarget: "ws-http1-tls",
+  };
+  snapshot.config.pingCadence = "slow";
+  snapshot.config.transferStreams = { mode: "forced", count: 3 };
   savePersisted(snapshot);
   expect(loadPersisted()).toEqual(snapshot);
 });

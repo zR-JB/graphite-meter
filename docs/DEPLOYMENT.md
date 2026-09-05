@@ -357,3 +357,11 @@ tokens are ignored; at least one valid stage must remain for a useful run.
 Releases attach native client archives for Linux amd64/arm64, macOS amd64/arm64, and Windows
 amd64. The server is distributed through the multi-architecture container image; a standalone
 server binary can be built from source but is not attached to GitHub Releases.
+
+## Upgrading browser preferences to 0.7
+
+Version 0.7 reads current preference fields only. Obsolete cadence names,
+`pingConcurrency`, `parallelStreams`, and old transport-role aliases are ignored;
+missing or invalid values use current defaults. Target identifiers are preserved
+as stored and resolved against current discovery. The browser storage key is
+unchanged, so current preferences and theme choices remain available.
