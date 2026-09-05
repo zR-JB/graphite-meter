@@ -48,6 +48,7 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   jitter: number | null;
   timeoutRatio: number | null;
   accountingComplete?: boolean | null;
+  accountingLegacy?: boolean;
   timeoutCount?: number | null;
   unresolvedCount?: number | null;
   sendFailureCount?: number | null;
@@ -164,7 +165,7 @@ export function hoverContext(
   return centerLabel(lane);
 }
 
-export const PARTIAL_ACCOUNTING_HELP =
+const PARTIAL_ACCOUNTING_HELP =
   "Worker shutdown could not account for all probes. Shown counts cover known outcomes only; additional outcomes are unknown.";
 
 export function probeAccountingDetails(
@@ -207,4 +208,12 @@ export function hasProbeAccountingNotice(
     (lane.unresolvedCount ?? 0) > 0 ||
     (lane.sendFailureCount ?? 0) > 0
   );
+}
+
+export function probeAccountingHelp(
+  lane: Pick<LatencyProfileViewLane, "accountingLegacy">,
+): string {
+  return lane.accountingLegacy
+    ? "This saved result predates probe-accounting completeness metadata. Exact timeout counts and any missing outcomes are unknown."
+    : PARTIAL_ACCOUNTING_HELP;
 }

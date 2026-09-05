@@ -77,3 +77,7 @@ Version 1 saved browser results remain readable. They retain their stored values
 and are marked as legacy calculations because profiles used bucket-derived
 estimates and some timeout populations were selectively sampled. They cannot be
 reconstructed into version 2 raw measurements.
+
+Early Version 2 snapshots without accounting-completeness metadata remain
+readable. They are shown as partial accounting with unknown exact timeout counts;
+a stored percentage is never used to reconstruct a supposedly exact count.

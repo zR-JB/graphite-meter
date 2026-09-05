@@ -1884,7 +1884,14 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
       accountingComplete: false,
     },
   };
-  await seedHistory(page, [partial]);
+  const earlierV2 = structuredClone(partial);
+  earlierV2.id = IDS.middle;
+  const earlierLane = earlierV2.stages.latency.lanes.download!;
+  delete earlierLane.accountingComplete;
+  delete earlierLane.timeoutCount;
+  earlierLane.count = 10;
+  earlierLane.timeoutRatio = 0.1;
+  await seedHistory(page, [partial, earlierV2]);
   await openHistory(page, partial.id);
   const profile = page.locator(
     '[data-latency-profile][data-variant="compact"]',
@@ -1905,4 +1912,14 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(profile.getByText("Partial accounting")).toBeVisible();
   await expectNoHorizontalOverflow(profile);
+  await page.evaluate((id) => {
+    window.location.hash = `/history/${id}`;
+  }, earlierV2.id);
+  await expect(profile.getByText("Partial accounting")).toBeVisible();
+  await expect(profile).toContainText("Known: 10 resolved");
+  await expect(profile).not.toContainText("0 timeouts");
+  await profile.getByRole("note").focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "predates probe-accounting completeness metadata",
+  );
 });

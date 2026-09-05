@@ -333,6 +333,11 @@ test("V2 persists partial accounting and exact known outcome counts", () => {
     delete missing.stages.latency.lanes.download![field];
     expect(isHistoryRecord(missing)).toBe(false);
   }
+  const earlierV2 = structuredClone(saved);
+  delete earlierV2.stages.latency.lanes.download!.accountingComplete;
+  delete earlierV2.stages.latency.lanes.download!.timeoutCount;
+  expect(isHistoryRecord(earlierV2)).toBe(true);
+  expect(earlierV2.stages.latency.lanes.download!.timeoutCount).toBeUndefined();
   saved.stages.latency.lanes.download!.timeoutCount = 4;
   expect(isHistoryRecord(saved)).toBe(false);
 });

@@ -16,7 +16,7 @@
   import { store } from "../../state/store.svelte";
   import {
     savedLatencyHasProbeEvidence,
-    PARTIAL_ACCOUNTING_HELP,
+    probeAccountingHelp,
     probeAccountingDetails,
     hasProbeAccountingNotice,
     type LatencyProfileViewLane,
@@ -49,6 +49,7 @@
     value: string;
     details: string;
     accountingComplete?: boolean;
+    accountingLegacy?: boolean;
   }
 
   let {
@@ -62,7 +63,10 @@
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
     Object.values(record.stages.latency.lanes).some(
-      (lane) => lane?.accountingComplete === false,
+      (lane) =>
+        lane != null &&
+        record.schemaVersion === 2 &&
+        lane.accountingComplete !== true,
     ) ||
       record.failures.length > 0 ||
       [
@@ -133,6 +137,17 @@
     );
   }
 
+  function savedAccounting(snapshot: LatencyLaneSnapshot) {
+    return {
+      accountingComplete:
+        record.schemaVersion === 2
+          ? (snapshot.accountingComplete ?? false)
+          : undefined,
+      accountingLegacy:
+        record.schemaVersion === 2 && snapshot.accountingComplete === undefined,
+    };
+  }
+
   function finalizedLane(
     key: LatencyProfileViewLane["key"],
     label: string,
@@ -146,6 +161,7 @@
       tone,
       centerKind: key === "latency" ? "result" : "average",
       ...snapshot,
+      ...savedAccounting(snapshot),
       timeoutRatio: snapshot.timeoutRatio ?? snapshot.lossRatio ?? null,
     };
     return usefulLane(lane) ? lane : null;
@@ -190,12 +206,13 @@
     tone: LatencyProfileTone,
     snapshot: LatencyLaneSnapshot | null,
   ): ProbeTimeoutLane | null {
+    if (!snapshot) return null;
+    const accounting = savedAccounting(snapshot);
     if (
-      !snapshot ||
-      (snapshot.accountingComplete !== false &&
-        snapshot.count <= 0 &&
-        !snapshot.unresolvedCount &&
-        !snapshot.sendFailureCount)
+      accounting.accountingComplete !== false &&
+      snapshot.count <= 0 &&
+      !snapshot.unresolvedCount &&
+      !snapshot.sendFailureCount
     )
       return null;
     const ratio = snapshot.timeoutRatio ?? snapshot.lossRatio ?? null;
@@ -205,11 +222,11 @@
       icon,
       tone,
       value:
-        snapshot.accountingComplete === false
+        accounting.accountingComplete === false
           ? "Partial"
           : formatPercent(ratio == null ? null : ratio * 100),
-      details: probeAccountingDetails(snapshot),
-      accountingComplete: snapshot.accountingComplete,
+      details: probeAccountingDetails({ ...snapshot, ...accounting }),
+      ...accounting,
     };
   }
 
@@ -465,7 +482,7 @@
               <strong>{lane.label}</strong>
               <small>{lane.details}</small>
               {#if lane.accountingComplete === false}
-                <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
+                <small role="note" use:tooltip={probeAccountingHelp(lane)}
                   >Partial accounting</small
                 >
               {/if}

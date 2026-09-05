@@ -63,7 +63,7 @@ export interface LatencyLaneSnapshot {
   /** V1 compatibility field. */
   lossRatio?: number;
   timeoutRatio?: number | null;
-  /** Required in V2; absent from legacy V1 records. */
+  /** New V2 writes include this; early V2 and V1 records lack this metadata. */
   accountingComplete?: boolean;
   timeoutCount?: number;
   unresolvedCount?: number;
@@ -507,15 +507,17 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         ? unitInterval(candidate.lossRatio)
         : (candidate.timeoutRatio === null ||
             unitInterval(candidate.timeoutRatio)) &&
-          typeof candidate.accountingComplete === "boolean" &&
-          Number.isSafeInteger(candidate.timeoutCount) &&
-          nonnegative(candidate.timeoutCount) &&
-          nonnegative(candidate.count) &&
-          candidate.timeoutCount <= candidate.count &&
-          candidate.timeoutRatio ===
-            (candidate.count
-              ? candidate.timeoutCount / candidate.count
-              : null) &&
+          ((candidate.accountingComplete === undefined &&
+            candidate.timeoutCount === undefined) ||
+            (typeof candidate.accountingComplete === "boolean" &&
+              Number.isSafeInteger(candidate.timeoutCount) &&
+              nonnegative(candidate.timeoutCount) &&
+              nonnegative(candidate.count) &&
+              candidate.timeoutCount <= candidate.count &&
+              candidate.timeoutRatio ===
+                (candidate.count
+                  ? candidate.timeoutCount / candidate.count
+                  : null))) &&
           Number.isSafeInteger(candidate.unresolvedCount) &&
           nonnegative(candidate.unresolvedCount) &&
           Number.isSafeInteger(candidate.sendFailureCount) &&

@@ -4,7 +4,7 @@
   import { fmtMs } from "../format";
   import {
     entries,
-    PARTIAL_ACCOUNTING_HELP,
+    probeAccountingHelp,
     probeAccountingDetails,
     hasProbeAccountingNotice,
     hoverContext,
@@ -203,7 +203,7 @@
             <span
               class="accounting-warning"
               role="note"
-              use:tooltip={PARTIAL_ACCOUNTING_HELP}>Partial accounting</span
+              use:tooltip={probeAccountingHelp(lane)}>Partial accounting</span
             >
           {/if}
           <span>{probeAccountingDetails(lane)}</span>
