@@ -2,7 +2,11 @@
 import type { CoreHost } from "../core";
 import type { PhaseActivity, RecoveryCause } from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
-import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
+import {
+  authEnabled,
+  csrfHeader,
+  reportAuthenticationRequired,
+} from "../../auth";
 import type { AuthRequiredMsg } from "./workerPool";
 import { startUploadFeed } from "./uploadFeed";
 import {
@@ -145,7 +149,7 @@ export class UploadProgressChannel {
     }
     if (msg.type === "auth-required") {
       this.#deps.discardTransfer();
-      redirectToLogin();
+      reportAuthenticationRequired();
       return;
     }
     if (msg.type === "fatal") {

@@ -155,3 +155,55 @@ export function parseResponseToken(
 ): string {
   return string(record(value)[key], 8192);
 }
+
+/** Session lifetime values are milliseconds remaining when the response was produced. */
+export function parseSessionLifetime(value: unknown): {
+  remainingMs: number;
+  maximumLifetimeMs: number;
+} {
+  const input = record(value);
+  const { remainingMs, maximumLifetimeMs } = input;
+  if (
+    typeof remainingMs !== "number" ||
+    !Number.isFinite(remainingMs) ||
+    remainingMs < 0 ||
+    typeof maximumLifetimeMs !== "number" ||
+    !Number.isFinite(maximumLifetimeMs) ||
+    maximumLifetimeMs <= 0 ||
+    remainingMs > maximumLifetimeMs
+  )
+    throw new Error("invalid session lifetime");
+  return { remainingMs, maximumLifetimeMs };
+}
+
+/** Only the account fields consumed by the browser cross into presentation. */
+export function parseAccountSession(value: unknown): {
+  name: string;
+  provider: string;
+  csrf: string;
+} {
+  const input = record(value);
+  return {
+    name: string(input.name, 8192, true),
+    provider: string(input.provider, 8192),
+    csrf: string(input.csrf, 8192),
+  };
+}
+
+/** Older mints may omit expiry; those tokens can be dialed once but are not cached. */
+export function parseWtToken(value: unknown): {
+  token: string;
+  expires?: number;
+} {
+  const input = record(value);
+  const token = parseResponseToken(input, "token");
+  const { expires } = input;
+  if (expires === undefined) return { token };
+  if (
+    typeof expires !== "number" ||
+    !Number.isSafeInteger(expires) ||
+    expires < 0
+  )
+    throw new Error("invalid WebTransport token expiry");
+  return { token, expires };
+}

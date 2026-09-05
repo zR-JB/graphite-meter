@@ -191,3 +191,66 @@ test("withWtToken appends to either URL shape and skips a blank token", () => {
   );
   expect(withWtToken("https://m/wt/ping", "")).toBe("https://m/wt/ping");
 });
+
+test("worker mint cancels oversized streamed control bodies", async () => {
+  let canceled = false;
+  let reads = 0;
+  const restore = respondWith(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          reads++;
+          controller.enqueue(new Uint8Array(16_384));
+        },
+        cancel() {
+          canceled = true;
+        },
+      }),
+    ),
+  );
+  try {
+    expect(await mintWtToken({ url: "https://meter.test/oversized" })).toEqual({
+      token: "",
+      authRequired: false,
+    });
+    expect(canceled).toBe(true);
+    expect(reads).toBeLessThanOrEqual(6);
+  } finally {
+    restore();
+  }
+});
+
+test("malformed mint tokens and overflowing JSON expiry are refused without inventing auth failure", async () => {
+  for (const body of [
+    "null",
+    '{"token":"' + "a".repeat(8193) + '"}',
+    '{"token":"gmw_bad","expires":1e999}',
+    '{"token":"gmw_bad","expires":null}',
+  ]) {
+    const restore = respondWith(new Response(body));
+    try {
+      expect(await mintWtToken({ url: "https://meter.test/invalid" })).toEqual({
+        token: "",
+        authRequired: false,
+      });
+    } finally {
+      restore();
+    }
+  }
+});
+
+test("legacy expiry-free mint responses are not reused", async () => {
+  let calls = 0;
+  const restore = stubFetch((async () => {
+    calls++;
+    return Response.json({ token: "gmw_legacy" });
+  }) as unknown as typeof fetch);
+  try {
+    const mint = { url: "https://meter.test/legacy" };
+    expect((await mintWtToken(mint)).token).toBe("gmw_legacy");
+    expect((await mintWtToken(mint)).token).toBe("gmw_legacy");
+    expect(calls).toBe(2);
+  } finally {
+    restore();
+  }
+});

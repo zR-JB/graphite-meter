@@ -4,13 +4,8 @@
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  const {
-    cancelPendingStart,
-    hasPendingStart,
-    returnToStart,
-    toggleRun,
-    dispose: teardownRunner,
-  } = getApplicationController();
+  const { cancelPendingStart, hasPendingStart, returnToStart, toggleRun } =
+    getApplicationController();
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
@@ -431,10 +426,6 @@
     e.returnValue = "";
   }
 
-  function onAuthRequired() {
-    teardownRunner();
-  }
-
   function isEditable(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
     const tag = el.tagName;
@@ -585,7 +576,6 @@
     onHashChange();
     window.addEventListener("keydown", onKeydown);
     window.addEventListener("beforeunload", onBeforeUnload);
-    window.addEventListener("graphite-meter-auth-required", onAuthRequired);
     if (authEnabled)
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
@@ -600,10 +590,6 @@
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("popstate", onHashChange);
       window.removeEventListener("beforeunload", onBeforeUnload);
-      window.removeEventListener(
-        "graphite-meter-auth-required",
-        onAuthRequired,
-      );
     };
   });
 </script>
