@@ -224,67 +224,74 @@ export class RealBackend implements RunnerBackend {
     this.#discoveryProtocol = undefined;
 
     const { pf, discovery } = await this.#fetchDiscovery(epoch, signal);
-    // Carrying a role over is only sound while the server advertises the same targets it did last time.
-    if (previous?.discoveryGeneration !== pf.generation) role = undefined;
+    try {
+      // Carrying a role over is only sound while the server advertises the same targets it did last time.
+      if (previous?.discoveryGeneration !== pf.generation) role = undefined;
 
-    const selected = this.#selectThroughputRole(
-      config,
-      discovery,
-      pf,
-      previous,
-      role,
-    );
-    const needsLatency = this.#selectLatencyRole(
-      config,
-      discovery,
-      previous,
-      role,
-    );
+      const selected = this.#selectThroughputRole(
+        config,
+        discovery,
+        pf,
+        previous,
+        role,
+      );
+      const needsLatency = this.#selectLatencyRole(
+        config,
+        discovery,
+        previous,
+        role,
+      );
 
-    const { pathProbe, firstHopProtocol } = await this.#probeThroughputPath(
-      selected,
-      previous,
-      role,
-      signal,
-    );
-    this.#assertCurrentProbe(epoch);
-    const latencyPathProbe = await this.#probeLatencyPath(
-      previous,
-      role,
-      needsLatency,
-      signal,
-    );
-    this.#assertCurrentProbe(epoch);
-
-    if (needsLatency && role !== "throughput") {
-      await this.#verifyLatencyChannel(discovery, config, signal);
+      const { pathProbe, firstHopProtocol } = await this.#probeThroughputPath(
+        selected,
+        previous,
+        role,
+        signal,
+      );
       this.#assertCurrentProbe(epoch);
+      const latencyPathProbe = await this.#probeLatencyPath(
+        previous,
+        role,
+        needsLatency,
+        signal,
+      );
+      this.#assertCurrentProbe(epoch);
+
+      if (needsLatency && role !== "throughput") {
+        await this.#verifyLatencyChannel(discovery, config, signal);
+        this.#assertCurrentProbe(epoch);
+      }
+
+      await this.#commitThroughputTransport(
+        config,
+        pf,
+        previous,
+        role,
+        epoch,
+        signal,
+      );
+
+      // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
+      const probeRtts =
+        needsLatency && role !== "throughput"
+          ? await this.#idle.collectRtts(signal)
+          : [];
+      this.#assertCurrentProbe(epoch);
+
+      const info = this.#assembleInfra(pf, previous, selected, {
+        throughput: pathProbe,
+        latency: latencyPathProbe,
+        firstHopProtocol,
+        probeRtts,
+      });
+      info.discovery = discovery;
+      this.#probeInfo = info;
+      return info;
+    } catch (cause) {
+      if (cause instanceof TransportUnavailableError)
+        cause.discovery = discovery;
+      throw cause;
     }
-
-    await this.#commitThroughputTransport(
-      config,
-      pf,
-      previous,
-      role,
-      epoch,
-      signal,
-    );
-
-    // Keepalive RTTs supply the pre-test ping median: RTT is client-measured, the server sends 0.
-    const probeRtts =
-      needsLatency && role !== "throughput"
-        ? await this.#idle.collectRtts(signal)
-        : [];
-    this.#assertCurrentProbe(epoch);
-
-    const info = this.#assembleInfra(pf, previous, selected, {
-      throughput: pathProbe,
-      latency: latencyPathProbe,
-      firstHopProtocol,
-      probeRtts,
-    });
-    this.#probeInfo = info;
-    return info;
   }
 
   /* Reads as an abort, which is what supersession is to the older caller. */
@@ -337,7 +344,6 @@ export class RealBackend implements RunnerBackend {
       server: pf.server,
       fetchedAt: Date.now(),
     });
-    this.#host?.emit({ type: "transportDiscovery", discovery });
     return { pf, discovery };
   }
 

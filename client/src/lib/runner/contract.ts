@@ -310,6 +310,7 @@ export interface EngineInfo {
 
 /* ---------- Pre-test handshake info ---------- */
 export interface InfraInfo {
+  discovery?: TransportDiscovery;
   clientIp: string;
   clientIpVersion: 4 | 6;
   clientIpSource: "socket" | "forwarded";

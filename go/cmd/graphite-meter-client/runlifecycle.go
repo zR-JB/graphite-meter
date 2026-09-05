@@ -44,9 +44,9 @@ func plannedStages(cfg goclient.Config) []stageProgress {
 	return stages
 }
 
-func prepareConnection(seq int, cfg goclient.Config) tea.Cmd {
+func prepareConnection(parent context.Context, seq int, cfg goclient.Config) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		ctx, cancel := context.WithTimeout(parent, 12*time.Second)
 		defer cancel()
 		connection, err := goclient.Prepare(ctx, cfg)
 		return preparationMsg{seq: seq, connection: connection, err: err}
@@ -62,9 +62,9 @@ func beginAuthorization(seq int, cfg goclient.Config, authURL string) tea.Cmd {
 
 const authWait = 2 * time.Minute
 
-func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
+func pollAuthorization(parent context.Context, seq int, p *goclient.PendingAuthorization) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), authWait)
+		ctx, cancel := context.WithTimeout(parent, authWait)
 		defer cancel()
 		token, err := p.Poll(ctx)
 		return authTokenMsg{seq: seq, token: token, origin: p.Origin, err: err}
@@ -73,13 +73,34 @@ func pollAuthorization(seq int, p *goclient.PendingAuthorization) tea.Cmd {
 
 const prepareDebounce = 350 * time.Millisecond
 
-func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+func (m *model) cancelPreparation() {
 	m.prepareSeq++
+	if m.prepareCancel != nil {
+		m.prepareCancel()
+		m.prepareCancel = nil
+	}
+	m.auth = nil
+	m.authOpened = false
+}
+
+func (m *model) renewPreparation() {
+	m.cancelPreparation()
+	m.prepareCtx, m.prepareCancel = context.WithCancel(m.lifetime)
+}
+
+func (m *model) close() {
+	m.cancelPreparation()
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.shutdown()
+}
+
+func (m model) reprepare(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	m.renewPreparation()
 	m.prepareStatus = "checking"
 	m.prepareStep = stepReach
 	m.prepareError = ""
-	m.auth = nil
-	m.authOpened = false
 	tick := tea.Tick(prepareDebounce, func(time.Time) tea.Msg { return prepareDueMsg{seq: m.prepareSeq} })
 	return m, tea.Batch(cmd, tick, m.spin.Tick)
 }
@@ -88,7 +109,7 @@ func (m model) handlePrepareDue(msg prepareDueMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
 	}
-	return m, prepareConnection(m.prepareSeq, m.cfg)
+	return m, prepareConnection(m.prepareCtx, m.prepareSeq, m.cfg)
 }
 
 func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
@@ -188,7 +209,7 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 	m.now = m.authSince
 	m.focusServer()
 	m.notice = "Check the code below, then press enter to open the approval page."
-	return m, tea.Batch(pollAuthorization(msg.seq, msg.pending), m.spin.Tick)
+	return m, tea.Batch(pollAuthorization(m.prepareCtx, msg.seq, msg.pending), m.spin.Tick)
 }
 
 func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
@@ -230,10 +251,12 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.runSeq {
 		return m, nil
 	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
-		if m.cancel != nil {
-			m.cancel()
-		}
+		m.renewPreparation()
 		m.complete = true
 		m.mode = modeConfigure
 		m.prepared = nil
@@ -244,7 +267,7 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 	}
 	if msg.err != nil {
-		if strings.Contains(msg.err.Error(), "context canceled") {
+		if errors.Is(msg.err, context.Canceled) {
 			m.status = "canceled"
 		} else {
 			m.err = msg.err
@@ -265,13 +288,18 @@ func (m model) startRun() (model, tea.Cmd) {
 		m.row = 0
 		return m, nil
 	}
+	m.cancelPreparation()
+	if m.cancel != nil {
+		m.cancel()
+	}
 
 	events := make(chan goclient.Event, 256)
 	done := make(chan error, 1)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(m.lifetime)
 	cfg := m.cfg
 	prepared := m.prepared
 	go func() {
+		defer cancel()
 		run := goclient.Run
 		if prepared.FreshFor(cfg) {
 			run = func(ctx context.Context, cfg goclient.Config, emit func(goclient.Event)) error {

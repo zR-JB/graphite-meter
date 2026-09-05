@@ -349,20 +349,6 @@ class AppStore {
     return canToggleMeasuredStage(stage, this.isRunning, this.phaseStage);
   }
 
-  toggleStage(stage: StageKey): boolean {
-    if (!this.canToggleStage(stage)) return false;
-
-    const currentlyEnabled = this.config.stages[stage];
-    const enabledCount = STAGE_ORDER.filter(
-      (stage) => this.config.stages[stage],
-    ).length;
-
-    if (currentlyEnabled && enabledCount <= 1) return false;
-
-    this.config.stages[stage] = !currentlyEnabled;
-    return true;
-  }
-
   latencyEnabled = $derived(
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
@@ -831,23 +817,22 @@ export const store = new AppStore();
 
 const SAVE_DEBOUNCE_MS = 250;
 
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", (event) => {
+export function mountStoreEffects(store: AppStore): () => void {
+  const onStorage = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY) return;
     const persisted = loadPersisted();
     store.resultHistoryPreference = persisted.resultHistoryPreference;
     store.historyColumns = persisted.historyColumns;
-  });
+  };
+  window.addEventListener("storage", onStorage);
   let systemPrefersLight = $state(systemThemeDefault() === "light");
-  if (window.matchMedia) {
-    window
-      .matchMedia("(prefers-color-scheme: light)")
-      .addEventListener("change", (e) => {
-        systemPrefersLight = e.matches;
-      });
-  }
+  const media = window.matchMedia?.("(prefers-color-scheme: light)");
+  const onThemeChange = (event: MediaQueryListEvent) => {
+    systemPrefersLight = event.matches;
+  };
+  media?.addEventListener("change", onThemeChange);
 
-  $effect.root(() => {
+  const disposeEffects = $effect.root(() => {
     $effect(() => {
       const resolved =
         store.theme === "auto"
@@ -875,4 +860,9 @@ if (typeof window !== "undefined") {
       return () => clearTimeout(timer);
     });
   });
+  return () => {
+    disposeEffects();
+    window.removeEventListener("storage", onStorage);
+    media?.removeEventListener("change", onThemeChange);
+  };
 }

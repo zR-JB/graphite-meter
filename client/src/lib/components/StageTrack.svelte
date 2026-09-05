@@ -1,7 +1,8 @@
 <script lang="ts">
   // Stage rail keeps editable selection separate from retained run execution.
   import { store, type StageKey } from "../state/store.svelte";
-  import { applyLiveRunConfig } from "../runner/engine.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
+  const controller = getApplicationController();
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
@@ -18,7 +19,7 @@
   ];
 
   function onToggle(stage: StageKey) {
-    if (store.toggleStage(stage)) applyLiveRunConfig();
+    controller.toggleStage(stage);
   }
 
   const segments = $derived.by(() => {
@@ -125,7 +126,7 @@
           : "Bidirectional — running."}
       disabled={!store.canToggleStage("bidirectional")}
       onclick={() => {
-        if (store.toggleStage("bidirectional")) applyLiveRunConfig();
+        controller.toggleStage("bidirectional");
       }}
     >
       <div class="seg-bar" aria-hidden="true">
