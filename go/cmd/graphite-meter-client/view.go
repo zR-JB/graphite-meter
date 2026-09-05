@@ -350,7 +350,7 @@ func (m model) authView() []string {
 	code := lipgloss.JoinHorizontal(lipgloss.Center,
 		labelStyle.Render("Match this code")+" ",
 		codeStyle.Render(m.auth.Code),
-		mutedStyle.Render("  waiting "+fmtClock(waited)+" · expires in "+fmtClock(authWait-waited)),
+		mutedStyle.Render("  waiting "+fmtClock(waited)+" · expires in "+fmtClock(goclient.AuthorizationTimeout-waited)),
 	)
 	return []string{
 		m.spin.View() + " " + accentStyle.Render(prompt),

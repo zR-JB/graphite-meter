@@ -25,7 +25,7 @@ func TestReprepareCancelsActiveRequestAndDiscardsItsReply(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = srv.URL
 	m := newModel(cfg)
-	defer m.shutdown()
+	defer m.controller.Close()
 	m, _ = modelAndCmd(m.reprepare(nil))
 	m, command := modelAndCmd(m.handlePrepareDue(prepareDueMsg{seq: m.prepareSeq}))
 	replied := make(chan tea.Msg, 1)
@@ -64,9 +64,9 @@ func TestPreparationCancellationReachesQueuedAuthorizationPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := newModel(cfg)
-	defer m.shutdown()
+	defer m.controller.Close()
 	m, _ = modelAndCmd(m.reprepare(nil))
-	command := pollAuthorization(m.prepareCtx, m.prepareSeq, pending)
+	command := pollAuthorization(m.preparation, m.prepareSeq, pending)
 	m, _ = modelAndCmd(m.reprepare(nil))
 	reply := command().(authTokenMsg)
 	if !errors.Is(reply.err, context.Canceled) || reply.token != "" {
@@ -82,9 +82,9 @@ func TestQuitCancelsPreparationInConfigurationAndEditor(t *testing.T) {
 	for _, editing := range []bool{false, true} {
 		t.Run(fmt.Sprint(editing), func(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
-			defer m.shutdown()
+			defer m.controller.Close()
 			m, _ = modelAndCmd(m.reprepare(nil))
-			ctx := m.prepareCtx
+			preparation := m.preparation
 			if editing {
 				m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
 			}
@@ -92,8 +92,11 @@ func TestQuitCancelsPreparationInConfigurationAndEditor(t *testing.T) {
 			if _, ok := command().(tea.QuitMsg); !ok {
 				t.Fatal("quit key did not quit")
 			}
-			if ctx.Err() != context.Canceled || m.lifetime.Err() != context.Canceled {
-				t.Fatal("quit left preparation or application lifetime active")
+			if _, err := preparation.Prepare(); !errors.Is(err, context.Canceled) {
+				t.Fatal("quit left the queued preparation active")
+			}
+			if _, err := m.controller.NewPreparation(m.cfg).Prepare(); !errors.Is(err, context.Canceled) {
+				t.Fatal("quit allowed new preparation work")
 			}
 		})
 	}
@@ -102,8 +105,8 @@ func TestQuitCancelsPreparationInConfigurationAndEditor(t *testing.T) {
 func TestApplicationShutdownCancelsWorkOwnedByUpdatedModel(t *testing.T) {
 	initial := newModel(goclient.DefaultConfig())
 	updated, _ := modelAndCmd(initial.reprepare(nil))
-	initial.shutdown()
-	if updated.prepareCtx.Err() != context.Canceled {
+	initial.controller.Close()
+	if _, err := updated.preparation.Prepare(); !errors.Is(err, context.Canceled) {
 		t.Fatal("program exit did not cancel work created by an updated model")
 	}
 }
@@ -112,11 +115,11 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = ":invalid"
 	m := newModel(cfg)
-	defer m.shutdown()
+	defer m.controller.Close()
 	m, _ = modelAndCmd(m.reprepare(nil))
-	ctx, seq := m.prepareCtx, m.prepareSeq
+	preparation, seq := m.preparation, m.prepareSeq
 	m, _ = m.startRun()
-	if ctx.Err() != context.Canceled || m.prepareSeq == seq {
+	if _, err := preparation.Prepare(); !errors.Is(err, context.Canceled) || m.prepareSeq == seq {
 		t.Fatal("starting a run left its preparation active")
 	}
 	if _, command := modelAndCmd(m.handlePrepareDue(prepareDueMsg{seq: seq})); command != nil {
@@ -149,34 +152,25 @@ func drainRun(t *testing.T, events <-chan goclient.Event) {
 	}
 }
 
-func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
-	measurement, abort := context.WithCancel(t.Context())
-	abort()
-	for _, kind := range []goclient.EventKind{goclient.EventResult, goclient.EventDone} {
-		t.Run(fmt.Sprint(kind), func(t *testing.T) {
-			delivery, abandon := context.WithCancel(t.Context())
-			defer abandon()
-			events := make(chan goclient.Event, 1)
-			events <- goclient.Event{Kind: goclient.EventLatency}
-			sent := make(chan struct{})
-			go func() {
-				sendRunEvent(measurement, delivery, events, goclient.Event{Kind: kind})
-				close(sent)
-			}()
-			<-events
-			select {
-			case event := <-events:
-				if event.Kind != kind {
-					t.Fatalf("delivered %v, want %v", event.Kind, kind)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("user cancellation discarded the queued final outcome")
-			}
-			<-sent
-			events <- goclient.Event{}
-			abandon()
-			// A superseded run can exit even when its consumer has stopped draining the full queue.
-			sendRunEvent(measurement, delivery, events, goclient.Event{Kind: kind})
-		})
+// The key tests exercise an actual owned request rather than injecting a cancel callback.
+func startPendingRun(t *testing.T) (model, <-chan struct{}) {
+	t.Helper()
+	entered, left := make(chan struct{}), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-r.Context().Done()
+		close(left)
+	}))
+	t.Cleanup(srv.Close)
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = srv.URL
+	m := newModel(cfg)
+	t.Cleanup(m.controller.Close)
+	m, _ = m.startRun()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run never reached preparation")
 	}
+	return m, left
 }

@@ -36,7 +36,7 @@ func ClassifyAuthFailure(ctx context.Context, cfg Config, runErr error) error {
 	if runErr == nil || ctx.Err() != nil || cfg.authToken() == "" {
 		return runErr
 	}
-	checkCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	tr := baseTransport(cfg)
 	defer tr.CloseIdleConnections()

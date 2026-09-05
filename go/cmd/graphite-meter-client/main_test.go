@@ -586,13 +586,12 @@ func TestHandleKey_RapidEditStartCancelReEdit(t *testing.T) {
 
 func TestHandleKey_QuitSendsCancelAndQuit(t *testing.T) {
 	for _, key := range []tea.KeyMsg{{Type: tea.KeyCtrlC}, keyRunes("q")} {
-		called := false
-		m := newModel(goclient.DefaultConfig())
-		m.cancel = func() { called = true }
-
+		m, canceled := startPendingRun(t)
 		_, cmd := m.handleKey(key)
-		if !called {
-			t.Errorf("key %q did not invoke cancel", key.String())
+		select {
+		case <-canceled:
+		case <-time.After(time.Second):
+			t.Errorf("key %q did not cancel the active request", key.String())
 		}
 		if cmd == nil {
 			t.Fatalf("key %q returned nil cmd, want tea.Quit", key.String())
@@ -1384,26 +1383,36 @@ func TestCommitEdit_RetypingTheSameURLKeepsAuthorization(t *testing.T) {
 }
 
 func TestHandleKey_RunMode_CancelTakesTwoEscapes(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.mode = modeRun
-	canceled := false
-	m.cancel = func() { canceled = true }
-
+	m, canceled := startPendingRun(t)
 	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
-	if !m.cancelPrompt || canceled {
-		t.Fatalf("first esc: cancelPrompt=%v canceled=%v, want a prompt and no cancel", m.cancelPrompt, canceled)
+	if !m.cancelPrompt {
+		t.Fatal("first escape did not ask for confirmation")
 	}
-
+	select {
+	case <-canceled:
+		t.Fatal("first escape canceled the request")
+	default:
+	}
 	m, _ = modelAndCmd(m.handleKey(keyRunes("j")))
-	if m.cancelPrompt || canceled {
-		t.Fatalf("other key: cancelPrompt=%v canceled=%v, want the prompt dropped and the run kept", m.cancelPrompt, canceled)
+	if m.cancelPrompt {
+		t.Fatal("other key did not dismiss the prompt")
 	}
-
+	select {
+	case <-canceled:
+		t.Fatal("dismissing confirmation canceled the request")
+	default:
+	}
 	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
 	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
-	if !canceled || m.status != "canceling" {
-		t.Errorf("second esc: canceled=%v status=%q, want the run canceled", canceled, m.status)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("confirmed cancellation left the request running")
 	}
+	if m.status != "canceling" {
+		t.Fatalf("status=%q, want canceling", m.status)
+	}
+	drainRun(t, m.events)
 }
 
 func TestHandleKey_RunMode_EscapeReturnsToSetupWhenComplete(t *testing.T) {
@@ -1471,9 +1480,7 @@ func TestStartRun_LaunchesRun(t *testing.T) {
 		t.Error("expected a non-nil cmd waiting for run events")
 	}
 
-	if next.cancel != nil {
-		next.cancel()
-	}
+	next.controller.CancelRun()
 	drainRun(t, next.events)
 }
 
@@ -1486,7 +1493,7 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 			events <- goclient.Event{Kind: goclient.EventDone, Err: outcome}
 			close(events)
 			m := newModel(goclient.DefaultConfig())
-			defer m.shutdown()
+			defer m.controller.Close()
 			m.mode, m.events = modeRun, events
 			m, cmd := modelAndCmd(m.Update(waitEvents(m.runSeq, events)()))
 			wantStatus, wantErr := "complete", outcome
@@ -1558,7 +1565,7 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 
 func TestUpdate_EventsMsg(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
-	defer m.shutdown()
+	defer m.controller.Close()
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
 	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{
