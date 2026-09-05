@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -48,6 +49,65 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/download", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("request after release = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
+	for _, http2 := range []bool{false, true} {
+		name := "http1"
+		if http2 {
+			name = "http2"
+		}
+		t.Run(name, func(t *testing.T) {
+			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
+			upload := endpoint.NewUpload(nil, nil)
+			finished := make(chan struct{})
+			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if (r.ProtoMajor == 2) != http2 {
+					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
+				}
+				if err := upload.Handle(transport.NewHTTPSession(w, r)); err != nil {
+					t.Errorf("upload: %v", err)
+				}
+			}), nil, "")
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				h.ServeHTTP(w, r)
+				close(finished)
+			}))
+			srv.EnableHTTP2 = http2
+			srv.StartTLS()
+			defer srv.Close()
+			body, writer := io.Pipe()
+			defer body.Close()
+			defer writer.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/upload", body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clientDone := make(chan struct{})
+			go func() {
+				defer close(clientDone)
+				res, err := srv.Client().Do(req)
+				if err == nil {
+					res.Body.Close()
+				}
+			}()
+			defer func() {
+				cancel()
+				writer.Close()
+				<-clientDone
+			}()
+			select {
+			case <-finished:
+				if got := a.stats().active; got != 0 {
+					t.Fatalf("active uploads = %d after timeout, want 0", got)
+				}
+			case <-ctx.Done():
+				t.Fatal("stalled upload retained its admission slot beyond the request lifetime")
+			}
+		})
 	}
 }
 
