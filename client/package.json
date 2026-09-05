@@ -15,7 +15,7 @@
     "check:webview": "bun run scripts/check-webview.ts",
     "test": "bun test src --parallel --timings=test-timings.json",
     "build:browser": "bun -e \"process.env.GM_CLIENT_ALLOW_DUMMY='1'; process.env.GM_CLIENT_BUILD_PROFILE='dev'; process.env.GM_CLIENT_REVISION='browser-test'; delete process.env.VERSION; const result = Bun.spawnSync(['bun', 'run', 'build:bundle'], { cwd: '.', stdout: 'inherit', stderr: 'inherit', env: process.env }); process.exit(result.exitCode);\"",
-    "test:browser": "bun run build:browser && bun test browser --no-orphans --timeout 30000",
+    "test:browser": "bun run build:browser && bun test browser --parallel=3 --path-ignore-patterns=**/presentation-performance.test.ts --no-orphans --timeout 30000 && bun test ./browser/presentation-performance.test.ts --no-orphans --timeout 30000",
     "build:e2e-harness": "vite build -c vite.e2e.config.ts",
     "test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000",
     "test:e2e": "bun run build:e2e-harness && bun test e2e --no-orphans --timeout 60000",

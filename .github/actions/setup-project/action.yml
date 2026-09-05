@@ -55,13 +55,25 @@ runs:
       with:
         just-version: ${{ steps.just-version.outputs.version }}
 
+    - name: Scope Go cache to the job
+      if: inputs.go == 'true' && inputs.go-cache == 'true'
+      shell: bash
+      env:
+        GO_CACHE_SCOPE: ${{ github.job }}
+      run: |
+        mkdir -p .tools
+        printf '%s\n' "$GO_CACHE_SCOPE" > .tools/go-cache-scope
+
     - name: Set up Go
       if: inputs.go == 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
       with:
         go-version-file: go/go.mod
         cache: ${{ inputs.go-cache }}
-        cache-dependency-path: go/go.sum
+        cache-dependency-path: |
+          go/go.sum
+          justfile
+          .tools/go-cache-scope
 
     - name: Show Go version
       if: inputs.go == 'true'

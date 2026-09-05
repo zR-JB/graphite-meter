@@ -50,8 +50,6 @@ govulncheck_version := "v1.7.0"
 ty_version := "0.0.78"
 ty_binary := tools_dir / ("ty-" + ty_version) / if os() == "windows" { "ty.exe" } else { "ty" }
 
-# Set OS-specific path for the Go build cache to remain fully cross-platform
-GOCACHE := env("GOCACHE", if os() == "windows" { env("TEMP") / "graphite-meter-go-build" } else { "/tmp/graphite-meter-go-build" })
 CGO_ENABLED := "0"
 
 # List the available developer commands.

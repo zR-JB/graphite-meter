@@ -178,7 +178,8 @@ the last port. Readiness requires the identity of the server started by that fix
 server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
 
 In restricted environments, `JUST_TEMPDIR=/tmp` selects a writable directory for Just's scripts.
-`GOCACHE` selects the Go build cache; the recipes already default to a temporary cache. Chromium
+Go uses its standard build cache, shared with CI’s setup-go cache. In a restricted environment,
+set `GOCACHE` to a writable directory if needed. Chromium
 also needs writable `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` directories on Linux. Set
 `BUN_CHROME_PATH` to the browser executable when discovery picks the wrong installation. Real
 browser/transport checks require permission to launch browser processes and bind loopback sockets.
