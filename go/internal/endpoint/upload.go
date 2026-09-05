@@ -14,14 +14,14 @@ import (
 // Upload sinks the client's streamed bytes for the upload measurement.
 type Upload struct {
 	meter   *Meter       // optional verbose per-second logger; nil unless -verbose
-	store   *UploadStore // optional per-id aggregate; nil disables server-authoritative counting
+	store   *UploadStore // required owner-bound receiver aggregate
 	trusted []netip.Prefix
 }
 
 // uploadReadTimeout bounds a single stuck POST's body read so a half-open lane cannot pin a goroutine indefinitely.
 const uploadReadTimeout = 120 * time.Second
 
-// NewUpload builds the upload endpoint. meter may be nil (no verbose logging).
+// NewUpload requires an aggregate store. meter may be nil (no verbose logging).
 func NewUpload(meter *Meter, store *UploadStore, trusted ...[]netip.Prefix) *Upload {
 	return &Upload{meter: meter, store: store, trusted: optionalPrefixes(trusted)}
 }
@@ -36,14 +36,12 @@ var scratchPool = sync.Pool{
 
 type discardSink struct {
 	meter *Meter
-	agg   *uploadAgg // nil unless the POST carried a valid server-minted ?id=
+	agg   *uploadAgg
 }
 
 func (s discardSink) Write(p []byte) (int, error) {
 	s.meter.Add(len(p))
-	if s.agg != nil {
-		s.agg.recordChunk(monoNanos(), len(p))
-	}
+	s.agg.recordChunk(monoNanos(), len(p))
 	return len(p), nil
 }
 
@@ -70,16 +68,12 @@ func (u *Upload) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 
 // HandleUpload joins the owner's aggregate before reading, and records receiver-side chunks and timing.
 func (u *Upload) HandleUpload(_ context.Context, id, owner string, src io.Reader) (int64, error) {
-	var agg *uploadAgg
-	if u.store != nil && id != "" {
-		a, access := u.store.getOrCreateFor(id, owner)
-		if access != uploadAccessOK {
-			return 0, &uploadRefusalError{access: access}
-		}
-		agg = a
-		agg.changePosts(1)
-		defer agg.changePosts(-1)
+	agg, access := u.store.getOrCreateFor(id, owner)
+	if access != uploadAccessOK {
+		return 0, &uploadRefusalError{access: access}
 	}
+	agg.changePosts(1)
+	defer agg.changePosts(-1)
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
 	u.meter.Open()

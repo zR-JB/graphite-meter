@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // progressRecorder is a flushable, race-safe ResponseWriter.
@@ -196,7 +198,7 @@ func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
 	done := make(chan struct{})
 	first := make(chan struct{})
 	var records atomic.Int32
-	go runProgress(done, make(chan struct{}), agg, func(e uploadProgressEvent) bool {
+	go runProgress(done, make(chan struct{}), agg, func(e wire.UploadProgress) bool {
 		if e.Type == "progress" && records.Add(1) == 1 {
 			close(first)
 		}

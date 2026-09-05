@@ -335,8 +335,10 @@ async function readProgress(
   readable: ReadableStream<Uint8Array>,
 ): Promise<void> {
   // The monotonic aggregate is per feed; replacement sessions cannot share feed totals.
-  const end = await readProgressFeed(readable, { lastN: 0 }, (event) =>
-    post({ type: "upload-progress", msg: event }),
+  const end = await readProgressFeed(
+    readable,
+    { lastN: 0, lastT: 0 },
+    (event) => post({ type: "upload-progress", msg: event }),
   );
   if (end === "complete") {
     completed?.();

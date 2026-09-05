@@ -357,3 +357,14 @@ test("missing terminal record expires grace without inventing final counters", a
   expect(feed.requests[0].init.signal?.aborted).toBe(true);
   expect(failures).toEqual([]);
 });
+
+test("a replacement session cannot regress either receiver counter", () => {
+  const { channel, curve, durations } = channelUnderTest({ measuring: true });
+  channel.beginMeasure();
+  channel.accept({ type: "bytes", n: 100, t: 1e9 });
+  channel.accept({ type: "bytes", n: 110, t: 0.5e9 });
+  channel.accept({ type: "bytes", n: 90, t: 2e9 });
+  channel.accept({ type: "bytes", n: 120, t: 3e9 });
+  expect(curve).toEqual([20]);
+  expect(durations).toEqual([2]);
+});
