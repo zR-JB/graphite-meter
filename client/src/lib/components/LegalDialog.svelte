@@ -1,5 +1,6 @@
 <script lang="ts">
   import { focusTrap } from "../actions/focusTrap";
+  import { acquirePageScrollLock } from "../actions/pageScrollLock";
   import { loadLegal, retryLegal } from "../legal/loader";
   import type { LegalAbout, LegalComponent } from "../legal/types";
 
@@ -65,12 +66,7 @@
   });
 
   $effect(() => {
-    if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
+    if (open) return acquirePageScrollLock();
   });
 </script>
 
