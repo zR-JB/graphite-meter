@@ -2009,7 +2009,8 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
     "0 resolved · 0 timeouts · 0 unresolved · 0 send failures",
   );
   const note = profile.getByRole("note");
-  await note.focus();
+  await note.press("Tab");
+  await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("tooltip")).toContainText(
     "Worker shutdown could not account for all probes",
   );
@@ -2025,7 +2026,8 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   await expect(profile.getByText("Partial accounting")).toBeVisible();
   await expect(profile).toContainText("Known: 10 resolved");
   await expect(profile).not.toContainText("0 timeouts");
-  await profile.getByRole("note").focus();
+  await profile.getByRole("note").press("Tab");
+  await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("tooltip")).toContainText(
     "predates probe-accounting completeness metadata",
   );
