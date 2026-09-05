@@ -31,6 +31,9 @@
 
   let resetConfirmOpen = $state(false);
   let setupResetVersion = $state(0);
+  $effect(() => {
+    if (!open) resetConfirmOpen = false;
+  });
 
   function confirmSettingsReset() {
     resetConfirmOpen = false;

@@ -539,3 +539,22 @@ test("endpoint status follows the live, running, and terminal path modes", async
   await download.click();
   await expect(throughputPath.locator("dd").first()).toHaveText(runSnapshot!);
 });
+
+test("Back closes a settings confirmation with its panel and cancels hidden focus", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  const settings = await openSettings(page);
+  await settings.getByRole("button", { name: "Reset settings" }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.evaluate(() => window.history.back());
+  await expect(settings).toHaveAttribute("inert", "");
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Open settings" }),
+  ).toBeFocused();
+  await page.waitForTimeout(100);
+  await expect(
+    page.getByRole("button", { name: "Open settings" }),
+  ).toBeFocused();
+});
