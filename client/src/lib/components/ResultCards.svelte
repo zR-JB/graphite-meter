@@ -455,7 +455,7 @@
 <style>
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
   /* Keep an empty result grid from shifting adjacent content. */
@@ -466,21 +466,35 @@
   .result-card {
     min-width: 0;
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 10px 16px;
+    flex-direction: column;
+    gap: 6px;
     min-height: 64px;
-    padding: 8px 14px;
+    padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+    transition:
+      border-color var(--dur-hover) var(--ease-out),
+      transform var(--dur-hover) var(--ease-out);
   }
   .result-readout {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
-    max-width: 100%;
+  }
+  @container viz (min-width: 1000px) {
+    .result-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 8px;
+    }
+  }
+  .result-card:hover {
+    transform: translateY(-1px);
+    border-color: var(--border-strong);
   }
   .partial {
     margin-left: auto;
@@ -496,8 +510,22 @@
     .result-chip {
       animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
     }
+    .result-card {
+      animation: card-enter var(--dur-slide) var(--ease-out) both;
+    }
+    .result-card:nth-child(1) {
+      animation-delay: 0ms;
+    }
+    .result-card:nth-child(2) {
+      animation-delay: 25ms;
+    }
+    .result-card:nth-child(3) {
+      animation-delay: 50ms;
+    }
+    .result-card:nth-child(4) {
+      animation-delay: 75ms;
+    }
   }
-
   @keyframes quick-content-enter {
     from {
       opacity: 0.65;
@@ -508,23 +536,27 @@
       transform: translateY(0);
     }
   }
+  @keyframes card-enter {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .result-card.active {
+    border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
+    box-shadow:
+      var(--elev-tile),
+      0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
+  }
+
   header {
     display: flex;
-    flex: 1 1 138px;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .result-card .ico {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: transparent;
-  }
-  .result-card .ico :global(svg) {
-    width: 16px;
-    height: 16px;
+    gap: var(--space-2);
   }
   .ico {
     display: grid;
@@ -561,9 +593,8 @@
   }
   .label {
     font-size: var(--type-sm);
-    font-weight: 600;
-    letter-spacing: 0;
-    white-space: nowrap;
+    font-weight: 700;
+    letter-spacing: -0.01em;
     color: var(--text);
   }
   .label.term {
@@ -582,12 +613,11 @@
     margin-left: auto;
     padding: 2px 7px;
     border-radius: var(--r-full);
-    line-height: 1.25;
     font-family: var(--font-mono);
     font-size: 9px;
     font-weight: 700;
-    letter-spacing: 0;
-    text-transform: capitalize;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
   .pip-high {
     background: var(--ok-soft);
@@ -611,8 +641,8 @@
     font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
-    font-size: 30px;
-    font-weight: 500;
+    font-size: var(--type-xl);
+    font-weight: 600;
     letter-spacing: var(--track-tight);
     color: var(--text);
     line-height: 1;
@@ -620,8 +650,7 @@
   .unit {
     font-family: var(--font-mono);
     font-size: var(--type-xs);
-    font-weight: 400;
-    white-space: nowrap;
+    font-weight: 700;
     color: var(--text-soft);
   }
 
@@ -649,8 +678,8 @@
   .est-tag {
     cursor: help;
     color: var(--text-soft);
-    font-size: 11px;
-    letter-spacing: 0;
+    font-size: 10px;
+    letter-spacing: 0.02em;
     text-decoration: underline dotted
       color-mix(in srgb, var(--text-soft) 70%, transparent);
     text-underline-offset: 3px;
