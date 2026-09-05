@@ -98,7 +98,9 @@ for (const viewport of [
         .poll(async () => (await geometry(page)).widths[0])
         .toBe(initial - 16);
       await viewportSize(page, { width: 1100, height: 700 });
-      await expect(page.getByRole("slider")).toHaveCount(0);
+      await expect(
+        page.getByRole("slider", { name: /Resize .* panel/ }),
+      ).toHaveCount(0);
       await expect(
         page.getByRole("dialog", { name: "Endpoint info" }),
       ).toBeVisible();
