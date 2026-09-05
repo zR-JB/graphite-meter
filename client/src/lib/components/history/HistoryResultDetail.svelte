@@ -109,7 +109,7 @@
         model.combinedBytesPerSec ?? (direction ? model[direction] : null),
       ),
       detail: direction
-        ? "One lane completed · combined result unavailable"
+        ? "One lane available · combined result unavailable"
         : directions.join(" · "),
     };
   }

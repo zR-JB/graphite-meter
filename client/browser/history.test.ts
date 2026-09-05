@@ -2035,7 +2035,7 @@ for (const direction of ["down", "up"] as const) {
     );
     await expect(card.locator("p")).toHaveText("0.00 bit/s");
     await expect(card.locator("small")).toHaveText(
-      "One lane completed · combined result unavailable",
+      "One lane available · combined result unavailable",
     );
   });
 }
