@@ -102,7 +102,7 @@ test("phone keeps a prominent dial and a natural run-to-stages reading order", a
       },
     ),
   );
-  expect(boxes[0].height).toBeGreaterThanOrEqual(240);
+  expect(boxes[0].height).toBeGreaterThanOrEqual(280);
   for (let i = 1; i < boxes.length; i++)
     expect(boxes[i].top).toBeGreaterThanOrEqual(boxes[i - 1].bottom);
   await expect(page.locator(".run-button")).toHaveAttribute(

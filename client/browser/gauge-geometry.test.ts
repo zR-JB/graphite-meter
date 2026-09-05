@@ -55,8 +55,8 @@ for (const viewport of [
     const withoutLatency = await gaugeBox(page, false);
     expectNear(withLatency.width, withoutLatency.width);
     expectNear(withLatency.height, withoutLatency.height);
-    expect(withLatency.height).toBeGreaterThanOrEqual(240);
-    expect(withLatency.height).toBeLessThanOrEqual(300);
+    expect(withLatency.height).toBeGreaterThanOrEqual(280);
+    expect(withLatency.height).toBeLessThanOrEqual(320);
     expectNear(withLatency.canvasWidth, withoutLatency.canvasWidth);
     expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
   });

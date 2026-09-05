@@ -619,10 +619,10 @@
   @media (max-width: 759px) and (orientation: portrait) {
     .instrument {
       /* A phone retains a readable dial while the document carries the results. */
-      --gauge-well-height: clamp(240px, 30svh, 300px);
+      --gauge-well-height: clamp(280px, 32svh, 320px);
     }
     .instrument .stage {
-      min-height: 240px;
+      min-height: 280px;
     }
     .canvas,
     .gauge-ticks,
