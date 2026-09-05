@@ -31,6 +31,7 @@
   class:pending
   aria-label={label}
   aria-busy={pending}
+  aria-describedby={!store.isRunning && !pending ? "run-duration" : undefined}
   onclick={controller.toggleRun}
   use:tooltip={pending
     ? "Cancel starting the test (Space / Esc)"
@@ -51,9 +52,24 @@
       <span class="ico">{@html ICON.bolt}</span> START TEST
     {/if}
   </span>
+  {#if !store.isRunning && !pending}
+    <span class="duration" aria-hidden="true"
+      >~{Math.round(store.totalEtaMs / 1000)}s</span
+    >
+  {/if}
 </button>
+{#if !store.isRunning && !pending}
+  <span id="run-duration" class="sr-only"
+    >Estimated duration {Math.round(store.totalEtaMs / 1000)} seconds</span
+  >
+{/if}
 
 <style>
+  .duration {
+    font: 500 11px var(--font-mono);
+    letter-spacing: 0;
+    opacity: 0.85;
+  }
   .run-button {
     position: relative;
     isolation: isolate;

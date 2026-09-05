@@ -391,31 +391,32 @@
         <span class="partial">Failed</span>
       {/if}
     </header>
-    <div class="val" aria-hidden={compact && c.active ? "true" : undefined}>
-      <span class="num">{c.num}</span>
-      <span class="unit">{c.unit}</span>
+    <div class="result-readout">
+      <div class="val" aria-hidden={compact && c.active ? "true" : undefined}>
+        <span class="num">{c.num}</span>
+        <span class="unit">{c.unit}</span>
+      </div>
+      {#if compact && c.active}
+        <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
+      {/if}
+      {#if c.sub}
+        <div class="sub" aria-hidden={compact && c.active ? "true" : undefined}>
+          {c.sub}
+        </div>
+      {/if}
+      {#if c.wire}
+        <div class="est">
+          {#if c.wire.kind === "lift"}
+            <span class="est-num">{c.wire.num}</span>
+            <span class="est-tag" use:tooltip={c.wire.tooltip}
+              >wire {c.wire.pct}</span
+            >
+          {:else}
+            <span class="est-tag" use:tooltip={c.wire.tooltip}>wire n/a</span>
+          {/if}
+        </div>
+      {/if}
     </div>
-    {#if compact && c.active}
-      <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
-    {/if}
-    {#if c.sub}
-      <div class="sub" aria-hidden={compact && c.active ? "true" : undefined}>
-        {c.sub}
-      </div>
-    {/if}
-    {#if c.wire}
-      <div class="est">
-        {#if c.wire.kind === "lift"}
-          <span class="est-arrow">→</span>
-          <span class="est-num">{c.wire.num}</span>
-          <span class="est-tag" use:tooltip={c.wire.tooltip}
-            >wire {c.wire.pct}</span
-          >
-        {:else}
-          <span class="est-tag" use:tooltip={c.wire.tooltip}>wire n/a</span>
-        {/if}
-      </div>
-    {/if}
   </article>
 {/snippet}
 
@@ -457,7 +458,7 @@
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-3);
   }
-  /* Matches .result-card min-height and GaugePanel's results-slot reserve. */
+  /* Keep an empty result grid from shifting adjacent content. */
   .result-cards.reserve {
     min-height: 64px;
   }
@@ -476,6 +477,20 @@
     transition:
       border-color var(--dur-hover) var(--ease-out),
       transform var(--dur-hover) var(--ease-out);
+  }
+  .result-readout {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+  }
+  @container viz (min-width: 1000px) {
+    .result-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 8px;
+    }
   }
   .result-card:hover {
     transform: translateY(-1px);
@@ -655,9 +670,6 @@
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     font-size: 12px;
-  }
-  .est-arrow {
-    color: var(--text-soft);
   }
   .est-num {
     font-weight: 700;
