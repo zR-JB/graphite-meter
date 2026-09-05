@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -73,7 +74,7 @@ func TestSaturationEnvelope(t *testing.T) {
 				if mix.spamWT {
 					err = wtPingSpam(ctx, h3Base, &spamPings)
 				} else {
-					err = wsPingSpam(ctx, "ws"+strings.TrimPrefix(base, "http")+routePing, &spamPings)
+					err = wsPingSpam(ctx, "ws"+strings.TrimPrefix(base, "http")+route.Ping, &spamPings)
 				}
 				if err != nil && ctx.Err() == nil {
 					loaderExits.Add(1)
@@ -222,7 +223,7 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error {
 	wtTransport := insecureWTTransport()
 	defer wtTransport.Close()
-	_, sess, err := wtTransport.Dial(ctx, origin+routeWTPing, nil)
+	_, sess, err := wtTransport.Dial(ctx, origin+route.WTPing, nil)
 	if err != nil {
 		return err
 	}

@@ -175,7 +175,7 @@ func TestGetPreflight(t *testing.T) {
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","capabilities":{"transfers":[],"channels":[]}}`))
+			_, _ = w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","generation":"test","capabilities":{"throughput":[],"latency":[]}}`))
 		}))
 		defer srv.Close()
 

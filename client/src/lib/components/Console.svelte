@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Main console shell: boots the runner, owns top-level panels, shortcuts,
+  // Main console shell: owns top-level panels, shortcuts,
   // theme toggle, and docked/flyout layout state.
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
@@ -25,15 +25,15 @@
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
+  import {
+    resolveDockWidths,
+    MIN_DOCK_WIDTH,
+    MAX_DOCK_WIDTH,
+    MIN_STAGE_WIDTH,
+  } from "./dockWidths";
   import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
   import { authEnabled } from "../auth";
   import { returnToLiveIndicator } from "../history/returnToLive";
-  import { HistoryWriteQueue } from "../history/writeQueue";
-  import {
-    broadcastHistory,
-    historyChanges,
-    isHistoryChange,
-  } from "../history/changes";
   import {
     activatePanel,
     appRoute,
@@ -157,11 +157,25 @@
       workspaceFocusIntent = null;
     });
   });
+  let consoleWidth = $state(
+    typeof window === "undefined" ? 0 : window.innerWidth,
+  );
+  const allowMultiplePanels = $derived(
+    consoleWidth >= MIN_STAGE_WIDTH + 2 * MIN_DOCK_WIDTH,
+  );
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const historyDirectQuery = mediaQuery(`(min-width: 340px)`);
-  const endpointDirectQuery = mediaQuery(`(min-width: 340px)`);
-  const themeDirectQuery = mediaQuery(`(min-width: 320px)`);
-  const liveDirectComfortQuery = mediaQuery(`(min-width: 380px)`);
+  const historyDirectQuery = mediaQuery(
+    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
+  );
+  const endpointDirectQuery = mediaQuery(
+    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
+  );
+  const themeDirectQuery = mediaQuery(
+    `(min-width: 320px) and (not (pointer: coarse)), (min-width: 360px)`,
+  );
+  const liveDirectComfortQuery = mediaQuery(
+    `(min-width: 380px) and (not (pointer: coarse)), (min-width: 560px)`,
+  );
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
@@ -176,12 +190,12 @@
   );
   const lastPanel = $derived(currentPanels.at(-1));
   const settingsOpen = $derived(
-    dockQuery.matches
+    allowMultiplePanels
       ? currentPanels.includes("settings")
       : lastPanel === "settings",
   );
   const telemetryOpen = $derived(
-    dockQuery.matches
+    allowMultiplePanels
       ? currentPanels.includes("endpoint")
       : lastPanel === "endpoint",
   );
@@ -190,10 +204,10 @@
   );
   const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
 
-  // Wide layouts may compose both docked panels. A narrow layout has one
-  // authoritative flyout, so its canonical route contains only that panel.
+  // Keep one authoritative panel when two docks would crowd the instruments;
+  // its canonical route also stays valid when the panel becomes a flyout.
   $effect(() => {
-    const reconciled = reconcilePanels(currentRoute, dockQuery.matches);
+    const reconciled = reconcilePanels(currentRoute, allowMultiplePanels);
     if (serializeRoute(reconciled) !== serializeRoute(currentRoute))
       routeTo(reconciled, true);
   });
@@ -240,17 +254,31 @@
     store.theme = next;
   }
 
-  // Persisted widths become reserved grid columns only while that side is
-  // actually docked and open; otherwise the stage gets the space back.
-  const dockLeft = $derived(
-    dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
+  // Preferences survive viewport changes; the grid and resize controls share
+  // the resolved widths, preserving room for the measurement instruments.
+  const docks = $derived(
+    resolveDockWidths(
+      consoleWidth,
+      dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
+      dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
+    ),
   );
-  const dockRight = $derived(
-    dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
+  const dockMaxLeft = $derived(
+    Math.min(MAX_DOCK_WIDTH, consoleWidth - MIN_STAGE_WIDTH - docks.right),
+  );
+  const dockMaxRight = $derived(
+    Math.min(MAX_DOCK_WIDTH, consoleWidth - MIN_STAGE_WIDTH - docks.left),
   );
 
   function setDockWidth(side: "left" | "right", px: number) {
-    store.dockWidth = { ...store.dockWidth, [side]: px };
+    const other = side === "left" ? "right" : "left";
+    // Freeze the visible sibling during an intentional resize so the handle
+    // follows the pointer even when saved preferences were constrained.
+    store.dockWidth = {
+      ...store.dockWidth,
+      ...(docks[other] ? { [other]: docks[other] } : {}),
+      [side]: px,
+    };
   }
   function resetDockWidth(side: "left" | "right") {
     store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
@@ -364,12 +392,12 @@
   }
   function panelRoute(panel: PanelSurface, invoker?: HTMLElement) {
     const replacingCompetingPanel =
-      !dockQuery.matches && lastPanel !== undefined && lastPanel !== panel;
+      !allowMultiplePanels && lastPanel !== undefined && lastPanel !== panel;
     if (invoker) panelInvokers[panel] = invoker;
     else delete panelInvokers[panel];
     if (replacingCompetingPanel && lastPanel) delete panelInvokers[lastPanel];
     routeTo(
-      activatePanel(currentRoute, panel, dockQuery.matches),
+      activatePanel(currentRoute, panel, allowMultiplePanels),
       replacingCompetingPanel,
     );
   }
@@ -596,85 +624,13 @@
       );
     };
   });
-
-  let historyRepository:
-    import("../history/repository").HistoryRepository | null = null;
-  let permanentHistoryWarning = false;
-  const historyQueue = new HistoryWriteQueue(
-    async (candidate, isCurrent, generation) => {
-      const { HistoryRepository } = await import("../history/repository");
-      historyRepository ??= new HistoryRepository();
-      if (isCurrent()) {
-        await historyRepository.put(candidate, generation);
-      }
-    },
-    async (id) => {
-      await historyRepository?.delete(id);
-    },
-    (candidate) => {
-      if (store.historyCandidate?.id === candidate.id)
-        store.historyCandidate = null;
-      if (!permanentHistoryWarning) store.historyWarning = "";
-      broadcastHistory({ type: "put", id: candidate.id });
-      window.dispatchEvent(new Event("graphite-meter-history-changed"));
-    },
-    (candidate) => {
-      if (store.historyCandidate?.id === candidate.id)
-        store.historyCandidate = null;
-      permanentHistoryWarning = true;
-      store.historyWarning =
-        "This result could not be saved because it was malformed.";
-    },
-    () => {
-      store.historyWarning =
-        "Unable to save this result locally. Future writes will be retried.";
-    },
-  );
-  const attemptHistoryWrite = () => void historyQueue.flush();
-  $effect(() => {
-    const candidate = store.historyCandidate;
-    if (!candidate) return;
-    historyQueue.enqueue(candidate);
-  });
-  onMount(() => {
-    const retry = () => void attemptHistoryWrite();
-    const timer = window.setInterval(retry, 15_000);
-    window.addEventListener("focus", retry);
-    window.addEventListener("online", retry);
-    document.addEventListener("visibilitychange", retry);
-    const clearHistoryQueue = (generation: string) => {
-      historyQueue.clear(generation);
-      if (store.historyCandidate) store.historyCandidate = null;
-      permanentHistoryWarning = false;
-    };
-    const onHistoryChange = (event: Event) => {
-      const change = (event as CustomEvent).detail;
-      if (isHistoryChange(change) && change.type === "clear")
-        clearHistoryQueue(change.generation);
-    };
-    const stopHistoryChanges = historyChanges((change) => {
-      if (change.type === "clear") clearHistoryQueue(change.generation);
-    });
-    window.addEventListener("graphite-meter-history-changed", onHistoryChange);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", retry);
-      window.removeEventListener("online", retry);
-      document.removeEventListener("visibilitychange", retry);
-      window.removeEventListener(
-        "graphite-meter-history-changed",
-        onHistoryChange,
-      );
-      stopHistoryChanges();
-      historyRepository?.close();
-    };
-  });
 </script>
 
 <main
   id="console"
+  bind:clientWidth={consoleWidth}
   data-phase={store.phase}
-  style="--dock-left: {dockLeft}px; --dock-right: {dockRight}px;"
+  style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
   class="bg-bg text-text"
 >
   <!-- TOPBAR -->
@@ -847,7 +803,8 @@
     open={settingsOpen}
     docked={dockQuery.matches}
     raised={lastOpened === "left"}
-    dockWidth={store.dockWidth.left}
+    dockWidth={docks.left}
+    dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
     onClose={() => dismissPanel("settings")}
@@ -857,7 +814,8 @@
     open={telemetryOpen}
     docked={dockQuery.matches}
     raised={lastOpened === "right"}
-    dockWidth={store.dockWidth.right}
+    dockWidth={docks.right}
+    dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
     onClose={() => dismissPanel("endpoint")}
@@ -888,12 +846,11 @@
      the dock breakpoint the panels are flyout overlays. */
   #console {
     display: grid;
-    /* Inline --dock-left/right drive these, 0 when not docked-open. The 46vw
-       clamp stops a stale saved width from starving the stage. */
+    /* One shared width budget reserves the instrument stage. */
     grid-template-columns:
-      min(var(--dock-left, 0px), 46vw)
+      var(--dock-left, 0px)
       minmax(0, 1fr)
-      min(var(--dock-right, 0px), 46vw);
+      var(--dock-right, 0px);
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
       var(--statusbar-h);
@@ -1167,6 +1124,21 @@
     .return-live {
       gap: 5px;
       padding-inline: 6px;
+    }
+  }
+  @media (pointer: coarse) and (max-width: 640px) {
+    .brand-label {
+      display: none;
+    }
+  }
+  @media (pointer: coarse) {
+    .topbar :global(.account) {
+      min-width: 44px;
+    }
+    .topbar :global(button) {
+      min-width: 44px;
+      min-height: 44px;
+      flex-shrink: 0;
     }
   }
 </style>

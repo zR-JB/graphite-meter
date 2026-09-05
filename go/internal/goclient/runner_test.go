@@ -239,7 +239,7 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		origin := "http://" + r.Host
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
 		}})
@@ -314,7 +314,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
-			Server: wire.ServerInfo{Name: "proxy"},
+			Generation: "test", Server: wire.ServerInfo{Name: "proxy"},
 			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("http2", origin, "http2", true),
 			}},
@@ -394,7 +394,7 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
-			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
+			Generation: "test", Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 				testTransfer("one", "http://one.example", "negotiated", false),
 				testTransfer("two", "http://two.example", "negotiated", false),
 			}},
@@ -711,7 +711,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 }
 
-func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
+func TestFailedTransferStagePreservesPartialLoadedLatencyResult(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ping", echoPingHandler())
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
@@ -755,10 +755,13 @@ func TestFailedTransferStagePublishesNoLoadedLatencyResult(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if samples == 0 {
-		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised the suppression")
+		t.Fatal("the loaded-latency probe took no samples before the lane failed; the test never exercised partial results")
 	}
-	if len(results) != 0 {
-		t.Fatalf("failed stage published %d result(s): %+v", len(results), results)
+	if len(results) != 1 || results[0].Latency.Count == 0 || !errors.Is(results[0].Err, err) {
+		t.Fatalf("failed stage did not preserve its partial latency and failure: %+v", results)
+	}
+	if results[0].Elapsed <= 0 || results[0].Elapsed >= 3*time.Second {
+		t.Fatalf("partial elapsed = %v", results[0].Elapsed)
 	}
 }
 
@@ -903,5 +906,37 @@ func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
 		if stageFailed(err) {
 			t.Errorf("stageFailed(%v) = true, want the stage to report", err)
 		}
+	}
+}
+
+func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
+	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
+		t.Run(duration.String(), func(t *testing.T) {
+			transfer := newBytesEchoDownloadServer()
+			defer transfer.Close()
+			ping := newSilentPingServer(t)
+			defer ping.Close()
+			cfg := Config{BaseURL: transfer.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+			var results []Result
+			r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: transfer.Client(), emit: func(e Event) {
+				if e.Kind == EventResult {
+					results = append(results, *e.Result)
+				}
+			}}
+			attachTestLatencyTarget(r, ping.URL)
+			if err := r.runTransferStage(t.Context(), "download", []Direction{Down}, duration); err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 2 || results[0].Direction != "" || results[1].Direction != Down {
+				t.Fatalf("loaded results: %+v", results)
+			}
+			stats := results[0].Latency
+			if stats.Count != 0 || stats.Unresolved == 0 {
+				t.Fatalf("missing unresolved population: %+v", stats)
+			}
+			if duration > stats.TimeoutAfter && stats.Timeouts == 0 {
+				t.Fatalf("missing timeout population: %+v", stats)
+			}
+		})
 	}
 }

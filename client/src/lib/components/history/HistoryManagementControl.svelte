@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { tick } from "svelte";
   import { tooltip } from "../../actions/tooltip";
+  import { focusMenuItem, navigateMenu } from "../../actions/menu";
   import { ICON } from "../../constants";
 
   interface Props {
@@ -12,17 +13,21 @@
   let trigger = $state<HTMLButtonElement>();
   let menu = $state<HTMLDivElement>();
 
-  async function toggle() {
-    open = !open;
-    if (!open) return;
+  const menuId = $props.id();
+  async function show(last = false) {
+    open = true;
     await tick();
-    menu?.querySelector<HTMLButtonElement>("button")?.focus();
+    if (open) focusMenuItem(menu, last);
   }
-
-  function close(restoreFocus = false) {
-    open = false;
-    if (restoreFocus)
-      void tick().then(() => trigger?.focus({ preventScroll: true }));
+  function toggle() {
+    if (open) open = false;
+    else void show();
+  }
+  function triggerKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    event.stopPropagation();
+    void show(event.key === "ArrowUp");
   }
 
   function requestClear() {
@@ -31,16 +36,14 @@
     onClear(trigger);
   }
 
-  onMount(() => {
-    const outside = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!trigger?.contains(target) && !menu?.contains(target)) close();
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  });
+  function outside(event: PointerEvent) {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!trigger?.contains(target) && !menu?.contains(target)) open = false;
+  }
 </script>
+
+<svelte:document onpointerdown={outside} />
 
 <div class="management-control">
   <button
@@ -50,6 +53,8 @@
     aria-label="Archive management"
     aria-haspopup="menu"
     aria-expanded={open}
+    aria-controls={open ? menuId : undefined}
+    onkeydown={triggerKeydown}
     use:tooltip={"Archive management"}
     onclick={toggle}
   >
@@ -58,18 +63,20 @@
   {#if open}
     <div
       bind:this={menu}
+      id={menuId}
       class="management-menu"
       role="menu"
       aria-label="Archive management"
       tabindex="-1"
-      onkeydown={(event) => {
-        if (event.key !== "Escape") return;
-        event.stopPropagation();
-        event.preventDefault();
-        close(true);
-      }}
+      onkeydown={(event) =>
+        navigateMenu(event, menu, trigger, () => (open = false))}
     >
-      <button type="button" role="menuitem" onclick={requestClear}>
+      <button
+        type="button"
+        role="menuitem"
+        tabindex="-1"
+        onclick={requestClear}
+      >
         <span>{@html ICON.trash}</span>
         <span><strong>Clear all saved results</strong></span>
       </button>
@@ -159,6 +166,12 @@
   @media (prefers-reduced-motion: reduce) {
     .management-menu {
       animation: none;
+    }
+  }
+  @media (pointer: coarse) {
+    .management-trigger {
+      width: 44px;
+      height: 44px;
     }
   }
 </style>

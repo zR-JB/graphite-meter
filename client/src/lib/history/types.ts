@@ -63,6 +63,9 @@ export interface LatencyLaneSnapshot {
   /** V1 compatibility field. */
   lossRatio?: number;
   timeoutRatio?: number | null;
+  /** New V2 writes include this; early V2 and V1 records lack this metadata. */
+  accountingComplete?: boolean;
+  timeoutCount?: number;
   unresolvedCount?: number;
   sendFailureCount?: number;
   count: number;
@@ -263,6 +266,8 @@ export function buildHistoryRecord(
                 timeoutRatio: summary.probeCount
                   ? summary.timeoutCount / summary.probeCount
                   : null,
+                accountingComplete: summary.accountingComplete,
+                timeoutCount: summary.timeoutCount,
                 unresolvedCount: summary.unresolvedCount,
                 sendFailureCount: summary.sendFailureCount,
                 count: summary.probeCount,
@@ -483,7 +488,13 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         "jitter",
         ...(record.schemaVersion === 1
           ? ["lossRatio"]
-          : ["timeoutRatio", "unresolvedCount", "sendFailureCount"]),
+          : [
+              "timeoutRatio",
+              "unresolvedCount",
+              "sendFailureCount",
+              "accountingComplete",
+              "timeoutCount",
+            ]),
         "count",
       ]) &&
       nonnegativeOrNull(candidate.min) &&
@@ -496,6 +507,17 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         ? unitInterval(candidate.lossRatio)
         : (candidate.timeoutRatio === null ||
             unitInterval(candidate.timeoutRatio)) &&
+          ((candidate.accountingComplete === undefined &&
+            candidate.timeoutCount === undefined) ||
+            (typeof candidate.accountingComplete === "boolean" &&
+              Number.isSafeInteger(candidate.timeoutCount) &&
+              nonnegative(candidate.timeoutCount) &&
+              nonnegative(candidate.count) &&
+              candidate.timeoutCount <= candidate.count &&
+              candidate.timeoutRatio ===
+                (candidate.count
+                  ? candidate.timeoutCount / candidate.count
+                  : null))) &&
           Number.isSafeInteger(candidate.unresolvedCount) &&
           nonnegative(candidate.unresolvedCount) &&
           Number.isSafeInteger(candidate.sendFailureCount) &&

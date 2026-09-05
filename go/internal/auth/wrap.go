@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 type Listener struct{ UI, WebTransport bool }
@@ -117,12 +119,8 @@ func (s *Service) isPublicAuthRoute(method, path string) bool {
 }
 
 func isMeasurementRoute(path string) bool {
-	switch path {
-	case "/preflight", "/probe", "/download", "/upload/session", "/upload", "/upload/progress", "/ws/ping",
-		"/wt/session", "/wt/download", "/wt/upload", "/wt/ping":
-		return true
-	}
-	return false
+	_, ok := route.Lookup(path)
+	return ok
 }
 
 func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {

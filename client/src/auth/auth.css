@@ -10,7 +10,7 @@
     "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", monospace;
 
-  --feel-radius: 0.6;
+  --feel-radius: 1;
   --r-well: calc(6px * var(--feel-radius));
   --r-chrome: calc(8px * var(--feel-radius));
   --r-pill: calc(12px * var(--feel-radius));
@@ -29,7 +29,7 @@
 
   --canvas: #131518;
   --surface-1: #1c1f23;
-  --surface-inset: #0f1012;
+  --surface-inset: #16191d;
   --border: rgba(211, 219, 227, 0.11);
 
   --text: #d9dce0;
@@ -60,14 +60,14 @@
 html[data-theme="light"] {
   color-scheme: light;
 
-  --canvas: #e9e9e4;
-  --surface-1: #f6f5f1;
-  --surface-inset: #d8d6ce;
+  --canvas: #f0f2f3;
+  --surface-1: #ffffff;
+  --surface-inset: #eef1f2;
   --border: rgba(43, 44, 40, 0.13);
 
   --text: #26272a;
   --text-muted: #454a4d;
-  --text-inverse: #f6f5f1;
+  --text-inverse: #ffffff;
 
   --brand: #2f717a;
   --brand-strong: #235257;
@@ -91,14 +91,14 @@ html[data-theme="light"] {
   html:not([data-theme="dark"]) {
     color-scheme: light;
 
-    --canvas: #e9e9e4;
-    --surface-1: #f6f5f1;
-    --surface-inset: #d8d6ce;
+    --canvas: #f0f2f3;
+    --surface-1: #ffffff;
+    --surface-inset: #eef1f2;
     --border: rgba(43, 44, 40, 0.13);
 
     --text: #26272a;
     --text-muted: #454a4d;
-    --text-inverse: #f6f5f1;
+    --text-inverse: #ffffff;
 
     --brand: #2f717a;
     --brand-strong: #235257;

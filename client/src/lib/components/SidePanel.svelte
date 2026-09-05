@@ -1,6 +1,7 @@
 <script lang="ts">
   // Shared side panel primitive for Settings and telemetry: docked column on
   // wide layouts, focus-trapped flyout/sheet elsewhere.
+  import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { sheetDrag } from "../actions/sheetDrag";
@@ -17,6 +18,7 @@
     docked?: boolean;
     raised?: boolean;
     dockWidth?: number;
+    dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
     onClose?: () => void;
@@ -33,6 +35,7 @@
     docked = false,
     raised = false,
     dockWidth,
+    dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
     onResetWidth,
     onClose,
@@ -45,46 +48,54 @@
     else open = false;
   }
 
-  const MIN_WIDTH = 320;
-  const MAX_WIDTH = 720;
-  // A docked panel never takes more than 60% of the viewport, so the stage keeps
-  // a usable share on narrow desktops.
-  function maxWidth() {
-    return Math.round(Math.min(MAX_WIDTH, window.innerWidth * 0.6));
-  }
   let panelEl = $state<HTMLDivElement>();
 
-  function clamp(px: number) {
-    return Math.max(MIN_WIDTH, Math.min(maxWidth(), px));
-  }
-
   function resizeBy(startWidth: number, delta: number) {
-    onResize?.(clamp(startWidth + (side === "left" ? delta : -delta)));
+    const desired = startWidth + (side === "left" ? delta : -delta);
+    onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, desired)));
   }
 
-  function startResize(e: PointerEvent) {
-    if (!docked || !panelEl) return;
-    e.preventDefault();
-    const handle = e.currentTarget as HTMLElement;
-    const startX = e.clientX;
-    const startWidth = panelEl.offsetWidth;
-    handle.setPointerCapture(e.pointerId);
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-
-    const onMove = (ev: PointerEvent) => {
-      resizeBy(startWidth, ev.clientX - startX);
+  function resizeHandle(handle: HTMLElement) {
+    if (!open) return;
+    let finish: (() => void) | undefined;
+    const start = (event: PointerEvent) => {
+      if (!event.isPrimary || event.button !== 0 || !panelEl) return;
+      finish?.();
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = panelEl.getBoundingClientRect().width;
+      const { cursor, userSelect } = document.body.style;
+      handle.setPointerCapture(event.pointerId);
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "col-resize";
+      const move = (next: PointerEvent) => {
+        if (next.pointerId === event.pointerId)
+          resizeBy(startWidth, next.clientX - startX);
+      };
+      const end = (next: PointerEvent) => {
+        if (next.pointerId === event.pointerId) finish?.();
+      };
+      finish = () => {
+        finish = undefined;
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", end);
+        handle.removeEventListener("pointercancel", end);
+        handle.removeEventListener("lostpointercapture", end);
+        if (handle.hasPointerCapture(event.pointerId))
+          handle.releasePointerCapture(event.pointerId);
+        document.body.style.cursor = cursor;
+        document.body.style.userSelect = userSelect;
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", end);
+      handle.addEventListener("pointercancel", end);
+      handle.addEventListener("lostpointercapture", end);
     };
-    const finish = () => {
-      handle.removeEventListener("pointermove", onMove);
-      handle.removeEventListener("pointerup", finish);
-      handle.removeEventListener("pointercancel", finish);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
+    handle.addEventListener("pointerdown", start);
+    return () => {
+      finish?.();
+      handle.removeEventListener("pointerdown", start);
     };
-    handle.addEventListener("pointermove", onMove);
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
   }
 
   function onHandleKey(e: KeyboardEvent) {
@@ -147,11 +158,11 @@
         role="slider"
         aria-orientation="horizontal"
         aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
-        aria-valuemin={MIN_WIDTH}
-        aria-valuemax={MAX_WIDTH}
+        aria-valuemin={MIN_DOCK_WIDTH}
+        aria-valuemax={dockMaxWidth}
         aria-valuenow={dockWidth}
         tabindex="0"
-        onpointerdown={startResize}
+        {@attach resizeHandle}
         onkeydown={onHandleKey}
         ondblclick={() => onResetWidth?.()}
       ></div>

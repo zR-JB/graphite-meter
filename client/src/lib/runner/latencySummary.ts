@@ -12,6 +12,7 @@ export class LatencyAccumulator {
   #deltaCount = 0;
   #previous: number | null = null;
   #continuityId = 0;
+  #accountingComplete = true;
 
   get count(): number {
     return this.#replies + this.#timeouts;
@@ -52,8 +53,19 @@ export class LatencyAccumulator {
     this.#previous = null;
   }
 
+  markAccountingIncomplete(): void {
+    this.#accountingComplete = false;
+    this.#previous = null;
+  }
+
   snapshot(): StageLatencySummary | null {
-    if (!this.count && !this.#unresolved && !this.#sendFailures) return null;
+    if (
+      !this.count &&
+      !this.#unresolved &&
+      !this.#sendFailures &&
+      this.#accountingComplete
+    )
+      return null;
     const sorted = [...this.rtts].sort((a, b) => a - b);
     const rank = (p: number): number | null =>
       sorted.length
@@ -61,6 +73,7 @@ export class LatencyAccumulator {
         : null;
     const mid = Math.floor(sorted.length / 2);
     return {
+      accountingComplete: this.#accountingComplete,
       probeCount: this.count,
       timeoutCount: this.#timeouts,
       unresolvedCount: this.#unresolved,
