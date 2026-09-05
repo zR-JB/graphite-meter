@@ -82,14 +82,14 @@ export function pos(
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
 
-// Width of a min/max band as a percentage, never thinner than a hairline so a flat distribution still shows.
+// Exact interval width as a percentage. Fixed caps keep a flat range visible.
 export function rangeWidth(
   min: number | null,
   max: number | null,
   domain: LatencyProfileDomain,
 ): number {
   if (min == null || max == null) return 0;
-  return Math.max(1.5, pos(max, domain) - pos(min, domain));
+  return Math.max(0, pos(max, domain) - pos(min, domain));
 }
 
 export function tickLabel(v: number): string {

@@ -47,9 +47,9 @@ test("pos: linear inside the domain, clamped at both ends, null at zero", () => 
   expect(pos(null, DOMAIN)).toBe(0);
 });
 
-test("rangeWidth: span as a percentage, hairline floor, null-safe", () => {
+test("rangeWidth: exact span as a percentage, including flat and missing ranges", () => {
   expect(rangeWidth(10, 30, DOMAIN)).toBe(20);
-  expect(rangeWidth(40, 40, DOMAIN)).toBe(1.5); // flat still shows
+  expect(rangeWidth(40, 40, DOMAIN)).toBe(0); // fixed caps represent a flat range
   expect(rangeWidth(null, 30, DOMAIN)).toBe(0);
   expect(rangeWidth(10, null, DOMAIN)).toBe(0);
 });
