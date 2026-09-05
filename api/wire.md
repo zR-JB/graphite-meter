@@ -93,14 +93,15 @@ selection ambiguous. Clients built before this field must be updated alongside t
   each id removed from the client's pending map within a bounded RTT), so a wrapped value can never
   match a still-pending id.
 
-## RTT, loss, and the instant chain (client behavior)
+## RTT, probe timeouts, and reply-driven pacing (client behavior)
 
 - On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>` it computes
   `rtt = now() − pending[id]`, deletes the entry, and immediately sends the next `PING` (the
   on-receive→send-next chain).
 - A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
-  not physical packet loss because TCP retransmits. The same eviction on the unreliable WT-datagram
-  channel is physical packet loss, which is why that bus is preferred where it is advertised.
+  not physical packet loss because TCP retransmits. A timeout on the WT-datagram channel also
+  includes possible endpoint queueing or drops; neither identifies physical or directional IP loss.
+  See [measurement definitions](../docs/MEASUREMENTS.md) for populations and statistics.
 - A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) keeps one delayed or missing response from deadlocking
   the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
 

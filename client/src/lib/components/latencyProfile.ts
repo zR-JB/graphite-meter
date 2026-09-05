@@ -46,7 +46,7 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   label: string;
   tone: LatencyProfileTone;
   jitter: number | null;
-  lossRatio: number;
+  timeoutRatio: number | null;
   count?: number;
   active?: boolean;
 }
@@ -84,17 +84,15 @@ export function tickLabel(v: number): string {
   return v <= 0 ? "0" : fmtMs(v);
 }
 
-// Sub-1% loss keeps a second decimal so a rare drop is still legible.
-export function lossLabel(ratio: number): string {
+// Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
+export function timeoutLabel(ratio: number): string {
   if (ratio <= 0) return "";
-  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% loss`;
+  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% timeouts`;
 }
 
-/** Saved probe loss is datagram-loss evidence only on the datagram-backed WT bus. */
-export function savedLatencyHasDatagramLossEvidence(
-  kind: string | null,
-): boolean {
-  return kind === "webtransport";
+/** Both supported latency transports provide application probe timeout evidence. */
+export function savedLatencyHasProbeEvidence(kind: string | null): boolean {
+  return kind === "webtransport" || kind === "websocket";
 }
 
 export function metricValue(

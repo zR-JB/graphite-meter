@@ -18,7 +18,7 @@ const TRANSFER_SLOPE_K = 1.4;
 
 /** Latency stability: how hard sustained RTT jitter is penalized. */
 const LATENCY_JITTER_K = 1.2;
-/** Latency stability: how hard packet loss within the window is penalized. */
+/** Latency stability: how hard probe timeouts within the window is penalized. */
 const LATENCY_LOSS_K = 3.6;
 /* Below this baseline, small timer/network noise is treated in absolute ms rather than magnified by division. */
 const LATENCY_JITTER_FLOOR_MS = 20;

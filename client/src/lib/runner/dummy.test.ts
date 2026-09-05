@@ -5,6 +5,7 @@ import { DummyBackend } from "./dummy";
 
 const noop = () => {};
 class Host implements CoreHost {
+  ingestLatencyInterruption = noop;
   config: RunnerConfig | null = null;
   phase = "download" as const;
   elapsed = 100;

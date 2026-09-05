@@ -5,7 +5,7 @@ import {
   StaleHistoryGenerationError,
 } from "./errors";
 import { historyChanges } from "./changes";
-import type { HistoryRecordV1 } from "./types";
+import type { HistoryRecord } from "./types";
 
 const valid = {
   schemaVersion: 1,
@@ -39,9 +39,9 @@ const valid = {
   client: { build: "b" },
   failures: [],
   wireEstimates: null,
-} satisfies HistoryRecordV1;
+} satisfies HistoryRecord;
 
-function candidate(index: number): HistoryRecordV1 {
+function candidate(index: number): HistoryRecord {
   return {
     ...valid,
     id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
@@ -62,7 +62,7 @@ test("permanent candidates are dropped while later valid candidates proceed", as
     (record) => dropped.push(record.id),
     () => undefined,
   );
-  queue.enqueue({ ...valid, id: "bad" } as unknown as HistoryRecordV1);
+  queue.enqueue({ ...valid, id: "bad" } as unknown as HistoryRecord);
   queue.enqueue(valid);
   await queue.flush();
   expect(dropped).toEqual(["bad"]);
@@ -383,7 +383,7 @@ test("captured empty generation cannot become a post-clear write", async () => {
   const attempted: Array<{ id: string; generation: string }> = [];
   const saved: string[] = [];
   const put = async (
-    record: HistoryRecordV1,
+    record: HistoryRecord,
     _isCurrent: () => boolean,
     generation: string,
   ) => {

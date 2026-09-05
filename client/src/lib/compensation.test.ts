@@ -19,7 +19,7 @@ function result(meanBytesPerSec: number): ThroughputResult {
     method: "full-average",
     stabilityScore: 0.4,
     band: "low",
-    packetLossPct: 12,
+    probeTimeoutPct: 12,
   };
 }
 

@@ -12,7 +12,7 @@ const throughput = {
   method: "full-average" as const,
   stabilityScore: 0.9,
   band: "high" as const,
-  packetLossPct: 1,
+  probeTimeoutPct: 1,
   serverAuthoritative: true,
 };
 const latency = {
@@ -21,7 +21,7 @@ const latency = {
   p50Ms: 12,
   p95Ms: 20,
   jitterMs: 2,
-  packetLossPct: 0,
+  probeTimeoutPct: 0,
   reportedMs: 12,
   method: "full-average" as const,
   stabilityScore: 1,
@@ -32,6 +32,26 @@ const result: RunResult = {
   upload: null,
   bidirectional: { down: throughput, up: null },
   latency,
+  latencyByStage: {
+    latency: null,
+    upload: null,
+    bidirectional: null,
+    download: {
+      minMs: 11,
+      maxMs: 30,
+      p10Ms: 12,
+      p50Ms: 18,
+      p90Ms: 25,
+      p95Ms: 30,
+      meanMs: 18,
+      jitterMs: 3,
+      unresolvedCount: 0,
+      sendFailureCount: 0,
+      jitterPairs: 8,
+      probeCount: 10,
+      timeoutCount: 1,
+    },
+  },
   bufferbloat: { grade: "B", idleMs: 12, loadedMs: 20, increaseMs: 8 },
   stageFailures: {
     upload: { stage: "upload", reason: "timeout", message: "raw secret" },
@@ -59,18 +79,6 @@ test("builds an immutable sanitized partial snapshot", () => {
       },
       clientBuild: "b",
       engineVersion: "e",
-      latencyLanes: {
-        download: {
-          min: 11,
-          max: 30,
-          p10: 12,
-          p90: 25,
-          center: 18,
-          jitter: 3,
-          lossRatio: 0.1,
-          count: 4,
-        },
-      },
       wireDownloadBytesPerSec: 101,
       wireBidirectionalBytesPerSec: 102,
     },
@@ -91,6 +99,38 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(JSON.stringify(record)).not.toContain("192.0.2.5");
   expect(isHistoryRecord(record)).toBe(true);
   expect(isHistoryRecord({ ...record, id: "bad" })).toBe(false);
+});
+
+test("V1 records remain readable while V2 fields cannot be mislabeled as legacy", () => {
+  const record = buildHistoryRecord(
+    result,
+    { infra: null, clientBuild: "b", engineVersion: "e" },
+    200,
+  );
+  expect(record.schemaVersion).toBe(2);
+  expect(isHistoryRecord({ ...record, schemaVersion: 1 })).toBe(false);
+  const legacy = structuredClone(record);
+  legacy.schemaVersion = 1;
+  for (const snapshot of [
+    legacy.stages.download.result,
+    legacy.stages.upload.result,
+    legacy.stages.bidirectional.down,
+    legacy.stages.bidirectional.up,
+    legacy.stages.latency.result,
+  ]) {
+    if (!snapshot) continue;
+    snapshot.packetLossPct = snapshot.probeTimeoutPct ?? 0;
+    delete snapshot.probeTimeoutPct;
+  }
+  for (const lane of Object.values(legacy.stages.latency.lanes)) {
+    if (!lane) continue;
+    lane.lossRatio = lane.timeoutRatio ?? 0;
+    delete lane.timeoutRatio;
+    delete lane.unresolvedCount;
+    delete lane.sendFailureCount;
+  }
+  expect(isHistoryRecord(legacy)).toBe(true);
+  expect(isHistoryRecord({ ...legacy, schemaVersion: 2 })).toBe(false);
 });
 
 test("rejects malformed nested records before they reach rendering", () => {
@@ -158,7 +198,7 @@ test("rejects malformed nested records before they reach rendering", () => {
         ...valid.stages,
         download: {
           ...valid.stages.download,
-          result: { ...valid.stages.download.result!, packetLossPct: 101 },
+          result: { ...valid.stages.download.result!, probeTimeoutPct: 101 },
         },
       },
     },
@@ -168,23 +208,20 @@ test("rejects malformed nested records before they reach rendering", () => {
 
 test("authoritative scalar counts are not rejected by an unrelated ceiling", () => {
   const record = buildHistoryRecord(
-    result,
+    {
+      ...result,
+      latencyByStage: {
+        ...result.latencyByStage,
+        latency: {
+          ...result.latencyByStage.download!,
+          probeCount: Number.MAX_SAFE_INTEGER,
+        },
+      },
+    },
     {
       infra: null,
       clientBuild: "b",
       engineVersion: "e",
-      latencyLanes: {
-        latency: {
-          min: 1,
-          max: 2,
-          p10: 1,
-          p90: 2,
-          center: 1.5,
-          jitter: 0.5,
-          lossRatio: 0,
-          count: Number.MAX_SAFE_INTEGER,
-        },
-      },
     },
     200,
   );

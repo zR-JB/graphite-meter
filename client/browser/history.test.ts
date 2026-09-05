@@ -1,4 +1,4 @@
-import type { HistoryRecordV1 } from "../src/lib/history/types";
+import type { HistoryRecord } from "../src/lib/history/types";
 import {
   AxeBuilder,
   endpointPanel,
@@ -30,7 +30,7 @@ function record(
   id: string,
   completedAt: number,
   download = 125_000_000,
-): HistoryRecordV1 {
+): HistoryRecord {
   const lane = (rate: number) => ({
     meanBytesPerSec: rate,
     reportedBytesPerSec: rate,
@@ -337,7 +337,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
-            const rows = request.result as HistoryRecordV1[];
+            const rows = request.result as HistoryRecord[];
             db.close();
             resolve(rows[0]?.wireEstimates?.downloadBytesPerSec ?? null);
           };
@@ -1035,7 +1035,7 @@ test("activating the selected result closes detail without hijacking modified li
   await expect(row).toBeFocused();
 });
 
-test("saved latency shows datagram loss only with WebTransport provenance", async ({
+test("saved probe timeouts identify their transport and preserve legacy results", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
@@ -1065,39 +1065,43 @@ test("saved latency shows datagram loss only with WebTransport provenance", asyn
   await firstTrack.focus();
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
-  const datagramLoss = page.locator(".datagram-loss-section");
-  await expect(datagramLoss).toBeVisible();
+  const probeTimeouts = page.locator(".probe-timeouts-section");
+  await expect(probeTimeouts).toBeVisible();
   await expect(
-    datagramLoss.getByRole("heading", { name: "Datagram loss" }),
+    probeTimeouts.getByRole("heading", { name: "Probe timeouts (datagram)" }),
   ).toBeVisible();
-  const lossHelp = datagramLoss.getByRole("note", {
-    name: "About datagram loss",
+  const lossHelp = probeTimeouts.getByRole("note", {
+    name: "About probe timeouts",
   });
   await expect(lossHelp).toHaveAttribute("tabindex", "0");
   await lossHelp.hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    "Round-trip WebTransport datagram probes that received no reply. This is end-to-end round-trip loss, not directional raw IP packet loss.",
+    "Application probes whose reply deadline expired. WebTransport uses datagrams; WebSocket uses a reliable stream. Neither identifies physical or directional IP packet loss. Interrupted and locally rejected sends are excluded.",
   );
   await page.mouse.move(0, 0);
   await expect(page.getByRole("tooltip")).toHaveCount(0);
-  await expect(datagramLoss.locator(".datagram-loss-lanes li")).toHaveCount(2);
+  await expect(probeTimeouts.locator(".probe-timeouts-lanes li")).toHaveCount(
+    2,
+  );
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="latency"]'),
-  ).toHaveAttribute("aria-label", "Idle datagram loss 1%, 140 samples");
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="latency"]'),
+  ).toHaveAttribute("aria-label", "Idle probe timeouts 1%, 140 resolved");
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"]'),
-  ).toHaveAttribute("aria-label", "Loaded Up datagram loss 0%, 140 samples");
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"]'),
+  ).toHaveAttribute("aria-label", "Loaded Up probe timeouts 0%, 140 resolved");
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"] em'),
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"] em'),
   ).toHaveText("0%");
-  await expect(datagramLoss).not.toContainText("Loaded Down");
-  await expect(datagramLoss).not.toContainText("Loaded Bi-dir");
+  await expect(probeTimeouts).not.toContainText("Loaded Down");
+  await expect(probeTimeouts).not.toContainText("Loaded Bi-dir");
 
   await page.evaluate(
     (id) => (window.location.hash = `/history/${id}`),
     websocket.id,
   );
-  await expect(datagramLoss).toHaveCount(0);
+  await expect(
+    probeTimeouts.getByRole("heading", { name: "Probe timeouts (WebSocket)" }),
+  ).toBeVisible();
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",
@@ -1108,7 +1112,7 @@ test("saved latency shows datagram loss only with WebTransport provenance", asyn
     (id) => (window.location.hash = `/history/${id}`),
     unknown.id,
   );
-  await expect(datagramLoss).toHaveCount(0);
+  await expect(probeTimeouts).toHaveCount(0);
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",

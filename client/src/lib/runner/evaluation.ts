@@ -6,6 +6,7 @@ import type {
   LatencyResult,
   BufferbloatGrade,
   FlowDirection,
+  StageLatencySummary,
 } from "./contract";
 import type { StagePhase } from "./schedule";
 import {
@@ -18,7 +19,8 @@ import {
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
-import { median, percentile, meanAbsDeviation } from "./stats";
+import { median } from "./stats";
+import { LatencyAccumulator } from "./latencySummary";
 import { FixedRateBuckets, PairedRateBuckets } from "./controlBuckets";
 
 export const MIN_PARTIAL_TRANSFER_EVIDENCE_MS = 800;
@@ -74,14 +76,16 @@ const emptyLaneStates = (): LaneStates => ({
 export class RunAccumulator {
   // ---- whole-run result bookkeeping ----
   #lanes: LaneStates = emptyLaneStates();
-  #idleRtts: number[] = [];
-  #loadedRtts: number[] = [];
-  #allRtts: number[] = [];
-  #pingsTotal = 0;
-  #pingsLost = 0;
-  // Under-load ping timeouts are a quality signal, not inferred TCP loss.
-  #loadedPings = 0;
-  #loadedPingsLost = 0;
+  #latency = this.#emptyLatency();
+
+  #emptyLatency(): Record<StagePhase, LatencyAccumulator> {
+    return {
+      latency: new LatencyAccumulator(),
+      download: new LatencyAccumulator(),
+      upload: new LatencyAccumulator(),
+      bidirectional: new LatencyAccumulator(),
+    };
+  }
 
   #phaseBuckets = {
     download: new FixedRateBuckets(TRANSFER_CONFIDENCE_BUCKETS),
@@ -99,13 +103,7 @@ export class RunAccumulator {
 
   reset(): void {
     this.#lanes = emptyLaneStates();
-    this.#idleRtts = [];
-    this.#loadedRtts = [];
-    this.#allRtts = [];
-    this.#pingsTotal = 0;
-    this.#pingsLost = 0;
-    this.#loadedPings = 0;
-    this.#loadedPingsLost = 0;
+    this.#latency = this.#emptyLatency();
     this.#latStableStartIndex = -1;
     this.#biStable = false;
     this.#latFinalScore = 0;
@@ -197,28 +195,42 @@ export class RunAccumulator {
       : [this.#lanes[phase]];
   }
 
-  /** Record a ping sample for whole-run and unloaded confidence metrics. */
+  /** Attribute every outcome to its measured stage and continuity segment. */
   pushLatency(
+    phase: StagePhase,
     rttMs: number,
-    underLoad: boolean,
-    lost: boolean,
+    timedOut: boolean,
     tMs = this.#phaseLatency.at(-1)?.tMs ?? 0,
+    continuityId = 0,
+    rttEligible = true,
   ): void {
-    this.#pingsTotal++;
-    if (underLoad) this.#loadedPings++;
-    if (lost) {
-      this.#pingsLost++;
-      if (underLoad) this.#loadedPingsLost++;
-    } else {
-      this.#allRtts.push(rttMs);
-      if (underLoad) this.#loadedRtts.push(rttMs);
-      else this.#idleRtts.push(rttMs);
-    }
-    if (!underLoad) {
-      this.#phaseLatency.push({ tMs, rttMs: lost ? null : rttMs });
+    this.#latency[phase].observe(rttMs, timedOut, continuityId, rttEligible);
+    if (phase === "latency" && rttEligible) {
+      this.#phaseLatency.push({ tMs, rttMs: timedOut ? null : rttMs });
       const cutoff = tMs - LATENCY_CONFIDENCE_WINDOW_MS;
       while (this.#phaseLatency[0]?.tMs <= cutoff) this.#phaseLatency.shift();
     }
+  }
+
+  interruptLatency(
+    phase: StagePhase,
+    count: number,
+    reason: "unresolved" | "send-failed",
+  ): void {
+    this.#latency[phase].interrupt(count, reason);
+  }
+
+  latencySummary(phase: StagePhase): StageLatencySummary | null {
+    return this.#latency[phase].snapshot();
+  }
+
+  latencySummaries(): Record<StagePhase, StageLatencySummary | null> {
+    return {
+      latency: this.latencySummary("latency"),
+      download: this.latencySummary("download"),
+      upload: this.latencySummary("upload"),
+      bidirectional: this.latencySummary("bidirectional"),
+    };
   }
 
   /* ================= STABILITY ================= */
@@ -280,14 +292,20 @@ export class RunAccumulator {
     const nowStable = isStillStable(wasStable, score, cfg);
     this.#latFinalScore = score;
     if (nowStable && !wasStable)
-      this.#latStableStartIndex = Math.max(0, this.#idleRtts.length - 1);
+      this.#latStableStartIndex = Math.max(
+        0,
+        this.#latency.latency.rtts.length - 1,
+      );
     else if (!nowStable && wasStable) this.#latStableStartIndex = -1;
     return nowStable;
   }
 
   armLatencyEarlyStop(): void {
     if (this.#latEarlyStopCandidateStart < 0)
-      this.#latEarlyStopCandidateStart = Math.max(0, this.#idleRtts.length - 1);
+      this.#latEarlyStopCandidateStart = Math.max(
+        0,
+        this.#latency.latency.rtts.length - 1,
+      );
   }
 
   cancelLatencyEarlyStop(): void {
@@ -307,7 +325,7 @@ export class RunAccumulator {
     phase: "download" | "upload",
     useStableWindow: boolean,
   ): ThroughputResult {
-    return this.#reduceLane(this.#lanes[phase], useStableWindow);
+    return this.#reduceLane(this.#lanes[phase], phase, useStableWindow);
   }
 
   /** Reduce a failed transfer after it has met the minimum evidence floor. */
@@ -316,15 +334,8 @@ export class RunAccumulator {
   ): ThroughputResult | null {
     const lane = this.#lanes[phase];
     return lane.evidenceMs >= MIN_PARTIAL_TRANSFER_EVIDENCE_MS
-      ? this.#reduceLane(lane, false, 0, -1)
+      ? this.#reduceLane(lane, phase, false, 0, -1)
       : null;
-  }
-
-  /** Under-load ping timeout percentage over the whole run. */
-  #loadedLossPct(): number {
-    return this.#loadedPings
-      ? (this.#loadedPingsLost / this.#loadedPings) * 100
-      : 0;
   }
 
   /** Reduce both bidirectional lanes with the common effective-rate reducer. */
@@ -335,9 +346,14 @@ export class RunAccumulator {
     return {
       down: this.#reduceLane(
         this.#lanes["bidirectional-down"],
+        "bidirectional",
         useStableWindow,
       ),
-      up: this.#reduceLane(this.#lanes["bidirectional-up"], useStableWindow),
+      up: this.#reduceLane(
+        this.#lanes["bidirectional-up"],
+        "bidirectional",
+        useStableWindow,
+      ),
     };
   }
 
@@ -348,7 +364,7 @@ export class RunAccumulator {
   } {
     const reduce = (lane: LaneState): ThroughputResult | null =>
       lane.evidenceMs >= MIN_PARTIAL_TRANSFER_EVIDENCE_MS
-        ? this.#reduceLane(lane, false, 0, -1)
+        ? this.#reduceLane(lane, "bidirectional", false, 0, -1)
         : null;
     return {
       down: reduce(this.#lanes["bidirectional-down"]),
@@ -374,6 +390,7 @@ export class RunAccumulator {
   /** Shared effective-throughput reducer for every transfer direction. */
   #reduceLane(
     lane: LaneState,
+    phase: StagePhase,
     useStableWindow: boolean,
     finalScore = lane.finalScore,
     stableStart = lane.stableStartMs,
@@ -390,7 +407,7 @@ export class RunAccumulator {
         method: "full-average",
         stabilityScore: finalScore,
         band,
-        packetLossPct: this.#loadedLossPct(),
+        probeTimeoutPct: this.#latency[phase].probeTimeoutPct,
         serverAuthoritative: lane.serverAuthoritative || undefined,
       };
     }
@@ -421,7 +438,7 @@ export class RunAccumulator {
       method: hasStableEvidence ? "stable-window" : "full-average",
       stabilityScore: finalScore,
       band,
-      packetLossPct: this.#loadedLossPct(),
+      probeTimeoutPct: this.#latency[phase].probeTimeoutPct,
       serverAuthoritative: lane.serverAuthoritative || undefined,
     };
   }
@@ -429,15 +446,15 @@ export class RunAccumulator {
   /** Reduce latency; `idleFallbackMs` is used only when no usable samples exist. */
   latencyResult(
     cfg: RunnerConfig,
-    idleFallbackMs: number,
     useAdaptive = cfg.adaptive.enabled,
-  ): LatencyResult {
+  ): LatencyResult | null {
     const stableStart = this.#latStableStartIndex;
     const earlyStopStart = this.#latEarlyStopStart;
     const finalScore = this.#latFinalScore;
-    const all = this.#allRtts;
-    const idle = this.#idleRtts;
-    // The headline follows the throughput window; other descriptors stay whole-run.
+    const summary = this.latencySummary("latency");
+    const idle = this.#latency.latency.rtts;
+    if (!summary || !idle.length) return null;
+    // The headline may use the stable window; descriptors always cover the full unloaded stage.
     const windowStart = this.#windowStart(
       stableStart,
       earlyStopStart,
@@ -446,17 +463,14 @@ export class RunAccumulator {
     );
     const useWindow = windowStart >= 0;
     const idleWindow = useWindow ? idle.slice(windowStart) : idle;
-    const idleMs =
-      median(idleWindow.length ? idleWindow : all) || idleFallbackMs;
+    const idleMs = median(idleWindow);
     return {
       idleMs,
-      minMs: all.length ? Math.min(...all) : 0,
-      p50Ms: percentile(all, 50),
-      p95Ms: percentile(all, 95),
-      jitterMs: meanAbsDeviation(all),
-      packetLossPct: this.#pingsTotal
-        ? (this.#pingsLost / this.#pingsTotal) * 100
-        : 0,
+      minMs: summary.minMs,
+      p50Ms: summary.p50Ms,
+      p95Ms: summary.p95Ms,
+      jitterMs: summary.jitterMs,
+      probeTimeoutPct: this.#latency.latency.probeTimeoutPct,
       reportedMs: idleMs,
       method: useWindow ? "stable-window" : "full-average",
       stabilityScore: finalScore,
@@ -465,23 +479,25 @@ export class RunAccumulator {
   }
 
   /** Latency evidence is usable only when enough outcomes include a success. */
-  partialLatencyResult(
-    cfg: RunnerConfig,
-    idleFallbackMs: number,
-  ): LatencyResult | null {
+  partialLatencyResult(cfg: RunnerConfig): LatencyResult | null {
     if (
-      this.#pingsTotal < MIN_PARTIAL_LATENCY_OUTCOMES ||
-      this.#allRtts.length < MIN_PARTIAL_LATENCY_SUCCESSES
+      this.#latency.latency.count < MIN_PARTIAL_LATENCY_OUTCOMES ||
+      this.#latency.latency.rtts.length < MIN_PARTIAL_LATENCY_SUCCESSES
     )
       return null;
-    return this.latencyResult(cfg, idleFallbackMs, false);
+    return this.latencyResult(cfg, false);
   }
 
   /** Bufferbloat grade from authoritative idle-vs-loaded RTT evidence. */
   bufferbloatGrade(): BufferbloatGrade | null {
-    if (!this.#idleRtts.length || !this.#loadedRtts.length) return null;
-    const idleMs = median(this.#idleRtts);
-    const loadedMs = median(this.#loadedRtts);
+    const loaded = ["download", "upload", "bidirectional"] as const;
+    const medians = loaded.flatMap((phase) => {
+      const rtts = this.#latency[phase].rtts;
+      return rtts.length ? [median(rtts)] : [];
+    });
+    if (!this.#latency.latency.rtts.length || !medians.length) return null;
+    const idleMs = median(this.#latency.latency.rtts);
+    const loadedMs = Math.max(...medians);
     const increaseMs = Math.max(0, loadedMs - idleMs);
     let grade: BufferbloatGrade["grade"];
     if (increaseMs <= 5) grade = "A";

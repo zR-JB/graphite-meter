@@ -1,4 +1,4 @@
-import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecordV1 } from "./types";
+import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecord } from "./types";
 import {
   InvalidHistoryRecordError,
   StaleHistoryGenerationError,
@@ -13,17 +13,17 @@ import {
 import { HISTORY_DB } from "./dbSchema";
 
 type HistoryListResult = {
-  records: HistoryRecordV1[];
+  records: HistoryRecord[];
   malformedCount: number;
 };
 
 type HistoryEntryResult =
-  | { status: "ready"; record: HistoryRecordV1 }
+  | { status: "ready"; record: HistoryRecord }
   | { status: "missing" | "malformed" };
 
 export function retainNewest(
-  records: readonly HistoryRecordV1[],
-): HistoryRecordV1[] {
+  records: readonly HistoryRecord[],
+): HistoryRecord[] {
   return [...records]
     .sort((a, b) => b.completedAt - a.completedAt || b.id.localeCompare(a.id))
     .slice(0, HISTORY_LIMIT);
@@ -85,7 +85,7 @@ export class HistoryRepository {
     return (this.#db ??= await openHistoryDB());
   }
   async put(
-    record: HistoryRecordV1,
+    record: HistoryRecord,
     generation = currentHistoryGeneration(),
   ): Promise<void> {
     if (!isHistoryRecord(record)) throw new InvalidHistoryRecordError();
@@ -138,7 +138,7 @@ export class HistoryRepository {
     const rawCount = request(store.count());
     let indexedCount = 0;
     let malformedIndexedCount = 0;
-    const records: HistoryRecordV1[] = [];
+    const records: HistoryRecord[] = [];
     const scan = new Promise<void>((resolve, reject) => {
       const cursorRequest = store
         .index(HISTORY_DB.completedAtIndex)
