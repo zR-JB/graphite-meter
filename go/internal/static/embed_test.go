@@ -31,6 +31,8 @@ func TestHandlerRoutes(t *testing.T) {
 		{name: "cleaned traversal cannot reach a second shell route", path: "/assets/../index.html", wantStatus: http.StatusNotFound},
 		{name: "dot-segment path is not the shell", path: "/foo/..", wantStatus: http.StatusNotFound},
 		{name: "asset dot-segment path is not the shell", path: "/assets/..", wantStatus: http.StatusNotFound},
+		{name: "encoded dot-segment path is not the shell", path: "/foo/%2e%2e", wantStatus: http.StatusNotFound},
+		{name: "backslash path is not the shell", path: `/foo\..\bar`, wantStatus: http.StatusNotFound},
 		{name: "deep path traversal is not an SPA fallback", path: "/../../../etc/passwd", wantStatus: http.StatusNotFound},
 		{name: "unknown trailing slash route is 404", path: "/settings/", wantStatus: http.StatusNotFound},
 		{name: "index file is not a second shell route", path: "/index.html", wantStatus: http.StatusNotFound},
@@ -47,29 +49,13 @@ func TestHandlerRoutes(t *testing.T) {
 			if status != test.wantStatus {
 				t.Fatalf("status = %d, want %d", status, test.wantStatus)
 			}
+			if status == http.StatusNotFound && strings.Contains(body, "index page") {
+				t.Fatal("missing path served the shell body")
+			}
 			if test.wantBody != "" && !strings.Contains(body, test.wantBody) {
 				t.Fatalf("body = %q, want %q", body, test.wantBody)
 			}
 		})
-	}
-}
-
-func TestHandlerDotSegmentsDoNotServeShell(t *testing.T) {
-	for _, requestPath := range []string{
-		"/foo/..",
-		"/assets/..",
-		"/foo/%2e%2e",
-		`/foo\..\bar`,
-	} {
-		rr := httptest.NewRecorder()
-		handlerForWithMarker(testFS(), resultHistoryMarker(false)).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, requestPath, nil))
-		status, body := rr.Code, rr.Body.String()
-		if status != http.StatusNotFound {
-			t.Errorf("%s status = %d, want 404", requestPath, status)
-		}
-		if strings.Contains(body, "index page") {
-			t.Errorf("%s served the shell body", requestPath)
-		}
 	}
 }
 

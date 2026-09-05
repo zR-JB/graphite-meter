@@ -349,6 +349,9 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
+		if (name == "login" || name == "cli") && !strings.Contains(rendered.String(), authPendingJS) {
+			t.Errorf("%s submits a form without the pending-state script", name)
+		}
 		rest := rendered.String()
 		scripts := 0
 		for {
@@ -368,25 +371,6 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		}
 		if scripts == 0 {
 			t.Fatalf("%s renders no inline script", name)
-		}
-	}
-}
-
-func TestFormPagesCarryTheSubmitScript(t *testing.T) {
-	pages := map[string]struct {
-		tmpl *template.Template
-		data any
-	}{
-		"login": {loginTemplate, loginView{Styles: authStyles, Password: true, OIDC: true, Provider: "Provider"}},
-		"cli":   {cliTemplate, map[string]any{"Styles": authStyles, "Code": "ABCD-1234", "Challenge": "c", "CSRF": "t"}},
-	}
-	for name, page := range pages {
-		var rendered bytes.Buffer
-		if err := page.tmpl.Execute(&rendered, page.data); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if !strings.Contains(rendered.String(), authPendingJS) {
-			t.Errorf("%s submits a form without the pending-state script", name)
 		}
 	}
 }

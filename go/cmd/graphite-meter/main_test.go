@@ -26,30 +26,6 @@ func TestVersionCommandAliases(t *testing.T) {
 	}
 }
 
-func TestH1AddressFlagOverridesDefault(t *testing.T) {
-	cfg := config.Default()
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
-	if err := fs.Parse([]string{"-h1-addr", ":9001"}); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Native.H1 != ":9001" {
-		t.Fatalf("Native.H1 = %q, want %q", cfg.Native.H1, ":9001")
-	}
-}
-
-func TestResultHistoryDefaultFlagOverridesConfig(t *testing.T) {
-	cfg := config.Default()
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
-	if err := fs.Parse([]string{"-result-history-default"}); err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.ResultHistoryDefault {
-		t.Fatal("--result-history-default did not enable the default")
-	}
-}
-
 func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
@@ -119,9 +95,12 @@ func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
 }
 
 func TestParseConfigAppliesFlagsAndValidates(t *testing.T) {
-	cfg, err := parseConfig("test", []string{"-name", "edge-1", "-max-connections", "128", "-h1-addr", "127.0.0.1:9100"}, io.Discard)
+	cfg, err := parseConfig("test", []string{"-name", "edge-1", "-max-connections", "128", "-h1-addr", "127.0.0.1:9100", "-result-history-default"}, io.Discard)
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
+	}
+	if !cfg.ResultHistoryDefault {
+		t.Fatal("--result-history-default did not enable the default")
 	}
 	if cfg.ServerName != "edge-1" {
 		t.Fatalf("ServerName = %q, want %q", cfg.ServerName, "edge-1")

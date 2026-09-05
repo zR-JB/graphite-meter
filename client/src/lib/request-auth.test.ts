@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  authenticationRequired,
   redirectForCredentials,
   sessionAuthenticationRequired,
 } from "./request-auth";
@@ -13,71 +12,37 @@ describe("redirectForCredentials", () => {
   });
 });
 
-describe("authenticationRequired", () => {
-  test("only a 403 carrying the marker counts", () => {
-    const response = (status: number, headers: Record<string, string> = {}) =>
-      new Response("", { status, headers });
-
-    expect(
-      authenticationRequired(
-        response(403, { "Graphite-Meter-Auth": "required" }),
-      ),
-    ).toBe(true);
-
-    // A bare 403 from a proxy or WAF is not an expired session.
-    expect(authenticationRequired(response(403))).toBe(false);
-    expect(
-      authenticationRequired(response(403, { "Graphite-Meter-Auth": "yes" })),
-    ).toBe(false);
-    expect(
-      authenticationRequired(
-        response(401, { "Graphite-Meter-Auth": "required" }),
-      ),
-    ).toBe(false);
-    expect(
-      authenticationRequired(
-        response(200, { "Graphite-Meter-Auth": "required" }),
-      ),
-    ).toBe(false);
-    expect(
-      authenticationRequired(
-        response(500, { "Graphite-Meter-Auth": "required" }),
-      ),
-    ).toBe(false);
-  });
-});
-
 describe("sessionAuthenticationRequired", () => {
-  test("recognizes only an exact auth-required response", async () => {
-    const answer =
-      (status: number, headers: Record<string, string> = {}) =>
-      async () =>
-        new Response("", { status, headers });
-
-    expect(
-      await sessionAuthenticationRequired(
+  test.each([
+    [403, "required", true],
+    [403, null, false],
+    [403, "yes", false],
+    [401, "required", false],
+    [200, "required", false],
+    [500, "required", false],
+    [200, null, false],
+  ] as const)(
+    "session status %i with marker %s means expiry: %s",
+    async (status, marker, expired) => {
+      const result = await sessionAuthenticationRequired(
         "https://meter.example",
         undefined,
-        answer(403, { "Graphite-Meter-Auth": "required" }),
-      ),
-    ).toBe(true);
-
-    for (const request of [
-      answer(403),
-      answer(403, { "Graphite-Meter-Auth": "1" }),
-      answer(401, { "Graphite-Meter-Auth": "required" }),
-      answer(200, { "Graphite-Meter-Auth": "required" }),
-      answer(200),
-    ]) {
-      expect(
-        await sessionAuthenticationRequired(
-          "https://meter.example",
-          undefined,
-          request,
-        ),
-      ).toBe(false);
-    }
-  });
+        async (url, init) => {
+          expect(String(url)).toBe("https://meter.example/auth/session");
+          expect(init).toMatchObject({
+            cache: "no-store",
+            credentials: "include",
+            redirect: "error",
+          });
+          return new Response(null, {
+            status,
+            headers: marker ? { "Graphite-Meter-Auth": marker } : {},
+          });
+        },
+      );
+      expect(result).toBe(expired);
+    },
+  );
 
   test("network failures and deliberate aborts are not expiry evidence", async () => {
     const failed = async () => {

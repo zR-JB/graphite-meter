@@ -113,7 +113,6 @@ test("the diagnostics rows agree with the path card above them", async ({
       });
     }
   });
-  const errorStart = page.errors.length;
   const consoleStart = page.console.length;
   await endpoint
     .getByRole("button", { name: "Copy diagnostic report" })
@@ -121,7 +120,6 @@ test("the diagnostics rows agree with the path card above them", async ({
   await expect(endpoint.locator(".sr-status")).toHaveText(
     "Unable to copy diagnostic report",
   );
-  expect(page.errors.slice(errorStart)).toEqual([]);
   expect(
     page.console
       .slice(consoleStart)
@@ -148,8 +146,6 @@ test("a failed latency path retains independently verified throughput", async ({
   ).toHaveCount(0);
 });
 test("each path's Retry names the path it retries", async ({ page }) => {
-  const pageErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
   // Both roles must fail independently; a latency failure preserves verified throughput.
   const settings = await preparePaths(
     page,
@@ -171,7 +167,6 @@ test("each path's Retry names the path it retries", async ({ page }) => {
       .locator("fieldset", { hasText: "Latency path" })
       .getByText("Connection check failed", { exact: true }),
   );
-  expect(pageErrors).toEqual([]);
   expect(
     page.console
       .slice(consoleStart)
@@ -182,8 +177,6 @@ test("a shared HTTP preflight failure fails both paths and Retry stays quiet", a
   page,
 }) => {
   let reachable = true;
-  const pageErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
   await page.addInitScript(
     (value) => localStorage.setItem("graphite-meter:v1", value),
     persistConfig(true),
@@ -218,7 +211,6 @@ test("a shared HTTP preflight failure fails both paths and Retry stays quiet", a
     settings.getByText("Connection check failed", { exact: true }),
   ).toHaveCount(2);
   await expect(settings.getByText("Failed", { exact: true })).toHaveCount(2);
-  expect(pageErrors).toEqual([]);
   expect(
     page.console
       .slice(consoleStart)

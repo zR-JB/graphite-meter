@@ -86,22 +86,6 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestUploadStoreCapRejectsCreate(t *testing.T) {
-	s := NewUploadStore()
-	for i := range maxLiveUploads {
-		id := s.Mint()
-		if _, ok := s.getOrCreate(id); !ok {
-			t.Fatalf("create %d below the cap was refused", i)
-		}
-	}
-	if s.live.Load() != maxLiveUploads {
-		t.Fatalf("live = %d, want %d", s.live.Load(), maxLiveUploads)
-	}
-	if _, ok := s.getOrCreate(s.Mint()); ok {
-		t.Errorf("create past the cap succeeded, want refusal")
-	}
-}
-
 func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 	s := NewUploadStore()
 	owner := "192.0.2.1"
@@ -137,6 +121,10 @@ func TestUploadStoreSweepReleasesOwnerCapacity(t *testing.T) {
 		agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
 	}
 	s.sweep(uploadIDTTL)
+	s.sweep(uploadIDTTL)
+	if s.live.Load() != 0 {
+		t.Fatalf("live = %d after repeated sweeps, want 0", s.live.Load())
+	}
 	if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessOK {
 		t.Fatalf("owner capacity not released: %v", access)
 	}
@@ -195,9 +183,6 @@ func TestUploadStoreKeepsAggregateAcrossAWebTransportIdleBound(t *testing.T) {
 
 // The aggregate TTL and the transport's idle bound must never be re-equalised.
 func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
-	if uploadIDTTL <= wire.WTIdleBound {
-		t.Fatalf("uploadIDTTL = %v, want strictly greater than the WebTransport idle bound %v", uploadIDTTL, wire.WTIdleBound)
-	}
 	if want := 2 * wire.WTIdleBound; uploadIDTTL < want {
 		t.Fatalf("uploadIDTTL = %v, want at least %v: detecting the stall alone takes up to 1.5 idle bounds", uploadIDTTL, want)
 	}
@@ -313,17 +298,6 @@ func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
 	}
 }
 
-func TestUploadStoreSweepIsIdempotent(t *testing.T) {
-	s := NewUploadStore()
-	id := s.Mint()
-	s.getOrCreate(id)
-	s.sweep(0)
-	s.sweep(0) // no-op
-	if s.live.Load() != 0 {
-		t.Errorf("live = %d after idempotent sweeps, want 0", s.live.Load())
-	}
-}
-
 func TestUploadStoreSweepBoundary(t *testing.T) {
 	s := NewUploadStore()
 	const ttl = 200 * time.Millisecond
@@ -361,6 +335,9 @@ func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 		} else {
 			agg.lastTouchMono.Store(monoNanos() + int64(time.Hour))
 		}
+	}
+	if s.live.Load() != maxLiveUploads {
+		t.Fatalf("live = %d, want %d", s.live.Load(), maxLiveUploads)
 	}
 	blocked := s.Mint()
 	if _, ok := s.getOrCreate(blocked); ok {

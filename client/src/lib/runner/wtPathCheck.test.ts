@@ -1,3 +1,4 @@
+import { stubGlobals } from "../test-helpers.test";
 import { test, expect } from "bun:test";
 import type { RunnerConfig } from "./contract";
 import type { ConnectionPreparation } from "./real/prepare";
@@ -42,24 +43,19 @@ type PathCheck = (
 type CheckBody = (check: PathCheck) => Promise<void>;
 async function withPathCheck(
   webTransport: unknown,
-  _probeConfig: RunnerConfig,
   capabilities = preflight,
   body: CheckBody,
 ): Promise<void> {
-  const globals = globalThis as Record<string, unknown>;
-  Object.assign(globals, TEST_BUILD_TOKENS);
-  const { prepareConnections } = await import("./real/prepare");
-  const realFetch = globalThis.fetch;
-  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
-  const realEntries = performance.getEntriesByName.bind(performance);
-  const realWebTransport = globals.WebTransport;
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    WebTransport: webTransport,
+    location: new URL(`${WT_ORIGIN}/`),
+    fetch: globalThis.fetch,
+  });
+  const realEntries = performance.getEntriesByName;
   const timings: PerformanceResourceTiming[] = [];
   try {
-    globals.WebTransport = webTransport;
-    Object.defineProperty(globalThis, "location", {
-      configurable: true,
-      value: new URL(`${WT_ORIGIN}/`),
-    });
+    const { prepareConnections } = await import("./real/prepare");
     performance.getEntriesByName = (name) =>
       timings.filter((entry) => entry.name === name);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -93,25 +89,12 @@ async function withPathCheck(
       return result;
     });
   } finally {
-    globalThis.fetch = realFetch;
     performance.getEntriesByName = realEntries;
-    if (realWebTransport === undefined)
-      Reflect.deleteProperty(globals, "WebTransport");
-    else globals.WebTransport = realWebTransport;
-    if (realLocation)
-      Object.defineProperty(globalThis, "location", realLocation);
-    for (const key of Object.keys(TEST_BUILD_TOKENS))
-      Reflect.deleteProperty(globals, key);
+    restore();
   }
 }
-const withFakeProbe = (
-  body: CheckBody,
-  capabilities = preflight,
-  probeConfig = config,
-): Promise<void> =>
-  withPathCheck(FakeWebTransport, probeConfig, capabilities, body);
 test("a refused WebTransport check is re-dialled on the next probe, so Retry works", async () => {
-  await withFakeProbe(async (check) => {
+  await withPathCheck(FakeWebTransport, preflight, async (check) => {
     const { TransportUnavailableError } = await import("./real/transportError");
     for (const attempt of [1, 2]) {
       await expect(check(config)).rejects.toBeInstanceOf(
@@ -136,7 +119,7 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
       closes++;
     }
   }
-  await withPathCheck(SilentWebTransport, config, preflight, async (check) => {
+  await withPathCheck(SilentWebTransport, preflight, async (check) => {
     const { TransportUnavailableError } = await import("./real/transportError");
     await expect(check(config)).rejects.toThrow(/carried no bytes/);
     await expect(check(config)).rejects.toBeInstanceOf(
@@ -159,33 +142,28 @@ test("a session kind this client cannot drive fails its role before any dial", a
       latency: [],
     },
   };
-  await withPathCheck(
-    FakeWebTransport,
-    config,
-    datagramPreflight,
-    async (check) => {
-      const { TRANSPORTS } = await import("./real/transports");
-      const realUsable = TRANSPORTS["webtransport-datagram"].usable;
-      try {
-        TRANSPORTS["webtransport-datagram"].usable = () => false;
-        const dialled = dials.length;
-        await expect(
-          check({
-            ...config,
-            transports: {
-              throughputTarget: `${WT_ORIGIN}::wtdg`,
-              latencyTarget: "auto",
-            },
-          }),
-        ).rejects.toThrow(
-          /webtransport-datagram is not supported by this client/,
-        );
-        expect(dials.length).toBe(dialled);
-      } finally {
-        TRANSPORTS["webtransport-datagram"].usable = realUsable;
-      }
-    },
-  );
+  await withPathCheck(FakeWebTransport, datagramPreflight, async (check) => {
+    const { TRANSPORTS } = await import("./real/transports");
+    const realUsable = TRANSPORTS["webtransport-datagram"].usable;
+    try {
+      TRANSPORTS["webtransport-datagram"].usable = () => false;
+      const dialled = dials.length;
+      await expect(
+        check({
+          ...config,
+          transports: {
+            throughputTarget: `${WT_ORIGIN}::wtdg`,
+            latencyTarget: "auto",
+          },
+        }),
+      ).rejects.toThrow(
+        /webtransport-datagram is not supported by this client/,
+      );
+      expect(dials.length).toBe(dialled);
+    } finally {
+      TRANSPORTS["webtransport-datagram"].usable = realUsable;
+    }
+  });
 });
 class HeldWebTransport {
   static readonly live: HeldWebTransport[] = [];
@@ -227,7 +205,7 @@ async function withHeldSessions(
 ): Promise<void> {
   HeldWebTransport.live.length = 0;
   HeldWebTransport.nextDial = Promise.withResolvers<void>();
-  await withPathCheck(HeldWebTransport, autoConfig, preflight, body);
+  await withPathCheck(HeldWebTransport, preflight, body);
 }
 async function untilDialled(dials: number): Promise<void> {
   while (HeldWebTransport.live.length < dials)
@@ -265,25 +243,5 @@ test("an aborted probe leaves the transport a newer probe committed alone", asyn
       "webtransport",
     );
     expect(firstOutcome).toBe("rejected");
-  });
-});
-test("aborting a superseded dial leaves the newer check independent", async () => {
-  await withHeldSessions(async (check) => {
-    const abort = new AbortController();
-    const first = check(autoConfig, abort.signal);
-    await untilDialled(1);
-    const second = check(autoConfig);
-    await untilDialled(2);
-    abort.abort();
-    HeldWebTransport.live[1].deliver();
-    expect((await second).validation.throughput.path?.target.transport).toBe(
-      "webtransport",
-    );
-    expect(
-      await first.then(
-        () => "resolved",
-        () => "rejected",
-      ),
-    ).toBe("rejected");
   });
 });

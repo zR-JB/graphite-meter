@@ -48,6 +48,7 @@ test("pinch zoom raises canvas resolution without changing layout", async ({
       })),
     );
   const before = await ratios();
+  expect(before.length).toBeGreaterThan(0);
   const session = await context.newCDPSession(page);
   try {
     await session.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });

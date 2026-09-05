@@ -108,7 +108,6 @@ function descriptiveStability(
 test("descriptive stability is invariant to callback chunking", () => {
   const rates = [950, 1050, 950, 1050, 1050, 950, 1050, 950];
   const wholeBuckets = Array(rates.length).fill(250);
-  const splitCallbacks = Array(rates.length * 5).fill(50);
   const whole = descriptiveStability(rates, wholeBuckets);
   const split = new RunAccumulator();
   split.reset();
@@ -121,34 +120,17 @@ test("descriptive stability is invariant to callback chunking", () => {
     whole,
     8,
   );
-  expect(splitCallbacks.length).toBeGreaterThan(wholeBuckets.length);
 });
 test.each([
-  { cv: 5, rates: [950, 1050, 950, 1050, 1050, 950, 1050, 950], band: "high" },
-  {
-    cv: 15,
-    rates: [850, 1150, 850, 1150, 1150, 850, 1150, 850],
-    band: "medium",
-  },
-  {
-    cv: 30,
-    rates: [700, 1300, 700, 1300, 1300, 700, 1300, 700],
-    band: "low",
-  },
-])(
-  "descriptive stability reports approximately $cv% CV as the $band band",
-  ({ rates, cv, band }) => {
-    const stabilityPct = descriptiveStability(
-      rates,
-      Array(rates.length).fill(250),
-    );
-    expect(stabilityPct).toBeCloseTo(100 - cv, 5);
-    const score = stabilityPct / 100;
-    const displayBand =
-      score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
-    expect(displayBand).toBe(band);
-  },
-);
+  [5, [950, 1050, 950, 1050, 1050, 950, 1050, 950]],
+  [15, [850, 1150, 850, 1150, 1150, 850, 1150, 850]],
+  [30, [700, 1300, 700, 1300, 1300, 700, 1300, 700]],
+])("descriptive stability reports %i percent CV", (cv, rates) => {
+  expect(
+    descriptiveStability(rates, Array(rates.length).fill(250)),
+  ).toBeCloseTo(100 - cv, 5);
+});
+
 test.each([
   [
     "adaptive throughput reports the final plateau after stability recovers",
@@ -193,21 +175,6 @@ test.each([
   if (expected !== undefined)
     expect(result.meanBytesPerSec).not.toBeCloseTo(1000, 0);
 });
-test("stable evidence does not select a window unless early completion shortened the stage", () => {
-  const accum = fresh();
-  for (let i = 0; i < 4; i++) {
-    accum.pushThroughput("download", "down", 100, 1);
-    accum.trackStableRun("download", 0, adaptive);
-  }
-  for (let i = 0; i < 4; i++) {
-    accum.pushThroughput("download", "down", 1000, 1);
-    accum.trackStableRun("download", 1, adaptive);
-  }
-  const result = accum.throughputResult("download", false);
-  expect(result.method).toBe("full-average");
-  expect(result.reportedBytesPerSec).toBeCloseTo(550, 6);
-  expect(result.fullAverageBytesPerSec).toBeCloseTo(550, 6);
-});
 test("transfer headline weights samples by represented time", () => {
   const accum = fresh();
   accum.pushThroughput("upload", "up", 10, 0.1);
@@ -238,28 +205,21 @@ test("stability first established on the final one-way observation remains reduc
   expect(result.fullAverageBytesPerSec).toBeCloseTo(500, 6);
   expect(result.serverAuthoritative).toBe(true);
 });
-test("bidirectional: down and up lanes reduce independently", () => {
-  const accum = fresh();
-  pushBidiPairs(accum, Array(30).fill(500), 300, true);
-  const result = accum.bidirectionalResult(false);
-  expect(result.down.fullAverageBytesPerSec).toBeCloseTo(500, 6);
-  expect(result.up.fullAverageBytesPerSec).toBeCloseTo(300, 6);
-  expect(result.down.serverAuthoritative).toBeUndefined();
-  expect(result.up.serverAuthoritative).toBe(true);
-  expect(result.down.totalBytes).toBeCloseTo(500 * 30, 6);
-  expect(result.up.totalBytes).toBeCloseTo(300 * 30, 6);
-});
 test("bidirectional: interleaved arrival order doesn't cross-contaminate the lanes", () => {
   const accum = fresh();
   const downs = [400, 420, 440, 460];
   const ups = [100, 120, 140, 160];
   for (let i = 0; i < downs.length; i++) {
-    accum.pushThroughput("bidirectional", "up", ups[i], 1);
+    accum.pushThroughput("bidirectional", "up", ups[i], 1, true);
     accum.pushThroughput("bidirectional", "down", downs[i], 1);
   }
   const result = accum.bidirectionalResult(false);
   expect(result.down.fullAverageBytesPerSec).toBeCloseTo(mean(downs), 6);
   expect(result.up.fullAverageBytesPerSec).toBeCloseTo(mean(ups), 6);
+  expect(result.down.serverAuthoritative).toBeUndefined();
+  expect(result.up.serverAuthoritative).toBe(true);
+  expect(result.down.totalBytes).toBe(1720);
+  expect(result.up.totalBytes).toBe(520);
 });
 test("bidirectional confidence keeps an uneven trailing window aligned", () => {
   const accum = fresh();

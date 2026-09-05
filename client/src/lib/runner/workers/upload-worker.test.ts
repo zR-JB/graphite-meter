@@ -11,13 +11,9 @@ const MAX_POST_BYTES = 10 * 1024 * 1024;
 test("uploadPoolBytes: divides one bounded reservoir across lanes", () => {
   expect(uploadPoolBytes(1, 8)).toBe(256 * 1024 * 1024);
   expect(uploadPoolBytes(4, 8)).toBe(64 * 1024 * 1024);
-  expect(uploadPoolBytes(4, 4)).toBe(6 * 1024 * 1024);
-  expect(uploadPoolBytes(16, 2)).toBe(2 * 1024 * 1024);
-});
-
-test("uploadPoolBytes: a 2 GiB device draws on a smaller reservoir than a 4 GiB one", () => {
   expect(uploadPoolBytes(4, 2)).toBe(4 * 1024 * 1024);
   expect(uploadPoolBytes(4, 4)).toBe(6 * 1024 * 1024);
+  expect(uploadPoolBytes(16, 2)).toBe(2 * 1024 * 1024);
 });
 
 test("uploadPoolBytes: a non-positive lane count still sizes one lane", () => {

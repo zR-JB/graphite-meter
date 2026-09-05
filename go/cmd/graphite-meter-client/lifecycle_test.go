@@ -149,21 +149,6 @@ func drainRun(t *testing.T, events <-chan goclient.Event) {
 	}
 }
 
-func TestDoneDistinguishesWrappedCancellationFromErrorText(t *testing.T) {
-	for _, err := range []error{fmt.Errorf("transfer: %w", context.Canceled), errors.New("server said context canceled")} {
-		m := newModel(goclient.DefaultConfig())
-		defer m.shutdown()
-		m, _ = modelAndCmd(m.handleEvents(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: err}}}))
-		if errors.Is(err, context.Canceled) {
-			if m.err != nil || m.status != "canceled" {
-				t.Fatalf("wrapped cancellation became a failure: %v", m.err)
-			}
-		} else if m.err != err || m.status != "error" {
-			t.Fatal("an error mentioning cancellation was mistaken for a user cancellation")
-		}
-	}
-}
-
 func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 	measurement, abort := context.WithCancel(t.Context())
 	abort()

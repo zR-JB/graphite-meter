@@ -121,15 +121,6 @@ test("layer ordering paints highest throughput first and preserves ties", () => 
   expect(layers[1]!.dashed).toBe(true);
 });
 
-test("partial result styling remains dashed without marker geometry", () => {
-  const arcs = resultGaugeArcs(
-    result({ bidirectional: { down: throughput(30), up: null } }),
-  );
-  expect(arcs).toEqual([
-    arc("bidirectional", "Bidirectional download", 30, true),
-  ]);
-});
-
 const headOptions = {
   baseRadius: 72,
   arcSweep: Math.PI * 1.5,

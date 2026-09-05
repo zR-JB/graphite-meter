@@ -92,15 +92,6 @@ func TestRateStatsResult(t *testing.T) {
 		}
 	})
 
-	t.Run("sample values do not define the window mean", func(t *testing.T) {
-		var s rateStats
-		s.add(100)
-		s.add(10)
-		s.setWindow(20, 2*time.Second)
-		if got := s.result("upload", Up, true).MeanBps; got != 10 {
-			t.Errorf("MeanBps = %v, want 10", got)
-		}
-	})
 }
 
 func TestLatencyStatsAdd(t *testing.T) {

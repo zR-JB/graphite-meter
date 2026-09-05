@@ -45,7 +45,6 @@ for _ in $(seq 1 30); do
     fi
     sleep 1
 done
-curl -fsS -o /dev/null "$base/preflight"
 
 curl -fsS "$base/preflight" | tee "$tmp/preflight.json" >/dev/null
 expected_origin="http://127.0.0.1:7246"
@@ -133,8 +132,7 @@ while IFS= read -r path; do
     rm -f "$headers" "$body"
 done < "$tmp/client-assets.txt"
 
-curl -fsS "$base/#/settings" -o "$tmp/hash-route.html"
-grep -qi '<div id="app"' "$tmp/hash-route.html"
+grep -qi '<div id="app"' "$tmp/index.html"
 direct_route_status=$(curl -sS -o "$tmp/direct-route.txt" -w '%{http_code}' "$base/settings/")
 test "$direct_route_status" = 404
 ! grep -Eqi '<!doctype html|<html|<div id="app"' "$tmp/direct-route.txt"

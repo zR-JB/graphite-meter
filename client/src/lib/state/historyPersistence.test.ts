@@ -1,27 +1,12 @@
+import "./runes.test";
 import { expect, test } from "bun:test";
-import { plugin, Transpiler } from "bun";
-import { compileModule } from "svelte/compiler";
-import { testPreparedPaths } from "../runner/test-helpers.test";
+import {
+  TEST_BUILD_TOKENS,
+  testPreparedPaths,
+} from "../runner/test-helpers.test";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
-
-plugin({
-  name: "history-store-runes",
-  setup(build) {
-    build.onLoad({ filter: /\.svelte\.ts$/ }, async (args) => {
-      const source = await Bun.file(args.path).text();
-      const module = new Transpiler({ loader: "ts" }).transformSync(source);
-      return {
-        contents: compileModule(module, {
-          generate: "client",
-          filename: args.path,
-        }).js.code,
-        loader: "js",
-      };
-    });
-  },
-});
 
 const throughput: ThroughputResult = {
   meanBytesPerSec: 12_500_000,
@@ -58,17 +43,8 @@ function result(): RunResult {
   };
 }
 
-const BUILD_TOKENS = {
-  __GM_ALLOW_DUMMY__: false,
-  __GM_BUILD_PROFILE__: "test",
-  __GM_RELEASE_VERSION__: null,
-  __GM_SOURCE_REVISION__: "test-revision",
-  __GM_BUILD_IDENTITY__: "test test-revision",
-  __GM_CLIENT_VERSION__: "0.0.0-test",
-} as const;
-
 test("UI and history use the raw stage summary even when chart samples disagree", async () => {
-  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousPreference = store.resultHistoryPreference;
   try {
@@ -106,7 +82,7 @@ test("UI and history use the raw stage summary even when chart samples disagree"
 });
 
 test("only an enabled complete event creates an immutable history candidate", async () => {
-  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousPreference = store.resultHistoryPreference;
   try {
@@ -162,13 +138,13 @@ test("only an enabled complete event creates an immutable history candidate", as
   } finally {
     store.reset();
     store.resultHistoryPreference = previousPreference;
-    for (const key of Object.keys(BUILD_TOKENS))
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);
   }
 });
 
 test("wire snapshots are independent of their display preference", async () => {
-  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousPreference = store.resultHistoryPreference;
   const previousShowWireEstimates = store.showWireEstimates;
@@ -203,7 +179,7 @@ test("wire snapshots are independent of their display preference", async () => {
     store.reset();
     store.resultHistoryPreference = previousPreference;
     store.showWireEstimates = previousShowWireEstimates;
-    for (const key of Object.keys(BUILD_TOKENS))
+    for (const key of Object.keys(TEST_BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);
   }
 });

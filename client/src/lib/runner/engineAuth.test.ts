@@ -1,26 +1,7 @@
+import "../state/runes.test";
 import { expect, test } from "bun:test";
-import { plugin, Transpiler } from "bun";
-import { compileModule } from "svelte/compiler";
 import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
 import type { NetworkRunner, RunnerEvent } from "./contract";
-
-plugin({
-  name: "auth-controller-runes",
-  setup(build) {
-    build.onLoad({ filter: /\.svelte\.ts$/ }, async (args) => {
-      const source = new Transpiler({ loader: "ts" }).transformSync(
-        await Bun.file(args.path).text(),
-      );
-      return {
-        contents: compileModule(source, {
-          generate: "client",
-          filename: args.path,
-        }).js.code,
-        loader: "js",
-      };
-    });
-  },
-});
 
 test("a canceled start cannot overwrite the newer run's session budget when authentication resolves late", async () => {
   const saved = new Map<string, PropertyDescriptor | undefined>();

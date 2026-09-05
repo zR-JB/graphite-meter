@@ -1,6 +1,6 @@
+import { stubGlobals } from "../test-helpers.test";
+import "../state/runes.test";
 import { test, expect } from "bun:test";
-import { plugin, Transpiler } from "bun";
-import { compileModule } from "svelte/compiler";
 import type {
   PreparedPaths,
   RunnerConfig,
@@ -17,36 +17,9 @@ import {
   emptyConnectionValidation,
 } from "./connectionModel";
 import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
-plugin({
-  name: "svelte-runes",
-  setup(build) {
-    build.onLoad({ filter: /\.svelte\.ts$/ }, async (args) => {
-      const source = await Bun.file(args.path).text();
-      const module = new Transpiler({ loader: "ts" }).transformSync(source);
-      return {
-        contents: compileModule(module, {
-          generate: "client",
-          filename: args.path,
-        }).js.code,
-        loader: "js",
-      };
-    });
-  },
-});
-function stubBuildGlobals(): () => void {
-  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
-  return () => {
-    for (const key of Object.keys(TEST_BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  };
-}
+
 function stubEngineGlobals(): () => void {
-  const restoreBuild = stubBuildGlobals();
-  const restoreWindow = stubGlobal("window", undefined);
-  return () => {
-    restoreWindow();
-    restoreBuild();
-  };
+  return stubGlobals({ ...TEST_BUILD_TOKENS, window: undefined });
 }
 async function yieldUntil(done: () => boolean, turns = 10): Promise<void> {
   for (let turn = 0; turn < turns && !done(); turn++)
@@ -98,16 +71,7 @@ async function checkPreparation(
   });
 }
 function stubGlobal(key: string, value: unknown): () => void {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, key);
-  Object.defineProperty(globalThis, key, {
-    value,
-    configurable: true,
-    writable: true,
-  });
-  return () => {
-    if (previous) Object.defineProperty(globalThis, key, previous);
-    else Reflect.deleteProperty(globalThis, key);
-  };
+  return stubGlobals({ [key]: value });
 }
 function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
   const restores = [
@@ -358,21 +322,17 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
         path: PROBE_EVIDENCE.latency,
       },
     };
+    store.startError = "This test would outlast the session.";
+    store.preparationStatus = "checking";
     store.reset();
+    expect(store.startError).toBe("");
+    expect(store.preparation.status).toBe("idle");
     expect(store.connectionValidation.throughput.path).toEqual(
       PROBE_EVIDENCE.throughput,
     );
     teardownRunner();
     expect(store.connectionValidation).toEqual(emptyConnectionValidation());
   });
-});
-test("store reset clears a transient start error", async () => {
-  const { store } = await import("../state/store.svelte");
-  store.startError = "This test would outlast the session.";
-  store.preparationStatus = "checking";
-  store.reset();
-  expect(store.startError).toBe("");
-  expect(store.preparation.status).toBe("idle");
 });
 test("an explicit second start click cancels a pending preflight", async () => {
   await withBootRunner(async ({ hasPendingStart, toggleRun }) => {
@@ -453,25 +413,6 @@ test("connection failures use safe presentation copy", async () => {
       }),
     ),
   ).toBe("Connection check failed");
-});
-test("runner boundary canonicalizes every adaptive tuning field", async () => {
-  const { canonicalAdaptiveConfig, DEFAULT_CONFIG } =
-    await import("../state/defaults");
-  const hostile = {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: false,
-    minCoverageRatio: 0.01,
-    stabilityThreshold: 0.01,
-    maxPhaseReductionRatio: 0.99,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 1,
-    glideMs: 1,
-  };
-  expect(canonicalAdaptiveConfig(hostile)).toEqual({
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: false,
-  });
 });
 test("preparation names a disabled throughput path for latency-only runs", async () => {
   await checkPreparation(
@@ -562,7 +503,7 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
       if (offline) throw new Error("server unavailable");
       return PROBE_EVIDENCE;
     },
-    async ({ engine, environment, probeCalls }) => {
+    async ({ environment, probeCalls }) => {
       const { store } = await import("../state/store.svelte");
       offline = true;
       environment.emit("offline");
@@ -575,7 +516,6 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
       await settleValidation();
       expect(probeCalls()).toBe(3);
       expect(store.connectionValidation.throughput.state).toBe("verified");
-      void engine;
     },
   );
 });

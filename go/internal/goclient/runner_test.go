@@ -292,6 +292,9 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	if result.TotalBytes == 0 {
 		t.Error("download result reports zero bytes")
 	}
+	if result.Samples == 0 || result.MeanBps <= 0 {
+		t.Fatalf("download result lacks throughput samples or a positive window rate: %+v", result)
+	}
 	if terminals != 1 || events[len(events)-1].Kind != EventDone || events[len(events)-2].Phase != StageFinished {
 		t.Fatalf("want one terminal outcome after the finished stage, got %+v", events)
 	}

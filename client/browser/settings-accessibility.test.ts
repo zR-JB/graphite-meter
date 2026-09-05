@@ -239,6 +239,7 @@ test("connection paths stay single-column by default and reflow after a dock res
     if (optionsMultiColumnStep < 0 && (await optionColumns()) > 1)
       optionsMultiColumnStep = step;
   }
+  expect(setupMultiColumnStep).toBeGreaterThan(0);
   expect(setupMultiColumnStep).toBe(optionsMultiColumnStep);
   await expectNoHorizontalOverflow(settings.locator(".panel-body"));
 });

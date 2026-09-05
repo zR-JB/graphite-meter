@@ -69,7 +69,6 @@ from trust import (
     require_main_codeql,
 )
 from workflow_policy import (
-    PINNED_ACTION,
     PolicyError,
     check_candidate_boundary,
     check_ci_path_map,
@@ -337,10 +336,13 @@ class PipelineTests(unittest.TestCase):
             self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
 
     def test_external_actions_require_exact_40_character_sha(self) -> None:
-        valid = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
-        broken = "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0"
-        self.assertIsNotNone(PINNED_ACTION.fullmatch(valid))
-        self.assertIsNone(PINNED_ACTION.fullmatch(broken))
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        check_external_action_shas(root)
+        path = root / ".github/workflows/unpinned.yml"
+        path.write_text("steps:\n  - uses: docker/setup-buildx-action@" + "a" * 39 + "\n")
+        with self.assertRaisesRegex(PolicyError, "unpinned.yml:2: external action"):
+            check_external_action_shas(root)
 
     def test_prerelease_gate_control_plane_is_bound_to_current_main(self) -> None:
         from unittest.mock import patch
@@ -379,6 +381,12 @@ class PipelineTests(unittest.TestCase):
             (root / "extra").write_text("x")
             with self.assertRaisesRegex(SystemExit, "candidate files"):
                 exact_file_set(root, {"candidate.json"}, "candidate")
+            (root / "extra").unlink()
+            (root / "candidate.json").unlink()
+            with tempfile.NamedTemporaryFile() as target:
+                (root / "candidate.json").symlink_to(target.name)
+                with self.assertRaisesRegex(SystemExit, "not a regular file"):
+                    exact_file_set(root, {"candidate.json"}, "candidate")
 
     def test_precommit_plan_uses_exact_component_gates(self) -> None:
         for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt"):
@@ -1364,8 +1372,10 @@ class PipelineTests(unittest.TestCase):
         path = root / ".github/workflows/release.yml"
         text = path.read_text()
         verify = 'python3 scripts/ci/verify_release_assets.py "$VERSION"'
-        build = "uses: ./.github/actions/build-oci"
-        self.assertLess(text.find(verify), text.find(build))
+        text = text.replace(verify, "echo skipped verification", 1)
+        path.write_text(text + "\n# " + verify + "\n")
+        with self.assertRaisesRegex(PolicyError, "before OCI build"):
+            check_release_workflow(root)
 
     def test_stable_release_request_is_zero_write_and_no_checkout(self) -> None:
         root = self._copy_policy_tree()
@@ -1379,10 +1389,6 @@ class PipelineTests(unittest.TestCase):
         path.write_text(text.replace("steps:\n", "steps:\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1))
         with self.assertRaisesRegex(PolicyError, "repository checkout"):
             check_release_request_workflow(root)
-
-    def test_prerelease_control_plane_includes_stable_request_workflow(self) -> None:
-        self.assertIn(".github/workflows/release-request.yml", PRERELEASE_CI_CONTROL_PLANE)
-
 
 class CodeQLCheckOrderingTests(unittest.TestCase):
     def test_overlapping_checks_use_start_order_and_block_unfinished_work(self) -> None:

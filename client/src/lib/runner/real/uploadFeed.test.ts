@@ -1,3 +1,4 @@
+import { stubGlobals } from "../../test-helpers.test";
 import { afterEach, expect, test } from "bun:test";
 import { startUploadFeed } from "./uploadFeed";
 type Event = Parameters<Parameters<typeof startUploadFeed>[0]["onEvent"]>[0];
@@ -230,11 +231,7 @@ test("dispose cancels reconnect timer and blocked stream reader", async () => {
 });
 
 test("included-credential error checks session and disposal aborts that check", async () => {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: { origin: "https://ui.test" },
-  });
+  const restore = stubGlobals({ location: { origin: "https://ui.test" } });
   try {
     let checkSignal: AbortSignal | undefined;
     let resolveCheck!: (response: Response) => void;
@@ -272,7 +269,6 @@ test("included-credential error checks session and disposal aborts that check", 
     await until(() => expired.events.length > 0);
     expect(expired.events).toEqual([{ type: "auth-required" }]);
   } finally {
-    if (previous) Object.defineProperty(globalThis, "location", previous);
-    else Reflect.deleteProperty(globalThis, "location");
+    restore();
   }
 });

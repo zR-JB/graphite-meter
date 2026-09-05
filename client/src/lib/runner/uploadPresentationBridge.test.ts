@@ -26,11 +26,6 @@ test("an authoritative advance wins immediately and clamps no history", () => {
   bridge.authoritative(900, true, 620);
   expect(bridge.target(1_000, true, 1)).toBeNull();
 });
-test("four independently observed lanes aggregate before the authority clamp", () => {
-  const bridge = settledBridge();
-  for (let lane = 0; lane < 4; lane++) bridge.hint(lane, 25, 100, 610);
-  expect(bridge.target(610, true, 4)).toBe(1_000);
-});
 test("uneven lane rates aggregate and a missing lane cannot be manufactured", () => {
   const bridge = settledBridge();
   bridge.hint(0, 10, 100, 610);

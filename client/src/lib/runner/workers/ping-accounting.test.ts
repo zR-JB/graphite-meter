@@ -1,3 +1,4 @@
+import { stubGlobals } from "../../test-helpers.test";
 import { expect, test } from "bun:test";
 import { RunAccumulator } from "../evaluation";
 import { DEFAULT_CONFIG } from "../../state/defaults";
@@ -32,19 +33,8 @@ async function replay(replies: number) {
     clearTimeout: () => {},
     onmessage: null,
   };
-  const original = new Map(
-    Object.keys(overrides).map((key) => [
-      key,
-      Object.getOwnPropertyDescriptor(globalThis, key),
-    ]),
-  );
+  const restore = stubGlobals(overrides);
   try {
-    for (const [key, value] of Object.entries(overrides))
-      Object.defineProperty(globalThis, key, {
-        configurable: true,
-        writable: true,
-        value,
-      });
     await import(`./ping-worker.ts?accounting=${replies}`);
     const handler = globalThis.onmessage as (event: MessageEvent) => void;
     const send = (data: unknown) => handler({ data } as MessageEvent);
@@ -74,10 +64,7 @@ async function replay(replies: number) {
     intervals[1]();
     return batches;
   } finally {
-    for (const [key, descriptor] of original) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
+    restore();
   }
 }
 

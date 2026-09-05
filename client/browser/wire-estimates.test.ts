@@ -43,24 +43,9 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
   await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
   await startTest(page);
   await expect(page.locator(".gauge-value")).not.toHaveText("—");
+  await waitForCompletion(page);
+  await expect(resultCards(page)).toHaveCount(1);
   await expect(page.locator(".result-card .est")).toHaveCount(0);
-});
-test("bidirectional results use their combined lane estimate", async ({
-  page,
-}) => {
-  const settings = await prepareApp(page, "short");
-  await settings
-    .locator("label.switch", {
-      hasText: "Include concurrent download + upload",
-    })
-    .click();
-  await settings.getByLabel("Download ms").fill("0");
-  await settings.getByLabel("Bidirectional ms").fill("900");
-  await startAndWait(page);
-  const card = resultCards(page).filter({ hasText: "Bi-dir" });
-  await expect(card.locator(".est")).toContainText("wire +");
-  await card.locator(".est-tag").hover();
-  await expect(page.getByRole("tooltip")).toContainText("Total +");
 });
 test("result wire details work with mouse, keyboard, touch, and narrow viewports", async ({
   page,
@@ -122,6 +107,10 @@ test("four-stage result details survive responsive and wire-preference changes",
   await settings.getByLabel("Bidirectional ms").fill("900");
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await startAndWait(page);
+  const bidirectional = resultCards(page).filter({ hasText: "Bi-dir" });
+  await expect(bidirectional.locator(".est")).toContainText("wire +");
+  await bidirectional.locator(".est-tag").hover();
+  await expect(page.getByRole("tooltip")).toContainText("Total +");
   const jitter = page.locator(".result-card .jitter");
   await expect(jitter).toHaveText("0.0 ms jitter");
   await expect(

@@ -289,22 +289,6 @@ func TestLaunchChecksNothingUntilAServerIsPicked(t *testing.T) {
 	}
 }
 
-func TestPreparationMessageIgnoresOldGenerationAndPublishesFailure(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.prepareSeq = 2
-	m.prepareStatus = "checking"
-
-	m, _ = modelAndCmd(m.Update(preparationMsg{seq: 1, err: errors.New("old")}))
-	if m.prepareStatus != "checking" {
-		t.Fatalf("stale preparation changed status to %q", m.prepareStatus)
-	}
-
-	m, _ = modelAndCmd(m.Update(preparationMsg{seq: 2, err: errors.New("unreachable")}))
-	if m.prepareStatus != "failed" || !strings.Contains(m.prepareError, "unreachable") {
-		t.Fatalf("failure state = %q %q", m.prepareStatus, m.prepareError)
-	}
-}
-
 func TestRecheckInvalidatesTheInFlightPreparation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	superseded := m.prepareSeq
@@ -424,15 +408,6 @@ func TestPathPickerOffersEachMechanismAndDeduplicatesOrigins(t *testing.T) {
 	}
 }
 
-func TestCheckbox(t *testing.T) {
-	if got := checkbox(true); got != "●" {
-		t.Errorf("checkbox(true) = %q, want ●", got)
-	}
-	if got := checkbox(false); got != "○" {
-		t.Errorf("checkbox(false) = %q, want ○", got)
-	}
-}
-
 func TestTimingRowsEditAndRenderTheCurrentModel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.section = sectionTiming
@@ -478,20 +453,6 @@ func TestRowCount(t *testing.T) {
 }
 
 // --- model state machine ---
-
-func TestNewModel(t *testing.T) {
-	cfg := goclient.DefaultConfig()
-	m := newModel(cfg)
-	if m.mode != modeConfigure {
-		t.Errorf("newModel mode = %v, want modeConfigure", m.mode)
-	}
-	if m.notice == "" {
-		t.Error("newModel notice should not be empty")
-	}
-	if m.rates == nil || m.peaks == nil {
-		t.Error("newModel should initialize rates and peaks maps")
-	}
-}
 
 func keyRunes(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
@@ -1054,6 +1015,10 @@ func TestChangingServerClearsAuthorization(t *testing.T) {
 func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "url", "")
+	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace}))
+	if m.edit.input.Value() != "" {
+		t.Fatal("backspace changed an empty field")
+	}
 
 	m, _ = modelAndCmd(m.handleKey(keyRunes("h")))
 	m, _ = modelAndCmd(m.handleKey(keyRunes("i")))
@@ -1072,15 +1037,6 @@ func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	}
 	if !strings.Contains(m.notice, "canceled") {
 		t.Errorf("notice after esc = %q, want mention of canceled", m.notice)
-	}
-}
-
-func TestHandleEditKey_BackspaceOnEmptyIsNoop(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.edit = beginEdit(editURL, "", "")
-	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyBackspace}))
-	if m.edit.input.Value() != "" {
-		t.Errorf("edit value after backspace on empty = %q, want empty", m.edit.input.Value())
 	}
 }
 
@@ -1522,7 +1478,7 @@ func TestStartRun_LaunchesRun(t *testing.T) {
 }
 
 func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
-	for _, outcome := range []error{nil, context.Canceled, errors.New("transfer failed")} {
+	for _, outcome := range []error{nil, context.Canceled, errors.New("transfer failed"), fmt.Errorf("transfer: %w", context.Canceled), errors.New("server said context canceled")} {
 		t.Run(fmt.Sprint(outcome), func(t *testing.T) {
 			events := make(chan goclient.Event, 3)
 			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24}}
@@ -1533,6 +1489,15 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 			defer m.shutdown()
 			m.mode, m.events = modeRun, events
 			m, cmd := modelAndCmd(m.Update(waitEvents(m.runSeq, events)()))
+			wantStatus, wantErr := "complete", outcome
+			if errors.Is(outcome, context.Canceled) {
+				wantStatus, wantErr = "canceled", nil
+			} else if outcome != nil {
+				wantStatus = "error"
+			}
+			if m.status != wantStatus || m.err != wantErr {
+				t.Fatalf("terminal status/error = %q/%v, want %q/%v", m.status, m.err, wantStatus, wantErr)
+			}
 			if !m.complete || cmd != nil || len(m.results) != 2 || m.results[1].Latency.Unresolved != 2 || m.results[1].Err != outcome {
 				t.Fatalf("terminal state discarded buffered results: complete=%v results=%+v", m.complete, m.results)
 			}
@@ -1588,28 +1553,6 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("WindowSizeMsg should not produce a follow-up cmd")
-	}
-}
-
-func TestUpdate_TerminalOutcome(t *testing.T) {
-	boom := errors.New("boom")
-	cases := []struct {
-		name       string
-		err        error
-		wantStatus string
-		wantErr    error
-	}{
-		{"no error", nil, "complete", nil},
-		{"error", boom, "error", boom},
-		{"context canceled", context.Canceled, "canceled", nil},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			m, _ := modelAndCmd(newModel(goclient.DefaultConfig()).Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: c.err}}}))
-			if !m.complete || m.status != c.wantStatus || m.err != c.wantErr {
-				t.Errorf("complete=%v status=%q err=%v, want complete/error=%v/%v and status %q", m.complete, m.status, m.err, true, c.wantErr, c.wantStatus)
-			}
-		})
 	}
 }
 
@@ -1989,6 +1932,9 @@ func TestPreparationMessageRecordsHowFarItGot(t *testing.T) {
 			m := newModel(goclient.DefaultConfig())
 			c.msg.seq = m.prepareSeq
 			m, _ = modelAndCmd(m.Update(c.msg))
+			if c.wantStatus == "failed" && !strings.Contains(m.prepareError, c.msg.err.Error()) {
+				t.Fatalf("failure reason was lost: %q", m.prepareError)
+			}
 			if m.prepareStep != c.wantStep || m.prepareStatus != c.wantStatus {
 				t.Fatalf("step/status = %v/%q, want %v/%q", m.prepareStep, m.prepareStatus, c.wantStep, c.wantStatus)
 			}

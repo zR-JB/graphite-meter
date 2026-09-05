@@ -70,33 +70,6 @@ func newBytesEchoDownloadServer() *httptest.Server {
 	}))
 }
 
-func TestMeasureDownloadReportsBytes(t *testing.T) {
-	srv := newBytesEchoDownloadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 128 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-
-	res, err := r.measureDownload(ctx, "download", 350*time.Millisecond, start)
-	if err != nil {
-		t.Fatalf("measureDownload: %v", err)
-	}
-	if res.TotalBytes == 0 {
-		t.Error("reported TotalBytes = 0, want > 0")
-	}
-	if res.Samples == 0 {
-		t.Error("reported Samples = 0, want at least one throughput sample")
-	}
-	if res.MeanBps <= 0 {
-		t.Errorf("MeanBps = %v, want > 0", res.MeanBps)
-	}
-}
-
 func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)

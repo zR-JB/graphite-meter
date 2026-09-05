@@ -5,6 +5,7 @@ import {
   sortPreparedHistory,
 } from "./sort";
 import type { HistoryRecord } from "./types";
+import { historyRecord } from "./test-helpers.test";
 
 function record(
   id: string,
@@ -27,34 +28,16 @@ function record(
           band: "high" as const,
           serverAuthoritative: false,
         };
-  const latency = {
-    status: "not-run" as const,
-    result: null,
-    lanes: { latency: null, download: null, upload: null, bidirectional: null },
-  };
+  const value = historyRecord();
   return {
-    schemaVersion: 1,
+    ...value,
     id,
     startedAt: completedAt - 1,
     completedAt,
-    durationMs: 1,
     stages: {
-      latency,
+      ...value.stages,
       download: { status: lane ? "complete" : "not-run", result: lane },
-      upload: { status: "not-run", result: null },
-      bidirectional: { status: "not-run", down: null, up: null },
     },
-    bufferbloat: null,
-    totalBytes: 1,
-    server: { name: "s", location: null, engine: "e" },
-    transport: {
-      throughput: { protocol: null, kind: null },
-      latency: { protocol: null, kind: null },
-    },
-    ipVersion: null,
-    client: { build: "b" },
-    failures: [],
-    wireEstimates: null,
   };
 }
 test("all missing values sort last and ties are newest first", () => {
@@ -70,15 +53,6 @@ test("all missing values sort last and ties are newest first", () => {
   expect(
     sortPreparedHistory(prepared, "download", false).map((value) => value.id),
   ).toEqual(["new", "old", "missing"]);
-});
-
-test("natural directions prefer newest and faster throughput but lower latency", () => {
-  expect(naturalDescending("date")).toBe(true);
-  expect(naturalDescending("download")).toBe(true);
-  expect(naturalDescending("upload")).toBe(true);
-  expect(naturalDescending("bidirectional")).toBe(true);
-  expect(naturalDescending("idle")).toBe(false);
-  expect(naturalDescending("loaded")).toBe(false);
 });
 
 test("each history field sorts in its natural direction and keeps nulls last", () => {
@@ -136,11 +110,9 @@ test("each history field sorts in its natural direction and keeps nulls last", (
   ];
   for (const [field, expected] of natural)
     expect(
-      sortPreparedHistory(
-        prepared,
-        field,
-        field === "idle" || field === "loaded" ? false : true,
-      ).map((item) => item.id),
+      sortPreparedHistory(prepared, field, naturalDescending(field)).map(
+        (item) => item.id,
+      ),
       field,
     ).toEqual(expected);
   expect(sortPreparedHistory(prepared, "download", false).at(-1)?.id).toBe("c");

@@ -115,93 +115,46 @@ func TestMountResolvesHTTPAndWSIndependently(t *testing.T) {
 	}
 }
 
-func TestHTTPAdapterSetsCommonHeaders(t *testing.T) {
-	check := func(t *testing.T, res *http.Response) {
-		t.Helper()
-		if got := res.Header.Get("Access-Control-Allow-Origin"); got != "*" {
-			t.Errorf("Access-Control-Allow-Origin = %q, want *", got)
-		}
-		if got := res.Header.Get("Access-Control-Allow-Methods"); got != "GET, POST, DELETE, OPTIONS" {
-			t.Errorf("Access-Control-Allow-Methods = %q", got)
-		}
-		if got := res.Header.Get("Access-Control-Allow-Headers"); got != "*" {
-			t.Errorf("Access-Control-Allow-Headers = %q, want *", got)
-		}
-		if got := res.Header.Get("Timing-Allow-Origin"); got != "*" {
-			t.Errorf("Timing-Allow-Origin = %q, want *", got)
-		}
-	}
-
-	t.Run("success", func(t *testing.T) {
-		srv := httptest.NewServer(httpAdapter(&countingEndpoint{}))
-		defer srv.Close()
-		res, err := http.Get(srv.URL)
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		defer res.Body.Close()
-		check(t, res)
-	})
-
-	t.Run("error", func(t *testing.T) {
-		e := &countingEndpoint{err: errBoom}
-		srv := httptest.NewServer(httpAdapter(e))
-		defer srv.Close()
-		res, err := http.Get(srv.URL)
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		defer res.Body.Close()
-		check(t, res)
-		if res.StatusCode != http.StatusInternalServerError {
-			t.Errorf("status = %d, want %d", res.StatusCode, http.StatusInternalServerError)
-		}
-	})
-}
-
-func TestHTTPAdapterOptionsShortCircuits(t *testing.T) {
-	e := &countingEndpoint{}
-	srv := httptest.NewServer(httpAdapter(e))
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodOptions, srv.URL, nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusNoContent {
-		t.Errorf("status = %d, want %d", res.StatusCode, http.StatusNoContent)
-	}
-	if n := e.calls.Load(); n != 0 {
-		t.Errorf("Handle called %d times for OPTIONS, want 0", n)
-	}
-}
-
-func TestHTTPAdapterHandleErrorReturns500(t *testing.T) {
-	e := &countingEndpoint{err: errBoom}
-	srv := httptest.NewServer(httpAdapter(e))
-	defer srv.Close()
-
-	res, err := http.Get(srv.URL)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusInternalServerError {
-		t.Errorf("status = %d, want %d", res.StatusCode, http.StatusInternalServerError)
-	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if got := string(body); !strings.Contains(got, errBoom.Error()) {
-		t.Errorf("body = %q, want it to contain %q", got, errBoom.Error())
+func TestHTTPAdapterHeadersAndDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name, method     string
+		err              error
+		preflightHeaders bool
+		status           int
+		calls            int32
+	}{
+		{"success", http.MethodGet, nil, false, http.StatusOK, 1},
+		{"handler error", http.MethodGet, errBoom, false, http.StatusInternalServerError, 1},
+		{"options short circuit", http.MethodOptions, nil, false, http.StatusNoContent, 0},
+		{"options ignores requested headers", http.MethodOptions, nil, true, http.StatusNoContent, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			endpoint := &countingEndpoint{err: tc.err}
+			req := httptest.NewRequest(tc.method, "/", nil)
+			if tc.preflightHeaders {
+				req.Header.Set("Origin", "https://evil.example")
+				req.Header.Set("Access-Control-Request-Method", "PUT")
+				req.Header.Set("Access-Control-Request-Headers", "X-Custom-Header, X-Another")
+			}
+			rec := httptest.NewRecorder()
+			httpAdapter(endpoint).ServeHTTP(rec, req)
+			if rec.Code != tc.status || endpoint.calls.Load() != tc.calls {
+				t.Fatalf("status/calls = %d/%d, want %d/%d", rec.Code, endpoint.calls.Load(), tc.status, tc.calls)
+			}
+			for name, want := range map[string]string{
+				"Access-Control-Allow-Origin":  "*",
+				"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+				"Access-Control-Allow-Headers": "*",
+				"Timing-Allow-Origin":          "*",
+			} {
+				if got := rec.Header().Get(name); got != want {
+					t.Errorf("%s = %q, want %q", name, got, want)
+				}
+			}
+			if tc.err != nil && !strings.Contains(rec.Body.String(), tc.err.Error()) {
+				t.Fatalf("body = %q, want it to contain %q", rec.Body.String(), tc.err.Error())
+			}
+		})
 	}
 }
 
@@ -247,39 +200,6 @@ func TestWSAdapterHandleErrorClosesWithInternalError(t *testing.T) {
 	_, _, err = conn.Read(ctx)
 	if got := websocket.CloseStatus(err); got != websocket.StatusInternalError {
 		t.Fatalf("close status = %v (err %v), want StatusInternalError", got, err)
-	}
-}
-
-func TestHTTPAdapterOptionsIgnoresRequestHeaders(t *testing.T) {
-	e := &countingEndpoint{}
-	srv := httptest.NewServer(httpAdapter(e))
-	defer srv.Close()
-
-	req, err := http.NewRequest(http.MethodOptions, srv.URL, nil)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("Origin", "https://evil.example")
-	req.Header.Set("Access-Control-Request-Method", "PUT")
-	req.Header.Set("Access-Control-Request-Headers", "X-Custom-Header, X-Another")
-
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("do: %v", err)
-	}
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusNoContent {
-		t.Errorf("status = %d, want %d", res.StatusCode, http.StatusNoContent)
-	}
-	if got := res.Header.Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("Access-Control-Allow-Origin = %q, want * regardless of Origin", got)
-	}
-	if got := res.Header.Get("Access-Control-Allow-Headers"); got != "*" {
-		t.Errorf("Access-Control-Allow-Headers = %q, want * regardless of the requested headers", got)
-	}
-	if n := e.calls.Load(); n != 0 {
-		t.Errorf("Handle called %d times for a preflight OPTIONS, want 0", n)
 	}
 }
 
