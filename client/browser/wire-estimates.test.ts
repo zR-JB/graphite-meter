@@ -100,7 +100,7 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
 
-test("latency jitter and bidirectional details stay compact when wire estimates are hidden", async ({
+test("four-stage result details survive responsive and wire-preference changes", async ({
   page,
 }) => {
   const settings = await prepareApp(
@@ -191,4 +191,19 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
   expect(after.map((card) => card.height)).toEqual(
     before.map((card) => card.height),
   );
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+    [320, 740],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.locator(".result-cards").scrollIntoViewIfNeeded();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(page.locator(".stat-label")).toHaveCount(4);
+  }
 });

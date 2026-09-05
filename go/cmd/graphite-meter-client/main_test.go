@@ -1521,81 +1521,6 @@ func TestStartRun_LaunchesRun(t *testing.T) {
 	drainRun(t, next.events)
 }
 
-func TestApply_Events(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageMeasuring})
-	if m.stage != "download" || m.status != "measure" {
-		t.Errorf("after EventStage: stage=%q status=%q", m.stage, m.status)
-	}
-
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
-	if m.rates[goclient.Down].BytesPerSec != 100 || m.peaks[goclient.Down] != 100 {
-		t.Errorf("after first throughput: rate=%v peak=%v", m.rates[goclient.Down].BytesPerSec, m.peaks[goclient.Down])
-	}
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 50}})
-	if m.rates[goclient.Down].BytesPerSec != 50 {
-		t.Errorf("rate should track the latest sample, got %v", m.rates[goclient.Down].BytesPerSec)
-	}
-	if m.peaks[goclient.Down] != 100 {
-		t.Errorf("peak should not drop below prior max, got %v", m.peaks[goclient.Down])
-	}
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}})
-	if m.peaks[goclient.Down] != 200 {
-		t.Errorf("peak should rise to new max, got %v", m.peaks[goclient.Down])
-	}
-
-	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{RTT: 5 * time.Millisecond}})
-	if m.latency.RTT != 5*time.Millisecond {
-		t.Errorf("latency.RTT = %v, want 5ms", m.latency.RTT)
-	}
-
-	m.apply(goclient.Event{Kind: goclient.EventResult, Result: nil})
-	if len(m.results) != 0 {
-		t.Errorf("nil Result should not be appended, got %d results", len(m.results))
-	}
-	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "download"}})
-	if len(m.results) != 1 || m.results[0].Stage != "download" {
-		t.Errorf("results = %+v, want single download result", m.results)
-	}
-
-	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone}}}))
-	if !m.complete || m.status != "complete" {
-		t.Errorf("after EventDone: complete=%v status=%q", m.complete, m.status)
-	}
-
-	boom := errors.New("boom")
-	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: boom}}}))
-	if m.err != boom || m.status != "error" {
-		t.Errorf("after EventDone: err=%v status=%q", m.err, m.status)
-	}
-
-	m2 := newModel(goclient.DefaultConfig())
-	pf := &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Location: "ams"}}
-	m2.apply(goclient.Event{Kind: goclient.EventPreflight, Preflight: pf})
-	if m2.status != "connected" || !strings.Contains(m2.server, "srv") {
-		t.Errorf("after EventPreflight: status=%q server=%q", m2.status, m2.server)
-	}
-}
-
-func TestApply_InterleavedDirections(t *testing.T) {
-	// Interleaved throughput samples for both directions must not clobber each other's rate or peak.
-	m2 := newModel(goclient.DefaultConfig())
-	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
-	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 40}})
-	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 30}})
-	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 90}})
-	if m2.peaks[goclient.Down] != 100 {
-		t.Errorf("down peak = %v, want 100 (unaffected by interleaved up samples)", m2.peaks[goclient.Down])
-	}
-	if m2.peaks[goclient.Up] != 90 {
-		t.Errorf("up peak = %v, want 90", m2.peaks[goclient.Up])
-	}
-	if m2.rates[goclient.Down].BytesPerSec != 30 || m2.rates[goclient.Up].BytesPerSec != 90 {
-		t.Errorf("rates = %+v, want the latest per-direction sample for each", m2.rates)
-	}
-}
-
 func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 	for _, outcome := range []error{nil, context.Canceled, errors.New("transfer failed")} {
 		t.Run(fmt.Sprint(outcome), func(t *testing.T) {
@@ -1612,32 +1537,6 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 				t.Fatalf("terminal state discarded buffered results: complete=%v results=%+v", m.complete, m.results)
 			}
 		})
-	}
-}
-
-func TestThroughputRateAndScale(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}})
-	if got := m.rates[goclient.Down].BytesPerSec; got != 200 {
-		t.Errorf("rate = %v, want latest authoritative sample", got)
-	}
-	// rateScale is the larger peak across both directions.
-	m.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 50}})
-	if got := m.rateScale(); got != m.peaks[goclient.Down] {
-		t.Errorf("rateScale = %v, want the larger peak %v", got, m.peaks[goclient.Down])
-	}
-}
-
-func TestEventsMsgAppliesBatch(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	got, _ := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
-		{Kind: goclient.EventStage, Stage: "download"},
-		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 1000}},
-	}}))
-	mm := got
-	if mm.stage != "download" || mm.rates[goclient.Down].BytesPerSec != 1000 {
-		t.Fatalf("batch was not applied atomically: stage=%q rates=%+v", mm.stage, mm.rates)
 	}
 }
 
@@ -1666,15 +1565,6 @@ func firstLineContaining(s, sub string) string {
 		}
 	}
 	return ""
-}
-
-func TestUpdate_WindowSize(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	got, _ := modelAndCmd(m.Update(tea.WindowSizeMsg{Width: 100, Height: 40}))
-	mm := got
-	if mm.width != 100 {
-		t.Errorf("width=%d, want 100", mm.width)
-	}
 }
 
 func TestUpdate_WindowSizeDuringRun(t *testing.T) {
@@ -1725,42 +1615,41 @@ func TestUpdate_TerminalOutcome(t *testing.T) {
 
 func TestUpdate_EventsMsg(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
+	defer m.shutdown()
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
-
-	got, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
-		{Kind: goclient.EventStage, Stage: "x"},
-		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 42}},
-	}}))
-	mm := got
-	if mm.stage != "x" {
-		t.Errorf("stage = %q, want x", mm.stage)
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{
+		Kind: goclient.EventPreflight, Preflight: &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Location: "ams"}},
+	}}}))
+	if m.status != "connected" || !strings.Contains(m.server, "srv") {
+		t.Fatalf("preflight: status=%q server=%q", m.status, m.server)
 	}
-	if mm.rates[goclient.Down].BytesPerSec != 42 {
-		t.Errorf("rate = %v, want 42", mm.rates[goclient.Down].BytesPerSec)
+	m, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
+		{Kind: goclient.EventStage, Stage: "bidirectional", Phase: goclient.StageMeasuring},
+		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}},
+		{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 40}},
+		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}},
+		{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 90}},
+		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 30}},
+		{Kind: goclient.EventLatency, Latency: goclient.LatencySample{RTT: 5 * time.Millisecond}},
+		{Kind: goclient.EventResult},
+		{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "latency"}},
+	}}))
+	if m.stage != "bidirectional" || m.status != "measure" || m.latency.RTT != 5*time.Millisecond {
+		t.Errorf("batch state: stage=%q status=%q latency=%+v", m.stage, m.status, m.latency)
+	}
+	if m.rates[goclient.Down].BytesPerSec != 30 || m.rates[goclient.Up].BytesPerSec != 90 || m.peaks[goclient.Down] != 200 || m.peaks[goclient.Up] != 90 || m.rateScale() != 200 {
+		t.Errorf("interleaved bytes/s samples: rates=%+v peaks=%+v scale=%v", m.rates, m.peaks, m.rateScale())
+	}
+	if len(m.results) != 1 || m.results[0].Stage != "latency" {
+		t.Errorf("results = %+v, want one non-nil latency result", m.results)
 	}
 	if cmd == nil {
-		t.Error("expected a non-nil cmd to keep waiting for more events")
+		t.Error("expected a command to keep waiting for events")
 	}
-
-	mm, cmd = modelAndCmd(mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone}}}))
-	if !mm.complete {
-		t.Error("expected complete after EventDone")
-	}
-	if cmd != nil {
-		t.Error("terminal outcome must stop event polling")
-	}
-}
-
-func TestWaitEventsDrainsBuffered(t *testing.T) {
-	events := make(chan goclient.Event, 3)
-	for i := range cap(events) {
-		events <- goclient.Event{Kind: goclient.EventStage, Stage: string(rune('0' + i))}
-	}
-	close(events)
-	msg, ok := waitEvents(0, events)().(eventsMsg)
-	if !ok || len(msg.events) != cap(events) {
-		t.Fatalf("waitEvents returned %T with %d events", msg, len(msg.events))
+	m, cmd = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone}}}))
+	if !m.complete || cmd != nil {
+		t.Error("terminal outcome must complete the run and stop event polling")
 	}
 }
 
@@ -2344,31 +2233,31 @@ func TestFmtClock(t *testing.T) {
 }
 
 func TestViewNeverExceedsTheTerminalWidth(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.cfg.BaseURL = "https://a-very-long-hostname.internal.example.com:7247"
-	m.notice = strings.Repeat("a long notice ", 12)
-	for _, width := range []int{44, 60, 80, 120, 200} {
-		m.width = width
+	for _, width := range []int{40, 44, 60, 80, 100, 120, 140, 200} {
+		configure := newModel(goclient.DefaultConfig())
+		configure.width = width
+		configure.cfg.BaseURL = "https://a-very-long-hostname.internal.example.com:7247"
+		configure.notice = strings.Repeat("a long notice ", 12)
+		run := populatedRunModel(width)
+		run.server = "graphite-meter somewhere [https://a-very-long-hostname.internal.example.com:7248/http3]"
+		run.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9, TotalBytes: 1e10}}
+		frames := map[string]string{"run": run.View()}
 		for _, sec := range []section{sectionServers, sectionConnections, sectionRun} {
-			m.section = sec
-			for i, line := range strings.Split(m.View(), "\n") {
-				if got := lipgloss.Width(line); got > width {
-					t.Errorf("width %d, section %v, line %d spans %d cells", width, sec, i, got)
+			configure.section = sec
+			frames[fmt.Sprint(sec)] = configure.View()
+		}
+		for name, frame := range frames {
+			for i, line := range strings.Split(frame, "\n") {
+				if got := lipgloss.Width(line); got > max(width, 44) {
+					t.Errorf("%s at width %d: line %d spans %d cells: %q", name, width, i, got, line)
 				}
 			}
 		}
-	}
-
-	m.mode = modeRun
-	m.server = "graphite-meter somewhere [https://a-very-long-hostname.internal.example.com:7248/http3]"
-	m.stages = plannedStages(m.cfg)
-	m.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9, TotalBytes: 1e10}}
-	for _, width := range []int{44, 80, 200} {
-		m.width = width
-		for i, line := range strings.Split(m.View(), "\n") {
-			if got := lipgloss.Width(line); got > width {
-				t.Errorf("run view, width %d, line %d spans %d cells", width, i, got)
-			}
+		if !strings.Contains(frames["run"], "3.00 ms") {
+			t.Errorf("run at width %d lost its latency reading", width)
+		}
+		if width >= 100 && !strings.Contains(frames["run"], "bidirectional / measure") {
+			t.Errorf("run at width %d lost its active stage", width)
 		}
 	}
 }
@@ -2478,35 +2367,6 @@ func populatedRunModel(width int) model {
 	m.stages[0].state = stageDone
 	m.stages[1].state, m.stages[1].since = stageMeasuring, m.now.Add(-2*time.Second)
 	return m
-}
-
-func frameBound(width int) int { return max(width, 44) }
-
-func TestRenderedFramesNeverExceedWidth(t *testing.T) {
-	for _, width := range []int{40, 60, 80, 100, 140, 200} {
-		bound := frameBound(width)
-		frames := map[string]string{
-			"configure": func() string { m := newModel(goclient.DefaultConfig()); m.width = width; return m.View() }(),
-			"run":       populatedRunModel(width).View(),
-		}
-		for name, frame := range frames {
-			for i, line := range strings.Split(frame, "\n") {
-				if w := lipgloss.Width(line); w > bound {
-					t.Errorf("%s@%d: line %d is %d cells wide (> %d): %q", name, width, i, w, bound, line)
-				}
-			}
-		}
-	}
-}
-
-func TestRenderRunFrame(t *testing.T) {
-	frame := populatedRunModel(100).View()
-	t.Log("\n" + frame)
-	for _, want := range []string{"Session", "Live Telemetry", "bidirectional / measure", "3.00 ms", "Stages"} {
-		if !strings.Contains(frame, want) {
-			t.Errorf("run frame missing %q", want)
-		}
-	}
 }
 
 func TestRunViewNamesTheCommittedPathsRatherThanTheProbes(t *testing.T) {

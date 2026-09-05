@@ -1,25 +1,27 @@
 import {
   expect,
-  openApp,
   prepareApp,
   startTest,
   test,
   waitForCompletion,
 } from "./webview";
 
-for (const viewport of [
-  { width: 1280, height: 720 },
-  { width: 1440, height: 900 },
-  { width: 1024, height: 768 },
-]) {
-  test(`three-stage results stay visible with centered controls at ${viewport.width}×${viewport.height}`, async ({
-    page,
-  }) => {
-    await openApp(page, "dummy", viewport);
-    const settings = await prepareApp(page, "three-stage", "dummy", viewport);
-    await settings.getByRole("button", { name: "Close Settings" }).click();
-    await startTest(page);
-    await waitForCompletion(page, 10000);
+test("three-stage results remain usable across desktop and phone layouts", async ({
+  page,
+}) => {
+  const settings = await prepareApp(page, "three-stage", "dummy", {
+    width: 1280,
+    height: 720,
+  });
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startTest(page);
+  await waitForCompletion(page, 10000);
+  for (const viewport of [
+    { width: 1280, height: 720 },
+    { width: 1440, height: 900 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
     const geometry = await page.evaluate(() => {
       const element = (selector: string) => {
         const node = document.querySelector(selector);
@@ -103,19 +105,9 @@ for (const viewport of [
     expect(geometry.lanesInside).toBe(true);
     expect(geometry.sharedAxis).toBe(1);
     expect(geometry.wireAligned).toBe(true);
-  });
-}
-
-for (const width of [320, 390]) {
-  test(`phone ${width}px keeps a prominent dial and a natural run-to-stages reading order`, async ({
-    page,
-  }) => {
-    await openApp(page, "dummy", { width, height: 844 });
-    const settings = await prepareApp(page, "three-stage", "dummy", {
-      width,
-      height: 844,
-    });
-    await settings.getByRole("button", { name: "Close Settings" }).click();
+  }
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
     const boxes = await page.evaluate(() =>
       [
         ".gauge-panel .stage",
@@ -136,13 +128,11 @@ for (const width of [320, 390]) {
       "aria-describedby",
       "run-duration",
     );
-    await startTest(page);
-    await waitForCompletion(page, 10000);
     const labelsFit = await page.evaluate(() =>
       [
         ...document.querySelectorAll<HTMLElement>(".seg-label, .lane-label"),
       ].every((label) => label.scrollWidth <= label.clientWidth),
     );
     expect(labelsFit).toBe(true);
-  });
-}
+  }
+});

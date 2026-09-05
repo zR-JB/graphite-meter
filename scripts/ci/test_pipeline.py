@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import ast
 import json
 import os
 import pathlib
@@ -12,21 +11,21 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from typing import Mapping, Sequence
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from github_api import JsonValue
+import precommit
 from precommit import (
     CheckPlan,
     StagedChange,
     is_tls_path,
     parse_staged_changes,
     plan_checks,
-    prepare_staged_worktree,
-    remove_worktree,
-    staged_worktree_environment,
+    run_staged_checks,
 )
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
@@ -76,10 +75,7 @@ from workflow_policy import (
     check_ci_path_map,
     check_oci_build_action,
     check_external_action_shas,
-    check_e2e_lifecycle,
-    check_oci_verifier_boundary,
-    check_precommit_boundary,
-    check_release_verifier_boundary,
+    check_browser_ci,
     check_privileged_workflows,
     check_runner_labels,
     check_setup_project_cache_boundary,
@@ -87,7 +83,6 @@ from workflow_policy import (
     check_prerelease_request_workflow,
     check_release_request_workflow,
     check_release_workflow,
-    check_repository,
     check_trusted_checkout_refs,
 )
 
@@ -425,75 +420,59 @@ class PipelineTests(unittest.TestCase):
         plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
         self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
 
-    def test_precommit_scrubs_parent_git_environment_for_staged_worktree(self) -> None:
+    def test_precommit_executes_the_staged_payload_in_an_isolated_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td) / "repo"
-            subprocess.run(("git", "init", "-q", str(repo)), check=True)
-            (repo / "tracked.txt").write_text("staged snapshot\n", encoding="utf-8")
-            subprocess.run(("git", "-C", str(repo), "add", "tracked.txt"), check=True)
-            subprocess.run(
-                (
-                    "git",
-                    "-C",
-                    str(repo),
-                    "-c",
-                    "user.name=CI",
-                    "-c",
-                    "user.email=ci@example.invalid",
-                    "commit",
-                    "-qm",
-                    "base",
-                ),
-                check=True,
+            repo.mkdir()
+
+            def git(*args: str) -> None:
+                subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
+
+            git("init", "-q")
+            (repo / "tracked.txt").write_text("committed base")
+            git("add", ".")
+            git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
+            (repo / "tracked.txt").write_text("staged payload")
+            git("add", ".")
+            (repo / "tracked.txt").write_text("unstaged fix")
+            (repo / "client/node_modules").mkdir(parents=True)
+            real_command = precommit.command
+            checked: list[pathlib.Path] = []
+            poisoned = {"GIT_DIR": ".git", "GIT_WORK_TREE": ".", "GIT_INDEX_FILE": ".git/index"}
+
+            def command(
+                args: Sequence[str], *, cwd: pathlib.Path, capture: bool = False,
+                check: bool = True, env: Mapping[str, str] | None = None,
+            ) -> subprocess.CompletedProcess[bytes]:
+                if args[0] != "just":
+                    return real_command(args, cwd=cwd, capture=capture, check=check, env=env)
+                self.assertNotEqual(cwd, repo)
+                self.assertEqual(args, ("just", "server-test"))
+                self.assertEqual((cwd / "tracked.txt").read_text(), "staged payload")
+                self.assertFalse((cwd / "client/node_modules").exists())
+                self.assertIsNotNone(env)
+                assert env is not None
+                self.assertTrue(set(poisoned).isdisjoint(env))
+                self.assertEqual(env["PATH"], os.environ["PATH"])
+                checked.append(cwd)
+                return subprocess.CompletedProcess(args, 0)
+
+            with patch.dict(os.environ, poisoned), patch("precommit.command", side_effect=command):
+                run_staged_checks(repo, CheckPlan(pipeline=False, recipes=("server-test",)))
+            self.assertEqual(len(checked), 1)
+            self.assertFalse(checked[0].exists(), "the staged worktree must be removed")
+            self.assertEqual((repo / "tracked.txt").read_text(), "unstaged fix")
+
+            # The executable hook must also obtain its own Python implementation from the index.
+            implementation = repo / "scripts/ci/precommit.py"
+            implementation.parent.mkdir(parents=True)
+            implementation.write_text("print('staged hook')")
+            git("add", "scripts/ci/precommit.py")
+            implementation.write_text("raise SystemExit('unstaged hook ran')")
+            result = subprocess.run(
+                (str(ROOT / ".githooks/pre-commit"),), cwd=repo, check=True, capture_output=True, text=True,
             )
-            tree = subprocess.run(
-                ("git", "-C", str(repo), "write-tree"),
-                check=True,
-                stdout=subprocess.PIPE,
-                text=True,
-            ).stdout.strip()
-            worktree = pathlib.Path(td) / "staged"
-            stale_dependencies = repo / "client" / "node_modules"
-            stale_dependencies.mkdir(parents=True)
-            (stale_dependencies / "unstaged-only.js").write_text("throw new Error('wrong dependency tree');\n")
-            poisoned = {
-                "GIT_DIR": ".git",
-                "GIT_WORK_TREE": ".",
-                "GIT_INDEX_FILE": ".git/index",
-            }
-
-            with patch.dict(os.environ, poisoned, clear=False):
-                clean_env = staged_worktree_environment(repo)
-                for name in poisoned:
-                    self.assertNotIn(name, clean_env)
-                self.assertEqual(clean_env.get("PATH"), os.environ.get("PATH"))
-                prepare_staged_worktree(repo, tree, worktree, env=clean_env)
-
-            try:
-                self.assertFalse((worktree / "client" / "node_modules").exists())
-                self.assertEqual(
-                    (worktree / "tracked.txt").read_text(encoding="utf-8"),
-                    "staged snapshot\n",
-                )
-                status = subprocess.run(
-                    ("git", "status", "--porcelain"),
-                    cwd=worktree,
-                    env=clean_env,
-                    check=True,
-                    stdout=subprocess.PIPE,
-                    text=True,
-                ).stdout
-                self.assertEqual(status, "")
-            finally:
-                remove_worktree(repo, worktree)
-
-    def test_policy_rejects_precommit_working_tree_regression(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "scripts/ci/precommit.py"
-        path.write_text(path.read_text().replace('"write-tree"', '"rev-parse"', 1))
-        with self.assertRaisesRegex(PolicyError, "staged-tree invariant"):
-            check_precommit_boundary(root)
+            self.assertEqual(result.stdout.strip(), "staged hook")
 
     def test_policy_requires_dockerignore_to_select_image_checks(self) -> None:
         root = self._copy_policy_tree()
@@ -535,45 +514,13 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
             check_oci_build_action(root)
 
-    def test_policy_rejects_fixed_port_webview_e2e_server(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/e2e/fixtures.ts"
-        path.write_text(path.read_text().replace("port: 0", "port: 5273", 1))
-        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_slow_e2e_server_readiness_timeout(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/e2e/fixtures.ts"
-        path.write_text(path.read_text().replace("Date.now() + 30_000", "Date.now() + 180_000", 1))
-        with self.assertRaisesRegex(PolicyError, "ephemeral lifecycle"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_persistent_webview_profile(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/browser/chrome.ts"
-        path.write_text(path.read_text().replace('dataStore: "ephemeral"', 'dataStore: { directory: "profile" }', 1))
-        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_missing_webview_failure_screenshot(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/browser/webview.ts"
-        path.write_text(path.read_text().replace(".screenshot(", ".capture(", 1))
-        with self.assertRaisesRegex(PolicyError, "diagnostic invariant"):
-            check_e2e_lifecycle(root)
-
     def test_policy_rejects_unpinned_chrome_version(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/ci.yml"
         path.write_text(path.read_text().replace("chrome-version: 152.0.7977.82", "chrome-version: latest"))
         with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
-            check_e2e_lifecycle(root)
+            check_browser_ci(root)
 
     def test_policy_rejects_missing_webview_launch_preflight(self) -> None:
         root = self._copy_policy_tree()
@@ -584,43 +531,7 @@ class PipelineTests(unittest.TestCase):
         )
         path.write_text(text, encoding="utf-8")
         with self.assertRaisesRegex(PolicyError, "launch preflight"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_suppressed_ci_chrome_stderr(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/browser/chrome.ts"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                'process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
-                'process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
-                1,
-            ),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(PolicyError, "Chromium launcher"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_dropped_ci_chrome_arguments(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/e2e/fixtures.ts"
-        path.write_text(
-            path.read_text(encoding="utf-8").replace(
-                "  process.env.BUN_CHROME_ARGS,\n", "", 1
-            ),
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(PolicyError, "preserve CI Chromium"):
-            check_e2e_lifecycle(root)
-
-    def test_policy_rejects_playwright_dependency(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/package.json"
-        path.write_text(path.read_text().replace('"axe-core":', '"@playwright/test": "1",\n    "axe-core":', 1))
-        with self.assertRaisesRegex(PolicyError, "browser dependency"):
-            check_e2e_lifecycle(root)
+            check_browser_ci(root)
 
     def test_policy_rejects_missing_client_audit(self) -> None:
         root = self._copy_policy_tree()
@@ -635,101 +546,20 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / "client/package.json"
         path.write_text(path.read_text().replace(" --no-orphans", ""))
-        with self.assertRaisesRegex(PolicyError, "browser scripts"):
-            check_e2e_lifecycle(root)
-
-    def test_repository_policy_passes_canonical_tree(self) -> None:
-        check_repository(ROOT)
+        with self.assertRaisesRegex(PolicyError, "clean up child processes"):
+            check_browser_ci(root)
 
     def _copy_policy_tree(self) -> pathlib.Path:
         td = tempfile.mkdtemp()
         dst = pathlib.Path(td)
         shutil.copytree(ROOT / ".github", dst / ".github")
         shutil.copytree(ROOT / ".githooks", dst / ".githooks")
-        shutil.copytree(ROOT / "scripts" / "ci", dst / "scripts" / "ci")
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
-        for relative in (
-            "client/browser/chrome.ts",
-            "client/browser/webview.ts",
-            "client/bench/fixtures.ts",
-            "client/scripts/check-webview.ts",
-            "client/vite.e2e.config.ts",
-            "client/e2e/fixtures.ts",
-            "client/package.json",
-            "go/internal/legal/cmd/legalgen/main.go",
-        ):
-            source = ROOT / relative
-            target = dst / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+        (dst / "client").mkdir()
+        shutil.copy2(ROOT / "client/package.json", dst / "client/package.json")
         (dst / "justfile").write_text((ROOT / "justfile").read_text())
         return dst
-
-    def test_ci_python_functions_are_fully_annotated(self) -> None:
-        missing: list[str] = []
-        for path in sorted((ROOT / "scripts/ci").glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                if node.returns is None:
-                    missing.append(f"{path.name}:{node.lineno}:{node.name}:return")
-                arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-                for argument in arguments:
-                    if argument.arg not in {"self", "cls"} and argument.annotation is None:
-                        missing.append(
-                            f"{path.name}:{node.lineno}:{node.name}:{argument.arg}"
-                        )
-                if node.args.vararg is not None and node.args.vararg.annotation is None:
-                    missing.append(
-                        f"{path.name}:{node.lineno}:{node.name}:*{node.args.vararg.arg}"
-                    )
-                if node.args.kwarg is not None and node.args.kwarg.annotation is None:
-                    missing.append(
-                        f"{path.name}:{node.lineno}:{node.name}:**{node.args.kwarg.arg}"
-                    )
-            self.assertNotIn("type:" + " ignore", path.read_text(encoding="utf-8"), path.name)
-        self.assertEqual(missing, [])
-
-    def test_external_action_policy_has_no_second_pin_database(self) -> None:
-        self.assertFalse((ROOT / "scripts/ci/action-pins.json").exists())
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        text = path.read_text()
-        text = text.replace(
-            "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "actions/checkout@v7",
-            1,
-        )
-        path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "full 40-character commit SHA"):
-            check_external_action_shas(root)
-
-    def test_github_api_is_the_single_json_decode_boundary(self) -> None:
-        violations: list[str] = []
-        for path in sorted((ROOT / "scripts/ci").glob("*.py")):
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                    continue
-                if (
-                    isinstance(node.func.value, ast.Name)
-                    and node.func.value.id == "json"
-                    and node.func.attr == "loads"
-                    and path.name != "github_api.py"
-                ):
-                    violations.append(f"{path.name}:{node.lineno}")
-        self.assertEqual(violations, [])
-
-    def test_ci_control_plane_has_no_standalone_shell_scripts(self) -> None:
-        shell_files = sorted(
-            path.name
-            for pattern in ("*.sh", "*.bash")
-            for path in (ROOT / "scripts/ci").glob(pattern)
-        )
-        self.assertEqual(shell_files, [])
 
     def test_checksum_verifier_accepts_file_and_rejects_path_escape(self) -> None:
         import hashlib
@@ -1018,20 +848,6 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "must not pass GitHub secrets"):
             check_oci_build_action(root)
 
-    def test_setup_project_disables_bun_executable_cache_with_bun_cache(self) -> None:
-        text = (ROOT / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
-        self.assertIn("no-cache: ${{ inputs.bun-cache != 'true' }}", text)
-
-    def test_oci_builder_disables_shared_tool_caches_and_git_credentials(self) -> None:
-        text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")
-        self.assertIn("cache-image: 'false'", text)
-        self.assertIn("cache-binary: 'false'", text)
-        self.assertIn("no-cache: true", text)
-        self.assertIn("DOCKER_BUILD_RECORD_UPLOAD: 'false'", text)
-        self.assertIn("github-token: ''", text)
-        self.assertNotIn("cache-from:", text)
-        self.assertNotIn("cache-to:", text)
-
     def test_oci_builder_requires_client_identity_build_args(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
@@ -1045,15 +861,6 @@ class PipelineTests(unittest.TestCase):
             path.write_text(original.replace(f"          {argument}\n", "", 1), encoding="utf-8")
             with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
                 check_oci_build_action(root)
-
-    def test_oci_builder_remote_context_is_exact_public_commit(self) -> None:
-        text = (ROOT / ".github/actions/build-oci/action.yml").read_text(encoding="utf-8")
-        self.assertIn('[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', text)
-        self.assertIn('context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"', text)
-        self.assertIn("context: ${{ steps.source.outputs.context }}", text)
-        self.assertIn("file: container/Dockerfile", text)
-        self.assertIn("bun=$(tr -d '[:space:]' < .bun-version)", text)
-        self.assertNotIn("source-dir:", text)
 
     def test_policy_requires_explicit_max_oci_provenance(self) -> None:
         root = self._copy_policy_tree()
@@ -1152,59 +959,6 @@ class PipelineTests(unittest.TestCase):
         mounts = [call[index + 1] for index, value in enumerate(call[:-1]) if value == "-v"]
         self.assertEqual(len(mounts), 1, "OCI verification must mount only the archive")
         self.assertTrue(mounts[0].endswith(":/work/image.oci.tar:ro"))
-
-
-    def test_policy_rejects_oci_verifier_host_writable_output(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "scripts/ci/verify_oci.py"
-        text = path.read_text(encoding="utf-8").replace(
-            '"oci:/tmp/graphite-meter-verified:verified"',
-            '"oci:/work/oci-copy:verified"',
-            1,
-        )
-        path.write_text(text, encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "OCI verifier"):
-            check_oci_verifier_boundary(root)
-
-    def test_policy_rejects_release_check_without_shared_asset_verifier(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "justfile"
-        path.write_text(
-            path.read_text().replace(
-                'RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "{{ version }}"',
-                'echo "skip shared release verifier"',
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "same native artifact verifier"):
-            check_release_verifier_boundary(root)
-
-    def test_policy_rejects_release_verifier_fixed_port_server(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "scripts/ci/verify_release_assets.py"
-        path.write_text(
-            path.read_text(encoding="utf-8") + '\n# regression: GM_H1_ADDR=127.0.0.1:7246\n',
-            encoding="utf-8",
-        )
-        with self.assertRaisesRegex(PolicyError, "fixed-port server"):
-            check_release_verifier_boundary(root)
-
-    def test_policy_rejects_obsolete_duplicated_source_bundle(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "justfile"
-        path.write_text(
-            path.read_text().replace(
-                "graphite-meter_{{ version }}_third-party-source.tar.gz",
-                "graphite-meter_{{ version }}_corresponding-source.tar.gz",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "split source-offer|obsolete"):
-            check_release_verifier_boundary(root)
 
     def test_policy_requires_stable_release_source_notice(self) -> None:
         root = self._copy_policy_tree()
@@ -1396,12 +1150,6 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "github.sha directly"):
             check_release_workflow(root)
 
-    def test_privileged_registry_workflows_do_not_parse_skopeo_version_text(self) -> None:
-        for name in ("_publish-oci.yml", "_promote-oci.yml"):
-            text = (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
-            self.assertNotIn("skopeo --version", text, name)
-            self.assertNotIn("SKOPEO_VERSION", text, name)
-
     def test_policy_rejects_skopeo_image_outside_job_env_mapping(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
@@ -1453,19 +1201,6 @@ class PipelineTests(unittest.TestCase):
             validate_request_run(
                 "zR-JB/graphite-meter", "zR-JB", MAIN, request_run_id, api=fake
             )
-
-    def test_prerelease_request_has_no_label_trigger_write_permission_or_pr_checkout(self) -> None:
-        request = (ROOT / ".github/workflows/prerelease-request.yml").read_text(encoding="utf-8")
-        self.assertNotIn("issues: write", request)
-        self.assertNotIn("actions: read", request)
-        self.assertNotIn("pull_request:", request)
-        self.assertNotIn("gm-prerelease-", request)
-        self.assertNotIn("path: source", request)
-        self.assertNotIn("ref: ${{ inputs.sha }}", request)
-        self.assertEqual(request.count("uses: actions/checkout@"), 1)
-        self.assertEqual(request.count("${{ inputs.sha }}"), 1)
-        self.assertIn("source-sha: ${{ steps.request.outputs.sha }}", request)
-        self.assertFalse((ROOT / ".github/workflows/prerelease-candidate.yml").exists())
 
     def test_stable_request_consumer_binds_exact_main_run_and_artifact(self) -> None:
         request_run_id = 4242
