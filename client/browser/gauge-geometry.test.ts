@@ -423,9 +423,7 @@ for (const viewport of [
         clientHeight: element.clientHeight,
         scrollHeight: element.scrollHeight,
       }));
-    if (viewport.height === 640)
-      expect(stage.scrollHeight).toBeGreaterThan(stage.clientHeight);
-    else expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
+    expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
     const chartContainment = await page.locator(".chart").evaluate((chart) => {
       const plot = chart.querySelector(".plot");
       if (!(plot instanceof HTMLElement)) throw new Error("missing chart plot");
