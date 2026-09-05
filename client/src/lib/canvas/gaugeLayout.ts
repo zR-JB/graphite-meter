@@ -42,15 +42,23 @@ export interface GaugeLayout {
 export function gaugeLayout(width: number, height: number): GaugeLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);
-  const center = { x: safeWidth / 2, y: safeHeight / 2 };
-  const minimum = Math.min(safeWidth, safeHeight);
   const radius = Math.max(
     36,
-    Math.min(minimum * 0.37, (minimum / 2 - 20) / 1.145),
+    Math.min(
+      safeWidth * 0.37,
+      (safeWidth / 2 - 20) / 1.145,
+      ((safeHeight - 42) / (1 + Math.SQRT1_2) - 11) / 1.145,
+    ),
   );
   const arcWidth = Math.max(6, radius * 0.13);
   const tickInner = radius + arcWidth * 0.5 + 3;
   const tickOuter = tickInner + radius * 0.08;
+  // Center the visible 270-degree sweep, including its label clearance.
+  const center = {
+    x: safeWidth / 2,
+    y:
+      safeHeight / 2 + ((1 - Math.SQRT1_2) * (tickOuter + LABEL_CLEARANCE)) / 2,
+  };
   const pointAt = (angle: number, distance: number): GaugePoint => ({
     x: center.x + Math.cos(angle) * distance,
     y: center.y + Math.sin(angle) * distance,

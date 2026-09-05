@@ -6,7 +6,6 @@ import { canvasPixelRatio } from "./canvasResolution";
 import {
   resultGaugeFillTarget,
   resultGaugeHeadPlacements,
-  sortResultGaugeArcs,
   type ResultArcPhase,
   type ResultGaugeHeadPlacement,
 } from "../components/resultGauge";
@@ -26,6 +25,7 @@ interface GaugeState {
   layout: GaugeLayout;
   rtt: number;
   completedKind: "speed" | "latency";
+  /** Highest result first; the component owns result ordering. */
   resultArcs?: readonly GaugeResultArc[];
 }
 const PHASE_VAR: Record<Phase, string> = {
@@ -54,6 +54,8 @@ export class GaugeEngine {
   #accent = "#888";
   #track = "#23262b";
   #tick = "#4a5058";
+  #surface = "#23262b";
+  #bandShade: CanvasGradient | null = null;
   #lastPhase: Phase | null = null;
   #sweep = 0;
   #showValue = true;
@@ -118,6 +120,7 @@ export class GaugeEngine {
       this.#canvas.height === backingHeight
     )
       return;
+    this.#bandShade = null;
     this.#w = cssWidth;
     this.#h = cssHeight;
     this.#dpr = dpr;
@@ -136,6 +139,7 @@ export class GaugeEngine {
     this.#accent = this.#cssVar(PHASE_VAR[phase], this.#accent);
     this.#track = this.#cssVar("--surface-2", this.#track);
     this.#tick = this.#cssVar("--border-strong", this.#tick);
+    this.#surface = this.#cssVar("--surface-inset", this.#surface);
     for (const phase of ["download", "upload", "bidirectional"] as const)
       this.#resultColors[phase] = this.#cssVar(
         `--phase-${phase}`,
@@ -155,18 +159,7 @@ export class GaugeEngine {
     const s = this.#get();
     this.#layout = s.layout;
     this.#showValue = s.showValue ?? true;
-    this.#resultArcs = sortResultGaugeArcs(
-      (s.resultArcs ?? []).map((arc) => ({
-        phase: arc.phase,
-        label: arc.phase,
-        bytesPerSec: arc.fraction,
-        dashed: arc.dashed,
-      })),
-    ).map((arc) => ({
-      phase: arc.phase,
-      fraction: arc.bytesPerSec,
-      dashed: arc.dashed,
-    }));
+    this.#resultArcs = s.resultArcs ?? [];
     const headGeometry = this.#headGeometry();
     this.#resultHeadPlacements = resultGaugeHeadPlacements(
       this.#resultArcs.map((arc) => arc.fraction),
@@ -227,13 +220,13 @@ export class GaugeEngine {
     const valueEnd = angleForFraction(sweep, layout.arcStart, layout.arcSweep);
     ctx.lineCap = "round";
     ctx.strokeStyle = this.#track;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([2, 5]);
+    ctx.lineWidth = arcW;
     ctx.beginPath();
     ctx.arc(cx, cy, r, layout.arcStart, layout.arcStart + layout.arcSweep);
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.strokeStyle = this.#tick;
+    ctx.lineWidth = 1;
     for (const tick of layout.majorTicks) {
       ctx.globalAlpha = 0.7;
       ctx.beginPath();
@@ -244,7 +237,7 @@ export class GaugeEngine {
     ctx.globalAlpha = 1;
     if (this.#lastPhase === "complete" && this.#resultArcs.length) {
       // Paint results from highest to lowest on the shared arc; lanes stay stable throughout reveal.
-      for (const [index, arc] of this.#resultArcs.entries()) {
+      for (const arc of this.#resultArcs) {
         const visibleFraction = Math.min(
           Math.max(0, arc.fraction),
           this.#completedSweep,
@@ -255,10 +248,6 @@ export class GaugeEngine {
           layout.arcStart,
           layout.arcSweep,
         );
-        if (index > 0) {
-          // A narrow track-colored under-stroke separates upper-layer handoffs.
-          this.#strokeArc(ctx, layout, end, this.#track, arcW + 2, 0.5);
-        }
         this.#strokeArc(
           ctx,
           layout,
@@ -276,7 +265,11 @@ export class GaugeEngine {
           Math.max(0, arc.fraction),
           this.#completedSweep,
         );
-        if (!placement || placement.lane === 0 || visibleFraction <= 0.002)
+        if (
+          !placement ||
+          placement.lane === 0 ||
+          (visibleFraction <= 0.002 && arc.fraction > 0)
+        )
           continue;
         const end = angleForFraction(
           visibleFraction,
@@ -288,9 +281,8 @@ export class GaugeEngine {
         const headX = cx + Math.cos(end) * placement.radius;
         const headY = cy + Math.sin(end) * placement.radius;
         ctx.save();
-        ctx.strokeStyle = this.#track;
-        ctx.globalAlpha = 0.55;
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = this.#surface;
+        ctx.lineWidth = 4;
         ctx.lineCap = "round";
         ctx.setLineDash([]);
         ctx.beginPath();
@@ -298,8 +290,7 @@ export class GaugeEngine {
         ctx.lineTo(headX, headY);
         ctx.stroke();
         ctx.strokeStyle = this.#resultColors[arc.phase];
-        ctx.globalAlpha = 0.7;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(trueX, trueY);
         ctx.lineTo(headX, headY);
@@ -314,7 +305,8 @@ export class GaugeEngine {
           Math.max(0, arc.fraction),
           this.#completedSweep,
         );
-        if (!placement || visibleFraction <= 0.002) continue;
+        if (!placement || (visibleFraction <= 0.002 && arc.fraction > 0))
+          continue;
         const end = angleForFraction(
           visibleFraction,
           layout.arcStart,
@@ -341,19 +333,34 @@ export class GaugeEngine {
     }
   }
   #headGeometry(): { radius: number; borderWidth: number } {
-    const radius = this.#layout.arcWidth * 0.55;
-    return { radius, borderWidth: Math.max(1, radius * 0.22) };
+    const radius = Math.min(7.5, this.#layout.arcWidth * 0.48);
+    const closeHeads = this.#resultArcs.some((arc, index, arcs) =>
+      arcs
+        .slice(index + 1)
+        .some(
+          (other) =>
+            Math.abs(arc.fraction - other.fraction) *
+              this.#layout.arcSweep *
+              this.#layout.radius <
+            2 * radius + 5,
+        ),
+    );
+    // Compact a close cluster before assigning inward lanes, preserving every angle.
+    return {
+      radius: closeHeads ? Math.min(4, radius) : radius,
+      borderWidth: 1.5,
+    };
   }
   #drawHead(x: number, y: number, color: string, hollow = false): void {
     const ctx = this.#ctx;
     if (!ctx) return;
     const { radius, borderWidth } = this.#headGeometry();
     ctx.save();
-    ctx.fillStyle = hollow ? this.#track : color;
+    ctx.fillStyle = hollow ? this.#surface : color;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = this.#track;
+    ctx.strokeStyle = this.#surface;
     ctx.lineWidth = borderWidth;
     ctx.beginPath();
     ctx.arc(x, y, radius + borderWidth * 0.5, 0, Math.PI * 2);
@@ -390,6 +397,24 @@ export class GaugeEngine {
       layout.arcStart,
       end,
     );
+    ctx.stroke();
+    if (!this.#bandShade) {
+      const { x, y } = layout.center;
+      this.#bandShade = ctx.createRadialGradient(
+        x,
+        y,
+        layout.radius - width / 2,
+        x,
+        y,
+        layout.radius + width / 2,
+      );
+      this.#bandShade.addColorStop(0, "rgba(255, 255, 255, 0.24)");
+      this.#bandShade.addColorStop(0.38, "rgba(255, 255, 255, 0.09)");
+      this.#bandShade.addColorStop(0.5, "rgba(255, 255, 255, 0.18)");
+      this.#bandShade.addColorStop(0.64, "rgba(0, 0, 0, 0.03)");
+      this.#bandShade.addColorStop(1, "rgba(0, 0, 0, 0.08)");
+    }
+    ctx.strokeStyle = this.#bandShade;
     ctx.stroke();
     ctx.restore();
   }

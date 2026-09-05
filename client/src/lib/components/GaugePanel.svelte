@@ -130,12 +130,11 @@
     )
       return EMPTY_DISPLAY;
     if (p === "complete") {
-      if (terminalArcs.length === 1)
+      if (terminalArcs.length)
         return {
           value: fmtSpeed(gaugeRate(terminalArcs[0].bytesPerSec)),
           unit: `${gaugeUnit} · ${terminalArcs[0].label}`,
         };
-      if (terminalArcs.length > 1) return { value: "", unit: gaugeUnit };
       return store.result?.latency
         ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
         : EMPTY_DISPLAY;
@@ -248,21 +247,21 @@
       )
       .join("; "),
   );
-  const terminalSummary = $derived.by(() =>
-    store.phase === "complete" && terminalArcs.length > 1
-      ? terminalArcs.map((arc) => ({
+  const terminalPrimary = $derived.by(() => {
+    const arc = store.phase === "complete" ? terminalArcs[0] : null;
+    return arc
+      ? {
+          ...arc,
           value: fmtSpeed(gaugeRate(arc.bytesPerSec)),
           direction:
             arc.phase === "download" || arc.label.endsWith("download")
-              ? "download"
+              ? ("download" as const)
               : arc.phase === "upload" || arc.label.endsWith("upload")
-                ? "upload"
-                : "bidirectional",
-          phase: arc.phase,
-          dashed: arc.dashed,
-        }))
-      : [],
-  );
+                ? ("upload" as const)
+                : ("bidirectional" as const),
+        }
+      : null;
+  });
 
   const STAGE_NAME: Record<string, string> = {
     latency: "Latency",
@@ -465,7 +464,11 @@
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
-    <div bind:this={stageEl} class="stage">
+    <div
+      bind:this={stageEl}
+      class="stage"
+      style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
+    >
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       {#if showGaugeTicks}
         <div class="gauge-ticks" aria-hidden="true">
@@ -481,37 +484,37 @@
         </div>
       {/if}
       <div class="metric-wrap">
-        {#if terminalSummary.length}
-          <div class="terminal-readout" aria-hidden="true">
-            <div class="terminal-summary">
-              {#each terminalSummary as item (item.phase)}
-                <span
-                  class="terminal-result {item.phase}"
-                  class:partial={item.dashed}
-                >
-                  <span class="terminal-marker">
-                    {#if item.direction === "download"}
-                      {@html ICON.download}
-                    {:else if item.direction === "upload"}
-                      {@html ICON.upload}
-                    {:else}
-                      {@html ICON.bidirectional}
-                    {/if}
-                  </span>
-                  <span class="terminal-number">{item.value}</span>
-                </span>
-              {/each}
-            </div>
-            <span class="terminal-unit">{display.unit}</span>
+        {#if terminalPrimary}
+          <div
+            class="terminal-readout {terminalPrimary.phase}"
+            class:partial={terminalPrimary.dashed}
+            aria-hidden="true"
+          >
+            <span class="terminal-marker">
+              {#if terminalPrimary.direction === "download"}
+                {@html ICON.download}
+              {:else if terminalPrimary.direction === "upload"}
+                {@html ICON.upload}
+              {:else}
+                {@html ICON.bidirectional}
+              {/if}
+            </span>
+            <span class="terminal-number">{terminalPrimary.value}</span>
+            <span class="terminal-unit">{gaugeUnit}</span>
+            {#if terminalPrimary.dashed}
+              <span class="terminal-partial"
+                >Partial {terminalPrimary.direction}</span
+              >
+            {/if}
           </div>
+        {:else}
+          {#if display.value}<span class="gauge-value" aria-hidden="true"
+              >{display.value}</span
+            >{/if}
+          {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+              >{display.unit}</span
+            >{/if}
         {/if}
-        {#if display.value}<span class="gauge-value" aria-hidden="true"
-            >{display.value}</span
-          >{/if}
-        {#if display.unit && !terminalSummary.length}<span
-            class="gauge-unit"
-            aria-hidden="true">{display.unit}</span
-          >{/if}
         <span class="sr-only"
           >{accessibleDisplay.value} {accessibleDisplay.unit}</span
         >
@@ -624,13 +627,6 @@
     .instrument .stage {
       min-height: 280px;
     }
-    .canvas,
-    .gauge-ticks,
-    .metric-wrap {
-      /* The 270-degree dial is top-heavy by construction. A small optical
-         shift balances its label clearance in the compact phone well. */
-      transform: translateY(8px);
-    }
   }
   /* The gauge well: the deepest recess on the faceplate. */
   .stage {
@@ -690,10 +686,10 @@
     transform: translate(-50%, -50%);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-size: 8.5px;
+    font-size: 9.5px;
     font-weight: 600;
     color: var(--text-soft);
-    opacity: 0.5;
+    opacity: 0.75;
     white-space: nowrap;
     line-height: 1;
   }
@@ -731,6 +727,7 @@
     /* Keeps the number clear of the gauge ring's sides. The inline padding
        also bounds how wide the value grows until cqmin sizing reins it in. */
     padding-inline: 9%;
+    padding-top: calc(2 * var(--gauge-center-offset));
     pointer-events: none;
   }
   /* The hero number: the display face with tabular figures, so a live value
@@ -749,76 +746,59 @@
     white-space: nowrap;
   }
   .terminal-readout {
-    display: grid;
-    justify-items: center;
-    gap: 8px;
-    max-width: 72%;
-  }
-  .terminal-summary {
-    display: grid;
-    gap: 4px;
-    max-width: 100%;
-    font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    font-size: clamp(18px, 7.2cqmin, 30px);
-    font-weight: 600;
-    letter-spacing: var(--track-tight);
-    line-height: 1;
-    white-space: nowrap;
-  }
-  .terminal-result {
     --result-accent: var(--text-soft);
     display: grid;
-    grid-template-columns: 21px minmax(4ch, 1fr);
-    align-items: center;
-    gap: 7px;
+    justify-items: center;
+    gap: clamp(7px, 2.5cqmin, 11px);
+    max-width: 72%;
+    color: var(--result-accent);
   }
-  .terminal-result.download {
+  .terminal-readout.download {
     --result-accent: var(--phase-download);
   }
-  .terminal-result.upload {
+  .terminal-readout.upload {
     --result-accent: var(--phase-upload);
   }
-  .terminal-result.bidirectional {
+  .terminal-readout.bidirectional {
     --result-accent: var(--phase-bidirectional);
   }
   .terminal-marker {
     display: grid;
     place-items: center;
-    width: 21px;
-    height: 21px;
+    width: clamp(32px, 12cqmin, 42px);
+    height: clamp(32px, 12cqmin, 42px);
     border: 1px solid
-      color-mix(in srgb, var(--result-accent) 30%, var(--border));
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, var(--result-accent) 6%, var(--surface-2));
-    color: var(--result-accent);
+      color-mix(in srgb, var(--result-accent) 28%, var(--border));
+    border-radius: 50%;
     line-height: 1;
   }
   .terminal-marker :global(svg) {
-    width: 13px;
-    height: 13px;
+    width: 58%;
+    height: 58%;
   }
-  .terminal-result.partial .terminal-marker {
+  .terminal-readout.partial .terminal-marker {
     border-style: dashed;
   }
   .terminal-number {
-    min-width: 0;
-    text-align: right;
-    color: var(--result-accent);
+    font-family: var(--font-display);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-size: clamp(28px, 14cqmin, 52px);
+    font-weight: 600;
+    letter-spacing: var(--track-tight);
+    line-height: 1;
+    white-space: nowrap;
   }
   .terminal-unit {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 7px;
-    width: 100%;
     font-family: var(--font-mono);
-    font-size: clamp(10px, 3.1cqmin, 12px);
-    font-weight: 600;
-    letter-spacing: 0.07em;
+    font-size: clamp(11px, 3.8cqmin, 15px);
+    font-weight: 500;
     color: var(--text-soft);
     line-height: 1;
+  }
+  .terminal-partial {
+    font-size: 11px;
+    color: var(--text-muted);
   }
   .gauge-unit {
     margin-top: var(--space-1);
@@ -828,32 +808,6 @@
     letter-spacing: 0.02em;
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .terminal-result {
-      animation: terminal-result-enter var(--dur-slide) var(--ease-out) both;
-    }
-    .terminal-result:nth-child(2) {
-      animation-delay: 35ms;
-    }
-    .terminal-result:nth-child(3) {
-      animation-delay: 70ms;
-    }
-    .terminal-unit {
-      animation: terminal-unit-enter var(--dur-hover) var(--ease-out)
-        var(--dur-hover) both;
-    }
-  }
-  @keyframes terminal-result-enter {
-    from {
-      opacity: 0;
-      transform: translateY(3px);
-    }
-  }
-  @keyframes terminal-unit-enter {
-    from {
-      opacity: 0;
-    }
   }
   /* Notes zone at the dial's foot: guided idle/transient copy and
      skipped-stage explanations. Centered beneath the big metric; doesn't affect
