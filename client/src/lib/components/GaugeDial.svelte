@@ -7,11 +7,13 @@
       phase: ResultArcPhase;
       fraction: number;
       dashed: boolean;
+      description?: string;
     }[];
   }
 </script>
 
 <script lang="ts">
+  import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
   import { resultGaugeHeadPlacements } from "./resultGauge";
@@ -197,10 +199,12 @@
   bind:this={surface}
   class="gauge-dial"
   class:motion
-  aria-hidden="true"
+  role={completed ? "group" : undefined}
+  aria-label={completed ? "Completed throughput measurements" : undefined}
 >
   <svg
     class="dial-art"
+    aria-hidden="true"
     width={layout.width}
     height={layout.height}
     viewBox={`0 0 ${layout.width} ${layout.height}`}
@@ -246,6 +250,7 @@
     <div class="result-layer">
       <svg
         class="dial-art"
+        aria-hidden="true"
         width={layout.width}
         height={layout.height}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
@@ -293,7 +298,31 @@
       </svg>
     </div>
   {/if}
-  <div class="live" class:visible={input.showValue && !completed}>
+  {#if completed}
+    {#each results as result (result.phase)}
+      {#if result.description}
+        {@const angle = angleForFraction(
+          result.fraction,
+          layout.arcStart,
+          layout.arcSweep,
+        )}
+        <span
+          class="result-head-target"
+          role="img"
+          aria-label={result.description}
+          style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+          style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
+          style:--head-color={`var(--phase-${result.phase})`}
+          use:tooltip={{ text: result.description, instant: true }}
+        ></span>
+      {/if}
+    {/each}
+  {/if}
+  <div
+    class="live"
+    class:visible={input.showValue && !completed}
+    aria-hidden="true"
+  >
     <div
       class="sweep-ring"
       style:left={`${layout.center.x - extent}px`}
@@ -362,6 +391,26 @@
 </div>
 
 <style>
+  .result-head-target {
+    position: absolute;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-full);
+    background: transparent;
+    transform: translate(-50%, -50%);
+    cursor: help;
+  }
+  .result-head-target:hover {
+    box-shadow: inset 0 0 0 1px var(--head-color);
+  }
+  .result-head-target:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 1px;
+  }
+
   .gauge-dial,
   .dial-art,
   .live,

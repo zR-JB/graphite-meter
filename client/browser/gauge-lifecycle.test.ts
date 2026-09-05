@@ -5,6 +5,7 @@ import {
   expect,
   gaugeStage,
   openApp,
+  openSettings,
   startTest,
   test,
   waitForCompletion,
@@ -285,4 +286,56 @@ test("offscreen and reduced-motion gauges cancel native interpolation", async ({
   await page.waitForTimeout(100);
   await abortButton(page).click();
   expect((await nativeDialState(page)).running).toBe(0);
+});
+
+test("completed result heads expose authoritative rates through pointer, keyboard, and touch", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 390, height: 844 });
+  const settings = await configureSettings(page, "active-presentation");
+  await settings
+    .locator("label.switch", {
+      hasText: "Include concurrent download + upload",
+    })
+    .click();
+  await settings.getByLabel("Bidirectional ms").fill("600");
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startTest(page);
+  await waitForCompletion(page);
+  await page.keyboard.press("Escape");
+  const heads = page.locator(".result-head-target");
+  await expect(heads).toHaveCount(3);
+  const download = page.getByRole("img", { name: /^Download / });
+  await download.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(
+    /Download\s+320\.0 Mbit\/s/,
+  );
+  await page.mouse.move(0, 0);
+  await download.focus();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("tooltip")).toHaveText(
+    /Download\s+320\.0 Mbit\/s/,
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  const bidi = page.getByRole("img", { name: /^Bidirectional / });
+  await bidi.dispatchEvent("pointerup", { pointerType: "touch" });
+  await expect(page.getByRole("tooltip")).toContainText("Download:");
+  await expect(page.getByRole("tooltip")).toContainText("Upload:");
+  const box = await page.getByRole("tooltip").boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  await bidi.dispatchEvent("pointerup", { pointerType: "touch" });
+  const unitSettings = await openSettings(page);
+  await unitSettings
+    .getByRole("button", { name: "Bytes", exact: true })
+    .click();
+  await unitSettings.getByRole("button", { name: "Close Settings" }).click();
+  await page.keyboard.press("Escape");
+  await download.hover();
+  await expect(page.getByRole("tooltip")).toHaveText(/Download\s+40\.00 MB\/s/);
+  await againButton(page).click();
+  await expect(heads).toHaveCount(0);
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
