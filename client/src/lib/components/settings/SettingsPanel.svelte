@@ -11,6 +11,7 @@
     docked?: boolean;
     raised?: boolean;
     dockWidth?: number;
+    dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
     onClose?: () => void;
@@ -21,6 +22,7 @@
     docked = false,
     raised = false,
     dockWidth,
+    dockMaxWidth,
     onResize,
     onResetWidth,
     onClose,
@@ -42,6 +44,7 @@
   {docked}
   {raised}
   {dockWidth}
+  {dockMaxWidth}
   {onResize}
   {onResetWidth}
   {onClose}

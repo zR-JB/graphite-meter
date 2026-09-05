@@ -8,6 +8,7 @@
     docked?: boolean;
     raised?: boolean;
     dockWidth?: number;
+    dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
     onOpenLegal?: (invoker: HTMLElement) => void;
@@ -18,6 +19,7 @@
     docked = false,
     raised = false,
     dockWidth,
+    dockMaxWidth,
     onResize,
     onResetWidth,
     onOpenLegal,
@@ -30,6 +32,7 @@
   {docked}
   {raised}
   {dockWidth}
+  {dockMaxWidth}
   {onResize}
   {onResetWidth}
   {onClose}
