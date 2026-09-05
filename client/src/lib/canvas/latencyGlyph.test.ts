@@ -51,3 +51,24 @@ test("an overflow arrow and its clipped dot retain a visible CSS-pixel gap", () 
     glyph.dot.y - glyph.dot.radius - glyph.arrow.baseY,
   ).toBeGreaterThanOrEqual(2);
 });
+
+test("latency inspection stays bounded with a long high-cadence history", () => {
+  const history = Array.from({ length: 20_000 }, (_, index) =>
+    bucket(index, 20),
+  );
+  let lookups = 0;
+  const selected = nearestLatencyGlyph([history], 9_999.2, (t) => {
+    lookups++;
+    return t;
+  });
+  expect(selected?.bucket).toBe(history[9_999]);
+  expect(lookups).toBeLessThan(32);
+});
+
+test("empty buckets do not hide the nearest measured glyph", () => {
+  const measured = bucket(20, 12);
+  const empty = bucket(21, null);
+  expect(nearestLatencyGlyph([[measured, empty]], 21, (t) => t)?.bucket).toBe(
+    measured,
+  );
+});

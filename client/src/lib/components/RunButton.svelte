@@ -41,17 +41,19 @@
         ? "Run the test again (Space / R)"
         : "Start the test (Space)"}
 >
-  <span class="run-button-content">
-    {#if pending}
-      CANCEL
-    {:else if store.isRunning}
-      <span class="stop-sq"></span> ABORT
-    {:else if resolved}
-      <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
-    {:else}
-      <span class="ico">{@html ICON.bolt}</span> START TEST
-    {/if}
-  </span>
+  {#key label}
+    <span class="run-button-content">
+      {#if pending}
+        CANCEL
+      {:else if store.isRunning}
+        <span class="stop-sq"></span> ABORT
+      {:else if resolved}
+        <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
+      {:else}
+        <span class="ico">{@html ICON.bolt}</span> START TEST
+      {/if}
+    </span>
+  {/key}
   {#if !store.isRunning && !pending}
     <span class="duration" aria-hidden="true"
       >~{Math.round(store.totalEtaMs / 1000)}s</span
@@ -112,6 +114,9 @@
   .run-button:hover {
     transform: translateY(-1px);
     filter: brightness(1.04);
+  }
+  .run-button:active {
+    transform: translateY(0) scale(0.985);
   }
   .run-button:focus-visible {
     outline: var(--focus-ring);

@@ -30,19 +30,3 @@ export function lowerBoundAt<T extends { t: number }>(
   }
   return lo;
 }
-/** A hover needs a rate or latency bucket; loss-only buckets retain ping evidence without an RTT. */
-export function hasHoverMeasurements(info: {
-  bytesPerSec: number | null;
-  downBytesPerSec: number | null;
-  upBytesPerSec: number | null;
-  rtt: number | null;
-  pingCount: number;
-}): boolean {
-  return (
-    info.bytesPerSec != null ||
-    info.downBytesPerSec != null ||
-    info.upBytesPerSec != null ||
-    info.rtt != null ||
-    info.pingCount > 0
-  );
-}
