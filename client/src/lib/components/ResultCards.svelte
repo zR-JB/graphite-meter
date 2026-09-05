@@ -478,15 +478,22 @@
 
   .result-card {
     min-width: 0;
-    display: flex;
-    flex-direction: column;
+    container: result-card / inline-size;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
     gap: 6px;
     min-height: 64px;
-    padding: 10px 12px;
+    padding: 10px var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
+  }
+  .result-card header,
+  .result-readout,
+  .sub {
+    grid-column: 1 / -1;
   }
   .result-readout {
     display: flex;
@@ -496,25 +503,29 @@
   }
   @container viz (min-width: 1000px) {
     .result-card {
-      display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: start;
-      column-gap: 8px;
+      column-gap: var(--space-2);
       row-gap: 5px;
     }
-    .result-card header {
-      grid-column: 1;
-      grid-row: 1;
-    }
-    .result-readout {
-      grid-column: 2;
-      grid-row: 1 / span 2;
-    }
-    .sub {
-      grid-column: 1;
-      grid-row: 2;
+    /* A wide instrument can still hold four narrow cards. Only place the
+       heading beside its value when this card has room for both groups. */
+    @container result-card (min-width: 260px) {
+      .result-card header {
+        grid-column: 1;
+        grid-row: 1;
+      }
+      .result-readout {
+        grid-column: 2;
+        grid-row: 1 / span 2;
+      }
+      .sub {
+        grid-column: 1;
+        grid-row: 2;
+      }
     }
   }
+
   .partial {
     margin-left: auto;
     color: var(--err);

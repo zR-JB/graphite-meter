@@ -134,7 +134,13 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
         const readout = card
           .querySelector(".result-readout")!
           .getBoundingClientRect();
+        const heading = [...card.querySelector("header")!.children].map(
+          (child) => child.getBoundingClientRect(),
+        );
         return {
+          groupsSeparated:
+            Math.max(...heading.map((box) => box.bottom)) + 5 <= readout.top ||
+            Math.max(...heading.map((box) => box.right)) + 8 <= readout.left,
           height: card.getBoundingClientRect().height,
           overflow: card.scrollWidth > card.clientWidth,
           detailBelowReadout: sub ? sub.bottom - readout.bottom : 0,
@@ -150,6 +156,16 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
         };
       }),
     );
+  // The instrument can be wide while each of its four cards is narrow.
+  // Check the actual heading content, which can collide without scroll overflow.
+  for (const width of [1024, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(async () =>
+        (await geometry()).every((card) => card.groupsSeparated),
+      )
+      .toBe(true);
+  }
   const before = await geometry();
   expect(before).toHaveLength(4);
   expect(

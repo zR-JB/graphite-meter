@@ -67,10 +67,10 @@
 <style>
   .duration {
     position: absolute;
-    inset-inline-end: 12px;
+    inset-inline-end: var(--space-3);
     top: 50%;
     transform: translateY(-50%);
-    padding: 4px 6px;
+    padding: var(--space-1) 6px;
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: var(--r-well);
     background: color-mix(in srgb, currentColor 8%, transparent);
