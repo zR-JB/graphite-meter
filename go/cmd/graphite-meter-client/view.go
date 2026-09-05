@@ -507,8 +507,11 @@ func (m model) resultsView(w int) string {
 				labelStyle.Render("latency"),
 				valueStyle.Render(fmtMs(r.Latency.P50)),
 				valueStyle.Render(fmtMs(r.Latency.P95)),
-				mutedStyle.Render(fmt.Sprintf("jitter %s  loss %.1f%%", fmtMs(r.Latency.Jitter), r.Latency.Loss*100)),
+				mutedStyle.Render(latencyOutcomeSummary(r.Latency)),
 			))
+			if r.Err != nil {
+				lines = append(lines, errorStyle.Render("  Incomplete: "+r.Err.Error()))
+			}
 			continue
 		}
 		b := bars[next]
@@ -519,16 +522,16 @@ func (m model) resultsView(w int) string {
 }
 
 func (m model) finalReport() string {
-	if !m.complete || len(m.results) == 0 {
+	if len(m.results) == 0 || !m.complete && m.err == nil {
 		return ""
 	}
 	lipgloss.SetColorProfile(termenv.Ascii)
 	return m.resultsView(m.innerWidth())
 }
 
-// isLatencyResult reports whether a result carries latency percentiles rather than throughput figures.
+// isLatencyResult includes directionless timeout-only and unresolved-only latency summaries.
 func isLatencyResult(r goclient.Result) bool {
-	return r.Latency.Count > 0 || r.Stage == "latency"
+	return r.Direction == ""
 }
 
 // helpView is the footer. The model is the key map it renders, so the listing follows whichever screen is on show.

@@ -17,6 +17,7 @@ import type {
   TransportRole,
   ConnectionRole,
   StageFailure,
+  StageLatencySummary,
 } from "../runner/contract";
 import {
   CONNECTION_FAILURE_REASONS,
@@ -31,7 +32,6 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 import {
-  quantile,
   chartThroughputScale,
   DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
   throughputUnitIndex,
@@ -48,7 +48,6 @@ import {
   compactThroughputHistory,
   PRESENTATION_POINT_LIMIT,
 } from "../runner/presentationHistory";
-import { weightedMean, weightedMeanAbsoluteDeviation } from "../runner/stats";
 import {
   canDisableBidirectional as canDisableBidirectionalPure,
   canToggleMeasuredStage,
@@ -77,7 +76,7 @@ import {
   type HistoryColumn,
 } from "./persistence";
 import { BUILD } from "../buildenv";
-import { buildHistoryRecord, type HistoryRecordV1 } from "../history/types";
+import { buildHistoryRecord, type HistoryRecord } from "../history/types";
 
 type PreparationStatus =
   "idle" | "authenticating" | "checking" | "launching" | "failed";
@@ -123,7 +122,11 @@ export interface LatencyLane {
   centerKind: "average" | "result";
   current: number | null;
   jitter: number | null;
-  lossRatio: number;
+  timeoutRatio: number | null;
+  accountingComplete: boolean | null;
+  timeoutCount: number | null;
+  unresolvedCount: number | null;
+  sendFailureCount: number | null;
   count: number;
   active: boolean;
 }
@@ -156,6 +159,9 @@ class AppStore {
   uploadPresentationBytesPerSec = $state<number | null>(null);
   presentationRateRevision = $state({ transfer: 0, down: 0, up: 0 });
   latency = $state<LatencyBucket[]>([]);
+  latencySummaries = $state<
+    Partial<Record<TransportRole, StageLatencySummary | null>>
+  >({});
   latencyRevision = $state(0);
   idleLatency = $state<LatencyBucket[]>([]);
 
@@ -207,7 +213,7 @@ class AppStore {
   resultHistoryPreference = $state<ResultHistoryPreference>("default");
   historyColumns = $state<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
-  historyCandidate = $state.raw<HistoryRecordV1 | null>(null);
+  historyCandidate = $state.raw<HistoryRecord | null>(null);
   historyWarning = $state("");
   operatorHistoryDefault = $derived.by(() => {
     if (typeof document === "undefined") return false;
@@ -605,12 +611,16 @@ class AppStore {
           this.latencyScaleMs = this.#latencyScale.observe(event.sample);
         }
         break;
+      case "latencySummary":
+        this.latencySummaries[event.stage] = event.summary;
+        break;
       case "connectivity":
         this.connectivity = event.state;
         break;
       case "complete":
         this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
+        this.latencySummaries = event.result.latencyByStage;
         if (this.savingResults) {
           const wireArgs = {
             detectedProtocol: this.runConnections.throughput.browserProtocol,
@@ -651,21 +661,6 @@ class AppStore {
               infra: this.infra,
               clientBuild: BUILD.clientVersion,
               engineVersion: this.infra?.engineVersion ?? "unknown",
-              latencyLanes: Object.fromEntries(
-                this.latencyLanes.map((lane) => [
-                  lane.key,
-                  {
-                    min: lane.min,
-                    max: lane.max,
-                    p10: lane.p10,
-                    p90: lane.p90,
-                    center: lane.center,
-                    jitter: lane.jitter,
-                    lossRatio: lane.lossRatio,
-                    count: lane.count,
-                  },
-                ]),
-              ),
               wireDownloadBytesPerSec: downloadWire?.available
                 ? downloadWire.estimatedBytesPerSec
                 : null,
@@ -712,6 +707,7 @@ class AppStore {
       liveThroughput: [],
       bytesTransferred: 0,
       latency: [],
+      latencySummaries: {},
       phase: "idle" as const,
       phaseStage: null,
       phaseStartedAtMs: 0,
@@ -757,54 +753,30 @@ class AppStore {
 
   latencyLanes = $derived.by<LatencyLane[]>(() =>
     STAGE_ORDER.map((key) => {
-      const laneSamples = this.latency.filter((s) =>
-        key === "latency"
-          ? s.phase === "latency"
-          : s.underLoad && s.phase === key,
-      );
-      const valid = laneSamples.filter(
-        (sample) => sample.medianRttMs != null,
-      ) as (LatencyBucket & { medianRttMs: number })[];
-      const weightedRtts = valid.map((sample) => ({
-        value: sample.medianRttMs,
-        weight: sample.pingCount - sample.lossCount,
-      }));
-      const sorted = weightedRtts
-        .map(({ value }) => value)
-        .sort((a, b) => a - b);
-      const avg = weightedMean(weightedRtts);
+      const summary = this.latencySummaries[key];
       const reported =
         key === "latency" ? this.stageResults.latency?.reportedMs : null;
-      const centerKind = reported != null ? "result" : "average";
-      const jitter =
-        avg != null && weightedRtts.length >= 2
-          ? weightedMeanAbsoluteDeviation(weightedRtts, avg)
-          : null;
-      const pingCount = laneSamples.reduce(
-        (sum, sample) => sum + sample.pingCount,
-        0,
-      );
-      const lossCount = laneSamples.reduce(
-        (sum, sample) => sum + sample.lossCount,
-        0,
-      );
-      const lossRatio = pingCount ? lossCount / pingCount : 0;
+      const latest = this.latency.findLast(
+        (sample) => sample.phase === key,
+      )?.medianRttMs;
       return {
         key,
-        min: sorted.at(0) ?? null,
-        max:
-          valid.reduce(
-            (max, sample) => Math.max(max, sample.maxRttMs ?? 0),
-            0,
-          ) || null,
-        p10: quantile(sorted, 0.1),
-        p90: quantile(sorted, 0.9),
-        center: reported ?? avg,
-        centerKind,
-        current: weightedRtts.at(-1)?.value ?? null,
-        jitter,
-        lossRatio,
-        count: pingCount,
+        min: summary?.minMs ?? null,
+        max: summary?.maxMs ?? null,
+        p10: summary?.p10Ms ?? null,
+        p90: summary?.p90Ms ?? null,
+        center: reported ?? summary?.meanMs ?? null,
+        centerKind: reported != null ? "result" : "average",
+        current: latest ?? null,
+        jitter: summary?.jitterMs ?? null,
+        timeoutRatio: summary?.probeCount
+          ? summary.timeoutCount / summary.probeCount
+          : null,
+        accountingComplete: summary?.accountingComplete ?? null,
+        timeoutCount: summary?.timeoutCount ?? null,
+        unresolvedCount: summary?.unresolvedCount ?? null,
+        sendFailureCount: summary?.sendFailureCount ?? null,
+        count: summary?.probeCount ?? 0,
         active: ["active", "recovering"].includes(
           this.stagePresentation[key].status,
         ),

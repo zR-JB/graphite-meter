@@ -9,7 +9,7 @@ import type {
 } from "../runner/contract";
 import { createUuid, isUuid } from "../uuid";
 
-const HISTORY_SCHEMA_VERSION = 1 as const;
+const HISTORY_SCHEMA_VERSION = 2 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const HISTORY_FAILURE_STAGES = [
   "latency",
@@ -33,18 +33,22 @@ export interface ThroughputSnapshot {
   method: "stable-window" | "full-average";
   totalBytes: number;
   stabilityPct: number;
-  packetLossPct: number;
+  /** V1 compatibility field; new records store probeTimeoutPct. */
+  packetLossPct?: number;
+  probeTimeoutPct?: number | null;
   stabilityScore: number;
   band: "low" | "medium" | "high";
   serverAuthoritative: boolean;
 }
 interface LatencySnapshot {
   reportedMs: number;
-  minMs: number;
-  p50Ms: number;
-  p95Ms: number;
-  jitterMs: number;
-  packetLossPct: number;
+  minMs: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  jitterMs: number | null;
+  /** V1 compatibility field; new records store probeTimeoutPct. */
+  packetLossPct?: number;
+  probeTimeoutPct?: number | null;
   method: "stable-window" | "full-average";
   stabilityScore: number;
   band: "low" | "medium" | "high";
@@ -56,7 +60,14 @@ export interface LatencyLaneSnapshot {
   p90: number | null;
   center: number | null;
   jitter: number | null;
-  lossRatio: number;
+  /** V1 compatibility field. */
+  lossRatio?: number;
+  timeoutRatio?: number | null;
+  /** New V2 writes include this; early V2 and V1 records lack this metadata. */
+  accountingComplete?: boolean;
+  timeoutCount?: number;
+  unresolvedCount?: number;
+  sendFailureCount?: number;
   count: number;
 }
 type ThroughputTransportKind = Extract<
@@ -67,8 +78,8 @@ type LatencyTransportKind = Extract<
   TransportKind,
   "websocket" | "webtransport"
 >;
-export interface HistoryRecordV1 {
-  schemaVersion: typeof HISTORY_SCHEMA_VERSION;
+export interface HistoryRecord {
+  schemaVersion: 1 | typeof HISTORY_SCHEMA_VERSION;
   id: string;
   startedAt: number;
   completedAt: number;
@@ -142,7 +153,7 @@ function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
       method: value.method,
       totalBytes: value.totalBytes,
       stabilityPct: value.stabilityPct,
-      packetLossPct: value.packetLossPct,
+      probeTimeoutPct: value.probeTimeoutPct,
       stabilityScore: value.stabilityScore,
       band: value.band,
       serverAuthoritative: value.serverAuthoritative === true,
@@ -157,7 +168,7 @@ function latency(value: LatencyResult | null): LatencySnapshot | null {
       p50Ms: value.p50Ms,
       p95Ms: value.p95Ms,
       jitterMs: value.jitterMs,
-      packetLossPct: value.packetLossPct,
+      probeTimeoutPct: value.probeTimeoutPct,
       method: value.method,
       stabilityScore: value.stabilityScore,
       band: value.band,
@@ -212,12 +223,6 @@ interface HistoryBuildContext {
   infra: InfraInfo | null;
   clientBuild: string;
   engineVersion: string;
-  latencyLanes?: Partial<
-    Record<
-      "latency" | "download" | "upload" | "bidirectional",
-      LatencyLaneSnapshot
-    >
-  >;
   wireDownloadBytesPerSec?: number | null;
   wireUploadBytesPerSec?: number | null;
   wireBidirectionalBytesPerSec?: number | null;
@@ -226,7 +231,7 @@ export function buildHistoryRecord(
   result: RunResult,
   context: HistoryBuildContext,
   completedAt = Date.now(),
-): HistoryRecordV1 {
+): HistoryRecord {
   const failures = result.stageFailures;
   const bidi = result.bidirectional;
   const down = throughput(result.download);
@@ -243,12 +248,33 @@ export function buildHistoryRecord(
       latency: {
         status: status(result.latency, failures.latency),
         result: latency(result.latency),
-        lanes: {
-          latency: context.latencyLanes?.latency ?? null,
-          download: context.latencyLanes?.download ?? null,
-          upload: context.latencyLanes?.upload ?? null,
-          bidirectional: context.latencyLanes?.bidirectional ?? null,
-        },
+        lanes: Object.fromEntries(
+          HISTORY_FAILURE_STAGES.map((stage) => {
+            const summary = result.latencyByStage[stage];
+            return [
+              stage,
+              summary && {
+                min: summary.minMs,
+                max: summary.maxMs,
+                p10: summary.p10Ms,
+                p90: summary.p90Ms,
+                center:
+                  stage === "latency"
+                    ? (result.latency?.reportedMs ?? summary.meanMs)
+                    : summary.meanMs,
+                jitter: summary.jitterMs,
+                timeoutRatio: summary.probeCount
+                  ? summary.timeoutCount / summary.probeCount
+                  : null,
+                accountingComplete: summary.accountingComplete,
+                timeoutCount: summary.timeoutCount,
+                unresolvedCount: summary.unresolvedCount,
+                sendFailureCount: summary.sendFailureCount,
+                count: summary.probeCount,
+              },
+            ];
+          }),
+        ) as HistoryRecord["stages"]["latency"]["lanes"],
       },
       download: {
         status: status(result.download, failures.download),
@@ -307,7 +333,7 @@ export function buildHistoryRecord(
   };
 }
 
-export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
+export function isHistoryRecord(value: unknown): value is HistoryRecord {
   if (!isObject(value)) return false;
   const record = value as Record<string, unknown>;
   const stage = (candidate: unknown): candidate is StageStatus =>
@@ -391,7 +417,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
         "method",
         "totalBytes",
         "stabilityPct",
-        "packetLossPct",
+        record.schemaVersion === 1 ? "packetLossPct" : "probeTimeoutPct",
         "stabilityScore",
         "band",
         "serverAuthoritative",
@@ -403,7 +429,10 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
       method(candidate.method) &&
       nonnegative(candidate.totalBytes) &&
       percentage(candidate.stabilityPct) &&
-      percentage(candidate.packetLossPct) &&
+      (record.schemaVersion === 1
+        ? percentage(candidate.packetLossPct)
+        : candidate.probeTimeoutPct === null ||
+          percentage(candidate.probeTimeoutPct)) &&
       unitInterval(candidate.stabilityScore) &&
       band(candidate.band) &&
       typeof candidate.serverAuthoritative === "boolean"
@@ -420,17 +449,28 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
         "p50Ms",
         "p95Ms",
         "jitterMs",
-        "packetLossPct",
+        record.schemaVersion === 1 ? "packetLossPct" : "probeTimeoutPct",
         "method",
         "stabilityScore",
         "band",
       ]) &&
       nonnegative(candidate.reportedMs) &&
-      nonnegative(candidate.minMs) &&
-      nonnegative(candidate.p50Ms) &&
-      nonnegative(candidate.p95Ms) &&
-      nonnegative(candidate.jitterMs) &&
-      percentage(candidate.packetLossPct) &&
+      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
+        candidate.minMs,
+      ) &&
+      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
+        candidate.p50Ms,
+      ) &&
+      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
+        candidate.p95Ms,
+      ) &&
+      (record.schemaVersion === 1 ? nonnegative : nonnegativeOrNull)(
+        candidate.jitterMs,
+      ) &&
+      (record.schemaVersion === 1
+        ? percentage(candidate.packetLossPct)
+        : candidate.probeTimeoutPct === null ||
+          percentage(candidate.probeTimeoutPct)) &&
       method(candidate.method) &&
       unitInterval(candidate.stabilityScore) &&
       band(candidate.band)
@@ -446,7 +486,15 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
         "p90",
         "center",
         "jitter",
-        "lossRatio",
+        ...(record.schemaVersion === 1
+          ? ["lossRatio"]
+          : [
+              "timeoutRatio",
+              "unresolvedCount",
+              "sendFailureCount",
+              "accountingComplete",
+              "timeoutCount",
+            ]),
         "count",
       ]) &&
       nonnegativeOrNull(candidate.min) &&
@@ -455,7 +503,25 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
       nonnegativeOrNull(candidate.p90) &&
       nonnegativeOrNull(candidate.center) &&
       nonnegativeOrNull(candidate.jitter) &&
-      unitInterval(candidate.lossRatio) &&
+      (record.schemaVersion === 1
+        ? unitInterval(candidate.lossRatio)
+        : (candidate.timeoutRatio === null ||
+            unitInterval(candidate.timeoutRatio)) &&
+          ((candidate.accountingComplete === undefined &&
+            candidate.timeoutCount === undefined) ||
+            (typeof candidate.accountingComplete === "boolean" &&
+              Number.isSafeInteger(candidate.timeoutCount) &&
+              nonnegative(candidate.timeoutCount) &&
+              nonnegative(candidate.count) &&
+              candidate.timeoutCount <= candidate.count &&
+              candidate.timeoutRatio ===
+                (candidate.count
+                  ? candidate.timeoutCount / candidate.count
+                  : null))) &&
+          Number.isSafeInteger(candidate.unresolvedCount) &&
+          nonnegative(candidate.unresolvedCount) &&
+          Number.isSafeInteger(candidate.sendFailureCount) &&
+          nonnegative(candidate.sendFailureCount)) &&
       Number.isInteger(candidate.count) &&
       nonnegative(candidate.count)
     );
@@ -550,7 +616,8 @@ export function isHistoryRecord(value: unknown): value is HistoryRecordV1 {
     record.completedAt < record.startedAt ||
     !nonnegative(record.durationMs) ||
     !nonnegative(record.totalBytes) ||
-    record.schemaVersion !== HISTORY_SCHEMA_VERSION ||
+    (record.schemaVersion !== 1 &&
+      record.schemaVersion !== HISTORY_SCHEMA_VERSION) ||
     !isUuid(record.id)
   )
     return false;

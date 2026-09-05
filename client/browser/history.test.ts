@@ -1,4 +1,4 @@
-import type { HistoryRecordV1 } from "../src/lib/history/types";
+import type { HistoryRecord } from "../src/lib/history/types";
 import {
   AxeBuilder,
   endpointPanel,
@@ -30,7 +30,7 @@ function record(
   id: string,
   completedAt: number,
   download = 125_000_000,
-): HistoryRecordV1 {
+): HistoryRecord {
   const lane = (rate: number) => ({
     meanBytesPerSec: rate,
     reportedBytesPerSec: rate,
@@ -337,7 +337,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
             .getAll();
           request.onerror = () => reject(request.error);
           request.onsuccess = () => {
-            const rows = request.result as HistoryRecordV1[];
+            const rows = request.result as HistoryRecord[];
             db.close();
             resolve(rows[0]?.wireEstimates?.downloadBytesPerSec ?? null);
           };
@@ -1102,7 +1102,7 @@ test("activating the selected result closes detail without hijacking modified li
   await expect(row).toBeFocused();
 });
 
-test("saved latency shows datagram loss only with WebTransport provenance", async ({
+test("saved probe timeouts identify their transport and preserve legacy results", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1366, height: 768 });
@@ -1132,39 +1132,43 @@ test("saved latency shows datagram loss only with WebTransport provenance", asyn
   await firstTrack.focus();
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
-  const datagramLoss = page.locator(".datagram-loss-section");
-  await expect(datagramLoss).toBeVisible();
+  const probeTimeouts = page.locator(".probe-timeouts-section");
+  await expect(probeTimeouts).toBeVisible();
   await expect(
-    datagramLoss.getByRole("heading", { name: "Datagram loss" }),
+    probeTimeouts.getByRole("heading", { name: "Probe timeouts (datagram)" }),
   ).toBeVisible();
-  const lossHelp = datagramLoss.getByRole("note", {
-    name: "About datagram loss",
+  const lossHelp = probeTimeouts.getByRole("note", {
+    name: "About probe timeouts",
   });
   await expect(lossHelp).toHaveAttribute("tabindex", "0");
   await lossHelp.hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    "Round-trip WebTransport datagram probes that received no reply. This is end-to-end round-trip loss, not directional raw IP packet loss.",
+    "Application probes whose reply deadline expired. WebTransport uses datagrams; WebSocket uses a reliable stream. Neither identifies physical or directional IP packet loss. Interrupted and locally rejected sends are excluded.",
   );
   await page.mouse.move(0, 0);
   await expect(page.getByRole("tooltip")).toHaveCount(0);
-  await expect(datagramLoss.locator(".datagram-loss-lanes li")).toHaveCount(2);
+  await expect(probeTimeouts.locator(".probe-timeouts-lanes li")).toHaveCount(
+    2,
+  );
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="latency"]'),
-  ).toHaveAttribute("aria-label", "Idle datagram loss 1%, 140 samples");
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="latency"]'),
+  ).toHaveAttribute("aria-label", "Idle probe timeouts 1%, 140 resolved");
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"]'),
-  ).toHaveAttribute("aria-label", "Loaded Up datagram loss 0%, 140 samples");
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"]'),
+  ).toHaveAttribute("aria-label", "Loaded Up probe timeouts 0%, 140 resolved");
   await expect(
-    datagramLoss.locator('.datagram-loss-lanes li[data-tone="upload"] em'),
+    probeTimeouts.locator('.probe-timeouts-lanes li[data-tone="upload"] em'),
   ).toHaveText("0%");
-  await expect(datagramLoss).not.toContainText("Loaded Down");
-  await expect(datagramLoss).not.toContainText("Loaded Bi-dir");
+  await expect(probeTimeouts).not.toContainText("Loaded Down");
+  await expect(probeTimeouts).not.toContainText("Loaded Bi-dir");
 
   await page.evaluate(
     (id) => (window.location.hash = `/history/${id}`),
     websocket.id,
   );
-  await expect(datagramLoss).toHaveCount(0);
+  await expect(
+    probeTimeouts.getByRole("heading", { name: "Probe timeouts (WebSocket)" }),
+  ).toBeVisible();
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",
@@ -1175,7 +1179,7 @@ test("saved latency shows datagram loss only with WebTransport provenance", asyn
     (id) => (window.location.hash = `/history/${id}`),
     unknown.id,
   );
-  await expect(datagramLoss).toHaveCount(0);
+  await expect(probeTimeouts).toHaveCount(0);
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",
@@ -1949,4 +1953,80 @@ test("archive stays chunked and overflow-free across required shell geometries",
   await expect(
     page.getByRole("button", { name: "Archive management" }),
   ).toBeVisible();
+});
+
+test("saved incomplete probe accounting remains visible with no known outcomes", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1366, height: 768 });
+  const partial = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+  partial.schemaVersion = 2;
+  for (const snapshot of [
+    partial.stages.download.result,
+    partial.stages.upload.result,
+    partial.stages.bidirectional.down,
+    partial.stages.bidirectional.up,
+    partial.stages.latency.result,
+  ]) {
+    if (!snapshot) continue;
+    snapshot.probeTimeoutPct = snapshot.packetLossPct ?? null;
+    delete snapshot.packetLossPct;
+  }
+  partial.stages.latency.lanes = {
+    latency: null,
+    upload: null,
+    bidirectional: null,
+    download: {
+      min: null,
+      max: null,
+      p10: null,
+      p90: null,
+      center: null,
+      jitter: null,
+      count: 0,
+      timeoutRatio: null,
+      timeoutCount: 0,
+      unresolvedCount: 0,
+      sendFailureCount: 0,
+      accountingComplete: false,
+    },
+  };
+  const earlierV2 = structuredClone(partial);
+  earlierV2.id = IDS.middle;
+  const earlierLane = earlierV2.stages.latency.lanes.download!;
+  delete earlierLane.accountingComplete;
+  delete earlierLane.timeoutCount;
+  earlierLane.count = 10;
+  earlierLane.timeoutRatio = 0.1;
+  await seedHistory(page, [partial, earlierV2]);
+  await openHistory(page, partial.id);
+  const profile = page.locator(
+    '[data-latency-profile][data-variant="compact"]',
+  );
+  await expect(profile.getByText("Partial accounting")).toBeVisible();
+  await expect(profile).toContainText("Additional outcomes unknown.");
+  await expect(profile).toContainText(
+    "0 resolved · 0 timeouts · 0 unresolved · 0 send failures",
+  );
+  const note = profile.getByRole("note");
+  await note.focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Worker shutdown could not account for all probes",
+  );
+  const timeouts = page.locator(".probe-timeouts-section");
+  await expect(timeouts).toBeVisible();
+  await expect(timeouts.locator("li em")).toHaveText("Partial");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(profile.getByText("Partial accounting")).toBeVisible();
+  await expectNoHorizontalOverflow(profile);
+  await page.evaluate((id) => {
+    window.location.hash = `/history/${id}`;
+  }, earlierV2.id);
+  await expect(profile.getByText("Partial accounting")).toBeVisible();
+  await expect(profile).toContainText("Known: 10 resolved");
+  await expect(profile).not.toContainText("0 timeouts");
+  await profile.getByRole("note").focus();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "predates probe-accounting completeness metadata",
+  );
 });

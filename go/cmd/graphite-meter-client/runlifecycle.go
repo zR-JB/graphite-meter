@@ -375,7 +375,9 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventResult:
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)
-			m.finishStage(e.Result.Stage)
+			if e.Result.Err == nil {
+				m.finishStage(e.Result.Stage)
+			}
 		}
 	case goclient.EventComplete:
 		m.status = "complete"
