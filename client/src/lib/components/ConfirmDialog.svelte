@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { canFocus, hasFocus } from "../actions/focus";
   import { focusTrap } from "../actions/focusTrap";
   import { acquirePageScrollLock } from "../actions/pageScrollLock";
 
@@ -10,6 +11,7 @@
     description: string;
     confirmLabel: string;
     cancelLabel?: string;
+    invoker?: HTMLElement | null;
     onConfirm: () => void;
     onCancel: () => void;
   }
@@ -21,6 +23,7 @@
     description,
     confirmLabel,
     cancelLabel = "Cancel",
+    invoker,
     onConfirm,
     onCancel,
   }: Props = $props();
@@ -33,26 +36,25 @@
 
   $effect(() => {
     const visible = open;
+    let cancelled = false;
     if (visible && !wasOpen) {
       returnFocus =
-        document.activeElement instanceof HTMLElement
+        invoker ??
+        (document.activeElement instanceof HTMLElement
           ? document.activeElement
-          : null;
+          : null);
     } else if (!visible && wasOpen) {
       const target = returnFocus;
       returnFocus = null;
       void tick().then(() => {
-        const active = document.activeElement;
-        const needsFocus =
-          active === document.body ||
-          active === document.documentElement ||
-          !(active instanceof HTMLElement) ||
-          !active.isConnected;
-        if (needsFocus && target?.isConnected)
+        if (!cancelled && !hasFocus() && canFocus(target))
           target.focus({ preventScroll: true });
       });
     }
     wasOpen = visible;
+    return () => {
+      cancelled = true;
+    };
   });
 </script>
 

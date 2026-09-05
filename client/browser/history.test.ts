@@ -2006,3 +2006,121 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
     "predates probe-accounting completeness metadata",
   );
 });
+
+test("Back cancels workspace focus while the History chunk is still loading", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/assets/HistoryWorkspace-*.js", async () => {
+    requested = true;
+    await delayed;
+  });
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  try {
+    await page.keyboard.press("h");
+    await expect.poll(() => requested).toBe(true);
+    await expect(page.locator(".history-loading")).toBeVisible();
+    await page.evaluate(() => window.history.back());
+    await expect(page.locator(".measurement-stage")).toBeFocused();
+  } finally {
+    release();
+  }
+  await page.waitForTimeout(100);
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await expect(page.locator(".history-workspace")).toHaveCount(0);
+  await page.keyboard.press("h");
+  await expect(page.locator(".history-workspace")).toBeFocused();
+});
+
+test("a retained Legal modal keeps focus while Back changes the History detail beneath it", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+  await openHistory(page, IDS.newest);
+  const endpoint = await openEndpointInfo(page);
+  const invoker = endpoint.getByRole("button", { name: "About & legal" });
+  await invoker.click();
+  const legal = page.getByRole("dialog", { name: "About & legal" });
+  const close = legal.getByRole("button", { name: "Close", exact: true });
+  await expect(close).toBeFocused();
+  await page.evaluate(() => {
+    window.location.hash = "/history?panels=endpoint&dialog=legal";
+  });
+  await expect(page.locator(".result-detail")).toHaveCount(0);
+  await expect(close).toBeFocused();
+  await page.evaluate(() => window.history.back());
+  await expect(page.locator(".result-detail")).toBeVisible();
+  await expect(close).toBeFocused();
+  await page.evaluate(() => window.history.back());
+  await expect(legal).toHaveCount(0);
+  await expect(invoker).toBeFocused();
+});
+
+test("a delete completing after History is destroyed cannot reopen its workspace", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1024, height: 768 });
+  await seedHistory(page, [record(IDS.newest, Date.UTC(2026, 7, 28, 12))]);
+  await openHistory(page, IDS.newest);
+  await page.evaluate((storeName) => {
+    const original = Object.getOwnPropertyDescriptor(
+      IDBTransaction.prototype,
+      "oncomplete",
+    )!;
+    Object.defineProperty(IDBTransaction.prototype, "oncomplete", {
+      ...original,
+      set(
+        this: IDBTransaction,
+        listener: ((this: IDBTransaction, event: Event) => void) | null,
+      ) {
+        if (
+          listener &&
+          this.mode === "readwrite" &&
+          this.objectStoreNames.contains(storeName)
+        ) {
+          Object.defineProperty(
+            IDBTransaction.prototype,
+            "oncomplete",
+            original,
+          );
+          original.set!.call(
+            this,
+            function (this: IDBTransaction, event: Event) {
+              (window as unknown as { finishDelete: () => void }).finishDelete =
+                () => listener.call(this, event);
+            },
+          );
+        } else original.set!.call(this, listener);
+      },
+    });
+  }, HISTORY_DB.resultsStore);
+  await page
+    .getByRole("button", { name: "Delete this result", exact: true })
+    .click();
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Delete result", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          typeof (window as unknown as { finishDelete?: () => void })
+            .finishDelete,
+      ),
+    )
+    .toBe("function");
+  await page.locator(".close-history").click();
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+  await page.evaluate(() =>
+    (window as unknown as { finishDelete: () => void }).finishDelete(),
+  );
+  await page.waitForTimeout(100);
+  await expect(page.locator(".history-workspace")).toHaveCount(0);
+  await expect(page.locator(".measurement-stage")).toBeFocused();
+});

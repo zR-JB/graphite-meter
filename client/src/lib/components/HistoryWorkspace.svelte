@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
+  import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { ICON } from "../constants";
   import { HistoryRepository } from "../history/repository";
   import { broadcastHistory, historyChanges } from "../history/changes";
@@ -44,19 +45,20 @@
   let visibleCount = $state(50);
   let renderedAt = $state(Date.now());
   let workspaceWidth = $state(0);
+  let workspace = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
   let detailCloseButton = $state<HTMLButtonElement>();
   let requestedDetailFocus = $state<{
     id: string;
     target: "region" | "close" | "none";
   } | null>(null);
-  let focusedDetailId = $state<string | null>(null);
-  let previousSelectedId = $state<string | null>(null);
+  let focusedDetailId: string | null = null;
+  let previousSelectedId: string | null = null;
   let keyboardActivationId: string | null = null;
   let confirm = $state<
     { kind: "delete"; id: string } | { kind: "clear" } | null
   >(null);
-  let confirmInvoker: HTMLElement | null = null;
+  let confirmInvoker = $state<HTMLElement | null>(null);
   let actionError = $state("");
   let announcement = $state("");
   let loadGeneration = 0;
@@ -201,6 +203,7 @@
 
   async function confirmAction() {
     const action = confirm;
+    const owner = workspace;
     confirm = null;
     if (!action) return;
     actionError = "";
@@ -210,7 +213,7 @@
         records = [];
         malformedCount = 0;
         announcement = "History cleared.";
-        if (selectedId) onNavigate(null);
+        if (owner?.isConnected && selectedId) onNavigate(null);
         const change = { type: "clear" as const, generation };
         broadcastHistory(change);
         window.dispatchEvent(
@@ -222,7 +225,7 @@
         await repository.delete(action.id);
         records = records.filter((record) => record.id !== action.id);
         announcement = "Result deleted.";
-        if (selectedId === action.id) onNavigate(null);
+        if (owner?.isConnected && selectedId === action.id) onNavigate(null);
         broadcastHistory({ type: "delete", id: action.id });
       }
       if (action.kind !== "clear")
@@ -230,16 +233,13 @@
       if (action.kind === "clear") {
         confirmInvoker = null;
         await tick();
-        document
-          .querySelector<HTMLElement>(".history-workspace .close-history")
-          ?.focus({ preventScroll: true });
+        const target = workspace?.querySelector<HTMLElement>(".close-history");
+        if (!hasFocus() && canFocus(target))
+          target.focus({ preventScroll: true });
       }
     } catch {
       actionError = "The local archive could not be changed. Try again.";
-      const invoker = confirmInvoker;
       confirmInvoker = null;
-      await tick();
-      if (invoker?.isConnected) invoker.focus({ preventScroll: true });
     }
   }
 
@@ -249,13 +249,8 @@
   }
 
   function cancelConfirmation() {
-    const invoker = confirmInvoker;
     confirm = null;
     confirmInvoker = null;
-    if (invoker)
-      void tick().then(() => {
-        if (invoker.isConnected) invoker.focus({ preventScroll: true });
-      });
   }
 
   function partial(record: HistoryRecord): boolean {
@@ -383,16 +378,11 @@
     const previous = previousSelectedId;
     previousSelectedId = id;
     if (!previous || id) return;
-    void tick().then(() => {
-      const target =
-        document.querySelector<HTMLElement>(
-          `[data-history-id="${previous}"]`,
-        ) ??
-        document.querySelector<HTMLElement>(
-          ".history-workspace .close-history",
-        );
-      target?.focus();
-    });
+    const target =
+      workspace?.querySelector<HTMLElement>(
+        `[data-history-id="${previous}"]`,
+      ) ?? workspace?.querySelector<HTMLElement>(".close-history");
+    if (!activeModal() && canFocus(target)) target.focus();
   });
 
   $effect(() => {
@@ -411,9 +401,8 @@
     if (!target) return;
     focusedDetailId = id;
     requestedDetailFocus = null;
-    void tick().then(() =>
-      target.focus({ preventScroll: request === "region" && sideInspector }),
-    );
+    if (!activeModal() && canFocus(target))
+      target.focus({ preventScroll: request === "region" && sideInspector });
   });
 
   $effect(() => {
@@ -439,6 +428,7 @@
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
+      loadGeneration++;
       stopChanges();
       window.removeEventListener("graphite-meter-history-changed", refresh);
       window.removeEventListener("focus", refresh);
@@ -451,6 +441,7 @@
 
 <section
   class="history-workspace"
+  bind:this={workspace}
   bind:clientWidth={workspaceWidth}
   aria-labelledby="history-title"
   tabindex="-1"
@@ -740,6 +731,7 @@
 <ConfirmDialog
   open={confirm !== null}
   id="history-confirm"
+  invoker={confirmInvoker}
   title={confirm?.kind === "clear"
     ? "Clear result history?"
     : "Delete this result?"}
