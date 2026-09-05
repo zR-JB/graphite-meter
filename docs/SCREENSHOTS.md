@@ -22,7 +22,7 @@ visible while you adjust the test; on smaller screens, the same settings open as
 ## Know which path you measured
 
 Endpoint information identifies the server and selected paths. Protocol evidence distinguishes
-what the browser observed from what reached the server—useful when a proxy sits between them.
+what the browser observed from what reached the server, which is useful when a proxy sits between them.
 
 <img src="assets/endpoint.png" alt="Endpoint information showing the simulated Frankfurt deployment and independent throughput and latency path evidence" width="1080">
 
@@ -46,6 +46,17 @@ and results form a vertical reading order; additional content remains available 
 <p align="center">
 <img src="assets/mobile.png" alt="Phone viewport showing the completed gauge, test stages, and loaded-latency profiles in dark mode" width="320">
 </p>
+
+## Native terminal client
+
+The Go TUI provides setup controls, live telemetry, and a completed report with receiver throughput,
+latency percentiles, probe timeouts, and paired server timing.
+
+<img src="assets/tui.png" alt="v0.7.0 native terminal client with simulated download, upload, and latency results" width="1080">
+
+This capture renders the current native view's ANSI output with illustrative results and the
+client version set to `0.7.0`. It uses the shipped layout and colors; the terminal frame is simulated.
+[Download and run the native client](../README.md#native-terminal-client).
 
 ## Capture details
 

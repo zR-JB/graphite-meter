@@ -33,14 +33,16 @@ Run setup once per checkout:
 ```sh
 git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
-mise trust
 mise run setup
 ```
 
-Review the repository configuration before trusting it: tasks execute repository
-code. Setup installs locked tools and language dependencies, configures the Git
-hook, and runs `mise run doctor` to detect toolchain drift. Shell activation is
-optional; `mise run` supplies the environment for every task. Use `mise exec --`
+Setup installs locked tools and language dependencies, configures the Git hook,
+and runs `mise run doctor` to detect toolchain drift. The pinned mise version
+automatically trusts the active configuration when `mise run` executes in normal
+mode, so a separate `mise trust` step is unnecessary. If you enable paranoid mode,
+explicit trust is required; see [mise trust](https://mise.jdx.dev/cli/trust.html).
+
+Shell activation is optional; `mise run` supplies the environment for every task. Use `mise exec --`
 for direct commands with the project toolchain, such as `mise exec -- go version`.
 
 `mise prod`, `mise dev` and `mise check` also work interactively. Scripts use
