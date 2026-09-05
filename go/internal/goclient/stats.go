@@ -170,14 +170,16 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 	s.previous, s.hasPrevious = rtt, true
 	s.values = append(s.values, rtt)
 	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
-	if handlingNanos > math.MaxInt64 || handlingNanos > uint64(rtt) {
-		return nil
+	if handlingNanos <= math.MaxInt64 {
+		handling := time.Duration(handlingNanos)
+		if handling <= rtt {
+			s.timingCount++
+			s.timingRawSum += rtt
+			s.handlingSum += handling
+			return new(handling)
+		}
 	}
-	handling := time.Duration(handlingNanos)
-	s.timingCount++
-	s.timingRawSum += rtt
-	s.handlingSum += handling
-	return new(handling)
+	return nil
 }
 
 func (s *latencyStats) snapshot() LatencyStats {
