@@ -113,7 +113,21 @@ configuration, repeatable setup through flags, browser-approved authentication g
 same latency, download, upload, bidirectional, and loaded-latency stages.
 
 The browser and native clients are not identical benchmark targets. They have different runtime
-constraints, buffer policies, percentile implementations, and browser-only presentation features.
+constraints, buffer policies, and browser-only presentation features.
+
+Native latency summaries use received application replies within each measured stage. P50 is the
+midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
+consecutive successful replies in receive order, skipping timeout outcomes and starting a new
+sequence after a reconnect. One reply cannot establish variation; repeated identical replies can
+establish zero variation.
+
+Native probe deadlines are `max(4 * PingInterval, 250ms)`, measured from the client send attempt.
+Replies after that deadline count as probe timeouts, even if the periodic timeout sweep has not
+run. Timeout ratios use only successful replies plus expired probes. At a stage cutoff or channel
+interruption, pending probes whose deadlines have not elapsed are reported as unresolved; local
+send failures are separate. This native cutoff does not add a post-stage drain interval. An empty
+resolved population has no timeout ratio, and timeout-only loaded stages still produce a result.
+These are application probe observations over WebSocket or WebTransport, not TCP/IP packet loss.
 
 ### Server
 

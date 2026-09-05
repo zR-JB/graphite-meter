@@ -57,7 +57,7 @@ type LatencySample struct {
 	Stage     string
 	RTT       time.Duration
 	UnderLoad bool
-	Lost      bool
+	Lost      bool // Compatibility event name: true only for an application probe deadline expiry.
 }
 
 type Result struct {
@@ -72,12 +72,23 @@ type Result struct {
 	Elapsed    time.Duration
 }
 
+// LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
 type LatencyStats struct {
-	Min    time.Duration
-	P50    time.Duration
-	P95    time.Duration
-	Mean   time.Duration
-	Jitter time.Duration
-	Loss   float64
-	Count  int
+	Min, Max, P10, P50, P90, P95, Mean time.Duration
+	Jitter                             time.Duration
+	Count                              int // Successful replies within the measured stage and probe deadline.
+	JitterPairs                        int // Zero means variation is unavailable, not zero.
+	Timeouts                           int
+	Unresolved                         int
+	SendFailures                       int
+	TimeoutAfter                       time.Duration
+}
+
+// TimeoutRatio excludes interrupted/unresolved probes and local send failures; an empty population is unavailable.
+func (s LatencyStats) TimeoutRatio() (float64, bool) {
+	resolved := s.Count + s.Timeouts
+	if resolved == 0 {
+		return 0, false
+	}
+	return float64(s.Timeouts) / float64(resolved), true
 }

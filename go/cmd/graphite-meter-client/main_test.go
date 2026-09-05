@@ -2358,7 +2358,7 @@ func TestLatencyLineHoldsTheLastRoundTripThroughLosses(t *testing.T) {
 		{"no sample yet", goclient.LatencySample{}, 0, "waiting"},
 		{"only losses so far", goclient.LatencySample{}, 2, "timeout"},
 		{"round trip", goclient.LatencySample{RTT: 3 * time.Millisecond}, 0, "3.00 ms"},
-		{"short streak keeps the value", goclient.LatencySample{RTT: 3 * time.Millisecond}, 1, "3.00 ms  1 lost"},
+		{"short streak keeps the value", goclient.LatencySample{RTT: 3 * time.Millisecond}, 1, "3.00 ms  probe timeout ×1"},
 		{"sustained streak reads as timeout", goclient.LatencySample{RTT: 3 * time.Millisecond}, 4, "timeout ×4"},
 	}
 	for _, c := range cases {

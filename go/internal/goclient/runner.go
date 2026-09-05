@@ -447,7 +447,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 	if r.cfg.LoadedLatency {
 		wg.Go(func() {
 			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
-			if err == nil && stats.Count > 0 {
+			if err == nil {
 				outcomes <- transferOutcome{result: Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: duration}, latency: true}
 				return
 			}
@@ -484,7 +484,7 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 		if !outcome.latency {
 			continue
 		}
-		if outcome.result.Latency.Count > 0 {
+		if outcome.err == nil {
 			r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(outcome.result)})
 		}
 	}

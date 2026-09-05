@@ -47,8 +47,8 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if latencyEvents == 0 {
-		t.Error("no non-lost EventLatency samples emitted")
+	if latencyEvents != stats.Count {
+		t.Errorf("returned %d replies but delivered %d events", stats.Count, latencyEvents)
 	}
 }
 
@@ -71,7 +71,7 @@ func newSilentPingServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
+func TestMeasureLatencyRegistersTimeoutsWithoutResponse(t *testing.T) {
 	srv := newSilentPingServer(t)
 	defer srv.Close()
 
@@ -84,7 +84,7 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	// lossAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
+	// timeoutAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
 	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
@@ -92,12 +92,12 @@ func TestMeasureLatencyRegistersLossWithoutResponse(t *testing.T) {
 	if stats.Count != 0 {
 		t.Errorf("Count = %d, want 0 (no responses were ever sent)", stats.Count)
 	}
-	if stats.Loss != 1 {
-		t.Errorf("Loss = %v, want 1 (total loss)", stats.Loss)
+	if timeoutRatio(t, stats) != 1 {
+		t.Errorf("TimeoutRatio = %v, want 1 (all resolved probes expired)", timeoutRatio(t, stats))
 	}
 }
 
-func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
+func newIntermittentTimeoutPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -128,9 +128,9 @@ func newIntermittentLossPingServer(t *testing.T, dropEvery uint32) *httptest.Ser
 	return httptest.NewServer(mux)
 }
 
-func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
+func TestMeasureLatencyMixedTimeoutsComputeRatioAndRTT(t *testing.T) {
 	const dropEvery = 3 // every 3rd ping (by ID) goes unanswered
-	srv := newIntermittentLossPingServer(t, dropEvery)
+	srv := newIntermittentTimeoutPingServer(t, dropEvery)
 	defer srv.Close()
 
 	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
@@ -147,16 +147,16 @@ func TestMeasureLatencyMixedLossComputesRatioAndRTT(t *testing.T) {
 		t.Fatalf("measureLatency: %v", err)
 	}
 	if stats.Count == 0 {
-		t.Fatal("want some successful RTT samples in a mixed-loss run")
+		t.Fatal("want some successful RTT samples in a mixed-outcome run")
 	}
 	if stats.Min <= 0 || stats.Mean <= 0 || stats.P50 <= 0 {
 		t.Errorf("want positive RTT stats from the responded pings, got %+v", stats)
 	}
-	if stats.Loss <= 0 || stats.Loss >= 1 {
-		t.Errorf("Loss = %v, want a partial ratio strictly between 0 and 1 for a mixed hit/miss sequence", stats.Loss)
+	if timeoutRatio(t, stats) <= 0 || timeoutRatio(t, stats) >= 1 {
+		t.Errorf("TimeoutRatio = %v, want a partial ratio strictly between 0 and 1 for a mixed hit/miss sequence", timeoutRatio(t, stats))
 	}
-	if stats.Loss < 0.10 || stats.Loss > 0.55 {
-		t.Errorf("Loss = %v, want roughly 1/%d given the drop pattern", stats.Loss, dropEvery)
+	if timeoutRatio(t, stats) < 0.10 || timeoutRatio(t, stats) > 0.55 {
+		t.Errorf("TimeoutRatio = %v, want roughly 1/%d given the drop pattern", timeoutRatio(t, stats), dropEvery)
 	}
 }
 
@@ -215,8 +215,8 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	if stats.Count <= dropAfter {
 		t.Errorf("Count = %d, want more than the %d samples one bus answers before dropping", stats.Count, dropAfter)
 	}
-	if stats.Loss == 1 {
-		t.Errorf("Loss = %v, want the redialled bus's answers to count", stats.Loss)
+	if timeoutRatio(t, stats) == 1 {
+		t.Errorf("TimeoutRatio = %v, want the redialled bus's answers to count", timeoutRatio(t, stats))
 	}
 }
 
@@ -278,5 +278,81 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 	}
 	if got := requests.Load(); got != 1 {
 		t.Fatalf("permanent auth refusal made %d requests, want one without retries", got)
+	}
+}
+
+func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
+	now := time.Now()
+	var stats latencyStats
+	stats.add(10*time.Millisecond, false)
+	pending := map[uint32]time.Time{1: now.Add(-time.Second), 2: now.Add(-250 * time.Millisecond), 3: now.Add(-time.Millisecond)}
+	stats.closePending(pending, now, 250*time.Millisecond)
+	stats.add(100*time.Millisecond, false)
+	got := stats.snapshot()
+	if len(pending) != 0 || got.Timeouts != 2 || got.Unresolved != 1 || got.JitterPairs != 0 {
+		t.Fatalf("cutoff summary: %+v, pending=%v", got, pending)
+	}
+}
+
+func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty(t *testing.T) {
+	srv := newSilentPingServer(t)
+	defer srv.Close()
+	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+	start := make(chan struct{})
+	close(start)
+	stats, err := r.measureLatency(t.Context(), "latency", false, 80*time.Millisecond, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Count != 0 || stats.Timeouts != 0 || stats.Unresolved == 0 || stats.TimeoutAfter != 250*time.Millisecond {
+		t.Fatalf("short window: %+v", stats)
+	}
+	if _, ok := stats.TimeoutRatio(); ok {
+		t.Fatal("unresolved probes manufactured a 0% timeout observation")
+	}
+}
+
+func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+		if err != nil {
+			return
+		}
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		defer conn.CloseNow()
+		for {
+			_, msg, err := conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			frame, err := wire.Decode(string(msg))
+			if err != nil || frame.Op != wire.OpPING {
+				continue
+			}
+			go func() {
+				timer := time.NewTimer(265 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return
+				case <-timer.C:
+					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: frame.ID})))
+				}
+			}()
+		}
+	}))
+	defer srv.Close()
+	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
+	attachTestLatencyTarget(r, srv.URL)
+	start := make(chan struct{})
+	close(start)
+	stats, err := r.measureLatency(t.Context(), "latency", false, 600*time.Millisecond, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 {
+		t.Fatalf("late replies became RTT observations: %+v", stats)
 	}
 }

@@ -507,7 +507,7 @@ func (m model) resultsView(w int) string {
 				labelStyle.Render("latency"),
 				valueStyle.Render(fmtMs(r.Latency.P50)),
 				valueStyle.Render(fmtMs(r.Latency.P95)),
-				mutedStyle.Render(fmt.Sprintf("jitter %s  loss %.1f%%", fmtMs(r.Latency.Jitter), r.Latency.Loss*100)),
+				mutedStyle.Render(latencyOutcomeSummary(r.Latency)),
 			))
 			continue
 		}
@@ -526,9 +526,9 @@ func (m model) finalReport() string {
 	return m.resultsView(m.innerWidth())
 }
 
-// isLatencyResult reports whether a result carries latency percentiles rather than throughput figures.
+// isLatencyResult includes directionless timeout-only and unresolved-only latency summaries.
 func isLatencyResult(r goclient.Result) bool {
-	return r.Latency.Count > 0 || r.Stage == "latency"
+	return r.Direction == ""
 }
 
 // helpView is the footer. The model is the key map it renders, so the listing follows whichever screen is on show.

@@ -905,3 +905,35 @@ func TestStageFailedKeepsABoundExpiryAndDropsACancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
+	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
+		t.Run(duration.String(), func(t *testing.T) {
+			transfer := newBytesEchoDownloadServer()
+			defer transfer.Close()
+			ping := newSilentPingServer(t)
+			defer ping.Close()
+			cfg := Config{BaseURL: transfer.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
+			var results []Result
+			r := &runner{cfg: cfg, streams: streamCounts{down: 1}, http: transfer.Client(), emit: func(e Event) {
+				if e.Kind == EventResult {
+					results = append(results, *e.Result)
+				}
+			}}
+			attachTestLatencyTarget(r, ping.URL)
+			if err := r.runTransferStage(t.Context(), "download", []Direction{Down}, duration); err != nil {
+				t.Fatal(err)
+			}
+			if len(results) != 2 || results[0].Direction != "" || results[1].Direction != Down {
+				t.Fatalf("loaded results: %+v", results)
+			}
+			stats := results[0].Latency
+			if stats.Count != 0 || stats.Unresolved == 0 {
+				t.Fatalf("missing unresolved population: %+v", stats)
+			}
+			if duration > stats.TimeoutAfter && stats.Timeouts == 0 {
+				t.Fatalf("missing timeout population: %+v", stats)
+			}
+		})
+	}
+}
