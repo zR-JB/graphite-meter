@@ -23,3 +23,13 @@ func BenchmarkDecodePONG(b *testing.B) {
 		}
 	}
 }
+
+var encodedFrame string
+
+func BenchmarkEncodePONG(b *testing.B) {
+	frame := Frame{Op: OpPONG, ID: 4294967295, Nanos: 9223372036854775807}
+	b.ReportAllocs()
+	for b.Loop() {
+		encodedFrame = Encode(frame)
+	}
+}

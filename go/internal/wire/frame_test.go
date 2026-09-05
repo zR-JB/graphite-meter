@@ -99,9 +99,9 @@ func render(f Frame) string {
 	case OpBYE:
 		return "op=BYE"
 	case OpPING:
-		return "op=PING;id=" + u32(f.ID)
+		return "op=PING;id=" + strconv.FormatUint(uint64(f.ID), 10)
 	case OpPONG:
-		return "op=PONG;id=" + u32(f.ID) + ";nanos=" + u64(f.Nanos)
+		return "op=PONG;id=" + strconv.FormatUint(uint64(f.ID), 10) + ";nanos=" + strconv.FormatUint(f.Nanos, 10)
 	case OpHI:
 		return "op=HI;proto=" + f.Proto
 	case OpERR:

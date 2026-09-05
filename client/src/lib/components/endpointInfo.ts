@@ -40,7 +40,7 @@ interface ServerLoad {
 /** Occupancy past this share means concurrent tests are contending for the bandwidth and CPU this run is measuring. */
 const BUSY_SHARE = 0.5;
 
-/* A server with no measurement slots configured has no occupancy: the share is not a number, so it can be neither. */
+// Without a positive slot limit, occupancy has no denominator.
 export function serverLoadSummary(load: ServerLoad | undefined): string | null {
   if (!load || load.max <= 0) return null;
   const slots = `${load.active} of ${load.max} slots`;

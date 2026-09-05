@@ -67,10 +67,9 @@ const isMeasuredPhase = (phase: Phase): phase is TransportRole =>
   phase === "latency" || isTransferPhase(phase);
 
 export interface CoreHost {
-  // Rates drive presentation/stability; bytesDelta and durationSec remain authoritative.
+  // Receiver bytes and elapsed time drive both result accounting and presentation.
   ingestThroughput(
     dir: FlowDirection,
-    liveBytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative?: boolean,
@@ -564,7 +563,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   /* ================= SAMPLE INGEST (CoreHost) ================= */
   ingestThroughput(
     dir: FlowDirection,
-    liveBytesPerSec: number,
     bytesDelta: number,
     durationSec: number,
     serverAuthoritative = false,
@@ -581,7 +579,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#accum.pushThroughput(
       phase,
       dir,
-      liveBytesPerSec,
       bytesDelta,
       durationSec,
       serverAuthoritative,
@@ -679,7 +676,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (wallNow - this.#lastLatencySummaryAt >= 1_000)
       this.#emitLatencySummary(phase);
     if (observation.rttEligible === false) return;
-    if (phase === "latency" && this.#updateStability()) this.#tick();
+    if (
+      phase === "latency" &&
+      wallNow - this.#lastStabilityAt >= STABILITY_CADENCE_MS &&
+      this.#updateStability()
+    )
+      this.#tick();
     for (const bucket of this.#latencyBuckets.observe(
       observedT,
       observation.rttMs,

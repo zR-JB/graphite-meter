@@ -2,8 +2,6 @@ import { test, expect } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-// That XSS reads the CSRF token, mints a measurement grant, and forges same-origin requests: account compromise.
-
 // Expressions vetted as build-time SVG markup. An entry asserts the value never carries anything from the network.
 const ALLOWED = new Set([
   "ICON.bidirectional",

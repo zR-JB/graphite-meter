@@ -1,4 +1,4 @@
-import { test, expect, beforeEach, afterEach } from "bun:test";
+import { test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   RunnerCore,
   STAGE_RECOVERY_BUDGET_MS,
@@ -16,6 +16,7 @@ import type {
 } from "./contract";
 import { latencyPresentationBucketMs } from "./latencyBuckets";
 import { fixedPingIntervalMs } from "./pingCadence";
+import { RunAccumulator } from "./evaluation";
 import { DEFAULT_CONFIG } from "../state/defaults";
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
@@ -98,12 +99,12 @@ class FakeBackend implements RunnerBackend {
   onStageEnd(activity: PhaseActivity): void | Promise<void> {
     this.calls.push(`end:${activity.stage}`);
     if (this.options.flush === "sync" && activity.stage === "download")
-      this.host.ingestThroughput("down", 1000, 100, 0.1);
+      this.host.ingestThroughput("down", 100, 0.1);
     if (this.options.flush !== "async") return;
     return new Promise(
       (resolve) =>
         (this.flush = () => {
-          this.host.ingestThroughput("down", 1000, 100, 0.1);
+          this.host.ingestThroughput("down", 100, 0.1);
           resolve();
         }),
     );
@@ -258,12 +259,10 @@ async function startStableDownload(
 function feedFlatThroughput(
   core: RunnerCore,
   count: number,
-  bytesPerSec = 1_000,
   bytes = 100,
   seconds = 0.1,
 ): void {
-  for (let i = 0; i < count; i++)
-    core.ingestThroughput("down", bytesPerSec, bytes, seconds);
+  for (let i = 0; i < count; i++) core.ingestThroughput("down", bytes, seconds);
 }
 function throughputContinuityIds(events: RunnerEvent[]): number[] {
   return events.flatMap((event) =>
@@ -335,7 +334,7 @@ test("a failed transfer preserves qualifying evidence and continues later stages
     stages: { download: true, upload: true },
     duration: { downloadMs: 1_000, uploadMs: 1_000 },
   });
-  backend.host.ingestThroughput("down", 1_000, 900, 0.9);
+  backend.host.ingestThroughput("down", 900, 0.9);
   backend.host.failStage("download", "connection-lost", "dropped");
   advance(0);
   const stageResult = typedEvents(events, "stageResult").find(
@@ -369,7 +368,7 @@ test("failed-stage shutdown reports discarded probe accounting before the partia
     },
     new InterruptedBackend(),
   );
-  core.ingestThroughput("down", 1_000, 900, 0.9);
+  core.ingestThroughput("down", 900, 0.9);
   core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow });
   core.failStage(
     "download",
@@ -408,8 +407,8 @@ test("a terminal runner error retains previously reduced bidirectional lanes", a
     stages: { download: false, bidirectional: true },
     duration: { bidirectionalMs: 1_000 },
   });
-  core.ingestThroughput("down", 1_000, 800, 0.8);
-  core.ingestThroughput("up", 1_000, 799, 0.799);
+  core.ingestThroughput("down", 800, 0.8);
+  core.ingestThroughput("up", 799, 0.799);
   core.failStage("bidirectional", "connection-lost", "downstream lost", "down");
   core.fail("internal-error", "later terminal error");
   const error = typedEvents(events, "error")[0];
@@ -428,18 +427,18 @@ test("throughput stays isolated across transfer warmups", async () => {
     },
   });
   advance(100);
-  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+  core.ingestThroughput("down", 2_000_000, 0.1);
   advance(100);
   expect(core.phase).toBe("warmup");
-  core.ingestThroughput("down", 20_000_000, 2_000_000, 0.1);
+  core.ingestThroughput("down", 2_000_000, 0.1);
   advance(100);
-  core.ingestThroughput("up", 10_000_000, 1_000_000, 0.1);
+  core.ingestThroughput("up", 1_000_000, 0.1);
   advance(100);
   expect(core.phase).toBe("warmup");
-  core.ingestThroughput("up", 10_000_000, 1_000_000, 0.1);
+  core.ingestThroughput("up", 1_000_000, 0.1);
   advance(100);
-  core.ingestThroughput("down", 7_000_000, 700_000, 0.1);
-  core.ingestThroughput("up", 3_000_000, 300_000, 0.1);
+  core.ingestThroughput("down", 700_000, 0.1);
+  core.ingestThroughput("up", 300_000, 0.1);
   const samples = eventSamples(events, "throughput");
   expect(samples).toHaveLength(4);
   expect(
@@ -777,9 +776,9 @@ test("a real sample arriving mid-stall auto-resumes", async () => {
   const { core, events } = await startCore({ duration: { downloadMs: 10000 } });
   core.stall({ reason: "connection-lost" });
   expect(events.filter((e) => e.type === "stall").length).toBe(1);
-  core.ingestThroughput("down", 0, 0, 0.1);
+  core.ingestThroughput("down", 0, 0.1);
   expect(hasEvent(events, "resume")).toBe(false);
-  core.ingestThroughput("down", 1000, 100, 0.1);
+  core.ingestThroughput("down", 100, 0.1);
   expect(hasEvent(events, "resume")).toBe(true);
 });
 
@@ -789,7 +788,7 @@ test("a healthy sibling's bytes do not resume a stalled bidirectional stage", as
     duration: { bidirectionalMs: 60_000 },
   });
   core.stall({ reason: "connection-lost" });
-  core.ingestThroughput("down", 1000, 100, 0.1, false, false);
+  core.ingestThroughput("down", 100, 0.1, false, false);
   expect(hasEvent(events, "resume")).toBe(false);
   advance(20_001);
   expect(core.phase).toBe("error");
@@ -800,12 +799,12 @@ test("accounting windows cannot overwrite the shared stall presentation", async 
     duration: { downloadMs: 10_000 },
   });
   advance(10);
-  core.ingestThroughput("down", 1_000, 100, 0.1);
+  core.ingestThroughput("down", 100, 0.1);
   core.stall({ reason: "connection-lost" });
   advance(400);
   const before = events.filter((event) => event.type === "throughput");
   expect(before.at(-1)?.sample.bytesPerSec).toBe(500);
-  core.ingestThroughput("down", 0, 0, 0.1, false, false);
+  core.ingestThroughput("down", 0, 0.1, false, false);
   const after = events.filter((event) => event.type === "throughput");
   expect(after).toHaveLength(before.length);
   expect(after.at(-1)?.sample.bytesPerSec).toBe(500);
@@ -818,7 +817,7 @@ test("a non-liveness throughput sample remains in the result", async () => {
   });
   const complete = () => completeEvent(events);
   core.stall({ reason: "connection-lost" });
-  core.ingestThroughput("down", 1000, 100, 0.1, false, false);
+  core.ingestThroughput("down", 100, 0.1, false, false);
   core.resume();
   advance(100);
   expect(complete()?.result.bidirectional?.down?.totalBytes).toBe(100);
@@ -853,6 +852,68 @@ test("the runner owns recovery request lifetime", async () => {
   expect(backend.recoveries[0].signal.aborted).toBe(false);
   core.resume();
   expect(backend.recoveries[0].signal.aborted).toBe(true);
+});
+
+test("reply-driven latency bounds confidence work while retaining every measured outcome", async () => {
+  const confidence = spyOn(RunAccumulator.prototype, "confidence");
+  try {
+    const { core, events } = await startCore({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 1_000, downloadMs: 0 },
+    });
+    advance(10);
+    const initialCalls = confidence.mock.calls.length;
+    for (let i = 0; i < 5_000; i++) {
+      core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
+    }
+    expect(confidence.mock.calls.length - initialCalls).toBe(1);
+    advance(100);
+    core.ingestLatency({ rttMs: 40, lost: false, observedAtMs: fakeNow });
+    expect(confidence.mock.calls.length - initialCalls).toBe(2);
+    expect(typedEvents(events, "stability").at(-1)?.snapshot.sampleCount).toBe(
+      5_001,
+    );
+    advance(890);
+    expectComplete(events, (result) => {
+      expect(result.latencyByStage.latency).toMatchObject({
+        probeCount: 5_001,
+        timeoutCount: 0,
+        unresolvedCount: 0,
+        p50Ms: 20,
+      });
+      expect(result.latencyByStage.latency?.meanMs).toBeCloseTo(
+        100_040 / 5_001,
+      );
+    });
+  } finally {
+    confidence.mockRestore();
+  }
+});
+
+test("latency confirmation checks outcomes received inside the confidence cadence", async () => {
+  const confidence = spyOn(RunAccumulator.prototype, "confidence");
+  try {
+    const { core } = await startCore({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 1_000, downloadMs: 0 },
+      adaptive: { enabled: true, minLatencySamples: 8, confirmationMs: 50 },
+    });
+    advance(10);
+    for (let i = 0; i < 50; i++)
+      core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
+    advance(100);
+    core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
+    const callsWhenArmed = confidence.mock.calls.length;
+    fakeNow += 25;
+    for (let i = 0; i < 50; i++)
+      core.ingestLatency({ rttMs: 20, lost: true, observedAtMs: fakeNow });
+    expect(confidence.mock.calls).toHaveLength(callsWhenArmed);
+    advance(25);
+    expect(confidence.mock.calls).toHaveLength(callsWhenArmed + 1);
+    expect(core.phase).toBe("latency");
+  } finally {
+    confidence.mockRestore();
+  }
 });
 
 test("default latency policy can confirm early at the fixed slow cadence", async () => {
@@ -915,7 +976,7 @@ test("a throughput drop during confirmation revokes early completion", async () 
   advance(10);
   feedFlatThroughput(core, 15);
   for (let i = 0; i < 4; i++)
-    core.ingestThroughput("down", 0, 0, 0.25, false, false);
+    core.ingestThroughput("down", 0, 0.25, false, false);
   advance(cfg.adaptive.confirmationMs);
   expect(core.phase).toBe("download");
 });
@@ -926,7 +987,7 @@ test("a confirmed throughput regime change revokes early completion without brea
   });
   advance(10);
   feedFlatThroughput(core, 30);
-  feedFlatThroughput(core, 20, 400, 40);
+  feedFlatThroughput(core, 20, 40);
   const continuities = throughputContinuityIds(events);
   expect(new Set(continuities).size).toBe(1);
   advance(1_000);
@@ -936,7 +997,7 @@ test("a confirmed throughput regime change revokes early completion without brea
 test("a confirmed upward throughput regime change preserves chart continuity", async () => {
   const { core, events } = await startDownload(10_000);
   advance(10);
-  feedFlatThroughput(core, 30, 400, 40);
+  feedFlatThroughput(core, 30, 40);
   feedFlatThroughput(core, 20);
   const continuities = throughputContinuityIds(events);
   expect(new Set(continuities).size).toBe(1);
@@ -970,7 +1031,7 @@ test("adaptive completion off publishes the whole phase even when it ends stable
     adaptive: { enabled: false },
   });
   for (let i = 0; i < 10; i++)
-    core.ingestThroughput("down", 1000, i === 0 ? 1 : 100, 0.1);
+    core.ingestThroughput("down", i === 0 ? 1 : 100, 0.1);
   advance(500);
   expectComplete(events, (complete) => {
     const result = complete.download!;
@@ -986,11 +1047,11 @@ test("adaptive enabled does not select a stable tail when the nominal phase wins
     confirmationMs: 10_000,
   });
   for (let i = 0; i < 40; i++) {
-    core.ingestThroughput("down", 100, 10, 0.1);
+    core.ingestThroughput("down", 10, 0.1);
     advance(100);
   }
   for (let i = 0; i < 60; i++) {
-    core.ingestThroughput("down", 1_000, 100, 0.1);
+    core.ingestThroughput("down", 100, 0.1);
     advance(100);
   }
   const stability = events.filter((event) => event.type === "stability").at(-1);
@@ -1015,7 +1076,7 @@ test("adaptive early-finish never arms on a noisy (monotonic ramp) feed — the 
   for (let i = 0; i < N; i++) {
     advance(100);
     const raw = 100 + i * 100;
-    core.ingestThroughput("down", raw, raw * 0.1, 0.1);
+    core.ingestThroughput("down", raw * 0.1, 0.1);
     if (i < N - 1) expect(core.phase).toBe("download"); // never armed early
   }
   expect(core.phase).toBe("complete");
@@ -1086,7 +1147,7 @@ test("raw samples reduce at source cadence while presentation snapshots are capp
   const { core, events } = await startCore();
   for (let i = 0; i < 50; i++) {
     fakeNow += 20;
-    core.ingestThroughput("down", 1000, 20, 0.02);
+    core.ingestThroughput("down", 20, 0.02);
   }
   expect(typedEvents(events, "throughput")).toHaveLength(17);
   advance(1000);
@@ -1096,23 +1157,21 @@ test("raw samples reduce at source cadence while presentation snapshots are capp
   ).toBe(1000);
 });
 
-test("presentation derives from exact bytes and time, not backend instantaneous diagnostics", async () => {
+test("presentation derives from receiver bytes and intervals while retaining exact totals", async () => {
   const { core, events } = await startCore({
     duration: { downloadMs: 100000 },
   });
   const DT = 200;
-  const RAW = 1000;
   const N = 12;
   const DELTA = 50;
-  core.ingestThroughput("down", 0, 0, 0.1);
+  core.ingestThroughput("down", 0, 0.1);
   for (let i = 0; i < N; i++) {
     fakeNow += DT;
-    core.ingestThroughput("down", RAW, DELTA, 0.1);
+    core.ingestThroughput("down", DELTA, 0.1);
   }
   const throughputSamples = typedEvents(events, "throughput");
   const lastSample = throughputSamples.at(-1)!;
   expect(lastSample.sample.bytesPerSec).toBeCloseTo(500, 6);
-  expect(lastSample.sample.bytesPerSec).not.toBe(RAW);
   expect(lastSample.sample.bytesCumulative).toBe(N * DELTA);
   advance(1_000_000);
   core.resume();

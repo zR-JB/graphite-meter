@@ -46,7 +46,6 @@ test("occupancy reads as slots and cautions only past half", () => {
     expect(serverLoadSummary(pool)).toBe(expected);
 });
 
-// A server with no measurement slots configured is neither idle nor busy: the ratio is not a number, so every.
 test("a server with no slots configured reports no occupancy", () => {
   expect(serverLoadSummary({ active: 0, max: 0 })).toBeNull();
   expect(serverLoadSummary(undefined)).toBeNull();

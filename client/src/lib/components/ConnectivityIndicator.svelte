@@ -16,8 +16,6 @@
   const CSS_WIDTH = 36;
   const CSS_HEIGHT = 16;
   const FALLBACK_COLOR = "#888";
-  // presentation keeps animating while a render returns true.
-  const PARKED = false;
 
   let canvasEl = $state<HTMLCanvasElement>();
   let canvasPresentation: PresentationHandle;
@@ -41,9 +39,9 @@
   // A one-shot repaint, re-armed by invalidate().
   function draw(): boolean {
     const canvas = canvasEl;
-    if (!canvas) return PARKED;
+    if (!canvas) return false;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return PARKED;
+    if (!ctx) return false;
     const dpr = canvasPixelRatio();
     const deviceWidth = Math.round(CSS_WIDTH * dpr);
     const deviceHeight = Math.round(CSS_HEIGHT * dpr);
@@ -55,7 +53,7 @@
     ctx.clearRect(0, 0, CSS_WIDTH, CSS_HEIGHT);
 
     const samples = spark;
-    if (samples.length < 2) return PARKED;
+    if (samples.length < 2) return false;
     const min = Math.min(...samples);
     const max = Math.max(...samples);
     const range = max - min || 1;
@@ -71,7 +69,7 @@
       else ctx.moveTo(x, y);
     });
     ctx.stroke();
-    return PARKED;
+    return false;
   }
 
   $effect(() => {

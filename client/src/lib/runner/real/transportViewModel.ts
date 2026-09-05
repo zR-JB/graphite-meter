@@ -25,7 +25,7 @@ const DISCOVERY_PENDING = "Checking server transports…";
 function noBrowserWebTransport(): string {
   return webTransportGap() === "insecure-page"
     ? "Needs a secure page: browsers offer WebTransport over HTTPS only — reopen this page on its https:// address."
-    : "This browser has no WebTransport API. Chromium and Firefox have it; Safari does not.";
+    : "WebTransport is unavailable in this browser.";
 }
 
 function automaticDetail(

@@ -485,11 +485,6 @@ func (p *uploadProgress) current() (io.ReadCloser, chan struct{}) {
 	return p.body, p.done
 }
 
-func (p *uploadProgress) currentDone() chan struct{} {
-	_, done := p.current()
-	return done
-}
-
 func (p *uploadProgress) closeBody() {
 	body, _ := p.current()
 	if body != nil {

@@ -37,10 +37,8 @@ test("chart axes and time ticks are DOM labels anchored inside the canvas layout
 });
 test("pinch zoom raises canvas resolution without changing layout", async ({
   page,
-  browserName,
   context,
 }) => {
-  test.skip(browserName !== "chromium", "CDP page scale is Chromium-only");
   await openApp(page);
   const ratios = () =>
     page.locator("canvas").evaluateAll((canvases) =>

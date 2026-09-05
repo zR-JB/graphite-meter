@@ -44,10 +44,6 @@ const TARGET_POST_MS = 500;
 /** Smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 
-/* How the POST body reaches fetch. */
-type UploadBody = "blob" | "arrayBuffer";
-const UPLOAD_BODY: UploadBody = "blob";
-
 /* The POST target is about ACCURACY: request/response turnaround sits in server elapsed time. */
 export function nextUploadBytes(
   prevBytes: number,
@@ -90,9 +86,7 @@ export function recoverableStatus(status: number): boolean {
 }
 
 /* The reused incompressible pool, built on first start. */
-let pool: Blob | Uint8Array<ArrayBuffer> | null = null;
-/** Byte length of the pool as actually built. */
-let poolBytes = 0;
+let pool: Blob | null = null;
 /** Per-lane pool size to build, device-bounded so a phone cannot OOM. Also the sizer's upper clamp. */
 let poolTargetBytes = UPLOAD_TOTAL_POOL_BYTES;
 /* Bytes the NEXT POST sends, the closed-loop variable. */
@@ -116,40 +110,16 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
 
 /* Build the reused pool by repeating one filled block up to poolTargetBytes. */
 function buildPool(): void {
-  const wantBlob = UPLOAD_BODY === "blob";
-  if (
-    pool &&
-    poolBytes === poolTargetBytes &&
-    pool instanceof Blob === wantBlob
-  )
-    return;
+  if (pool?.size === poolTargetBytes) return;
   const block = incompressibleBlock();
-  if (wantBlob) {
-    const parts: BlobPart[] = [];
-    let remaining = poolTargetBytes;
-    while (remaining > 0) {
-      const take = Math.min(remaining, block.byteLength);
-      parts.push(take === block.byteLength ? block : block.subarray(0, take));
-      remaining -= take;
-    }
-    pool = new Blob(parts, { type: "application/octet-stream" });
-  } else {
-    const bytes = new Uint8Array(new ArrayBuffer(poolTargetBytes));
-    for (let off = 0; off < bytes.length; off += block.byteLength)
-      bytes.set(
-        block.subarray(0, Math.min(block.byteLength, bytes.length - off)),
-        off,
-      );
-    pool = bytes;
+  const parts: BlobPart[] = [];
+  let remaining = poolTargetBytes;
+  while (remaining > 0) {
+    const take = Math.min(remaining, block.byteLength);
+    parts.push(take === block.byteLength ? block : block.subarray(0, take));
+    remaining -= take;
   }
-  poolBytes = poolTargetBytes;
-}
-
-/* A Blob slice is a view fetch reads through; a byte view is copied per POST. */
-function bodyFor(sentBytes: number): BodyInit {
-  return pool instanceof Blob
-    ? pool.slice(0, sentBytes)
-    : pool!.subarray(0, sentBytes);
+  pool = new Blob(parts, { type: "application/octet-stream" });
 }
 
 /* Release the tiny JSON echo so the keep-alive connection serves the next POST: an unread body pins it and stalls. */
@@ -161,12 +131,12 @@ async function drainForKeepAlive(res: Response): Promise<void> {
   }
 }
 
-/* Mirrors download-worker.ts's re-fetch loop, and a network error ends the lane (RealBackend restarts it). */
+/* Keep posting until the worker is terminated or a failure returns control to the runner. */
 async function run(url: string): Promise<void> {
   try {
     buildPool();
   } catch (err) {
-    // Left to reject, the promise takes no worker `error` event with it — unhandled rejections do not reach.
+    // Report allocation failure explicitly; an unhandled rejection does not reach the owner’s worker error handler.
     post({
       type: "error",
       recoverable: true,
@@ -189,7 +159,7 @@ async function run(url: string): Promise<void> {
     try {
       const res = await fetch(url, {
         method: "POST",
-        body: bodyFor(sentBytes),
+        body: pool.slice(0, sentBytes),
         cache: "no-store",
         headers: { ...headers, "Content-Type": "application/octet-stream" },
         credentials,
@@ -225,7 +195,7 @@ async function run(url: string): Promise<void> {
         poolTargetBytes,
       ));
     } catch (err) {
-      // A POST that failed on an expired session is an auth failure, not a transport one, so the session is.
+      // Check whether the failed POST followed session expiry before classifying it as a transport error.
       if (
         credentials === "include" &&
         (await sessionAuthenticationRequired(self.location.origin))

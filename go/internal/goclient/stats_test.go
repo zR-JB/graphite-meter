@@ -34,47 +34,10 @@ func TestPercentile(t *testing.T) {
 	})
 
 	t.Run("midpoint median", func(t *testing.T) {
-		// 4 samples: pos = 0.5*3 = 1.5 -> lo=1, hi=2, frac=0.5 interpolate xs[1]=20ms and xs[2]=30ms -> 25ms
 		xs := []time.Duration{ms(10), ms(20), ms(30), ms(40)}
 		want := ms(25)
 		if got := median(xs); got != want {
-			t.Errorf("percentile(4 samples, 0.5) = %v, want %v", got, want)
-		}
-	})
-}
-
-func TestRateStatsAdd(t *testing.T) {
-	t.Run("ignores non-positive values", func(t *testing.T) {
-		var s rateStats
-		s.add(0)
-		s.add(-5)
-		if len(s.samples) != 0 {
-			t.Errorf("samples = %v, want empty", s.samples)
-		}
-		if s.peak != 0 {
-			t.Errorf("peak = %v, want 0", s.peak)
-		}
-	})
-
-	t.Run("tracks running peak", func(t *testing.T) {
-		var s rateStats
-		s.add(5)
-		s.add(3)
-		s.add(10)
-		s.add(1)
-		if s.peak != 10 {
-			t.Errorf("peak = %v, want 10", s.peak)
-		}
-		if len(s.samples) != 4 {
-			t.Errorf("samples len = %d, want 4", len(s.samples))
-		}
-	})
-
-	t.Run("window is authoritative", func(t *testing.T) {
-		var s rateStats
-		s.setWindow(300, 2*time.Second)
-		if s.total != 300 || s.elapsed != 2*time.Second {
-			t.Errorf("window = (%v, %v), want (300, 2s)", s.total, s.elapsed)
+			t.Errorf("median(4 samples) = %v, want %v", got, want)
 		}
 	})
 }
@@ -97,8 +60,10 @@ func TestRateStatsResult(t *testing.T) {
 	t.Run("with samples", func(t *testing.T) {
 		var s rateStats
 		s.add(10)
-		s.add(20)
+		s.add(0)
+		s.add(-5)
 		s.add(30)
+		s.add(20)
 		s.setWindow(300, 2*time.Second)
 		r := s.result("upload", Up, false)
 		if r.Stage != "upload" {
@@ -127,7 +92,7 @@ func TestRateStatsResult(t *testing.T) {
 		}
 	})
 
-	t.Run("long samples are weighted by time", func(t *testing.T) {
+	t.Run("sample values do not define the window mean", func(t *testing.T) {
 		var s rateStats
 		s.add(100)
 		s.add(10)
@@ -192,10 +157,6 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 
 		got := s.snapshot()
 
-		sorted := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond, 40 * time.Millisecond}
-		wantP50 := median(sorted)
-		wantP95 := percentile(sorted, 0.95)
-
 		if got.Min != 10*time.Millisecond {
 			t.Errorf("Min = %v, want 10ms", got.Min)
 		}
@@ -205,11 +166,11 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 		if got.Jitter != 70*time.Millisecond/3 {
 			t.Errorf("Jitter = %v, want 70ms/3 (receive-order variation)", got.Jitter)
 		}
-		if got.P50 != wantP50 {
-			t.Errorf("P50 = %v, want %v (via percentile)", got.P50, wantP50)
+		if got.P50 != 25*time.Millisecond {
+			t.Errorf("P50 = %v, want 25ms", got.P50)
 		}
-		if got.P95 != wantP95 {
-			t.Errorf("P95 = %v, want %v (via percentile)", got.P95, wantP95)
+		if got.P95 != 40*time.Millisecond {
+			t.Errorf("P95 = %v, want 40ms", got.P95)
 		}
 		if got.Count != 4 {
 			t.Errorf("Count = %v, want 4", got.Count)

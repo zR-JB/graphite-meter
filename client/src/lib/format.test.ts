@@ -4,8 +4,6 @@ import {
   fmtSpeed,
   rateScaleIndex,
   rateValueAt,
-  niceCeil,
-  quantile,
   niceStep,
   niceDomain,
   chartThroughputScale,
@@ -143,33 +141,6 @@ test("rateValueAt: converts bytes/s at a scaled tier", () => {
 
 test("rateValueAt: converts bits/s (8x bytes) at a scaled tier", () => {
   expect(rateValueAt(125, "base10", "bits", 1)).toBe(1);
-});
-
-test("niceCeil: passes an already-nice value through unchanged", () => {
-  expect(niceCeil(50)).toBe(50);
-});
-
-test("niceCeil: rounds an awkward value up to the next 1-2-5 rung", () => {
-  expect(niceCeil(73)).toBe(100);
-});
-
-test("niceCeil: non-positive input floors at 1", () => {
-  expect(niceCeil(0)).toBe(1);
-  expect(niceCeil(-5)).toBe(1);
-});
-
-test("quantile: empty input has no quantile", () => {
-  expect(quantile([], 0.5)).toBeNull();
-});
-
-test("quantile: single-value input returns that value regardless of q", () => {
-  expect(quantile([5], 0.9)).toBe(5);
-});
-
-test("quantile: interpolates between the two straddling positions", () => {
-  const sorted = [1, 2, 3, 4, 5];
-  expect(quantile(sorted, 0.5)).toBe(3);
-  expect(quantile(sorted, 0.4)).toBeCloseTo(2.6);
 });
 
 test("niceStep: picks a 1-2-5 rung at or below a small span", () => {

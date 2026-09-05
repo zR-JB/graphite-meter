@@ -162,7 +162,7 @@ export class DummyBackend implements RunnerBackend {
     const seconds = TICK_MS / 1000;
     for (const direction of activity.transfer) {
       const rate = direction === "down" ? DOWN_RATE : UP_RATE;
-      host.ingestThroughput(direction, rate, rate * seconds, seconds);
+      host.ingestThroughput(direction, rate * seconds, seconds);
     }
     if (!activity.transfer.length || activity.loadedLatency)
       host.ingestLatency({

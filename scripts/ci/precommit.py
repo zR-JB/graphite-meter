@@ -4,8 +4,8 @@
 The hook itself runs from the developer working tree, but component checks run
 in a temporary Git worktree whose index and files are replaced with the exact
 `git write-tree` snapshot. Unstaged fixes therefore cannot make a broken staged
-commit pass. Existing dependency/tool directories are linked read-only-by-intent
-into that disposable worktree; generated outputs and test artifacts stay there.
+commit pass. Client dependencies are installed from that snapshot's lockfile;
+prepared tool binaries are shared. Generated outputs and test artifacts stay there.
 """
 
 from __future__ import annotations
@@ -196,7 +196,7 @@ def validate_staged_files(root: Path, changes: tuple[StagedChange, ...]) -> None
 
 def plan_checks(paths: tuple[str, ...]) -> CheckPlan:
     path_set = set(paths)
-    if path_set & FULL_GATE_FILES:
+    if path_set & FULL_GATE_FILES or any(path.startswith("api/") for path in paths):
         return CheckPlan(pipeline=False, recipes=("check",))
 
     pipeline = any(path.startswith(PIPELINE_PREFIXES) for path in paths)
@@ -232,10 +232,8 @@ def prepare_staged_worktree(
     )
     command(("git", "read-tree", tree), cwd=worktree, env=env)
     command(("git", "checkout-index", "-a", "-f"), cwd=worktree, env=env)
-    # These are ignored dependency/tool caches prepared by `just setup`. Tests
-    # may read them, but all tracked/generated outputs remain in the disposable
-    # staged worktree so the developer tree cannot hide staged drift.
-    link_optional_directory(root / "client" / "node_modules", worktree / "client" / "node_modules")
+    # Tool versions are checked by their recipes; application dependencies must
+    # come from the staged lockfile, not the working tree's node_modules.
     link_optional_directory(root / ".tools", worktree / ".tools")
 
 
@@ -256,9 +254,8 @@ def remove_worktree(root: Path, worktree: Path) -> None:
 
 
 def run_pipeline_checks(worktree: Path, *, env: Mapping[str, str]) -> None:
-    command(("python3", "-m", "compileall", "-q", "scripts/ci"), cwd=worktree, env=env)
     command(("python3", "scripts/ci/workflow_policy.py"), cwd=worktree, env=env)
-    command(("python3", "scripts/ci/test_pipeline.py"), cwd=worktree, env=env)
+    command(("just", "pipeline-test"), cwd=worktree, env=env)
 
 
 def run_staged_checks(root: Path, plan: CheckPlan) -> None:
@@ -270,6 +267,12 @@ def run_staged_checks(root: Path, plan: CheckPlan) -> None:
         worktree = Path(temp_dir) / "staged"
         try:
             prepare_staged_worktree(root, tree, worktree, env=worktree_env)
+            if set(plan.recipes) & {"check", "client-ci", "legal-check"}:
+                command(
+                    ("bun", "install", "--frozen-lockfile", "--prefer-offline"),
+                    cwd=worktree / "client",
+                    env=worktree_env,
+                )
             if plan.pipeline:
                 run_pipeline_checks(worktree, env=worktree_env)
             for recipe in plan.recipes:

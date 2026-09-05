@@ -121,7 +121,6 @@ interface ThemeColors {
   upload: string;
   uploadRgb: { r: number; g: number; b: number };
   bidirectional: string;
-  warmup: string;
   signal: string;
   warn: string;
   err: string;
@@ -211,7 +210,6 @@ export class ChartEngine {
     upload: "#bda36c",
     uploadRgb: { r: 189, g: 163, b: 108 },
     bidirectional: "#a695c8",
-    warmup: "#858c94",
     signal: "#8ba3ba",
     warn: "#c4a568",
     err: "#d89393",
@@ -353,7 +351,6 @@ export class ChartEngine {
       upload,
       uploadRgb: hexToRgb(upload),
       bidirectional: g("--phase-bidirectional", "#a695c8"),
-      warmup: g("--phase-warmup", "#858c94"),
       signal: g("--signal", "#8ba3ba"),
       warn: g("--warn", "#c4a568"),
       err: g("--err", "#d89393"),
@@ -361,9 +358,6 @@ export class ChartEngine {
       textSoft: g("--text-soft", "#8b929a"),
       brand: g("--brand", "#6db0b8"),
     };
-    this.#invalidateGradients();
-  }
-  #invalidateGradients(): void {
     this.#gradH = -1;
   }
   #areaGrad(
@@ -540,7 +534,7 @@ export class ChartEngine {
         })
       : [];
     const phaseStats = this.#result
-      ? this.#phaseStats(data.throughput).flatMap((stat) => {
+      ? this.#phaseStats(data.resultRates).flatMap((stat) => {
           const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
           if (x1 <= x0) return [];
           const y = this.#layout.throughputY(stat.bytesPerSec);
@@ -569,8 +563,8 @@ export class ChartEngine {
     const d = this.#get();
     ctx.clearRect(0, 0, this.#w, this.#h);
     this.#drawThroughput(ctx, d.throughput);
-    if (this.#result) this.#drawPhaseStats(ctx, d.throughput);
-    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency, now, false);
+    if (this.#result) this.#drawPhaseStats(ctx, d.resultRates);
+    if (d.latencyEnabled) this.#drawLatency(ctx, d.latency, now);
     else this.#latencyAnimating.clear();
     this.#sceneTMax = this.#vp.tMax;
   }
@@ -627,9 +621,9 @@ export class ChartEngine {
   }
   #drawPhaseStats(
     ctx: CanvasRenderingContext2D,
-    all: ThroughputSample[],
+    rates: ChartData["resultRates"],
   ): void {
-    for (const stat of this.#phaseStats(all)) {
+    for (const stat of this.#phaseStats(rates)) {
       const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
       if (x1 <= x0) continue;
       const yResult = this.#layout.throughputY(stat.bytesPerSec);
@@ -645,32 +639,12 @@ export class ChartEngine {
       ctx.restore();
     }
   }
-  #phaseStats(all: ThroughputSample[]): PhaseStat[] {
+  #phaseStats(rates: ChartData["resultRates"]): PhaseStat[] {
     const out: PhaseStat[] = [];
-    const groups = [
-      { key: "download", phase: "download", stroke: this.#colors.download },
-      { key: "upload", phase: "upload", stroke: this.#colors.upload },
-      {
-        key: "bidiDown",
-        phase: "bidirectional",
-        dir: "down",
-        stroke: this.#colors.download,
-      },
-      {
-        key: "bidiUp",
-        phase: "bidirectional",
-        dir: "up",
-        stroke: this.#colors.upload,
-      },
-    ] as const;
-    for (const group of groups) {
-      const seg = all.filter(
-        (sample) =>
-          sample.phase === group.phase &&
-          (group.phase !== "bidirectional" || sample.dir === group.dir),
-      );
-      const { key, stroke } = group;
-      const bytesPerSec = this.#get().resultRates[key];
+    for (const { samples: key, area } of THROUGHPUT_LANES) {
+      const seg = this.#throughputByLane[key];
+      const stroke = this.#colors[area];
+      const bytesPerSec = rates[key];
       if (seg.length < 2 || bytesPerSec == null) continue;
       out.push({
         lane: key,
@@ -809,18 +783,19 @@ export class ChartEngine {
     ctx: CanvasRenderingContext2D,
     all: LatencyBucket[],
     now: number,
-    drawAnimating: boolean,
-  ): boolean {
+  ): void {
     this.#latencyAnimating.clear();
-    if (!all.length) return false;
+    if (!all.length) return;
     ctx.lineWidth = 1;
-    let animating = false;
     const lo = Math.max(0, lowerBoundAt(all, this.#vp.tMin) - 1);
     const hi = Math.min(all.length, lowerBoundAt(all, this.#vp.tMax) + 1);
     for (let i = lo; i < hi; i++) {
       const s = all[i];
       let p = 1;
-      const animate = !this.#result && i >= hi - LATENCY_ANIMATION_WINDOW;
+      const animate =
+        !this.#reducedMotion &&
+        !this.#result &&
+        i >= hi - LATENCY_ANIMATION_WINDOW;
       if (animate) {
         let startedAt = this.#latencyGlyphStartedAt.get(s);
         if (startedAt == null) {
@@ -833,16 +808,14 @@ export class ChartEngine {
         );
         if (p < 1) {
           this.#latencyAnimating.add(s);
-          animating = true;
         }
       } else if (!this.#latencyGlyphStartedAt.has(s)) {
         // Long histories should appear settled; only the recent tail enters.
         this.#latencyGlyphStartedAt.set(s, now - LATENCY_GLYPH_ENTER_MS);
       }
-      if (p < 1 && !drawAnimating) continue;
+      if (p < 1) continue;
       this.#drawLatencyBucket(ctx, s, p);
     }
-    return animating;
   }
   #drawActiveLatency(ctx: CanvasRenderingContext2D, now: number): boolean {
     if (this.#result) return false;

@@ -541,65 +541,6 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
   await openHistory(page);
   await expect(page.locator(".result-row")).toHaveCount(50);
 
-  const profile = await page.evaluate(
-    (db) =>
-      new Promise<{ nestedMs: number; cachedMs: number }>((resolve, reject) => {
-        const opening = indexedDB.open(db.name, db.version);
-        opening.onerror = () => reject(opening.error);
-        opening.onsuccess = () => {
-          const database = opening.result;
-          const request = database
-            .transaction(db.resultsStore, "readonly")
-            .objectStore(db.resultsStore)
-            .getAll();
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () => {
-            const records = request.result;
-            database.close();
-            const stable = (a: any, b: any) =>
-              b.completedAt - a.completedAt ||
-              String(b.id).localeCompare(String(a.id));
-            const nestedSort = () =>
-              [...records].sort((a, b) => {
-                const av =
-                  a.stages.download.result?.reportedBytesPerSec ?? null;
-                const bv =
-                  b.stages.download.result?.reportedBytesPerSec ?? null;
-                if (av == null && bv == null) return stable(a, b);
-                if (av == null) return 1;
-                if (bv == null) return -1;
-                return av === bv ? stable(a, b) : bv - av;
-              });
-            const prepared = records.map((record) => ({
-              record,
-              key: record.stages.download.result?.reportedBytesPerSec ?? null,
-              id: record.id,
-              completedAt: record.completedAt,
-            }));
-            const cachedSort = () =>
-              [...prepared].sort((a, b) => {
-                if (a.key == null && b.key == null) return stable(a, b);
-                if (a.key == null) return 1;
-                if (b.key == null) return -1;
-                return a.key === b.key ? stable(a, b) : b.key - a.key;
-              });
-            nestedSort();
-            cachedSort();
-            const iterations = 40;
-            let started = performance.now();
-            for (let index = 0; index < iterations; index++) nestedSort();
-            const nestedMs = performance.now() - started;
-            started = performance.now();
-            for (let index = 0; index < iterations; index++) cachedSort();
-            resolve({
-              nestedMs,
-              cachedMs: performance.now() - started,
-            });
-          };
-        };
-      }),
-    HISTORY_DB,
-  );
   const elapsed = await page.evaluate(
     (expectedId) =>
       new Promise<number>((resolve, reject) => {
@@ -640,11 +581,9 @@ test("sorting a 2,000-result archive keeps the visible chunk bounded", async ({
     values.at(-1)!.id,
   );
   console.info(
-    `[history-sort-profile] 2000 rows × 40: nested ${profile.nestedMs.toFixed(2)} ms, cached ${profile.cachedMs.toFixed(2)} ms; interaction ${elapsed.toFixed(2)} ms`,
+    `[history-sort] 2000 rows: interaction ${elapsed.toFixed(2)} ms`,
   );
-  expect(profile.nestedMs).toBeGreaterThan(0);
-  expect(profile.cachedMs).toBeGreaterThan(0);
-  expect(Number.isFinite(elapsed)).toBe(true);
+  expect(elapsed).toBeLessThan(1_000);
   await expect(page.locator(".result-row")).toHaveCount(50);
 
   for (const width of [390, 340, 320]) {

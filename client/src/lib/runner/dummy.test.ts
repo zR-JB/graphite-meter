@@ -15,8 +15,8 @@ class Host implements CoreHost {
   latency = 0;
   latencyObservations: Array<{ observedAtMs: number }> = [];
 
-  ingestThroughput(_dir: "down" | "up", rate: number): void {
-    this.throughput.push(rate);
+  ingestThroughput(_dir: "down" | "up", bytes: number, seconds: number): void {
+    this.throughput.push(bytes / seconds);
   }
   ingestLatency(sample: { rttMs: number; observedAtMs: number }): void {
     this.latency = sample.rttMs;

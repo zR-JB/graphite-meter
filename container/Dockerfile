@@ -51,9 +51,8 @@ WORKDIR /src/go
 # Module graph first for caching.
 COPY go/go.mod go/go.sum ./
 RUN go mod download
-# Source + the api/ tree (the schema-conformance test references ../../../api).
+# Server source; contract fixtures are only needed by tests.
 COPY go/ ./
-COPY api/ /src/api/
 # Legal assets are generated from the same runtime closure used by the
 # server/browser and container inventories.
 COPY LICENSE COPYRIGHT legal/generated/container/THIRD_PARTY_NOTICES.txt legal/generated/container/SOURCE.txt /legal/graphite-meter/

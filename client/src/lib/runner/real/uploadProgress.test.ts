@@ -64,7 +64,6 @@ function channelUnderTest(
     },
     ingestThroughput(
       _dir: string,
-      _rate: number,
       bytesDelta: number,
       duration: number,
       _authoritative: boolean,

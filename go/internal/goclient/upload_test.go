@@ -398,7 +398,8 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 		t.Fatalf("write the superseded feed's buffered record: %v", err)
 	}
 	staleWriter.Close()
-	<-p.currentDone()
+	_, done := p.current()
+	<-done
 
 	bytes, nanos := p.counters()
 	if bytes != 1000 || nanos != uint64(5*time.Second) {
@@ -639,7 +640,7 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 
 func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	progress, cancel := newWaitNextProgress(t)
-	before := progress.currentDone()
+	_, before := progress.current()
 	cancel()
 
 	late := &closeRecorder{Reader: strings.NewReader("{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n")}
@@ -648,7 +649,7 @@ func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	if !late.closed.Load() {
 		t.Error("the reader offered after the report ended was adopted instead of released")
 	}
-	if progress.currentDone() != before {
+	if _, done := progress.current(); done != before {
 		t.Error("attach installed a reader behind the closed feed")
 	}
 	if bytes, _ := progress.counters(); bytes != 0 {

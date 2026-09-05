@@ -2,7 +2,7 @@ import type { RunResult, ThroughputResult } from "../runner/contract";
 
 type BidirectionalResult = RunResult["bidirectional"];
 
-/* Terminal bidirectional presentation retains one qualifying lane as a diagnostic, but reserves its combined. */
+// A combined result requires both lanes; a surviving lane remains diagnostic evidence.
 export function bidirectionalResultPresentation(result: BidirectionalResult): {
   down: ThroughputResult | null;
   up: ThroughputResult | null;

@@ -106,22 +106,22 @@
     if (!intent) return;
     void tick().then(() => {
       if (workspaceFocusIntent !== intent) return;
+      const matchesRoute =
+        intent.workspace === "history" ? historyOpen : measurementOpen;
+      if (!matchesRoute) return;
+      if (
+        intent.afterPanel &&
+        currentRoute.kind === "app" &&
+        currentRoute.panels.includes(intent.afterPanel)
+      )
+        return;
+      if (
+        intent.afterDialog &&
+        currentRoute.kind === "app" &&
+        currentRoute.dialog === "legal"
+      )
+        return;
       if (intent.kind === "element") {
-        const matchesRoute =
-          intent.workspace === "history" ? historyOpen : measurementOpen;
-        if (!matchesRoute) return;
-        if (
-          intent.afterPanel &&
-          currentRoute.kind === "app" &&
-          currentRoute.panels.includes(intent.afterPanel)
-        )
-          return;
-        if (
-          intent.afterDialog &&
-          currentRoute.kind === "app" &&
-          currentRoute.dialog === "legal"
-        )
-          return;
         if (canRestoreFocus(intent.target)) {
           intent.target.focus({ preventScroll: true });
           workspaceFocusIntent = null;
@@ -131,21 +131,6 @@
         workspaceFocusIntent = { kind: "workspace", workspace: fallback };
         return;
       } else {
-        const matchesRoute =
-          intent.workspace === "history" ? historyOpen : measurementOpen;
-        if (!matchesRoute) return;
-        if (
-          intent.afterPanel &&
-          currentRoute.kind === "app" &&
-          currentRoute.panels.includes(intent.afterPanel)
-        )
-          return;
-        if (
-          intent.afterDialog &&
-          currentRoute.kind === "app" &&
-          currentRoute.dialog === "legal"
-        )
-          return;
         const target = document.querySelector<HTMLElement>(
           intent.workspace === "history"
             ? ".history-workspace"
@@ -164,10 +149,7 @@
     consoleWidth >= MIN_STAGE_WIDTH + 2 * MIN_DOCK_WIDTH,
   );
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const historyDirectQuery = mediaQuery(
-    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
-  );
-  const endpointDirectQuery = mediaQuery(
+  const secondaryActionsQuery = mediaQuery(
     `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
   );
   const themeDirectQuery = mediaQuery(
@@ -213,11 +195,11 @@
   });
 
   const showHistoryDirect = $derived(
-    historyDirectQuery.matches &&
+    secondaryActionsQuery.matches &&
       (awayRunIndicator === null || liveDirectComfortQuery.matches),
   );
   const showEndpointDirect = $derived(
-    endpointDirectQuery.matches &&
+    secondaryActionsQuery.matches &&
       (awayRunIndicator === null || liveDirectComfortQuery.matches),
   );
   const showThemeDirect = $derived(themeDirectQuery.matches);

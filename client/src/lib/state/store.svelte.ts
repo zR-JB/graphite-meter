@@ -27,8 +27,7 @@ import {
 } from "../runner/connectionModel";
 import {
   combineCompensationEstimates,
-  estimateLiveCompensation,
-  estimateResultCompensation,
+  estimateCompensation,
   type CompensationEstimate,
 } from "../compensation";
 import {
@@ -359,66 +358,47 @@ class AppStore {
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
-  #estimateLiveWire(
-    bytesPerSec: number,
-    phase: "download" | "upload",
-  ): CompensationEstimate {
-    return estimateLiveCompensation(
+  #estimateWire(bytesPerSec: number): CompensationEstimate {
+    const connection = this.runConnections.throughput;
+    return estimateCompensation(
       bytesPerSec,
-      phase,
-      this.runConnections.throughput.browserProtocol,
-      this.runConnections.throughput.target?.tls,
-      this.runConnections.throughput.clientIpVersion,
-      this.runConnections.throughput.clientIp,
-      this.runConnections.throughput.target?.transport,
-    );
-  }
-
-  #estimateResultWire(
-    result: ThroughputResult | null,
-    phase: "download" | "upload",
-  ): CompensationEstimate {
-    return estimateResultCompensation(
-      result,
-      phase,
-      this.runConnections.throughput.browserProtocol,
-      this.runConnections.throughput.target?.tls,
-      this.runConnections.throughput.clientIpVersion,
-      this.runConnections.throughput.clientIp,
-      this.runConnections.throughput.target?.transport,
+      connection.browserProtocol,
+      connection.target?.tls,
+      connection.clientIpVersion,
+      connection.clientIp,
+      connection.target?.transport,
     );
   }
 
   liveCompensation = $derived<CompensationEstimate>(
-    this.#estimateLiveWire(
+    this.#estimateWire(
       this.phase === "download" || this.phase === "upload"
         ? this.liveTransferBytesPerSec
         : 0,
-      this.phase === "upload" ? "upload" : "download",
     ),
   );
 
   downloadCompensation = $derived<CompensationEstimate>(
-    this.#estimateResultWire(this.stageResults.download, "download"),
+    this.#estimateWire(this.stageResults.download?.reportedBytesPerSec ?? 0),
   );
 
   uploadCompensation = $derived<CompensationEstimate>(
-    this.#estimateResultWire(this.stageResults.upload, "upload"),
+    this.#estimateWire(this.stageResults.upload?.reportedBytesPerSec ?? 0),
   );
 
   liveBidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
     const lanes = this.liveBidirectional ?? { down: 0, up: 0 };
     return combineCompensationEstimates([
-      this.#estimateLiveWire(lanes.down, "download"),
-      this.#estimateLiveWire(lanes.up, "upload"),
+      this.#estimateWire(lanes.down),
+      this.#estimateWire(lanes.up),
     ]);
   });
 
   bidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
     const result = this.result?.bidirectional;
     return combineCompensationEstimates([
-      this.#estimateResultWire(result?.down ?? null, "download"),
-      this.#estimateResultWire(result?.up ?? null, "upload"),
+      this.#estimateWire(result?.down?.reportedBytesPerSec ?? 0),
+      this.#estimateWire(result?.up?.reportedBytesPerSec ?? 0),
     ]);
   });
 
@@ -622,34 +602,14 @@ class AppStore {
         this.result = event.result;
         this.latencySummaries = event.result.latencyByStage;
         if (this.savingResults) {
-          const wireArgs = {
-            detectedProtocol: this.runConnections.throughput.browserProtocol,
-            detectedSecure: this.runConnections.throughput.target?.tls,
-            detectedIPVersion: this.runConnections.throughput.clientIpVersion,
-            detectedClientIP: this.runConnections.throughput.clientIp,
-            selectedTransport: this.runConnections.throughput.target?.transport,
-          };
-          const estimate = (
-            value: ThroughputResult | null,
-            phase: "download" | "upload",
-          ) =>
-            value
-              ? estimateResultCompensation(
-                  value,
-                  phase,
-                  wireArgs.detectedProtocol,
-                  wireArgs.detectedSecure,
-                  wireArgs.detectedIPVersion,
-                  wireArgs.detectedClientIP,
-                  wireArgs.selectedTransport,
-                )
-              : null;
-          const downloadWire = estimate(event.result.download, "download");
-          const uploadWire = estimate(event.result.upload, "upload");
+          const estimate = (value: ThroughputResult | null) =>
+            value ? this.#estimateWire(value.reportedBytesPerSec) : null;
+          const downloadWire = estimate(event.result.download);
+          const uploadWire = estimate(event.result.upload);
           const bidiEstimates = event.result.bidirectional
             ? [
-                estimate(event.result.bidirectional.down, "download"),
-                estimate(event.result.bidirectional.up, "upload"),
+                estimate(event.result.bidirectional.down),
+                estimate(event.result.bidirectional.up),
               ].filter((value): value is CompensationEstimate => value !== null)
             : [];
           const bidiWire = bidiEstimates.length
