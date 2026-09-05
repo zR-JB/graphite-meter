@@ -417,6 +417,73 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
   await expectNoHorizontalOverflow(page.locator(".topbar"));
 });
 
+test("overflow menu supports keyboard navigation and returns focus", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 319, height: 844 });
+  await setHistoryPreference(page, "enabled");
+  const trigger = page.getByRole("button", { name: "More controls" });
+  await trigger.focus();
+  await page.keyboard.press("ArrowDown");
+  const history = page.getByRole("menuitem", { name: /Open History/ });
+  const endpoint = page.getByRole("menuitem", { name: /Endpoint info/ });
+  const theme = page.getByRole("menuitem", { name: /Theme:/ });
+  await expect(history).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(endpoint).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(theme).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(history).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(theme).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(history).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await page.keyboard.press("ArrowUp");
+  await expect(theme).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(history).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    page.getByRole("status", { name: "Connection: connected" }),
+  ).toBeFocused();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+});
+
+test("coarse-pointer topbar controls fit at phone and tablet widths", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 390, height: 844 });
+  await setHistoryPreference(page, "enabled");
+  const cdp = await page.context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  for (const width of [319, 360, 390, 430, 700, 844]) {
+    await page.setViewportSize({ width, height: width === 844 ? 390 : 844 });
+    await expect
+      .poll(() => page.evaluate(() => matchMedia("(pointer: coarse)").matches))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Array.from(document.querySelectorAll(".topbar button")).every(
+            (button) => {
+              const rect = button.getBoundingClientRect();
+              return rect.width >= 44 && rect.height >= 44;
+            },
+          ),
+        ),
+      )
+      .toBe(true);
+    await expectNoHorizontalOverflow(page.locator(".topbar"));
+    await expectNoHorizontalOverflow(page.locator("body"));
+  }
+});
+
 test("History is safe to reload and malformed client routes stay in the shell", async ({
   page,
 }) => {
@@ -1369,6 +1436,14 @@ test("phone topbar keeps History, Theme, and Endpoint direct without a special a
   const management = page.getByRole("button", { name: "Archive management" });
   await management.click();
   const managementMenu = page.getByRole("menu", { name: "Archive management" });
+  const clearAction = page.getByRole("menuitem", {
+    name: "Clear all saved results",
+  });
+  await expect(clearAction).toBeFocused();
+  for (const key of ["ArrowDown", "ArrowUp", "Home", "End"]) {
+    await page.keyboard.press(key);
+    await expect(clearAction).toBeFocused();
+  }
   const managementBox = await managementMenu.boundingBox();
   expect(managementBox!.x).toBeGreaterThanOrEqual(0);
   expect(managementBox!.x + managementBox!.width).toBeLessThanOrEqual(390);
@@ -1387,6 +1462,13 @@ test("phone topbar keeps History, Theme, and Endpoint direct without a special a
     page.getByRole("button", { name: "More controls" }),
   ).toBeVisible();
   await expectNoHorizontalOverflow(page.locator(".topbar"));
+  const cdp = await page.context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  for (const width of [319, 360, 390, 430, 520, 521, 640, 700]) {
+    await page.setViewportSize({ width, height: 640 });
+    await expect(page.locator(".return-live")).toBeVisible();
+    await expectNoHorizontalOverflow(page.locator(".topbar"));
+  }
 });
 
 test("authenticated phone chrome compacts account identity before core controls", async ({
@@ -1443,6 +1525,31 @@ test("authenticated phone chrome compacts account identity before core controls"
     0,
   );
   await expectNoHorizontalOverflow(page.locator(".topbar"));
+  const cdp = await page.context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  for (const width of [319, 360, 390, 430, 431, 520, 521, 640, 700, 759]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expectNoHorizontalOverflow(page.locator(".topbar"));
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          Array.from(document.querySelectorAll(".topbar button"))
+            .filter((button) => button.getBoundingClientRect().width > 0)
+            .every((button) => {
+              const rect = button.getBoundingClientRect();
+              const header = document
+                .querySelector(".topbar")!
+                .getBoundingClientRect();
+              return (
+                rect.width >= 44 &&
+                rect.height >= 44 &&
+                rect.right <= header.right
+              );
+            }),
+        ),
+      )
+      .toBe(true);
+  }
 });
 
 test("sortable headers expose natural reversible order with missing values last", async ({

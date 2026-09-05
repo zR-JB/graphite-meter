@@ -164,10 +164,18 @@
     consoleWidth >= MIN_STAGE_WIDTH + 2 * MIN_DOCK_WIDTH,
   );
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const historyDirectQuery = mediaQuery(`(min-width: 340px)`);
-  const endpointDirectQuery = mediaQuery(`(min-width: 340px)`);
-  const themeDirectQuery = mediaQuery(`(min-width: 320px)`);
-  const liveDirectComfortQuery = mediaQuery(`(min-width: 380px)`);
+  const historyDirectQuery = mediaQuery(
+    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
+  );
+  const endpointDirectQuery = mediaQuery(
+    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
+  );
+  const themeDirectQuery = mediaQuery(
+    `(min-width: 320px) and (not (pointer: coarse)), (min-width: 360px)`,
+  );
+  const liveDirectComfortQuery = mediaQuery(
+    `(min-width: 380px) and (not (pointer: coarse)), (min-width: 560px)`,
+  );
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
@@ -1116,6 +1124,21 @@
     .return-live {
       gap: 5px;
       padding-inline: 6px;
+    }
+  }
+  @media (pointer: coarse) and (max-width: 640px) {
+    .brand-label {
+      display: none;
+    }
+  }
+  @media (pointer: coarse) {
+    .topbar :global(.account) {
+      min-width: 44px;
+    }
+    .topbar :global(button) {
+      min-width: 44px;
+      min-height: 44px;
+      flex-shrink: 0;
     }
   }
 </style>
