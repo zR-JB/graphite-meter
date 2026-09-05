@@ -1,5 +1,6 @@
 import {
   expect,
+  openApp,
   prepareApp,
   startTest,
   test,
@@ -19,6 +20,7 @@ test("three-stage results remain usable across desktop and phone layouts", async
   for (const viewport of [
     { width: 1280, height: 720 },
     { width: 1440, height: 900 },
+    { width: 2560, height: 1440 },
     { width: 1024, height: 768 },
   ]) {
     await page.setViewportSize(viewport);
@@ -66,6 +68,12 @@ test("three-stage results remain usable across desktop and phone layouts", async
         ),
         controlsAligned: Math.abs(rail.top - button.top) <= 1,
         controlsSeparated: rail.left >= button.right + 16,
+        controlsStacked: rail.top >= button.bottom + 12,
+        instrumentWidth: host.width,
+        chartHeight: chart.height,
+        resultWidths: [...document.querySelectorAll(".result-card")].map(
+          (card) => card.getBoundingClientRect().width,
+        ),
         groupSpacing:
           button.top - gauge.bottom >= 16 &&
           results.top - button.bottom >= 16 &&
@@ -99,15 +107,21 @@ test("three-stage results remain usable across desktop and phone layouts", async
     expect(geometry.controlsCenter).toBeLessThanOrEqual(1);
     expect(geometry.buttonLabelCenter).toBeLessThanOrEqual(1);
     expect(geometry.durationSeparate).toBe(true);
-    expect(geometry.controlsAligned).toBe(true);
-    expect(geometry.controlsSeparated).toBe(true);
+    if (viewport.height <= 800) {
+      expect(geometry.controlsAligned).toBe(true);
+      expect(geometry.controlsSeparated).toBe(true);
+    } else expect(geometry.controlsStacked).toBe(true);
+    expect(geometry.instrumentWidth).toBeLessThanOrEqual(1180);
+    expect(geometry.chartHeight).toBeLessThanOrEqual(200);
+    expect(geometry.resultWidths.every((width) => width <= 320)).toBe(true);
     expect(geometry.groupSpacing).toBe(true);
     expect(geometry.lanesInside).toBe(true);
     expect(geometry.sharedAxis).toBe(1);
     expect(geometry.wireAligned).toBe(true);
+    await page.artifact(`instrument-${viewport.width}x${viewport.height}`);
   }
   for (const width of [320, 390]) {
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 320 ? 740 : 844 });
     const boxes = await page.evaluate(() =>
       [
         ".gauge-panel .stage",
@@ -134,5 +148,61 @@ test("three-stage results remain usable across desktop and phone layouts", async
       ].every((label) => label.scrollWidth <= label.clientWidth),
     );
     expect(labelsFit).toBe(true);
+    await page.artifact(`instrument-${width}`);
+  }
+});
+
+test("single and four-lane profiles keep bounded plots and clear gauge notes", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 2560, height: 1440 });
+  for (const allStages of [false, true]) {
+    await page.evaluate(
+      (all) =>
+        localStorage.setItem(
+          "graphite-meter:v1",
+          JSON.stringify({
+            config: {
+              stages: {
+                latency: true,
+                download: all,
+                upload: all,
+                bidirectional: all,
+              },
+            },
+          }),
+        ),
+      allStages,
+    );
+    await page.reload();
+    for (const viewport of [
+      { width: 2560, height: 1440 },
+      { width: 1440, height: 640 },
+      { width: 320, height: 740 },
+    ]) {
+      await page.setViewportSize(viewport);
+      const geometry = await page.evaluate(() => {
+        const box = (selector: string) =>
+          document.querySelector(selector)!.getBoundingClientRect();
+        const tracks = [...document.querySelectorAll(".live-profile .track")];
+        return {
+          laneCount: tracks.length,
+          plotHeights: tracks.map(
+            (track) => track.getBoundingClientRect().height,
+          ),
+          noteGap: box(".gauge-notes").top - box(".gauge-face").bottom,
+          contained: document.documentElement.scrollWidth <= innerWidth,
+        };
+      });
+      expect(geometry.laneCount).toBe(allStages ? 4 : 1);
+      expect(
+        geometry.plotHeights.every((height) => height >= 36 && height <= 48),
+      ).toBe(true);
+      expect(geometry.noteGap).toBeGreaterThanOrEqual(8);
+      expect(geometry.contained).toBe(true);
+      await page.artifact(
+        `instrument-${allStages ? "four" : "single"}-${viewport.width}x${viewport.height}`,
+      );
+    }
   }
 });

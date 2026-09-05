@@ -31,6 +31,8 @@
 
 <style>
   .live-profile {
+    --profile-track-height: clamp(36px, 4svh, 48px);
+    --profile-lane-gap: 8px;
     width: 100%;
     overflow: visible;
   }

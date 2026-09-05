@@ -311,7 +311,7 @@
   }
   .lanes {
     display: grid;
-    gap: 6px;
+    gap: var(--profile-lane-gap, 6px);
     min-width: 0;
     padding: 0;
   }
@@ -422,7 +422,7 @@
   }
   .track {
     position: relative;
-    height: 30px;
+    height: var(--profile-track-height, 30px);
     width: 100%;
     padding: 0;
     overflow: visible;
@@ -452,7 +452,7 @@
     position: absolute;
   }
   .range {
-    top: 13px;
+    top: calc(50% - 2px);
     height: 5px;
     min-width: 10px;
     border-radius: var(--r-full);
@@ -461,9 +461,9 @@
   .range::before,
   .range::after {
     position: absolute;
-    top: -7px;
+    top: calc(2px - var(--profile-track-height, 30px) * 0.32);
     width: 1px;
-    height: 19px;
+    height: calc(var(--profile-track-height, 30px) * 0.64);
     content: "";
     background: color-mix(in srgb, var(--text-soft) 64%, transparent);
   }
@@ -474,8 +474,8 @@
     right: 0;
   }
   .band {
-    top: 6px;
-    height: 18px;
+    top: 20%;
+    height: 60%;
     min-width: 8px;
     border-radius: var(--r-full);
     background: color-mix(in srgb, var(--tone) 28%, transparent);
@@ -493,8 +493,8 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
   }
   .current-marker {
-    top: 9px;
-    bottom: 9px;
+    top: calc(50% - 5px);
+    height: 10px;
     width: 10px;
     border: 2px solid var(--surface-1);
     border-radius: var(--r-full);
@@ -618,10 +618,6 @@
   .lanes[data-variant="compact"] .center-marker {
     top: 3px;
     bottom: 3px;
-  }
-  .lanes[data-variant="compact"] .current-marker {
-    top: 6px;
-    bottom: 6px;
   }
   @media (max-width: 759px) {
     .lane-meta {

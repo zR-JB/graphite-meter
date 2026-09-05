@@ -388,60 +388,64 @@
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
-    <div
-      bind:this={stageEl}
-      class="stage"
-      style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
-    >
-      <GaugeDial input={dialState} {layout} />
-      {#if showGaugeTicks}
-        <div class="gauge-ticks" aria-hidden="true">
-          {#each layout.labelPoints as point, index (index)}
-            <span
-              class="gauge-tick"
-              data-anchor-x={point.anchorX}
-              data-anchor-y={point.anchorY}
-              style:left={`${point.x}px`}
-              style:top={`${point.y}px`}>{gaugeTicks[index].label}</span
-            >
-          {/each}
-        </div>
-      {/if}
-      <div class="metric-wrap">
-        {#if terminalPrimary}
-          <div
-            class="terminal-readout {terminalPrimary.phase}"
-            class:partial={terminalPrimary.dashed}
-            aria-hidden="true"
-          >
-            <span class="terminal-marker">
-              {#if terminalPrimary.direction === "download"}
-                {@html ICON.download}
-              {:else if terminalPrimary.direction === "upload"}
-                {@html ICON.upload}
-              {:else}
-                {@html ICON.bidirectional}
-              {/if}
-            </span>
-            <span class="terminal-number">{terminalPrimary.value}</span>
-            <span class="terminal-unit">{gaugeUnit}</span>
-            {#if terminalPrimary.dashed}
-              <span class="terminal-partial"
-                >Partial {terminalPrimary.direction}</span
+    <div class="stage">
+      <div
+        bind:this={stageEl}
+        class="gauge-face"
+        style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
+      >
+        <GaugeDial input={dialState} {layout} />
+        {#if showGaugeTicks}
+          <div class="gauge-ticks" aria-hidden="true">
+            {#each layout.labelPoints as point, index (index)}
+              <span
+                class="gauge-tick"
+                data-anchor-x={point.anchorX}
+                data-anchor-y={point.anchorY}
+                style:left={`${point.x}px`}
+                style:top={`${point.y}px`}>{gaugeTicks[index].label}</span
               >
-            {/if}
+            {/each}
           </div>
-        {:else}
-          {#if display.value}<span class="gauge-value" aria-hidden="true"
-              >{display.value}</span
-            >{/if}
-          {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-              >{display.unit}</span
-            >{/if}
         {/if}
-        <span class="sr-only"
-          >{announcementDisplay.value} {announcementDisplay.unit}</span
-        >
+        <div class="metric-wrap">
+          {#if terminalPrimary}
+            <div
+              class="terminal-readout {terminalPrimary.phase}"
+              class:partial={terminalPrimary.dashed}
+              aria-hidden="true"
+            >
+              <span class="terminal-marker">
+                {#if terminalPrimary.direction === "download"}
+                  {@html ICON.download}
+                {:else if terminalPrimary.direction === "upload"}
+                  {@html ICON.upload}
+                {:else}
+                  {@html ICON.bidirectional}
+                {/if}
+              </span>
+              <span class="terminal-number">{terminalPrimary.value}</span>
+              <span class="terminal-unit">{gaugeUnit}</span>
+              {#if terminalPrimary.dashed}
+                <span class="terminal-partial"
+                  >Partial {terminalPrimary.direction}</span
+                >
+              {/if}
+            </div>
+          {:else}
+            {#if display.value}<span class="gauge-value" aria-hidden="true"
+                >{display.value}</span
+              >{/if}
+            {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+                >{display.unit}</span
+              >{/if}
+          {/if}
+          <span class="sr-only"
+            >{announcementDisplay.value} {announcementDisplay.unit}</span
+          >
+        </div>
+      </div>
+      <div class="gauge-footer">
         {#if hint || status || preparationFailure || failNotes.length}
           <div class="gauge-notes">
             {#each failNotes as note (note)}<span class="gauge-fail"
@@ -553,6 +557,8 @@
   .stage {
     grid-area: gauge;
     position: relative;
+    display: flex;
+    flex-direction: column;
     min-width: 240px;
     min-height: 220px;
     height: 100%;
@@ -561,6 +567,11 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: hidden;
+  }
+  .gauge-face {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
     /* Size container so the hero number scales with cqmin, the same smaller
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
@@ -578,14 +589,16 @@
   .instrument-controls:has(:global(.quad)) {
     --stage-controls-width: 700px;
   }
-  @container viz (min-width: 1000px) {
-    .instrument-controls {
-      grid-template-columns: 280px minmax(0, 1fr);
-      column-gap: var(--space-5);
-      max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
+  @media (max-height: 800px) {
+    @container viz (min-width: 1000px) {
+      .instrument-controls {
+        grid-template-columns: 280px minmax(0, 1fr);
+        column-gap: var(--space-5);
+        max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
+      }
     }
   }
-  /* The action and editable stages form one centered group on wide screens. */
+  /* Short wide windows share a control row; taller screens keep the action above its stages. */
   .run-slot {
     display: flex;
     flex-direction: column;
@@ -741,18 +754,19 @@
     color: var(--text-soft);
     /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   }
-  /* Notes zone at the dial's foot: guided idle/transient copy and
-     skipped-stage explanations. Centered beneath the big metric; doesn't affect
-     the metric's zero-shift baseline. */
+  /* Reserve a separate footer so transient notes cannot overlap the dial. */
+  .gauge-footer {
+    flex: 0 0 auto;
+    min-height: 44px;
+    display: grid;
+    align-items: center;
+    padding: var(--space-2) var(--space-3) var(--space-3);
+  }
   .gauge-notes {
-    position: absolute;
-    bottom: var(--space-4);
-    left: 50%;
-    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     gap: var(--space-1);
-    width: 86%;
+    width: 100%;
     text-align: center;
   }
   .gauge-hint {
