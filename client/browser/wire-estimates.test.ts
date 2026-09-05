@@ -124,6 +124,9 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
   await startAndWait(page);
   const jitter = page.locator(".result-card .jitter");
   await expect(jitter).toHaveText("0.0 ms jitter");
+  await expect(
+    page.locator(".terminal-readout.download .terminal-number"),
+  ).toHaveText("320.0");
   const geometry = () =>
     resultCards(page).evaluateAll((cards) =>
       cards.map((card) => {
@@ -135,6 +138,15 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
           height: card.getBoundingClientRect().height,
           overflow: card.scrollWidth > card.clientWidth,
           detailBelowReadout: sub ? sub.bottom - readout.bottom : 0,
+          jitterAlignment: (() => {
+            const jitter = card
+              .querySelector(".jitter-num")
+              ?.getBoundingClientRect();
+            const primary = card
+              .querySelector(".val .num")!
+              .getBoundingClientRect();
+            return jitter ? Math.abs(jitter.left - primary.left) : 0;
+          })(),
         };
       }),
     );
@@ -143,7 +155,10 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
   expect(
     before.every(
       (card) =>
-        card.height <= 70 && !card.overflow && card.detailBelowReadout <= 1,
+        card.height <= 70 &&
+        !card.overflow &&
+        card.detailBelowReadout <= 1 &&
+        card.jitterAlignment <= 1,
     ),
   ).toBe(true);
   const preferences = await openSettings(page);

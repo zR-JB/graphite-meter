@@ -66,9 +66,17 @@
 
 <style>
   .duration {
-    font: 500 11px var(--font-mono);
+    position: absolute;
+    inset-inline-end: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 4px 6px;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font: 500 10px/1 var(--font-mono);
     letter-spacing: 0;
-    opacity: 0.85;
+    white-space: nowrap;
   }
   .run-button {
     position: relative;

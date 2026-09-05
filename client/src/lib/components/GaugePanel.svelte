@@ -24,7 +24,7 @@
     presentation,
     type PresentationHandle,
   } from "../canvas/presentation";
-  import { resultGaugeArcs } from "./resultGauge";
+  import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { preparationFailurePresentation } from "./preparationFailure";
   import { failureDetail } from "./failurePresentation";
   import { ICON } from "../constants";
@@ -38,6 +38,7 @@
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
   const terminalArcs = $derived(resultGaugeArcs(store.result));
+  const headlineArc = $derived(primaryResultGaugeArc(terminalArcs));
   // A one-sided bidirectional partial retains its lane result for diagnostics,
   // but has no truthful combined gauge value.
   const unusableStage = $derived(
@@ -130,10 +131,10 @@
     )
       return EMPTY_DISPLAY;
     if (p === "complete") {
-      if (terminalArcs.length)
+      if (headlineArc)
         return {
-          value: fmtSpeed(gaugeRate(terminalArcs[0].bytesPerSec)),
-          unit: `${gaugeUnit} · ${terminalArcs[0].label}`,
+          value: fmtSpeed(gaugeRate(headlineArc.bytesPerSec)),
+          unit: `${gaugeUnit} · ${headlineArc.label}`,
         };
       return store.result?.latency
         ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
@@ -248,7 +249,7 @@
       .join("; "),
   );
   const terminalPrimary = $derived.by(() => {
-    const arc = store.phase === "complete" ? terminalArcs[0] : null;
+    const arc = store.phase === "complete" ? headlineArc : null;
     return arc
       ? {
           ...arc,
@@ -397,8 +398,8 @@
         showValue: !unusableStage,
         valueBytesPerSec: unusableStage
           ? 0
-          : p === "complete" && terminalArcs.length
-            ? terminalArcs[0].bytesPerSec
+          : p === "complete" && headlineArc
+            ? headlineArc.bytesPerSec
             : liveRateValues.transfer,
         scaleBytesPerSec: scale,
         throughputEvidence:

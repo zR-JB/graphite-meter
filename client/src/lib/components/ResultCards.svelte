@@ -406,9 +406,10 @@
       {#if c.jitterMs !== undefined}
         <div class="jitter">
           <span class="jitter-num"
-            >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}</span
+            >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}
+            <span class="jitter-unit">ms</span></span
           >
-          <span class="jitter-term" use:tooltip={JARGON.jitter}>ms jitter</span>
+          <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
         </div>
       {/if}
       {#if c.wire}
@@ -665,13 +666,15 @@
     font-variant-numeric: tabular-nums;
     font-size: 12px;
   }
-  .est-num {
+  .est-num,
+  .jitter-num {
     font-weight: 700;
     color: var(--brand-strong);
   }
-  .jitter-num {
-    font-weight: 700;
-    color: var(--phase-latency);
+  .jitter-unit {
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 600;
   }
   .est-tag,
   .jitter-term {

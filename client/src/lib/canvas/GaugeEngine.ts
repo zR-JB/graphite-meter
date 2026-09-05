@@ -258,7 +258,7 @@ export class GaugeEngine {
           arc.dashed ? [arcW * 1.5, arcW] : [],
         );
       }
-      // Leaders sit above arcs and below heads so the primary remains visually dominant.
+      // Leaders sit above arcs and below heads.
       for (const [index, arc] of this.#resultArcs.entries()) {
         const placement = this.#resultHeadPlacements[index];
         const visibleFraction = Math.min(
@@ -297,7 +297,7 @@ export class GaugeEngine {
         ctx.stroke();
         ctx.restore();
       }
-      // Draw secondary heads first and the primary last for deterministic dominance.
+      // Draw lower-value heads first to keep the outermost endpoint clear.
       for (let index = this.#resultArcs.length - 1; index >= 0; index -= 1) {
         const arc = this.#resultArcs[index]!;
         const placement = this.#resultHeadPlacements[index];

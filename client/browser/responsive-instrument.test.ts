@@ -32,6 +32,12 @@ for (const viewport of [
       const profileBox = profile.getBoundingClientRect();
       const stage = element("#console > section.stage");
       const button = element(".run-button").getBoundingClientRect();
+      const buttonLabel = element(
+        ".run-button-content",
+      ).getBoundingClientRect();
+      const durationTag = element(
+        ".run-button .duration",
+      ).getBoundingClientRect();
       const rail = element(".stage-head").getBoundingClientRect();
       const host = element(".gauge-panel").getBoundingClientRect();
       return {
@@ -41,6 +47,15 @@ for (const viewport of [
         gaugeHeight: gauge.height,
         pairedHeight: Math.abs(gauge.height - profileBox.height),
         pairedWidth: Math.abs(gauge.width - profileBox.width),
+        buttonLabelCenter: Math.abs(
+          buttonLabel.left +
+            buttonLabel.width / 2 -
+            button.left -
+            button.width / 2,
+        ),
+        durationSeparate:
+          durationTag.left >= buttonLabel.right + 8 &&
+          durationTag.right < button.right,
         buttonCenter: Math.abs(
           button.left + button.width / 2 - host.left - host.width / 2,
         ),
@@ -75,6 +90,8 @@ for (const viewport of [
     expect(geometry.pairedHeight).toBeLessThanOrEqual(1);
     expect(geometry.pairedWidth).toBeLessThanOrEqual(1);
     expect(geometry.buttonCenter).toBeLessThanOrEqual(1);
+    expect(geometry.buttonLabelCenter).toBeLessThanOrEqual(1);
+    expect(geometry.durationSeparate).toBe(true);
     expect(geometry.railCenter).toBeLessThanOrEqual(1);
     expect(geometry.controlsSeparated).toBe(true);
     expect(geometry.lanesInside).toBe(true);
