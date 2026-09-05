@@ -66,23 +66,73 @@
   );
 
   // CSS owns interpolation; only suppress motion when this instrument is unseen.
-  function attach(node: SVGSVGElement) {
+  function attach(node: HTMLDivElement) {
     let intersecting = true;
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => {
-      motion = intersecting && !document.hidden;
+      motion = intersecting && !document.hidden && !reducedMotion.matches;
     };
     const observer = new IntersectionObserver(([entry]) => {
       intersecting = entry.isIntersecting;
       update();
     });
     observer.observe(node);
+    reducedMotion.addEventListener("change", update);
     document.addEventListener("visibilitychange", update);
     update();
     return () => {
       observer.disconnect();
+      reducedMotion.removeEventListener("change", update);
+      node
+        .getAnimations({ subtree: true })
+        .forEach((animation) => animation.cancel());
       document.removeEventListener("visibilitychange", update);
     };
   }
+  let surface = $state<HTMLDivElement>();
+  const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
+  const diameter = $derived(extent * 2);
+  let flight: { from: number; to: number; animation?: Animation } | undefined;
+  const ease = (progress: number) => 1 - (1 - progress) ** 3;
+  $effect(() => {
+    const node = surface;
+    const next = target * 270;
+    const visible = input.showValue && !completed;
+    const animate = motion && visible;
+    if (!node) return;
+    const current = flight
+      ? flight.from +
+        (flight.to - flight.from) *
+          ease(Math.min(1, Number(flight.animation?.currentTime ?? 600) / 600))
+      : next;
+    flight = { from: animate ? current : next, to: next };
+    const rotors = node.querySelectorAll<HTMLElement>(".rotor, .live-head");
+    const rotation = (angle: number, index: number) =>
+      index === 0
+        ? Math.min(180, angle)
+        : index === 1
+          ? Math.max(0, angle - 180)
+          : angle + 135;
+    // The compositor follows one sampled ease for all three surfaces. Include
+    // the exact half-ring crossing so both clips meet without a gap.
+    const offsets = Array.from({ length: 31 }, (_, i) => i / 30);
+    const crossing = (180 - current) / (next - current);
+    if (crossing > 0 && crossing < 1) offsets.push(1 - Math.cbrt(1 - crossing));
+    offsets.sort((a, b) => a - b);
+    rotors.forEach((rotor, index) => {
+      rotor.getAnimations().forEach((animation) => animation.cancel());
+      rotor.style.transform = `rotate(${rotation(next, index)}deg)`;
+      if (!animate || Math.abs(current - next) < 0.01) return;
+      const animation = rotor.animate(
+        offsets.map((offset) => ({
+          offset,
+          transform: `rotate(${rotation(current + (next - current) * ease(offset), index)}deg)`,
+        })),
+        { duration: 600, easing: "linear" },
+      );
+      if (index === 2) flight!.animation = animation;
+    });
+  });
   const track = $derived.by(() => {
     const { center, radius, arcStart, arcSweep } = layout;
     const start = {
@@ -103,12 +153,10 @@
   color: string,
   hollow = false,
   lane = 0,
-  result = false,
 )}
   <g transform={`translate(${layout.center.x} ${layout.center.y})`}>
     <g
-      class="head"
-      class:result
+      class="head result"
       style:transform={`rotate(${angleForFraction(fraction, layout.arcStart, layout.arcSweep)}rad)`}
     >
       {#if lane !== 0}
@@ -141,157 +189,242 @@
   </g>
 {/snippet}
 
-<svg
+<div
   {@attach attach}
+  bind:this={surface}
   class="gauge-dial"
   class:motion
   aria-hidden="true"
-  width={layout.width}
-  height={layout.height}
-  viewBox={`0 0 ${layout.width} ${layout.height}`}
 >
-  <defs>
-    <radialGradient
-      id={shadeId}
-      gradientUnits="userSpaceOnUse"
-      cx={layout.center.x}
-      cy={layout.center.y}
-      r={layout.radius + layout.arcWidth / 2}
-      fr={layout.radius - layout.arcWidth / 2}
-    >
-      <stop offset="0" stop-color="var(--edge-highlight)" />
-      <stop
-        offset=".38"
-        stop-color="color-mix(in srgb, var(--edge-highlight) 40%, transparent)"
-      />
-      <stop
-        offset=".5"
-        stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
-      />
-      <stop offset=".64" stop-color="rgba(var(--shadow-ink), .03)" />
-      <stop offset="1" stop-color="rgba(var(--shadow-ink), .08)" />
-    </radialGradient>
-  </defs>
-  <g fill="none" stroke-linecap="round">
-    <path d={track} stroke="var(--surface-2)" stroke-width={layout.arcWidth} />
-    <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
-      {#each layout.majorTicks as tick (tick.angle)}
-        <path
-          d={`M ${tick.from.x} ${tick.from.y} L ${tick.to.x} ${tick.to.y}`}
+  <svg
+    class="dial-art"
+    width={layout.width}
+    height={layout.height}
+    viewBox={`0 0 ${layout.width} ${layout.height}`}
+  >
+    <defs>
+      <radialGradient
+        id={shadeId}
+        gradientUnits="userSpaceOnUse"
+        cx={layout.center.x}
+        cy={layout.center.y}
+        r={layout.radius + layout.arcWidth / 2}
+        fr={layout.radius - layout.arcWidth / 2}
+      >
+        <stop offset="0" stop-color="var(--edge-highlight)" />
+        <stop
+          offset=".38"
+          stop-color="color-mix(in srgb, var(--edge-highlight) 40%, transparent)"
         />
-      {/each}
-    </g>
-    <path
-      class="sweep live"
-      class:visible={input.showValue && !completed}
-      d={track}
-      pathLength="1"
-      style:stroke-dasharray={`${target} 1`}
-      stroke={accent}
-      stroke-width={layout.arcWidth}
-    />
-    {#if completed}
-      {#each results as result (result.phase)}
-        <mask
-          id={`${shadeId}-${result.phase}`}
-          maskUnits="userSpaceOnUse"
-          x="0"
-          y="0"
-          width={layout.width}
-          height={layout.height}
-        >
+        <stop
+          offset=".5"
+          stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
+        />
+        <stop offset=".64" stop-color="rgba(var(--shadow-ink), .03)" />
+        <stop offset="1" stop-color="rgba(var(--shadow-ink), .08)" />
+      </radialGradient>
+    </defs>
+    <g fill="none" stroke-linecap="round">
+      <path
+        d={track}
+        stroke="var(--surface-2)"
+        stroke-width={layout.arcWidth}
+      />
+      <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
+        {#each layout.majorTicks as tick (tick.angle)}
           <path
-            class="reveal"
-            d={track}
-            pathLength="1"
-            style:stroke-dasharray={`${result.fraction} 1`}
-            stroke="white"
-            stroke-width={layout.arcWidth + 2}
+            d={`M ${tick.from.x} ${tick.from.y} L ${tick.to.x} ${tick.to.y}`}
           />
-        </mask>
-        <g
-          mask={`url(#${shadeId}-${result.phase})`}
-          stroke-width={layout.arcWidth}
-          stroke-dasharray={result.dashed
-            ? `${layout.arcWidth * 1.5} ${layout.arcWidth}`
-            : undefined}
-        >
-          <path d={track} stroke={`var(--phase-${result.phase})`} />
-          <path d={track} stroke={`url(#${shadeId})`} />
-        </g>
-      {/each}
-    {/if}
-  </g>
+        {/each}
+      </g>
+    </g>
+  </svg>
   {#if completed}
-    {#each results.toReversed() as result (result.phase)}
-      {@render head(
-        result.fraction,
-        result.radius,
-        `var(--phase-${result.phase})`,
-        result.dashed,
-        result.lane,
-        true,
-      )}
-    {/each}
+    <div class="result-layer">
+      <svg
+        class="dial-art"
+        width={layout.width}
+        height={layout.height}
+        viewBox={`0 0 ${layout.width} ${layout.height}`}
+      >
+        <g fill="none" stroke-linecap="round">
+          {#each results as result (result.phase)}
+            <mask
+              id={`${shadeId}-${result.phase}`}
+              maskUnits="userSpaceOnUse"
+              x="0"
+              y="0"
+              width={layout.width}
+              height={layout.height}
+            >
+              <path
+                class="result-arc"
+                d={track}
+                pathLength="1"
+                style:stroke-dasharray={`${result.fraction} 1`}
+                stroke="white"
+                stroke-width={layout.arcWidth + 2}
+              />
+            </mask>
+            <g
+              mask={`url(#${shadeId}-${result.phase})`}
+              stroke-width={layout.arcWidth}
+              stroke-dasharray={result.dashed
+                ? `${layout.arcWidth * 1.5} ${layout.arcWidth}`
+                : undefined}
+            >
+              <path d={track} stroke={`var(--phase-${result.phase})`} />
+              <path d={track} stroke={`url(#${shadeId})`} />
+            </g>
+          {/each}
+        </g>
+        {#each results.toReversed() as result (result.phase)}
+          {@render head(
+            result.fraction,
+            result.radius,
+            `var(--phase-${result.phase})`,
+            result.dashed,
+            result.lane,
+          )}
+        {/each}
+      </svg>
+    </div>
   {/if}
-  <g class="live" class:visible={input.showValue && !completed}>
-    {@render head(target, layout.radius, accent)}
-  </g>
-</svg>
+  <div class="live" class:visible={input.showValue && !completed}>
+    <div
+      class="sweep-ring"
+      style:left={`${layout.center.x - extent}px`}
+      style:top={`${layout.center.y - extent}px`}
+      style:width={`${diameter}px`}
+      style:height={`${diameter}px`}
+    >
+      {#each [0, 1] as half (half)}
+        <div class="half-clip" class:second={half === 1}>
+          <div
+            class="rotor"
+            style:width={`${diameter}px`}
+            style:height={`${diameter}px`}
+          >
+            <svg
+              width={diameter}
+              height={diameter}
+              viewBox={`0 0 ${diameter} ${diameter}`}
+            >
+              <path
+                d={`M ${extent} ${extent - layout.radius} A ${layout.radius} ${layout.radius} 0 0 ${half} ${extent} ${extent + layout.radius}`}
+                fill="none"
+                stroke={accent}
+                stroke-width={layout.arcWidth}
+              />
+            </svg>
+          </div>
+        </div>
+      {/each}
+      <svg
+        class="start-cap"
+        width={diameter}
+        height={diameter}
+        viewBox={`0 0 ${diameter} ${diameter}`}
+      >
+        <circle
+          cx={extent}
+          cy={extent - layout.radius}
+          r={layout.arcWidth / 2}
+          fill={accent}
+        />
+      </svg>
+    </div>
+    <div
+      class="live-head"
+      style:left={`${layout.center.x}px`}
+      style:top={`${layout.center.y}px`}
+    >
+      <svg
+        style:left={`${layout.radius - headRadius - 1.5}px`}
+        style:top={`${-headRadius - 1.5}px`}
+        width={headRadius * 2 + 3}
+        height={headRadius * 2 + 3}
+        viewBox={`${-headRadius - 1.5} ${-headRadius - 1.5} ${headRadius * 2 + 3} ${headRadius * 2 + 3}`}
+      >
+        <circle
+          r={headRadius + 0.75}
+          fill={accent}
+          stroke="var(--surface-inset)"
+          stroke-width="1.5"
+        />
+      </svg>
+    </div>
+  </div>
+</div>
 
 <style>
-  .live {
-    opacity: 0;
-  }
-  .live.visible {
-    opacity: 1;
-  }
-  .motion .live {
-    transition: opacity 180ms ease-out;
-  }
-  .motion .sweep {
-    transition:
-      stroke-dasharray 600ms cubic-bezier(0.16, 1, 0.3, 1),
-      stroke 180ms linear,
-      opacity 180ms ease-out;
-  }
-  .motion .head {
-    transition: transform 600ms cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  .motion .live circle {
-    transition: fill 180ms linear;
-  }
-  .motion .live:not(.visible),
-  .motion .live:not(.visible) * {
-    transition: none;
-  }
-  .motion .reveal {
-    transition: stroke-dasharray 550ms ease-out;
-  }
-  .motion .head.result {
-    transition: transform 550ms ease-out;
-  }
-  @starting-style {
-    .reveal {
-      stroke-dasharray: 0 1 !important;
-    }
-    .head.result {
-      transform: rotate(135deg) !important;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .motion .sweep,
-    .motion .head,
-    .motion .reveal,
-    .motion .live,
-    .motion .live circle {
-      transition: none;
-    }
-  }
-  .gauge-dial {
+  .gauge-dial,
+  .dial-art,
+  .live,
+  .result-layer {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
+  }
+  .live {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .live.visible {
+    opacity: 1;
+  }
+  .motion .live,
+  .motion .result-layer {
+    transition: opacity 180ms ease-out;
+  }
+  .motion .live svg path {
+    transition: stroke 180ms linear;
+  }
+  .motion .live svg circle {
+    transition: fill 180ms linear;
+  }
+  @starting-style {
+    .motion .result-layer {
+      opacity: 0;
+    }
+  }
+  .sweep-ring {
+    position: absolute;
+    transform: rotate(225deg);
+  }
+  .half-clip {
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 50%;
+    height: 100%;
+    overflow: hidden;
+  }
+  .half-clip.second {
+    right: auto;
+    left: 0;
+  }
+  .rotor {
+    position: absolute;
+    top: 0;
+    right: 0;
+  }
+  .second .rotor {
+    right: auto;
+    left: 0;
+  }
+  .start-cap {
+    position: absolute;
+    inset: 0;
+  }
+  .live-head {
+    position: absolute;
+    width: 0;
+    height: 0;
+  }
+  .live-head svg {
+    position: absolute;
+    max-width: none;
   }
 </style>
