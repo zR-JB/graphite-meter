@@ -61,7 +61,9 @@ runs:
       with:
         go-version-file: go/go.mod
         cache: ${{ inputs.go-cache }}
-        cache-dependency-path: go/go.sum
+        cache-dependency-path: |
+          go/go.sum
+          justfile
 
     - name: Show Go version
       if: inputs.go == 'true'

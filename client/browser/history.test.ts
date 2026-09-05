@@ -1,6 +1,7 @@
 import type { HistoryRecord } from "../src/lib/history/types";
 import {
   AxeBuilder,
+  configureSettings,
   endpointPanel,
   expect,
   expectNoHorizontalOverflow,
@@ -303,7 +304,7 @@ test("explicitly enabled completion is reachable in History and stays responsive
     .click();
   await settings.getByText("Show estimated wire rate", { exact: true }).click();
   await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
-  await settings.getByRole("button", { name: "short", exact: true }).click();
+  await configureSettings(page, "short");
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await startTest(page);
   await waitForCompletion(page, 20_000);
@@ -683,7 +684,7 @@ test("repository repairs corrupt generation metadata without deleting raw rows",
   await openApp(page, "dummy", { width: 1024, height: 768 });
   await setHistoryPreference(page, "enabled");
   const settings = await openSettings(page);
-  await settings.getByRole("button", { name: "short", exact: true }).click();
+  await configureSettings(page, "short");
   await settings.getByRole("button", { name: "Close Settings" }).click();
 
   const existing = record(IDS.oldest, Date.UTC(2026, 7, 28, 12));
