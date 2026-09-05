@@ -40,8 +40,8 @@ export interface PhaseActivity {
 
 export type ConnectivityState =
   | "connected"
-  | "degraded" // jitter / minor packet loss
-  | "unstable" // significant loss
+  | "degraded" // RTT variation / occasional probe timeouts
+  | "unstable" // frequent probe timeouts
   | "offline";
 
 /* Automatic wire estimates ---------- Forward-direction physical link occupancy from application bytes. */
@@ -126,6 +126,8 @@ export interface LatencyObservation {
   rttMs: number;
   lost: boolean;
   observedAtMs: number;
+  /** A reply after the stage cutoff resolves its probe but is outside the RTT measurement window. */
+  rttEligible?: boolean;
 }
 
 export interface ThroughputSample {
@@ -174,6 +176,7 @@ export interface RunResult {
     up: ThroughputResult | null;
   } | null;
   latency: LatencyResult | null;
+  latencyByStage: Record<TransportRole, StageLatencySummary | null>;
   /** Unavailable unless both idle and loaded latency evidence exist. */
   bufferbloat: BufferbloatGrade | null;
   /** A usable result plus an entry here is a partial stage. */
@@ -197,18 +200,35 @@ export interface ThroughputResult {
   stabilityScore: number; // stability (0..1) at the moment the phase ends
   band: StabilityBand;
   /** Under-load ping timeout percentage; a quality signal, not TCP packet loss. */
-  packetLossPct: number;
+  probeTimeoutPct: number | null;
   /** True when bytes and time came from the server upload receiver. */
   serverAuthoritative?: boolean;
 }
 
+/** Full measured stage; percentiles use nearest rank, with the midpoint median for P50. */
+export interface StageLatencySummary {
+  probeCount: number;
+  timeoutCount: number;
+  unresolvedCount: number;
+  sendFailureCount: number;
+  jitterPairs: number;
+  minMs: number | null;
+  maxMs: number | null;
+  meanMs: number | null;
+  p10Ms: number | null;
+  p50Ms: number | null;
+  p90Ms: number | null;
+  p95Ms: number | null;
+  jitterMs: number | null;
+}
+
 export interface LatencyResult {
   idleMs: number; // median unloaded over the chosen window, the headline
-  minMs: number;
-  p50Ms: number;
-  p95Ms: number;
-  jitterMs: number; // mean abs deviation
-  packetLossPct: number;
+  minMs: number | null;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  jitterMs: number | null; // mean absolute consecutive-success RTT difference
+  probeTimeoutPct: number | null;
   reportedMs: number; // == idleMs, the headline value, named for symmetry
   method: ResultMethod;
   stabilityScore: number;
@@ -373,6 +393,11 @@ export type RunnerEvent =
   /* A short-lived upload-only visual target. */
   | { type: "uploadPresentation"; bytesPerSec: number | null }
   | { type: "latency"; sample: LatencyBucket }
+  | {
+      type: "latencySummary";
+      stage: TransportRole;
+      summary: StageLatencySummary | null;
+    }
   // Reserved seam: a backend MAY push an explicit connectivity state.
   | { type: "connectivity"; state: ConnectivityState }
   // Progress within the active wall-time budget.

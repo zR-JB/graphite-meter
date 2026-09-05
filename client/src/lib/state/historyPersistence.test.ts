@@ -3,6 +3,8 @@ import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
 import type { ConnectionPresentation } from "../runner/connectionModel";
 import type { RunResult, ThroughputResult } from "../runner/contract";
+import { LatencyAccumulator } from "../runner/latencySummary";
+import { singleLatencyBucket } from "../runner/latencyBuckets";
 
 plugin({
   name: "history-store-runes",
@@ -29,7 +31,7 @@ const throughput: ThroughputResult = {
   method: "full-average",
   totalBytes: 25_000_000,
   stabilityPct: 4,
-  packetLossPct: 0,
+  probeTimeoutPct: 0,
   stabilityScore: 0.96,
   band: "high",
   serverAuthoritative: true,
@@ -41,6 +43,12 @@ function result(): RunResult {
     upload: null,
     bidirectional: null,
     latency: null,
+    latencyByStage: {
+      latency: null,
+      download: null,
+      upload: null,
+      bidirectional: null,
+    },
     bufferbloat: null,
     stageFailures: {
       upload: { stage: "upload", reason: "timeout", message: "private detail" },
@@ -81,6 +89,44 @@ const BUILD_TOKENS = {
   __GM_BUILD_IDENTITY__: "test test-revision",
   __GM_CLIENT_VERSION__: "0.0.0-test",
 } as const;
+
+test("UI and history use the raw stage summary even when chart samples disagree", async () => {
+  Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const previousPreference = store.resultHistoryPreference;
+  try {
+    store.reset();
+    store.resultHistoryPreference = "enabled";
+    const raw = new LatencyAccumulator();
+    for (const rtt of [10, 100, 10, 100]) raw.observe(rtt, false, 0);
+    store.ingest({
+      type: "latency",
+      sample: {
+        ...singleLatencyBucket(100, 55, false, "download"),
+        underLoad: true,
+      },
+    });
+    store.ingest({
+      type: "latencySummary",
+      stage: "download",
+      summary: raw.snapshot(),
+    });
+    const lane = store.latencyLanes.find((lane) => lane.key === "download")!;
+    expect(lane.min).toBe(10);
+    expect(lane.p90).toBe(100);
+    expect(lane.jitter).toBe(90);
+    const completed = result();
+    completed.latencyByStage.download = raw.snapshot();
+    store.ingest({ type: "complete", result: completed });
+    expect(store.historyCandidate?.schemaVersion).toBe(2);
+    expect(store.historyCandidate?.stages.latency.lanes.download).toMatchObject(
+      { min: 10, p90: 100, jitter: 90, count: 4, timeoutRatio: 0 },
+    );
+  } finally {
+    store.resultHistoryPreference = previousPreference;
+    store.reset();
+  }
+});
 
 test("only an enabled complete event creates an immutable history candidate", async () => {
   Object.assign(globalThis as Record<string, unknown>, BUILD_TOKENS);

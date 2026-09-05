@@ -296,6 +296,7 @@ test("full run: latency then download — phase order and stage lifecycle", asyn
     "measure:latency",
   ]);
   expect(phaseTransitions(events)).toEqual(["connecting", "latency"]);
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow });
   advance(100);
   expect(backend.calls).toEqual([
     "runStart",
@@ -539,13 +540,13 @@ test("stall counts toward the window but blocks finalization until resume", asyn
 test("latency presentation does not bridge a short stall", async () => {
   const { core, events } = await startCore({ duration: { downloadMs: 1_000 } });
   advance(10);
-  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow }, true);
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow });
   core.stall({ reason: "connection-lost", detail: "test" });
   advance(100);
   core.resume();
-  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow }, true);
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow });
   advance(300);
-  core.ingestLatency({ rttMs: 14, lost: false, observedAtMs: fakeNow }, true);
+  core.ingestLatency({ rttMs: 14, lost: false, observedAtMs: fakeNow });
   advance(250);
   const buckets = eventSamples(events, "latency");
   expect(buckets.length).toBeGreaterThanOrEqual(2);
@@ -555,7 +556,7 @@ test("latency presentation does not bridge a short stall", async () => {
 test("latency presentation closes on bucket time without a later ping", async () => {
   const { core, events } = await startCore({ duration: { downloadMs: 1_000 } });
   advance(10);
-  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, true);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
   expect(hasEvent(events, "latency")).toBe(false);
   advance(240);
   const latency = eventSamples(events, "latency")[0];
@@ -575,7 +576,7 @@ test("loaded latency presentation follows every fixed cadence", async () => {
       duration: { downloadMs: durationMs },
     });
     for (let t = 0; t < durationMs; t += pingIntervalMs)
-      core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: t }, true);
+      core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: t });
     // The final runner tick closes the last time bucket and the phase.
     fakeNow = durationMs;
     advance(0);
@@ -595,8 +596,8 @@ test("queued latency outcomes retain their worker observation buckets", async ()
     duration: { latencyMs: 1_000, downloadMs: 0 },
   });
   fakeNow = 400;
-  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: 100 }, false);
-  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: 350 }, false);
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: 100 });
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: 350 });
   advance(0);
   const buckets = eventSamples(events, "latency");
   expect(buckets.map((bucket) => bucket.startT)).toEqual([0, 200]);
@@ -624,10 +625,11 @@ test("loaded pings do not hide a stalled transfer", async () => {
     duration: { downloadMs: 5000 },
   });
   for (let i = 0; i < 8; i++) {
-    backend.host.ingestLatency(
-      { rttMs: 2, lost: false, observedAtMs: fakeNow },
-      true,
-    );
+    backend.host.ingestLatency({
+      rttMs: 2,
+      lost: false,
+      observedAtMs: fakeNow,
+    });
     advance(250);
   }
   expect(hasEvent(events, "stall")).toBe(true);
@@ -761,13 +763,10 @@ test("default latency policy can confirm early at the fixed slow cadence", async
   cfg.pingCadence = "slow";
   await core.start(cfg);
   advance(10);
-  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow }, false);
+  core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
   for (let i = 1; i < 5; i++) {
     advance(600);
-    core.ingestLatency(
-      { rttMs: 20, lost: false, observedAtMs: fakeNow },
-      false,
-    );
+    core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
   }
   expect(core.phase).toBe("latency");
   advance(1_099);

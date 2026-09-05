@@ -4,13 +4,13 @@ import {
   prepareHistorySort,
   sortPreparedHistory,
 } from "./sort";
-import type { HistoryRecordV1 } from "./types";
+import type { HistoryRecord } from "./types";
 
 function record(
   id: string,
   completedAt: number,
   down: number | null,
-): HistoryRecordV1 {
+): HistoryRecord {
   const lane =
     down == null
       ? null

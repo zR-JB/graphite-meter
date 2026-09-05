@@ -3,13 +3,13 @@ import {
   pos,
   rangeWidth,
   tickLabel,
-  lossLabel,
+  timeoutLabel,
   entries,
   nearestMetric,
   hoverContext,
   metricLabel,
   profileDomain,
-  savedLatencyHasDatagramLossEvidence,
+  savedLatencyHasProbeEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -26,7 +26,7 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     centerKind: "average",
     current: 55,
     jitter: 5,
-    lossRatio: 0,
+    timeoutRatio: 0,
     count: 100,
     active: false,
     ...over,
@@ -62,18 +62,18 @@ test("tickLabel: non-positive collapses to a bare zero", () => {
   expect(tickLabel(12)).not.toBe("0");
 });
 
-test("lossLabel: hidden at zero, extra precision under one percent", () => {
-  expect(lossLabel(0)).toBe("");
-  expect(lossLabel(-1)).toBe("");
-  expect(lossLabel(0.005)).toBe("0.50% loss");
-  expect(lossLabel(0.05)).toBe("5.0% loss");
+test("timeoutLabel: hidden at zero, extra precision under one percent", () => {
+  expect(timeoutLabel(0)).toBe("");
+  expect(timeoutLabel(-1)).toBe("");
+  expect(timeoutLabel(0.005)).toBe("0.50% timeouts");
+  expect(timeoutLabel(0.05)).toBe("5.0% timeouts");
 });
 
 test("saved datagram loss requires WebTransport latency provenance", () => {
-  expect(savedLatencyHasDatagramLossEvidence("webtransport")).toBe(true);
-  expect(savedLatencyHasDatagramLossEvidence("websocket")).toBe(false);
-  expect(savedLatencyHasDatagramLossEvidence(null)).toBe(false);
-  expect(savedLatencyHasDatagramLossEvidence("unknown")).toBe(false);
+  expect(savedLatencyHasProbeEvidence("webtransport")).toBe(true);
+  expect(savedLatencyHasProbeEvidence("websocket")).toBe(true);
+  expect(savedLatencyHasProbeEvidence(null)).toBe(false);
+  expect(savedLatencyHasProbeEvidence("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {

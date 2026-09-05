@@ -399,10 +399,10 @@
            status rather than an alert — nothing has gone wrong — and its point
            is carried by the leading sentence, not only by the warn colour. -->
       <p class="caution" role="status">
-        <strong>Measures loss, not link speed.</strong> Datagrams are never resent,
-        so whatever goes missing is real packet loss — which is the point of this
-        mode. Expect a lower rate than the stream card, upload especially: browsers
-        hand over one datagram per call.
+        <strong>Measures application datagram delivery.</strong> Datagrams are not
+        retransmitted. Missing deliveries can come from network or endpoint queues;
+        they do not identify physical packet loss. Expect a lower received rate than
+        stream transfers, especially for browser uploads.
       </p>
     {/if}
     <Switch
