@@ -2007,6 +2007,38 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   );
 });
 
+for (const direction of ["down", "up"] as const) {
+  test(`saved ${direction}-only throughput stays directional instead of becoming a combined result`, async ({
+    page,
+  }) => {
+    await openApp(page, "dummy", { width: 1440, height: 900 });
+    const partial = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+    partial.stages.bidirectional.status = "partial";
+    const missing = direction === "down" ? "up" : "down";
+    partial.totalBytes -= partial.stages.bidirectional[missing]!.totalBytes;
+    partial.stages.bidirectional[missing] = null;
+    // Measured zero is still evidence, not an absent lane.
+    partial.stages.bidirectional[direction]!.reportedBytesPerSec = 0;
+    await seedHistory(page, [partial]);
+    await openHistory(page, IDS.newest);
+    await page.getByRole("button", { name: "Choose visible columns" }).click();
+    await page.getByRole("checkbox", { name: "Bidirectional" }).click();
+    await page.keyboard.press("Escape");
+    await expect(
+      page.locator(`[data-history-id="${IDS.newest}"]`),
+    ).toContainText(direction === "down" ? "Down only" : "Up only");
+    const card = page.locator(
+      '.result-detail .throughput-card[data-tone="bidirectional"]',
+    );
+    await expect(card.locator("strong")).toHaveText(
+      `Bidirectional ${direction === "down" ? "download" : "upload"}`,
+    );
+    await expect(card.locator("p")).toHaveText("0.00 bit/s");
+    await expect(card.locator("small")).toHaveText(
+      "One lane available · combined result unavailable",
+    );
+  });
+}
 test("Back cancels workspace focus while the History chunk is still loading", async ({
   page,
 }) => {

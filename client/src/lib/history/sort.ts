@@ -1,3 +1,4 @@
+import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
 import type { HistoryRecord } from "./types";
 export type HistorySort =
   "date" | "download" | "upload" | "bidirectional" | "idle" | "loaded";
@@ -28,10 +29,10 @@ function value(record: HistoryRecord, sort: HistorySort): number | null {
   if (sort === "upload")
     return record.stages.upload.result?.reportedBytesPerSec ?? null;
   if (sort === "bidirectional")
-    return record.stages.bidirectional.down && record.stages.bidirectional.up
-      ? record.stages.bidirectional.down.reportedBytesPerSec +
-          record.stages.bidirectional.up.reportedBytesPerSec
-      : null;
+    return bidirectionalResultPresentation(
+      record.stages.bidirectional.down?.reportedBytesPerSec,
+      record.stages.bidirectional.up?.reportedBytesPerSec,
+    ).combinedBytesPerSec;
   if (sort === "idle") return record.stages.latency.result?.reportedMs ?? null;
   // Use the result's user-facing aggregate; do not recombine detail lanes.
   return record.bufferbloat?.loadedMs ?? null;
