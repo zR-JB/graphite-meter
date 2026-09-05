@@ -6,9 +6,8 @@ workflow: &workflow
   - 'scripts/**'
   - 'justfile'
   - '.bun-version'
-  - '.just-version'
   - '.python-version'
-  - '.gitleaks-version'
+  - 'tools.toml'
   - 'go/go.mod'
   - 'go/go.sum'
 

@@ -75,6 +75,7 @@ from workflow_policy import (
     check_oci_build_action,
     check_external_action_shas,
     check_browser_ci,
+    check_toolchain_consumers,
     check_privileged_workflows,
     check_runner_labels,
     check_skopeo_contract_consistency,
@@ -391,7 +392,7 @@ class PipelineTests(unittest.TestCase):
                     exact_file_set(root, {"candidate.json"}, "candidate")
 
     def test_precommit_plan_uses_exact_component_gates(self) -> None:
-        for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt"):
+        for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt", "tools.toml", ".python-version"):
             with self.subTest(path=path):
                 self.assertEqual(plan_checks((path,)), CheckPlan(pipeline=False, recipes=("check",)))
         self.assertEqual(
@@ -524,11 +525,27 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
             check_oci_build_action(root)
 
+    def test_policy_rejects_independent_runtime_version_declarations(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/ci.yml"
+        original = path.read_text()
+        for field in ("go-version", "bun-version", "python-version"):
+            with self.subTest(field=field):
+                path.write_text(original + f"\n        {field}: 1.0.0\n")
+                with self.assertRaisesRegex(PolicyError, "native toolchain version files"):
+                    check_toolchain_consumers(root)
+        path.write_text(original)
+        setup = root / ".github/actions/setup-project/action.yml"
+        setup.write_text(setup.read_text().replace("go-version-file: go/go.mod", "go-version-file: alternate.mod"))
+        with self.assertRaisesRegex(PolicyError, "go/go.mod"):
+            check_toolchain_consumers(root)
+
     def test_policy_rejects_unpinned_chrome_version(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("chrome-version: 152.0.7977.82", "chrome-version: latest"))
+        path.write_text(path.read_text().replace("chrome-version: ${{ steps.toolchain.outputs.chrome-version }}", "chrome-version: latest"))
         with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
             check_browser_ci(root)
 
@@ -564,6 +581,7 @@ class PipelineTests(unittest.TestCase):
         dst = pathlib.Path(td)
         shutil.copytree(ROOT / ".github", dst / ".github")
         shutil.copytree(ROOT / ".githooks", dst / ".githooks")
+        shutil.copy2(ROOT / "tools.toml", dst / "tools.toml")
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
         (dst / "client").mkdir()
@@ -1397,8 +1415,11 @@ class PythonTypeGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "scripts/ci").mkdir(parents=True)
-            for name in ("justfile", ".python-version", ".gitleaks-version"):
+            for name in ("justfile", ".python-version", ".bun-version", "tools.toml"):
                 shutil.copy2(ROOT / name, root / name)
+            (root / "go").mkdir()
+            shutil.copy2(ROOT / "go/go.mod", root / "go/go.mod")
+            shutil.copy2(ROOT / "scripts/ci/toolchains.py", root / "scripts/ci/toolchains.py")
             # Run the actual offline recipe with the prepared standalone checker.
             (root / ".tools").symlink_to(ROOT / ".tools", target_is_directory=True)
             probe = root / "scripts/type_error_probe.py"
