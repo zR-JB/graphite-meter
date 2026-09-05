@@ -64,7 +64,7 @@ func main() {
 	m := newModel(cfg)
 	p := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen())
 	final, err := p.Run()
-	m.shutdown()
+	m.controller.Close()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
 		os.Exit(1)

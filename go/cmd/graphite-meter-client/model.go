@@ -175,8 +175,7 @@ var serverPresets = []serverPreset{
 }
 
 type model struct {
-	lifetime context.Context
-	shutdown context.CancelFunc
+	controller *goclient.Controller
 
 	cfg   goclient.Config
 	mode  mode
@@ -192,10 +191,8 @@ type model struct {
 	now          time.Time
 
 	// runSeq stamps every message a run emits; a superseded run's messages carry an older sequence and are dropped.
-	runSeq  int
-	events  <-chan goclient.Event
-	cancel  context.CancelFunc
-	abandon context.CancelFunc
+	runSeq int
+	events <-chan goclient.Event
 
 	displayRates map[goclient.Direction]float64
 	lostStreak   int
@@ -212,8 +209,7 @@ type model struct {
 	prepared      *goclient.PreparedConnection
 	discovery     *wire.Preflight
 	prepareSeq    int
-	prepareCtx    context.Context
-	prepareCancel context.CancelFunc
+	preparation   *goclient.Preparation
 	prepareStatus string
 	prepareStep   prepareStep
 	prepareError  string
@@ -233,15 +229,14 @@ type model struct {
 const animationFPS = 20
 
 func newModel(cfg goclient.Config) model {
-	lifetime, shutdown := context.WithCancel(context.Background())
+	controller := goclient.NewController(context.Background())
 	dial := spinner.MiniDot
 	dial.FPS = time.Second / animationFPS
 	spin := spinner.New(spinner.WithSpinner(dial))
 	spin.Style = accentStyle
 	return model{
-		lifetime:      lifetime,
-		shutdown:      shutdown,
-		prepareCtx:    lifetime,
+		controller:    controller,
+		preparation:   controller.NewPreparation(cfg),
 		cfg:           cfg,
 		mode:          modeConfigure,
 		openApproval:  (*goclient.PendingAuthorization).Open,
@@ -353,7 +348,7 @@ func (m model) urlRowRune(msg tea.KeyMsg) bool {
 
 func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.complete {
-		if key.Matches(msg, keys.cancel) && m.cancel != nil {
+		if key.Matches(msg, keys.cancel) {
 			m.cancelPrompt = true
 			m.notice = "Cancel the run? esc confirms, any other key continues."
 		}
@@ -376,10 +371,8 @@ func (m model) answerCancelPrompt(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Run continues."
 		return m, nil
 	}
-	if m.cancel != nil {
-		m.cancel()
-		m.status = "canceling"
-	}
+	m.controller.CancelRun()
+	m.status = "canceling"
 	m.notice = "Canceling the run."
 	return m, nil
 }

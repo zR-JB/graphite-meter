@@ -49,6 +49,12 @@ The browser separates connection preparation, measurement execution, and present
 isolate transfer and probe hot paths. The interface uses native SVG/CSS for the gauge and canvas
 for the timeline chart, with responsive layout, reduced motion, and bounded local history.
 
+The native client controller owns preparation, browser-approval polling, and run cancellation.
+Preparation tokens bind delayed commands to their original configuration; replacing one cancels
+its network work. User cancellation retains final result events, while replacement and shutdown
+abandon the old bounded event stream. Shutdown joins started work. Bubble Tea keeps input,
+rendering, event batching, and sequence guards for already queued replies.
+
 The native client provides the same measurement stages through a terminal interface. Browser
 and native results reflect different runtime constraints and should not be treated as identical
 benchmark targets.
