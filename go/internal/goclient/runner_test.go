@@ -382,8 +382,8 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	backendMux := http.NewServeMux()
 	backendMux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
-			ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Protocol: "negotiated"}},
-			LatencyTargets:    []wire.LatencyTarget{{Origin: "."}},
+			ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Protocol: "negotiated", Transport: wire.TransportFetchStream}},
+			LatencyTargets:    []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
 		}})
 	})
 	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {

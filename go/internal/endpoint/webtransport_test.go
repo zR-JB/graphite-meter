@@ -228,7 +228,7 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
 	}
-	if minted.Token != "gmw_minted" {
+	if minted.Token != "gmw_minted" || minted.Expires != 3_600_000 {
 		t.Errorf("token = %q, want the minted one", minted.Token)
 	}
 }
@@ -340,4 +340,18 @@ func datagramSizes(sent [][]byte) []int {
 		sizes[i] = len(d)
 	}
 	return sizes
+}
+
+func TestWTSessionWithoutAuthIncludesZeroExpiry(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if err := NewWTSession(nil).HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
+		t.Fatal(err)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["token"] != "" || response["expires"] != float64(0) {
+		t.Fatalf("auth-off response = %s", rec.Body.String())
+	}
 }
