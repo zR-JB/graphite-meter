@@ -2,13 +2,14 @@ package auth
 
 import (
 	"crypto/subtle"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 type trust struct{ Secure, Canonical bool }

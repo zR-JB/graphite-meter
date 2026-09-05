@@ -3,10 +3,11 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"maps"
 	"net/http"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 const (

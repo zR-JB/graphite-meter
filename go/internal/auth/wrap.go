@@ -5,10 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 type Listener struct{ UI, WebTransport bool }
