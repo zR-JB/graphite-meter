@@ -8,11 +8,7 @@ import {
   latencyBucketExceedsScale,
   latencyScaleForHistory,
 } from "../runner/latencyScale";
-import {
-  hasHoverMeasurements,
-  interpolateConnectedAt,
-  lowerBoundAt,
-} from "./hoverInterp";
+import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
 import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
@@ -189,7 +185,6 @@ export class ChartEngine {
   // Phase boundaries only; each sample carries its own phase for attribution.
   #spans: PhaseSpan[] = [];
   #lastPhase: Phase | null = null;
-  #hoverX: number | null = null;
   #result = false; // frozen post-run result mode
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
@@ -275,17 +270,13 @@ export class ChartEngine {
     this.#resolveColors();
     this.wake();
   }
-  setHover(x: number | null): void {
-    this.#hoverX = x;
-    this.#presentation?.invalidate();
-  }
-  hoverInfo(): HoverInfo | null {
-    if (this.#hoverX == null) return null;
+  /** Read the plotted evidence without scheduling or painting a chart frame. */
+  inspect(pointerX: number): HoverInfo | null {
     const plotW = this.#layout.plot.right - this.#layout.plot.left;
     if (plotW <= 0) return null;
     const x = Math.max(
       this.#layout.plot.left,
-      Math.min(this.#layout.plot.right, this.#hoverX),
+      Math.min(this.#layout.plot.right, pointerX),
     );
     const frac = (x - this.#layout.plot.left) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
@@ -338,7 +329,7 @@ export class ChartEngine {
         latencyBucket != null &&
         latencyBucketExceedsScale(latencyBucket, this.#vp.rttMax),
     };
-    return hasHoverMeasurements(info) ? info : null;
+    return data.throughput.length || data.latency.length ? info : null;
   }
   #resolveColors(): void {
     const cs = getComputedStyle(document.documentElement);
@@ -601,7 +592,6 @@ export class ChartEngine {
     const latencyAnimating = d.latencyEnabled
       ? this.#drawActiveLatency(ctx, now)
       : false;
-    this.#drawHover(ctx);
     return latencyAnimating;
   }
   #clipSpan(t0: number, t1: number): { x0: number; x1: number } {
@@ -895,58 +885,5 @@ export class ChartEngine {
       ctx.fill();
     }
     ctx.restore();
-  }
-  #drawHover(ctx: CanvasRenderingContext2D): void {
-    if (this.#hoverX == null) return;
-    const x = Math.max(
-      this.#layout.plot.left,
-      Math.min(this.#layout.plot.right, this.#hoverX),
-    );
-    const { top, bottom: bot } = this.#layout.plot;
-    ctx.strokeStyle = this.#colors.brand;
-    ctx.lineWidth = 1;
-    const gx = Math.round(x) + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(gx, top);
-    ctx.lineTo(gx, bot);
-    ctx.stroke();
-    const info = this.hoverInfo();
-    if (!info) return;
-    // Dots ride the interpolated value (matches the chip + the drawn line).
-    if (info.bytesPerSec != null)
-      fillCircle(
-        ctx,
-        x,
-        this.#layout.throughputY(info.bytesPerSec),
-        2.5,
-        this.#colors.brand,
-      );
-    // Bidirectional: one dot per lane, tinted to match its drawn line.
-    if (info.downBytesPerSec != null)
-      fillCircle(
-        ctx,
-        x,
-        this.#layout.throughputY(info.downBytesPerSec),
-        2.5,
-        this.#colors.download,
-      );
-    if (info.upBytesPerSec != null)
-      fillCircle(
-        ctx,
-        x,
-        this.#layout.throughputY(info.upBytesPerSec),
-        2.5,
-        this.#colors.upload,
-      );
-    if (info.rtt != null && info.latencyX != null) {
-      const overflowGlyph = info.latencyOverflow
-        ? latencyOverflowGlyph(this.#layout.plot.top)
-        : null;
-      const latencyY =
-        overflowGlyph && info.rtt >= this.#vp.rttMax
-          ? overflowGlyph.dot.y
-          : this.#layout.latencyY(info.rtt);
-      fillCircle(ctx, info.latencyX, latencyY, 2.5, this.#colors.warn);
-    }
   }
 }

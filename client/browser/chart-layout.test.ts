@@ -95,9 +95,9 @@ test("chart inspector exposes the same bucket details to keyboard and touch", as
     "aria-valuetext",
     /bucket median latency.*probe timeouts/,
   );
-  await expect(plot.locator(".chip")).toContainText("probe timeouts");
-  // Hover work is coalesced by the presentation scheduler; capture the final
-  // key selection after its repaint rather than the previous key's chip.
+  await expect(plot.locator(".chip")).toContainText("bucket median");
+  await expect(plot.locator(".chip")).not.toContainText("probe timeouts");
+  // Capture the committed DOM after the final keyboard selection.
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -147,5 +147,54 @@ test("chart inspector exposes the same bucket details to keyboard and touch", as
   expect(chip!.x).toBeGreaterThanOrEqual(box!.x);
   expect(chip!.x + chip!.width).toBeLessThanOrEqual(box!.x + box!.width);
   await plot.press("Tab");
+  await expect(plot.locator(".chip")).toHaveCount(0);
+});
+
+test("pointer inspection stays visible through sample gaps without repainting the chart", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const metrics = window as unknown as { chartPaints: number };
+    metrics.chartPaints = 0;
+    const clear = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      metrics.chartPaints++;
+      return clear.apply(this, args);
+    };
+  });
+  const settings = await prepareApp(page, "long-latency", "dummy", {
+    width: 1440,
+    height: 900,
+  });
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startAndWait(page);
+  const paints = () =>
+    page.evaluate(
+      () => (window as unknown as { chartPaints: number }).chartPaints,
+    );
+  await expect
+    .poll(async () => {
+      const before = await paints();
+      await page.waitForTimeout(250);
+      return (await paints()) === before;
+    })
+    .toBe(true);
+  const plot = page.getByRole("slider", {
+    name: "Throughput and latency over time",
+  });
+  const bounds = await plot.boundingBox();
+  if (!bounds) throw new Error("missing chart");
+  const before = await paints();
+  for (let index = 0; index < 20; index++) {
+    await page.mouse.move(
+      bounds.x + 48 + (index * (bounds.width - 96)) / 20,
+      bounds.y + 60,
+    );
+    await expect(plot.locator(".chip")).toBeVisible();
+    await expect(plot.locator(".inspection-guide")).toBeVisible();
+    await expect(plot.locator(".chip")).not.toContainText("probe timeouts");
+  }
+  expect(await paints()).toBe(before);
+  await page.mouse.move(bounds.x, bounds.y - 20);
   await expect(plot.locator(".chip")).toHaveCount(0);
 });

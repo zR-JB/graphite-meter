@@ -8,10 +8,7 @@
     type HoverInfo,
   } from "../canvas/ChartEngine";
   import { fmtSpeed, fmtMs } from "../format";
-  import {
-    presentation,
-    type PresentationHandle,
-  } from "../canvas/presentation";
+  import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   const PHASE_LABEL: Record<ChartLabelPhase, string> = {
@@ -25,7 +22,7 @@
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
   let engine: ChartEngine;
-  let hover = $state<HoverInfo | null>(null);
+  let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
   let position = $state<number | null>(null);
   let retainSelection = false;
@@ -63,9 +60,41 @@
       details.push(
         `probe timeouts ${hover.lossCount} of ${hover.pingCount} resolved probes in bucket`,
       );
+    if (
+      hover.bytesPerSec == null &&
+      hover.downBytesPerSec == null &&
+      hover.upBytesPerSec == null &&
+      hover.rtt == null &&
+      hover.pingCount === 0
+    )
+      details.push("no measurements at this position");
     return details.join(", ");
   });
-  let hoverPresentation: PresentationHandle;
+  let pointerFrame = 0;
+  let pointerClientX = 0;
+  const inspectorDots = $derived.by(() => {
+    if (!hover || !chartPresentation) return [];
+    const { layout } = chartPresentation;
+    const dots: { key: string; x: number; y: number; color: string }[] = [];
+    for (const [key, value, color] of [
+      ["rate", hover.bytesPerSec, "var(--brand)"],
+      ["down", hover.downBytesPerSec, "var(--phase-download)"],
+      ["up", hover.upBytesPerSec, "var(--phase-upload)"],
+    ] as const)
+      if (value != null)
+        dots.push({ key, x: hover.x, y: layout.throughputY(value), color });
+    if (hover.rtt != null && hover.latencyX != null)
+      dots.push({
+        key: "latency",
+        x: hover.latencyX,
+        y:
+          hover.latencyOverflow && hover.rtt >= layout.viewport.rttMax
+            ? latencyOverflowGlyph(layout.plot.top).dot.y
+            : layout.latencyY(hover.rtt),
+        color: "var(--warn)",
+      });
+    return dots;
+  });
   // Invalidate only for state read by ChartEngine.
   $effect(() => {
     void store.phase;
@@ -91,10 +120,14 @@
 
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
-    selectX(
-      e.clientX -
-        (e.currentTarget as HTMLDivElement).getBoundingClientRect().left,
-    );
+    pointerClientX = e.clientX;
+    if (pointerFrame) return;
+    // Coalesce pointer events into one small DOM update. The cached chart stays parked.
+    pointerFrame = requestAnimationFrame(() => {
+      pointerFrame = 0;
+      if (!document.hidden && plotEl)
+        selectX(pointerClientX - plotEl.getBoundingClientRect().left);
+    });
   }
   function selectX(x: number) {
     if (!chartPresentation || !hasData) return;
@@ -102,7 +135,7 @@
     position =
       (Math.max(plot.left, Math.min(plot.right, x)) - plot.left) /
       (plot.right - plot.left);
-    hoverPresentation?.invalidate();
+    updateHover();
   }
   function selectTime(t: number) {
     if (chartPresentation) selectX(chartPresentation.layout.x(t));
@@ -147,17 +180,17 @@
         (e.currentTarget as HTMLDivElement).getBoundingClientRect().left,
     );
   }
-  // A one-shot repaint, re-armed by invalidate().
   function updateHover() {
-    engine.setHover(
-      position == null ? null : chartPresentation!.layout.x(selectedTime),
-    );
-    hover = engine.hoverInfo();
-    return false;
+    hover =
+      position == null || !chartPresentation
+        ? null
+        : engine.inspect(chartPresentation.layout.x(selectedTime));
   }
   function clearSelection() {
+    if (pointerFrame) cancelAnimationFrame(pointerFrame);
+    pointerFrame = 0;
     position = null;
-    hoverPresentation?.invalidate();
+    hover = null;
   }
   function onLeave() {
     if (!retainSelection) clearSelection();
@@ -193,17 +226,10 @@
       }),
       (next) => {
         chartPresentation = next;
-        const { plot } = next.layout;
-        engine.setHover(
-          position == null
-            ? null
-            : plot.left + position * (plot.right - plot.left),
-        );
-        hover = engine.hoverInfo();
+        updateHover();
       },
     );
     engine.attach(canvasEl!);
-    hoverPresentation = presentation.register(plotEl!, updateHover);
 
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
     themeObserver.observe(document.documentElement, {
@@ -218,7 +244,7 @@
 
     return () => {
       engine.destroy();
-      hoverPresentation.destroy();
+      if (pointerFrame) cancelAnimationFrame(pointerFrame);
       themeObserver.disconnect();
       resizeObserver.disconnect();
       stopWatchingPixelRatio();
@@ -314,10 +340,25 @@
       </div>
     {/if}
 
-    {#if hover}
+    {#if hover && chartPresentation}
+      <div
+        class="inspection-guide"
+        style:top={`${chartPresentation.layout.plot.top}px`}
+        style:height={`${chartPresentation.layout.plot.bottom - chartPresentation.layout.plot.top}px`}
+        style:transform={`translateX(${hover.x}px)`}
+        aria-hidden="true"
+      ></div>
+      {#each inspectorDots as dot (dot.key)}
+        <span
+          class="inspection-dot"
+          style:background={dot.color}
+          style:transform={`translate(${dot.x}px, ${dot.y}px)`}
+          aria-hidden="true"
+        ></span>
+      {/each}
       <div
         class="chip"
-        style:left={`clamp(8px, ${hover.x + 8}px, calc(100% - 232px))`}
+        style:transform={`translateX(${Math.max(8, Math.min(hover.x + 12, chartPresentation.layout.width - 232))}px)`}
       >
         <div class="chip-row">
           <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
@@ -345,12 +386,14 @@
             >
           </div>
         {/if}
-        {#if hover.rtt != null}
+        {#if chartPresentation.latencyEnabled}
           <div class="chip-row">
-            <span>median</span><b>{fmtMs(hover.rtt)} ms</b>
+            <span>bucket median</span><b
+              >{hover.rtt == null ? "—" : `${fmtMs(hover.rtt)} ms`}</b
+            >
           </div>
         {/if}
-        {#if hover.pingCount > 0}
+        {#if hover.lossCount > 0}
           <div class="chip-row">
             <span>probe timeouts</span><b>{hover.lossCount}/{hover.pingCount}</b
             >
@@ -406,6 +449,24 @@
     width: 100%;
     height: 100%;
   }
+  .inspection-guide,
+  .inspection-dot {
+    position: absolute;
+    left: 0;
+    pointer-events: none;
+    will-change: transform;
+  }
+  .inspection-guide {
+    width: 1px;
+    background: var(--brand);
+  }
+  .inspection-dot {
+    top: 0;
+    width: 5px;
+    height: 5px;
+    margin: -2.5px;
+    border-radius: var(--r-full);
+  }
   .chart-labels {
     position: absolute;
     inset: 0;
@@ -450,6 +511,8 @@
   }
 
   .chip {
+    left: 0;
+    will-change: transform;
     position: absolute;
     top: var(--space-2);
     width: 224px;
