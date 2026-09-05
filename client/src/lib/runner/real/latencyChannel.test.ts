@@ -127,20 +127,19 @@ test("adopting a verified idle monitor replays its proven connectivity without r
 test("stage latency preserves distinct times from one worker batch", () => {
   const observations: number[] = [];
   const channel = new LatencyChannel({
-    host: () =>
-      ({
-        config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
-        ingestLatency(observation: { observedAtMs: number }) {
-          observations.push(observation.observedAtMs);
-        },
-      }) as unknown as CoreHost,
-    target: () => target,
+    host: {
+      config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
+      ingestLatency(observation: { observedAtMs: number }) {
+        observations.push(observation.observedAtMs);
+      },
+    } as unknown as CoreHost,
+    target,
     stall() {},
     resume() {},
     timeOriginMs: 10_000,
   });
 
-  channel.prime("websocket", true);
+  channel.prime(true);
   channel.measure();
   TestWorker.last!.emit({
     type: "samples",
@@ -157,19 +156,18 @@ test("stage latency preserves distinct times from one worker batch", () => {
 test("a stage latency socket reopening does not itself resume recovery", () => {
   let resumes = 0;
   const channel = new LatencyChannel({
-    host: () =>
-      ({
-        config: { pingCadence: "medium", loadedPingCadence: "medium" },
-        ingestLatency() {},
-      }) as unknown as CoreHost,
-    target: () => target,
+    host: {
+      config: { pingCadence: "medium", loadedPingCadence: "medium" },
+      ingestLatency() {},
+    } as unknown as CoreHost,
+    target,
     stall() {},
     resume() {
       resumes++;
     },
   });
 
-  channel.prime("websocket", true);
+  channel.prime(true);
   channel.measure();
   TestWorker.last!.emit({ type: "resume" });
 
@@ -195,18 +193,17 @@ test("READY cancels the stage channel's warmup establishment deadline", () => {
   }) as typeof clearTimeout;
   const failures: string[] = [];
   const channel = new LatencyChannel({
-    host: () =>
-      ({
-        config: { pingCadence: "medium", loadedPingCadence: "medium" },
-        failStage: (_stage: string, _reason: string, detail: string) =>
-          failures.push(detail),
-      }) as unknown as CoreHost,
-    target: () => target,
+    host: {
+      config: { pingCadence: "medium", loadedPingCadence: "medium" },
+      failStage: (_stage: string, _reason: string, detail: string) =>
+        failures.push(detail),
+    } as unknown as CoreHost,
+    target,
     stall: (detail) => failures.push(detail),
     resume() {},
   });
 
-  channel.prime("websocket", true);
+  channel.prime(true);
   TestWorker.last!.emit({ type: "ready" });
   if (deadlineActive) (deadline as (() => void) | null)?.();
 
@@ -220,24 +217,23 @@ function finalizingChannel() {
   const stalls: string[] = [];
   let accountingComplete = true;
   const channel = new LatencyChannel({
-    host: () =>
-      ({
-        config: { pingCadence: "medium", loadedPingCadence: "medium" },
-        ingestLatency(observation: { rttMs: number; rttEligible?: boolean }) {
-          observations.push(observation);
-        },
-        ingestLatencyAccountingIncomplete() {
-          accountingComplete = false;
-        },
-        ingestLatencyInterruption(count: number, reason: string) {
-          interruptions.push({ count, reason });
-        },
-      }) as unknown as CoreHost,
-    target: () => target,
+    host: {
+      config: { pingCadence: "medium", loadedPingCadence: "medium" },
+      ingestLatency(observation: { rttMs: number; rttEligible?: boolean }) {
+        observations.push(observation);
+      },
+      ingestLatencyAccountingIncomplete() {
+        accountingComplete = false;
+      },
+      ingestLatencyInterruption(count: number, reason: string) {
+        interruptions.push({ count, reason });
+      },
+    } as unknown as CoreHost,
+    target,
     stall: (detail) => stalls.push(detail),
     resume() {},
   });
-  channel.prime("websocket", true);
+  channel.prime(true);
   channel.measure();
   return {
     channel,
@@ -321,7 +317,7 @@ test("abort settles an in-flight drain and prevents its late worker messages rea
   const ending = channel.finish();
   channel.teardown();
   await ending;
-  channel.prime("websocket", true);
+  channel.prime(true);
   worker.emit({
     type: "samples",
     samples: [{ rtt: 10, lost: false, observedAtEpochMs: 100 }],

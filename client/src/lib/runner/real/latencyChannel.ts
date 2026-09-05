@@ -60,8 +60,8 @@ function pingMint(target: LatencyTarget | null):
 }
 
 interface LatencyChannelDeps {
-  host: () => CoreHost;
-  target: () => LatencyTarget | null;
+  host: CoreHost;
+  target: LatencyTarget;
   /* Reconnect edges reported by the ping worker. */
   stall: (detail: string) => void;
   resume: () => void;
@@ -91,11 +91,12 @@ export class LatencyChannel {
   }
 
   /* The ping worker owns the bus and the ping algorithm. */
-  prime(kind: TransportKind, isLatencyStage = false): void {
+  prime(isLatencyStage = false): void {
     this.teardown();
-    const host = this.#deps.host();
+    const host = this.#deps.host;
     const cfg = host.config!;
-    const channel = this.#deps.target();
+    const channel = this.#deps.target;
+    const kind = channel.transport;
     const url = pingUrl(channel, kind);
     if (!url) throw new Error("latency target not resolved");
     const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
@@ -124,7 +125,7 @@ export class LatencyChannel {
     };
     worker.onerror = (e: ErrorEvent): void => {
       if (this.#worker !== worker) return;
-      this.#deps.host().ingestLatencyAccountingIncomplete();
+      this.#deps.host.ingestLatencyAccountingIncomplete();
       this.#onMessage({
         type: "stall",
         detail: e.message || "ping worker error",
@@ -164,7 +165,7 @@ export class LatencyChannel {
     });
     const timer = setTimeout(() => {
       if (this.#worker !== worker) return;
-      this.#deps.host().ingestLatencyAccountingIncomplete();
+      this.#deps.host.ingestLatencyAccountingIncomplete();
       this.#deps.stall("ping worker did not finish its pending probes");
       if (this.#worker === worker) this.teardown();
     }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
@@ -172,7 +173,7 @@ export class LatencyChannel {
     try {
       worker.postMessage({ type: "stop", cutoffEpochMs: this.#cutoffEpochMs });
     } catch {
-      this.#deps.host().ingestLatencyAccountingIncomplete();
+      this.#deps.host.ingestLatencyAccountingIncomplete();
       this.#deps.stall("ping worker could not finalize its pending probes");
       if (this.#worker === worker) this.teardown();
     }
@@ -181,11 +182,11 @@ export class LatencyChannel {
 
   /** Hard stage failure cannot establish which buffered or pending outcomes were discarded. */
   discard(): void {
-    if (this.#worker) this.#deps.host().ingestLatencyAccountingIncomplete();
+    if (this.#worker) this.#deps.host.ingestLatencyAccountingIncomplete();
     this.teardown();
   }
 
-  /* Stop + terminate the ping worker, which drops its bus without a close frame: the server's read ends with the. */
+  /* Terminating the ping worker also releases its transport. */
   teardown(): void {
     this.#active = false;
     this.#clearEstablishTimer();
@@ -211,7 +212,7 @@ export class LatencyChannel {
     switch (msg.type) {
       case "samples": {
         this.#clearEstablishTimer(); // a pong proves the channel works
-        const host = this.#deps.host();
+        const host = this.#deps.host;
         for (const sample of msg.samples) {
           if (
             this.#cutoffEpochMs !== null &&
@@ -232,15 +233,13 @@ export class LatencyChannel {
         break;
       }
       case "interrupted":
-        this.#deps
-          .host()
-          .ingestLatencyInterruption(
-            msg.sentAtEpochMs.filter(
-              (sentAt) =>
-                this.#cutoffEpochMs === null || sentAt <= this.#cutoffEpochMs,
-            ).length,
-            msg.reason,
-          );
+        this.#deps.host.ingestLatencyInterruption(
+          msg.sentAtEpochMs.filter(
+            (sentAt) =>
+              this.#cutoffEpochMs === null || sentAt <= this.#cutoffEpochMs,
+          ).length,
+          msg.reason,
+        );
         break;
       case "stopped":
         this.teardown();
@@ -382,7 +381,7 @@ export class IdleKeepalive {
       const finish = (error?: Error): void => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
-        // Only the live wait clears the slot: an older instance timing out or aborting would otherwise silence the.
+        // Only the current wait may clear its slot.
         if (this.#probeReady?.finish === finish) this.#probeReady = null;
         if (error) reject(error);
         else resolve();

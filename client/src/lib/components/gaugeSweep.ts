@@ -1,4 +1,4 @@
-// Pure dial mapping and interpolation.
+// Pure measurement-to-dial mapping.
 import type { Phase } from "../runner/contract";
 import { throughputGaugeFraction } from "./gaugeScale";
 export function clamp01(v: number): number {
@@ -59,18 +59,4 @@ export function angleForFraction(
   arcSweep: number,
 ): number {
   return arcStart + arcSweep * clamp01(fraction);
-}
-export function interpolateSweep(
-  current: number,
-  target: number,
-  elapsedMs: number,
-  reducedMotion: boolean,
-): { value: number; active: boolean } {
-  const delta = target - current;
-  if (reducedMotion || Math.abs(delta) < 0.002)
-    return { value: target, active: false };
-  return {
-    value: current + delta * (1 - Math.exp(-Math.min(100, elapsedMs) / 100)),
-    active: true,
-  };
 }

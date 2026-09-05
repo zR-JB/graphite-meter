@@ -1,4 +1,4 @@
-/* The server drains and counts the bytes; upload-progress-worker.ts relays the authoritative total. */
+/* The server drains and counts the bytes; its progress feed reports the authoritative total. */
 
 import {
   redirectForCredentials,

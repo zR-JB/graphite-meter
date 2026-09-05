@@ -98,13 +98,6 @@ export function primaryResultGaugeArc(
 }
 
 /** Completion animation is always bounded to the gauge's normalized domain. */
-export function resultGaugeFillTarget(fractions: readonly number[]): number {
-  let maximum = 0;
-  for (const fraction of fractions) {
-    if (Number.isFinite(fraction)) maximum = Math.max(maximum, fraction);
-  }
-  return Math.min(1, Math.max(0, maximum));
-}
 
 export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
   if (!result) return [];

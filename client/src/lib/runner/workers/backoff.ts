@@ -1,4 +1,4 @@
-/* Reconnect backoff for ping-worker.ts and upload-progress-worker.ts. */
+/* Reconnect backoff for latency probes and the HTTP upload progress feed. */
 
 /* Next reconnect backoff (ms): starts at `minMs` on the first failure (prev 0), then doubles each subsequent. */
 export function nextBackoff(

@@ -23,13 +23,6 @@ export function wtTransferWorker(): Worker {
   );
 }
 
-export function uploadProgressWorker(): Worker {
-  return new Worker(
-    new URL("../workers/upload-progress-worker.ts", import.meta.url),
-    { type: "module" },
-  );
-}
-
 export function pingWorker(): Worker {
   return new Worker(new URL("../workers/ping-worker.ts", import.meta.url), {
     type: "module",

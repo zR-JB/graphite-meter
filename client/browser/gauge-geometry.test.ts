@@ -11,7 +11,7 @@ import {
   waitForCompletion,
   type Page,
 } from "./webview";
-import { gaugeLayout } from "../src/lib/canvas/gaugeLayout";
+import { gaugeLayout } from "../src/lib/components/gaugeLayout";
 function persistedConfig(latency: boolean) {
   return JSON.stringify({
     config: {
@@ -34,12 +34,12 @@ async function gaugeBox(page: Page, latency: boolean) {
   await expectVisible(stage);
   return stage.evaluate((element) => {
     const box = element.getBoundingClientRect();
-    const canvas = element.querySelector("canvas");
+    const dial = element.querySelector(".gauge-dial");
     return {
       width: box.width,
       height: box.height,
-      canvasWidth: canvas?.getBoundingClientRect().width ?? 0,
-      canvasHeight: canvas?.getBoundingClientRect().height ?? 0,
+      dialWidth: dial?.getBoundingClientRect().width ?? 0,
+      dialHeight: dial?.getBoundingClientRect().height ?? 0,
     };
   });
 }
@@ -57,8 +57,8 @@ for (const viewport of [
     expectNear(withLatency.height, withoutLatency.height);
     expect(withLatency.height).toBeGreaterThanOrEqual(280);
     expect(withLatency.height).toBeLessThanOrEqual(320);
-    expectNear(withLatency.canvasWidth, withoutLatency.canvasWidth);
-    expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
+    expectNear(withLatency.dialWidth, withoutLatency.dialWidth);
+    expectNear(withLatency.dialHeight, withoutLatency.dialHeight);
   });
 }
 async function assertGaugeLabels(page: Page) {
@@ -171,13 +171,12 @@ async function assertGaugeLabels(page: Page) {
   }
 }
 
-async function assertGaugeCanvasAlignment(page: Page) {
+async function assertGaugeDialAlignment(page: Page) {
   const boxes = await page.locator(".gauge-panel .stage").evaluate((stage) => {
-    const canvas = stage.querySelector("canvas");
-    if (!(canvas instanceof HTMLCanvasElement))
-      throw new Error("missing gauge");
+    const dial = stage.querySelector(".gauge-dial");
+    if (!(dial instanceof SVGSVGElement)) throw new Error("missing gauge");
     const stageBox = stage.getBoundingClientRect();
-    const canvasBox = canvas.getBoundingClientRect();
+    const dialBox = dial.getBoundingClientRect();
     return {
       stage: {
         left: stageBox.left,
@@ -187,22 +186,22 @@ async function assertGaugeCanvasAlignment(page: Page) {
         centerX: (stageBox.left + stageBox.right) / 2,
         centerY: (stageBox.top + stageBox.bottom) / 2,
       },
-      canvas: {
-        left: canvasBox.left,
-        right: canvasBox.right,
-        top: canvasBox.top,
-        bottom: canvasBox.bottom,
-        centerX: (canvasBox.left + canvasBox.right) / 2,
-        centerY: (canvasBox.top + canvasBox.bottom) / 2,
+      dial: {
+        left: dialBox.left,
+        right: dialBox.right,
+        top: dialBox.top,
+        bottom: dialBox.bottom,
+        centerX: (dialBox.left + dialBox.right) / 2,
+        centerY: (dialBox.top + dialBox.bottom) / 2,
       },
     };
   });
-  expectNear(boxes.canvas.left, boxes.stage.left);
-  expectNear(boxes.canvas.right, boxes.stage.right);
-  expectNear(boxes.canvas.top, boxes.stage.top);
-  expectNear(boxes.canvas.bottom, boxes.stage.bottom);
-  expectNear(boxes.canvas.centerX, boxes.stage.centerX);
-  expectNear(boxes.canvas.centerY, boxes.stage.centerY);
+  expectNear(boxes.dial.left, boxes.stage.left);
+  expectNear(boxes.dial.right, boxes.stage.right);
+  expectNear(boxes.dial.top, boxes.stage.top);
+  expectNear(boxes.dial.bottom, boxes.stage.bottom);
+  expectNear(boxes.dial.centerX, boxes.stage.centerX);
+  expectNear(boxes.dial.centerY, boxes.stage.centerY);
 }
 
 test("running and completed gauge geometry stays aligned to the shared layout", async ({
@@ -216,10 +215,10 @@ test("running and completed gauge geometry stays aligned to the shared layout", 
     "data-phase",
     "download",
   );
-  await assertGaugeCanvasAlignment(page);
+  await assertGaugeDialAlignment(page);
   await assertGaugeLabels(page);
   await waitForCompletion(page, 10_000);
-  await assertGaugeCanvasAlignment(page);
+  await assertGaugeDialAlignment(page);
   await assertGaugeLabels(page);
 });
 
@@ -416,7 +415,7 @@ for (const viewport of [
     const withoutLatency = await gaugeBox(page, false);
     expect(withoutLatency.width).toBeGreaterThan(withLatency.width * 1.5);
     expectNear(withLatency.height, withoutLatency.height);
-    expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
+    expectNear(withLatency.dialHeight, withoutLatency.dialHeight);
     const stage = await page
       .locator("#console > section.stage")
       .evaluate((element) => ({

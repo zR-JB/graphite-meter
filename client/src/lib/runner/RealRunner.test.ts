@@ -438,21 +438,29 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
   const transferWorkers: FakeWorker[] = [];
   let preflights = 0;
   let browserProtocol = "http/1.1";
-  let progressWorker: FakeWorker | null = null;
+  let progressFeed: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const progressSignals: AbortSignal[] = [];
+  const sendProgress = (record: object): void => {
+    progressFeed!.enqueue(
+      new TextEncoder().encode(JSON.stringify(record) + "\n"),
+    );
+  };
+  const until = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(1);
+    expect(predicate()).toBe(true);
+  };
   let pingWorker: FakeWorker | null = null;
   class FakeWorker {
     onmessage: ((event: MessageEvent) => void) | null = null;
     onerror: ((event: ErrorEvent) => void) | null = null;
-    readonly kind: "ping" | "progress" | "upload" | "download";
+    readonly kind: "ping" | "upload" | "download";
     constructor(url: URL) {
       const path = String(url);
-      this.kind = path.includes("upload-progress")
-        ? "progress"
-        : path.includes("upload-worker")
-          ? "upload"
-          : path.includes("download-worker")
-            ? "download"
-            : "ping";
+      this.kind = path.includes("upload-worker")
+        ? "upload"
+        : path.includes("download-worker")
+          ? "download"
+          : "ping";
       if (this.kind === "ping") pingWorker = this;
       if (this.kind === "upload" || this.kind === "download")
         transferWorkers.push(this);
@@ -484,7 +492,6 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         });
       } else if (message.type === "start") {
         started.push(this.kind);
-        if (this.kind === "progress") progressWorker = this;
       }
     }
     emit(data: unknown): void {
@@ -517,7 +524,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     return done;
   };
   const restoreProbe = stubProbeEnvironment(
-    (async (input: RequestInfo | URL) => {
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       fetchUrls.push(url);
       if (url.includes("/preflight")) {
@@ -533,6 +540,24 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         });
       if (url.includes("/upload/session"))
         return Response.json({ uploadId: "gmu_test" });
+      if (url.includes("/upload/progress")) {
+        if (init?.method === "DELETE")
+          return new Response(null, { status: 204 });
+        started.push("progress");
+        progressSignals.push(init!.signal!);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              progressFeed = controller;
+              init!.signal!.addEventListener(
+                "abort",
+                () => controller.error(init!.signal!.reason),
+                { once: true },
+              );
+            },
+          }),
+        );
+      }
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch,
     { location: "http://meter.test:7246/", protocol: () => browserProtocol },
@@ -696,12 +721,12 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       transfer: ["up"],
       loadedLatency: false,
     });
-    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
+    await until(() => progressFeed !== null);
     expect(started).toEqual(["progress"]);
-    expect(workerStarts.at(-1)?.url).toBe(
+    expect(fetchUrls.at(-1)).toBe(
       "http://meter.test:7246/upload/progress?id=gmu_test",
     );
-    progressWorker!.emit({ type: "open" });
+    sendProgress({ type: "ready" });
     await stagePreparation;
     expect(started).toEqual([
       "progress",
@@ -715,8 +740,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     expect(failures).toEqual([]);
     const activity = phaseActivity("upload", ["up"]);
     backend.onStageMeasure(activity);
-    progressWorker!.emit({ type: "bytes", n: 100, t: 100_000_000 });
-    progressWorker!.emit({ type: "bytes", n: 200, t: 200_000_000 });
+    sendProgress({ type: "progress", bytes: 100, nanos: 100_000_000 });
+    sendProgress({ type: "progress", bytes: 200, nanos: 200_000_000 });
+    await until(() => uploadBytes.length === 1);
     const ending = backend.onStageEnd(activity);
     if (!ending)
       throw new Error("upload finalization did not return a promise");
@@ -724,31 +750,33 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     void ending.then(() => (ended = true));
     await Promise.resolve();
     expect(ended).toBe(false);
-    progressWorker!.emit({ type: "complete", n: 300, t: 300_000_000 });
+    sendProgress({ type: "complete", bytes: 300, nanos: 300_000_000 });
     await ending;
     expect(uploadBytes).toEqual([100, 100]);
     expect(ended).toBe(true);
     uploadBytes.length = 0;
-    progressWorker = null;
+    progressFeed = null;
     const stalePreparation = backend.onStageBegin(activity);
-    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
-    progressWorker!.emit({ type: "open" });
+    await until(() => progressFeed !== null);
+    sendProgress({ type: "ready" });
     await stalePreparation;
     backend.onStageMeasure(activity);
     const staleEnding = backend.onStageEnd(activity);
     if (!staleEnding)
       throw new Error("stale upload finalization did not return a promise");
     backend.onAbort();
+    expect(progressSignals.at(-1)?.aborted).toBe(true);
     backend.onRunStart(config);
-    progressWorker = null;
+    progressFeed = null;
     const replacementPreparation = backend.onStageBegin(activity);
-    for (let i = 0; i < 10 && !progressWorker; i++) await Promise.resolve();
-    progressWorker!.emit({ type: "open" });
+    await until(() => progressFeed !== null);
+    sendProgress({ type: "ready" });
     await replacementPreparation;
     backend.onStageMeasure(activity);
     await staleEnding;
-    progressWorker!.emit({ type: "bytes", n: 100, t: 100_000_000 });
-    progressWorker!.emit({ type: "bytes", n: 200, t: 200_000_000 });
+    sendProgress({ type: "progress", bytes: 100, nanos: 100_000_000 });
+    sendProgress({ type: "progress", bytes: 200, nanos: 200_000_000 });
+    await until(() => uploadBytes.length === 1);
     expect(uploadBytes).toEqual([100]);
     backend.onComplete();
   } finally {

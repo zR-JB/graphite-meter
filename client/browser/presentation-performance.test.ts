@@ -12,6 +12,7 @@ import {
 } from "./webview";
 type Metrics = {
   __canvasDraws: number;
+  __gaugeUpdates: number;
   __chartFrames: number;
   __frameWork: number[];
   __longTasks: number[];
@@ -20,6 +21,7 @@ const installPerformanceMetrics = async (page: Page) => {
   await page.addInitScript(() => {
     const metrics = window as unknown as Metrics;
     metrics.__canvasDraws = 0;
+    metrics.__gaugeUpdates = 0;
     metrics.__chartFrames = 0;
     metrics.__frameWork = [];
     metrics.__longTasks = [];
@@ -35,6 +37,14 @@ const installPerformanceMetrics = async (page: Page) => {
         metrics.__chartFrames++;
       return clearRect.apply(this, args);
     };
+    new MutationObserver((changes) => {
+      for (const change of changes)
+        if (
+          change.target instanceof Element &&
+          change.target.closest(".gauge-dial")
+        )
+          metrics.__gaugeUpdates++;
+    }).observe(document, { subtree: true, childList: true, attributes: true });
     const requestFrame = window.requestAnimationFrame.bind(window);
     window.requestAnimationFrame = (callback) =>
       requestFrame((now) => {
@@ -58,7 +68,21 @@ const performanceTest = (name: string, run: Parameters<typeof test>[1]) =>
     await run(fixtures);
   });
 const draws = (page: Page) =>
-  page.evaluate(() => (window as unknown as Metrics).__canvasDraws);
+  page.evaluate(() => {
+    const metrics = window as unknown as Metrics;
+    return metrics.__canvasDraws;
+  });
+const gaugeUpdates = (page: Page) =>
+  page.evaluate(() => (window as unknown as Metrics).__gaugeUpdates);
+const nativeGaugeAnimations = (page: Page) =>
+  page
+    .locator(".gauge-dial")
+    .evaluate(
+      (dial: SVGSVGElement) =>
+        dial
+          .getAnimations({ subtree: true })
+          .filter((animation) => animation.playState === "running").length,
+    );
 const chartSample = (page: Page) =>
   page.evaluate(() => ({
     frames: (window as unknown as Metrics).__chartFrames,
@@ -80,7 +104,7 @@ const performanceMetrics = (page: Page) =>
     };
   });
 performanceTest(
-  "canvas work parks when settled or offscreen",
+  "canvas and SVG work park when settled or offscreen",
   async ({ page, context }) => {
     const session = await context.newCDPSession(page);
     await session.send("Emulation.setCPUThrottlingRate", { rate: 4 });
@@ -93,8 +117,10 @@ performanceTest(
       })
       .toBe(true);
     await resetMetrics(page);
+    const settledGauge = await gaugeUpdates(page);
     await startTest(page);
     await page.waitForTimeout(1200);
+    expect(await gaugeUpdates(page)).toBeGreaterThan(settledGauge);
     const plot = page.locator(
       '[role="slider"][aria-label="Throughput and latency over time"]',
     );
@@ -123,6 +149,7 @@ performanceTest(
       document.dispatchEvent(new Event("visibilitychange"));
     });
     await page.waitForTimeout(100);
+    expect(await nativeGaugeAnimations(page)).toBe(0);
     const hidden = await draws(page);
     await page.waitForTimeout(500);
     expect(await draws(page)).toBe(hidden);
@@ -135,15 +162,16 @@ performanceTest(
     });
     await page.waitForTimeout(100);
     expect(await draws(page)).toBeGreaterThan(hidden);
-    await page.locator("canvas").evaluateAll((canvases) => {
-      for (const canvas of canvases) canvas.style.display = "none";
+    await page.locator("canvas, .gauge-dial").evaluateAll((surfaces) => {
+      for (const surface of surfaces) surface.style.display = "none";
     });
     await page.waitForTimeout(250);
+    expect(await nativeGaugeAnimations(page)).toBe(0);
     const offscreen = await draws(page);
     await page.waitForTimeout(500);
     expect(await draws(page)).toBe(offscreen);
-    await page.locator("canvas").evaluateAll((canvases) => {
-      for (const canvas of canvases) canvas.style.display = "";
+    await page.locator("canvas, .gauge-dial").evaluateAll((surfaces) => {
+      for (const surface of surfaces) surface.style.display = "";
     });
     await page.waitForTimeout(250);
     expect(await draws(page)).toBeGreaterThan(offscreen);
@@ -166,6 +194,7 @@ performanceTest(
     await startTest(page);
     await waitForCompletion(page);
     await page.waitForTimeout(500);
+    expect(await nativeGaugeAnimations(page)).toBe(0);
     const complete = await draws(page);
     await page.waitForTimeout(500);
     expect(await draws(page)).toBe(complete);

@@ -27,6 +27,8 @@ interface ProgressRecord {
 
 /* Why a feed stopped. */
 type ProgressFeedEnd = "complete" | "fatal" | "eof";
+// UTF-16 code units: bound retained text and JSON parsing for tiny control records.
+const MAX_RECORD_LENGTH = 64 * 1024;
 
 export async function readProgressFeed(
   body: ReadableStream<Uint8Array>,
@@ -37,40 +39,49 @@ export async function readProgressFeed(
   const decoder = new TextDecoder();
   let partial = "";
   let opened = false;
-  for (;;) {
-    const { value, done } = await reader.read();
-    partial += decoder.decode(value, { stream: !done });
-    const lines = partial.split("\n");
-    partial = lines.pop() ?? "";
-    for (const line of lines) {
-      if (line.trim() === "") continue; // heartbeat
-      let record: ProgressRecord;
-      try {
-        record = JSON.parse(line) as ProgressRecord;
-      } catch {
-        continue; // a truncated or non-JSON line is never a measurement
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      partial += decoder.decode(value, { stream: !done });
+      const lines = partial.split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.length > MAX_RECORD_LENGTH)
+          throw new Error("upload progress record exceeds 64 Ki characters");
+        if (line.trim() === "") continue; // heartbeat
+        let record: ProgressRecord;
+        try {
+          record = JSON.parse(line) as ProgressRecord;
+        } catch {
+          continue; // a truncated or non-JSON line is never a measurement
+        }
+        if (record.type === "ready") {
+          if (opened) continue;
+          opened = true;
+          emit({ type: "open" });
+          continue;
+        }
+        if (record.type === "error") {
+          emit({
+            type: "fatal",
+            detail: record.message || "upload progress error",
+            cause: classifyUploadFailure(undefined, record.code),
+          });
+          return "fatal";
+        }
+        if (record.type !== "progress" && record.type !== "complete") continue;
+        const n = Number(record.bytes ?? 0);
+        if (n >= state.lastN) state.lastN = n;
+        const event = record.type === "progress" ? "bytes" : "complete";
+        emit({ type: event, n: state.lastN, t: Number(record.nanos ?? 0) });
+        if (record.type === "complete") return "complete";
       }
-      if (record.type === "ready") {
-        if (opened) continue;
-        opened = true;
-        emit({ type: "open" });
-        continue;
-      }
-      if (record.type === "error") {
-        emit({
-          type: "fatal",
-          detail: record.message || "upload progress error",
-          cause: classifyUploadFailure(undefined, record.code),
-        });
-        return "fatal";
-      }
-      if (record.type !== "progress" && record.type !== "complete") continue;
-      const n = Number(record.bytes ?? 0);
-      if (n >= state.lastN) state.lastN = n;
-      const event = record.type === "progress" ? "bytes" : "complete";
-      emit({ type: event, n: state.lastN, t: Number(record.nanos ?? 0) });
-      if (record.type === "complete") return "complete";
+      if (partial.length > MAX_RECORD_LENGTH)
+        throw new Error("upload progress record exceeds 64 Ki characters");
+      if (done) return "eof";
     }
-    if (done) return "eof";
+  } finally {
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }

@@ -82,7 +82,7 @@ function fakeHost(
     ...core,
   } as unknown as CoreHost;
   return {
-    host: () => host,
+    host,
     stallChanged: (detail) => record.stalls.push(detail ?? "stalled"),
     uploadProgress: () => {},
     beginUploadMeasure: () => {},
@@ -137,7 +137,7 @@ for (const [what, establishMs] of [
             setTimeout(() => events.onError(true, "no bytes"), establishMs);
           }),
       });
-      direction.spawn(["https://meter.test/lane"]);
+      direction.spawn();
       direction.measure();
       clock.advance(
         (ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS + LANE_RESTART_BACKOFF_MS) *
@@ -165,7 +165,7 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
           setTimeout(() => events.onError(true, "dropped"), 10);
         }),
     });
-    direction.spawn(["https://meter.test/lane"]);
+    direction.spawn();
     clock.advance(20_000);
     expect(record.skips).toEqual([]);
     expect(record.starts.length).toBeGreaterThan(1);
@@ -176,25 +176,32 @@ test("a lane that carried bytes is restarted past the skip deadline", () => {
 });
 test("a local upload completion is a presentation hint, not measurement evidence", () => {
   withClock((clock) => {
-    const hints: [number, number, number, number][] = [];
+    const hints: [number, number, number][] = [];
+    let reportAlive!: () => void;
     let ingests = 0;
     const deps = fakeHost(recording(), clock, {
       ingestThroughput() {
         ingests++;
       },
     });
-    deps.uploadPresentationHint = (lane, bytes, elapsedMs, generation) =>
-      hints.push([lane, bytes, elapsedMs, generation]);
+    deps.uploadPresentationHint = (lane, bytes, elapsedMs) =>
+      hints.push([lane, bytes, elapsedMs]);
     const direction = newDirection(clock, undefined, {
       host: deps,
-      makeLane: (events) => lane(() => events.onAlive(640, 80)),
+      makeLane: (events) =>
+        lane(() => {
+          reportAlive = () => events.onAlive(640, 80);
+          reportAlive();
+        }),
     });
-    direction.setUploadGeneration(7);
-    direction.spawn(["https://meter.test/upload"]);
-    expect(hints).toEqual([[0, 640, 80, 7]]);
+    direction.spawn();
+    expect(hints).toEqual([[0, 640, 80]]);
     expect(ingests).toBe(0);
     clock.advance(DIRECTION_PROGRESS_WINDOW_MS + 1);
     expect(ingests).toBe(0);
+    direction.discard();
+    reportAlive();
+    expect(hints).toEqual([[0, 640, 80]]);
   });
 });
 test("a permanent lane refusal finalizes only its affected stage", () => {
@@ -204,7 +211,7 @@ test("a permanent lane refusal finalizes only its affected stage", () => {
       stage: "bidirectional",
       makeLane: (events) => lane(() => events.onError(false, "HTTP 429")),
     });
-    direction.spawn(["https://meter.test/lane"]);
+    direction.spawn();
     expect(record.skips).toEqual([0]);
     expect(record.fails).toEqual([]);
     expect(record.stalls).toEqual([]);
@@ -221,7 +228,7 @@ test("an explicit invalid upload id enters runner recovery without a same-id res
           refuse = () => events.onError(true, "HTTP 400", "unknown-upload-id");
         }),
     });
-    direction.spawn(["https://meter.test/lane"]);
+    direction.spawn();
     direction.measure();
     refuse();
     clock.advance(LANE_RESTART_BACKOFF_MS * 2);
@@ -252,7 +259,7 @@ test("bytes reported inside one clock tick reach the next aggregate", () => {
           },
         ),
     });
-    direction.spawn(["https://meter.test/lane"]);
+    direction.spawn();
     direction.measure();
     void direction.stop();
     expect(bytes.reduce((sum, delta) => sum + delta, 0)).toBe(22);
@@ -284,7 +291,7 @@ test("graceful stop aggregates a lane's final progress report", async () => {
         },
       ),
   });
-  direction.spawn(["https://meter.test/wt/download"]);
+  direction.spawn();
   direction.measure();
   await direction.stop();
   expect(bytes.reduce((sum, delta) => sum + delta, 0)).toBe(17);
@@ -309,7 +316,7 @@ test("a silently pending measured direction stalls independently", () => {
       host,
       makeLane: () => lane(),
     });
-    direction.spawn(["https://meter.test/wt/upload"]);
+    direction.spawn();
     direction.measure();
     clock.advance(DIRECTION_PROGRESS_WINDOW_MS + 1);
     expect(states).toEqual([true]);
@@ -336,7 +343,7 @@ test("discard cancels a pending direction watchdog", () => {
     const host = fakeHost(record, clock);
     host.stallChanged = () => states.push(direction.stalled);
     direction = newDirection(clock, record, { host, makeLane: () => lane() });
-    direction.spawn(["https://meter.test/wt/upload"]);
+    direction.spawn();
     direction.measure();
     direction.discard();
     clock.advance(DIRECTION_PROGRESS_WINDOW_MS * 2);
