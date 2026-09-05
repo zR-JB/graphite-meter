@@ -1,4 +1,4 @@
-/* Only computed outcomes cross the boundary, carrying the worker's monotonic observation time so batching never. */
+/* Every measured outcome crosses the boundary with its worker-owned observation time. */
 
 import { encode, decode } from "../real/wire";
 import {
@@ -24,14 +24,13 @@ type InMsg =
       intervalMs: number;
       replyDriven: boolean;
       maxInFlight: number;
-      reportGapMs: number;
       lossK: number;
       lossFloorMs: number;
       checkAuthentication?: boolean;
     }
   | { type: "measure"; intervalMs?: number };
 
-/* Both affect only how many samples cross the boundary: RTT and observation time remain worker-owned. */
+/* Batching changes delivery timing, never the measurement population. */
 type OutMsg =
   | { type: "open" }
   | { type: "ready" }
@@ -45,6 +44,7 @@ const post = (m: OutMsg): void => ctx.postMessage(m);
 
 /** Batch flush cadence (ms). */
 const FLUSH_MS = 50;
+const MAX_BATCH_SAMPLES = 128;
 /* Upper bound on the loss timeout (ms). */
 const LOSS_CEIL_MS = 10_000;
 /** Reconnect backoff bounds (ms). */
@@ -74,7 +74,6 @@ let checkAuthentication = false;
 let intervalMs = 250;
 let replyDriven = false;
 let maxInFlight = 16; // caps concurrent pings, bounding wire spam and memory
-let reportGapMs = 20;
 let lossK = 4;
 let lossFloorMs = 250;
 
@@ -89,7 +88,6 @@ const pending = new Map<number, PendingPing>();
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
 let replyHeadId: number | null = null;
-let lastReportAt = 0; // gates the UI-bound sample rate (see reportGapMs)
 let outbox: PingSample[] = [];
 
 // Adaptive RTT estimator (RFC 6298, ms). See rttEstimator.ts.
@@ -115,7 +113,6 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
       intervalMs = m.intervalMs;
       replyDriven = m.replyDriven;
       maxInFlight = m.maxInFlight;
-      reportGapMs = m.reportGapMs;
       lossK = m.lossK;
       lossFloorMs = m.lossFloorMs;
       checkAuthentication = m.checkAuthentication ?? false;
@@ -139,7 +136,6 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
         scheduler?.setInterval(intervalMs);
       }
       measuring = true;
-      lastReportAt = 0; // report the first measured sample promptly; fixed cadence is re-anchored at the lifecycle.
       if (!replyDriven) scheduler?.restartNow();
       break;
   }
@@ -337,10 +333,7 @@ function onFrame(data: unknown): void {
     pending.delete(frame.id);
     const rtt = recv - ping.sentAt;
     rttEstimate = observeRtt(rttEstimate, rtt); // always: keeps the loss timeout accurate; reply-driven localhost.
-    if (ping.measured && recv - lastReportAt >= reportGapMs) {
-      lastReportAt = recv;
-      outbox.push(pingSample(rtt, false, recv));
-    }
+    if (ping.measured) record(pingSample(rtt, false, recv));
     if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     return;
   }
@@ -394,7 +387,7 @@ function sweep(): void {
       rememberEvicted(id, ping.sentAt);
       evicted = true;
       if (id === replyHeadId) replyHeadEvicted = true;
-      if (ping.measured) outbox.push(pingSample(now - ping.sentAt, true, now));
+      if (ping.measured) record(pingSample(now - ping.sentAt, true, now));
     }
   }
   // A timed-out request completes one chain step.
@@ -408,6 +401,11 @@ function rememberEvicted(id: number, sent: number): void {
     const oldest = graveyard.keys().next().value;
     if (oldest !== undefined) graveyard.delete(oldest);
   }
+}
+
+function record(sample: PingSample): void {
+  outbox.push(sample);
+  if (outbox.length >= MAX_BATCH_SAMPLES) flush();
 }
 
 function flush(): void {
