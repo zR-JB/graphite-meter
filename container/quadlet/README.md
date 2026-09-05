@@ -3,6 +3,15 @@
 Run Graphite Meter as a systemd-managed Podman service. Quadlet turns these
 `.container` / `.build` files into generated systemd services.
 
+[Deployment overview](../../docs/DEPLOYMENT.md) · [Native TLS](graphite-meter-tls/README.md) · [Tailscale](tailscale-sidecar/README.md)
+
+Use the published image for a normal installation. Choose the source build only when you need
+changes from a checkout. Commands below run from `container/quadlet`:
+
+```sh
+cd container/quadlet
+```
+
 Two ways to run it:
 
 - **`graphite-meter.container` - the default.** Pulls the published release
@@ -100,10 +109,26 @@ and giving each `GM_H*_PUBLIC_ORIGIN` that same hostname.
 See [DEPLOYMENT.md](../../docs/DEPLOYMENT.md) for every variable, the
 terminal-client grant flow, and the headers a trusted proxy must set.
 
+## Verify and maintain
+
+```sh
+systemctl --user status graphite-meter.service --no-pager
+journalctl --user -u graphite-meter.service -f
+```
+
+For the source variant, substitute `graphite-meter-source.service`. The supplied `[Install]`
+sections make the generated services start with the user manager; lingering keeps that manager
+available after logout. Do not run `systemctl enable` on generated Quadlet services.
+See [Podman's Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html#enabling-unit-files).
+
+When upgrading to 0.7, update native clients too and reload browser tabs;
+see [upgrade notes](../../docs/DEPLOYMENT.md#upgrading-to-07).
+
 ## Build and networking
 
 - Override client build knobs (dummy runner / label) by uncommenting
   the `BuildArg=` lines in `graphite-meter.build`.
 - On rootless Podman, pasta user-mode networking can significantly limit
   measured throughput - uncomment `Network=host` in the `.container` unit for
-  full-rate LAN tests.
+  LAN tests that need to avoid that overhead. Host networking gives up the container network
+  namespace; apply firewall policy on the host.

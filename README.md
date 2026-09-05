@@ -2,155 +2,136 @@
 
 # Graphite Meter
 
-Self-hosted network throughput, loaded latency, and datagram-loss measurement for browsers and terminals.
+**How fast is your connection—and how responsive does it stay?**
 
-[![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases)
-[![Image](https://img.shields.io/badge/ghcr.io-zr--jb%2Fgraphite--meter-2496ed?logo=docker&logoColor=white)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter)
-[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+Self-hosted speed testing for browsers and terminals.\
+Download, upload, and latency under load, with the measurement path in plain sight.
 
-<img src="docs/assets/hero.png" alt="Graphite Meter browser client showing a completed multi-gigabit test on desktop and mobile" width="920">
+[![CI](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml/badge.svg)](https://github.com/zR-JB/graphite-meter/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/zR-JB/graphite-meter?sort=semver)](https://github.com/zR-JB/graphite-meter/releases) [![Container](https://img.shields.io/badge/container-ghcr.io%2Fzr--jb%2Fgraphite--meter-387d91)](https://github.com/zR-JB/graphite-meter/pkgs/container/graphite-meter) [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 
-<sub>Demo data.</sub>
+[Quick start](#quick-start) · [Features](#why-graphite-meter) · [Screenshots](docs/SCREENSHOTS.md) · [Deployment guide](docs/DEPLOYMENT.md)
+
+<img src="docs/assets/hero.png" alt="Completed Graphite Meter test: download and upload results alongside idle and loaded latency profiles" width="1080">
+
+<sub>v0.7.0 · simulated measurements · <a href="docs/SCREENSHOTS.md">explore the interface</a></sub>
 
 </div>
 
-Graphite Meter combines a server, a responsive browser client, and a native terminal client. Open
-the browser UI from any device, select the stages and transports you want to test, and inspect
-throughput and latency under load. The server is mise run as quick to start: one container command
-provides a usable local instance with no configuration file.
+## Quick start
 
-The measurement paths are explicit. Uploads are timed where the server receives them, latency can
-use unreliable WebTransport datagrams, and native listeners on separate ports let clients select
-HTTP/1.1, HTTP/2, or HTTP/3 instead of depending only on protocol negotiation.
-
-## Measurement model
-
-| Capability              | What Graphite Meter reports                                                                                                | Boundary                                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Download                | Payload bytes consumed by the receiving client over measured time.                                                         | Browser, host, server, and path limits can all constrain the result.                               |
-| Upload                  | Payload bytes received and timed by the server, so bytes merely queued by the sender are not counted as delivered.         | A proxy or server that terminates or buffers the measured request becomes part of the path.        |
-| Idle and loaded latency | Client-clock application send-to-receive time before and during each selected transfer stage, with percentiles and jitter. | It includes browser, server, transport, and scheduler time. It is not ICMP latency.                |
-| Probe timeouts          | Resolved application probes whose reply deadline expired, labelled by WebSocket or datagram transport.                     | Network and endpoint queues can cause timeouts; this does not identify physical or directional IP loss. |
-| Wire-rate estimate      | A separately labelled estimate derived from payload rate and observed protocol evidence.                                   | It is not packet capture and cannot include unknown tunnel, encapsulation, VLAN, or path overhead. |
-
-WebSocket latency remains available when WebTransport is unavailable. It measures application RTT,
-including TCP retransmission and head-of-line blocking. WebTransport datagrams avoid stream
-retransmission, but their timeouts also include endpoint queueing and drops.
-See [measurement definitions](docs/MEASUREMENTS.md) for exact populations, missing evidence, and statistics.
-
-## Start a server
-
-Run the multi-architecture image and open <http://localhost:7246>:
+One container. One port. No configuration file or database service.
 
 ```sh
-docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
+docker run -d --name graphite-meter --restart unless-stopped \
+  -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
-This default starts a clear HTTP/1.1 service with fetch-stream throughput and WebSocket latency.
-It is useful for quick local or trusted-network testing and requires only port 7246. It does not
-provide native TLS, HTTP/2, HTTP/3, or WebTransport. Native TLS listeners add those dedicated paths.
-WebTransport in a remote browser also requires an HTTPS page, a trusted certificate, reachable
-HTTP/3 over UDP, and compatible browser support.
+Open **[localhost:7246](http://localhost:7246)**, or `http://YOUR_SERVER_IP:7246` from another
+device, and start a test. Traffic travels between that device and your Graphite Meter server;
+choose a server location that includes the network path you want to measure.
 
-See [Deployment and configuration](docs/DEPLOYMENT.md) for Docker Compose, native TLS, reverse
-proxies, authentication, Podman, Quadlet, every server setting, and every terminal-client flag.
+The default provides HTTP/1.1 throughput and WebSocket latency for local or trusted-network use.
+For public access, follow the [HTTPS and authentication guide](docs/DEPLOYMENT.md#choose-your-deployment).
+For HTTP/2, HTTP/3, and WebTransport, enable [native TLS listeners](docs/DEPLOYMENT.md#native-listeners).
 
-## Browser client
+> **Upgrading from 0.6?** Update the server and native client together, then reload the browser.
+> [The 0.7 upgrade notes](docs/DEPLOYMENT.md#upgrading-to-07) cover protocol changes and older saved history.
 
-The main screen keeps routine test choices close to the run button:
+Prefer Compose? Save this as `compose.yml`, then run `docker compose up -d`:
 
-- toggle idle latency, download, and upload stages independently;
-- enable the optional bidirectional stage in Settings;
-- keep latency probes active during transfers to profile responsiveness under load;
-- choose a duration preset or custom stage timings and let estimated-stable stages finish early;
-- select throughput and latency paths independently from the server's advertised endpoints;
-- choose automatic or fixed stream policy and automatic or fixed gauge scale;
-- display rates as decimal or binary bits or bytes throughout the application;
-- show protocol-overhead wire estimates beside measured application rates;
-- keep up to 2,000 completed summaries in optional device-local history.
+```yaml
+services:
+  graphite-meter:
+    image: ghcr.io/zr-jb/graphite-meter:latest
+    ports:
+      - "7246:7246"
+    restart: unless-stopped
+```
 
-The connection picker exposes fetch streams over negotiated or dedicated HTTP listeners,
-WebSocket latency, and WebTransport streams or datagrams where the server advertises them.
-Experimental datagram throughput is available for comparing browser and QUIC API behavior, but it
-commonly measures browser datagram-processing limits rather than line capacity. Parallel clear
-HTTP/1.1 fetch streams remain the practical high-throughput browser path on the reference system.
+[Compose with TLS](docs/DEPLOYMENT.md#docker-compose) · [Reverse proxy](docs/DEPLOYMENT.md#reverse-proxies) · [Rootless Podman](container/quadlet/README.md) · [Tailscale](container/quadlet/tailscale-sidecar/README.md)
 
-Graphite Meter records both browser-observed and server-observed protocol evidence when available.
-That matters behind a reverse proxy, where the browser-facing protocol can differ from the upstream
-protocol. Some proxies perform better with multiplexed HTTP/2 than with separate HTTP/1.1 requests,
-so there is no universal transport ranking. An ordinary TCP reverse proxy does not carry native
-WebTransport; expose the HTTP/3 UDP listener separately when that path is required.
+## Why Graphite Meter?
 
-More browser views are collected in the [screenshot gallery](docs/SCREENSHOTS.md).
+A throughput number is the beginning. Graphite Meter also shows what happens to responsiveness
+while the connection is busy, and gives you control over how it is measured.
 
-## Native terminal client
+| What you get                               | Why it matters                                                                                                                                           |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Receiver-measured throughput**           | Downloads count bytes received by the client. Upload bytes and timing come from the server, so data waiting in a sender queue does not inflate delivery. |
+| **Latency under each kind of load**        | Compare idle, download, upload, and optional simultaneous transfer. Separate profiles show when responsiveness degrades.                                 |
+| **Independent connection choices**         | Select throughput and latency paths separately. Compare dedicated HTTP/1.1, HTTP/2, HTTP/3, WebSocket, and WebTransport paths where available.           |
+| **Evidence behind the numbers**            | Inspect latency distributions, RTT variation, probe timeouts, and paired server handling time. Missing or interrupted evidence stays explicit.           |
+| **A browser and a native terminal client** | Test from a phone or desktop, or use the Go TUI to explore the path without browser runtime limits.                                                      |
+| **A small deployment with access control** | One Go binary embeds the web UI. Optional password, OIDC, or hybrid sign-in protects measurement routes as well as the page.                             |
 
-`graphite-meter-client` uses the same server contracts without a browser. Its TUI selects the
-server, stages, timing, independent connection paths, and stream policy, then shows live progress
-and the completed latency and throughput results.
+### A useful instrument on every screen
 
-<div align="center">
-<img src="docs/assets/tui.png" alt="Graphite Meter native terminal client showing a completed test" width="920">
-<br><sub>Demo data.</sub>
-</div>
+The responsive interface keeps the run controls, throughput results, and latency profile together.
+Inspect charts with a pointer, keyboard, or touch; light and dark themes and reduced-motion support
+carry across the interface.
 
-Current [releases](https://github.com/zR-JB/graphite-meter/releases) attach prebuilt native client
-archives for Linux, macOS, and Windows. Authenticated servers use a short
-verification code and browser approval; the client keeps the resulting measurement grant in memory
-only. Command-line configuration and all flags are documented in
-[Deployment and configuration](docs/DEPLOYMENT.md#native-terminal-client).
+- **Make the test yours:** toggle stages, add simultaneous download/upload, choose a duration
+  preset or custom timings, and use automatic or fixed stream counts.
+- **Read rates your way:** decimal or binary bits/bytes, automatic or fixed gauge scale, and an
+  optional, separately labelled wire-rate estimate.
+- **Keep a local record:** opt into device-local history for up to 2,000 completed summaries.
+  Browse, sort, and inspect saved runs while keeping the live meter available.
 
-## Deployment options
+<details>
+<summary><strong>Connection choices and measurement limits</strong></summary>
 
-The memory-safe Go server embeds the production Svelte client in one static binary. The published
-container is built from `scratch` and contains no shell or libc. Runtime admission limits bound
-active measurements, sessions, and connections without throttling the traffic being measured.
+Dedicated native listeners make protocol selection explicit. A reverse proxy creates two hops;
+endpoint information distinguishes browser-observed and server-observed protocol evidence when
+available. There is no universal fastest transport: client, CPU, proxy, and path conditions matter.
 
-| Deployment                               | Use case                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------- |
-| Clear HTTP/1.1 container                 | Fast local startup with fetch throughput and WebSocket latency.                 |
-| Native TLS listeners                     | Deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3, and WebTransport on separate ports. |
-| Reverse proxy                            | Existing HTTPS ingress with protocol evidence for both sides of the proxy.      |
-| Password, OIDC, or hybrid authentication | Restrict the UI and all measurement transports on public deployments.           |
-| Rootless Podman and Quadlet              | Run under a user account, with complete native-TLS and Tailscale examples.      |
+WebTransport requires a compatible browser, an HTTPS page, a trusted certificate, and reachable
+HTTP/3 over UDP. WebSocket probes remain available without it. Experimental datagram throughput
+is useful for investigating browser and QUIC behavior, but can hit API processing limits before
+network capacity.
 
-Host networking can avoid rootless userspace-network throughput limits, but it also removes the
-container network namespace. The deployment guide describes that tradeoff and the firewall rules
-needed for TCP and UDP listeners.
+Probe timeouts describe unanswered application probes. They do **not** measure TCP/IP packet loss.
+Paired adjusted RTT subtracts only the instrumented server handling interval; raw application RTT
+remains the primary latency measurement. Wire rate is an overhead estimate, not packet capture.
 
-## Reference performance
+See [measurement definitions](docs/MEASUREMENTS.md) for timing, populations, and missing-data behavior,
+and [historical benchmarks](docs/BENCHMARKS.md) for software-path performance evidence.
 
-Reference testing on one x86 system measured these sustained loopback medians:
+</details>
 
-| Client and path                   |      Download |        Upload |
-| --------------------------------- | ------------: | ------------: |
-| Chromium, clear HTTP/1.1, 2 lanes |  49.00 Gbit/s |  16.95 Gbit/s |
-| Native Go client, 8 lanes         | 362.59 Gbit/s | 239.71 Gbit/s |
+## From the terminal
 
-These are software-path results from one machine, not expected rates for a real network. Browser
-version, CPU, memory, transport, proxy, latency, loss, and the network path can change the ordering
-and the ceiling. The method, transport matrix, shaped-path results, and limitations are in
-[Benchmarks](docs/BENCHMARKS.md).
+Download the matching `graphite-meter-client` archive for your platform from
+[Releases](https://github.com/zR-JB/graphite-meter/releases), extract it, and run:
 
-## Documentation
+```sh
+./graphite-meter-client --url http://YOUR_SERVER_IP:7246
+```
 
-| Document                                            | Contents                                                                                                                       |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| [Deployment and configuration](docs/DEPLOYMENT.md)  | Listeners, TLS, advertised origins, authentication, limits, containers, proxies, Podman, and all CLI and environment settings. |
-| [Development and architecture](docs/DEVELOPMENT.md) | Data flow, authoritative boundaries, repository layout, toolchain, tests, builds, and releases.                                |
-| [Benchmarks](docs/BENCHMARKS.md)                    | Historical evidence, maintained reproduction commands, and interpretation limits.                                              |
-| [Screenshots](docs/SCREENSHOTS.md)                  | Current browser settings, endpoint evidence, and local history surfaces.                                                       |
-| [Wire protocol](api/wire.md)                        | Normative server and client measurement contracts.                                                                             |
+The interactive TUI provides stage, duration, stream, and connection choices with live results.
+Releases provide Linux and macOS builds for amd64/arm64, plus Windows amd64
+(`graphite-meter-client.exe`). For source-built servers, [build the client from the same checkout](docs/DEVELOPMENT.md#development-commands).
 
-## Roadmap
+On authenticated servers, approve the terminal's short code in your browser. The client keeps its
+measurement grant in memory; it does not need your operator password.
+[All terminal flags and authentication details →](docs/DEPLOYMENT.md#native-terminal-client)
 
-1. Let the browser select independent Graphite Meter servers. Authentication and operator policy
-   for remote targets still need a defined contract.
-2. Build on that work to measure several servers at once, using independent origins and
-   connections to load paths beyond one browser origin's limits.
+## Find your next step
+
+| I want to…                                                       | Read                                                                                               |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Deploy, configure TLS, add sign-in, or troubleshoot a connection | [Deployment and configuration](docs/DEPLOYMENT.md)                                                 |
+| See settings, endpoint details, mobile, and saved results        | [Screenshot gallery](docs/SCREENSHOTS.md)                                                          |
+| Understand exactly what a result means                           | [Measurement definitions](docs/MEASUREMENTS.md)                                                    |
+| Explore performance evidence and reproduce a benchmark           | [Benchmarks](docs/BENCHMARKS.md)                                                                   |
+| Build, test, or contribute                                       | [Development and architecture](docs/DEVELOPMENT.md)                                                |
+| Integrate a client or inspect the contracts                      | [Discovery](api/discovery.md) · [Uploads](api/upload.md) · [Latency and WebTransport](api/wire.md) |
+
+Server selection and parallel tests across independent servers are planned. The current browser
+selects among the paths advertised by one deployment.
 
 ## Contributing
+
+With [mise installed](docs/DEVELOPMENT.md#prerequisites):
 
 ```sh
 git clone https://github.com/zR-JB/graphite-meter.git
@@ -158,17 +139,13 @@ cd graphite-meter
 mise trust
 mise run setup
 mise run dev
-mise run ci
 ```
 
-The required toolchain, focused test commands, generated artifacts, and release workflow are in
-[Development and architecture](docs/DEVELOPMENT.md).
+Run `mise run check` before submitting a change. The [development guide](docs/DEVELOPMENT.md)
+explains the architecture, focused checks, full CI gate, and release process.
 
 ## License
 
-Graphite Meter - Copyright © 2026 zR-JB
-
-Licensed under AGPL-3.0-or-later. See [LICENSE](LICENSE) and [COPYRIGHT](COPYRIGHT). Third-party
-notices are generated for each distributed artifact and are available in the browser's About and
-legal view, in the container under `/usr/share/licenses/graphite-meter/`, and in native-client
-release archives.
+Copyright © 2026 zR-JB. Licensed under **AGPL-3.0-or-later**; see [LICENSE](LICENSE) and
+[COPYRIGHT](COPYRIGHT). Third-party notices ship in the browser's About/legal view, native-client
+archives, and `/usr/share/licenses/graphite-meter/` in the container.

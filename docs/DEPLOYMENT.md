@@ -4,17 +4,104 @@ Graphite Meter runs as one static server binary with the browser client embedded
 configuration needs no file and starts a clear HTTP/1.1 service on port 7246. Add native TLS
 listeners when you need deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3, or WebTransport.
 
+## Choose your deployment
+
+| Your setup                       | Start here                                                              | What you need                                                |
+| -------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Local or trusted LAN             | [One container](#fast-local-deployment)                                 | TCP 7246.                                                    |
+| Existing HTTPS ingress           | [Reverse proxy](#reverse-proxies) and [authentication](#authentication) | A hostname, TLS proxy, and its trusted CIDR.                 |
+| Direct protocol comparisons      | [Compose with native TLS](#docker-compose)                              | A trusted certificate; TCP 7247–7249 and UDP 7249.           |
+| systemd under your own user      | [Quadlet](../container/quadlet/README.md)                               | Linux, Podman, and systemd.                                  |
+| Private tailnet                  | [Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md)   | Tailnet identity, HTTPS certificates, and access policy.     |
+| Features in the current checkout | [Build from source](#build-from-source)                                 | Git and Docker Compose, or the pinned development toolchain. |
+
+This guide covers **v0.7.0**. Read [upgrading to 0.7](#upgrading-to-07) when replacing a 0.6 deployment.
+For reproducible deployments, replace `:latest` with `:0.7.0` or a verified image digest.
+
+Jump to [server settings](#server-reference), [terminal flags](#native-terminal-client), or
+[troubleshooting](#troubleshooting). Commands using `container/` paths run from the repository root.
+
 ## Fast local deployment
 
 Run the published container and open <http://localhost:7246>:
 
 ```sh
-docker run -d --name graphite-meter -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
+docker run -d --name graphite-meter --restart unless-stopped \
+  -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
 ```
 
 This clear HTTP deployment provides fetch-stream throughput and WebSocket latency. Browsers only
 expose WebTransport in a secure context, so a remote deployment needs HTTPS plus the native
 HTTP/3 listener for WebTransport latency and datagrams.
+
+## Docker Compose
+
+Clone the repository first if you have not already. The base file pulls the published image;
+cloning alone does not build the current source:
+
+```sh
+git clone https://github.com/zR-JB/graphite-meter.git
+cd graphite-meter
+```
+
+```sh
+docker compose -f container/docker-compose.yml up -d
+```
+
+### Native TLS
+
+The TLS overlay deliberately does not issue certificates. Supply an existing Let's Encrypt-style
+tree whose `live/` entries link into the same mounted `archive/` tree:
+
+```sh
+export GM_PUBLIC_HOST=meter.example.com
+export GM_CERT_NAME=meter.example.com
+export GM_CERTIFICATE_TREE=/etc/letsencrypt
+docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
+```
+
+This publishes TCP ports 7247, 7248, and 7249 plus UDP port 7249. The certificate tree is mounted
+read-only. The rootless Quadlet example under `container/quadlet/graphite-meter-tls` provides a
+complete Cloudflare DNS-01 issuance and renewal workflow.
+
+### Authentication overlay
+
+[The authentication overlay](../container/docker-compose.auth.yml) demonstrates password sign-in
+behind an existing HTTPS reverse proxy:
+
+1. Generate a hash using the [password command](#authentication) and save the single hash line to
+   `/etc/graphite-meter/auth-password-hash` outside the repository.
+2. Edit the overlay's canonical HTTPS URL, trusted proxy CIDR, and secret file path.
+3. Configure [proxy forwarding and streaming](#reverse-proxies), then start both Compose files:
+
+```sh
+docker compose -f container/docker-compose.yml -f container/docker-compose.auth.yml up -d
+```
+
+Open the configured HTTPS URL and sign in. The overlay also documents OIDC and hybrid settings.
+
+### Build from source
+
+From a checkout of the revision you want to run:
+
+```sh
+git clone https://github.com/zR-JB/graphite-meter.git
+cd graphite-meter
+docker compose -f container/docker-compose.build.yml up --build -d
+```
+
+Open <http://localhost:7246>. If you already cloned the repository, run only the Compose command.
+Stop an existing container bound to port 7246 before starting the source build.
+
+Direct source images use development build identities. Official release automation supplies the
+release version and exact source revision.
+
+To build and run the embedded server directly instead of creating an image:
+
+```sh
+mise run server-build-prod
+./go/graphite-meter
+```
 
 ## Native listeners
 
@@ -80,6 +167,212 @@ Public negotiated origins accept `self` or absolute HTTP/HTTPS origins:
 An origin cannot be advertised as both deterministic native and negotiated. Use `self` for the
 origin that served the current page.
 
+## Reverse proxies
+
+A proxy creates two protocol hops:
+
+```text
+browser or TUI  <->  proxy  <->  Graphite Meter
+```
+
+The browser may negotiate HTTP/2 or HTTP/3 with the proxy while Graphite Meter receives clear
+HTTP/1.1 upstream. Configure this as a negotiated public origin:
+
+```env
+GM_ADVERTISED_NATIVE_ENDPOINTS=none
+GM_PUBLIC_ORIGINS=self
+GM_TRUSTED_PROXIES=172.30.0.0/24
+```
+
+Use `GM_PUBLIC_THROUGHPUT_ORIGINS` or `GM_PUBLIC_LATENCY_ORIGINS` when an origin provides only one
+role. Keep deterministic native endpoints advertised alongside the proxy origin when users should
+be able to select both.
+
+WebTransport is HTTP/3 extended CONNECT over UDP. A normal TCP reverse proxy cannot carry it.
+Expose the native H3 endpoint separately when WebTransport is required. Without it, clients can
+still use fetch throughput and WebSocket latency.
+
+### nginx
+
+Merge this location and the `map` into your existing HTTPS configuration; the snippet omits
+certificate and TLS-listener setup. Request buffering and body-size limits must permit uploads.
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    location / {
+        proxy_pass http://graphite-meter:7246;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Forwarded "";
+        proxy_set_header X-Forwarded-For "";
+
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        client_max_body_size 0;
+    }
+}
+```
+
+### Caddy
+
+```caddyfile
+meter.example {
+    reverse_proxy graphite-meter:7246 {
+        header_up X-Real-IP {remote_host}
+        header_up -Forwarded
+        header_up -X-Forwarded-For
+    }
+}
+```
+
+### Proxy requirements
+
+- Preserve `Host` and overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`.
+- Set `X-Real-IP` from the proxy connection peer.
+- Remove client-supplied `Forwarded` and `X-Forwarded-For` values.
+- Allow WebSocket Upgrade to `/ws/ping`.
+- Do not buffer, cache, compress, or transform `/upload/progress`.
+- Set `GM_TRUSTED_PROXIES` only to the proxy peers.
+- Redact the `/auth/oidc/callback` query string from logs.
+- Do not add provider `forward_auth`; Graphite Meter owns its authentication boundary.
+- Apply bandwidth policy outside measurement routes only when accurate throughput is required.
+
+## Authentication
+
+Authentication is off by default. When enabled, it covers the UI, discovery, probes, transfers,
+progress streams, WebSockets, and WebTransport sessions.
+
+| Environment                       | Flag                             | Default    | Meaning                                                        |
+| --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------- |
+| `GM_AUTH_MODE`                    | `--auth-mode`                    | `off`      | `off`, `password`, `oidc`, or `hybrid`.                        |
+| `GM_AUTH_PUBLIC_URL`              | `--auth-public-url`              | empty      | Canonical HTTPS UI origin without a path or explicit `:443`.   |
+| `GM_AUTH_PASSWORD_HASH`           | none                             | empty      | Inline Argon2id PHC hash. Prefer the file setting.             |
+| `GM_AUTH_PASSWORD_HASH_FILE`      | `--auth-password-hash-file`      | empty      | File containing one Argon2id PHC hash.                         |
+| `GM_AUTH_OIDC_ISSUER`             | `--auth-oidc-issuer`             | empty      | HTTPS OIDC issuer URL.                                         |
+| `GM_AUTH_OIDC_CLIENT_ID`          | `--auth-oidc-client-id`          | empty      | Confidential client ID.                                        |
+| `GM_AUTH_OIDC_CLIENT_SECRET`      | none                             | empty      | Inline client secret. Prefer the file setting.                 |
+| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty      | File containing the OIDC client secret.                        |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS`     | `--auth-oidc-allowed-groups`     | empty      | Required comma-separated, case-sensitive OIDC group allowlist. |
+| `GM_AUTH_OIDC_PROVIDER_NAME`      | `--auth-oidc-provider-name`      | `Authelia` | Provider label shown on the sign-in page.                      |
+
+Create an operator password hash interactively:
+
+```sh
+docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
+```
+
+Password mode requires exactly one password-hash source. OIDC mode requires issuer, client ID,
+one secret source, and at least one allowed group. Hybrid mode requires both complete methods and
+keeps the operator password available if the identity provider cannot be reached.
+
+Register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client
+using PKCE S256, `client_secret_basic`, and the `openid profile groups` scopes.
+
+Authenticated browser sessions are HTTPS-only, absolute eight-hour sessions. Advertised origins
+must use the canonical authentication hostname, although their ports may differ. Clear HTTP/1.1
+cannot be advertised while authentication is enabled.
+
+### Terminal client authorization
+
+The TUI does not request or store the operator password. It creates a verifier in memory and
+shows a short code plus a browser approval URL. After the user confirms the matching code, the
+client receives a measurement-only bearer grant bound to the approving browser session and exact
+HTTPS origin. Closing the client discards the grant; browser sign-out revokes it.
+
+The client refuses authenticated operation over HTTP and does not combine authentication with
+`--insecure`.
+
+## Podman and Quadlet
+
+[The Quadlet guide](../container/quadlet/README.md) contains:
+
+- a published-image unit;
+- source-build units for Podman 5 or newer;
+- a complete native TLS and Certbot DNS-01 deployment;
+- a Tailscale sidecar deployment with no published host ports.
+
+Rootless Podman limits host privilege. Its userspace networking can also limit measured
+throughput. `Network=host` avoids that path and is useful for high-rate LAN testing, but it gives
+up the container network namespace. Use it deliberately and apply host firewall policy directly.
+
+## Native terminal client
+
+Run `graphite-meter-client` with no arguments for an interactive test against
+`http://127.0.0.1:7246`. The default stages are latency, download, and upload with loaded latency
+enabled.
+
+| Flag                       | Default                   | Meaning                                                               |
+| -------------------------- | ------------------------- | --------------------------------------------------------------------- |
+| `--url`                    | `http://127.0.0.1:7246`   | Graphite Meter UI and discovery origin.                               |
+| `--throughput-origin`      | `auto`                    | Discovered throughput origin or `auto`.                               |
+| `--throughput-protocol`    | `auto`                    | `auto`, `http1`, `http2`, or `http3` for a negotiated origin.         |
+| `--throughput-transport`   | `auto`                    | `auto`, `fetch-stream`, or `webtransport`.                            |
+| `--latency-origin`         | `auto`                    | Discovered latency origin or `auto`.                                  |
+| `--latency-transport`      | `auto`                    | `auto`, `websocket`, or `webtransport`.                               |
+| `--stages`                 | `latency,download,upload` | Comma-separated stages, including `bidirectional`.                    |
+| `--warmup`                 | `800ms`                   | Per-transfer-stage warmup.                                            |
+| `--latency-duration`       | `4s`                      | Idle latency duration.                                                |
+| `--download-duration`      | `10s`                     | Download duration.                                                    |
+| `--upload-duration`        | `10s`                     | Upload duration.                                                      |
+| `--bidirectional-duration` | `10s`                     | Bidirectional duration.                                               |
+| `--auto-streams`           | `6`                       | Maximum automatic HTTP/1 streams per direction.                       |
+| `--streams`                | `0`                       | Forced streams per active direction; zero keeps automatic policy.     |
+| `--ping`                   | `medium`                  | `instant` (80 ms), `medium` (250 ms), `slow` (600 ms), or a duration. |
+| `--loaded-latency`         | `true`                    | Measure latency while transfer stages run.                            |
+| `--insecure`               | `false`                   | Skip TLS verification for unauthenticated testing.                    |
+| `--version`                | `false`                   | Print the client version and exit.                                    |
+| `--legal`                  | `false`                   | Print licenses and notices and exit.                                  |
+
+WebTransport limits custom ping intervals to half the server session idle bound. Invalid stage
+tokens are ignored; at least one valid stage must remain for a useful run.
+
+Releases attach native client archives for Linux amd64/arm64, macOS amd64/arm64, and Windows
+amd64. The server is distributed through the multi-architecture container image; a standalone
+server binary can be built from source but is not attached to GitHub Releases.
+
+## Upgrading to 0.7
+
+Deploy the server and native client together. The 0.7 probe replies require server handling time,
+uploads require measured sessions and exact progress counters, and discovery requires explicit
+transports. Version 0.6 peers are incompatible. Reload open browser tabs after replacing the server.
+
+History accepts schema version 3 only. Earlier records stay in browser storage but are skipped
+and reported as unsupported or malformed; they are not migrated. Clearing history is an explicit
+user action. See [measurement and history definitions](MEASUREMENTS.md#saved-history).
+
+### Browser preferences
+
+Version 0.7 reads current preference fields only. Obsolete cadence names,
+`pingConcurrency`, `parallelStreams`, and old transport-role aliases are ignored;
+missing or invalid values use current defaults. Target identifiers are preserved
+as stored and resolved against current discovery. The browser storage key is
+unchanged, so current preferences and theme choices remain available.
+
+## Troubleshooting
+
+| Symptom                                  | Check                                                                                                                        |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Another device cannot open the page      | Use the server IP rather than `localhost`; publish TCP 7246 and allow it through the host firewall.                          |
+| WebTransport is unavailable              | Use an HTTPS page and trusted certificate; verify browser support, advertised H3 origin, and TCP/UDP reachability.           |
+| An advertised path fails validation      | Public origins must be reachable from the client, with the correct scheme, port, and certificate hostname.                   |
+| Uploads fail behind a proxy              | Remove request buffering and restrictive body-size limits; allow streaming progress and sufficiently long request lifetimes. |
+| Throughput is lower than expected        | Check CPU, browser, Wi-Fi, proxy, and container networking; compare the native client and a direct listener.                 |
+| Timeouts or a missing value appear       | Inspect the stage evidence. Unresolved probes and missing receiver counters are not zero-valued measurements.                |
+| A client stopped working after upgrading | Match server and native-client versions; reload the browser to fetch the matching embedded UI.                               |
+
 ## Server reference
 
 Environment variables load first. A supplied command-line flag overrides the corresponding
@@ -143,225 +436,4 @@ Meter sees them. Default routes such as `0.0.0.0/0` and `::/0` are rejected.
 Only trusted peers may supply forwarding information used for client identity and admission
 accounting. Configure the actual proxy network rather than a broad client network.
 
-## Authentication
-
-Authentication is off by default. When enabled, it covers the UI, discovery, probes, transfers,
-progress streams, WebSockets, and WebTransport sessions.
-
-| Environment                       | Flag                             | Default    | Meaning                                                        |
-| --------------------------------- | -------------------------------- | ---------- | -------------------------------------------------------------- |
-| `GM_AUTH_MODE`                    | `--auth-mode`                    | `off`      | `off`, `password`, `oidc`, or `hybrid`.                        |
-| `GM_AUTH_PUBLIC_URL`              | `--auth-public-url`              | empty      | Canonical HTTPS UI origin without a path or explicit `:443`.   |
-| `GM_AUTH_PASSWORD_HASH`           | none                             | empty      | Inline Argon2id PHC hash. Prefer the file setting.             |
-| `GM_AUTH_PASSWORD_HASH_FILE`      | `--auth-password-hash-file`      | empty      | File containing one Argon2id PHC hash.                         |
-| `GM_AUTH_OIDC_ISSUER`             | `--auth-oidc-issuer`             | empty      | HTTPS OIDC issuer URL.                                         |
-| `GM_AUTH_OIDC_CLIENT_ID`          | `--auth-oidc-client-id`          | empty      | Confidential client ID.                                        |
-| `GM_AUTH_OIDC_CLIENT_SECRET`      | none                             | empty      | Inline client secret. Prefer the file setting.                 |
-| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty      | File containing the OIDC client secret.                        |
-| `GM_AUTH_OIDC_ALLOWED_GROUPS`     | `--auth-oidc-allowed-groups`     | empty      | Required comma-separated, case-sensitive OIDC group allowlist. |
-| `GM_AUTH_OIDC_PROVIDER_NAME`      | `--auth-oidc-provider-name`      | `Authelia` | Provider label shown on the sign-in page.                      |
-
-Create an operator password hash interactively:
-
-```sh
-docker run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
-```
-
-Password mode requires exactly one password-hash source. OIDC mode requires issuer, client ID,
-one secret source, and at least one allowed group. Hybrid mode requires both complete methods and
-keeps the operator password available if the identity provider cannot be reached.
-
-Register `${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code client
-using PKCE S256, `client_secret_basic`, and the `openid profile groups` scopes.
-
-Authenticated browser sessions are HTTPS-only, absolute eight-hour sessions. Advertised origins
-must use the canonical authentication hostname, although their ports may differ. Clear HTTP/1.1
-cannot be advertised while authentication is enabled.
-
-### Terminal client authorization
-
-The TUI does not request or store the operator password. It creates a verifier in memory and
-shows a short code plus a browser approval URL. After the user confirms the matching code, the
-client receives a measurement-only bearer grant bound to the approving browser session and exact
-HTTPS origin. Closing the client discards the grant; browser sign-out revokes it.
-
-The client refuses authenticated operation over HTTP and does not combine authentication with
-`--insecure`.
-
-## Docker Compose
-
-The base file pulls the published image:
-
-```sh
-docker compose -f container/docker-compose.yml up -d
-```
-
-### Native TLS
-
-The TLS overlay deliberately does not issue certificates. Supply an existing Let's Encrypt-style
-tree whose `live/` entries link into the same mounted `archive/` tree:
-
-```sh
-export GM_PUBLIC_HOST=meter.example.com
-export GM_CERT_NAME=meter.example.com
-export GM_CERTIFICATE_TREE=/etc/letsencrypt
-docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
-```
-
-This publishes TCP ports 7247, 7248, and 7249 plus UDP port 7249. The certificate tree is mounted
-read-only. The rootless Quadlet example under `container/quadlet/graphite-meter-tls` provides a
-complete Cloudflare DNS-01 issuance and renewal workflow.
-
-### Authentication overlay
-
-`container/docker-compose.auth.yml` demonstrates password authentication behind a TLS reverse
-proxy. Create the hash file outside the repository, configure the canonical URL and trusted proxy
-CIDR, then combine it with the base file. The overlay also documents the OIDC and hybrid settings.
-
-### Build from source
-
-```sh
-docker compose -f container/docker-compose.build.yml up --build
-```
-
-Direct source images use development build identities. Official release automation supplies the
-release version and exact source revision.
-
-To build and run the embedded server directly instead of creating an image:
-
-```sh
-mise run server-build-prod
-./go/graphite-meter
-```
-
-## Podman and Quadlet
-
-`container/quadlet` contains:
-
-- a published-image unit;
-- source-build units for Podman 5 or newer;
-- a complete native TLS and Certbot DNS-01 deployment;
-- a Tailscale sidecar deployment with no published host ports.
-
-Rootless Podman limits host privilege. Its userspace networking can also limit measured
-throughput. `Network=host` avoids that path and is useful for high-rate LAN testing, but it gives
-up the container network namespace. Use it deliberately and apply host firewall policy directly.
-
-## Reverse proxies
-
-A proxy creates two protocol hops:
-
-```text
-browser or TUI  <->  proxy  <->  Graphite Meter
-```
-
-The browser may negotiate HTTP/2 or HTTP/3 with the proxy while Graphite Meter receives clear
-HTTP/1.1 upstream. Configure this as a negotiated public origin:
-
-```env
-GM_ADVERTISED_NATIVE_ENDPOINTS=none
-GM_PUBLIC_ORIGINS=self
-GM_TRUSTED_PROXIES=172.30.0.0/24
-```
-
-Use `GM_PUBLIC_THROUGHPUT_ORIGINS` or `GM_PUBLIC_LATENCY_ORIGINS` when an origin provides only one
-role. Keep deterministic native endpoints advertised alongside the proxy origin when users should
-be able to select both.
-
-WebTransport is HTTP/3 extended CONNECT over UDP. A normal TCP reverse proxy cannot carry it.
-Expose the native H3 endpoint separately when WebTransport is required. Without it, clients can
-still use fetch throughput and WebSocket latency.
-
-### nginx
-
-```nginx
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-
-server {
-    location / {
-        proxy_pass http://graphite-meter:7246;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-Host $http_host;
-        proxy_set_header Forwarded "";
-        proxy_set_header X-Forwarded-For "";
-
-        proxy_buffering off;
-    }
-}
-```
-
-### Caddy
-
-```caddyfile
-meter.example {
-    reverse_proxy graphite-meter:7246 {
-        header_up X-Real-IP {remote_host}
-        header_up -Forwarded
-        header_up -X-Forwarded-For
-    }
-}
-```
-
-### Proxy requirements
-
-- Preserve `Host` and overwrite `X-Forwarded-Proto` and `X-Forwarded-Host`.
-- Set `X-Real-IP` from the proxy connection peer.
-- Remove client-supplied `Forwarded` and `X-Forwarded-For` values.
-- Allow WebSocket Upgrade to `/ws/ping`.
-- Do not buffer, cache, compress, or transform `/upload/progress`.
-- Set `GM_TRUSTED_PROXIES` only to the proxy peers.
-- Redact the `/auth/oidc/callback` query string from logs.
-- Do not add provider `forward_auth`; Graphite Meter owns its authentication boundary.
-- Apply bandwidth policy outside measurement routes only when accurate throughput is required.
-
-## Native terminal client
-
-Run `graphite-meter-client` with no arguments for an interactive test against
-`http://127.0.0.1:7246`. The default stages are latency, download, and upload with loaded latency
-enabled.
-
-| Flag                       | Default                   | Meaning                                                               |
-| -------------------------- | ------------------------- | --------------------------------------------------------------------- |
-| `--url`                    | `http://127.0.0.1:7246`   | Graphite Meter UI and discovery origin.                               |
-| `--throughput-origin`      | `auto`                    | Discovered throughput origin or `auto`.                               |
-| `--throughput-protocol`    | `auto`                    | `auto`, `http1`, `http2`, or `http3` for a negotiated origin.         |
-| `--throughput-transport`   | `auto`                    | `auto`, `fetch-stream`, or `webtransport`.                            |
-| `--latency-origin`         | `auto`                    | Discovered latency origin or `auto`.                                  |
-| `--latency-transport`      | `auto`                    | `auto`, `websocket`, or `webtransport`.                               |
-| `--stages`                 | `latency,download,upload` | Comma-separated stages, including `bidirectional`.                    |
-| `--warmup`                 | `800ms`                   | Per-transfer-stage warmup.                                            |
-| `--latency-duration`       | `4s`                      | Idle latency duration.                                                |
-| `--download-duration`      | `10s`                     | Download duration.                                                    |
-| `--upload-duration`        | `10s`                     | Upload duration.                                                      |
-| `--bidirectional-duration` | `10s`                     | Bidirectional duration.                                               |
-| `--auto-streams`           | `6`                       | Maximum automatic HTTP/1 streams per direction.                       |
-| `--streams`                | `0`                       | Forced streams per active direction; zero keeps automatic policy.     |
-| `--ping`                   | `medium`                  | `instant` (80 ms), `medium` (250 ms), `slow` (600 ms), or a duration. |
-| `--loaded-latency`         | `true`                    | Measure latency while transfer stages run.                            |
-| `--insecure`               | `false`                   | Skip TLS verification for unauthenticated testing.                    |
-| `--version`                | `false`                   | Print the client version and exit.                                    |
-| `--legal`                  | `false`                   | Print licenses and notices and exit.                                  |
-
-WebTransport limits custom ping intervals to half the server session idle bound. Invalid stage
-tokens are ignored; at least one valid stage must remain for a useful run.
-
-Releases attach native client archives for Linux amd64/arm64, macOS amd64/arm64, and Windows
-amd64. The server is distributed through the multi-architecture container image; a standalone
-server binary can be built from source but is not attached to GitHub Releases.
-
-## Upgrading browser preferences to 0.7
-
-Version 0.7 reads current preference fields only. Obsolete cadence names,
-`pingConcurrency`, `parallelStreams`, and old transport-role aliases are ignored;
-missing or invalid values use current defaults. Target identifiers are preserved
-as stored and resolved against current discovery. The browser storage key is
-unchanged, so current preferences and theme choices remain available.
+Return to the [project overview](../README.md).

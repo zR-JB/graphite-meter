@@ -1,9 +1,9 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
 This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the
-WebTransport datagram bus (`/wt/ping`), plus the **WebTransport session routes**, whose streams
-carry no messages at all and are defined by their CONNECT URL (see [WebTransport
-routes](#webtransport-routes)). The plain request/response HTTP endpoints (`/preflight`, `/probe`,
+WebTransport datagram bus (`/wt/ping`), plus the **WebTransport session routes**, defined by their CONNECT URL (see [WebTransport
+routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also
+open a receiver-progress stream. The plain request/response HTTP endpoints (`/preflight`, `/probe`,
 `/download`, `/upload/session`, `/upload`, `/upload/progress`) are **not** covered here — they use
 normal HTTP (query params, status codes, streaming bodies).
 
@@ -11,14 +11,18 @@ The Go server/native client and TypeScript browser client share the conformance
 corpus `api/wire.testvectors.txt`. Version 0.7 is a protocol break: version 0.6
 clients and servers cannot be mixed with 0.7 peers. Deploy matching versions.
 
+Related contracts: [discovery and control responses](discovery.md),
+[upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
+For listener setup, use the [deployment guide](../docs/DEPLOYMENT.md#native-listeners).
+
 ## Framing and lifecycle
 
 One WebSocket text message or WebTransport datagram carries one ASCII message,
 with no length prefix or trailing newline. Only two directional forms exist:
 
-| Direction | Message | Meaning |
-|---|---|---|
-| Client → server | `PING,<id>` | Client-owned uint32 probe ID. |
+| Direction       | Message                   | Meaning                                                                  |
+| --------------- | ------------------------- | ------------------------------------------------------------------------ |
+| Client → server | `PING,<id>`               | Client-owned uint32 probe ID.                                            |
 | Server → client | `PONG,<id>,<handling-ns>` | Echoed ID and mandatory uint64 server handling duration, in nanoseconds. |
 
 Decimal fields contain only digits: no sign, whitespace, exponent, or fraction.
@@ -57,11 +61,11 @@ Sessions are opened with extended CONNECT on the HTTP/3 origin. A stream carries
 its own, so the CONNECT URL query carries every parameter and the server opens the streams whose
 content it defines. Streams are raw bytes end to end.
 
-| Route | Query | Streams | Datagrams |
-|---|---|---|---|
-| `/wt/ping` | `token=` | none | the message bus above, one frame per datagram |
-| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
-| `/wt/upload` | `id=&datagrams=&token=` | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is reset rather than served. The server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained |
+| Route          | Query                               | Streams                                                                                                                                                                                                                    | Datagrams                                                                                                                                  |
+| -------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/wt/ping`     | `token=`                            | none                                                                                                                                                                                                                       | the message bus above, one frame per datagram                                                                                              |
+| `/wt/download` | `bytes=&streams=&datagrams=&token=` | the server opens `streams` (1..16, default 1) unidirectional streams; each writes `bytes`, closes, and is replaced while the session lives. `bytes=0` establishes without serving: the transport check                     | with `datagrams=`, the server floods `bytes` at a time, repeating while the session lives; `datagrams=0` is served the stream form instead |
+| `/wt/upload`   | `id=&datagrams=&token=`             | client unidirectional streams are raw upload bytes, up to 16 concurrently; a lane opened past that is reset rather than served. The server opens **one** unidirectional stream on establishment carrying the progress feed | with `datagrams=`, received datagrams count as upload bytes; with `datagrams=0` only the streams are drained                               |
 
 `streams=` is **clamped, never rejected**: a missing, non-numeric, or sub-1 value is read as 1, and
 a value above 16 is read as 16. `/wt/upload` enforces the same ceiling from the receiving side —
@@ -113,7 +117,7 @@ clients and servers together for the 0.7 contract.
 
 ## RTT, probe timeouts, and reply-driven pacing (client behavior)
 
-- On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>` it computes
+- On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>,<handling-ns>` it computes
   `rtt = now() − pending[id]` and resolves that probe once. Sending policy is separate:
   browser fixed cadence is start-to-start and a reply never advances the next scheduled send.
   A full in-flight window waits for a slot, then sends once without a catch-up burst.
@@ -130,5 +134,5 @@ clients and servers together for the 0.7 contract.
 
 ## Text representation
 
-The two small messages are directly inspectable in packet captures and share
-strict numeric validation across the Go and browser implementations.
+The two message payloads are ASCII and share strict numeric validation across the Go and
+browser implementations. Inspecting them in a TLS or QUIC packet capture requires decryption.

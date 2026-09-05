@@ -1,5 +1,15 @@
 # Legal pipeline
 
+This guide is for maintainers changing dependencies or distributed artifacts. For the project's
+license, see [LICENSE](../LICENSE) and [COPYRIGHT](../COPYRIGHT). Build prerequisites and the
+normal gates are in the [development guide](../docs/DEVELOPMENT.md).
+
+| Change                                        | Action                                                                                  |
+| --------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Application or documentation only             | Run the normal gate; no inventory regeneration unless distributed dependencies change.  |
+| Dependency version with unchanged legal files | Regenerate and validate using [routine dependency update](#routine-dependency-update).  |
+| New component or changed legal facts          | Follow [maintainer review](#new-dependency-or-changed-legal-facts) before regeneration. |
+
 ## Ownership and execution
 
 The standard-library Python package `scripts/legal` owns review policy,

@@ -5,6 +5,13 @@ Let's Encrypt certificate obtained over the Cloudflare DNS-01 challenge:
 `certbot-bootstrap` issues it once, `certbot-renew` keeps it fresh, and
 `graphite-meter` serves with it.
 
+[Deployment overview](../../../docs/DEPLOYMENT.md) · [Basic Quadlet](../README.md) · [Tailscale](../tailscale-sidecar/README.md)
+
+Before starting, have a public hostname, permission to edit its Cloudflare DNS zone, and a
+rootless Podman/systemd installation. Allow TCP 7247–7249 and UDP 7249 through your firewall.
+The supplied units use host networking and the published image; do not install them alongside
+another Quadlet using the `graphite-meter` name.
+
 ## Install
 
 Copy the whole directory into the rootless Quadlet search path - modern Quadlet
@@ -35,17 +42,22 @@ not proxied. Graphite Meter uses non-standard TCP ports 7247/7248 and TCP+UDP
 7249; Cloudflare's normal HTTP proxy does not transparently pass this native
 multi-port measurement traffic.
 
-The API token should only have `Zone:DNS:Edit` for the one relevant zone.
+Scope the API token to `Zone:DNS:Edit` for the relevant zone, following the
+[Certbot Cloudflare credential guide](https://certbot-dns-cloudflare.readthedocs.io/en/stable/#credentials).
 
 ## Validate and start
 
 ```sh
+loginctl enable-linger "$USER"
 systemctl --user daemon-reload
 /usr/lib/systemd/system-generators/podman-system-generator --user --dryrun
 systemctl --user start certbot-bootstrap.service
 systemctl --user start certbot-renew.service graphite-meter.service
-systemctl --user enable certbot-bootstrap.service certbot-renew.service graphite-meter.service
 ```
+
+The units already declare `WantedBy=default.target`; Quadlet applies that at generation time.
+Do not enable the generated services with `systemctl enable`
+([Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html#enabling-unit-files)).
 
 Some distributions install the generator at `/usr/libexec/podman/quadlet`; if
 the dry-run path above does not exist, skip that command and inspect generated
@@ -53,7 +65,10 @@ units with `systemctl --user cat graphite-meter.service` after daemon-reload.
 
 ## Verify
 
+Set the hostname in your verification shell as well as in the service environment:
+
 ```sh
+export GM_PUBLIC_HOST=meter.example.com
 systemctl --user status certbot-bootstrap certbot-renew graphite-meter
 journalctl --user -u certbot-bootstrap -u certbot-renew -u graphite-meter -f
 podman exec graphite-meter-certbot-renew certbot certificates

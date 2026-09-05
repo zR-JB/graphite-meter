@@ -15,6 +15,20 @@ for `gh`/Skopeo and intentionally stay in YAML: moving them into embedded Python
 would not make them type-checkable, while checking out repository scripts into a
 write-capable job would weaken the publication boundary.
 
+## Working on this pipeline
+
+Start with [development setup](../../docs/DEVELOPMENT.md#prerequisites), then run the focused checks:
+
+```sh
+mise run toolchain-check
+mise run workflow-check
+mise run pipeline-test
+```
+
+Use `mise run check` for the deterministic repository gate and `mise run ci` for the full gate.
+Task definitions live in [mise.toml](../../mise.toml); workflow files live in
+[.github/workflows](../../.github/workflows). Local release validation does not publish a release.
+
 ## JSON and typing boundary
 
 `github_api.py` is the single GitHub JSON decoding boundary. `json.loads()` is
@@ -103,7 +117,7 @@ The request has two modes:
 
 - `validate`: full build/verification, zero publication;
 - `publish`: same build, protected-environment approval, then a fresh current-main
-  + Gate + CodeQL recheck before write-capable jobs.
+  - Gate + CodeQL recheck before write-capable jobs.
 
 Before any write-capable job, the release guard also preflights a pre-existing
 `vMAJOR.MINOR.PATCH` ref and refuses if it targets a different commit. Publication
@@ -178,8 +192,8 @@ Other checked invariants include:
 version-pinned standalone `ty` binary, then runs the control-plane and legal
 positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
 Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
-The suite does not duplicate implementation bodies as required source strings. The Git hook is only a two-line launcher
-for `scripts/ci/precommit.py`; Just no longer contains a second hook implementation.
+The suite does not duplicate implementation bodies as required source strings. The Git hook bootstraps Python from the staged mise configuration, then invokes
+`scripts/ci/precommit.py`; the Python module owns check selection and execution.
 The typed hook records the exact staged Git tree, materializes that tree in a
 disposable detached worktree, installs client dependencies from that tree's frozen lockfile when
 needed, and runs selected component checks there. Prepared tool binaries can be shared; the
@@ -201,7 +215,7 @@ GitHub Settings and workflow YAML each have one non-overlapping responsibility:
    immutable refs on the platform.
 3. Workflow `uses:` lines keep the exact 40-character SHA plus a same-line version
    comment so Dependabot can update them normally.
-4. `workflow_policy.py` repeats only the SHA *shape* check locally for fast
+4. `workflow_policy.py` repeats only the SHA _shape_ check locally for fast
    pre-commit/CI feedback; there is no package/SHA allowlist file to maintain.
 
 When adding a new external action package, review it **and any composite-action
@@ -212,8 +226,6 @@ checksums against signed upstream metadata. It installs only the tools explicitl
 selected by each job before saving its tool cache. Go build/module and Bun
 package caches remain separate. Automatic tool installation is disabled in CI,
 so a later task cannot silently add unused toolchains to a narrowly scoped job.
-
-
 
 ## Python development gate
 

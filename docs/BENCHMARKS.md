@@ -8,6 +8,16 @@ The historical raw NDJSON rows are not retained. The tables below are the surviv
 maintained harness under `client/bench` keeps the transport and lane matrix that remains useful for
 new browser and protocol versions.
 
+## How to use this page
+
+These tables are **historical evidence**, not a fresh v0.7.0 benchmark or a performance promise.
+The documentation refresh does not remeasure them. Use the [current measurement definitions](MEASUREMENTS.md)
+when interpreting new results; changed clients and methods can limit comparisons with old runs.
+
+Read the [reference systems](#reference-systems) and [method](#method) before comparing rates.
+For deployment choices, start with the [deployment guide](DEPLOYMENT.md); benchmark a particular
+path only when the result will affect your choice.
+
 ## Reference systems
 
 The reference tests used two Linux systems:
@@ -162,16 +172,18 @@ Run the full Chromium matrix:
 GM_BENCH_SPKI='<pin>' GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 mise run bench-throughput
 ```
 
-Create a shaped path:
+Create a shaped path on a dedicated Linux benchmark host. The benchmark process must have
+permission to enter the network namespace: the fixture invokes `ip netns exec` without elevating
+itself. Its TLS certificate must cover `10.77.0.2`.
 
 ```sh
 sudo client/bench/rig.sh up lan-fast-lossy
-sudo ip netns exec gmbench <server-binary-bound-to-10.77.0.2>
-GM_BENCH_SPKI='<pin>' GM_BENCH_HOST=10.77.0.2 mise run bench-throughput
+GM_BENCH_SPKI='<pin>' GM_BENCH_HOST=10.77.0.2 GM_BENCH_NETNS=gmbench mise run bench-throughput
 sudo client/bench/rig.sh down
 ```
 
-Set `GM_BENCH_NETNS` instead when the fixture should start the server inside the namespace.
+The fixture starts and stops the server inside `gmbench`; do not start a second server manually.
+Always tear down the rig after the run, including after a failed benchmark.
 `mise run bench-wire` measures wire-codec cost, and `mise run stress` measures the server saturation
 envelope.
 
@@ -187,3 +199,5 @@ envelope.
   Safari, or shaped capacity above 10 Gbit/s.
 - Loopback results demonstrate software headroom. They do not prove equivalent performance across
   a real NIC or network.
+
+Return to the [project overview](../README.md) or [development guide](DEVELOPMENT.md).

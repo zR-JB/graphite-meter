@@ -1,5 +1,12 @@
 # Discovery and control response boundary
 
+This is the control-plane entry point for client implementers. Pair it with the
+[upload contract](upload.md), [latency and WebTransport wire protocol](wire.md), and
+[measurement definitions](../docs/MEASUREMENTS.md). Operators should start with
+[advertised measurement paths](../docs/DEPLOYMENT.md#advertised-measurement-paths).
+
+## Validation limits
+
 The browser and native clients limit discovery, probe, and upload-session JSON
 responses to 64 KiB of decoded response bytes. This applies to streamed bodies
 without a Content-Length header and to decompressed bodies. Native browser-approval

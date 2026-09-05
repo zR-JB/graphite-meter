@@ -15,6 +15,14 @@ Result: all 39 entries are **confirmed**. None is changed or unresolved, and
 there are no recommended edits to `legal/reviewed-components.json`. The
 recorded local fingerprints matched byte-for-byte.
 
+## Historical scope
+
+This is the dated August 24, 2026 audit, retained as provenance. Its versions and confirmations
+apply to that snapshot; this document does not certify the current dependency graph or v0.7.0.
+Use the [legal pipeline](README.md) and `mise run legal-check` for the current build, and
+`mise run legal-review audit` to produce its audit manifest. The itemized findings below are
+preserved without changing their original review date or verdicts.
+
 ## Itemized result
 
 Each row gives the exact installed revision, upstream legal-file URL, and
@@ -60,6 +68,6 @@ recommended edit. `none` means the existing fail-closed record is correct.
 - confirmed — `Spline Sans Mono` — `1.002 webfont` — OFL-1.1 — [upstream repository](https://github.com/SorkinType/SplineSansMono), local `legal/manual/fonts/OFL-1.1.txt`, provenance hashes both shipped WOFF2 files — none
 - confirmed — `ca-certificates` — `builder package` — LicenseRef-Debian-ca-certificates-bundle — [Debian upstream](https://salsa.debian.org/debian/ca-certificates), builder copies `/usr/share/doc/ca-certificates/copyright` from the CA-bundle image — none
 
-This confirms the current state only. A future version, upstream legal-file
+This confirms the audited snapshot only. A future version, upstream legal-file
 change, declared-license change, or local fingerprint mismatch must remain
 unapproved until a new audit updates the record and generated outputs.
