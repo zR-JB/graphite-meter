@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -66,7 +67,7 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 				if (r.ProtoMajor == 2) != http2 {
 					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
 				}
-				if err := upload.Handle(transport.NewHTTPSession(w, r)); err != nil {
+				if err := upload.HandleHTTP(w, r); err != nil {
 					t.Errorf("upload: %v", err)
 				}
 			}), nil, "")
@@ -245,13 +246,13 @@ func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
 	// Room for four measurements and four sessions, two per client either way.
 	a := newRequestAdmission(4, 2, 4, 2, time.Minute, time.Hour)
 	for i, key := range []string{"client-a", "client-a", "client-b", "client-b"} {
-		release, status := a.acquire(key, sessionKeyFor(routeWTPing, "login-"+key))
+		release, status := a.acquire(key, sessionKeyFor(route.WTPing, "login-"+key))
 		if status != 0 {
 			t.Fatalf("ping bus %d from %s rejected with %d", i, key, status)
 		}
 		defer release()
 	}
-	if _, status := a.acquire("client-c", sessionKeyFor(routeWTDownload, "login-c")); status != http.StatusServiceUnavailable {
+	if _, status := a.acquire("client-c", sessionKeyFor(route.WTDownload, "login-c")); status != http.StatusServiceUnavailable {
 		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status, http.StatusServiceUnavailable)
 	}
 	a.mu.Lock()
@@ -337,7 +338,7 @@ func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
 // The two ping buses are one thing under two mechanisms: neither holds a test.
 func TestPingBusesShareTheRequestBound(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 1, time.Minute, time.Hour)
-	for _, path := range []string{routePing, routeWTPing} {
+	for _, path := range []string{route.Ping, route.WTPing} {
 		if got := a.lifetimeFor(path); got != a.requestLifetime {
 			t.Errorf("%s lifetime = %v, want the request bound %v", path, got, a.requestLifetime)
 		}
@@ -345,7 +346,7 @@ func TestPingBusesShareTheRequestBound(t *testing.T) {
 			t.Errorf("%s counts against the session budget", path)
 		}
 	}
-	for _, path := range []string{routeWTDownload, routeWTUpload} {
+	for _, path := range []string{route.WTDownload, route.WTUpload} {
 		if got := a.lifetimeFor(path); got != a.sessionLifetime {
 			t.Errorf("%s lifetime = %v, want the session bound %v", path, got, a.sessionLifetime)
 		}
@@ -373,13 +374,13 @@ func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
 			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		return w.armed
 	}
-	for _, path := range []string{routePing, routeWTPing, routeWTDownload, routeWTUpload} {
+	for _, path := range []string{route.Ping, route.WTPing, route.WTDownload, route.WTUpload} {
 		if got := armedFor(path); got != 0 {
 			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request", path, got)
 		}
 	}
 	// The control: a request-shaped route still gets its deadlines.
-	for _, path := range []string{routeDownload, routeUpload} {
+	for _, path := range []string{route.Download, route.Upload} {
 		if got := armedFor(path); got == 0 {
 			t.Errorf("%s armed no socket deadline, want one: an unbounded transfer that stops reading its context has nothing else to stop it", path)
 		}
@@ -410,9 +411,8 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 
 type deadlineEndpoint struct{}
 
-func (deadlineEndpoint) ID() string { return "deadline" }
-func (deadlineEndpoint) Handle(s transport.Session) error {
-	<-s.Context().Done()
+func (deadlineEndpoint) HandleMessages(ctx context.Context, _ transport.MessageBus) error {
+	<-ctx.Done()
 	return nil
 }
 

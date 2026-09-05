@@ -21,6 +21,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -538,7 +539,7 @@ func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
 	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
 		// Dial and then send nothing.
-		dialWT(t, wtTransport, base+routeWTPing)
+		dialWT(t, wtTransport, base+route.WTPing)
 	})
 }
 
@@ -547,7 +548,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	s := newAuthenticatedStack(t)
 
 	foreign := http.Header{"Origin": {"https://attacker.example"}}
-	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
+	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
 	if err == nil {
 		_ = sess.CloseWithError(0, "")
 		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
@@ -560,7 +561,7 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	}
 
 	// The control: the same credential, the same wtTransport and the same header, and only the origin canonical.
-	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+routeWTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
+	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
 	if err != nil {
 		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
 	}
@@ -767,7 +768,9 @@ type wtObservedSession struct{ lanes, live, peak int }
 
 // wtLaneCounter wraps a transfer endpoint and records what the server itself saw on the WebTransport side of it.
 type wtLaneCounter struct {
-	endpoint.Endpoint
+	endpoint.HTTPHandler
+	download endpoint.DownloadHandler
+	upload   endpoint.UploadHandler
 	// cut, when set, limits how long each WebTransport lane may carry bytes.
 	cut func(lane int) time.Duration
 
@@ -777,18 +780,21 @@ type wtLaneCounter struct {
 	lanes    int
 }
 
-func (c *wtLaneCounter) Handle(s transport.Session) error {
-	if s.Proto() != transport.ProtoWebTransport {
-		return c.Endpoint.Handle(s)
-	}
-	obs, lane := c.enterLane(s.Context())
+func (c *wtLaneCounter) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
+	obs, _ := c.enterLane(ctx)
+	defer c.leaveLane(obs)
+	return c.download.HandleDownload(ctx, n, sink)
+}
+
+func (c *wtLaneCounter) HandleUpload(ctx context.Context, id, owner string, src io.Reader) (int64, error) {
+	obs, lane := c.enterLane(ctx)
 	defer c.leaveLane(obs)
 	if c.cut != nil {
 		if window := c.cut(lane); window > 0 {
-			return c.Endpoint.Handle(cutLaneSession{Session: s, until: time.Now().Add(window)})
+			src = &deadlineSource{src: src, until: time.Now().Add(window)}
 		}
 	}
-	return c.Endpoint.Handle(s)
+	return c.upload.HandleUpload(ctx, id, owner, src)
 }
 
 func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int) {
@@ -832,28 +838,6 @@ func (c *wtLaneCounter) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.byCtx, c.sessions, c.lanes = nil, nil, 0
-}
-
-// cutLaneSession serves a lane's source only until its deadline.
-type cutLaneSession struct {
-	transport.Session
-	until time.Time
-}
-
-func (s cutLaneSession) OpenUploadSource() (io.Reader, error) {
-	src, err := s.Session.OpenUploadSource()
-	if err != nil {
-		return nil, err
-	}
-	return &deadlineSource{src: src, until: s.until}, nil
-}
-
-// ClientOwner is not part of transport.Session, so embedding one does not carry it.
-func (s cutLaneSession) ClientOwner() string {
-	if owner, ok := s.Session.(interface{ ClientOwner() string }); ok {
-		return owner.ClientOwner()
-	}
-	return ""
 }
 
 type deadlineSource struct {
@@ -942,7 +926,8 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 	t.Parallel()
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		down.Endpoint, up.Endpoint = e.download, e.upload
+		down.HTTPHandler, down.download = e.download, e.download
+		up.HTTPHandler, up.upload = e.upload, e.upload
 		e.download, e.upload = down, up
 	})
 
@@ -1021,7 +1006,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 		return 700 * time.Millisecond
 	}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		up.Endpoint = e.upload
+		up.HTTPHandler, up.upload = e.upload, e.upload
 		e.upload = up
 	})
 

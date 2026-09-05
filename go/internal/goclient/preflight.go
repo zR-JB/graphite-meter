@@ -22,6 +22,9 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	if err != nil {
 		return wire.Preflight{}, err
 	}
+	if err := pf.Validate(); err != nil {
+		return wire.Preflight{}, err
+	}
 	baseOrigin := response.Request.URL.Clone()
 	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
 	resolveSelfOrigins(&pf, baseOrigin.String())
@@ -56,6 +59,9 @@ func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPref
 	var p wire.Probe
 	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, nil, &p, httpStatusError(statusPrefix))
 	if err != nil {
+		return wire.Probe{}, "", err
+	}
+	if err := p.Validate(); err != nil {
 		return wire.Probe{}, "", err
 	}
 	return p, response.Proto, nil

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 func TestUploadCountsAndEchoes(t *testing.T) {
@@ -99,24 +97,18 @@ func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 }
 
 func TestUploadStopsOnReadError(t *testing.T) {
-	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: t.Context()},
-		src:         &errReader{remaining: 4096},
-	}
-	if err := NewUpload(nil, nil).Handle(s); err != nil {
-		t.Fatalf("handle should swallow the abort, got: %v", err)
+	src := &errReader{remaining: 4096}
+	if n, err := NewUpload(nil, nil).HandleUpload(t.Context(), "", "", src); err == nil || n != 4096 {
+		t.Fatalf("expected partial count and read error, got: %v", err)
 	}
 }
 
 func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: t.Context(), query: "id=" + id},
-		src:         &errReader{remaining: 4096},
-	}
-	if err := NewUpload(nil, store).Handle(s); err != nil {
-		t.Fatalf("handle should swallow the abort, got: %v", err)
+	src := &errReader{remaining: 4096}
+	if n, err := NewUpload(nil, store).HandleUpload(t.Context(), id, "", src); err == nil || n != 4096 {
+		t.Fatalf("expected partial count and read error, got: %v", err)
 	}
 
 	agg, ok := store.get(id)
@@ -196,13 +188,10 @@ func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 		}
 	}
 	id := store.Mint()
-	// A non-HTTP session with no ClientOwner, so the refusal path cannot fall back to writing a status.
-	s := &uploadSession{
-		fakeSession: &fakeSession{ctx: t.Context(), query: "id=" + id},
-		src:         bytes.NewReader(make([]byte, 4096)),
-	}
+	// The stream boundary returns its refusal before consuming the reader.
+	src := bytes.NewReader(make([]byte, 4096))
 
-	err := NewUpload(nil, store).Handle(s)
+	_, err := NewUpload(nil, store).HandleUpload(t.Context(), id, "", src)
 
 	if err == nil {
 		t.Fatal("a refused stream lane returned nil: the peer is never told and its bytes are never counted")
@@ -233,7 +222,7 @@ func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(make([]byte, 4096)))
 	before := time.Now()
 
-	if err := NewUpload(nil, nil).Handle(transport.NewHTTPSession(rec, req)); err != nil {
+	if err := NewUpload(nil, nil).HandleHTTP(rec, req); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 
@@ -254,7 +243,7 @@ func TestUploadRespectsRequestDeadline(t *testing.T) {
 			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
 			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/upload", nil)
 			before := time.Now()
-			if err := NewUpload(nil, nil).Handle(transport.NewHTTPSession(rec, req)); err != nil {
+			if err := NewUpload(nil, nil).HandleHTTP(rec, req); err != nil {
 				t.Fatal(err)
 			}
 			if !rec.set || rec.read.After(requestDeadline) {
@@ -298,14 +287,6 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 
 /* ---- test doubles ---- */
 
-// uploadSession reuses the download test's fakeSession (same package) and only overrides the upload source.
-type uploadSession struct {
-	*fakeSession
-	src io.Reader
-}
-
-func (u *uploadSession) OpenUploadSource() (io.Reader, error) { return u.src, nil }
-
 // errReader yields `remaining` zero bytes then a non-EOF error, simulating a connection dropped mid-upload.
 type errReader struct{ remaining int }
 
@@ -316,4 +297,40 @@ func (r *errReader) Read(p []byte) (int, error) {
 	n := min(len(p), r.remaining)
 	r.remaining -= n
 	return n, nil
+}
+
+func TestUploadStreamOwnerCannotReadAnotherClientsLane(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	upload := NewUpload(nil, store)
+	if n, err := upload.HandleUpload(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
+		t.Fatalf("initial upload = %d, %v", n, err)
+	}
+	src := strings.NewReader("must not be read")
+	n, err := upload.HandleUpload(t.Context(), id, "other-owner", src)
+	refusal, ok := errors.AsType[*uploadRefusalError](err)
+	if !ok || refusal.access != uploadAccessOwnerMismatch || n != 0 || src.Len() != len("must not be read") {
+		t.Fatalf("refused upload = %d, %v; unread bytes = %d", n, err, src.Len())
+	}
+	agg, _ := store.get(id)
+	if agg.bytes.Load() != 5 || agg.posts.Load() != 0 {
+		t.Fatalf("refusal changed aggregate: bytes=%d posts=%d", agg.bytes.Load(), agg.posts.Load())
+	}
+}
+
+func TestUploadHTTPAbortDoesNotPublishCompleteBytes(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	req := httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096})
+	rec := httptest.NewRecorder()
+	if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("aborted upload published response %q", rec.Body.String())
+	}
+	agg, ok := store.get(id)
+	if !ok || agg.bytes.Load() != 4096 || agg.posts.Load() != 0 {
+		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
+	}
 }
