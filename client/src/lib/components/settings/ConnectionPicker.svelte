@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from "../../state/store.svelte";
-  import { validateConnections } from "../../runner/engine.svelte";
+  import { getApplicationController } from "../../runner/controllerContext";
+  const controller = getApplicationController();
   import type { ConnectionRole } from "../../runner/connectionModel";
   import {
     latencyOptionView,
@@ -34,8 +35,7 @@
   );
 
   function select(value: string) {
-    if (role === "throughput") store.config.transports.throughputTarget = value;
-    else store.config.transports.latencyTarget = value;
+    controller.selectConnection(role, value);
   }
 
   function optionView(value: string) {
@@ -87,7 +87,8 @@
       <button
         type="button"
         aria-label={`Retry ${title}`}
-        onclick={() => void validateConnections(true, role).catch(() => {})}
+        onclick={() =>
+          void controller.validateConnections(true, role).catch(() => {})}
         >Retry</button
       >
     {/if}

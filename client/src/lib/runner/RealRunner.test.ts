@@ -527,17 +527,26 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     });
     const backend = new RealBackend();
     backend.attach(host);
-    const firstProbe = await probeWithRtts(backend.probe(config), 3);
+    const probe = async () => {
+      try {
+        const info = await backend.probe(config);
+        discoveries.push(info.discovery!);
+        return info;
+      } catch (cause) {
+        if (cause instanceof TransportUnavailableError && cause.discovery)
+          discoveries.push(cause.discovery);
+        throw cause;
+      }
+    };
+    const firstProbe = await probeWithRtts(probe(), 3);
     expect(firstProbe.preTestPingMs).toBe(3);
     config.transports.throughputTarget = "https://meter.test:7249";
-    await expect(backend.probe(config)).rejects.toBeInstanceOf(
-      TransportUnavailableError,
-    );
+    await expect(probe()).rejects.toBeInstanceOf(TransportUnavailableError);
     expect(
       discoveries.at(-1)?.throughput["https://meter.test:7248"].state,
     ).toBe("advertised");
     config.transports.throughputTarget = "http://meter.test:7246";
-    const info = await probeWithRtts(backend.probe(config), 5);
+    const info = await probeWithRtts(probe(), 5);
     expect(pingMessages).toContainEqual({
       type: "measure",
       intervalMs: 1000,
@@ -913,15 +922,16 @@ test("a superseded probe does not publish its discovery", async () => {
     const superseded = backend.probe(probeConfig(false));
     for (let turn = 0; turn < 20 && preflights < 1; turn++)
       await Promise.resolve();
-    await backend.probe(probeConfig(false));
-    expect(discoveries).toHaveLength(1);
+    const prepared = await backend.probe(probeConfig(false));
+    expect(prepared.discovery?.generation).toBe(preflightDocument.generation);
+    expect(discoveries).toHaveLength(0);
     releaseFirst();
     const outcome = await superseded.then(
       () => "resolved",
       (cause: unknown) => (cause as Error).message,
     );
     expect(outcome).toBe("probe superseded");
-    expect(discoveries).toHaveLength(1);
+    expect(discoveries).toHaveLength(0);
   } finally {
     restore();
   }

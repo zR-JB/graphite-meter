@@ -1,8 +1,9 @@
-import type { ConnectionRole } from "../contract";
+import type { ConnectionRole, TransportDiscovery } from "../contract";
 
 /* A transport a role needs is unavailable: not advertised, blocked by the browser, or it never established. */
 export class TransportUnavailableError extends Error {
   readonly role?: ConnectionRole;
+  discovery?: TransportDiscovery;
 
   constructor(
     message: string,

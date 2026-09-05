@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -1775,7 +1776,7 @@ func TestUpdate_DoneMsg(t *testing.T) {
 	}{
 		{"no error", nil, "", nil},
 		{"error", boom, "error", boom},
-		{"context canceled", errors.New("context canceled"), "canceled", nil},
+		{"context canceled", context.Canceled, "canceled", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2290,7 +2291,7 @@ func TestEndOfRunStopsTheStageThatWasRunning(t *testing.T) {
 	m.stages[0].state = stageDone
 	m.stages[1].state = stageMeasuring
 
-	m, _ = modelAndCmd(m.Update(doneMsg{err: errors.New("context canceled")}))
+	m, _ = modelAndCmd(m.Update(doneMsg{err: context.Canceled}))
 	if m.stages[0].state != stageDone || m.stages[1].state != stageStopped || m.stages[2].state != stagePending {
 		t.Errorf("timeline after a canceled run = %+v, want the running stage stopped only", m.stages)
 	}

@@ -1,7 +1,8 @@
 <script lang="ts">
   // Primary start/abort action.
   import { store } from "../state/store.svelte";
-  import { toggleRun } from "../runner/engine.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
+  const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
 
@@ -30,7 +31,7 @@
   class:pending
   aria-label={label}
   aria-busy={pending}
-  onclick={toggleRun}
+  onclick={controller.toggleRun}
   use:tooltip={pending
     ? "Cancel starting the test (Space / Esc)"
     : store.isRunning
