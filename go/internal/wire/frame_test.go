@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ func TestCodecMatchesCorpus(t *testing.T) {
 		case "decode":
 			f, err := Decode(v.input)
 			if want, ok := strings.CutPrefix(v.expected, "ERR:"); ok {
-				de, isDecodeErr := err.(*DecodeError)
+				de, isDecodeErr := errors.AsType[*DecodeError](err)
 				if !isDecodeErr {
 					t.Errorf("line %d: Decode(%q) = (%+v, %v); want *DecodeError code %q",
 						v.line, v.input, f, err, want)
@@ -93,17 +94,25 @@ func TestCodecMatchesCorpus(t *testing.T) {
 
 // render produces the canonical "op=…;k=v;…" form the decode rows pin.
 func render(f Frame) string {
+	timing := ""
+	if f.Timing {
+		timing = ";timing=true"
+	}
+	handling := ""
+	if f.HandlingNanos != nil {
+		handling = ";handling=" + strconv.FormatUint(*f.HandlingNanos, 10)
+	}
 	switch f.Op {
 	case OpREADY:
-		return "op=READY"
+		return "op=READY" + timing
 	case OpBYE:
 		return "op=BYE"
 	case OpPING:
 		return "op=PING;id=" + strconv.FormatUint(uint64(f.ID), 10)
 	case OpPONG:
-		return "op=PONG;id=" + strconv.FormatUint(uint64(f.ID), 10) + ";nanos=" + strconv.FormatUint(f.Nanos, 10)
+		return "op=PONG;id=" + strconv.FormatUint(uint64(f.ID), 10) + ";nanos=" + strconv.FormatUint(f.Nanos, 10) + handling
 	case OpHI:
-		return "op=HI;proto=" + f.Proto
+		return "op=HI;proto=" + f.Proto + timing
 	case OpERR:
 		return "op=ERR;code=" + f.Code + ";text=" + f.Text
 	default:
@@ -126,6 +135,10 @@ func parseCanonical(t *testing.T, line int, spec string) Frame {
 				t.Fatalf("line %d: bad id %q: %v", line, v, err)
 			}
 			f.ID = uint32(n)
+		case "timing":
+			f.Timing = v == "true"
+		case "handling":
+			f.HandlingNanos = new(mustU64(t, line, v))
 		case "nanos":
 			f.Nanos = mustU64(t, line, v)
 		case "proto":

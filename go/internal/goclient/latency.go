@@ -95,7 +95,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
+	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto, Timing: true}))
 
 	measureCtx, cancel := context.WithCancel(ctx)
 
@@ -140,21 +140,26 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	}
 
 	readLoop := func(bus pingBus) {
+		timingNegotiated := false // Capability state belongs to this bus, never to a replacement reader.
 		for {
 			msg, err := bus.Recv(measureCtx)
 			if err != nil {
 				recvErr <- err
 				return
 			}
+			now := time.Now() // Reply receipt ends raw RTT before optional diagnostic parsing.
 			f, err := wire.Decode(msg)
 			if err != nil {
+				continue
+			}
+			if f.Op == wire.OpREADY {
+				timingNegotiated = timingNegotiated || f.Timing
 				continue
 			}
 			if f.Op != wire.OpPONG {
 				continue
 			}
 			everPong.Store(true)
-			now := time.Now()
 			mu.Lock()
 			sent, ok := pending[f.ID]
 			if measuring.Load() && !measuredUntil.IsZero() && !now.Before(measuredUntil) {
@@ -170,13 +175,17 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			rtt := now.Sub(sent)
 			timedOut := rtt >= timeoutAfter
-			stats.add(rtt, timedOut)
+			var handlingNanos *uint64
+			if timingNegotiated {
+				handlingNanos = f.HandlingNanos
+			}
+			handling := stats.add(rtt, timedOut, handlingNanos)
 			mu.Unlock()
 			r.emit(Event{
 				Kind:    EventLatency,
 				At:      now,
 				Stage:   stage,
-				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, Lost: timedOut},
+				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, Lost: timedOut, ReflectorHandling: handling},
 			})
 		}
 	}
@@ -264,7 +273,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Lock()
 			clear(pending)
 			mu.Unlock()
-			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
+			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto, Timing: true}))
 			startReader(conn)
 		case <-ticker:
 			_ = send()
@@ -280,7 +289,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				if now.Sub(sent) < timeoutAfter {
 					return false
 				}
-				stats.add(0, true)
+				stats.add(0, true, nil)
 				r.emit(Event{
 					Kind:    EventLatency,
 					At:      now,

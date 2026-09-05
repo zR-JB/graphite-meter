@@ -285,10 +285,10 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
 	now := time.Now()
 	var stats latencyStats
-	stats.add(10*time.Millisecond, false)
+	stats.add(10*time.Millisecond, false, nil)
 	pending := map[uint32]time.Time{1: now.Add(-time.Second), 2: now.Add(-250 * time.Millisecond), 3: now.Add(-time.Millisecond)}
 	stats.closePending(pending, now, 250*time.Millisecond)
-	stats.add(100*time.Millisecond, false)
+	stats.add(100*time.Millisecond, false, nil)
 	got := stats.snapshot()
 	if len(pending) != 0 || got.Timeouts != 2 || got.Unresolved != 1 || got.JitterPairs != 0 {
 		t.Fatalf("cutoff summary: %+v, pending=%v", got, pending)
@@ -329,6 +329,10 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 				return
 			}
 			frame, err := wire.Decode(string(msg))
+			if err == nil && frame.Op == wire.OpHI {
+				_ = conn.Write(ctx, websocket.MessageText, []byte("READY,TIMING,1"))
+				continue
+			}
 			if err != nil || frame.Op != wire.OpPING {
 				continue
 			}
@@ -339,7 +343,7 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 				case <-ctx.Done():
 					return
 				case <-timer.C:
-					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: frame.ID})))
+					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: frame.ID, HandlingNanos: new(uint64(0))})))
 				}
 			}()
 		}
@@ -353,7 +357,7 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 {
+	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 || stats.ReflectorTiming != nil {
 		t.Fatalf("late replies became RTT observations: %+v", stats)
 	}
 }

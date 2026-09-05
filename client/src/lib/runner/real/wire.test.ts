@@ -36,17 +36,22 @@ function parseCorpus(text: string): Row[] {
 
 // Canonical "op=…;k=v;…" render the decode rows pin: the TS mirror of the corpus expected column (test artifact; the.
 function render(frame: Frame): string {
+  const timing = "timing" in frame && frame.timing ? ";timing=true" : "";
+  const handling =
+    "handlingNanos" in frame && frame.handlingNanos !== undefined
+      ? `;handling=${frame.handlingNanos}`
+      : "";
   switch (frame.op) {
     case "READY":
-      return "op=READY";
+      return "op=READY" + timing;
     case "BYE":
       return "op=BYE";
     case "PING":
       return `op=PING;id=${frame.id}`;
     case "PONG":
-      return `op=PONG;id=${frame.id};nanos=${frame.nanos}`;
+      return `op=PONG;id=${frame.id};nanos=${frame.nanos}${handling}`;
     case "HI":
-      return `op=HI;proto=${frame.proto}`;
+      return `op=HI;proto=${frame.proto}${timing}`;
     case "ERR":
       return `op=ERR;code=${frame.code};text=${frame.text}`;
   }
@@ -62,7 +67,7 @@ function parseCanonical(spec: string): Frame {
   const op = fields.get("op");
   switch (op) {
     case "READY":
-      return { op: "READY" };
+      return { op: "READY", timing: fields.get("timing") === "true" };
     case "BYE":
       return { op: "BYE" };
     case "PING":
@@ -72,9 +77,14 @@ function parseCanonical(spec: string): Frame {
         op: "PONG",
         id: Number(fields.get("id")),
         nanos: fields.get("nanos")!,
+        handlingNanos: fields.get("handling"),
       };
     case "HI":
-      return { op: "HI", proto: fields.get("proto")! };
+      return {
+        op: "HI",
+        proto: fields.get("proto")!,
+        timing: fields.get("timing") === "true",
+      };
     case "ERR":
       return {
         op: "ERR",

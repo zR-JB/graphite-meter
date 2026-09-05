@@ -63,3 +63,21 @@ func TestFinalReportRetainsIncompleteLatencyOnFailure(t *testing.T) {
 		t.Fatalf("partial failure report was discarded: %q", got)
 	}
 }
+
+func TestReflectorTimingStaysSeparateAndPreservesZeroHandling(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.complete = true
+	m.width = 124
+	m.results = []goclient.Result{{Stage: "latency", Latency: goclient.LatencyStats{Count: 4, P50: 20 * time.Millisecond, P95: 30 * time.Millisecond, ReflectorTiming: &goclient.ReflectorTimingStats{Count: 2, MeanRawRTT: 10 * time.Millisecond, MeanAdjustedRTT: 10 * time.Millisecond}}}}
+	for _, text := range []string{m.resultsView(120), m.finalReport()} {
+		for _, want := range []string{"p50 20.00 ms", "2 paired replies", "raw 10.00 ms", "handling 0.00 ms", "adjusted 10.00 ms"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("report missing %q: %q", want, text)
+			}
+		}
+	}
+	m.results[0].Latency.ReflectorTiming = nil
+	if text := m.resultsView(120); strings.Contains(text, "Server timing") {
+		t.Fatalf("missing timing became a value: %q", text)
+	}
+}

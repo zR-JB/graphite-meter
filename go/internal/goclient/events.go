@@ -63,10 +63,11 @@ type ThroughputSample struct {
 }
 
 type LatencySample struct {
-	Stage     string
-	RTT       time.Duration
-	UnderLoad bool
-	Lost      bool // Compatibility event name: true only for an application probe deadline expiry.
+	ReflectorHandling *time.Duration // Optional negotiated server interval from this same reply; zero is valid.
+	Stage             string
+	RTT               time.Duration
+	UnderLoad         bool
+	Lost              bool // Compatibility event name: true only for an application probe deadline expiry.
 }
 
 type Result struct {
@@ -84,6 +85,7 @@ type Result struct {
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
 type LatencyStats struct {
+	ReflectorTiming                    *ReflectorTimingStats // Nil when no valid timing pairs were observed.
 	Min, Max, P10, P50, P90, P95, Mean time.Duration
 	Jitter                             time.Duration
 	Count                              int // Successful replies within the measured stage and probe deadline.
@@ -93,6 +95,13 @@ type LatencyStats struct {
 	SendFailures                       int
 	TimeoutAfter                       time.Duration
 	Elapsed                            time.Duration
+}
+
+// ReflectorTimingStats contains means over one paired population of successful in-window replies.
+// Adjusted RTT removes only the instrumented server application handling interval.
+type ReflectorTimingStats struct {
+	Count                                     int
+	MeanRawRTT, MeanHandling, MeanAdjustedRTT time.Duration
 }
 
 // TimeoutRatio excludes interrupted/unresolved probes and local send failures; an empty population is unavailable.

@@ -16,10 +16,11 @@ async function withWorker(
     posted: Output[];
     advance: (ms: number) => void;
     jump: (ms: number) => void;
-    reply: (id: number) => void;
+    reply: (id: number, handling?: string) => void;
     send: (message: unknown) => void;
     stop: (cutoff?: number) => void;
     socket: FakeSocket;
+    sockets: FakeSocket[];
     now: () => number;
     samples: () => PingSample[];
   }) => void | Promise<void>,
@@ -32,6 +33,7 @@ async function withWorker(
   >();
   const posted: Output[] = [];
   let socket!: FakeSocket;
+  const sockets: FakeSocket[] = [];
   const timeout = (callback: () => void, delay = 0, interval?: number) => {
     const id = ++nextTimer;
     timers.set(id, { at: now + delay, interval, callback });
@@ -43,6 +45,7 @@ async function withWorker(
       constructor() {
         super();
         socket = this;
+        sockets.push(this);
       }
     },
     performance: { now: () => now, timeOrigin: 10_000 },
@@ -76,6 +79,7 @@ async function withWorker(
     await run({
       posted,
       socket,
+      sockets,
       send,
       now: () => now,
       jump: (ms) => {
@@ -96,7 +100,10 @@ async function withWorker(
         }
         now = end;
       },
-      reply: (id) => socket.onmessage({ data: `PONG,${id};TIME,0` }),
+      reply: (id, handling) =>
+        socket.onmessage({
+          data: `PONG,${id};TIME,0${handling === undefined ? "" : `;HANDLING,${handling}`}`,
+        }),
       stop: (cutoff = now) =>
         send({ type: "stop", cutoffEpochMs: 10_000 + cutoff }),
       samples: () =>
@@ -117,10 +124,12 @@ class FakeSocket {
   rejectSends = false;
   parkSends = false;
   pings: number[] = [];
+  sent: string[] = [];
   onopen = () => {};
   onmessage = (_event: { data: string }) => {};
   onclose = (_event: { code: number; reason: string }) => {};
   send(message: string): void | Promise<void> {
+    this.sent.push(message);
     if (this.failSends) throw new Error("local send failed");
     if (this.rejectSends)
       return Promise.reject(new Error("local datagram write rejected"));
@@ -317,3 +326,136 @@ for (const failure of ["failSends", "rejectSends"] as const) {
     });
   });
 }
+
+test("timing capability falls back to raw echoes and survives duplicate acknowledgements", async () => {
+  await withWorker(({ socket, jump, reply, stop, samples }) => {
+    expect(socket.sent[0]).toBe("HI,ws;TIMING,1");
+    socket.onmessage({ data: "READY" });
+    jump(5);
+    reply(1, "1000000");
+    socket.onmessage({ data: "READY,TIMING,1" });
+    socket.onmessage({ data: "READY" });
+    jump(5);
+    reply(2, "1000000");
+    stop(5);
+    expect(
+      samples().map(({ rtt, reflectorHandlingMs }) => ({
+        rtt,
+        reflectorHandlingMs,
+      })),
+    ).toEqual([
+      { rtt: 5, reflectorHandlingMs: undefined },
+      { rtt: 5, reflectorHandlingMs: 1 },
+    ]);
+  });
+});
+
+test("malformed, impossible, and imprecise optional handling never change a raw reply", async () => {
+  await withWorker(({ socket, jump, reply, stop, samples }) => {
+    socket.onmessage({ data: "READY,TIMING,1" });
+    const durations = [
+      "-1",
+      "NaN",
+      "",
+      "1;HANDLING,2",
+      "9007199254740992",
+      "6000000",
+      "0",
+      "5000000",
+    ];
+    for (const [index, duration] of durations.entries()) {
+      jump(5);
+      reply(index + 1, duration);
+    }
+    stop(35);
+    expect(samples()).toHaveLength(durations.length);
+    expect(samples().every((sample) => sample.rtt === 5 && !sample.lost)).toBe(
+      true,
+    );
+    expect(samples().map((sample) => sample.reflectorHandlingMs)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      0,
+      5,
+    ]);
+  });
+});
+
+test("reordered and duplicated timed replies keep one duration paired with their original probe", async () => {
+  await withWorker(({ socket, advance, reply, stop, samples }) => {
+    socket.onmessage({ data: "READY,TIMING,1" });
+    advance(10); // The reply-driven backup sends id 2 at 8 ms while id 1 remains pending.
+    expect(socket.pings).toEqual([0, 1, 2]);
+    reply(2, "1000000");
+    reply(1, "7000000");
+    reply(2, "0");
+    reply(999_999, "0");
+    stop(8);
+    expect(
+      samples().map(({ rtt, reflectorHandlingMs }) => ({
+        rtt,
+        reflectorHandlingMs,
+      })),
+    ).toEqual([
+      { rtt: 2, reflectorHandlingMs: 1 },
+      { rtt: 10, reflectorHandlingMs: 7 },
+    ]);
+  });
+});
+
+test("reconnect clears timing and ignores old socket READY and PONG events", async () => {
+  await withWorker(
+    ({ socket, sockets, jump, advance, reply, stop, samples }) => {
+      socket.onmessage({ data: "READY,TIMING,1" });
+      jump(5);
+      reply(1, "1000000");
+      socket.disconnect();
+      advance(1_000);
+      expect(sockets).toHaveLength(2);
+      const fresh = sockets[1];
+      fresh.onopen();
+      fresh.onmessage({ data: "READY" });
+      socket.onmessage({ data: "READY,TIMING,1" });
+      const id = fresh.pings[0];
+      socket.onmessage({ data: `PONG,${id};TIME,0;HANDLING,0` });
+      jump(5);
+      reply(id, "1000000");
+      stop(1_005);
+      expect(
+        samples().map(({ rtt, reflectorHandlingMs }) => ({
+          rtt,
+          reflectorHandlingMs,
+        })),
+      ).toEqual([
+        { rtt: 5, reflectorHandlingMs: 1 },
+        { rtt: 5, reflectorHandlingMs: undefined },
+      ]);
+    },
+  );
+});
+
+test("late replies retain only their timeout while drain replies retain paired timing for cutoff filtering", async () => {
+  await withWorker(({ socket, jump, reply, stop, samples }) => {
+    socket.onmessage({ data: "READY,TIMING,1" });
+    jump(251);
+    reply(1, "1000000");
+    stop(251);
+    jump(5);
+    reply(2, "2000000");
+    const outcomes = samples();
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]).toMatchObject({ rtt: 250, lost: true });
+    expect(outcomes[0].reflectorHandlingMs).toBeUndefined();
+    expect(outcomes[1]).toMatchObject({
+      rtt: 5,
+      lost: false,
+      reflectorHandlingMs: 2,
+    });
+    // The channel/core owns the cutoff; retaining metadata does not make a post-cutoff RTT eligible.
+    expect(outcomes[1].observedAtEpochMs).toBe(10_256);
+  });
+});

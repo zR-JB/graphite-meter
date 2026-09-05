@@ -14,6 +14,7 @@ import { sessionAuthenticationRequired } from "../../request-auth";
 import { ESTABLISH_BUDGET_MS } from "../real/budgets";
 import {
   pingSample,
+  reflectorHandlingMs,
   PING_TIMEOUT_CEIL_MS,
   type PingSample,
   type PingWorkerEvent,
@@ -66,6 +67,7 @@ let measuring = false;
 let stopped = false;
 let stopCutoff: number | null = null;
 let checkAuthentication = false;
+let timingNegotiated = false;
 
 // Tuning: stage workers keep this fixed; the idle worker settles from probe pacing to its one-second keepalive.
 let intervalMs = 250;
@@ -161,7 +163,8 @@ function onConnected(proto: string): void {
     stalledOut = false;
   }
   post({ type: "open" });
-  trySend(encode({ op: "HI", proto }));
+  timingNegotiated = false;
+  trySend(encode({ op: "HI", proto, timing: true }));
   scheduler?.reset();
   scheduler?.start();
 }
@@ -174,16 +177,21 @@ function connectWebSocket(): void {
     scheduleReconnect(String(err));
     return;
   }
-  link = {
+  const connection: PingLink = {
     ready: () => ws.readyState === WebSocket.OPEN,
     send: (msg) => ws.send(msg),
     close: () => ws.close(),
   };
-  ws.onopen = (): void => onConnected("ws");
-  ws.onmessage = (ev: MessageEvent): void => onFrame(ev.data);
+  link = connection;
+  ws.onopen = (): void => {
+    if (link === connection) onConnected("ws");
+  };
+  ws.onmessage = (ev: MessageEvent): void => {
+    if (link === connection && connection.ready()) onFrame(ev.data);
+  };
   // A WebSocket always follows onerror with onclose. Reconnect from onclose only, to avoid a double schedule.
   ws.onclose = (event: CloseEvent): void => {
-    if (stopped) return;
+    if (stopped || link !== connection) return;
     if (event.code === 1008 && event.reason === "authentication required") {
       interruptPending("unresolved");
       post({ type: "auth-required" });
@@ -231,11 +239,11 @@ async function connectWebTransport(): Promise<void> {
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
   let disconnectReported = false;
   const disconnect = (detail: string): void => {
-    if (disconnectReported) return;
+    if (disconnectReported || link !== connection) return;
     disconnectReported = true;
     onDisconnect(detail);
   };
-  link = {
+  const connection: PingLink = {
     ready: () => writer !== null,
     send: (msg) => {
       if (!writer) throw new Error("datagram writer unavailable");
@@ -243,6 +251,7 @@ async function connectWebTransport(): Promise<void> {
     },
     close: () => wt.close(),
   };
+  link = connection;
   void wt.closed.then(
     () => disconnect("webtransport closed"),
     (err: unknown) => disconnect(String(err)),
@@ -270,7 +279,7 @@ async function connectWebTransport(): Promise<void> {
     return;
   }
   if (timer !== null) clearTimeout(timer);
-  if (stopped || stopCutoff !== null) {
+  if (stopped || stopCutoff !== null || link !== connection) {
     wt.close();
     return;
   }
@@ -286,6 +295,7 @@ async function connectWebTransport(): Promise<void> {
         disconnect("webtransport datagram stream closed");
         return;
       }
+      if (link !== connection) return;
       onFrame(decoder.decode(value as AllowSharedBufferSource));
     }
   } catch (err) {
@@ -312,6 +322,7 @@ async function checkSessionThenReconnect(detail: string): Promise<void> {
 function onDisconnect(detail: string): void {
   if (stopped) return;
   link = null;
+  timingNegotiated = false;
   scheduler?.stop();
   sweep();
   if (stopped) return;
@@ -354,6 +365,7 @@ function onFrame(data: unknown): void {
     return; // malformed and ERR frames never tear the bus down
   }
   if (frame.op === "READY") {
+    timingNegotiated ||= frame.timing === true;
     post({ type: "ready" });
     return;
   }
@@ -369,6 +381,7 @@ function onFrame(data: unknown): void {
         ping,
         recv >= ping.expiresAt,
         recv >= ping.expiresAt ? ping.expiresAt : recv,
+        timingNegotiated ? frame.handlingNanos : undefined,
       );
     if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     serviceDrain();
@@ -471,10 +484,15 @@ function recordOutcome(
   ping: PendingPing,
   lost: boolean,
   observedAt: number,
+  handlingNanos?: string,
 ): void {
+  const handling = lost
+    ? undefined
+    : reflectorHandlingMs(observedAt - ping.sentAt, handlingNanos);
   record({
     ...pingSample(observedAt - ping.sentAt, lost, observedAt),
     sentAtEpochMs: performance.timeOrigin + ping.sentAt,
+    ...(handling === undefined ? {} : { reflectorHandlingMs: handling }),
   });
 }
 

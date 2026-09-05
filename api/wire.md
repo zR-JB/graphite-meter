@@ -19,7 +19,7 @@ are additionally pinned as a shared constant table in each implemented language
   streams carry no messages at all: every parameter rides the session's CONNECT URL.
 - **ASCII text.** Format: `OP` or `OP,arg[,arg...]`. The opcode is a fixed uppercase keyword.
 - **Parsing** is `indexOf(',')` slicing — never JSON, never regex. The id/number args are plain integers.
-- Unknown opcode or malformed args → the receiver replies `ERR,<code>,<text>` (non-fatal) and ignores
+- Unknown opcode or malformed core args → the receiver replies `ERR,<code>,<text>` (non-fatal) and ignores
   the message; it never tears down the bus for a single bad frame.
 
 ## Opcodes
@@ -32,6 +32,37 @@ are additionally pinned as a shared constant table in each implemented language
 | S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
 | C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
 | S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
+
+## Optional reflector handling time
+
+A client requests application timing on each new bus with `HI,ws;TIMING,1` or
+`HI,wt;TIMING,1`. A supporting server acknowledges with `READY,TIMING,1` and adds
+`;HANDLING,<nanos>` to each subsequent PONG on that bus. `<nanos>` is an unsigned
+64-bit duration in nanoseconds, including zero. An ordinary HI, an unsupported
+version, or a new bus retains the legacy READY/PONG shapes. Existing servers
+accept the extended HI as an opaque protocol label and answer ordinary READY;
+clients continue measuring raw RTT when timing is unacknowledged or absent.
+The capability is connection-local and a client must discard it on reconnect.
+Repeated acknowledgements are idempotent. Datagrams may reorder, so a reply
+arriving before its capability acknowledgement has no timing diagnostic.
+
+The interval begins immediately after the server message adapter's `Recv` returns
+and ends immediately before encoding the PONG. It includes parsing and application
+handling. It excludes receive queues and adapter work before that boundary,
+reply encoding, transport submission, and delivery after it. The existing TIME
+field is the server monotonic timestamp at this receive boundary; its absolute
+value does not participate in RTT subtraction.
+
+A valid PONG ID and TIME remain a raw reply even if an optional suffix is unknown,
+malformed, duplicated, or out of uint64 range: receivers omit the diagnostic.
+Malformed core ID/TIME still invalidates the reply. Clients use HANDLING only after
+timing was negotiated on that same bus, on the same on-time reply as its raw RTT.
+An imprecise or impossible duration (including handling greater than raw RTT due
+to clock quantization) is omitted, never clamped. Missing diagnostics do not change
+raw RTT, probe outcomes, timeout deadlines, or in-flight ownership.
+
+This is an application protocol extension inspired by reflector residence-time
+measurement. It is not TWAMP interoperable and does not measure isolated network RTT.
 
 ## WebTransport routes
 
@@ -87,8 +118,8 @@ selection ambiguous. Clients built before this field must be updated alongside t
 ## Ids (PING/PONG)
 
 - The **client** owns a per-bus monotonic `uint32` counter: `id = (id + 1) >>> 0` (wraps at 2³²).
-- The **server keeps zero state** — it copies the id bytes straight back into `PONG`. No allocation,
-  no map, no overflow possible server-side.
+- The **server keeps no per-probe state** — it echoes the parsed id in `PONG`. Its only
+  per-bus protocol state is the optional timing capability; there is no server-side id map.
 - Wraparound cannot collide: the live key space is only the in-flight window (a few hundred at most,
   each id removed from the client's pending map within a bounded RTT), so a wrapped value can never
   match a still-pending id.
@@ -96,14 +127,19 @@ selection ambiguous. Clients built before this field must be updated alongside t
 ## RTT, probe timeouts, and reply-driven pacing (client behavior)
 
 - On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>` it computes
-  `rtt = now() − pending[id]`, deletes the entry, and immediately sends the next `PING` (the
-  on-receive→send-next chain).
+  `rtt = now() − pending[id]` and resolves that probe once. Sending policy is separate:
+  browser fixed cadence is start-to-start and a reply never advances the next scheduled send.
+  A full in-flight window waits for a slot, then sends once without a catch-up burst.
+- Browser reply-driven pacing sends immediately after its chain-head reply and uses a bounded
+  RTT-based backup timer when that reply does not arrive. Its reply-dependent sampling density
+  differs from a fixed cadence; neither mode changes which attempted probes enter accounting.
 - A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
   not physical packet loss because TCP retransmits. A timeout on the WT-datagram channel also
   includes possible endpoint queueing or drops; neither identifies physical or directional IP loss.
   See [measurement definitions](../docs/MEASUREMENTS.md) for populations and statistics.
-- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) keeps one delayed or missing response from deadlocking
-  the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
+- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) limits
+  pending work. Pauses, a saturated window, and scheduling gaps create unsent opportunities,
+  not timeout or unresolved attempts. Requested cadence alone cannot establish a coverage percentage.
 
 ## Why text, not binary
 

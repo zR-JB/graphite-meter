@@ -125,6 +125,8 @@ export interface RunnerConfig {
 /** Authoritative in-run latency outcome in the window realm's monotonic clock domain. */
 export interface LatencyObservation {
   rttMs: number;
+  /** Optional server application handling duration from this same reply. */
+  reflectorHandlingMs?: number;
   lost: boolean;
   observedAtMs: number;
   /** A reply after the stage cutoff resolves its probe but is outside the RTT measurement window. */
@@ -206,8 +208,18 @@ export interface ThroughputResult {
   serverAuthoritative?: boolean;
 }
 
+/** Diagnostic means over the same successful, in-window replies with valid
+ * negotiated timing. Missing timing is omitted from this population only. */
+export interface ReflectorTimingSummary {
+  sampleCount: number;
+  meanRawRttMs: number;
+  meanHandlingMs: number;
+  meanAdjustedRttMs: number;
+}
+
 /** Full measured stage; percentiles use nearest rank, with the midpoint median for P50. */
 export interface StageLatencySummary {
+  reflectorTiming?: ReflectorTimingSummary;
   /** False when a worker failure leaves the outcome population unknown. */
   accountingComplete: boolean;
   probeCount: number;

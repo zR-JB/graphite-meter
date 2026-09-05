@@ -17,6 +17,7 @@ import type {
   TransportRole,
   StageFailure,
   StageLatencySummary,
+  ReflectorTimingSummary,
 } from "../runner/contract";
 import {
   CONNECTION_FAILURE_REASONS,
@@ -107,6 +108,7 @@ const TERMINAL_PHASES: readonly Phase[] = [
   "error",
 ];
 export interface LatencyLane {
+  reflectorTiming?: ReflectorTimingSummary;
   key: TransportRole;
   min: number | null;
   max: number | null;
@@ -718,6 +720,7 @@ class AppStore {
         centerKind: reported != null ? "result" : "average",
         current: latest ?? null,
         jitter: summary?.jitterMs ?? null,
+        reflectorTiming: summary?.reflectorTiming,
         timeoutRatio: summary?.probeCount
           ? summary.timeoutCount / summary.probeCount
           : null,

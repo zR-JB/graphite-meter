@@ -12,11 +12,11 @@ const Op = {
 
 /* A parsed wire frame. */
 export type Frame =
-  | { op: "READY" }
+  | { op: "READY"; timing?: boolean }
   | { op: "BYE" }
   | { op: "PING"; id: number }
-  | { op: "PONG"; id: number; nanos: string }
-  | { op: "HI"; proto: string }
+  | { op: "PONG"; id: number; nanos: string; handlingNanos?: string }
+  | { op: "HI"; proto: string; timing?: boolean }
   | { op: "ERR"; code: string; text: string };
 
 /** Stable rejection codes a receiver echoes as ERR,<code>,<text>. */
@@ -76,7 +76,9 @@ export function decode(msg: string): Frame {
 
   switch (op) {
     case Op.READY:
-      return { op: "READY" };
+      return rest === "TIMING,1"
+        ? { op: "READY", timing: true }
+        : { op: "READY" };
     case Op.BYE:
       return { op: "BYE" };
 
@@ -92,13 +94,34 @@ export function decode(msg: string): Frame {
       const timeComma = tail.indexOf(",");
       if (timeComma === -1 || tail.slice(0, timeComma) !== "TIME")
         throw new DecodeError(ErrBadArgs, "PONG TIME");
-      const nanos = u64Digits(tail.slice(timeComma + 1), "PONG nanos");
+      const values = tail.slice(timeComma + 1);
+      const handlingStart = values.indexOf(";");
+      const nanos = u64Digits(
+        handlingStart === -1 ? values : values.slice(0, handlingStart),
+        "PONG nanos",
+      );
+      if (handlingStart === -1) return { op: "PONG", id, nanos };
+      const handling = values.slice(handlingStart + 1);
+      if (handling.startsWith("HANDLING,")) {
+        try {
+          return {
+            op: "PONG",
+            id,
+            nanos,
+            handlingNanos: u64Digits(handling.slice(9), "PONG handling nanos"),
+          };
+        } catch {
+          // Optional diagnostic corruption must not invalidate a base echo.
+        }
+      }
       return { op: "PONG", id, nanos };
     }
 
     case Op.HI:
       if (rest === "") throw new DecodeError(ErrBadArgs, "HI proto");
-      return { op: "HI", proto: rest };
+      return rest.endsWith(";TIMING,1")
+        ? { op: "HI", proto: rest.slice(0, -9), timing: true }
+        : { op: "HI", proto: rest };
 
     case Op.ERR: {
       const codeComma = rest.indexOf(",");
@@ -117,15 +140,15 @@ export function decode(msg: string): Frame {
 export function encode(f: Frame): string {
   switch (f.op) {
     case "READY":
-      return Op.READY;
+      return f.timing ? `${Op.READY},TIMING,1` : Op.READY;
     case "BYE":
       return Op.BYE;
     case "PING":
       return `${Op.PING},${f.id}`;
     case "PONG":
-      return `${Op.PONG},${f.id};TIME,${f.nanos}`;
+      return `${Op.PONG},${f.id};TIME,${f.nanos}${f.handlingNanos === undefined ? "" : `;HANDLING,${f.handlingNanos}`}`;
     case "HI":
-      return `${Op.HI},${f.proto}`;
+      return `${Op.HI},${f.proto}${f.timing ? ";TIMING,1" : ""}`;
     case "ERR":
       return `${Op.ERR},${f.code},${f.text}`;
   }

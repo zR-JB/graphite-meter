@@ -11,9 +11,13 @@ type Frame struct {
 	ID uint32 // PING / PONG: client-owned monotonic id, echoed verbatim
 	// Nanos is PONG's server monotonic timestamp for diagnostics/skew only.
 	Nanos uint64
-	Proto string // HI: "ws" | "wt"
-	Code  string // ERR: short error token
-	Text  string // ERR: human detail
+	// Timing negotiates optional application reflector timing on HI/READY.
+	Timing bool
+	// HandlingNanos is present only on an opted-in PONG; zero is a valid duration.
+	HandlingNanos *uint64
+	Proto         string // HI: "ws" | "wt"
+	Code          string // ERR: short error token
+	Text          string // ERR: human detail
 }
 
 // timeField is the keyword that prefixes the nanos arg inside a PONG frame: PONG,<id>;TIME,<nanos>.
@@ -42,7 +46,7 @@ func Decode(msg string) (Frame, error) {
 
 	switch op {
 	case OpREADY:
-		return Frame{Op: OpREADY}, nil
+		return Frame{Op: OpREADY, Timing: rest == "TIMING,1"}, nil
 	case OpBYE:
 		return Frame{Op: OpBYE}, nil
 
@@ -64,17 +68,29 @@ func Decode(msg string) (Frame, error) {
 		if key != timeField {
 			return Frame{}, badArgs("PONG TIME")
 		}
+		nanosStr, handling, hasHandling := strings.Cut(nanosStr, ";")
 		nanos, err := strconv.ParseUint(nanosStr, 10, 64)
 		if err != nil {
 			return Frame{}, badArgs("PONG nanos")
 		}
-		return Frame{Op: OpPONG, ID: uint32(id), Nanos: nanos}, nil
+		f := Frame{Op: OpPONG, ID: uint32(id), Nanos: nanos}
+		if hasHandling {
+			value, ok := strings.CutPrefix(handling, "HANDLING,")
+			if ok {
+				// Optional diagnostic corruption must not invalidate a base echo.
+				if duration, err := strconv.ParseUint(value, 10, 64); err == nil {
+					f.HandlingNanos = new(duration)
+				}
+			}
+		}
+		return f, nil
 
 	case OpHI:
 		if rest == "" {
 			return Frame{}, badArgs("HI proto")
 		}
-		return Frame{Op: OpHI, Proto: rest}, nil
+		proto, timing := strings.CutSuffix(rest, ";TIMING,1")
+		return Frame{Op: OpHI, Proto: proto, Timing: timing}, nil
 
 	case OpERR:
 		code, text, _ := strings.Cut(rest, ",")
@@ -92,14 +108,24 @@ func Decode(msg string) (Frame, error) {
 func Encode(f Frame) string {
 	switch f.Op {
 	case OpREADY:
+		if f.Timing {
+			return OpREADY + ",TIMING,1"
+		}
 		return OpREADY
 	case OpBYE:
 		return OpBYE
 	case OpPING:
 		return OpPING + "," + strconv.FormatUint(uint64(f.ID), 10)
 	case OpPONG:
-		return OpPONG + "," + strconv.FormatUint(uint64(f.ID), 10) + ";" + timeField + "," + strconv.FormatUint(f.Nanos, 10)
+		message := OpPONG + "," + strconv.FormatUint(uint64(f.ID), 10) + ";" + timeField + "," + strconv.FormatUint(f.Nanos, 10)
+		if f.HandlingNanos != nil {
+			message += ";HANDLING," + strconv.FormatUint(*f.HandlingNanos, 10)
+		}
+		return message
 	case OpHI:
+		if f.Timing {
+			return OpHI + "," + f.Proto + ";TIMING,1"
+		}
 		return OpHI + "," + f.Proto
 	case OpERR:
 		return OpERR + "," + f.Code + "," + f.Text

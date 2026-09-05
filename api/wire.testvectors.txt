@@ -36,3 +36,29 @@ encode | op=READY | READY
 encode | op=HI;proto=ws | HI,ws
 encode | op=BYE | BYE
 encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown
+
+# Optional reflector timing; legacy HI/READY/PONG retain their exact wire shape.
+decode | HI,ws;TIMING,1 | op=HI;proto=ws;timing=true
+decode | HI,wt;TIMING,1 | op=HI;proto=wt;timing=true
+decode | READY,TIMING,1 | op=READY;timing=true
+decode | READY,TIMING,2 | op=READY
+decode | PONG,5;TIME,1234;HANDLING,0 | op=PONG;id=5;nanos=1234;handling=0
+decode | PONG,4294967295;TIME,18446744073709551615;HANDLING,18446744073709551615 | op=PONG;id=4294967295;nanos=18446744073709551615;handling=18446744073709551615
+decode | PONG,5;TIME,1234;HANDLING,-1 | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,18446744073709551616 | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,1;HANDLING,2 | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING, | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;UNKNOWN,1 | op=PONG;id=5;nanos=1234
+encode | op=HI;proto=ws;timing=true | HI,ws;TIMING,1
+encode | op=READY;timing=true | READY,TIMING,1
+encode | op=PONG;id=5;nanos=1234;handling=0 | PONG,5;TIME,1234;HANDLING,0
+encode | op=PONG;id=5;nanos=1234;handling=15000000 | PONG,5;TIME,1234;HANDLING,15000000
+# A valid base echo survives unknown or malformed optional diagnostics.
+decode | PONG,5;TIME,1234; | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,+1 | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,NaN | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,1.2 | op=PONG;id=5;nanos=1234
+decode | PONG,5;TIME,1234;HANDLING,9007199254740992 | op=PONG;id=5;nanos=1234;handling=9007199254740992
+decode | PONG,5;TIME,-1;HANDLING,1 | ERR:bad_args
+decode | PONG,5;TIME,;HANDLING,1 | ERR:bad_args
+decode | PONG,x;TIME,1234;HANDLING,1 | ERR:bad_args
