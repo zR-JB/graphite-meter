@@ -82,6 +82,7 @@ export interface CoreHost {
     count: number,
     reason: "unresolved" | "send-failed",
   ): void;
+  ingestLatencyAccountingIncomplete(): void;
   /* Account a rotation handoff only in final byte/time reduction. */
   recordRecoveryGap(dir: FlowDirection, durationSec: number): void;
   /* Server recovery bytes are authoritative but lack a prior checkpoint for a live-rate estimate. */
@@ -122,7 +123,8 @@ export interface RunnerBackend {
   onStageBegin(activity: PhaseActivity): void | Promise<void>;
   // Start measuring on the connections primed by onStageBegin, never reopening them.
   onStageMeasure(activity: PhaseActivity): void;
-  // Close the stage's connections. Result reduction waits for asynchronous final samples and shutdown.
+  // Close stage connections. Normal reduction awaits final samples; flush=false must
+  // synchronously report discarded evidence before the core reduces a failed stage.
   onStageEnd(activity: PhaseActivity, flush?: boolean): void | Promise<void>;
   /* The runner owns recovery expiry. */
   onStageRecovery?(request: {
@@ -697,6 +699,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#accum.interruptLatency(this.#phase, count, reason);
   }
 
+  ingestLatencyAccountingIncomplete(): void {
+    if (isMeasuredPhase(this.#phase)) {
+      this.#accum.markLatencyAccountingIncomplete(this.#phase);
+      this.#emitLatencySummary(this.#phase);
+    }
+  }
+
   #emitLatencySummary(stage: TransportRole): void {
     this.#lastLatencySummaryAt = performance.now();
     this.emit({
@@ -869,14 +878,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!this.#running || this.#stageFailures.has(stage)) return;
     const failure: StageFailure = { stage, direction, reason, message };
     this.#stageFailures.set(stage, failure);
-    // Preserve qualifying exact evidence before ending the stage.
-    this.#finalizeStage(stage);
-
-    // Close stage I/O and skip its remaining timeline so the next tick enters the following stage.
+    // Failed-stage shutdown reports discarded evidence before its partial summary is reduced.
     if (this.#activeSeg?.activity.stage === stage) {
       this.#backend.onStageEnd(this.#activeSeg.activity, false);
       this.#activeSeg = null;
     }
+    this.#finalizeStage(stage);
     this.resume();
     this.#cancelEarlyCandidate();
     let end = this.#measuredElapsed;

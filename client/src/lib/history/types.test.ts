@@ -37,6 +37,7 @@ const result: RunResult = {
     upload: null,
     bidirectional: null,
     download: {
+      accountingComplete: true,
       minMs: 11,
       maxMs: 30,
       p10Ms: 12,
@@ -126,6 +127,8 @@ test("V1 records remain readable while V2 fields cannot be mislabeled as legacy"
     if (!lane) continue;
     lane.lossRatio = lane.timeoutRatio ?? 0;
     delete lane.timeoutRatio;
+    delete lane.accountingComplete;
+    delete lane.timeoutCount;
     delete lane.unresolvedCount;
     delete lane.sendFailureCount;
   }
@@ -300,4 +303,41 @@ test("rejects non-date epochs while retaining valid date bounds", () => {
     expect(isHistoryRecord({ ...valid, startedAt: value })).toBe(false);
     expect(isHistoryRecord({ ...valid, completedAt: value })).toBe(false);
   }
+});
+
+test("V2 persists partial accounting and exact known outcome counts", () => {
+  const partial = structuredClone(result);
+  partial.latencyByStage.download = {
+    ...partial.latencyByStage.download!,
+    accountingComplete: false,
+    probeCount: 3,
+    timeoutCount: 1,
+    unresolvedCount: 2,
+    sendFailureCount: 4,
+  };
+  const saved = buildHistoryRecord(
+    partial,
+    { infra: null, clientBuild: "b", engineVersion: "e" },
+    200,
+  );
+  expect(saved.stages.latency.lanes.download).toMatchObject({
+    accountingComplete: false,
+    count: 3,
+    timeoutCount: 1,
+    unresolvedCount: 2,
+    sendFailureCount: 4,
+  });
+  expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
+  for (const field of ["accountingComplete", "timeoutCount"] as const) {
+    const missing = structuredClone(saved);
+    delete missing.stages.latency.lanes.download![field];
+    expect(isHistoryRecord(missing)).toBe(false);
+  }
+  const earlierV2 = structuredClone(saved);
+  delete earlierV2.stages.latency.lanes.download!.accountingComplete;
+  delete earlierV2.stages.latency.lanes.download!.timeoutCount;
+  expect(isHistoryRecord(earlierV2)).toBe(true);
+  expect(earlierV2.stages.latency.lanes.download!.timeoutCount).toBeUndefined();
+  saved.stages.latency.lanes.download!.timeoutCount = 4;
+  expect(isHistoryRecord(saved)).toBe(false);
 });

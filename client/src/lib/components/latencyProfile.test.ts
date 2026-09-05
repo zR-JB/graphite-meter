@@ -1,6 +1,8 @@
 import { test, expect } from "bun:test";
 import {
   pos,
+  probeAccountingDetails,
+  hasProbeAccountingNotice,
   rangeWidth,
   tickLabel,
   timeoutLabel,
@@ -27,6 +29,10 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     current: 55,
     jitter: 5,
     timeoutRatio: 0,
+    accountingComplete: true,
+    timeoutCount: 0,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
     count: 100,
     active: false,
     ...over,
@@ -112,4 +118,22 @@ test("center labels and hover context follow the lane's semantics", () => {
   expect(hoverContext(result, "center")).toContain("Range");
   expect(hoverContext(lane({ p10: null }), "p90")).toBe("");
   expect(hoverContext(lane({ center: null }), "current")).toBe("");
+});
+
+test("incomplete accounting stays visible without turning unknown outcomes into zero", () => {
+  const incomplete = lane({
+    accountingComplete: false,
+    count: 0,
+    timeoutCount: 0,
+  });
+  expect(hasProbeAccountingNotice(incomplete)).toBe(true);
+  expect(probeAccountingDetails(incomplete)).toBe(
+    "Known: 0 resolved · 0 timeouts · 0 unresolved · 0 send failures. Additional outcomes unknown.",
+  );
+  expect(hasProbeAccountingNotice(lane())).toBe(false);
+  expect(hasProbeAccountingNotice(lane({ unresolvedCount: 2 }))).toBe(true);
+});
+
+test("legacy lane details do not invent missing exact outcome counts", () => {
+  expect(probeAccountingDetails({ count: 140 })).toBe("140 resolved");
 });
