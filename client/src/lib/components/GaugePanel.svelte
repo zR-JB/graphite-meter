@@ -544,6 +544,11 @@
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
+  @media (min-width: 1800px) and (min-height: 1000px) {
+    .instrument {
+      --gauge-well-height: clamp(360px, 32svh, 420px);
+    }
+  }
   @media (max-width: 759px) and (orientation: portrait) {
     .instrument {
       /* A phone retains a readable dial while the document carries the results. */

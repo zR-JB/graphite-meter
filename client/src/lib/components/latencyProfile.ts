@@ -119,7 +119,7 @@ export function metricLabel(
   metric: MetricKey,
 ): string {
   if (metric === "center")
-    return lane.centerKind === "result" ? "Result" : "Avg";
+    return lane.centerKind === "result" ? "Median" : "Mean";
   return METRIC_LABELS[metric];
 }
 
@@ -223,4 +223,37 @@ export function probeAccountingHelp(
   return lane.accountingLegacy
     ? "This saved result predates probe-accounting completeness metadata. Exact timeout counts and any missing outcomes are unknown."
     : PARTIAL_ACCOUNTING_HELP;
+}
+
+/** Compact visible counts; complete accounting stays available to assistive technology. */
+export function probeAccountingSummary(
+  lane: Pick<
+    LatencyProfileViewLane,
+    "count" | "timeoutCount" | "unresolvedCount" | "sendFailureCount"
+  >,
+): { replies: string; exceptions: string[] } {
+  const count = lane.count;
+  const replied =
+    count == null || lane.timeoutCount == null
+      ? null
+      : count - lane.timeoutCount;
+  return {
+    replies:
+      replied == null
+        ? count == null
+          ? ""
+          : `${count} resolved`
+        : `${replied} ${replied === 1 ? "reply" : "replies"}`,
+    exceptions: [
+      (lane.timeoutCount ?? 0) > 0
+        ? `${lane.timeoutCount} ${lane.timeoutCount === 1 ? "timeout" : "timeouts"}`
+        : null,
+      (lane.unresolvedCount ?? 0) > 0
+        ? `${lane.unresolvedCount} unresolved`
+        : null,
+      (lane.sendFailureCount ?? 0) > 0
+        ? `${lane.sendFailureCount} ${lane.sendFailureCount === 1 ? "send failure" : "send failures"}`
+        : null,
+    ].filter((value): value is string => value !== null),
+  };
 }

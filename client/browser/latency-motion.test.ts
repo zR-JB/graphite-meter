@@ -18,6 +18,7 @@ test("latency artwork retargets finite transforms and settles without widening f
   page,
 }) => {
   const profile = await completedProfile(page);
+  await expect(profile.locator(".current-marker")).toHaveCount(0);
   const flat = await profile.evaluate((node) => ({
     rangeWidth: node.querySelector(".range")!.getBoundingClientRect().width,
     capWidths: [...node.querySelectorAll(".range-cap")].map(
@@ -30,7 +31,7 @@ test("latency artwork retargets finite transforms and settles without widening f
   const label = await track.getAttribute("aria-label");
   const movement = await track.evaluate(async (node) => {
     const mark = (node as HTMLElement).querySelector<HTMLElement>(
-      ".position:has(.current-marker)",
+      ".position:has(.center-marker)",
     )!;
     const width = mark.getBoundingClientRect().width;
     const x = () => new DOMMatrix(getComputedStyle(mark).transform).m41 / width;
@@ -84,13 +85,15 @@ test("latency artwork retargets finite transforms and settles without widening f
   ).toBe(true);
   await track.focus();
   await expect(profile.locator(".hover-card")).toContainText("16.0");
+  await expect(profile.locator(".guide")).toBeVisible();
+  await expect(profile.locator(".pin")).toHaveCount(0);
 });
 
 test("latency motion snaps for reduced motion and hidden profiles", async ({
   page,
 }) => {
   const profile = await completedProfile(page);
-  const mark = profile.locator(".position:has(.current-marker)");
+  const mark = profile.locator(".position:has(.center-marker)");
   await mark.evaluate((node) => {
     node.style.transform = "translateX(80%)";
   });

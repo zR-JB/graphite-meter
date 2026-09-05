@@ -862,6 +862,12 @@
     max-width: 1180px;
     align-self: center;
   }
+  @media (min-width: 1800px) and (min-height: 1000px) {
+    .stage > :global(.gauge-panel),
+    .stage > :global(.chart) {
+      max-width: 1360px;
+    }
+  }
   /* A compact timeline supports the two primary instruments without taking over. */
   .stage > :global(.chart) {
     flex: 0 0 clamp(160px, 20svh, 200px);

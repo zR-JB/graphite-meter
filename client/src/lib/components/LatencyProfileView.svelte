@@ -207,8 +207,8 @@
               ? "unavailable"
               : "waiting"
             : lane.centerKind === "average"
-              ? `avg ${fmtMs(lane.center)} ms`
-              : `${fmtMs(lane.center)} ms`}</strong
+              ? `mean ${fmtMs(lane.center)} ms`
+              : `median ${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
           <em class="jit" use:tooltip={jitterDescription}
@@ -297,11 +297,6 @@
           </span>
           {#if hover?.key === lane.key && hoverValue != null}
             <span class="guide" style={`left:${pos(hoverValue, scale)}%`}
-            ></span>
-            <span
-              class="pin"
-              class:center={hover.metric === "center"}
-              style={`left:${pos(hoverValue, scale)}%`}
             ></span>
             <span
               class="hover-card"
@@ -580,24 +575,6 @@
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
     transform: translateX(-50%);
-  }
-  .pin {
-    position: absolute;
-    z-index: 5;
-    top: 50%;
-    width: 11px;
-    height: 11px;
-    border: 2px solid var(--surface-1);
-    border-radius: var(--r-full);
-    background: var(--tone);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 22%, transparent);
-    pointer-events: none;
-    transform: translate(-50%, -50%);
-  }
-  .pin.center {
-    width: 8px;
-    border-radius: var(--r-well);
-    background: var(--text);
   }
   .hover-card {
     position: absolute;

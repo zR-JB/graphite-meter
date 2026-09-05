@@ -147,11 +147,15 @@ test("factor contributions sum to the displayed overhead", () => {
 
 test("tooltip reports automatic assumptions", () => {
   const estimate = estimateCompensation(1_000_000, "h3", true, 6);
-  expect(compensationTooltip(estimate)).toContain("IPv6 detected · MTU 1500 B");
-  expect(compensationTooltip(estimate)).toContain("UDP + QUIC");
+  expect(compensationTooltip(estimate)).toContain("IP: IPv6 (detected)");
+  expect(compensationTooltip(estimate)).toContain("MTU: 1,500 bytes (assumed)");
   expect(compensationTooltip(estimate)).toContain(
-    "Local Ethernet · HTTP/3 QUIC · assumed",
+    "Transport: HTTP/3 QUIC (detected)",
   );
-  expect(compensationTooltip(estimate)).toContain("Transport detected");
-  expect(compensationTooltip(estimate)).toContain("Total +");
+  expect(compensationTooltip(estimate)).toContain(
+    "Actual wire overhead can differ.",
+  );
+  expect(compensationTooltip(estimate)).toContain(
+    "Estimated Ethernet overhead:",
+  );
 });

@@ -111,7 +111,9 @@ test("three-stage results remain usable across desktop and phone layouts", async
       expect(geometry.controlsAligned).toBe(true);
       expect(geometry.controlsSeparated).toBe(true);
     } else expect(geometry.controlsStacked).toBe(true);
-    expect(geometry.instrumentWidth).toBeLessThanOrEqual(1180);
+    expect(geometry.instrumentWidth).toBeLessThanOrEqual(
+      viewport.width >= 1800 && viewport.height >= 1000 ? 1360 : 1180,
+    );
     expect(geometry.chartHeight).toBeLessThanOrEqual(200);
     expect(geometry.resultWidths.every((width) => width <= 320)).toBe(true);
     expect(geometry.groupSpacing).toBe(true);
@@ -196,7 +198,7 @@ test("single and four-lane profiles keep bounded plots and clear gauge notes", a
       });
       expect(geometry.laneCount).toBe(allStages ? 4 : 1);
       expect(
-        geometry.plotHeights.every((height) => height >= 36 && height <= 48),
+        geometry.plotHeights.every((height) => height >= 36 && height <= 64),
       ).toBe(true);
       expect(geometry.noteGap).toBeGreaterThanOrEqual(8);
       expect(geometry.contained).toBe(true);

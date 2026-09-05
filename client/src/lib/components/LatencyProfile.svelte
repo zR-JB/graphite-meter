@@ -9,11 +9,15 @@
   const lanes = $derived<LatencyProfileViewLane[]>(
     LATENCY_LANES.filter(
       (meta) => store.stagePresentation[meta.key].configured,
-    ).map((meta) => ({
-      ...store.latencyLanes.find((lane) => lane.key === meta.key)!,
-      ...meta,
-      tone: meta.key,
-    })),
+    ).map((meta) => {
+      const lane = store.latencyLanes.find((lane) => lane.key === meta.key)!;
+      return {
+        ...lane,
+        current: store.isRunning ? lane.current : null,
+        ...meta,
+        tone: meta.key,
+      };
+    }),
   );
 </script>
 
@@ -26,7 +30,12 @@
     </p>
   {/if}
 
-  <LatencyProfileView {lanes} variant="bare" showCurrent showTimeouts />
+  <LatencyProfileView
+    {lanes}
+    variant="bare"
+    showCurrent={store.isRunning}
+    showTimeouts
+  />
 </section>
 
 <style>
@@ -35,6 +44,12 @@
     --profile-lane-gap: 8px;
     width: 100%;
     overflow: visible;
+  }
+  @media (min-width: 1800px) and (min-height: 1000px) {
+    .live-profile {
+      --profile-track-height: clamp(48px, 4.5svh, 64px);
+      --profile-lane-gap: 10px;
+    }
   }
   .lane-fail {
     margin: 0 0 var(--space-2);
