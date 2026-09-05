@@ -75,6 +75,12 @@ test("each history field sorts in its natural direction and keeps nulls last", (
     down: { ...values[1].stages.download.result!, reportedBytesPerSec: 20 },
     up: { ...values[1].stages.download.result!, reportedBytesPerSec: 10 },
   };
+  // A large surviving lane must not outrank a complete bidirectional result.
+  values[2].stages.bidirectional = {
+    status: "partial",
+    down: { ...values[0].stages.download.result!, reportedBytesPerSec: 1_000 },
+    up: null,
+  };
   for (const value of values)
     value.stages.latency.result = {
       reportedMs: value.completedAt === 1 ? 20 : 10,
