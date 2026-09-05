@@ -19,6 +19,7 @@
   import TopbarMore from "./TopbarMore.svelte";
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
+  import { canFocus, activeModal } from "../actions/focus";
   import { mediaQuery } from "../actions/mediaQuery.svelte";
   import {
     resolveDockWidths,
@@ -55,15 +56,11 @@
     | {
         kind: "workspace";
         workspace: "history" | "measurement";
-        afterPanel?: PanelSurface;
-        afterDialog?: boolean;
       }
     | {
         kind: "element";
         target: HTMLElement;
         workspace: "history" | "measurement";
-        afterPanel?: PanelSurface;
-        afterDialog?: boolean;
       }
     | null
   >(null);
@@ -99,25 +96,22 @@
     void currentRoute;
     void HistoryWorkspace;
     if (!intent) return;
+    let cancelled = false;
     void tick().then(() => {
-      if (workspaceFocusIntent !== intent) return;
+      if (cancelled || workspaceFocusIntent !== intent) return;
       const matchesRoute =
         intent.workspace === "history" ? historyOpen : measurementOpen;
       if (!matchesRoute) return;
+      const modal = activeModal();
       if (
-        intent.afterPanel &&
-        currentRoute.kind === "app" &&
-        currentRoute.panels.includes(intent.afterPanel)
-      )
+        modal &&
+        (intent.kind !== "element" || !modal.contains(intent.target))
+      ) {
+        workspaceFocusIntent = null;
         return;
-      if (
-        intent.afterDialog &&
-        currentRoute.kind === "app" &&
-        currentRoute.dialog === "legal"
-      )
-        return;
+      }
       if (intent.kind === "element") {
-        if (canRestoreFocus(intent.target)) {
+        if (canFocus(intent.target)) {
           intent.target.focus({ preventScroll: true });
           workspaceFocusIntent = null;
           return;
@@ -136,6 +130,9 @@
       }
       workspaceFocusIntent = null;
     });
+    return () => {
+      cancelled = true;
+    };
   });
   let consoleWidth = $state(
     typeof window === "undefined" ? 0 : window.innerWidth,
@@ -217,14 +214,6 @@
     auto: "Auto",
   };
 
-  function canRestoreFocus(
-    target: HTMLElement | null | undefined,
-  ): target is HTMLElement {
-    return !!(
-      target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')
-    );
-  }
-
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
@@ -276,7 +265,7 @@
 
   function routeTo(next: Route, replace = false) {
     const parent = serializeRoute(currentRoute);
-    currentRoute = next;
+    commitRoute(next);
     const hash = serializeRoute(next);
     if (replace)
       window.history.replaceState({ graphiteRoute: false }, "", hash);
@@ -299,30 +288,20 @@
     if (id === null) historyInvoker = invoker;
     routeTo(withWorkspace(currentRoute, { kind: "history", selectedId: id }));
   }
-  function focusWorkspace(
-    workspace: "history" | "measurement",
-    afterPanel?: PanelSurface,
-    afterDialog = false,
-  ) {
+  function focusWorkspace(workspace: "history" | "measurement") {
     workspaceFocusIntent = {
       kind: "workspace",
       workspace,
-      afterPanel,
-      afterDialog,
     };
   }
   function focusElement(
     target: HTMLElement,
     workspace: "history" | "measurement",
-    afterPanel?: PanelSurface,
-    afterDialog = false,
   ) {
     workspaceFocusIntent = {
       kind: "element",
       target,
       workspace,
-      afterPanel,
-      afterDialog,
     };
   }
   function closeHistory(focus: "measurement" | HTMLElement) {
@@ -360,7 +339,7 @@
   function dismissHistory() {
     const invoker = historyInvoker;
     historyInvoker = null;
-    closeHistory(canRestoreFocus(invoker) ? invoker : "measurement");
+    closeHistory(canFocus(invoker) ? invoker : "measurement");
   }
   function closeHistoryDetail() {
     backOrReplace(
@@ -378,16 +357,9 @@
       replacingCompetingPanel,
     );
   }
-  function closePanelRoute(panel: PanelSurface) {
-    backOrReplace(closePanel(currentRoute, panel));
-  }
   function dismissPanel(panel: PanelSurface, invoker?: HTMLElement) {
-    const restore = invoker ?? panelInvokers[panel];
-    delete panelInvokers[panel];
-    closePanelRoute(panel);
-    const workspace = historyOpen ? "history" : "measurement";
-    if (canRestoreFocus(restore)) focusElement(restore, workspace, panel);
-    else focusWorkspace(workspace, panel);
+    if (invoker) panelInvokers[panel] = invoker;
+    backOrReplace(closePanel(currentRoute, panel));
   }
   function togglePanelFromPointer(panel: PanelSurface, invoker: HTMLElement) {
     const open = panel === "settings" ? settingsOpen : telemetryOpen;
@@ -407,17 +379,66 @@
   }
 
   function closeLegal() {
-    const next = closeDialog(currentRoute);
-    const workspace =
-      next.kind === "app" && next.workspace.kind === "history"
-        ? "history"
-        : "measurement";
-    const invoker = legalInvoker;
-    legalInvoker = null;
-    if (canRestoreFocus(invoker))
-      focusElement(invoker, workspace, undefined, true);
-    else focusWorkspace(workspace, undefined, true);
-    backOrReplace(next);
+    backOrReplace(closeDialog(currentRoute));
+  }
+
+  // Direct closes and browser navigation commit through the same focus owner.
+  function commitRoute(next: Route, fromHistory = false) {
+    const previous = currentRoute;
+    const previousHistory = historyOpen;
+    const nextHistory =
+      next.kind === "app" && next.workspace.kind === "history";
+    currentRoute = next;
+    const workspace = nextHistory ? "history" : "measurement";
+    if (workspaceFocusIntent && workspaceFocusIntent.workspace !== workspace)
+      workspaceFocusIntent = null;
+    const openingModal =
+      next.kind === "app" &&
+      ((next.dialog === "legal" &&
+        (previous.kind !== "app" || previous.dialog !== "legal")) ||
+        (!dockQuery.matches &&
+          next.panels.some(
+            (panel) =>
+              previous.kind !== "app" || !previous.panels.includes(panel),
+          )));
+    if (openingModal) {
+      workspaceFocusIntent = null;
+      return;
+    }
+    if (!workspaceFocusIntent && previous.kind === "app") {
+      let invoker: HTMLElement | null | undefined;
+      let closedSurface = false;
+      if (
+        previous.dialog === "legal" &&
+        (next.kind !== "app" || next.dialog !== "legal")
+      ) {
+        invoker = legalInvoker;
+        legalInvoker = null;
+        closedSurface = true;
+      } else {
+        const nextPanels = next.kind === "app" ? next.panels : [];
+        const removedPanel = [...previous.panels]
+          .reverse()
+          .find((panel) => !nextPanels.includes(panel));
+        if (removedPanel) {
+          invoker = panelInvokers[removedPanel];
+          delete panelInvokers[removedPanel];
+          closedSurface = true;
+        }
+      }
+      if (closedSurface) {
+        if (canFocus(invoker)) focusElement(invoker, workspace);
+        else focusWorkspace(workspace);
+        return;
+      }
+    }
+    if (
+      fromHistory &&
+      previousHistory !== nextHistory &&
+      !workspaceFocusIntent &&
+      !auxiliaryOwnsFocus(next)
+    )
+      focusWorkspace(workspace);
   }
 
   function onBeforeUnload(e: BeforeUnloadEvent) {
@@ -532,45 +553,8 @@
   }
 
   onMount(() => {
-    const onHashChange = () => {
-      const previous = currentRoute;
-      const previousHistory = historyOpen;
-      const next = parseRoute(window.location.hash);
-      const nextHistory =
-        next.kind === "app" && next.workspace.kind === "history";
-      currentRoute = next;
-      if (!workspaceFocusIntent && previous.kind === "app") {
-        const workspace = nextHistory ? "history" : "measurement";
-        if (
-          previous.dialog === "legal" &&
-          (next.kind !== "app" || next.dialog !== "legal")
-        ) {
-          const invoker = legalInvoker;
-          legalInvoker = null;
-          if (canRestoreFocus(invoker)) focusElement(invoker, workspace);
-          else focusWorkspace(workspace);
-          return;
-        }
-        const nextPanels = next.kind === "app" ? next.panels : [];
-        const removedPanel = [...previous.panels]
-          .reverse()
-          .find((panel) => !nextPanels.includes(panel));
-        if (removedPanel) {
-          const invoker = panelInvokers[removedPanel];
-          delete panelInvokers[removedPanel];
-          if (canRestoreFocus(invoker)) focusElement(invoker, workspace);
-          else focusWorkspace(workspace);
-          return;
-        }
-      }
-      if (
-        previousHistory === nextHistory ||
-        workspaceFocusIntent ||
-        auxiliaryOwnsFocus(next)
-      )
-        return;
-      focusWorkspace(nextHistory ? "history" : "measurement");
-    };
+    const onHashChange = () =>
+      commitRoute(parseRoute(window.location.hash), true);
     window.addEventListener("hashchange", onHashChange);
     window.addEventListener("popstate", onHashChange);
     onHashChange();

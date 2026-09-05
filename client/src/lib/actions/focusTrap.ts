@@ -1,3 +1,5 @@
+import { canFocus } from "./focus";
+
 // Svelte action for flyout dialogs.
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -10,15 +12,12 @@ const FOCUSABLE_SELECTOR = [
 ].join(",");
 export function focusTrap(node: HTMLElement, active = true) {
   let enabled = active;
+  let focusTimer: number | undefined;
   // Closed disclosures retain layout boxes; check rendering visibility too.
   function getFocusable(): HTMLElement[] {
     return Array.from(
       node.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-    ).filter(
-      (el) =>
-        !el.hasAttribute("disabled") &&
-        el.checkVisibility({ visibilityProperty: true }),
-    );
+    ).filter(canFocus);
   }
   function handleKeydown(event: KeyboardEvent) {
     if (!enabled || event.key !== "Tab") return;
@@ -40,19 +39,29 @@ export function focusTrap(node: HTMLElement, active = true) {
       first.focus();
     }
   }
+  function cancelFocus() {
+    window.clearTimeout(focusTimer);
+    focusTimer = undefined;
+  }
   function focusFirst() {
-    const first = getFocusable()[0];
-    // Deferred one task: focusing an element still hidden mid-open is a no-op.
-    window.setTimeout(() => (first ?? node).focus(), 0);
+    // Resolve the target after opening, not before a pending render or teardown.
+    focusTimer = window.setTimeout(() => {
+      focusTimer = undefined;
+      if (enabled && canFocus(node)) (getFocusable()[0] ?? node).focus();
+    }, 0);
   }
   node.addEventListener("keydown", handleKeydown);
   if (enabled) focusFirst();
   return {
     update(nextActive: boolean) {
+      if (enabled === nextActive) return;
       enabled = nextActive;
+      cancelFocus();
       if (enabled) focusFirst();
     },
     destroy() {
+      enabled = false;
+      cancelFocus();
       node.removeEventListener("keydown", handleKeydown);
     },
   };
