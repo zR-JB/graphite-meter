@@ -192,6 +192,34 @@ test("warmup is owned by one stage while future stages remain toggleable", async
     page.getByRole("switch", { name: "Upload stage" }),
   ).toBeEnabled();
 });
+
+test("removing the final measurement during warmup leaves no active result", async ({
+  page,
+}) => {
+  const settings = await prepareApp(page, {
+    "Warmup ms": "1500",
+    "Latency ms": "0",
+    "Download ms": "0",
+    "Upload ms": "900",
+  });
+  await startTest(page);
+  await expect(page.locator("#console")).toHaveAttribute(
+    "data-phase",
+    "warmup",
+  );
+  await settings.getByLabel("Upload ms").fill("0");
+  await expectVisible(againButton(page), 5_000);
+  await expect(page.locator("#console")).toHaveAttribute(
+    "data-phase",
+    "complete",
+  );
+  await expect(page.locator(".result-card")).toHaveCount(0);
+  await expect(page.locator(".seg--active, .seg--recovering")).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Upload stage" })).toHaveClass(
+    /seg--pending/,
+  );
+});
+
 test("three live result chips remain below the phase rail", async ({
   page,
 }) => {

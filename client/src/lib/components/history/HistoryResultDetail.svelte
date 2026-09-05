@@ -8,13 +8,10 @@
     formatLatency,
     formatPercent,
   } from "../../history/format";
-  import type {
-    HistoryRecord,
-    LatencyLaneSnapshot,
-    ThroughputSnapshot,
-  } from "../../history/types";
+  import type { HistoryRecord, ThroughputSnapshot } from "../../history/types";
   import { store } from "../../state/store.svelte";
   import {
+    LATENCY_LANES,
     savedLatencyHasProbeEvidence,
     probeAccountingHelp,
     probeAccountingDetails,
@@ -39,17 +36,6 @@
     tone: LatencyProfileTone;
     value: string;
     detail: string;
-  }
-
-  interface ProbeTimeoutLane {
-    key: LatencyProfileViewLane["key"];
-    label: string;
-    icon: string;
-    tone: LatencyProfileTone;
-    value: string;
-    details: string;
-    accountingComplete?: boolean;
-    accountingLegacy?: boolean;
   }
 
   let {
@@ -137,131 +123,54 @@
     );
   }
 
-  function savedAccounting(snapshot: LatencyLaneSnapshot) {
-    return {
-      accountingComplete:
-        record.schemaVersion === 2
-          ? (snapshot.accountingComplete ?? false)
-          : undefined,
-      accountingLegacy:
-        record.schemaVersion === 2 && snapshot.accountingComplete === undefined,
-    };
-  }
-
-  function finalizedLane(
-    key: LatencyProfileViewLane["key"],
-    label: string,
-    tone: LatencyProfileTone,
-    snapshot: LatencyLaneSnapshot | null,
-  ): LatencyProfileViewLane | null {
-    if (!snapshot) return null;
-    const lane: LatencyProfileViewLane = {
-      key,
-      label,
-      tone,
-      centerKind: key === "latency" ? "result" : "average",
-      ...snapshot,
-      ...savedAccounting(snapshot),
-      timeoutRatio: snapshot.timeoutRatio ?? snapshot.lossRatio ?? null,
-    };
-    return usefulLane(lane) ? lane : null;
-  }
-
-  const latencyProfiles = $derived<LatencyProfileViewLane[]>(
-    [
-      finalizedLane(
-        "latency",
-        "Idle",
-        "latency",
-        record.stages.latency.lanes.latency,
-      ),
-      finalizedLane(
-        "download",
-        "Loaded Down",
-        "download",
-        record.stages.latency.lanes.download,
-      ),
-      finalizedLane(
-        "upload",
-        "Loaded Up",
-        "upload",
-        record.stages.latency.lanes.upload,
-      ),
-      finalizedLane(
-        "bidirectional",
-        "Loaded Bi-dir",
-        "bidirectional",
-        record.stages.latency.lanes.bidirectional,
-      ),
-    ].filter((lane): lane is LatencyProfileViewLane => lane !== null),
+  const savedLanes = $derived(
+    LATENCY_LANES.flatMap((meta) => {
+      const snapshot = record.stages.latency.lanes[meta.key];
+      return snapshot
+        ? [
+            {
+              ...meta,
+              tone: meta.key,
+              icon: meta.key === "latency" ? ICON.ping : ICON[meta.key],
+              ...snapshot,
+              centerKind:
+                meta.key === "latency"
+                  ? ("result" as const)
+                  : ("average" as const),
+              accountingComplete:
+                record.schemaVersion === 2
+                  ? (snapshot.accountingComplete ?? false)
+                  : undefined,
+              accountingLegacy:
+                record.schemaVersion === 2 &&
+                snapshot.accountingComplete === undefined,
+              timeoutRatio: snapshot.timeoutRatio ?? snapshot.lossRatio ?? null,
+            },
+          ]
+        : [];
+    }),
   );
-  const showProbeTimeouts = $derived(
-    savedLatencyHasProbeEvidence(record.transport.latency.kind),
-  );
-
-  function probeTimeoutLane(
-    key: LatencyProfileViewLane["key"],
-    label: string,
-    icon: string,
-    tone: LatencyProfileTone,
-    snapshot: LatencyLaneSnapshot | null,
-  ): ProbeTimeoutLane | null {
-    if (!snapshot) return null;
-    const accounting = savedAccounting(snapshot);
-    if (
-      accounting.accountingComplete !== false &&
-      snapshot.count <= 0 &&
-      !snapshot.unresolvedCount &&
-      !snapshot.sendFailureCount
-    )
-      return null;
-    const ratio = snapshot.timeoutRatio ?? snapshot.lossRatio ?? null;
-    return {
-      key,
-      label,
-      icon,
-      tone,
-      value:
-        accounting.accountingComplete === false
-          ? "Partial"
-          : formatPercent(ratio == null ? null : ratio * 100),
-      details: probeAccountingDetails({ ...snapshot, ...accounting }),
-      ...accounting,
-    };
-  }
-
-  const probeTimeoutLanes = $derived<ProbeTimeoutLane[]>(
-    showProbeTimeouts
-      ? [
-          probeTimeoutLane(
-            "latency",
-            "Idle",
-            ICON.ping,
-            "latency",
-            record.stages.latency.lanes.latency,
-          ),
-          probeTimeoutLane(
-            "download",
-            "Loaded Down",
-            ICON.download,
-            "download",
-            record.stages.latency.lanes.download,
-          ),
-          probeTimeoutLane(
-            "upload",
-            "Loaded Up",
-            ICON.upload,
-            "upload",
-            record.stages.latency.lanes.upload,
-          ),
-          probeTimeoutLane(
-            "bidirectional",
-            "Loaded Bi-dir",
-            ICON.bidirectional,
-            "bidirectional",
-            record.stages.latency.lanes.bidirectional,
-          ),
-        ].filter((lane): lane is ProbeTimeoutLane => lane !== null)
+  const latencyProfiles = $derived(savedLanes.filter(usefulLane));
+  const probeTimeoutLanes = $derived(
+    savedLatencyHasProbeEvidence(record.transport.latency.kind)
+      ? savedLanes
+          .filter(
+            (lane) =>
+              lane.accountingComplete === false ||
+              lane.count > 0 ||
+              lane.unresolvedCount ||
+              lane.sendFailureCount,
+          )
+          .map((lane) => ({
+            ...lane,
+            value:
+              lane.accountingComplete === false
+                ? "Partial"
+                : formatPercent(
+                    lane.timeoutRatio == null ? null : lane.timeoutRatio * 100,
+                  ),
+            details: probeAccountingDetails(lane),
+          }))
       : [],
   );
 

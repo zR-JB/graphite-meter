@@ -453,6 +453,31 @@ test("overflow menu supports keyboard navigation and returns focus", async ({
     page.getByRole("status", { name: "Connection: connected" }),
   ).toBeFocused();
   await expect(page.getByRole("menu")).toHaveCount(0);
+
+  await trigger.focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(trigger).not.toBeFocused();
+  await trigger.click();
+  await page
+    .getByRole("status", { name: "Connection: connected" })
+    .evaluate((node) =>
+      node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })),
+    );
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+  await trigger.click();
+  await endpoint.click();
+  await expect(endpointPanel(page)).toBeVisible();
+  await expect(trigger).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await history.click();
+  await expect(page.locator(".history-workspace")).toBeVisible();
+  await expect(trigger).toBeFocused();
 });
 
 test("coarse-pointer topbar controls fit at phone and tablet widths", async ({

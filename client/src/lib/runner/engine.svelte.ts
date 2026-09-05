@@ -1,17 +1,16 @@
 import type {
   ConnectionRole,
-  InfraInfo,
+  EngineInfo,
   LiveRunConfig,
   NetworkRunner,
+  PreparedPaths,
   RunnerEvent,
 } from "./contract";
 import { RunnerCore } from "./core";
 import { DummyBackend } from "./dummy";
-import {
-  PreflightUnavailableError,
-  RealBackend,
-  TransportUnavailableError,
-} from "./RealRunner";
+import { RealBackend } from "./RealRunner";
+import { PreflightUnavailableError } from "./real/transportError";
+import { prepareConnections, type ConnectionPreparation } from "./real/prepare";
 import type {
   store as applicationStore,
   StageKey,
@@ -33,11 +32,10 @@ import {
   connectionDraftKey,
   connectionDraftRoleKey,
   roleNeedsValidation,
-  connectionKey,
-  connectionRoleKey,
-  connectionSelection,
   validationRoles,
-  verifiedRolesForProbe,
+  preparedPaths,
+  emptyConnectionValidation,
+  latencyPathNeeded,
 } from "./connectionModel";
 
 function isNetworkUnavailable(cause: unknown): boolean {
@@ -75,133 +73,244 @@ export function connectionFailureMessage(cause: unknown): string {
     : "Connection check failed";
 }
 
+interface ApplicationDependencies {
+  prepare: typeof prepareConnections;
+  createRunner: (paths: PreparedPaths) => NetworkRunner;
+  describe: () => EngineInfo;
+}
+
 export function createApplicationController(
   store: typeof applicationStore,
-  createRunner?: () => NetworkRunner,
+  dependencies: Partial<ApplicationDependencies> = {},
 ) {
+  const dummy =
+    __GM_ALLOW_DUMMY__ &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("engine") === "dummy";
+  const prepare =
+    dependencies.prepare ?? (dummy ? DummyBackend.prepare : prepareConnections);
+  const createRunner =
+    dependencies.createRunner ??
+    ((paths: PreparedPaths) =>
+      new RunnerCore(dummy ? new DummyBackend() : new RealBackend(paths)));
+  const describe =
+    dependencies.describe ??
+    (dummy ? DummyBackend.describe : RealBackend.describe);
   let runner: NetworkRunner | null = null;
-  let disposeDraft: (() => void) | null = null;
-  let unsubscribe: (() => void) | null = null;
-  let validationAbort: AbortController | null = null;
-  let pendingStartAbort: AbortController | null = null;
-  let pendingStartSeq = 0;
-  let validationSeq = 0;
+  let unsubscribe: (() => void) | undefined;
+  let disposeDraft: (() => void) | undefined;
+  let idle: NonNullable<ConnectionPreparation["idle"]> | null = null;
+  let validation: {
+    abort: AbortController;
+    roles: ConnectionRole[];
+    draft: string;
+  } | null = null;
+  let pendingStart: { abort: AbortController; draft: string } | null = null;
   let booted = false;
-  let prepared: { key: string; info: InfraInfo; verifiedAt: number } | null =
-    null;
-  let lastDraftRoleKeys: Record<ConnectionRole, string> = {
-    throughput: "",
-    latency: "",
-  };
-  let validating: ConnectionRole[] = [];
   let sessionBudget: SessionBudget | null = null;
-  let validationTimer: ReturnType<typeof setTimeout> | null = null;
-
-  let validationDueAt = 0;
-  let lastValidationAttemptAt = 0;
-  let validationFailureCount = 0;
-  let connectivityOnline: boolean | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let nextValidationAt = 0;
+  let failures = 0;
+  let online: boolean | null = null;
   const SESSION_RUN_MARGIN_MS = 60_000;
 
-  function preparationPathState(
-    role: ConnectionRole,
-  ): "checking" | "ready" | "failed" | "stale" | "disabled" {
+  const freshPaths = () =>
+    preparedPaths(
+      store.config,
+      store.transportDiscovery,
+      store.connectionValidation,
+    );
+  const hidden = () => document.visibilityState === "hidden";
+  function mark(
+    roles: ConnectionRole[],
+    state: ConnectionValidationState,
+    message?: string,
+  ) {
+    const next = { ...store.connectionValidation };
+    if (roles.includes("throughput"))
+      next.throughput = { ...next.throughput, state, message };
+    if (roles.includes("latency"))
+      next.latency = { ...next.latency, state, message };
+    store.connectionValidation = next;
+  }
+  function schedule() {
+    clearTimeout(timer);
+    timer = undefined;
+    if (!booted || store.isRunning || pendingStart || validation || hidden())
+      return;
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        void validateConnections(true).catch(() => {});
+      },
+      Math.max(0, nextValidationAt - Date.now()),
+    );
+  }
+  function requestValidation() {
+    nextValidationAt = Date.now();
+    schedule();
+  }
+  function cancelPendingStart() {
+    pendingStart?.abort.abort();
+    pendingStart = null;
+    store.startError = "";
+    store.preparationStatus = "idle";
+    schedule();
+  }
+  function refreshIdle() {
     if (
-      role === "throughput" &&
-      !(
-        store.config.stages.download ||
-        store.config.stages.upload ||
-        store.config.stages.bidirectional
+      !booted ||
+      store.isRunning ||
+      hidden() ||
+      !latencyPathNeeded(store.config)
+    )
+      idle?.stop();
+    else idle?.start();
+  }
+  function ingest(event: RunnerEvent) {
+    if (event.type === "connectivity") {
+      if (event.state === "offline") offline();
+      else onlineAgain();
+    }
+    if (
+      event.type === "error" &&
+      CONNECTION_FAILURE_REASONS.has(event.error.reason)
+    )
+      mark(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+    store.ingest(event);
+    if (
+      event.type === "complete" ||
+      event.type === "error" ||
+      event.type === "phase"
+    ) {
+      refreshIdle();
+      schedule();
+    }
+  }
+  function offline() {
+    if (online === false) return;
+    online = false;
+    mark(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+    requestValidation();
+  }
+  function onlineAgain() {
+    if (
+      online === true &&
+      CONNECTION_ROLES.every(
+        (role) =>
+          !roleNeedsValidation(
+            store.config,
+            store.connectionValidation,
+            role,
+            store.transportDiscovery,
+          ),
       )
     )
-      return "disabled";
-    if (role === "latency" && !store.latencyEnabled) return "disabled";
-    const state = store.connectionValidation[role].state;
-    if (state === "verified") return "ready";
-    return state;
+      return;
+    online = true;
+    requestValidation();
+  }
+  function visibilityChanged() {
+    refreshIdle();
+    schedule();
   }
 
-  function updatePreparation(
-    status: "authenticating" | "checking" | "launching" | "failed" | "idle",
-  ): void {
-    store.preparation = {
-      status,
-      throughput: preparationPathState("throughput"),
-      latency: preparationPathState("latency"),
+  async function validateConnections(
+    force = false,
+    requestedRole?: ConnectionRole,
+    ownerSignal?: AbortSignal,
+  ): Promise<void> {
+    if (!booted) throw new DOMException("Runner is not active", "AbortError");
+    if (!force && freshPaths()) return;
+    const config = $state.snapshot(store.config);
+    const draft = connectionDraftKey(config);
+    if (validation) {
+      validation.abort.abort();
+      mark(validation.roles, "stale");
+    }
+    const task = {
+      abort: new AbortController(),
+      draft,
+      roles: validationRoles(
+        config,
+        store.connectionValidation,
+        requestedRole,
+        store.transportDiscovery,
+      ),
     };
-  }
-
-  function clearValidationTimer(): void {
-    if (validationTimer !== null) clearTimeout(validationTimer);
-    validationTimer = null;
-  }
-
-  function validationHidden(): boolean {
-    return document.visibilityState === "hidden";
-  }
-
-  function validationDue(): number {
-    const now = Date.now();
-    if (validationDueAt) return validationDueAt;
-    if (prepared) return prepared.verifiedAt + CONNECTION_FRESH_MS;
-    if (lastValidationAttemptAt)
-      return lastValidationAttemptAt + CONNECTION_FRESH_MS;
-    return now;
-  }
-
-  function scheduleValidation(): void {
-    clearValidationTimer();
-    if (!booted || store.isRunning || validationHidden()) return;
-    const dueAt = validationDue();
-    const delay = Math.max(0, dueAt - Date.now());
-    validationTimer = setTimeout(() => {
-      validationTimer = null;
-      serviceValidation();
-    }, delay);
-  }
-
-  function requestValidation(): void {
-    validationDueAt = Date.now();
-    scheduleValidation();
-  }
-
-  function serviceValidation(): void {
-    if (!booted || store.isRunning || validationHidden()) {
-      scheduleValidation();
-      return;
-    }
-    if (validating.length) return;
-    if (validationDue() > Date.now()) {
-      scheduleValidation();
-      return;
-    }
-    validationDueAt = 0;
-    void validateConnections(true).catch(() => {
-      // Validation state carries expected probe failures to the UI.
-    });
-  }
-
-  function cancelPendingStart() {
-    if (!pendingStartAbort) {
-      if (store.preparation.status !== "idle") updatePreparation("idle");
-      return;
-    }
-    pendingStartSeq++;
-    pendingStartAbort.abort();
-    pendingStartAbort = null;
-    store.startError = "";
-    updatePreparation("idle");
-  }
-
-  function observeDraft() {
-    return $effect.root(() => {
-      $effect(() => {
-        const changed = CONNECTION_ROLES.filter(
-          (role) =>
-            connectionDraftRoleKey(store.config, role) !==
-            lastDraftRoleKeys[role],
+    const previous = store.connectionValidation;
+    validation = task;
+    const signal = ownerSignal
+      ? AbortSignal.any([ownerSignal, task.abort.signal])
+      : task.abort.signal;
+    const current = () =>
+      booted &&
+      validation === task &&
+      !signal.aborted &&
+      connectionDraftKey(store.config) === draft;
+    mark(task.roles, "checking");
+    nextValidationAt = Date.now() + CONNECTION_FRESH_MS;
+    let result: ConnectionPreparation | undefined;
+    try {
+      result = await prepare(config, previous, task.roles, signal);
+      if (!current()) throw new DOMException("Aborted", "AbortError");
+      store.transportDiscovery = result.discovery;
+      store.connectionValidation = result.validation;
+      if (result.idle !== undefined) {
+        idle?.stop();
+        idle = result.idle;
+        if (idle) idle.onEvent = ingest;
+        refreshIdle();
+      }
+      if (result.failure) throw result.failure;
+      if (!freshPaths()) {
+        // A provisional monitor may have stalled before adoption; its observed edge invalidates these checks.
+        nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
+      } else {
+        failures = 0;
+        const checked = CONNECTION_ROLES.flatMap(
+          (role) => result!.validation[role].path?.verifiedAt ?? [],
         );
-        const needed = CONNECTION_ROLES.filter((role) =>
+        nextValidationAt = Math.min(...checked) + CONNECTION_FRESH_MS;
+      }
+    } catch (cause) {
+      if (!current()) {
+        if (result?.idle !== idle) result?.idle?.stop();
+        throw cause;
+      }
+      if (!result) {
+        mark(CONNECTION_ROLES, "failed", connectionFailureMessage(cause));
+        if (cause instanceof PreflightUnavailableError)
+          store.connectivity = "offline";
+      }
+      nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
+      throw cause;
+    } finally {
+      if (validation === task) {
+        if (signal.aborted) mark(task.roles, "stale");
+        validation = null;
+      }
+      schedule();
+    }
+  }
+
+  async function boot() {
+    if (booted) return;
+    booted = true;
+    store.engineInfo = describe();
+    online = typeof navigator === "undefined" ? null : navigator.onLine;
+    let draftKeys = CONNECTION_ROLES.map((role) =>
+      connectionDraftRoleKey(store.config, role),
+    );
+    disposeDraft = $effect.root(() => {
+      $effect(() => {
+        const keys = CONNECTION_ROLES.map((role) =>
+          connectionDraftRoleKey(store.config, role),
+        );
+        const changed = CONNECTION_ROLES.filter(
+          (_role, i) => keys[i] !== draftKeys[i],
+        );
+        const needed = changed.filter((role) =>
           roleNeedsValidation(
             store.config,
             store.connectionValidation,
@@ -209,312 +318,39 @@ export function createApplicationController(
             store.transportDiscovery,
           ),
         );
-        const running = store.isRunning;
-        if (!booted) return;
-        if (changed.length) {
-          if (changed.includes("latency") && needed.includes("latency"))
-            store.idleLatency = [];
-          for (const role of changed)
-            lastDraftRoleKeys[role] = connectionDraftRoleKey(
-              store.config,
-              role,
-            );
-          if (!needed.length) return;
-          requestValidation();
-          if (running) {
-            markValidation(
-              changed.filter((role) => needed.includes(role)),
-              "stale",
-              "Draft changed; validation resumes after this run.",
-            );
-            return;
-          }
+        draftKeys = keys;
+        if (!booted || !changed.length) return;
+        const draft = connectionDraftKey(store.config);
+        if (pendingStart && pendingStart.draft !== draft) cancelPendingStart();
+        if (validation && validation.draft !== draft) validation.abort.abort();
+        if (changed.includes("latency") && !latencyPathNeeded(store.config)) {
+          idle?.stop();
+          idle = null;
+          store.connectionValidation = {
+            ...store.connectionValidation,
+            latency: {
+              selection: store.config.transports.latencyTarget,
+              state: "stale",
+              path: null,
+            },
+          };
         }
-        serviceValidation();
+        if (!needed.length || validation?.draft === draft) return;
+        if (needed.includes("latency")) store.idleLatency = [];
+        mark(
+          needed,
+          "stale",
+          store.isRunning
+            ? "Draft changed; validation resumes after this run."
+            : undefined,
+        );
+        requestValidation();
       });
     });
-  }
-
-  function getRunner(): NetworkRunner {
-    if (!runner) {
-      const dummy =
-        __GM_ALLOW_DUMMY__ &&
-        typeof window !== "undefined" &&
-        new URLSearchParams(window.location.search).get("engine") === "dummy";
-      runner =
-        createRunner?.() ??
-        new RunnerCore(dummy ? new DummyBackend() : new RealBackend());
-    }
-    return runner;
-  }
-
-  function markValidation(
-    roles: ConnectionRole[],
-    state: ConnectionValidationState,
-    message?: string,
-    verifiedAt?: number,
-    config = store.config,
-  ) {
-    const next = { ...store.connectionValidation };
-    for (const role of roles)
-      next[role] = {
-        selection: connectionSelection(config, role),
-        identity: connectionRoleKey(config, role, store.transportDiscovery),
-        state,
-        message,
-        verifiedAt,
-      };
-    store.connectionValidation = next;
-    if (store.preparing)
-      updatePreparation(
-        store.preparation.status === "launching" ? "launching" : "checking",
-      );
-  }
-
-  function preparedIsFresh(key: string): boolean {
-    const config = $state.snapshot(store.config);
-    if (
-      CONNECTION_ROLES.some((role) =>
-        roleNeedsValidation(
-          config,
-          store.connectionValidation,
-          role,
-          store.transportDiscovery,
-        ),
-      )
-    )
-      return false;
-    return !!(
-      prepared &&
-      prepared.key === key &&
-      Date.now() - prepared.verifiedAt <= CONNECTION_FRESH_MS &&
-      prepared.info.discoveryGeneration === store.transportDiscovery?.generation
-    );
-  }
-
-  async function validateConnections(
-    force = false,
-    requestedRole?: ConnectionRole,
-    ownerSignal?: AbortSignal,
-  ): Promise<InfraInfo> {
-    if (!booted) throw new DOMException("Runner is not active", "AbortError");
-    const config = $state.snapshot(store.config);
-    const key = connectionKey(config, store.transportDiscovery);
-    const draftKey = connectionDraftKey(config);
-    if (!force && preparedIsFresh(key)) return prepared!.info;
-    lastValidationAttemptAt = Date.now();
-    validationDueAt = 0;
-    if (validating.length) markValidation(validating, "stale");
-    validationAbort?.abort();
-    const roles = validationRoles(
-      config,
-      store.connectionValidation,
-      requestedRole,
-      store.transportDiscovery,
-    );
-    const abort = new AbortController();
-    const relayOwnerAbort = () => abort.abort();
-    ownerSignal?.addEventListener("abort", relayOwnerAbort, { once: true });
-    if (ownerSignal?.aborted) abort.abort();
-    validationAbort = abort;
-    const seq = ++validationSeq;
-    validating = roles;
-    markValidation(roles, "checking", undefined, undefined, config);
-    const transactionCurrent = (): boolean =>
-      booted &&
-      !abort.signal.aborted &&
-      seq === validationSeq &&
-      connectionDraftKey($state.snapshot(store.config)) === draftKey;
-    try {
-      let latest: InfraInfo | null = null;
-      let firstFailure: unknown;
-      const batches: (ConnectionRole | undefined)[] =
-        roles.length === CONNECTION_ROLES.length ? [undefined] : roles;
-      for (const role of batches) {
-        const batchRoles = role ? [role] : roles;
-        const discoveryGeneration = store.transportDiscovery?.generation;
-        try {
-          const info = await getRunner().probe(config, abort.signal, role);
-          if (!transactionCurrent())
-            throw new DOMException("Aborted", "AbortError");
-          latest = info;
-          const verifiedAt = Date.now();
-          commitDiscovery(info.discovery);
-          store.ingest({ type: "infra", info });
-          markValidation(
-            verifiedRolesForProbe(
-              batchRoles,
-              discoveryGeneration,
-              info.discoveryGeneration,
-            ),
-            "verified",
-            undefined,
-            verifiedAt,
-            config,
-          );
-        } catch (cause) {
-          if (!transactionCurrent()) throw cause;
-          if (cause instanceof TransportUnavailableError)
-            commitDiscovery(cause.discovery);
-          firstFailure ??= cause;
-          const failedRoles =
-            cause instanceof PreflightUnavailableError
-              ? CONNECTION_ROLES
-              : cause instanceof TransportUnavailableError && cause.role
-                ? [cause.role]
-                : batchRoles;
-          markValidation(
-            failedRoles,
-            "failed",
-            connectionFailureMessage(cause),
-            undefined,
-            config,
-          );
-          const uncheckedRoles = batchRoles.filter(
-            (batchRole) => !failedRoles.includes(batchRole),
-          );
-          if (uncheckedRoles.length)
-            markValidation(
-              uncheckedRoles,
-              "stale",
-              "Not checked because the other path failed.",
-              undefined,
-              config,
-            );
-        }
-      }
-      if (firstFailure) {
-        prepared = null;
-        if (firstFailure instanceof PreflightUnavailableError)
-          store.connectivity = "offline";
-        validationFailureCount++;
-        validationDueAt =
-          Date.now() + connectionFailureBackoff(validationFailureCount);
-        throw firstFailure;
-      }
-      if (!latest) throw new Error("no connection role was validated");
-      prepared = {
-        key: connectionKey(config, store.transportDiscovery),
-        info: latest,
-        verifiedAt: Date.now(),
-      };
-      validationFailureCount = 0;
-      validationDueAt = prepared.verifiedAt + CONNECTION_FRESH_MS;
-      return latest;
-    } finally {
-      if (validationAbort === abort) {
-        validationAbort = null;
-        validating = [];
-      }
-      ownerSignal?.removeEventListener("abort", relayOwnerAbort);
-      scheduleValidation();
-    }
-  }
-
-  function commitDiscovery(discovery: InfraInfo["discovery"]) {
-    if (!discovery) return;
-    const changed =
-      store.transportDiscovery &&
-      discovery.generation !== store.transportDiscovery.generation;
-    store.ingest({ type: "transportDiscovery", discovery });
-    if (changed) {
-      prepared = null;
-      markValidation(
-        CONNECTION_ROLES,
-        "stale",
-        "Server changed; checking both paths again.",
-      );
-    }
-  }
-
-  function ingestRunnerEvent(event: RunnerEvent) {
-    if (event.type === "connectivity") {
-      if (event.state === "offline") refreshAfterOffline();
-      else refreshAfterTransition();
-    }
-    if (
-      event.type === "phase" &&
-      event.transition.to === "connecting" &&
-      pendingStartAbort
-    ) {
-      pendingStartAbort = null;
-    }
-    if (event.type === "infra") commitDiscovery(event.info.discovery);
-    if (
-      event.type === "error" &&
-      CONNECTION_FAILURE_REASONS.has(event.error.reason)
-    ) {
-      prepared = null;
-      markValidation(
-        CONNECTION_ROLES,
-        "stale",
-        "Connection changed; check again.",
-      );
-    }
-    store.ingest(event);
-    if (
-      event.type === "phase" &&
-      ["complete", "aborted", "error"].includes(event.transition.to)
-    )
-      scheduleValidation();
-  }
-
-  function refreshAfterTransition() {
-    const active = validating.length > 0;
-    if (
-      connectivityOnline === true &&
-      !CONNECTION_ROLES.some((role) =>
-        roleNeedsValidation(
-          store.config,
-          store.connectionValidation,
-          role,
-          store.transportDiscovery,
-        ),
-      )
-    )
-      return;
-    connectivityOnline = true;
-    if (!active) requestValidation();
-  }
-
-  function refreshAfterOffline() {
-    if (connectivityOnline === false) return;
-    connectivityOnline = false;
-    prepared = null;
-    markValidation(
-      CONNECTION_ROLES,
-      "stale",
-      "Connection changed; check again.",
-    );
-    if (!validating.length) requestValidation();
-  }
-
-  function refreshAfterVisibility() {
-    const hidden = document.visibilityState === "hidden";
-    runner?.setBackgroundActivity?.(!hidden);
-    if (hidden) {
-      clearValidationTimer();
-    } else {
-      scheduleValidation();
-    }
-  }
-
-  async function bootRunner() {
-    if (booted) return;
-    const engine = getRunner();
-    store.engineInfo = engine.describe();
-    unsubscribe = engine.on(ingestRunnerEvent);
-    booted = true;
-    connectivityOnline =
-      typeof navigator === "undefined" ? null : navigator.onLine;
-    for (const role of CONNECTION_ROLES)
-      lastDraftRoleKeys[role] = connectionDraftRoleKey(store.config, role);
-    window.addEventListener("online", refreshAfterTransition);
-    window.addEventListener("offline", refreshAfterOffline);
-    document.addEventListener("visibilitychange", refreshAfterVisibility);
-    disposeDraft = observeDraft();
-    refreshAfterVisibility();
-    if (validationHidden()) requestValidation();
+    window.addEventListener("online", onlineAgain);
+    window.addEventListener("offline", offline);
+    document.addEventListener("visibilitychange", visibilityChanged);
+    if (hidden()) requestValidation();
     else await validateConnections().catch(() => {});
   }
 
@@ -522,81 +358,73 @@ export function createApplicationController(
     if (!booted) return;
     if (store.isRunning) {
       cancelPendingStart();
-      getRunner().abort();
+      runner?.abort();
       return;
     }
-    if (pendingStartAbort) {
+    if (pendingStart) {
       cancelPendingStart();
       return;
     }
-    const cfg = $state.snapshot(store.config);
-    cfg.adaptive = canonicalAdaptiveConfig(cfg.adaptive);
-    const key = connectionKey(cfg, store.transportDiscovery);
-    const startAbort = new AbortController();
-    const startSeq = ++pendingStartSeq;
-    pendingStartAbort = startAbort;
+    const config = $state.snapshot(store.config);
+    config.adaptive = canonicalAdaptiveConfig(config.adaptive);
+    const abort = new AbortController();
+    pendingStart = { abort, draft: connectionDraftKey(config) };
     store.startError = "";
-    updatePreparation("authenticating");
+    store.preparationStatus = "authenticating";
     const current = () =>
       booted &&
-      pendingStartSeq === startSeq &&
-      !startAbort.signal.aborted &&
-      connectionDraftKey(store.config) === connectionDraftKey(cfg);
+      pendingStart?.abort === abort &&
+      !abort.signal.aborted &&
+      connectionDraftKey(store.config) === connectionDraftKey(config);
     const start = async () => {
       const budget = await requireSessionCoverage(
-        buildSegments(cfg).totalMs + SESSION_RUN_MARGIN_MS,
-        startAbort.signal,
+        buildSegments(config).totalMs + SESSION_RUN_MARGIN_MS,
+        abort.signal,
       );
       if (!current()) return;
       sessionBudget = budget;
       store.reset();
-      updatePreparation("checking");
+      store.preparationStatus = "checking";
+      await validateConnections(false, undefined, abort.signal);
       if (!current()) return;
-      const info = preparedIsFresh(key)
-        ? prepared!.info
-        : await validateConnections(false, undefined, startAbort.signal);
-      if (!current()) return;
-      if (!preparedIsFresh(connectionKey(cfg, store.transportDiscovery)))
-        return;
-      updatePreparation("launching");
-      store.activeConfig = structuredClone(cfg);
-      store.activeConnections = $state.snapshot(store.connections);
-      if (!current()) return;
-      await getRunner().start(cfg, info);
+      const paths = freshPaths();
+      if (!paths) throw new Error("connection evidence expired before start");
+      store.preparationStatus = "launching";
+      unsubscribe?.();
+      runner?.dispose();
+      runner = createRunner(paths);
+      unsubscribe = runner.on(ingest);
+      store.activeConfig = structuredClone(config);
+      store.activePaths = paths;
+      idle?.stop();
+      runner.start(config, paths.latency?.rttMs ?? 0);
     };
-    start()
+    void start()
       .catch((cause) => {
         if (!current()) return;
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
-        if (cause instanceof SessionCoverageError) {
-          store.startError = cause.message;
-          updatePreparation("failed");
-          return;
-        }
-        store.startError = connectionFailureMessage(cause);
-        updatePreparation("failed");
+        store.startError =
+          cause instanceof SessionCoverageError
+            ? cause.message
+            : connectionFailureMessage(cause);
+        store.preparationStatus = "failed";
       })
       .finally(() => {
-        if (pendingStartAbort === startAbort) {
-          pendingStartAbort = null;
-          if (store.preparation.status === "launching")
-            updatePreparation("idle");
+        if (pendingStart?.abort === abort) {
+          pendingStart = null;
+          if (store.preparationStatus === "launching")
+            store.preparationStatus = "idle";
         }
+        schedule();
       });
   }
-
-  function hasPendingStart(): boolean {
-    return pendingStartAbort !== null;
-  }
-
   function returnToStart() {
     cancelPendingStart();
-    if (store.isRunning) getRunner().abort();
+    runner?.abort();
     store.reset();
     requestValidation();
   }
-
   function configureRun(patch: Partial<LiveRunConfig>): boolean {
     const config = { ...$state.snapshot(store.config), ...patch };
     config.adaptive = canonicalAdaptiveConfig(config.adaptive);
@@ -642,39 +470,31 @@ export function createApplicationController(
     store.startError = "";
     if (!store.isRunning) return true;
     store.compactThroughputForDuration(candidateTotal);
-    getRunner().reconfigure?.(live);
+    runner?.reconfigure(live);
     if (store.activeConfig)
       store.activeConfig = { ...store.activeConfig, ...live };
     return true;
   }
 
-  function teardownRunner() {
+  function dispose() {
     booted = false;
     disposeDraft?.();
-    disposeDraft = null;
     cancelPendingStart();
-    validationSeq++;
+    validation?.abort.abort();
+    validation = null;
     unsubscribe?.();
-    unsubscribe = null;
-    runner?.dispose?.();
+    runner?.dispose();
     runner = null;
-    prepared = null;
-    validating = [];
-    validationAbort?.abort();
-    validationAbort = null;
-    clearValidationTimer();
-    validationDueAt = 0;
-    lastValidationAttemptAt = 0;
-    validationFailureCount = 0;
-    connectivityOnline = null;
-    window.removeEventListener("online", refreshAfterTransition);
-    window.removeEventListener("offline", refreshAfterOffline);
-    document.removeEventListener("visibilitychange", refreshAfterVisibility);
+    idle?.stop();
+    idle = null;
+    clearTimeout(timer);
+    window.removeEventListener("online", onlineAgain);
+    window.removeEventListener("offline", offline);
+    document.removeEventListener("visibilitychange", visibilityChanged);
     store.reset();
     store.transportDiscovery = null;
-    store.infra = null;
+    store.connectionValidation = emptyConnectionValidation();
   }
-
   function toggleStage(stage: StageKey): boolean {
     if (!store.canToggleStage(stage)) return false;
     const stages = { ...$state.snapshot(store.config.stages) };
@@ -683,19 +503,17 @@ export function createApplicationController(
     stages[stage] = !stages[stage];
     return configureRun({ stages });
   }
-
   function selectConnection(role: ConnectionRole, value: string) {
     cancelPendingStart();
     if (role === "throughput") store.config.transports.throughputTarget = value;
     else store.config.transports.latencyTarget = value;
   }
-
   return {
-    boot: bootRunner,
-    dispose: teardownRunner,
+    boot,
+    dispose,
     toggleRun,
     cancelPendingStart,
-    hasPendingStart,
+    hasPendingStart: () => pendingStart !== null,
     returnToStart,
     validateConnections,
     configureRun,
@@ -703,7 +521,6 @@ export function createApplicationController(
     selectConnection,
   };
 }
-
 export type ApplicationController = ReturnType<
   typeof createApplicationController
 >;

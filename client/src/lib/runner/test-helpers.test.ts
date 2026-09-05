@@ -1,8 +1,8 @@
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type { CoreHost } from "./core";
-import type { RunnerConfig } from "./contract";
-import { ROUTES } from "./real/backendPure";
+import type { PreparedPaths, RunnerConfig } from "./contract";
+import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 
 export const TEST_BUILD_TOKENS = {
   __GM_ALLOW_DUMMY__: false,
@@ -112,4 +112,54 @@ export function testWtConfig(
     confirmationMs: 0,
   };
   return config;
+}
+
+/** Complete verified connection values for lifecycle and privacy boundary fixtures. */
+export function testPreparedPaths(
+  overrides: Partial<PreparedPaths> = {},
+): PreparedPaths {
+  const origin = "http://meter.test";
+  const discovery = {
+    ...classifyTransportDiscovery(
+      [{ baseUrl: origin, transport: "fetch-stream", protocol: "http1" }],
+      [{ baseUrl: origin, transport: "websocket" }],
+      origin,
+      false,
+      "http/1.1",
+    ),
+    generation: "gen-a",
+    engineVersion: "1.2.3",
+    server: { name: "node-a", location: "Somewhere" },
+    fetchedAt: Date.now(),
+  };
+  const throughput = discovery.throughput[origin]
+    .targets[0] as FetchThroughputTarget;
+  const latency = discovery.latency[origin].targets[0];
+  const probe = {
+    clientIp: "203.0.113.7",
+    clientIpVersion: 4 as const,
+    clientIpSource: "socket" as const,
+    protocolNegotiated: "http/1.1" as const,
+  };
+  return {
+    discovery,
+    throughput: {
+      requested: throughput,
+      target: throughput,
+      fetch: throughput,
+      probe: { ...probe, load: { active: 3, max: 4 } },
+      browserProtocol: "http/1.1",
+      generation: discovery.generation,
+      verifiedAt: Date.now(),
+    },
+    latency: {
+      requested: latency,
+      target: latency,
+      probe,
+      rttMs: 12,
+      generation: discovery.generation,
+      verifiedAt: Date.now(),
+    },
+    ...overrides,
+  };
 }

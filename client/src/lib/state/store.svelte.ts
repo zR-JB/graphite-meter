@@ -2,7 +2,7 @@ import type {
   RunnerEvent,
   Phase,
   ConnectivityState,
-  InfraInfo,
+  PreparedPaths,
   TransportDiscovery,
   EngineInfo,
   RunResult,
@@ -15,14 +15,13 @@ import type {
   LatencyResult,
   StallInfo,
   TransportRole,
-  ConnectionRole,
   StageFailure,
   StageLatencySummary,
 } from "../runner/contract";
 import {
   CONNECTION_FAILURE_REASONS,
   presentConnections,
-  type ConnectionPresentation,
+  emptyConnectionValidation,
   type ConnectionValidation,
 } from "../runner/connectionModel";
 import {
@@ -92,10 +91,6 @@ type StageResults = {
   latency: LatencyResult | null;
 };
 
-function emptyPreparation(): PreparationState {
-  return { status: "idle", throughput: "stale", latency: "stale" };
-}
-
 function emptyStageResults(): StageResults {
   return { download: null, upload: null, latency: null };
 }
@@ -144,7 +139,23 @@ function emptyStability(): LiveStability {
 class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
-  preparation = $state<PreparationState>(emptyPreparation());
+  preparationStatus = $state<PreparationStatus>("idle");
+  preparation = $derived.by<PreparationState>(() => ({
+    status: this.preparationStatus,
+    throughput:
+      this.config.stages.download ||
+      this.config.stages.upload ||
+      this.config.stages.bidirectional
+        ? this.connectionValidation.throughput.state === "verified"
+          ? "ready"
+          : this.connectionValidation.throughput.state
+        : "disabled",
+    latency: this.latencyEnabled
+      ? this.connectionValidation.latency.state === "verified"
+        ? "ready"
+        : this.connectionValidation.latency.state
+      : "disabled",
+  }));
   preparing = $derived(
     this.preparation.status !== "idle" && this.preparation.status !== "failed",
   );
@@ -176,8 +187,7 @@ class AppStore {
   runSeq = $state(0);
 
   connectivity = $state<ConnectivityState>("connected");
-  infra = $state<InfraInfo | null>(null);
-  transportDiscovery = $state<TransportDiscovery | null>(null);
+  transportDiscovery = $state.raw<TransportDiscovery | null>(null);
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   stageResults = $state<StageResults>(emptyStageResults());
@@ -187,24 +197,28 @@ class AppStore {
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   activeConfig = $state<RunnerConfig | null>(null);
-  activeConnections = $state<Record<
-    ConnectionRole,
-    ConnectionPresentation
-  > | null>(null);
-  connectionValidation = $state<ConnectionValidation>({
-    throughput: { selection: "current", state: "stale" },
-    latency: { selection: "auto", state: "stale" },
-  });
+  activePaths = $state.raw<PreparedPaths | null>(null);
+  connectionValidation = $state.raw<ConnectionValidation>(
+    emptyConnectionValidation(),
+  );
   connections = $derived(
     presentConnections(
       this.config,
       this.transportDiscovery,
       this.connectionValidation,
-      this.infra,
     ),
   );
   runConfig = $derived(this.activeConfig ?? this.config);
-  runConnections = $derived(this.activeConnections ?? this.connections);
+  runConnections = $derived(
+    this.activePaths
+      ? presentConnections(
+          this.runConfig,
+          this.activePaths.discovery,
+          this.connectionValidation,
+          this.activePaths,
+        )
+      : this.connections,
+  );
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
@@ -272,7 +286,9 @@ class AppStore {
   });
 
   liveRtt = $derived(
-    this.pulseLatency.at(-1)?.medianRttMs ?? this.infra?.preTestPingMs ?? 0,
+    this.pulseLatency.at(-1)?.medianRttMs ??
+      this.connectionValidation.latency.path?.rttMs ??
+      0,
   );
 
   liveLatencyLost = $derived(
@@ -474,12 +490,6 @@ class AppStore {
 
   ingest = (event: RunnerEvent) => {
     switch (event.type) {
-      case "transportDiscovery":
-        this.transportDiscovery = event.discovery;
-        break;
-      case "infra":
-        this.infra = event.info;
-        break;
       case "phase": {
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
@@ -491,11 +501,7 @@ class AppStore {
         this.phaseFraction = 0;
         this.uploadPresentationBytesPerSec = null;
         if (event.transition.to === "connecting") {
-          this.preparation = {
-            status: "idle",
-            throughput: "ready",
-            latency: "ready",
-          };
+          this.preparationStatus = "idle";
         }
         if (event.transition.to === "connecting") this.startEpoch = Date.now();
         break;
@@ -618,9 +624,8 @@ class AppStore {
           this.historyCandidate = buildHistoryRecord(
             event.result,
             {
-              infra: this.infra,
+              paths: this.activePaths,
               clientBuild: BUILD.clientVersion,
-              engineVersion: this.infra?.engineVersion ?? "unknown",
               wireDownloadBytesPerSec: downloadWire?.available
                 ? downloadWire.estimatedBytesPerSec
                 : null,
@@ -661,7 +666,7 @@ class AppStore {
   reset() {
     Object.assign(this, {
       startError: "",
-      preparation: emptyPreparation(),
+      preparationStatus: "idle",
       throughput: [],
       throughputRevision: 0,
       liveThroughput: [],
@@ -682,7 +687,7 @@ class AppStore {
       result: null,
       error: null,
       activeConfig: null,
-      activeConnections: null,
+      activePaths: null,
       startEpoch: 0,
       historyCandidate: null,
     });

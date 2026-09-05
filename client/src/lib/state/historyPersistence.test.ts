@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { plugin, Transpiler } from "bun";
 import { compileModule } from "svelte/compiler";
-import type { ConnectionPresentation } from "../runner/connectionModel";
+import { testPreparedPaths } from "../runner/test-helpers.test";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
@@ -55,29 +55,6 @@ function result(): RunResult {
     },
     startedAt: 100,
     durationMs: 2_500,
-  };
-}
-
-function loopbackConnections(): Record<
-  "throughput" | "latency",
-  ConnectionPresentation
-> {
-  const connection = (
-    role: "throughput" | "latency",
-  ): ConnectionPresentation => ({
-    role,
-    selection: role === "throughput" ? "current" : "auto",
-    target: null,
-    availability: "not-advertised",
-    validation: "verified",
-    label: `${role} path`,
-    summary: "Loopback test path",
-    clientIp: "127.0.0.1",
-    clientIpVersion: 4,
-  });
-  return {
-    throughput: connection("throughput"),
-    latency: connection("latency"),
   };
 }
 
@@ -136,6 +113,9 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.reset();
     store.resultHistoryPreference = "enabled";
     const completed = result();
+    const paths = testPreparedPaths();
+    paths.discovery.server.name = "Measured server";
+    store.activePaths = paths;
     store.ingest({ type: "complete", result: completed });
     const candidate = store.historyCandidate;
     expect(candidate?.stages.upload.status).toBe("failed");
@@ -145,6 +125,10 @@ test("only an enabled complete event creates an immutable history candidate", as
       reason: "timeout",
     });
     completed.download!.reportedBytesPerSec = 1;
+    paths.discovery.server.name = "Next server";
+    paths.throughput.probe.clientIp = "192.0.2.254";
+    expect(candidate?.server.name).toBe("Measured server");
+    expect(JSON.stringify(candidate)).not.toContain("192.0.2.254");
     expect(candidate?.stages.download.result?.reportedBytesPerSec).toBe(
       12_500_000,
     );
@@ -209,7 +193,10 @@ test("wire snapshots are independent of their display preference", async () => {
     store.reset();
     store.showWireEstimates = false;
     store.resultHistoryPreference = "enabled";
-    store.activeConnections = loopbackConnections();
+    const loopback = testPreparedPaths();
+    loopback.throughput.probe.clientIp = "127.0.0.1";
+    loopback.latency!.probe.clientIp = "127.0.0.1";
+    store.activePaths = loopback;
     store.ingest({ type: "complete", result: result() });
     expect(store.historyCandidate?.wireEstimates).toBeNull();
   } finally {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -231,18 +232,6 @@ func TestActivePreset(t *testing.T) {
 	}
 }
 
-func TestTimingLabel(t *testing.T) {
-	want := []string{"Warmup", "Latency", "Download", "Upload", "Bidirectional", "Ping interval"}
-	for i, w := range want {
-		if got := timingLabel(i); got != w {
-			t.Errorf("timingLabel(%d) = %q, want %q", i, got, w)
-		}
-	}
-	if got := timingLabel(99); got != "" {
-		t.Errorf("timingLabel(out of range) = %q, want empty", got)
-	}
-}
-
 func TestProtocolChoiceLabelNamesEveryVersionTheRowOffers(t *testing.T) {
 	for raw, want := range map[string]string{
 		"auto": "Automatic", "http1": "HTTP/1.1", "http2": "HTTP/2",
@@ -444,24 +433,27 @@ func TestCheckbox(t *testing.T) {
 	}
 }
 
-func TestDurationValue(t *testing.T) {
-	cfg := goclient.DefaultConfig()
-	cfg.Warmup = time.Second
-	cfg.LatencyDuration = 2 * time.Second
-	cfg.DownloadDuration = 3 * time.Second
-	cfg.UploadDuration = 4 * time.Second
-	cfg.BidirectionalDuration = 5 * time.Second
-	cfg.PingInterval = 6 * time.Second
-	m := newModel(cfg)
-
-	want := []string{"1s", "2s", "3s", "4s", "5s", "6s"}
-	for i, w := range want {
-		if got := m.durationValue(i); got != w {
-			t.Errorf("durationValue(%d) = %q, want %q", i, got, w)
+func TestTimingRowsEditAndRenderTheCurrentModel(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.section = sectionTiming
+	for row, label := range []string{"Warmup", "Latency", "Download", "Upload", "Bidirectional", "Ping interval"} {
+		m.row = row
+		m, _ = modelAndCmd(m.activate())
+		m.edit.input.SetValue(fmt.Sprintf("%ds", row+1))
+		m.commitEdit()
+		if m.edit.err != "" {
+			t.Fatal(m.edit.err)
+		}
+		line := firstLineContaining(m.timingView(120), label)
+		if !strings.Contains(line, fmt.Sprintf("%ds", row+1)) {
+			t.Fatalf("edited row %d: %q", row, line)
 		}
 	}
-	if got := m.durationValue(99); got != "" {
-		t.Errorf("durationValue(out of range) = %q, want empty", got)
+	want := []time.Duration{m.cfg.Warmup, m.cfg.LatencyDuration, m.cfg.DownloadDuration, m.cfg.UploadDuration, m.cfg.BidirectionalDuration, m.cfg.PingInterval}
+	for i, duration := range want {
+		if duration != time.Duration(i+1)*time.Second {
+			t.Fatalf("setting %d = %v", i, duration)
+		}
 	}
 }
 
@@ -890,12 +882,12 @@ func TestActivate_EditorCases(t *testing.T) {
 		field     string
 		wantValue func(model) string
 	}{
-		{"warmup duration", sectionTiming, 0, editDuration, "warmup", func(m model) string { return m.durationValue(0) }},
-		{"latency duration", sectionTiming, 1, editDuration, "latency", func(m model) string { return m.durationValue(1) }},
-		{"download duration", sectionTiming, 2, editDuration, "download", func(m model) string { return m.durationValue(2) }},
-		{"upload duration", sectionTiming, 3, editDuration, "upload", func(m model) string { return m.durationValue(3) }},
-		{"bidirectional duration", sectionTiming, 4, editDuration, "bidirectional", func(m model) string { return m.durationValue(4) }},
-		{"ping duration", sectionTiming, 5, editDuration, "ping", func(m model) string { return m.durationValue(5) }},
+		{"warmup duration", sectionTiming, 0, editDuration, "warmup", func(m model) string { return m.cfg.Warmup.String() }},
+		{"latency duration", sectionTiming, 1, editDuration, "latency", func(m model) string { return m.cfg.LatencyDuration.String() }},
+		{"download duration", sectionTiming, 2, editDuration, "download", func(m model) string { return m.cfg.DownloadDuration.String() }},
+		{"upload duration", sectionTiming, 3, editDuration, "upload", func(m model) string { return m.cfg.UploadDuration.String() }},
+		{"bidirectional duration", sectionTiming, 4, editDuration, "bidirectional", func(m model) string { return m.cfg.BidirectionalDuration.String() }},
+		{"ping duration", sectionTiming, 5, editDuration, "ping", func(m model) string { return m.cfg.PingInterval.String() }},
 		{"automatic streams", sectionConnections, rowAutoStreams, editInt, "auto-streams", nil},
 		{"forced streams", sectionConnections, rowStreams, editInt, "streams", nil},
 	}
@@ -1240,15 +1232,15 @@ func TestUpdate_StaleRunMessagesAreDropped(t *testing.T) {
 		t.Errorf("stale eventsMsg applied: stage=%q cmd=%v, want dropped", mm.stage, cmd)
 	}
 
-	got, _ = modelAndCmd(m.Update(doneMsg{seq: 1, err: errors.New("boom")}))
+	got, _ = modelAndCmd(m.Update(eventsMsg{seq: 1, events: []goclient.Event{{Kind: goclient.EventDone, Err: errors.New("boom")}}}))
 	mm = got
 	if mm.complete || mm.err != nil {
-		t.Errorf("stale doneMsg applied: complete=%v err=%v, want dropped", mm.complete, mm.err)
+		t.Errorf("stale terminal outcome applied: complete=%v err=%v, want dropped", mm.complete, mm.err)
 	}
 
-	got, _ = modelAndCmd(m.Update(doneMsg{seq: 2, err: nil}))
+	got, _ = modelAndCmd(m.Update(eventsMsg{seq: 2, events: []goclient.Event{{Kind: goclient.EventDone, Err: nil}}}))
 	if mm = got; !mm.complete {
-		t.Error("current-run doneMsg was not applied")
+		t.Error("current-run terminal outcome was not applied")
 	}
 }
 
@@ -1409,7 +1401,7 @@ func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
 		t.Fatalf("rejected commit: kind=%v seq=%d, want the field open and no recheck", m.edit.kind, m.prepareSeq)
 	}
 
-	m.edit = beginEdit(editDuration, "download", m.durationValue(2))
+	m.edit = beginEdit(editDuration, "download", m.cfg.DownloadDuration.String())
 	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEnter}))
 	if m.edit.kind != editNone || m.prepareSeq != seq {
 		t.Fatalf("commit of the current value: kind=%v seq=%d, want the field closed and no recheck", m.edit.kind, m.prepareSeq)
@@ -1520,23 +1512,19 @@ func TestStartRun_LaunchesRun(t *testing.T) {
 		t.Error("complete should be false right after starting a run")
 	}
 	if cmd == nil {
-		t.Error("expected a non-nil cmd batching waitEvent/waitDone")
+		t.Error("expected a non-nil cmd waiting for run events")
 	}
 
 	if next.cancel != nil {
 		next.cancel()
 	}
-	select {
-	case <-next.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run goroutine did not finish after cancel")
-	}
+	drainRun(t, next.events)
 }
 
 func TestApply_Events(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageMeasuring})
 	if m.stage != "download" || m.status != "measure" {
 		t.Errorf("after EventStage: stage=%q status=%q", m.stage, m.status)
 	}
@@ -1571,15 +1559,15 @@ func TestApply_Events(t *testing.T) {
 		t.Errorf("results = %+v, want single download result", m.results)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventComplete})
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone}}}))
 	if !m.complete || m.status != "complete" {
-		t.Errorf("after EventComplete: complete=%v status=%q", m.complete, m.status)
+		t.Errorf("after EventDone: complete=%v status=%q", m.complete, m.status)
 	}
 
 	boom := errors.New("boom")
-	m.apply(goclient.Event{Kind: goclient.EventError, Err: boom})
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: boom}}}))
 	if m.err != boom || m.status != "error" {
-		t.Errorf("after EventError: err=%v status=%q", m.err, m.status)
+		t.Errorf("after EventDone: err=%v status=%q", m.err, m.status)
 	}
 
 	m2 := newModel(goclient.DefaultConfig())
@@ -1590,32 +1578,7 @@ func TestApply_Events(t *testing.T) {
 	}
 }
 
-func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-
-	m.apply(goclient.Event{Kind: goclient.EventComplete})
-	if !m.complete {
-		t.Fatal("expected complete after EventComplete")
-	}
-
-	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "download"}})
-	if len(m.results) != 1 {
-		t.Errorf("late-arriving Result after Complete should still be recorded, got %d results", len(m.results))
-	}
-
-	// A duplicate Complete is a no-op.
-	m.apply(goclient.Event{Kind: goclient.EventComplete})
-	if !m.complete || m.status != "complete" {
-		t.Errorf("duplicate EventComplete changed state unexpectedly: complete=%v status=%q", m.complete, m.status)
-	}
-
-	// A late Error still overwrites status/err; apply has no "already done" guard against post-completion events.
-	boom := errors.New("late boom")
-	m.apply(goclient.Event{Kind: goclient.EventError, Err: boom})
-	if m.err != boom || m.status != "error" {
-		t.Errorf("late EventError not applied: err=%v status=%q", m.err, m.status)
-	}
-
+func TestApply_InterleavedDirections(t *testing.T) {
 	// Interleaved throughput samples for both directions must not clobber each other's rate or peak.
 	m2 := newModel(goclient.DefaultConfig())
 	m2.apply(goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}})
@@ -1633,50 +1596,22 @@ func TestApply_DuplicateAndOutOfOrderEvents(t *testing.T) {
 	}
 }
 
-func TestUpdate_DrainsEventsAfterComplete(t *testing.T) {
-	events := make(chan goclient.Event, 1)
-	events <- goclient.Event{
-		Kind:   goclient.EventResult,
-		Stage:  "bidirectional",
-		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Up, TotalBytes: 42},
-	}
-	close(events)
-
-	m := newModel(goclient.DefaultConfig())
-	m.mode = modeRun
-	m.events = events
-	m.complete = true
-
-	got, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{
-		Kind:   goclient.EventResult,
-		Stage:  "bidirectional",
-		Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24},
-	}}}))
-	if cmd == nil {
-		t.Fatal("completed runs must keep waiting for buffered events")
-	}
-
-	msg := cmd()
-	if msg == nil {
-		t.Fatal("waitEvent returned nil before draining the buffered upload result")
-	}
-	got, _ = modelAndCmd(got.Update(msg))
-	mm := got
-
-	var sawDown, sawUp bool
-	for _, res := range mm.results {
-		if res.Stage != "bidirectional" {
-			continue
-		}
-		switch res.Direction {
-		case goclient.Down:
-			sawDown = true
-		case goclient.Up:
-			sawUp = true
-		}
-	}
-	if !sawDown || !sawUp {
-		t.Fatalf("want both bidirectional transfer results after completion, got %+v", mm.results)
+func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
+	for _, outcome := range []error{nil, context.Canceled, errors.New("transfer failed")} {
+		t.Run(fmt.Sprint(outcome), func(t *testing.T) {
+			events := make(chan goclient.Event, 3)
+			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24}}
+			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Latency: goclient.LatencyStats{Unresolved: 2}, Err: outcome}}
+			events <- goclient.Event{Kind: goclient.EventDone, Err: outcome}
+			close(events)
+			m := newModel(goclient.DefaultConfig())
+			defer m.shutdown()
+			m.mode, m.events = modeRun, events
+			m, cmd := modelAndCmd(m.Update(waitEvents(m.runSeq, events)()))
+			if !m.complete || cmd != nil || len(m.results) != 2 || m.results[1].Latency.Unresolved != 2 || m.results[1].Err != outcome {
+				t.Fatalf("terminal state discarded buffered results: complete=%v results=%+v", m.complete, m.results)
+			}
+		})
 	}
 }
 
@@ -1766,7 +1701,7 @@ func TestUpdate_WindowSizeDuringRun(t *testing.T) {
 	}
 }
 
-func TestUpdate_DoneMsg(t *testing.T) {
+func TestUpdate_TerminalOutcome(t *testing.T) {
 	boom := errors.New("boom")
 	cases := []struct {
 		name       string
@@ -1774,13 +1709,13 @@ func TestUpdate_DoneMsg(t *testing.T) {
 		wantStatus string
 		wantErr    error
 	}{
-		{"no error", nil, "", nil},
+		{"no error", nil, "complete", nil},
 		{"error", boom, "error", boom},
 		{"context canceled", context.Canceled, "canceled", nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m, _ := modelAndCmd(newModel(goclient.DefaultConfig()).Update(doneMsg{err: c.err}))
+			m, _ := modelAndCmd(newModel(goclient.DefaultConfig()).Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: c.err}}}))
 			if !m.complete || m.status != c.wantStatus || m.err != c.wantErr {
 				t.Errorf("complete=%v status=%q err=%v, want complete/error=%v/%v and status %q", m.complete, m.status, m.err, true, c.wantErr, c.wantStatus)
 			}
@@ -1808,12 +1743,12 @@ func TestUpdate_EventsMsg(t *testing.T) {
 		t.Error("expected a non-nil cmd to keep waiting for more events")
 	}
 
-	mm, cmd = modelAndCmd(mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventComplete}}}))
+	mm, cmd = modelAndCmd(mm.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone}}}))
 	if !mm.complete {
-		t.Error("expected complete after EventComplete")
+		t.Error("expected complete after EventDone")
 	}
-	if cmd == nil {
-		t.Error("expected a non-nil cmd to drain buffered events after completion")
+	if cmd != nil {
+		t.Error("terminal outcome must stop event polling")
 	}
 }
 
@@ -1978,7 +1913,7 @@ func TestExpiredGrantReturnsToTheServerSelection(t *testing.T) {
 	m.mode = modeRun
 	m.section, m.row = sectionConnections, 2
 
-	m, _ = modelAndCmd(m.Update(doneMsg{seq: m.runSeq, err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}}))
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{{Kind: goclient.EventDone, Err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}}}}))
 	if m.mode != modeConfigure || m.section != sectionServers {
 		t.Fatalf("expired grant left the screen at mode %d section %d", m.mode, m.section)
 	}
@@ -2180,7 +2115,7 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	}
 
 	start := m.now
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: start, Stage: "latency", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: start, Stage: "latency", Phase: goclient.StageMeasuring})
 	if m.stages[0].state != stageMeasuring || !m.stages[0].since.Equal(start) {
 		t.Fatalf("latency = %v since %v, want measuring since %v", m.stages[0].state, m.stages[0].since, start)
 	}
@@ -2189,28 +2124,33 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	}
 
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "latency", Result: &goclient.Result{Stage: "latency"}})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "latency", Phase: goclient.StageFinished})
 	if m.stages[0].state != stageDone {
 		t.Errorf("latency after its result = %v, want done", m.stages[0].state)
 	}
 
 	warmupAt := start.Add(4 * time.Second)
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt, Stage: "download", Message: "warmup"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt, Stage: "download", Phase: goclient.StageWarmup})
 	if m.stages[1].state != stageWarmup {
 		t.Fatalf("download = %v, want warmup", m.stages[1].state)
 	}
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(time.Second), Stage: "download", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(time.Second), Stage: "download", Phase: goclient.StageMeasuring})
 	if m.stages[1].state != stageMeasuring {
 		t.Fatalf("download = %v, want measuring", m.stages[1].state)
 	}
 
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download", Direction: goclient.Down}})
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "download", Result: &goclient.Result{Stage: "download"}})
+	if m.stages[1].state != stageMeasuring {
+		t.Fatal("direction results completed the stage before its terminal phase")
+	}
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageFinished})
 	if m.stages[1].state != stageDone {
 		t.Errorf("download after its results = %v, want done", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(10 * time.Second), Stage: "upload", Message: "measure"})
-	m.apply(goclient.Event{Kind: goclient.EventError, Err: errors.New("upload failed")})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(10 * time.Second), Stage: "upload", Phase: goclient.StageMeasuring})
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: errors.New("upload failed")}}}))
 	if m.stages[2].state != stageStopped {
 		t.Errorf("upload after the run failed = %v, want stopped", m.stages[2].state)
 	}
@@ -2272,13 +2212,13 @@ func TestStageTimelineIgnoresWhatItCannotPlace(t *testing.T) {
 		t.Errorf("download = %v after a result but no start, want pending", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Message: "measure"})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Message: "cooldown"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: "cooldown"})
 	if m.stages[1].state != stageMeasuring {
 		t.Errorf("download = %v after an unnamed phase, want measuring", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "loaded-latency", Message: "measure"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "loaded-latency", Phase: goclient.StageMeasuring})
 	if m.stages[0].state != stagePending || m.stages[2].state != stagePending {
 		t.Errorf("a stage with no row disturbed the timeline: %+v", m.stages)
 	}
@@ -2291,7 +2231,7 @@ func TestEndOfRunStopsTheStageThatWasRunning(t *testing.T) {
 	m.stages[0].state = stageDone
 	m.stages[1].state = stageMeasuring
 
-	m, _ = modelAndCmd(m.Update(doneMsg{err: context.Canceled}))
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: context.Canceled}}}))
 	if m.stages[0].state != stageDone || m.stages[1].state != stageStopped || m.stages[2].state != stagePending {
 		t.Errorf("timeline after a canceled run = %+v, want the running stage stopped only", m.stages)
 	}

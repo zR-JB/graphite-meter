@@ -56,7 +56,10 @@ export function deriveStagePresentation(
   } else if (input.hasUsableResult) {
     status = "complete";
     fill = 100;
-  } else if (input.phaseStage === stage) {
+  } else if (
+    input.phaseStage === stage &&
+    (input.phase === "warmup" || input.phase === stage)
+  ) {
     warming = input.phase === "warmup";
     status = input.measuring ? "active" : "recovering";
     fill = warming ? 0 : Math.round(input.phaseFraction * 200) / 2;

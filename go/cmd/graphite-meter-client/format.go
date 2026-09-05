@@ -20,17 +20,8 @@ func protocolChoiceLabel(protocol string) string {
 
 func stageSummary(s goclient.StageSet) string {
 	var parts []string
-	if s.Latency {
-		parts = append(parts, "latency")
-	}
-	if s.Download {
-		parts = append(parts, "download")
-	}
-	if s.Upload {
-		parts = append(parts, "upload")
-	}
-	if s.Bidirectional {
-		parts = append(parts, "bidirectional")
+	for _, stage := range (goclient.Config{Stages: s}).Plan() {
+		parts = append(parts, stage.Name)
 	}
 	if len(parts) == 0 {
 		return "none"
@@ -128,25 +119,6 @@ func checkbox(on bool) string {
 		return accentStyle.Render("●")
 	}
 	return mutedStyle.Render("○")
-}
-
-func timingLabel(row int) string {
-	switch row {
-	case 0:
-		return "Warmup"
-	case 1:
-		return "Latency"
-	case 2:
-		return "Download"
-	case 3:
-		return "Upload"
-	case 4:
-		return "Bidirectional"
-	case 5:
-		return "Ping interval"
-	default:
-		return ""
-	}
 }
 
 // eighths are the partial-cell fills between an empty and a full block. A bar's tip moves in sub-cell steps.

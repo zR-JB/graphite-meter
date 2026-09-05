@@ -54,13 +54,16 @@ async function stubPreflight(
 async function preparePaths(
   page: Page,
   latency: { baseUrl: string; transport: "websocket" | "webtransport" }[],
+  probeStatus = 200,
 ) {
   await page.addInitScript(
     (value) => localStorage.setItem("graphite-meter:v1", value),
     persistConfig(latency.length > 0),
   );
   await stubPreflight(page, latency);
-  await page.route("**/probe?*", (route) => route.fulfill({ json: PROBE }));
+  await page.route("**/probe?*", (route) =>
+    route.fulfill({ status: probeStatus, json: PROBE }),
+  );
   await openApp(page, "real");
   return openSettings(page);
 }
@@ -125,12 +128,34 @@ test("the diagnostics rows agree with the path card above them", async ({
       .filter((entry) => entry.startsWith("error:")),
   ).toEqual([]);
 });
-test("each path's Retry names the path it retries", async ({ page }) => {
-  const pageErrors: string[] = [];
-  page.on("pageerror", (error) => pageErrors.push(error.message));
+test("a failed latency path retains independently verified throughput", async ({
+  page,
+}) => {
+  await page.blockRequests(`${DEAD_LATENCY_ORIGIN}/**`);
   const settings = await preparePaths(page, [
     { baseUrl: DEAD_LATENCY_ORIGIN, transport: "websocket" },
   ]);
+  await expectVisible(
+    settings.getByRole("button", { name: "Retry Latency path" }),
+  );
+  await expect(
+    settings
+      .locator("fieldset", { hasText: "Throughput path" })
+      .getByText("Ready", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    settings.getByRole("button", { name: "Retry Throughput path" }),
+  ).toHaveCount(0);
+});
+test("each path's Retry names the path it retries", async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  // Both roles must fail independently; a latency failure preserves verified throughput.
+  const settings = await preparePaths(
+    page,
+    [{ baseUrl: DEAD_LATENCY_ORIGIN, transport: "websocket" }],
+    503,
+  );
   await page.blockRequests(`${DEAD_LATENCY_ORIGIN}/**`);
   await expectVisible(
     settings.getByRole("button", { name: "Retry Latency path" }),
@@ -213,7 +238,7 @@ test("the readiness badge names a failure over a check in flight", async ({
   ]);
   await page.route("**/probe?*", async (route) => {
     if (holdProbe) return new Promise(() => {});
-    await route.fulfill({ json: PROBE });
+    await route.fulfill({ status: 503 });
   });
   await page.blockRequests(`${DEAD_LATENCY_ORIGIN}/**`);
   await openApp(page, "real");

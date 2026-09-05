@@ -122,32 +122,21 @@ func TestStaggerSleep(t *testing.T) {
 	})
 }
 
-func TestRunnerFail(t *testing.T) {
-	t.Run("nil error is passed through without emitting", func(t *testing.T) {
-		r := &runner{emit: func(Event) { t.Fatal("emit should not be called for a nil error") }}
-		if err := r.fail(nil); err != nil {
-			t.Errorf("fail(nil) = %v, want nil", err)
-		}
-	})
-
-	t.Run("context.Canceled is swallowed without emitting", func(t *testing.T) {
-		r := &runner{emit: func(Event) { t.Fatal("emit should not be called for context.Canceled") }}
-		if err := r.fail(context.Canceled); !errors.Is(err, context.Canceled) {
-			t.Errorf("fail(Canceled) = %v, want context.Canceled", err)
-		}
-	})
-
-	t.Run("other errors are emitted as EventError", func(t *testing.T) {
-		var got []Event
-		r := &runner{emit: func(e Event) { got = append(got, e) }}
-		want := errors.New("boom")
-		if err := r.fail(want); !errors.Is(err, want) {
-			t.Errorf("fail(boom) = %v, want boom", err)
-		}
-		if len(got) != 1 || got[0].Kind != EventError || got[0].Err != want {
-			t.Errorf("emitted events = %+v, want a single EventError wrapping %v", got, want)
-		}
-	})
+func TestRunPreparationFailureHasOneTerminalOutcome(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if cancelled {
+				cancel()
+			}
+			var events []Event
+			err := Run(ctx, Config{BaseURL: ":invalid"}, func(e Event) { events = append(events, e) })
+			if err == nil || len(events) != 1 || events[0].Kind != EventDone || events[0].Err != err {
+				t.Fatalf("Run = %v, events = %+v; want one matching terminal error", err, events)
+			}
+		})
+	}
 }
 
 func TestRunnerEndpoint(t *testing.T) {
@@ -183,7 +172,7 @@ func TestWarmupGate(t *testing.T) {
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if len(events) != 1 || events[0].Kind != EventStage || events[0].Message != "measure" {
+		if len(events) != 1 || events[0].Kind != EventStage || events[0].Phase != StageMeasuring {
 			t.Errorf("events = %+v, want a single measure stage event", events)
 		}
 	})
@@ -193,7 +182,7 @@ func TestWarmupGate(t *testing.T) {
 		var messages []string
 		r := &runner{cfg: Config{Warmup: 30 * time.Millisecond}, emit: func(e Event) {
 			mu.Lock()
-			messages = append(messages, e.Message)
+			messages = append(messages, string(e.Phase))
 			mu.Unlock()
 		}}
 		start := r.warmupGate(t.Context(), "download")
@@ -288,13 +277,13 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	var result *Result
-	var sawComplete bool
+	var terminals int
 	for _, e := range events {
 		if e.Kind == EventResult && e.Stage == "download" {
 			result = e.Result
 		}
-		if e.Kind == EventComplete {
-			sawComplete = true
+		if e.Kind == EventDone {
+			terminals++
 		}
 	}
 	if result == nil {
@@ -303,8 +292,8 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	if result.TotalBytes == 0 {
 		t.Error("download result reports zero bytes")
 	}
-	if !sawComplete {
-		t.Error("Run did not emit EventComplete")
+	if terminals != 1 || events[len(events)-1].Kind != EventDone || events[len(events)-2].Phase != StageFinished {
+		t.Fatalf("want one terminal outcome after the finished stage, got %+v", events)
 	}
 }
 
@@ -475,13 +464,13 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	time.AfterFunc(150*time.Millisecond, cancel)
 	defer cancel()
 
-	var sawError bool
+	var terminal []Event
 	done := make(chan error, 1)
 	start := time.Now()
 	go func() {
 		done <- Run(ctx, cfg, func(e Event) {
-			if e.Kind == EventError {
-				sawError = true
+			if e.Kind == EventDone {
+				terminal = append(terminal, e)
 			}
 		})
 	}()
@@ -497,8 +486,8 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Errorf("Run took %v to stop after cancellation, want well under the 3s stage duration", elapsed)
 	}
-	if sawError {
-		t.Error("Run emitted EventError for a plain context cancellation")
+	if len(terminal) != 1 || !errors.Is(terminal[0].Err, context.Canceled) {
+		t.Fatalf("canceled terminal outcome = %+v", terminal)
 	}
 }
 

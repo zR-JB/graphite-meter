@@ -192,27 +192,21 @@ func (m model) serversView(w int) string {
 }
 
 func (m model) stagesView(w int) string {
-	rows := []string{
-		toggleLine("Latency", m.cfg.Stages.Latency, "idle RTT baseline"),
-		toggleLine("Download", m.cfg.Stages.Download, "server to client"),
-		toggleLine("Upload", m.cfg.Stages.Upload, "client to server"),
-		toggleLine("Bidirectional", m.cfg.Stages.Bidirectional, "both directions at once"),
-		toggleLine("Loaded latency", m.cfg.LoadedLatency, "ping during transfers"),
+	var rows []string
+	for _, setting := range stageSettings(&m.cfg) {
+		rows = append(rows, toggleLine(setting.label, *setting.value, setting.note))
 	}
 	return m.listWithTitle("Stage Profile", rows, w)
 }
 
 func (m model) timingView(w int) string {
-	rows := []string{
-		valueLine("Warmup", m.cfg.Warmup.String(), "per stage, before the clock starts"),
-		valueLine("Latency", m.cfg.LatencyDuration.String(), "measured window"),
-		valueLine("Download", m.cfg.DownloadDuration.String(), "measured window"),
-		valueLine("Upload", m.cfg.UploadDuration.String(), "measured window"),
-		valueLine("Bidirectional", m.cfg.BidirectionalDuration.String(), "measured window"),
-		valueLine("Ping interval", m.cfg.PingInterval.String(), "cadence"),
-	}
-	if m.edit.kind == editDuration {
-		rows[m.row] = valueLine(timingLabel(m.row), m.edit.input.View(), "editing") + m.editError()
+	var rows []string
+	for i, setting := range timingSettings(&m.cfg) {
+		row := valueLine(setting.label, setting.value.String(), setting.note)
+		if m.edit.kind == editDuration && i == m.row {
+			row = valueLine(setting.label, m.edit.input.View(), "editing") + m.editError()
+		}
+		rows = append(rows, row)
 	}
 	return m.listWithTitle("Timing", rows, w)
 }

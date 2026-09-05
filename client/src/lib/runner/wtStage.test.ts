@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { emptyConnectionValidation } from "./connectionModel";
 import type { PhaseActivity, RunnerConfig } from "./contract";
 import {
   TEST_BUILD_TOKENS,
@@ -134,12 +135,23 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
         throughput.push({ dir, bytes });
       },
     });
-    const backend = new RealBackend();
+    const { prepareConnections } = await import("./real/prepare");
+    const prepared = await prepareConnections(
+      config,
+      emptyConnectionValidation(),
+      ["throughput", "latency"],
+      new AbortController().signal,
+    );
+    prepared.idle?.stop();
+    expect(prepared.failure).toBeUndefined();
+    const paths = {
+      discovery: prepared.discovery,
+      throughput: prepared.validation.throughput.path!,
+      latency: prepared.validation.latency.path,
+    };
+    expect(paths.throughput.target.transport).toBe("webtransport");
+    const backend = new RealBackend(paths);
     backend.attach(host);
-    const probe = backend.probe(config);
-    for (let i = 0; i < 20; i++) await Promise.resolve();
-    const info = await probe;
-    expect(info.selectedThroughputTransport).toBe("webtransport");
     backend.onRunStart(config);
     await body({
       backend,

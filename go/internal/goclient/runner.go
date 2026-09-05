@@ -286,18 +286,19 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 }
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
-	prepared, err := Prepare(ctx, cfg)
-	if err != nil {
-		emit(Event{Kind: EventError, At: time.Now(), Err: err})
-		return err
-	}
-	return RunPrepared(ctx, cfg, prepared, emit)
+	return RunPrepared(ctx, cfg, nil, emit)
 }
 
-func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) error {
+// RunPrepared emits exactly one EventDone after all stage events, including on cancellation.
+// The returned error is the same terminal outcome for synchronous callers.
+func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) (err error) {
+	defer func() { emit(Event{Kind: EventDone, At: time.Now(), Err: err}) }()
 	cfg = cfg.normalized()
-	if prepared == nil || prepared.configKey != preparationKey(cfg) || time.Since(prepared.VerifiedAt) > preparationFreshness {
-		return Run(ctx, cfg, emit)
+	if !prepared.FreshFor(cfg) {
+		prepared, err = Prepare(ctx, cfg)
+		if err != nil {
+			return err
+		}
 	}
 	target := &prepared.ThroughputTarget
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
@@ -326,31 +327,19 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 		target: target, latencyTarget: latencyTarget,
 		emit: emit,
 	}
-	for _, stage := range []struct {
-		name     string
-		enabled  bool
-		duration time.Duration
-		dirs     []Direction
-	}{
-		{"latency", cfg.Stages.Latency, cfg.LatencyDuration, nil},
-		{"download", cfg.Stages.Download, cfg.DownloadDuration, []Direction{Down}},
-		{"upload", cfg.Stages.Upload, cfg.UploadDuration, []Direction{Up}},
-		{"bidirectional", cfg.Stages.Bidirectional, cfg.BidirectionalDuration, []Direction{Down, Up}},
-	} {
-		if !stage.enabled {
-			continue
-		}
-		var err error
-		if stage.dirs == nil {
-			err = r.runLatencyStage(ctx, stage.name, false, stage.duration)
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() { cancel(); r.warmups.Wait() }()
+	for _, stage := range cfg.Plan() {
+		if len(stage.Directions) == 0 {
+			err = r.runLatencyStage(ctx, stage.Name, false, stage.Duration)
 		} else {
-			err = r.runTransferStage(ctx, stage.name, stage.dirs, stage.duration)
+			err = r.runTransferStage(ctx, stage.Name, stage.Directions, stage.Duration)
 		}
 		if err != nil {
-			return r.fail(err)
+			return err
 		}
+		emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StageFinished})
 	}
-	emit(Event{Kind: EventComplete, At: time.Now(), Message: "complete"})
 	return nil
 }
 
@@ -363,6 +352,7 @@ type runner struct {
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)
 	idleRTT       time.Duration
+	warmups       sync.WaitGroup
 }
 
 type transferOutcome struct {
@@ -401,14 +391,6 @@ func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
 	case <-t.C:
 		return true
 	}
-}
-
-func (r *runner) fail(err error) error {
-	if err == nil || errors.Is(err, context.Canceled) {
-		return err
-	}
-	r.emit(Event{Kind: EventError, At: time.Now(), Err: err})
-	return err
 }
 
 func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bool, duration time.Duration) error {
@@ -512,21 +494,21 @@ func (r *runner) warmupGate(ctx context.Context, stage string) <-chan struct{} {
 	start := make(chan struct{})
 	warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT)
 	if warmup <= 0 {
-		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "measure"})
+		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
 		close(start)
 		return start
 	}
-	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "warmup"})
-	go func() {
+	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageWarmup})
+	r.warmups.Go(func() {
 		timer := time.NewTimer(warmup)
 		defer timer.Stop()
 		select {
 		case <-ctx.Done():
 		case <-timer.C:
-			r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Message: "measure"})
+			r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
 			close(start)
 		}
-	}()
+	})
 	return start
 }
 

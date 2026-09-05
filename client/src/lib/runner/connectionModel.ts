@@ -1,11 +1,13 @@
 import type {
   ConnectionRole,
   DiscoveredTarget,
-  InfraInfo,
+  PreparedPaths,
   ProtocolTarget,
   RunnerConfig,
   RunnerError,
   TransportDiscovery,
+  VerifiedLatencyPath,
+  VerifiedThroughputPath,
 } from "./contract";
 import type {
   FetchThroughputTarget,
@@ -13,7 +15,6 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import {
-  fetchViewOfWebTransport,
   locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
@@ -23,19 +24,20 @@ import { describeTarget } from "./real/targetPresentation";
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
 export type { ConnectionRole } from "./contract";
-
-interface RoleValidation {
+export interface RoleValidation<Path> {
   selection: string;
-  identity?: string;
   state: ConnectionValidationState;
-  verifiedAt?: number;
+  path: Path | null;
   message?: string;
 }
-
 export interface ConnectionValidation {
-  throughput: RoleValidation;
-  latency: RoleValidation;
+  throughput: RoleValidation<VerifiedThroughputPath>;
+  latency: RoleValidation<VerifiedLatencyPath>;
 }
+export const emptyConnectionValidation = (): ConnectionValidation => ({
+  throughput: { selection: "current", state: "stale", path: null },
+  latency: { selection: "auto", state: "stale", path: null },
+});
 
 export interface ConnectionPresentation {
   role: ConnectionRole;
@@ -57,29 +59,22 @@ export interface ConnectionPresentation {
   verifiedAt?: number;
 }
 
-/* A successful path check is a snapshot, not a keepalive; the idle ping channel handles ordinary liveness. */
 export const CONNECTION_FRESH_MS = 2 * 60_000;
 export const CONNECTION_FAILURE_BACKOFF_MS = [
   30_000, 60_000, 120_000, 240_000, 300_000,
 ] as const;
-
-export function connectionFailureBackoff(attempt: number): number {
-  const index = Math.max(
-    0,
-    Math.min(attempt - 1, CONNECTION_FAILURE_BACKOFF_MS.length - 1),
-  );
-  return CONNECTION_FAILURE_BACKOFF_MS[index];
-}
 export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
-
-/* Failures that leave the path's reachability unknown: connectivity latches offline and the cached probe is. */
+export function connectionFailureBackoff(attempt: number): number {
+  return CONNECTION_FAILURE_BACKOFF_MS[
+    Math.max(0, Math.min(attempt - 1, CONNECTION_FAILURE_BACKOFF_MS.length - 1))
+  ];
+}
 export const CONNECTION_FAILURE_REASONS = new Set<RunnerError["reason"]>([
   "connection-lost",
   "timeout",
   "preflight-failed",
   "transport-unavailable",
 ]);
-
 export function connectionSelection(
   config: RunnerConfig,
   role: ConnectionRole,
@@ -88,9 +83,7 @@ export function connectionSelection(
     ? config.transports.throughputTarget
     : config.transports.latencyTarget;
 }
-
-/* Whether the run opens a latency path at all: the idle latency stage, or a transfer stage whose loaded pings are. */
-function latencyPathNeeded(config: RunnerConfig): boolean {
+export function latencyPathNeeded(config: RunnerConfig): boolean {
   return (
     config.stages.latency ||
     (!config.skipLoadedLatencyWhenStageOff &&
@@ -99,13 +92,11 @@ function latencyPathNeeded(config: RunnerConfig): boolean {
         config.stages.bidirectional))
   );
 }
-
-function selectTarget(
+export function selectTarget(
   discovery: TransportDiscovery,
   role: ConnectionRole,
   selection: string,
-): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
-  // The panel must resolve what the runner resolves, so both roles apply the same browser-capability gate rather than.
+) {
   return role === "throughput"
     ? selectThroughputTarget(
         discovery,
@@ -118,71 +109,6 @@ function selectTarget(
         typeof WebTransport !== "undefined",
       );
 }
-
-/* A probe can commit to something the selector does not prefer: a WebTransport ping bus that never establishes. */
-function committedTarget(
-  discovery: TransportDiscovery,
-  role: ConnectionRole,
-  infra: InfraInfo,
-): FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget | null {
-  if (role === "latency") {
-    const id = infra.selectedLatencyTarget;
-    return id ? (locateTarget(discovery.latency, id)?.target ?? null) : null;
-  }
-  const id = infra.selectedThroughputTarget;
-  if (!id) return null;
-  const advertised = locateTarget(discovery.throughput, id)?.target;
-  if (advertised) return advertised;
-  // A degrade off a session-only origin commits to a fetch view that origin never advertised, so no id names it; the.
-  const session = discovery.throughput[id]?.targets.find(
-    (target): target is WebTransportThroughputTarget =>
-      target.transport !== "fetch-stream",
-  );
-  return infra.selectedThroughputTransport === "fetch-stream" && session
-    ? fetchViewOfWebTransport(session)
-    : null;
-}
-
-export function validationRoles(
-  config: RunnerConfig,
-  validation: ConnectionValidation,
-  requestedRole?: ConnectionRole,
-  discovery?: TransportDiscovery | null,
-): ConnectionRole[] {
-  const roles = requestedRole ? [requestedRole] : [...CONNECTION_ROLES];
-  for (const role of CONNECTION_ROLES) {
-    const status = validation[role];
-    const matches = status.identity
-      ? status.identity === connectionRoleKey(config, role, discovery)
-      : status.selection === connectionSelection(config, role);
-    if (!roles.includes(role) && (status.state === "stale" || !matches))
-      roles.push(role);
-  }
-  return roles;
-}
-
-export function verifiedRolesForProbe(
-  requested: ConnectionRole[],
-  discoveryGeneration: string | undefined,
-  resultGeneration: string,
-): ConnectionRole[] {
-  return discoveryGeneration === resultGeneration
-    ? requested
-    : [...CONNECTION_ROLES];
-}
-
-export function connectionKey(
-  config: RunnerConfig,
-  discovery?: TransportDiscovery | null,
-): string {
-  return JSON.stringify({
-    throughput: connectionRoleKey(config, "throughput", discovery),
-    latency: connectionRoleKey(config, "latency", discovery),
-    needsLatency: latencyPathNeeded(config),
-  });
-}
-
-/* Inputs that can invalidate preparation without depending on discovery or runtime protocol evidence produced by. */
 export function connectionDraftRoleKey(
   config: RunnerConfig,
   role: ConnectionRole,
@@ -192,25 +118,11 @@ export function connectionDraftRoleKey(
     ? selection
     : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
-
 export function connectionDraftKey(config: RunnerConfig): string {
-  return JSON.stringify({
-    throughput: connectionDraftRoleKey(config, "throughput"),
-    latency: connectionDraftRoleKey(config, "latency"),
-  });
+  return JSON.stringify(
+    CONNECTION_ROLES.map((role) => connectionDraftRoleKey(config, role)),
+  );
 }
-
-export function connectionRoleKey(
-  config: RunnerConfig,
-  role: ConnectionRole,
-  discovery?: TransportDiscovery | null,
-): string {
-  const selection = connectionSelection(config, role);
-  const target = discovery ? selectTarget(discovery, role, selection) : null;
-  return target ? JSON.stringify(target) : selection;
-}
-
-/* Whether a role has to be checked now: one the run never opens does not, and one already verified against the. */
 export function roleNeedsValidation(
   config: RunnerConfig,
   validation: ConnectionValidation,
@@ -218,9 +130,61 @@ export function roleNeedsValidation(
   discovery?: TransportDiscovery | null,
 ): boolean {
   if (role === "latency" && !latencyPathNeeded(config)) return false;
-  const status = validation[role];
-  if (status.state !== "verified") return true;
-  return status.identity !== connectionRoleKey(config, role, discovery);
+  const check = validation[role];
+  return (
+    check.state !== "verified" ||
+    !check.path ||
+    !discovery ||
+    check.path.generation !== discovery.generation ||
+    JSON.stringify(check.path.requested) !==
+      JSON.stringify(
+        selectTarget(discovery, role, connectionSelection(config, role)),
+      )
+  );
+}
+export function validationRoles(
+  config: RunnerConfig,
+  validation: ConnectionValidation,
+  requestedRole?: ConnectionRole,
+  discovery?: TransportDiscovery | null,
+): ConnectionRole[] {
+  return CONNECTION_ROLES.filter((role) => {
+    if (!requestedRole || role === requestedRole) return true;
+    if (role === "latency" && !latencyPathNeeded(config)) return false;
+    const check = validation[role];
+    return (
+      check.state === "stale" ||
+      (check.path && discovery
+        ? JSON.stringify(check.path.requested) !==
+          JSON.stringify(
+            selectTarget(discovery, role, connectionSelection(config, role)),
+          )
+        : check.selection !== connectionSelection(config, role))
+    );
+  });
+}
+
+/** There is no second prepared cache: freshness belongs to each verified role. */
+export function preparedPaths(
+  config: RunnerConfig,
+  discovery: TransportDiscovery | null,
+  validation: ConnectionValidation,
+): PreparedPaths | null {
+  if (
+    !discovery ||
+    CONNECTION_ROLES.some(
+      (role) =>
+        roleNeedsValidation(config, validation, role, discovery) ||
+        ((role === "throughput" || latencyPathNeeded(config)) &&
+          Date.now() - validation[role].path!.verifiedAt > CONNECTION_FRESH_MS),
+    )
+  )
+    return null;
+  return {
+    discovery,
+    throughput: validation.throughput.path!,
+    latency: latencyPathNeeded(config) ? validation.latency.path : null,
+  };
 }
 
 function availability(
@@ -228,52 +192,40 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  // "current"/"auto" have no entry of their own: they resolve to whichever advertised target the selector picks.
-  if (selection !== "current" && selection !== "auto") {
-    const byOrigin: Record<
-      string,
-      DiscoveredTarget<{ id: string }>
-    > = discovery[role];
-    return (
-      locateTarget(byOrigin, selection)?.entry.state ??
-      byOrigin[selection]?.state ??
-      "not-advertised"
-    );
-  }
-  return selectTarget(discovery, role, selection)
-    ? "advertised"
-    : "not-advertised";
+  if (selection === "current" || selection === "auto")
+    return selectTarget(discovery, role, selection)
+      ? "advertised"
+      : "not-advertised";
+  const byOrigin: Record<string, DiscoveredTarget<{ id: string }>> = discovery[
+    role
+  ];
+  return (
+    locateTarget(byOrigin, selection)?.entry.state ??
+    byOrigin[selection]?.state ??
+    "not-advertised"
+  );
 }
 
 export function presentConnections(
   config: RunnerConfig,
   discovery: TransportDiscovery | null,
   validation: ConnectionValidation,
-  infra: InfraInfo | null,
+  active?: PreparedPaths | null,
 ): Record<ConnectionRole, ConnectionPresentation> {
   const make = (role: ConnectionRole): ConnectionPresentation => {
     const selection = connectionSelection(config, role);
-    const preferred = discovery
-      ? selectTarget(discovery, role, selection)
-      : null;
-    const status = validation[role];
-    const evidenceMatches = status.identity
-      ? status.identity === connectionRoleKey(config, role, discovery)
-      : status.selection === selection;
-    const currentEvidence =
-      status.state === "verified" &&
-      evidenceMatches &&
-      infra?.discoveryGeneration === discovery?.generation;
-    const evidence = currentEvidence ? infra : null;
-    // Evidence names the path the run drove; the selector names the one it wanted.
+    const check = validation[role];
+    const path = active
+      ? active[role]
+      : roleNeedsValidation(config, validation, role, discovery)
+        ? null
+        : check.path;
     const target =
-      (discovery && evidence && committedTarget(discovery, role, evidence)) ??
-      preferred;
+      path?.target ??
+      (discovery ? selectTarget(discovery, role, selection) : null);
     const observedProtocol =
-      evidence && role === "throughput"
-        ? evidence.selectedThroughputProtocol
-        : undefined;
-    const targetPresentation =
+      path && "fetch" in path ? path.fetch.protocol : undefined;
+    const presentation =
       target && discovery
         ? describeTarget(discovery, target, observedProtocol)
         : null;
@@ -284,47 +236,25 @@ export function presentConnections(
       availability: discovery
         ? availability(discovery, role, selection)
         : "not-advertised",
-      validation: status.state,
+      validation: active ? "verified" : check.state,
       label:
-        targetPresentation?.label ??
+        presentation?.label ??
         (role === "throughput" ? "Throughput path" : "Latency path"),
-      summary: targetPresentation?.summary ?? "Selection unresolved",
-      message: status.message,
+      summary: presentation?.summary ?? "Selection unresolved",
+      message: active ? undefined : check.message,
       observedProtocol,
-      browserProtocol: evidence
-        ? role === "throughput"
-          ? evidence.firstHopProtocol
-          : undefined
-        : undefined,
-      serverProtocol: evidence
-        ? role === "throughput"
-          ? evidence.protocolNegotiated
-          : evidence.latencyProtocolNegotiated
-        : undefined,
-      clientIp: evidence
-        ? role === "throughput"
-          ? evidence.clientIp
-          : evidence.latencyClientIp
-        : undefined,
-      clientIpVersion: evidence
-        ? role === "throughput"
-          ? evidence.clientIpVersion
-          : evidence.latencyClientIpVersion
-        : undefined,
-      clientIpSource: evidence
-        ? role === "throughput"
-          ? evidence.clientIpSource
-          : evidence.latencyClientIpSource
-        : undefined,
-      preTestPingMs:
-        evidence && role === "latency" ? evidence.preTestPingMs : undefined,
-      verifiedAt: currentEvidence ? status.verifiedAt : undefined,
+      browserProtocol:
+        path && "browserProtocol" in path ? path.browserProtocol : undefined,
+      serverProtocol: path?.probe.protocolNegotiated,
+      clientIp: path?.probe.clientIp,
+      clientIpVersion: path?.probe.clientIpVersion,
+      clientIpSource: path?.probe.clientIpSource,
+      preTestPingMs: path && "rttMs" in path ? path.rttMs : undefined,
+      verifiedAt: path?.verifiedAt,
     };
   };
   return { throughput: make("throughput"), latency: make("latency") };
 }
-
-/* The one state a panel covering both roles reports: the worst across the roles the run opens. */
 export function panelReadiness(
   connections: Record<ConnectionRole, ConnectionPresentation>,
   latencyEnabled: boolean,

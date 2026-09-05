@@ -1,5 +1,5 @@
 import type {
-  InfraInfo,
+  PreparedPaths,
   RunResult,
   StageFailure,
   ThroughputResult,
@@ -220,9 +220,8 @@ function historyProtocol(value: string | undefined): string | null {
 }
 
 interface HistoryBuildContext {
-  infra: InfraInfo | null;
+  paths: PreparedPaths | null;
   clientBuild: string;
-  engineVersion: string;
   wireDownloadBytesPerSec?: number | null;
   wireUploadBytesPerSec?: number | null;
   wireBidirectionalBytesPerSec?: number | null;
@@ -297,25 +296,29 @@ export function buildHistoryRecord(
       (bidi?.down?.totalBytes ?? 0) +
       (bidi?.up?.totalBytes ?? 0),
     server: {
-      name: historyText(context.infra?.server.name ?? "Unknown"),
-      location: context.infra?.server.location
-        ? historyText(context.infra.server.location)
+      name: historyText(context.paths?.discovery.server.name ?? "Unknown"),
+      location: context.paths?.discovery.server.location
+        ? historyText(context.paths.discovery.server.location)
         : null,
-      engine: historyText(context.engineVersion),
+      engine: historyText(context.paths?.discovery.engineVersion ?? "unknown"),
     },
     transport: {
       throughput: {
-        protocol: historyProtocol(context.infra?.protocolNegotiated),
+        protocol: historyProtocol(
+          context.paths?.throughput.probe.protocolNegotiated,
+        ),
         kind: throughputTransportKind(
-          context.infra?.selectedThroughputTransport,
+          context.paths?.throughput.target.transport,
         ),
       },
       latency: {
-        protocol: historyProtocol(context.infra?.latencyProtocolNegotiated),
-        kind: latencyTransportKind(context.infra?.selectedLatencyTransport),
+        protocol: historyProtocol(
+          context.paths?.latency?.probe.protocolNegotiated,
+        ),
+        kind: latencyTransportKind(context.paths?.latency?.target.transport),
       },
     },
-    ipVersion: context.infra?.clientIpVersion ?? null,
+    ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
     client: { build: historyText(context.clientBuild) },
     failures: failureSnapshots(failures),
     wireEstimates:

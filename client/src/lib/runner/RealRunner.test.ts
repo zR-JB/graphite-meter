@@ -16,13 +16,15 @@ import {
 } from "./real/backendPure";
 import { TRANSPORTS, kindsForRole, ridesSession } from "./real/transports";
 import type {
-  InfraInfo,
+  PreparedPaths,
+  ConnectionRole,
   PhaseActivity,
   RunnerConfig,
   StallInfo,
   TransportDiscovery,
   TransportKind,
 } from "./contract";
+import { emptyConnectionValidation } from "./connectionModel";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { TEST_BUILD_TOKENS, testHost, testTransfer } from "./test-helpers.test";
 type ThroughputAdvertisement = Parameters<
@@ -382,6 +384,51 @@ for (const { name, lanes, warmupMs, baseMs, expected } of [
     expect(laneStaggerMs(lanes, warmupMs, baseMs)).toBe(expected);
   });
 
+async function preparationHarness() {
+  const { prepareConnections } = await import("./real/prepare");
+  let validation = emptyConnectionValidation();
+  let idle: import("./real/prepare").ConnectionPreparation["idle"];
+  const discoveries: TransportDiscovery[] = [];
+  return {
+    discoveries,
+    async check(
+      config: RunnerConfig,
+      roles: ConnectionRole[] = ["throughput", "latency"],
+      signal = new AbortController().signal,
+    ): Promise<PreparedPaths> {
+      const result = await prepareConnections(
+        config,
+        validation,
+        roles,
+        signal,
+      );
+      validation = result.validation;
+      discoveries.push(result.discovery);
+      if (result.idle !== undefined) {
+        idle?.stop();
+        idle = result.idle;
+      }
+      if (result.failure) throw result.failure;
+      if (!validation.throughput.path)
+        throw new Error("throughput path missing");
+      return {
+        discovery: result.discovery,
+        throughput: validation.throughput.path,
+        latency: validation.latency.path,
+      };
+    },
+    stop() {
+      idle?.stop();
+    },
+    start() {
+      idle?.start();
+    },
+    observe(listener: NonNullable<typeof idle>["onEvent"]) {
+      if (idle) idle.onEvent = listener;
+    },
+  };
+}
+
 test("real backend: probe refresh keeps the negotiated protocol per role, and the upload stage opens its progress channel before any POST lane", async () => {
   const realWorker = globalThis.Worker;
   const started: string[] = [];
@@ -446,9 +493,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     terminate(): void {}
   }
   const probeWithRtts = async (
-    probe: Promise<InfraInfo>,
+    probe: Promise<PreparedPaths>,
     rtt: number,
-  ): Promise<InfraInfo> => {
+  ): Promise<PreparedPaths> => {
     let settled = false;
     const done = probe.then(
       (info) => {
@@ -491,9 +538,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     { location: "http://meter.test:7246/", protocol: () => browserProtocol },
   );
   globalThis.Worker = FakeWorker as unknown as typeof Worker;
+  const preparation = await preparationHarness();
   try {
-    const { RealBackend, TransportUnavailableError } =
-      await import("./RealRunner");
+    const { RealBackend } = await import("./RealRunner");
+    const { TransportUnavailableError } = await import("./real/transportError");
     const config = probeConfig(true);
     config.stages = {
       latency: true,
@@ -512,14 +560,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     };
     const failures: string[] = [];
     let incompleteAccounting = 0;
-    const discoveries: import("./contract").TransportDiscovery[] = [];
+    const discoveries = preparation.discoveries;
     const uploadBytes: number[] = [];
     const stalls: StallInfo[] = [];
     const host = testHost(config, {
-      emit(event) {
-        if (event.type === "transportDiscovery")
-          discoveries.push(event.discovery);
-      },
       failStage(_stage, _reason, message) {
         failures.push(message);
       },
@@ -533,21 +577,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
         stalls.push(info);
       },
     });
-    const backend = new RealBackend();
-    backend.attach(host);
-    const probe = async () => {
-      try {
-        const info = await backend.probe(config);
-        discoveries.push(info.discovery!);
-        return info;
-      } catch (cause) {
-        if (cause instanceof TransportUnavailableError && cause.discovery)
-          discoveries.push(cause.discovery);
-        throw cause;
-      }
-    };
+    const probe = () => preparation.check(config);
     const firstProbe = await probeWithRtts(probe(), 3);
-    expect(firstProbe.preTestPingMs).toBe(3);
+    expect(firstProbe.latency!.rttMs).toBe(3);
     config.transports.throughputTarget = "https://meter.test:7249";
     await expect(probe()).rejects.toBeInstanceOf(TransportUnavailableError);
     expect(
@@ -555,15 +587,14 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     ).toBe("advertised");
     config.transports.throughputTarget = "http://meter.test:7246";
     const info = await probeWithRtts(probe(), 5);
-    expect(pingMessages).toContainEqual({
-      type: "measure",
-      intervalMs: 1000,
-    });
-    expect(info.preTestPingMs).toBe(5);
-    expect(info.latencyClientIp).toBe("127.0.0.1");
-    expect(info.latencyClientIpVersion).toBe(4);
-    expect(info.latencyClientIpSource).toBe("socket");
-    expect(info.latencyProtocolNegotiated).toBe("http/1.1");
+    expect(
+      pingMessages.filter((message) => message.type === "start").length,
+    ).toBeGreaterThan(1);
+    expect(info.latency!.rttMs).toBe(5);
+    expect(info.latency!.probe.clientIp).toBe("127.0.0.1");
+    expect(info.latency!.probe.clientIpVersion).toBe(4);
+    expect(info.latency!.probe.clientIpSource).toBe("socket");
+    expect(info.latency!.probe.protocolNegotiated).toBe("http/1.1");
     expect(preflights).toBe(3);
     const preflightUrls = fetchUrls.filter((url) => url.includes("/preflight"));
     expect(preflightUrls).toHaveLength(3);
@@ -585,23 +616,19 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       "advertised",
     );
     let fetchStart = fetchUrls.length;
-    await backend.probe(config, undefined, "throughput");
+    await preparation.check(config, ["throughput"]);
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
     fetchStart = fetchUrls.length;
     const latencyProbe = await probeWithRtts(
-      backend.probe(config, undefined, "latency"),
+      preparation.check(config, ["latency"]),
       7,
     );
-    expect(latencyProbe.preTestPingMs).toBe(7);
+    expect(latencyProbe.latency!.rttMs).toBe(7);
     expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
     config.transports.throughputTarget = "https://proxy.test";
     browserProtocol = "";
-    const proxyWithoutTiming = await backend.probe(
-      config,
-      undefined,
-      "throughput",
-    );
-    expect(proxyWithoutTiming.selectedThroughputProtocol).toBe("negotiated");
+    const proxyWithoutTiming = await preparation.check(config, ["throughput"]);
+    expect(proxyWithoutTiming.throughput.fetch.protocol).toBe("negotiated");
     expect(
       targetOfKind(
         discoveries.at(-1)!.throughput["https://proxy.test"],
@@ -609,18 +636,14 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       )?.protocol,
     ).toBe("negotiated");
     browserProtocol = "h2";
-    const proxyThroughput = await backend.probe(
-      config,
-      undefined,
-      "throughput",
-    );
-    expect(proxyThroughput.selectedThroughputProtocol).toBe("http2");
+    const proxyThroughput = await preparation.check(config, ["throughput"]);
+    expect(proxyThroughput.throughput.fetch.protocol).toBe("http2");
     const proxyLatency = await probeWithRtts(
-      backend.probe(config, undefined, "latency"),
+      preparation.check(config, ["latency"]),
       9,
     );
-    expect(proxyLatency.selectedThroughputProtocol).toBe("http2");
-    expect(proxyLatency.preTestPingMs).toBe(9);
+    expect(proxyLatency.throughput.fetch.protocol).toBe("http2");
+    expect(proxyLatency.latency!.rttMs).toBe(9);
     expect(
       targetOfKind(
         discoveries.at(-1)!.throughput["https://proxy.test"],
@@ -629,7 +652,10 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     ).toBe("negotiated");
     config.transports.throughputTarget = "http://meter.test:7246";
     browserProtocol = "http/1.1";
-    await backend.probe(config, undefined, "throughput");
+    const paths = await preparation.check(config, ["throughput"]);
+    preparation.stop();
+    const backend = new RealBackend(paths);
+    backend.attach(host);
     backend.onRunStart(config);
     const unloaded = phaseActivity("latency");
     backend.onStageBegin(unloaded);
@@ -665,7 +691,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     expect(incompleteAccounting).toBe(1);
     started.length = 0;
     uploadBytes.length = 0;
-    const preparation = backend.onStageBegin({
+    const stagePreparation = backend.onStageBegin({
       stage: "upload",
       transfer: ["up"],
       loadedLatency: false,
@@ -676,7 +702,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       "http://meter.test:7246/upload/progress?id=gmu_test",
     );
     progressWorker!.emit({ type: "open" });
-    await preparation;
+    await stagePreparation;
     expect(started).toEqual([
       "progress",
       "upload",
@@ -726,6 +752,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     expect(uploadBytes).toEqual([100]);
     backend.onComplete();
   } finally {
+    preparation.stop();
     globalThis.Worker = realWorker;
     restoreProbe();
   }
@@ -890,14 +917,12 @@ test("a WebTransport-less browser is refused by mechanism, not by availability",
     }),
   );
   try {
-    const { RealBackend } = await import("./RealRunner");
-    const backend = new RealBackend();
+    const preparation = await preparationHarness();
     const config = {
       ...probeConfig(false),
       transports: { throughputTarget: "auto", latencyTarget: "auto" },
     };
-    backend.attach(testHost(config));
-    await expect(backend.probe(config)).rejects.toThrow(
+    await expect(preparation.check(config)).rejects.toThrow(
       /^webtransport is not supported by this client$/,
     );
   } finally {
@@ -921,54 +946,38 @@ test("a superseded probe does not publish its discovery", async () => {
     return probeFetch()(input);
   }) as typeof fetch);
   try {
-    const { RealBackend } = await import("./RealRunner");
-    const discoveries: TransportDiscovery[] = [];
-    const backend = new RealBackend();
-    backend.attach(
-      testHost(probeConfig(false), {
-        emit(event) {
-          if (event.type === "transportDiscovery")
-            discoveries.push(event.discovery);
-        },
-      }),
+    const preparation = await preparationHarness();
+    const abort = new AbortController();
+    const superseded = preparation.check(
+      probeConfig(false),
+      ["throughput"],
+      abort.signal,
     );
-    const superseded = backend.probe(probeConfig(false));
     for (let turn = 0; turn < 20 && preflights < 1; turn++)
       await Promise.resolve();
-    const prepared = await backend.probe(probeConfig(false));
-    expect(prepared.discovery?.generation).toBe(preflightDocument.generation);
-    expect(discoveries).toHaveLength(0);
+    abort.abort(new Error("preparation superseded"));
+    const prepared = await preparation.check(probeConfig(false), [
+      "throughput",
+    ]);
+    expect(prepared.discovery.generation).toBe(preflightDocument.generation);
     releaseFirst();
-    const outcome = await superseded.then(
-      () => "resolved",
-      (cause: unknown) => (cause as Error).message,
-    );
-    expect(outcome).toBe("probe superseded");
-    expect(discoveries).toHaveLength(0);
+    await expect(superseded).rejects.toThrow("preparation superseded");
+    expect(preparation.discoveries).toHaveLength(1);
   } finally {
     restore();
   }
 });
 
-test("a hidden page parks the keepalive its probe started, and gets it back on visibility", async () => {
+test("the preparation owner can park and restart the returned idle monitor", async () => {
   FakePingWorker.all = [];
   const restore = stubProbeEnvironment(probeFetch());
   const realWorker = globalThis.Worker;
   globalThis.Worker = FakePingWorker as unknown as typeof Worker;
   try {
-    const { RealBackend } = await import("./RealRunner");
+    const preparation = await preparationHarness();
     const connectivity: string[] = [];
-    const backend = new RealBackend();
-    backend.attach(
-      testHost(probeConfig(true), {
-        emit(event) {
-          if (event.type === "connectivity") connectivity.push(event.state);
-        },
-      }),
-    );
-    backend.setBackgroundActivity(false); // the page is hidden; the keepalive supplies probe readiness and RTT.
     let settled = false;
-    const probe = backend.probe(probeConfig(true)).finally(() => {
+    const probe = preparation.check(probeConfig(true)).finally(() => {
       settled = true;
     });
     for (let turn = 0; turn < 100 && !settled; turn++) {
@@ -980,14 +989,19 @@ test("a hidden page parks the keepalive its probe started, and gets it back on v
       await Promise.resolve();
     }
     await probe;
+    preparation.observe((event) => {
+      if (event.type === "connectivity") connectivity.push(event.state);
+    });
+    preparation.stop();
     const parked = FakePingWorker.all.at(-1)!;
     expect(parked.terminated).toBe(true);
     const emitted = connectivity.length;
     parked.emit({ type: "stall", detail: "webtransport closed" });
     expect(connectivity).toHaveLength(emitted);
     const workers = FakePingWorker.all.length;
-    backend.setBackgroundActivity(true);
+    preparation.start();
     expect(FakePingWorker.all).toHaveLength(workers + 1);
+    preparation.stop();
   } finally {
     globalThis.Worker = realWorker;
     restore();
@@ -997,13 +1011,14 @@ const bothBusesDocument = {
   ...preflightDocument,
   capabilities: {
     throughput: [fetchAd("https://meter.test", "http2")],
-    latency: [wsAd("https://meter.test"), wtLatencyAd("https://meter.test")],
+    latency: [wsAd("https://fallback.test"), wtLatencyAd("https://meter.test")],
   },
 };
 
 test("a throughput-role probe keeps the latency bus the last check committed to", async () => {
   PingBusWorker.live = [];
   PingBusWorker.starts = [];
+  const probedUrls: string[] = [];
   const realWorker = globalThis.Worker;
   const globals = globalThis as Record<string, unknown>;
   const realWebTransport = globals.WebTransport;
@@ -1011,7 +1026,15 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/preflight")) return Response.json(bothBusesDocument);
-      if (url.includes("/probe")) return Response.json(pathProbeDocument);
+      if (url.includes("/probe")) {
+        probedUrls.push(url);
+        return Response.json({
+          ...pathProbeDocument,
+          clientIp: url.startsWith("https://fallback.test/")
+            ? "192.0.2.9"
+            : "127.0.0.1",
+        });
+      }
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch,
     { location: "https://meter.test/", protocol: "h2" },
@@ -1023,10 +1046,9 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     const config = probeConfig(true);
     config.stages.download = false;
     config.transports.throughputTarget = "https://meter.test";
-    const backend = new RealBackend();
-    backend.attach(testHost(config));
+    const preparation = await preparationHarness();
     let settled = false;
-    const degrading = backend.probe(config).then(
+    const degrading = preparation.check(config).then(
       (info) => {
         settled = true;
         return info;
@@ -1045,9 +1067,18 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
         });
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    expect((await degrading).selectedLatencyTransport).toBe("websocket");
-    const throughputRole = await backend.probe(config, undefined, "throughput");
-    expect(throughputRole.selectedLatencyTransport).toBe("websocket");
+    const fallback = await degrading;
+    expect(fallback.latency!.target.transport).toBe("websocket");
+    expect(fallback.latency!.target.origin).toBe("https://fallback.test");
+    expect(fallback.latency!.probe.clientIp).toBe("192.0.2.9");
+    expect(
+      probedUrls.map((url) => new URL(url).origin + new URL(url).pathname),
+    ).toContain("https://fallback.test/probe");
+    const throughputRole = await preparation.check(config, ["throughput"]);
+    expect(throughputRole.latency!.target.transport).toBe("websocket");
+    preparation.stop();
+    const backend = new RealBackend(throughputRole);
+    backend.attach(testHost(config));
     backend.onRunStart(config);
     backend.onStageBegin(phaseActivity("latency"));
     expect(PingBusWorker.starts.at(-1)).toBe("websocket");

@@ -1,11 +1,11 @@
 import { test, expect } from "bun:test";
 import type { RunnerConfig } from "./contract";
-import type { RealBackend } from "./RealRunner";
+import type { ConnectionPreparation } from "./real/prepare";
+import { emptyConnectionValidation } from "./connectionModel";
 import {
   TEST_BUILD_TOKENS,
   TEST_WT_ORIGIN,
   TEST_WT_PREFLIGHT,
-  testHost,
   testWtConfig,
 } from "./test-helpers.test";
 const dials: string[] = [];
@@ -35,18 +35,20 @@ const config: RunnerConfig = testWtConfig({
   bidirectional: false,
 });
 config.transferStreams = { mode: "auto", count: 1 };
-type BackendBody = (
-  backend: import("./RealRunner").RealBackend,
-) => Promise<void>;
-async function withProbeBackend(
+type PathCheck = (
+  config: RunnerConfig,
+  signal?: AbortSignal,
+) => Promise<ConnectionPreparation>;
+type CheckBody = (check: PathCheck) => Promise<void>;
+async function withPathCheck(
   webTransport: unknown,
-  probeConfig: RunnerConfig,
+  _probeConfig: RunnerConfig,
   capabilities = preflight,
-  body: BackendBody,
+  body: CheckBody,
 ): Promise<void> {
   const globals = globalThis as Record<string, unknown>;
   Object.assign(globals, TEST_BUILD_TOKENS);
-  const { RealBackend } = await import("./RealRunner");
+  const { prepareConnections } = await import("./real/prepare");
   const realFetch = globalThis.fetch;
   const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
   const realEntries = performance.getEntriesByName.bind(performance);
@@ -79,9 +81,17 @@ async function withProbeBackend(
       }
       throw new Error(`unexpected fetch ${url}`);
     }) as typeof fetch;
-    const backend = new RealBackend();
-    backend.attach(testHost(probeConfig));
-    await body(backend);
+    await body(async (config, signal = new AbortController().signal) => {
+      const result = await prepareConnections(
+        config,
+        emptyConnectionValidation(),
+        ["throughput", "latency"],
+        signal,
+      );
+      result.idle?.stop();
+      if (result.failure) throw result.failure;
+      return result;
+    });
   } finally {
     globalThis.fetch = realFetch;
     performance.getEntriesByName = realEntries;
@@ -95,16 +105,16 @@ async function withProbeBackend(
   }
 }
 const withFakeProbe = (
-  body: BackendBody,
+  body: CheckBody,
   capabilities = preflight,
   probeConfig = config,
 ): Promise<void> =>
-  withProbeBackend(FakeWebTransport, probeConfig, capabilities, body);
+  withPathCheck(FakeWebTransport, probeConfig, capabilities, body);
 test("a refused WebTransport check is re-dialled on the next probe, so Retry works", async () => {
-  await withFakeProbe(async (backend) => {
-    const { TransportUnavailableError } = await import("./RealRunner");
+  await withFakeProbe(async (check) => {
+    const { TransportUnavailableError } = await import("./real/transportError");
     for (const attempt of [1, 2]) {
-      await expect(backend.probe(config)).rejects.toBeInstanceOf(
+      await expect(check(config)).rejects.toBeInstanceOf(
         TransportUnavailableError,
       );
       expect(dials.length).toBe(attempt);
@@ -126,19 +136,14 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
       closes++;
     }
   }
-  await withProbeBackend(
-    SilentWebTransport,
-    config,
-    preflight,
-    async (backend) => {
-      const { TransportUnavailableError } = await import("./RealRunner");
-      await expect(backend.probe(config)).rejects.toThrow(/carried no bytes/);
-      await expect(backend.probe(config)).rejects.toBeInstanceOf(
-        TransportUnavailableError,
-      );
-      expect(closes).toBe(2); // one per established session, both released
-    },
-  );
+  await withPathCheck(SilentWebTransport, config, preflight, async (check) => {
+    const { TransportUnavailableError } = await import("./real/transportError");
+    await expect(check(config)).rejects.toThrow(/carried no bytes/);
+    await expect(check(config)).rejects.toBeInstanceOf(
+      TransportUnavailableError,
+    );
+    expect(closes).toBe(2); // one per established session, both released
+  });
 });
 test("a session kind this client cannot drive fails its role before any dial", async () => {
   const datagramPreflight = {
@@ -154,18 +159,18 @@ test("a session kind this client cannot drive fails its role before any dial", a
       latency: [],
     },
   };
-  await withProbeBackend(
+  await withPathCheck(
     FakeWebTransport,
     config,
     datagramPreflight,
-    async (backend) => {
+    async (check) => {
       const { TRANSPORTS } = await import("./real/transports");
       const realUsable = TRANSPORTS["webtransport-datagram"].usable;
       try {
         TRANSPORTS["webtransport-datagram"].usable = () => false;
         const dialled = dials.length;
         await expect(
-          backend.probe({
+          check({
             ...config,
             transports: {
               throughputTarget: `${WT_ORIGIN}::wtdg`,
@@ -218,11 +223,11 @@ const autoConfig: RunnerConfig = {
   transports: { throughputTarget: "auto", latencyTarget: "auto" },
 };
 async function withHeldSessions(
-  body: (backend: RealBackend) => Promise<void>,
+  body: (check: PathCheck) => Promise<void>,
 ): Promise<void> {
   HeldWebTransport.live.length = 0;
   HeldWebTransport.nextDial = Promise.withResolvers<void>();
-  await withProbeBackend(HeldWebTransport, autoConfig, preflight, body);
+  await withPathCheck(HeldWebTransport, autoConfig, preflight, body);
 }
 async function untilDialled(dials: number): Promise<void> {
   while (HeldWebTransport.live.length < dials)
@@ -230,25 +235,25 @@ async function untilDialled(dials: number): Promise<void> {
   expect(HeldWebTransport.live).toHaveLength(dials);
 }
 test("an aborted WebTransport check aborts the probe, it does not degrade it", async () => {
-  await withHeldSessions(async (backend) => {
+  await withHeldSessions(async (check) => {
     const abort = new AbortController();
-    const probe = backend.probe(autoConfig, abort.signal);
+    const probe = check(autoConfig, abort.signal);
     await untilDialled(1);
     abort.abort();
     expect(
       await probe.then(
-        (info) => info.selectedThroughputTransport,
+        (info) => info.validation.throughput.path?.target.transport,
         () => "rejected",
       ),
     ).toBe("rejected");
   });
 });
 test("an aborted probe leaves the transport a newer probe committed alone", async () => {
-  await withHeldSessions(async (backend) => {
+  await withHeldSessions(async (check) => {
     const abort = new AbortController();
-    const first = backend.probe(autoConfig, abort.signal);
+    const first = check(autoConfig, abort.signal);
     await untilDialled(1);
-    const second = backend.probe(autoConfig);
+    const second = check(autoConfig);
     await untilDialled(2);
     abort.abort();
     const firstOutcome = await first.then(
@@ -256,19 +261,24 @@ test("an aborted probe leaves the transport a newer probe committed alone", asyn
       () => "rejected",
     );
     HeldWebTransport.live[1].deliver();
-    expect((await second).selectedThroughputTransport).toBe("webtransport");
+    expect((await second).validation.throughput.path?.target.transport).toBe(
+      "webtransport",
+    );
     expect(firstOutcome).toBe("rejected");
   });
 });
-test("a probe superseded mid-dial does not commit behind the newer one", async () => {
-  await withHeldSessions(async (backend) => {
-    const first = backend.probe(autoConfig);
+test("aborting a superseded dial leaves the newer check independent", async () => {
+  await withHeldSessions(async (check) => {
+    const abort = new AbortController();
+    const first = check(autoConfig, abort.signal);
     await untilDialled(1);
-    const second = backend.probe(autoConfig);
+    const second = check(autoConfig);
     await untilDialled(2);
+    abort.abort();
     HeldWebTransport.live[1].deliver();
-    expect((await second).selectedThroughputTransport).toBe("webtransport");
-    HeldWebTransport.live[0].deliver();
+    expect((await second).validation.throughput.path?.target.transport).toBe(
+      "webtransport",
+    );
     expect(
       await first.then(
         () => "resolved",
