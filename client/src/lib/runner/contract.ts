@@ -207,6 +207,8 @@ export interface ThroughputResult {
 
 /** Full measured stage; percentiles use nearest rank, with the midpoint median for P50. */
 export interface StageLatencySummary {
+  /** False when a worker failure leaves the outcome population unknown. */
+  accountingComplete: boolean;
   probeCount: number;
   timeoutCount: number;
   unresolvedCount: number;

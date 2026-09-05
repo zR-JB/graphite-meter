@@ -349,6 +349,60 @@ test("a failed transfer preserves qualifying evidence and continues later stages
   expect(backend.calls).toContain("begin:upload");
 });
 
+test("failed-stage shutdown reports discarded probe accounting before the partial result", async () => {
+  class InterruptedBackend extends FakeBackend {
+    override onStageEnd(
+      activity: PhaseActivity,
+      flush = true,
+    ): void | Promise<void> {
+      if (!flush) {
+        this.host.ingestLatencyAccountingIncomplete();
+        return;
+      }
+      return super.onStageEnd(activity);
+    }
+  }
+  const { core, events } = await startCore(
+    {
+      stages: { download: true, upload: true },
+      duration: { downloadMs: 1_000, uploadMs: 100 },
+    },
+    new InterruptedBackend(),
+  );
+  core.ingestThroughput("down", 1_000, 900, 0.9);
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow });
+  core.failStage(
+    "download",
+    "connection-lost",
+    "transfer failed with pending probes",
+  );
+  const summaryBeforeResult = events.slice(
+    0,
+    events.findIndex(
+      (event) => event.type === "stageResult" && event.stage === "download",
+    ),
+  );
+  expect(
+    typedEvents(summaryBeforeResult, "latencySummary").at(-1)?.summary,
+  ).toMatchObject({
+    accountingComplete: false,
+    probeCount: 1,
+    timeoutCount: 0,
+    meanMs: 12,
+  });
+  advance(0);
+  advance(100);
+  expectComplete(events, (result) => {
+    expect(result.download?.totalBytes).toBe(900);
+    expect(result.latencyByStage.download).toMatchObject({
+      accountingComplete: false,
+      probeCount: 1,
+      timeoutCount: 0,
+      meanMs: 12,
+    });
+  });
+});
+
 test("a terminal runner error retains previously reduced bidirectional lanes", async () => {
   const { core, events } = await startCore({
     stages: { download: false, bidirectional: true },
@@ -662,6 +716,61 @@ test("asynchronous boundary flush completes before stage reduction", async () =>
   expectComplete(events, (result) =>
     expect(result.download?.totalBytes).toBe(100),
   );
+});
+
+test("terminal probe accounting reaches the original stage summary before finalization", async () => {
+  const backend = new FakeBackend({ flush: "async" });
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    backend,
+  );
+  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow });
+  advance(100);
+  expect(core.phase).toBe("download");
+  expect(hasEvent(events, "complete")).toBe(false);
+  core.ingestLatency({ rttMs: 250, lost: true, observedAtMs: fakeNow });
+  core.ingestLatency({
+    rttMs: 30,
+    lost: false,
+    observedAtMs: fakeNow + 20,
+    rttEligible: false,
+  });
+  core.ingestLatencyInterruption(2, "unresolved");
+  backend.flush!();
+  await Promise.resolve();
+  expectComplete(events, (result) => {
+    expect(result.latencyByStage.download).toMatchObject({
+      probeCount: 3,
+      timeoutCount: 1,
+      unresolvedCount: 2,
+      meanMs: 10,
+      p50Ms: 10,
+      jitterPairs: 0,
+    });
+    expect(result.latencyByStage.latency).toBeNull();
+    expect(result.download?.probeTimeoutPct).toBeCloseTo(100 / 3);
+  });
+});
+
+test("a failed terminal worker keeps unknown accounting visible in the final stage summary", async () => {
+  const backend = new FakeBackend({ flush: "async" });
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    backend,
+  );
+  advance(100);
+  core.ingestLatencyAccountingIncomplete();
+  backend.flush!();
+  await Promise.resolve();
+  expectComplete(events, (result) => {
+    expect(result.latencyByStage.download).toMatchObject({
+      accountingComplete: false,
+      probeCount: 0,
+      timeoutCount: 0,
+      unresolvedCount: 0,
+    });
+    expect(result.download?.probeTimeoutPct).toBeNull();
+  });
 });
 
 test("a real sample arriving mid-stall auto-resumes", async () => {

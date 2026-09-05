@@ -4,6 +4,9 @@
   import { fmtMs } from "../format";
   import {
     entries,
+    probeAccountingHelp,
+    probeAccountingDetails,
+    hasProbeAccountingNotice,
     hoverContext,
     timeoutLabel,
     metricLabel,
@@ -152,7 +155,8 @@
       showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
         : null,
-      lane.count == null ? null : `${lane.count} samples`,
+      lane.accountingComplete === false ? "Partial accounting" : null,
+      probeAccountingDetails(lane) || null,
     ].filter((value): value is string => value !== null);
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
   }
@@ -174,7 +178,9 @@
         <span class="lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
-            ? "waiting"
+            ? lane.accountingComplete === false || (lane.count ?? 0) > 0
+              ? "unavailable"
+              : "waiting"
             : lane.centerKind === "average"
               ? `avg ${fmtMs(lane.center)} ms`
               : `${fmtMs(lane.center)} ms`}</strong
@@ -191,6 +197,18 @@
         </em>
       </div>
 
+      {#if hasProbeAccountingNotice(lane)}
+        <p class="probe-accounting">
+          {#if lane.accountingComplete === false}
+            <span
+              class="accounting-warning"
+              role="note"
+              use:tooltip={probeAccountingHelp(lane)}>Partial accounting</span
+            >
+          {/if}
+          <span>{probeAccountingDetails(lane)}</span>
+        </p>
+      {/if}
       <div class="strip">
         <div class="ticks" aria-hidden="true">
           {#each ticks as tick, index (`${lane.key}-${index}`)}
@@ -280,6 +298,18 @@
 </div>
 
 <style>
+  .probe-accounting {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .accounting-warning {
+    color: var(--warn);
+    font-weight: 600;
+  }
   .lanes {
     display: grid;
     gap: var(--space-2);

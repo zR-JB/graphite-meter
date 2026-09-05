@@ -722,17 +722,20 @@ export class RealBackend implements RunnerBackend {
   onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {
     if (!flush) {
       this.#discardTransfer();
-      this.#latency.teardown();
+      this.#latency.discard();
       // Reset the stage stall latch; otherwise later healthy bytes cannot refresh the core watchdog.
       this.#stalled = false;
       this.#transferActivity = null;
       return;
     }
     const generation = this.#transferGeneration;
-    return this.#teardownTransfer(generation).then((released) => {
+    const latencyFinished = this.#latency.finish();
+    return Promise.all([
+      this.#teardownTransfer(generation),
+      latencyFinished,
+    ]).then(([released]) => {
       // Ignore completion if abort or a new run took ownership while this stage awaited its terminal record.
       if (!released || generation !== this.#transferGeneration) return;
-      this.#latency.teardown();
       this.#stalled = false;
       this.#transferActivity = null;
     });

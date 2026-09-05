@@ -167,7 +167,7 @@
       display: none;
     }
   }
-  @media (max-width: 430px) {
+  @media (max-width: 430px), (pointer: coarse) and (max-width: 759px) {
     .identity,
     .everywhere {
       display: none;

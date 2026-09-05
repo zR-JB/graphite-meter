@@ -33,11 +33,11 @@ func TestPercentile(t *testing.T) {
 		}
 	})
 
-	t.Run("interpolated fraction", func(t *testing.T) {
+	t.Run("midpoint median", func(t *testing.T) {
 		// 4 samples: pos = 0.5*3 = 1.5 -> lo=1, hi=2, frac=0.5 interpolate xs[1]=20ms and xs[2]=30ms -> 25ms
 		xs := []time.Duration{ms(10), ms(20), ms(30), ms(40)}
 		want := ms(25)
-		if got := percentile(xs, 0.5); got != want {
+		if got := median(xs); got != want {
 			t.Errorf("percentile(4 samples, 0.5) = %v, want %v", got, want)
 		}
 	})
@@ -145,8 +145,8 @@ func TestLatencyStatsAdd(t *testing.T) {
 	s.add(0, false) // not lost but non-positive: skipped from values
 	s.add(20*time.Millisecond, false)
 
-	if s.lost != 1 {
-		t.Errorf("lost = %d, want 1", s.lost)
+	if s.timeouts != 1 {
+		t.Errorf("lost = %d, want 1", s.timeouts)
 	}
 	if len(s.values) != 2 {
 		t.Errorf("values = %v, want 2 entries", s.values)
@@ -169,8 +169,8 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 		s.add(0, true)
 		s.add(0, true)
 		got := s.snapshot()
-		if got.Loss != 1 {
-			t.Errorf("Loss = %v, want 1", got.Loss)
+		if timeoutRatio(t, got) != 1 {
+			t.Errorf("Loss = %v, want 1", timeoutRatio(t, got))
 		}
 		if got.Count != 0 {
 			t.Errorf("Count = %v, want 0", got.Count)
@@ -193,7 +193,7 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 		got := s.snapshot()
 
 		sorted := []time.Duration{10 * time.Millisecond, 20 * time.Millisecond, 30 * time.Millisecond, 40 * time.Millisecond}
-		wantP50 := percentile(sorted, 0.50)
+		wantP50 := median(sorted)
 		wantP95 := percentile(sorted, 0.95)
 
 		if got.Min != 10*time.Millisecond {
@@ -202,8 +202,8 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 		if got.Mean != 25*time.Millisecond {
 			t.Errorf("Mean = %v, want 25ms", got.Mean)
 		}
-		if got.Jitter != 10*time.Millisecond {
-			t.Errorf("Jitter = %v, want 10ms (mean absolute deviation)", got.Jitter)
+		if got.Jitter != 70*time.Millisecond/3 {
+			t.Errorf("Jitter = %v, want 70ms/3 (receive-order variation)", got.Jitter)
 		}
 		if got.P50 != wantP50 {
 			t.Errorf("P50 = %v, want %v (via percentile)", got.P50, wantP50)
@@ -215,8 +215,8 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 			t.Errorf("Count = %v, want 4", got.Count)
 		}
 		wantLoss := 2.0 / 6.0 // 2 lost out of 4 values + 2 lost
-		if got.Loss != wantLoss {
-			t.Errorf("Loss = %v, want %v", got.Loss, wantLoss)
+		if timeoutRatio(t, got) != wantLoss {
+			t.Errorf("Loss = %v, want %v", timeoutRatio(t, got), wantLoss)
 		}
 	})
 }
@@ -232,5 +232,76 @@ func BenchmarkMeasurementReduction(b *testing.B) {
 		}
 		rates.setWindow(1_000_000_000, 10*time.Second)
 		benchmarkResult = rates.result("download", Down, false)
+	}
+}
+
+func timeoutRatio(t *testing.T, s LatencyStats) float64 {
+	t.Helper()
+	ratio, ok := s.TimeoutRatio()
+	if !ok {
+		t.Fatal("timeout ratio unavailable")
+	}
+	return ratio
+}
+
+func TestLatencyDefinitionFixtures(t *testing.T) {
+	var s latencyStats
+	for _, ms := range []int{10, 100, 10, 100} {
+		s.add(time.Duration(ms)*time.Millisecond, false)
+	}
+	got := s.snapshot()
+	if got.Jitter != 90*time.Millisecond || got.JitterPairs != 3 || got.P50 != 55*time.Millisecond || got.P10 != 10*time.Millisecond || got.P90 != 100*time.Millisecond || got.P95 != 100*time.Millisecond {
+		t.Fatalf("alternating fixture: %+v", got)
+	}
+	// Taking a snapshot must not sort the receive-order population used by later replies.
+	s.add(10*time.Millisecond, false)
+	if s.snapshot().Jitter != 90*time.Millisecond {
+		t.Fatal("snapshot changed receive order")
+	}
+	var gaps latencyStats
+	gaps.add(10*time.Millisecond, false)
+	gaps.add(0, true)
+	gaps.add(20*time.Millisecond, false)
+	gaps.breakContinuity()
+	gaps.add(100*time.Millisecond, false)
+	gaps.add(110*time.Millisecond, false)
+	got = gaps.snapshot()
+	if got.Jitter != 10*time.Millisecond || got.JitterPairs != 2 {
+		t.Fatalf("continuity fixture: %+v", got)
+	}
+}
+
+func TestLatencyMissingPopulations(t *testing.T) {
+	if _, ok := (LatencyStats{}).TimeoutRatio(); ok {
+		t.Fatal("empty population has a timeout ratio")
+	}
+	if _, ok := (LatencyStats{Unresolved: 3, SendFailures: 2}).TimeoutRatio(); ok {
+		t.Fatal("unresolved/local failures became resolved probes")
+	}
+	if got := timeoutRatio(t, LatencyStats{Timeouts: 3, Unresolved: 2}); got != 1 {
+		t.Fatalf("timeout-only ratio = %v", got)
+	}
+	var single latencyStats
+	single.add(time.Millisecond, false)
+	if single.snapshot().JitterPairs != 0 {
+		t.Fatal("one reply manufactured a variation pair")
+	}
+	var steady latencyStats
+	steady.add(time.Millisecond, false)
+	steady.add(time.Millisecond, false)
+	if got := steady.snapshot(); got.Jitter != 0 || got.JitterPairs != 1 {
+		t.Fatalf("valid zero variation: %+v", got)
+	}
+}
+
+func TestNearestRankPercentiles(t *testing.T) {
+	xs := []time.Duration{10, 20, 30, 40}
+	for _, tt := range []struct {
+		p    float64
+		want time.Duration
+	}{{0.1, 10}, {0.9, 40}, {0.95, 40}} {
+		if got := percentile(xs, tt.p); got != tt.want {
+			t.Fatalf("p=%v: %v, want %v", tt.p, got, tt.want)
+		}
 	}
 }
