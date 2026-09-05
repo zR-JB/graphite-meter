@@ -70,19 +70,19 @@ func (a *sessionActivity) watch(ctx context.Context, bound time.Duration) {
 }
 
 type wtPing struct {
-	ping      Endpoint
+	ping      MessageHandler
 	idleBound time.Duration
 }
 
-// NewWTPing serves the latency bus over session datagrams, where a ping that never returns is real packet loss.
-func NewWTPing(ping Endpoint, idleBound time.Duration) WTHandler {
+// NewWTPing serves the latency bus over session datagrams, which measure application probe timeouts.
+func NewWTPing(ping MessageHandler, idleBound time.Duration) WTHandler {
 	return &wtPing{ping: ping, idleBound: idleBound}
 }
 
 func (h *wtPing) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	ctx, live := watchSession(ctx, h.idleBound)
-	bus := transport.NewWebTransportBusSession(ctx, liveDatagramConn{conn: sess, live: live}, r.URL.Query())
-	_ = h.ping.Handle(bus)
+	bus := transport.NewWebTransportBus(ctx, liveDatagramConn{conn: sess, live: live})
+	_ = h.ping.HandleMessages(ctx, bus)
 }
 
 type liveDatagramConn struct {
@@ -101,12 +101,12 @@ func (c liveDatagramConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 }
 
 type wtDownload struct {
-	download  Endpoint
+	download  DownloadHandler
 	idleBound time.Duration
 }
 
 // NewWTDownload serves byte lanes on server-opened WebTransport streams.
-func NewWTDownload(download Endpoint, idleBound time.Duration) WTHandler {
+func NewWTDownload(download DownloadHandler, idleBound time.Duration) WTHandler {
 	return &wtDownload{download: download, idleBound: idleBound}
 }
 
@@ -128,7 +128,7 @@ func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Sessi
 		go bumpOnPeerDatagrams(ctx, sess, live)
 		sink := &datagramSink{conn: sess}
 		for ctx.Err() == nil && !sink.failed {
-			_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, sink, nil, ""))
+			_ = h.download.HandleDownload(ctx, parseBytes(query.Get("bytes")), sink)
 		}
 		return
 	}
@@ -158,7 +158,7 @@ func (h *wtDownload) serveLane(ctx context.Context, lanes laneOpener, query url.
 		}
 		lane := &laneWriter{w: str, live: live}
 		withWTWriteStream(ctx, str, func() {
-			_ = h.download.Handle(transport.NewWebTransportStreamSession(ctx, query, lane, nil, ""))
+			_ = h.download.HandleDownload(ctx, parseBytes(query.Get("bytes")), lane)
 		})
 		if !lane.moved {
 			return
@@ -215,14 +215,14 @@ func wtStreamCount(query url.Values) int {
 }
 
 type wtUpload struct {
-	upload    Endpoint
+	upload    UploadHandler
 	progress  *UploadProgress
 	trusted   []netip.Prefix
 	idleBound time.Duration
 }
 
 // NewWTUpload drains client-opened streams as upload lanes and serves the progress feed on one server-opened stream.
-func NewWTUpload(upload Endpoint, progress *UploadProgress, trusted []netip.Prefix, idleBound time.Duration) WTHandler {
+func NewWTUpload(upload UploadHandler, progress *UploadProgress, trusted []netip.Prefix, idleBound time.Duration) WTHandler {
 	return &wtUpload{upload: upload, progress: progress, trusted: trusted, idleBound: idleBound}
 }
 
@@ -257,7 +257,7 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 
 func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, query url.Values, owner string, live *sessionActivity) {
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live}
-	err := h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	_, err := h.upload.HandleUpload(ctx, query.Get("id"), owner, src)
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		// Stream uploads have no response headers.
 		h.serveRefusal(ctx, sess, refusal.access)
@@ -295,7 +295,7 @@ func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Sessio
 		}
 	}()
 	src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout, live)
-	_ = h.upload.Handle(transport.NewWebTransportStreamSession(ctx, query, nil, src, owner))
+	_, _ = h.upload.HandleUpload(ctx, query.Get("id"), owner, src)
 }
 
 func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, id, owner string) {

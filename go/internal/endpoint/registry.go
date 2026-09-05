@@ -14,8 +14,8 @@ import (
 
 // Registry maps paths to endpoints.
 type Registry struct {
-	httpEndpoints map[string]Endpoint
-	wsEndpoints   map[string]Endpoint
+	httpEndpoints map[string]HTTPHandler
+	wsEndpoints   map[string]MessageHandler
 	wtEndpoints   map[string]WTHandler
 }
 
@@ -37,19 +37,19 @@ func (r *Registry) Kinds() map[string]string {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		httpEndpoints: make(map[string]Endpoint),
-		wsEndpoints:   make(map[string]Endpoint),
+		httpEndpoints: make(map[string]HTTPHandler),
+		wsEndpoints:   make(map[string]MessageHandler),
 		wtEndpoints:   make(map[string]WTHandler),
 	}
 }
 
 // RegisterHTTP mounts an endpoint as an HTTP request/response handler at path.
-func (r *Registry) RegisterHTTP(path string, e Endpoint) {
+func (r *Registry) RegisterHTTP(path string, e HTTPHandler) {
 	r.httpEndpoints[path] = e
 }
 
 // RegisterWS mounts an endpoint as a WebSocket bus at path.
-func (r *Registry) RegisterWS(path string, e Endpoint) {
+func (r *Registry) RegisterWS(path string, e MessageHandler) {
 	r.wsEndpoints[path] = e
 }
 
@@ -96,7 +96,7 @@ func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, o
 	}
 }
 
-func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin string) http.Handler {
+func wsAdapterWithOrigin(parent context.Context, e MessageHandler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -134,8 +134,8 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 		defer cancel()
 		defer conn.CloseNow()
 
-		s := transport.NewWebSocketSession(ctx, conn, r.URL.Query())
-		err = e.Handle(s)
+		bus := transport.NewWebSocketBus(ctx, conn)
+		err = e.HandleMessages(ctx, bus)
 		if allowedOrigin != "" && auth.SessionEnded(r.Context()) {
 			conn.Close(websocket.StatusPolicyViolation, "authentication required")
 			return
@@ -148,15 +148,14 @@ func wsAdapterWithOrigin(parent context.Context, e Endpoint, allowedOrigin strin
 	})
 }
 
-func httpAdapterWithOrigin(e Endpoint, origin string) http.Handler {
+func httpAdapterWithOrigin(e HTTPHandler, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		setCommonHeaders(w, origin)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		s := transport.NewHTTPSession(w, r)
-		if err := e.Handle(s); err != nil {
+		if err := e.HandleHTTP(w, r); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})

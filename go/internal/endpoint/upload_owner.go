@@ -71,17 +71,6 @@ func (e *uploadRefusalError) Error() string {
 	return "upload refused: " + uploadAccessMessage(e.access)
 }
 
-// sessionOwner reads the client key from an HTTP request, or from the session that owns a WebTransport stream.
-func sessionOwner(s transport.Session, trusted []netip.Prefix) string {
-	if _, r, ok := s.HTTP(); ok {
-		return ClientKey(r, trusted)
-	}
-	if owner, ok := s.(interface{ ClientOwner() string }); ok {
-		return owner.ClientOwner()
-	}
-	return ""
-}
-
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
 	info := access.info()
 	if info.code == "" {

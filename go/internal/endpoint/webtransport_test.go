@@ -17,7 +17,6 @@ import (
 
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // recordingConn is the datagram half of a session: it replays queued datagrams and records what was sent.
@@ -201,7 +200,7 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 				return "", time.Time{}, mint
 			})
 			rec := httptest.NewRecorder()
-			if err := endpoint.Handle(transport.NewHTTPSession(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))); err != nil {
+			if err := endpoint.HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
 				t.Fatalf("handle: %v", err)
 			}
 			if rec.Code != tc.status {
@@ -222,7 +221,7 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 		return "gmw_minted", time.Unix(0, 0).Add(time.Hour), auth.WTMintOK
 	})
 	rec := httptest.NewRecorder()
-	if err := endpoint.Handle(transport.NewHTTPSession(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))); err != nil {
+	if err := endpoint.HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	var minted wtSessionResponse

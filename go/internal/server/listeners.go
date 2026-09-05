@@ -51,13 +51,21 @@ const (
 )
 
 type endpoints struct {
-	preflight, probe, bootstrapProbe endpoint.Endpoint
-	download, uploadSession, upload  endpoint.Endpoint
-	ping                             endpoint.Endpoint
-	uploadProgress                   *endpoint.UploadProgress
-	admission                        *requestAdmission
-	trustedProxies                   []netip.Prefix
-	wtIdleBound                      time.Duration
+	preflight, probe, bootstrapProbe endpoint.HTTPHandler
+	uploadSession                    endpoint.HTTPHandler
+	download                         interface {
+		endpoint.HTTPHandler
+		endpoint.DownloadHandler
+	}
+	upload interface {
+		endpoint.HTTPHandler
+		endpoint.UploadHandler
+	}
+	ping           endpoint.MessageHandler
+	uploadProgress *endpoint.UploadProgress
+	admission      *requestAdmission
+	trustedProxies []netip.Prefix
+	wtIdleBound    time.Duration
 }
 
 type service struct {
@@ -124,20 +132,16 @@ type muxTopology struct {
 }
 
 type protocolEndpoint struct {
-	endpoint.Endpoint
+	endpoint.HTTPHandler
 	major int
 }
 
-func (e protocolEndpoint) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (e protocolEndpoint) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if r.ProtoMajor != e.major {
 		http.NotFound(w, r)
 		return nil
 	}
-	return e.Endpoint.Handle(s)
+	return e.HTTPHandler.HandleHTTP(w, r)
 }
 
 func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *endpoint.Registry {
@@ -151,9 +155,9 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 		reg.RegisterHTTP(routeProbe, e.probe)
 	}
 	if topology.transfers {
-		register := func(path string, h endpoint.Endpoint) {
+		register := func(path string, h endpoint.HTTPHandler) {
 			if topology.requiredProto != 0 {
-				h = protocolEndpoint{Endpoint: h, major: topology.requiredProto}
+				h = protocolEndpoint{HTTPHandler: h, major: topology.requiredProto}
 			}
 			reg.RegisterHTTP(path, h)
 		}
