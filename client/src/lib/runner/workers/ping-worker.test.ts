@@ -126,7 +126,6 @@ async function start(scenario: Scenario): Promise<Realm> {
     intervalMs: 250,
     replyDriven: false,
     maxInFlight: 16,
-    reportGapMs: 20,
     lossK: 4,
     lossFloorMs: 250,
     checkAuthentication: true,

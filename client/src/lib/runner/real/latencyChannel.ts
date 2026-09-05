@@ -26,7 +26,6 @@ const PING_LOSS_FLOOR_MS = 250;
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
-const PING_REPORT_GAP_MS = 20;
 const PING_ESTABLISH_TIMEOUT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 
 // One low-rate idle ping worker powers connectivity and preflight RTT outside runs.
@@ -134,7 +133,6 @@ export class LatencyChannel {
       intervalMs,
       replyDriven,
       maxInFlight,
-      reportGapMs: PING_REPORT_GAP_MS,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
@@ -264,7 +262,6 @@ export class IdleKeepalive {
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,
-      reportGapMs: 0, // paced sends are sparse: report every sample
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: authEnabled,
