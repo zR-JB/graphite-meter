@@ -96,10 +96,10 @@ func TestRateStatsResult(t *testing.T) {
 
 func TestLatencyStatsAdd(t *testing.T) {
 	var s latencyStats
-	s.add(10*time.Millisecond, false)
-	s.add(0, true)  // lost: counted, value not recorded
-	s.add(0, false) // not lost but non-positive: skipped from values
-	s.add(20*time.Millisecond, false)
+	s.add(10*time.Millisecond, false, 0)
+	s.add(0, true, 0)  // lost: counted, value not recorded
+	s.add(0, false, 0) // not lost but non-positive: skipped from values
+	s.add(20*time.Millisecond, false, 0)
 
 	if s.timeouts != 1 {
 		t.Errorf("lost = %d, want 1", s.timeouts)
@@ -121,9 +121,9 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 
 	t.Run("all lost", func(t *testing.T) {
 		var s latencyStats
-		s.add(0, true)
-		s.add(0, true)
-		s.add(0, true)
+		s.add(0, true, 0)
+		s.add(0, true, 0)
+		s.add(0, true, 0)
 		got := s.snapshot()
 		if timeoutRatio(t, got) != 1 {
 			t.Errorf("Loss = %v, want 1", timeoutRatio(t, got))
@@ -139,12 +139,12 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 	t.Run("mixed", func(t *testing.T) {
 		var s latencyStats
 		// unsorted insertion order; snapshot must sort internally
-		s.add(30*time.Millisecond, false)
-		s.add(10*time.Millisecond, false)
-		s.add(40*time.Millisecond, false)
-		s.add(20*time.Millisecond, false)
-		s.add(0, true)
-		s.add(0, true)
+		s.add(30*time.Millisecond, false, 0)
+		s.add(10*time.Millisecond, false, 0)
+		s.add(40*time.Millisecond, false, 0)
+		s.add(20*time.Millisecond, false, 0)
+		s.add(0, true, 0)
+		s.add(0, true, 0)
 
 		got := s.snapshot()
 
@@ -199,24 +199,24 @@ func timeoutRatio(t *testing.T, s LatencyStats) float64 {
 func TestLatencyDefinitionFixtures(t *testing.T) {
 	var s latencyStats
 	for _, ms := range []int{10, 100, 10, 100} {
-		s.add(time.Duration(ms)*time.Millisecond, false)
+		s.add(time.Duration(ms)*time.Millisecond, false, 0)
 	}
 	got := s.snapshot()
 	if got.Jitter != 90*time.Millisecond || got.JitterPairs != 3 || got.P50 != 55*time.Millisecond || got.P10 != 10*time.Millisecond || got.P90 != 100*time.Millisecond || got.P95 != 100*time.Millisecond {
 		t.Fatalf("alternating fixture: %+v", got)
 	}
 	// Taking a snapshot must not sort the receive-order population used by later replies.
-	s.add(10*time.Millisecond, false)
+	s.add(10*time.Millisecond, false, 0)
 	if s.snapshot().Jitter != 90*time.Millisecond {
 		t.Fatal("snapshot changed receive order")
 	}
 	var gaps latencyStats
-	gaps.add(10*time.Millisecond, false)
-	gaps.add(0, true)
-	gaps.add(20*time.Millisecond, false)
+	gaps.add(10*time.Millisecond, false, 0)
+	gaps.add(0, true, 0)
+	gaps.add(20*time.Millisecond, false, 0)
 	gaps.breakContinuity()
-	gaps.add(100*time.Millisecond, false)
-	gaps.add(110*time.Millisecond, false)
+	gaps.add(100*time.Millisecond, false, 0)
+	gaps.add(110*time.Millisecond, false, 0)
 	got = gaps.snapshot()
 	if got.Jitter != 10*time.Millisecond || got.JitterPairs != 2 {
 		t.Fatalf("continuity fixture: %+v", got)
@@ -234,13 +234,13 @@ func TestLatencyMissingPopulations(t *testing.T) {
 		t.Fatalf("timeout-only ratio = %v", got)
 	}
 	var single latencyStats
-	single.add(time.Millisecond, false)
+	single.add(time.Millisecond, false, 0)
 	if single.snapshot().JitterPairs != 0 {
 		t.Fatal("one reply manufactured a variation pair")
 	}
 	var steady latencyStats
-	steady.add(time.Millisecond, false)
-	steady.add(time.Millisecond, false)
+	steady.add(time.Millisecond, false, 0)
+	steady.add(time.Millisecond, false, 0)
 	if got := steady.snapshot(); got.Jitter != 0 || got.JitterPairs != 1 {
 		t.Fatalf("valid zero variation: %+v", got)
 	}

@@ -255,3 +255,11 @@ func latencyOutcomeSummary(s goclient.LatencyStats) string {
 	}
 	return out
 }
+
+func reflectorTimingSummary(s *goclient.ReflectorTimingStats) string {
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("Server timing (%d paired replies, means): raw %.2f ms · handling %.2f ms · adjusted %.2f ms. Only server handling is subtracted.",
+		s.Count, float64(s.MeanRawRTT)/float64(time.Millisecond), float64(s.MeanHandling)/float64(time.Millisecond), float64(s.MeanAdjustedRTT)/float64(time.Millisecond))
+}

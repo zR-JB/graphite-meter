@@ -146,25 +146,20 @@ func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
 	defer cancel()
 
 	// Datagrams may be dropped, so each frame is re-sent until its reply lands or the window closes.
-	if !echoes(t, ctx, sess, wire.Frame{Op: wire.OpHI, Proto: "wt"}, func(reply string) bool {
-		return reply == wire.OpREADY
-	}) {
-		t.Fatal("HI never drew READY")
-	}
-	if !echoes(t, ctx, sess, wire.Frame{Op: wire.OpPING, ID: 42}, func(reply string) bool {
-		f, err := wire.Decode(reply)
-		return err == nil && f.Op == wire.OpPONG && f.ID == 42
+	if !echoes(t, ctx, sess, 42, func(reply string) bool {
+		f, err := wire.DecodePong(reply)
+		return err == nil && f.ID == 42
 	}) {
 		t.Fatal("PING never drew PONG with id 42")
 	}
 }
 
 // echoes sends frame until want accepts a reply or ctx ends.
-func echoes(t *testing.T, ctx context.Context, sess *webtransport.Session, frame wire.Frame, want func(string) bool) bool {
+func echoes(t *testing.T, ctx context.Context, sess *webtransport.Session, id uint32, want func(string) bool) bool {
 	t.Helper()
 	for ctx.Err() == nil {
-		if err := sess.SendDatagram([]byte(wire.Encode(frame))); err != nil {
-			t.Fatalf("send %s: %v", frame.Op, err)
+		if err := sess.SendDatagram([]byte(wire.EncodePing(id))); err != nil {
+			t.Fatalf("send PING,%d: %v", id, err)
 		}
 		replyCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		reply, err := sess.ReceiveDatagram(replyCtx)

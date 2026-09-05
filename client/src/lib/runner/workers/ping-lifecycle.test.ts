@@ -16,13 +16,15 @@ async function withWorker(
     posted: Output[];
     advance: (ms: number) => void;
     jump: (ms: number) => void;
-    reply: (id: number) => void;
+    reply: (id: number, handling?: string) => void;
     send: (message: unknown) => void;
     stop: (cutoff?: number) => void;
     socket: FakeSocket;
+    sockets: FakeSocket[];
     now: () => number;
     samples: () => PingSample[];
   }) => void | Promise<void>,
+  completeWarmup = true,
 ) {
   let now = 0;
   let nextTimer = 0;
@@ -32,6 +34,7 @@ async function withWorker(
   >();
   const posted: Output[] = [];
   let socket!: FakeSocket;
+  const sockets: FakeSocket[] = [];
   const timeout = (callback: () => void, delay = 0, interval?: number) => {
     const id = ++nextTimer;
     timers.set(id, { at: now + delay, interval, callback });
@@ -43,6 +46,7 @@ async function withWorker(
       constructor() {
         super();
         socket = this;
+        sockets.push(this);
       }
     },
     performance: { now: () => now, timeOrigin: 10_000 },
@@ -72,10 +76,11 @@ async function withWorker(
     socket.onopen();
     send({ type: "measure" });
     // Finish the warmup request, starting the first eligible probe at time zero.
-    socket.onmessage({ data: "PONG,0;TIME,0" });
+    if (completeWarmup) socket.onmessage({ data: "PONG,0,0" });
     await run({
       posted,
       socket,
+      sockets,
       send,
       now: () => now,
       jump: (ms) => {
@@ -96,7 +101,10 @@ async function withWorker(
         }
         now = end;
       },
-      reply: (id) => socket.onmessage({ data: `PONG,${id};TIME,0` }),
+      reply: (id, handling) =>
+        socket.onmessage({
+          data: `PONG,${id},${handling ?? "0"}`,
+        }),
       stop: (cutoff = now) =>
         send({ type: "stop", cutoffEpochMs: 10_000 + cutoff }),
       samples: () =>
@@ -117,10 +125,12 @@ class FakeSocket {
   rejectSends = false;
   parkSends = false;
   pings: number[] = [];
+  sent: string[] = [];
   onopen = () => {};
   onmessage = (_event: { data: string }) => {};
   onclose = (_event: { code: number; reason: string }) => {};
   send(message: string): void | Promise<void> {
+    this.sent.push(message);
     if (this.failSends) throw new Error("local send failed");
     if (this.rejectSends)
       return Promise.reject(new Error("local datagram write rejected"));
@@ -317,3 +327,140 @@ for (const failure of ["failSends", "rejectSends"] as const) {
     });
   });
 }
+
+test("application readiness requires one matched valid reply and excludes warmup samples", async () => {
+  await withWorker(({ socket, posted, jump, reply, stop, samples }) => {
+    const readiness = () =>
+      posted.filter((event) => event.type === "ready").length;
+    socket.onmessage({ data: "READY" });
+    socket.onmessage({ data: "PONG,0" });
+    socket.onmessage({ data: "PONG,999999,0" });
+    expect(readiness()).toBe(0);
+    jump(5);
+    reply(0);
+    expect(readiness()).toBe(1);
+    reply(0);
+    expect(readiness()).toBe(1);
+    jump(5);
+    reply(1);
+    stop(10);
+    expect(readiness()).toBe(1);
+    expect(samples()).toHaveLength(1);
+    expect(samples()[0]).toMatchObject({ rtt: 5, lost: false });
+  }, false);
+});
+
+test("incomplete or malformed PONGs cannot resolve a probe or invent zero handling", async () => {
+  await withWorker(({ socket, jump, reply, stop, samples }) => {
+    expect(socket.sent[0]).toBe("PING,0");
+    jump(5);
+    for (const suffix of ["", ",", ",-1", ",1,2"]) {
+      socket.onmessage({ data: `PONG,1${suffix}` });
+    }
+    expect(socket.pings).toEqual([0, 1]);
+    expect(samples()).toHaveLength(0);
+    reply(1, "1000000");
+    stop(5);
+    expect(samples()).toHaveLength(1);
+    expect(samples()[0]).toMatchObject({
+      rtt: 5,
+      lost: false,
+      reflectorHandlingMs: 1,
+    });
+  });
+});
+
+test("impossible and imprecise handling never change a raw reply", async () => {
+  await withWorker(({ jump, reply, stop, samples }) => {
+    const durations = ["9007199254740992", "6000000", "0", "5000000"];
+    for (const [index, duration] of durations.entries()) {
+      jump(5);
+      reply(index + 1, duration);
+    }
+    stop(15);
+    expect(samples()).toHaveLength(durations.length);
+    expect(samples().every((sample) => sample.rtt === 5 && !sample.lost)).toBe(
+      true,
+    );
+    expect(samples().map((sample) => sample.reflectorHandlingMs)).toEqual([
+      undefined,
+      undefined,
+      0,
+      5,
+    ]);
+  });
+});
+
+test("reordered and duplicated timed replies keep one duration paired with their original probe", async () => {
+  await withWorker(({ socket, advance, reply, stop, samples }) => {
+    advance(10); // The reply-driven backup sends id 2 at 8 ms while id 1 remains pending.
+    expect(socket.pings).toEqual([0, 1, 2]);
+    reply(2, "1000000");
+    reply(1, "7000000");
+    reply(2, "0");
+    reply(999_999, "0");
+    stop(8);
+    expect(
+      samples().map(({ rtt, reflectorHandlingMs }) => ({
+        rtt,
+        reflectorHandlingMs,
+      })),
+    ).toEqual([
+      { rtt: 2, reflectorHandlingMs: 1 },
+      { rtt: 10, reflectorHandlingMs: 7 },
+    ]);
+  });
+});
+
+test("reconnect ignores old socket PONG events and retains fresh reply timing", async () => {
+  await withWorker(
+    ({ socket, sockets, posted, jump, advance, reply, stop, samples }) => {
+      jump(5);
+      reply(1, "1000000");
+      socket.disconnect();
+      advance(1_000);
+      expect(sockets).toHaveLength(2);
+      const fresh = sockets[1];
+      fresh.onopen();
+
+      const id = fresh.pings[0];
+      socket.onmessage({ data: `PONG,${id},0` });
+      fresh.onmessage({ data: "PONG,999999,0" });
+      expect(posted.filter((event) => event.type === "ready")).toHaveLength(1);
+      jump(5);
+      reply(id, "1000000");
+      expect(posted.filter((event) => event.type === "ready")).toHaveLength(2);
+      stop(1_005);
+      expect(
+        samples().map(({ rtt, reflectorHandlingMs }) => ({
+          rtt,
+          reflectorHandlingMs,
+        })),
+      ).toEqual([
+        { rtt: 5, reflectorHandlingMs: 1 },
+        { rtt: 5, reflectorHandlingMs: 1 },
+      ]);
+    },
+  );
+});
+
+test("late replies retain only their timeout while drain replies retain paired timing for cutoff filtering", async () => {
+  await withWorker(({ jump, reply, stop, samples }) => {
+    jump(251);
+    reply(1, "1000000");
+    stop(251);
+    jump(5);
+    reply(2, "2000000");
+    const outcomes = samples();
+    expect(outcomes).toHaveLength(2);
+    expect(outcomes[0]).toMatchObject({ rtt: 250, lost: true });
+    expect(outcomes[0].reflectorHandlingMs).toBeUndefined();
+    expect(outcomes[1]).toMatchObject({
+      rtt: 5,
+      lost: false,
+      reflectorHandlingMs: 2,
+    });
+    // The channel/core owns the cutoff; retaining metadata does not make a post-cutoff RTT eligible.
+    expect(outcomes[1].observedAtEpochMs).toBe(10_256);
+  });
+});

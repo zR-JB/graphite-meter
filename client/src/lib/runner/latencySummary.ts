@@ -8,6 +8,9 @@ export class LatencyAccumulator {
   #unresolved = 0;
   #sendFailures = 0;
   #sum = 0;
+  #timingCount = 0;
+  #timingRawSum = 0;
+  #handlingSum = 0;
   #deltaSum = 0;
   #deltaCount = 0;
   #previous: number | null = null;
@@ -27,6 +30,7 @@ export class LatencyAccumulator {
     timedOut: boolean,
     continuityId: number,
     rttEligible = true,
+    reflectorHandlingMs?: number,
   ): void {
     if (continuityId !== this.#continuityId) this.#previous = null;
     this.#continuityId = continuityId;
@@ -39,6 +43,16 @@ export class LatencyAccumulator {
     if (!rttEligible) return;
     this.rtts.push(rttMs);
     this.#sum += rttMs;
+    if (
+      reflectorHandlingMs !== undefined &&
+      Number.isFinite(reflectorHandlingMs) &&
+      reflectorHandlingMs >= 0 &&
+      reflectorHandlingMs <= rttMs
+    ) {
+      this.#timingCount++;
+      this.#timingRawSum += rttMs;
+      this.#handlingSum += reflectorHandlingMs;
+    }
     if (this.#previous !== null) {
       this.#deltaSum += Math.abs(rttMs - this.#previous);
       this.#deltaCount++;
@@ -73,6 +87,17 @@ export class LatencyAccumulator {
         : null;
     const mid = Math.floor(sorted.length / 2);
     return {
+      ...(this.#timingCount
+        ? {
+            reflectorTiming: {
+              sampleCount: this.#timingCount,
+              meanRawRttMs: this.#timingRawSum / this.#timingCount,
+              meanHandlingMs: this.#handlingSum / this.#timingCount,
+              meanAdjustedRttMs:
+                (this.#timingRawSum - this.#handlingSum) / this.#timingCount,
+            },
+          }
+        : {}),
       accountingComplete: this.#accountingComplete,
       probeCount: this.count,
       timeoutCount: this.#timeouts,

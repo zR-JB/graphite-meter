@@ -79,8 +79,8 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	for ctx.Err() == nil {
-		if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {
-			t.Fatalf("hello: %v", err)
+		if err := sess.SendDatagram([]byte(wire.EncodePing(0))); err != nil {
+			t.Fatalf("probe: %v", err)
 		}
 		replyCtx, cancelReply := context.WithTimeout(ctx, 500*time.Millisecond)
 		reply, err := sess.ReceiveDatagram(replyCtx)
@@ -88,11 +88,11 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 		if err != nil {
 			continue // an unacknowledged datagram may simply be lost
 		}
-		if f, err := wire.Decode(string(reply)); err == nil && f.Op == wire.OpREADY {
+		if f, err := wire.DecodePong(string(reply)); err == nil && f.ID == 0 {
 			return
 		}
 	}
-	t.Fatal("ping bus never answered READY")
+	t.Fatal("ping bus never answered its probe")
 }
 
 func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {

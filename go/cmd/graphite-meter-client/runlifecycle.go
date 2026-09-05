@@ -313,7 +313,7 @@ func (m *model) apply(e goclient.Event) {
 		m.rates[e.Direction] = e.Throughput
 		m.peaks[e.Direction] = max(m.peaks[e.Direction], e.Throughput.BytesPerSec)
 	case goclient.EventLatency:
-		if e.Latency.Lost {
+		if e.Latency.TimedOut {
 			m.lostStreak++
 		} else {
 			m.lostStreak = 0

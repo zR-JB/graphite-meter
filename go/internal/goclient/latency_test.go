@@ -23,7 +23,7 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 	var mu sync.Mutex
 	var latencyEvents int
 	r := &runner{cfg: cfg, http: srv.Client(), emit: func(e Event) {
-		if e.Kind == EventLatency && !e.Latency.Lost {
+		if e.Kind == EventLatency && !e.Latency.TimedOut {
 			mu.Lock()
 			latencyEvents++
 			mu.Unlock()
@@ -113,14 +113,14 @@ func newIntermittentTimeoutPingServer(t *testing.T, dropEvery uint32) *httptest.
 			if err != nil {
 				return
 			}
-			f, derr := wire.Decode(string(msg))
-			if derr != nil || f.Op != wire.OpPING {
+			f, derr := wire.DecodePing(string(msg))
+			if derr != nil {
 				continue
 			}
-			if f.ID%dropEvery == dropEvery-1 {
+			if f%dropEvery == dropEvery-1 {
 				continue // silently drop this one; no PONG sent
 			}
-			pong := wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Now().UnixNano())})
+			pong := wire.EncodePong(f, 0)
 			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
 				return
 			}
@@ -178,11 +178,11 @@ func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atom
 			if err != nil {
 				return
 			}
-			f, derr := wire.Decode(string(msg))
-			if derr != nil || f.Op != wire.OpPING {
+			f, derr := wire.DecodePing(string(msg))
+			if derr != nil {
 				continue
 			}
-			pong := wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Now().UnixNano())})
+			pong := wire.EncodePong(f, 0)
 			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
 				return
 			}
@@ -273,7 +273,7 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 
 	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
-	_, _, err := r.redialPingBus(t.Context(), time.Now().Add(busRedialWindow))
+	_, err := r.redialPingBus(t.Context(), time.Now().Add(busRedialWindow))
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("redial error = %v, want AuthRequiredError", err)
 	}
@@ -285,10 +285,10 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
 	now := time.Now()
 	var stats latencyStats
-	stats.add(10*time.Millisecond, false)
+	stats.add(10*time.Millisecond, false, 0)
 	pending := map[uint32]time.Time{1: now.Add(-time.Second), 2: now.Add(-250 * time.Millisecond), 3: now.Add(-time.Millisecond)}
 	stats.closePending(pending, now, 250*time.Millisecond)
-	stats.add(100*time.Millisecond, false)
+	stats.add(100*time.Millisecond, false, 0)
 	got := stats.snapshot()
 	if len(pending) != 0 || got.Timeouts != 2 || got.Unresolved != 1 || got.JitterPairs != 0 {
 		t.Fatalf("cutoff summary: %+v, pending=%v", got, pending)
@@ -328,8 +328,8 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 			if err != nil {
 				return
 			}
-			frame, err := wire.Decode(string(msg))
-			if err != nil || frame.Op != wire.OpPING {
+			frame, err := wire.DecodePing(string(msg))
+			if err != nil {
 				continue
 			}
 			go func() {
@@ -339,7 +339,7 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 				case <-ctx.Done():
 					return
 				case <-timer.C:
-					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: frame.ID})))
+					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.EncodePong(frame, 0)))
 				}
 			}()
 		}
@@ -353,7 +353,7 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 {
+	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 || stats.ReflectorTiming != nil {
 		t.Fatalf("late replies became RTT observations: %+v", stats)
 	}
 }
@@ -381,11 +381,11 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 					if err != nil {
 						return
 					}
-					f, err := wire.Decode(string(msg))
-					if !reply || err != nil || f.Op != wire.OpPING || time.Since(started) > 100*time.Millisecond {
+					f, err := wire.DecodePing(string(msg))
+					if !reply || err != nil || time.Since(started) > 100*time.Millisecond {
 						continue
 					}
-					_ = conn.Write(req.Context(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID})))
+					_ = conn.Write(req.Context(), websocket.MessageText, []byte(wire.EncodePong(f, 0)))
 				}
 			}))
 			defer srv.Close()

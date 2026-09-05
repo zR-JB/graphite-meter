@@ -8,6 +8,7 @@
     probeAccountingDetails,
     hasProbeAccountingNotice,
     hoverContext,
+    reflectorTimingDescription,
     timeoutLabel,
     metricLabel,
     metricValue,
@@ -197,9 +198,19 @@
   {#each lanes as lane (lane.key)}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
-        <span class="lane-icon" aria-hidden="true"
-          >{@html laneIcons[lane.key]}</span
-        >
+        {#if lane.reflectorTiming}
+          <span
+            class="lane-icon timing-info"
+            role="img"
+            aria-label={`${lane.label}: server timing, ${lane.reflectorTiming.sampleCount} paired replies`}
+            use:tooltip={reflectorTimingDescription(lane.reflectorTiming)}
+            >{@html ICON.info}</span
+          >
+        {:else}
+          <span class="lane-icon" aria-hidden="true"
+            >{@html laneIcons[lane.key]}</span
+          >
+        {/if}
         <span class="lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
@@ -327,6 +338,13 @@
 </div>
 
 <style>
+  .timing-info {
+    cursor: help;
+  }
+  .timing-info:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
   .probe-accounting {
     display: flex;
     flex-wrap: wrap;

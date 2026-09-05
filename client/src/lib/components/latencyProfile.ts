@@ -1,6 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtMs, niceDomain } from "../format";
-import type { TransportRole } from "../runner/contract";
+import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 
 export const LATENCY_LANES = [
   { key: "latency", label: "Idle" },
@@ -49,6 +49,7 @@ export type LatencyProfileTone =
   "latency" | "download" | "upload" | "bidirectional";
 
 export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
+  reflectorTiming?: ReflectorTimingSummary;
   key: TransportRole;
   label: string;
   tone: LatencyProfileTone;
@@ -256,4 +257,14 @@ export function probeAccountingSummary(
         : null,
     ].filter((value): value is string => value !== null),
   };
+}
+
+export function reflectorTimingDescription(
+  timing: ReflectorTimingSummary,
+): string {
+  return `Server timing · ${timing.sampleCount} paired replies
+Mean raw RTT: ${fmtMs(timing.meanRawRttMs)} ms
+Mean server handling: ${fmtMs(timing.meanHandlingMs)} ms
+Mean adjusted RTT: ${fmtMs(timing.meanAdjustedRttMs)} ms
+Only server handling is subtracted.`;
 }

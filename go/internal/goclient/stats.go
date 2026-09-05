@@ -145,17 +145,19 @@ type latencyStats struct {
 	hasPrevious                        bool
 	variation                          time.Duration
 	pairs                              int
+	timingCount                        int
+	timingRawSum, handlingSum          time.Duration
 }
 
 func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
 
-func (s *latencyStats) add(rtt time.Duration, timeout bool) {
+func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) *time.Duration {
 	if timeout {
 		s.timeouts++
-		return
+		return nil
 	}
 	if rtt <= 0 {
-		return
+		return nil
 	}
 	if s.hasPrevious {
 		delta := rtt - s.previous
@@ -167,10 +169,30 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool) {
 	}
 	s.previous, s.hasPrevious = rtt, true
 	s.values = append(s.values, rtt)
+	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
+	if handlingNanos <= math.MaxInt64 {
+		handling := time.Duration(handlingNanos)
+		if handling <= rtt {
+			s.timingCount++
+			s.timingRawSum += rtt
+			s.handlingSum += handling
+			return new(handling)
+		}
+	}
+	return nil
 }
 
 func (s *latencyStats) snapshot() LatencyStats {
 	out := LatencyStats{Count: len(s.values), Timeouts: s.timeouts, Unresolved: s.unresolved, SendFailures: s.sendFailures, JitterPairs: s.pairs}
+	if s.timingCount > 0 {
+		count := time.Duration(s.timingCount)
+		out.ReflectorTiming = &ReflectorTimingStats{
+			Count:           s.timingCount,
+			MeanRawRTT:      s.timingRawSum / count,
+			MeanHandling:    s.handlingSum / count,
+			MeanAdjustedRTT: (s.timingRawSum - s.handlingSum) / count,
+		}
+	}
 	if s.pairs > 0 {
 		out.Jitter = s.variation / time.Duration(s.pairs)
 	}

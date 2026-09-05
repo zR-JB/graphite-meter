@@ -654,13 +654,19 @@ test("terminal probe accounting reaches the original stage summary before finali
     { duration: { downloadMs: 100 } },
     backend,
   );
-  core.ingestLatency({ rttMs: 10, lost: false, observedAtMs: fakeNow });
+  core.ingestLatency({
+    rttMs: 10,
+    reflectorHandlingMs: 2,
+    lost: false,
+    observedAtMs: fakeNow,
+  });
   advance(100);
   expect(core.phase).toBe("download");
   expect(hasEvent(events, "complete")).toBe(false);
   core.ingestLatency({ rttMs: 250, lost: true, observedAtMs: fakeNow });
   core.ingestLatency({
     rttMs: 30,
+    reflectorHandlingMs: 9,
     lost: false,
     observedAtMs: fakeNow + 20,
     rttEligible: false,
@@ -675,6 +681,12 @@ test("terminal probe accounting reaches the original stage summary before finali
       probeCount: 3,
       timeoutCount: 1,
       unresolvedCount: 2,
+      reflectorTiming: {
+        sampleCount: 1,
+        meanRawRttMs: 10,
+        meanHandlingMs: 2,
+        meanAdjustedRttMs: 8,
+      },
       meanMs: 10,
       p50Ms: 10,
       jitterPairs: 0,

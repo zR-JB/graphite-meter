@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { decode, encode } from "../real/wire";
+import { encodePing } from "../real/wire";
 import { createPingScheduler, type PingSchedulerClock } from "./pingScheduler";
 import { testClock } from "./test-helpers.test";
 
@@ -24,7 +24,7 @@ function makeHarness(
     () => {
       if (pending.size >= maxInFlight) return false;
       pending.add(id);
-      socket.send(encode({ op: "PING", id: id++ }));
+      socket.send(encodePing(id++));
       return true;
     },
     clock,
@@ -69,9 +69,9 @@ for (const [cadence, expected] of [
       h.pong(); // immediate/sub-millisecond RTT cannot pull the next send early
     }
     expect(h.socket.sent).toHaveLength(expected);
-    expect(
-      h.socket.sent.every(({ frame }) => decode(frame).op === "PING"),
-    ).toBe(true);
+    expect(h.socket.sent.every(({ frame }) => frame.startsWith("PING,"))).toBe(
+      true,
+    );
     for (let i = 1; i < h.socket.sent.length; i++)
       expect(
         h.socket.sent[i].at - h.socket.sent[i - 1].at,

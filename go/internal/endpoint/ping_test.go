@@ -42,44 +42,36 @@ func TestPingEcho(t *testing.T) {
 			t.Fatalf("write %q: %v", msg, err)
 		}
 	}
-	recv := func() wire.Frame {
+	recv := func() wire.Pong {
 		t.Helper()
 		_, data, err := conn.Read(ctx)
 		if err != nil {
 			t.Fatalf("read: %v", err)
 		}
-		f, derr := wire.Decode(string(data))
+		f, derr := wire.DecodePong(string(data))
 		if derr != nil {
 			t.Fatalf("decode reply %q: %v", string(data), derr)
 		}
 		return f
 	}
 
-	// PING echoes the id verbatim with a monotonic TIME stamp.
+	// PING echoes the id verbatim with a handling duration.
 	send("PING,42")
-	if f := recv(); f.Op != wire.OpPONG || f.ID != 42 {
+	if f := recv(); f.ID != 42 {
 		t.Fatalf("PING,42 → %+v; want PONG id=42", f)
 	}
 
 	// uint32 boundary id round-trips.
 	send("PING,4294967295")
-	if f := recv(); f.Op != wire.OpPONG || f.ID != 4294967295 {
+	if f := recv(); f.ID != 4294967295 {
 		t.Fatalf("PING max → %+v; want PONG id=4294967295", f)
 	}
 
-	// HI is acknowledged with READY.
-	send("HI,ws")
-	if f := recv(); f.Op != wire.OpREADY {
-		t.Fatalf("HI,ws → %+v; want READY", f)
-	}
-
-	// A malformed frame is rejected with ERR, and the bus survives for the next PING.
+	// Malformed probes are ignored and the bus remains usable.
 	send("PNG,5")
-	if f := recv(); f.Op != wire.OpERR || f.Code != wire.ErrBadOp {
-		t.Fatalf("PNG,5 → %+v; want ERR bad_op", f)
-	}
+	send("PING,5,0")
 	send("PING,7")
-	if f := recv(); f.Op != wire.OpPONG || f.ID != 7 {
+	if f := recv(); f.ID != 7 {
 		t.Fatalf("bus did not survive bad frame: PING,7 → %+v", f)
 	}
 }
