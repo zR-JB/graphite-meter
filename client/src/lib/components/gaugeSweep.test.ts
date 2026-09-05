@@ -1,10 +1,5 @@
 import { test, expect } from "bun:test";
-import {
-  clamp01,
-  sweepTarget,
-  angleForFraction,
-  interpolateSweep,
-} from "./gaugeSweep";
+import { clamp01, sweepTarget, angleForFraction } from "./gaugeSweep";
 import type { SweepTargetInput } from "./gaugeSweep";
 
 const base: SweepTargetInput = {
@@ -143,32 +138,4 @@ test("angleForFraction: midpoint fraction lands halfway across the sweep", () =>
 test("angleForFraction: out-of-range fractions are clamped before mapping", () => {
   expect(angleForFraction(-1, 1, 2)).toBe(1);
   expect(angleForFraction(2, 1, 2)).toBe(3);
-});
-
-test("interpolateSweep settles and honors reduced motion", () => {
-  const moving = interpolateSweep(0, 1, 16, false);
-  expect(moving.value).toBeGreaterThan(0);
-  expect(moving.value).toBeLessThan(1);
-  expect(moving.active).toBe(true);
-
-  expect(interpolateSweep(0.999, 1, 16, false)).toEqual({
-    value: 1,
-    active: false,
-  });
-  expect(interpolateSweep(0, 1, 16, true)).toEqual({
-    value: 1,
-    active: false,
-  });
-});
-
-test("completed gauge reveal starts at zero and settles at bounded target", () => {
-  const live = 0;
-  const target = 0.8;
-  const reveal = interpolateSweep(live, target, 16, false);
-  expect(reveal.value).toBeGreaterThan(live);
-  expect(reveal.value).toBeLessThan(target);
-  expect(interpolateSweep(live, target, 16, true)).toEqual({
-    value: target,
-    active: false,
-  });
 });

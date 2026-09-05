@@ -99,7 +99,7 @@ function dispatchWorkerMessage(
   }
 }
 
-/* One fetch request per lane: the worker script owns its own retries within one request, and a dropped lane is. */
+/* One fetch worker per lane; discarding the lane revokes its callbacks immediately. */
 export function fetchLane(
   opts: FetchLaneOptions,
   events: LaneEvents,
@@ -107,7 +107,9 @@ export function fetchLane(
   let worker: Worker | null = null;
   return {
     start(): void {
+      this.discard();
       const w = opts.dir === "down" ? downloadWorker() : uploadWorker();
+      worker = w;
       w.onmessage = (e: MessageEvent<WorkerMsg>): void => {
         dispatchWorkerMessage(e.data, events);
       };
@@ -120,31 +122,32 @@ export function fetchLane(
         credentials: opts.credentials,
         headers: opts.headers,
       });
-      worker = w;
     },
     measure(seq: number): void {
       worker?.postMessage({ type: "measure", seq });
     },
     stop(): Promise<void> {
-      worker?.terminate();
-      worker = null;
+      this.discard();
       return Promise.resolve();
     },
     discard(): void {
-      worker?.terminate();
+      if (!worker) return;
+      worker.onmessage = null;
+      worker.onerror = null;
+      worker.terminate();
       worker = null;
     },
   };
 }
 
-/* One worker owns a whole WebTransport session: its streams cannot be split across workers the way fetch lanes. */
+/* One worker owns a whole WebTransport session and all of its streams. */
 export function sessionLane(
   opts: SessionLaneOptions,
   events: LaneEvents,
 ): ByteLane {
   let worker: Worker | null = null;
   let established = false;
-  // One session death reaches every lane reader, the accept loop and the close promise, so only the first failure of.
+  // Readers, the accept loop and the close promise can report the same session failure.
   let failed = false;
   let establishTimer: ReturnType<typeof setTimeout> | null = null;
   let stopAck: (() => void) | null = null;

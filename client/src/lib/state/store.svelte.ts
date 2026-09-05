@@ -37,7 +37,7 @@ import {
   rateValueAt,
   rawRateFrom,
 } from "../format";
-import { gaugeScaleForPeak } from "../canvas/gaugeScale";
+import { gaugeScaleForPeak } from "../components/gaugeScale";
 import { buildSegments } from "../runner/schedule";
 import { LatencyScaleController } from "../runner/latencyScale";
 import { latencyJitterMs, upsertLatencyBucket } from "../runner/latencyBuckets";
@@ -167,7 +167,6 @@ class AppStore {
   #sustainedPeakBytesPerSec = $state(0);
   bytesTransferred = $state(0);
   uploadPresentationBytesPerSec = $state<number | null>(null);
-  presentationRateRevision = $state({ transfer: 0, down: 0, up: 0 });
   latency = $state<LatencyBucket[]>([]);
   latencySummaries = $state<
     Partial<Record<TransportRole, StageLatencySummary | null>>
@@ -570,19 +569,9 @@ class AppStore {
           )
         )
           this.throughputRevision++;
-        if (event.sample.phase === "bidirectional") {
-          this.presentationRateRevision[event.sample.dir]++;
-        }
-        this.presentationRateRevision.transfer++;
         break;
       case "uploadPresentation":
         this.uploadPresentationBytesPerSec = event.bytesPerSec;
-        if (this.phase === "bidirectional") {
-          this.presentationRateRevision.up++;
-          this.presentationRateRevision.transfer++;
-        } else if (this.phase === "upload") {
-          this.presentationRateRevision.transfer++;
-        }
         break;
       case "latency":
         if (event.sample.phase === "idle") {

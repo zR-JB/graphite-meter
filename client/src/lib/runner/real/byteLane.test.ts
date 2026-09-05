@@ -16,7 +16,6 @@ mock.module("./workerPool", () => ({
   wtTransferWorker: spawn,
   downloadWorker: spawn,
   uploadWorker: spawn,
-  uploadProgressWorker: () => new Worker("", { type: "module" }),
   pingWorker: () => new Worker("", { type: "module" }),
 }));
 
@@ -66,7 +65,7 @@ test("a restart reports the next generation's first failure", () => {
   expect(errors).toEqual(["first death", "second death"]);
 });
 
-// discard() terminates the worker, but messages already queued would still be dispatched to a handler that no longer.
+// Queued worker events must not reach a discarded lane's owner.
 test("a discarded worker stops reaching its owner", () => {
   const { lane, errors, worker } = session();
   lane.discard();
@@ -114,4 +113,40 @@ test("an upload worker's local completion metadata stays on the alive seam", () 
   spawned[0].emit({ type: "alive", bytes: 512, elapsedMs: 40 });
 
   expect(hints).toEqual([[512, 40]]);
+});
+
+test("a restarted fetch lane detaches the prior worker immediately", async () => {
+  spawned.length = 0;
+  const progress: number[] = [];
+  const errors: string[] = [];
+  const lane = fetchLane(
+    {
+      url: "https://meter/download",
+      dir: "down",
+      lanes: 1,
+      credentials: "same-origin",
+    },
+    {
+      onProgress: (bytes) => progress.push(bytes),
+      onAlive: () => {},
+      onError: (_recoverable, detail) => errors.push(detail),
+      onUploadProgress: () => {},
+      onAuthRequired: () => {},
+    },
+  );
+  lane.start();
+  const old = spawned[0];
+  lane.start();
+  old.emit({ type: "progress", bytes: 100 });
+  old.onerror?.({ message: "late failure" } as ErrorEvent);
+  expect(old.terminated).toBe(1);
+  expect(progress).toEqual([]);
+  expect(errors).toEqual([]);
+  const current = spawned[1];
+  current.emit({ type: "progress", bytes: 20 });
+  const stopped = lane.stop();
+  current.emit({ type: "progress", bytes: 200 });
+  expect(progress).toEqual([20]);
+  expect(current.onmessage).toBeNull();
+  await stopped;
 });

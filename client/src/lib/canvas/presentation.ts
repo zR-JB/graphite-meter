@@ -1,12 +1,9 @@
-// A moving hero gauge is the sole exception; it may use native frames to ease
-// an already-derived target, never to publish new measurement evidence.
 const PRESENTATION_MAX_FPS = 30;
 const FRAME_MS = 1000 / PRESENTATION_MAX_FPS;
 /** Draws one frame; true keeps the clock running without another invalidation. */
 type Render = (now: number) => boolean;
 interface Task {
   render: Render;
-  nativeAnimation: boolean;
   dirty: boolean;
   active: boolean;
   visible: boolean;
@@ -26,11 +23,7 @@ export interface PresentationHandle {
   invalidate(): void;
   destroy(): void;
 }
-interface PresentationOptions {
-  /** Use native animation frames only while this task's render reports motion. */
-  nativeAnimation?: boolean;
-}
-/** One visibility-aware frame clock shared by every canvas instrument. */
+/** One visibility-aware frame clock shared by instrument renderers. */
 export class PresentationScheduler {
   #tasks = new Set<Task>();
   #raf = 0;
@@ -42,14 +35,9 @@ export class PresentationScheduler {
     // The scheduler outlives every task, so the unsubscribe is never needed.
     environment.onVisibilityChange(this.#onVisibility);
   }
-  register(
-    element: Element,
-    render: Render,
-    options: PresentationOptions = {},
-  ): PresentationHandle {
+  register(element: Element, render: Render): PresentationHandle {
     const task: Task = {
       render,
-      nativeAnimation: options.nativeAnimation ?? false,
       dirty: true,
       active: false,
       visible: true,
@@ -86,10 +74,6 @@ export class PresentationScheduler {
   #request(): void {
     if (this.#raf || this.#timer || this.#environment.hidden()) return;
     if (!this.#hasPending()) return;
-    if (this.#hasNativeAnimation()) {
-      this.#raf = this.#environment.requestFrame(this.#frame);
-      return;
-    }
     const delay = FRAME_MS - (this.#environment.now() - this.#lastFrame);
     if (delay > 1) {
       // Wake half a frame early so the requested frame lands on the budgeted slot.
@@ -107,27 +91,18 @@ export class PresentationScheduler {
   #frame = (now: number): void => {
     this.#raf = 0;
     const cappedFrameDue = now - this.#lastFrame >= FRAME_MS - 1;
-    const nativeAnimation = this.#hasNativeAnimation();
-    if (!nativeAnimation && !cappedFrameDue) {
+    if (!cappedFrameDue) {
       this.#request();
       return;
     }
-    if (cappedFrameDue) this.#lastFrame = now;
+    this.#lastFrame = now;
     for (const task of this.#tasks) {
       if (!task.visible || (!task.dirty && !task.active)) continue;
-      const renderNativeAnimation = task.nativeAnimation && task.active;
-      if (!cappedFrameDue && !renderNativeAnimation) continue;
       task.dirty = false;
       task.active = task.render(now);
     }
     this.#request();
   };
-  #hasNativeAnimation(): boolean {
-    for (const task of this.#tasks) {
-      if (task.visible && task.nativeAnimation && task.active) return true;
-    }
-    return false;
-  }
   #hasPending(): boolean {
     for (const task of this.#tasks)
       if (task.visible && (task.dirty || task.active)) return true;

@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
-  import { GaugeEngine } from "../canvas/GaugeEngine";
-  import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
-  import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "../canvas/gaugeLayout";
+  import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
+  import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
   import {
     fmtGaugeTick,
     throughputGaugeFraction,
     throughputValueAtFraction,
-  } from "../canvas/gaugeScale";
+  } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -47,9 +46,7 @@
         !store.result?.latency),
   );
 
-  let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLDivElement>();
-  let engine: GaugeEngine;
   let gaugeSize = $state({ width: 0, height: 0 });
   const liveRateAnimator = new LiveRateAnimator();
   let liveRateValues = $state<LiveRateValues>({
@@ -147,70 +144,26 @@
 
   const liveRateInput = $derived.by(() => {
     const phase = store.phase;
-    const active =
-      store.measuring &&
-      (phase === "download" || phase === "upload" || phase === "bidirectional");
-    const context = `${store.runSeq}:${phase}`;
     const bidi = store.visualBidirectional ?? { down: 0, up: 0 };
     return {
-      active,
-      context,
-      transfer: {
-        target: store.visualTransferBytesPerSec,
-        revision: store.presentationRateRevision.transfer,
-      },
-      down: {
-        target: bidi.down,
-        revision: store.presentationRateRevision.down,
-      },
-      up: {
-        target: bidi.up,
-        revision: store.presentationRateRevision.up,
+      active:
+        store.measuring &&
+        (phase === "download" ||
+          phase === "upload" ||
+          phase === "bidirectional"),
+      context: `${store.runSeq}:${phase}`,
+      values: {
+        transfer: store.visualTransferBytesPerSec,
+        down: bidi.down,
+        up: bidi.up,
       },
     };
   });
 
   function stepLiveRates(now: number): boolean {
-    const input = liveRateInput;
-    const transfer = liveRateAnimator.step(
-      {
-        key: "transfer",
-        target: input.transfer.target,
-        revision: input.transfer.revision,
-        context: input.context,
-        active: input.active,
-      },
-      now,
-      reducedRateMotion,
-    );
-    const down = liveRateAnimator.step(
-      {
-        key: "down",
-        target: input.down.target,
-        revision: input.down.revision,
-        context: input.context,
-        active: input.active,
-      },
-      now,
-      reducedRateMotion,
-    );
-    const up = liveRateAnimator.step(
-      {
-        key: "up",
-        target: input.up.target,
-        revision: input.up.revision,
-        context: input.context,
-        active: input.active,
-      },
-      now,
-      reducedRateMotion,
-    );
-    liveRateValues = {
-      transfer: transfer.value,
-      down: down.value,
-      up: up.value,
-    };
-    return transfer.active || down.active || up.active;
+    const frame = liveRateAnimator.step(liveRateInput, now, reducedRateMotion);
+    liveRateValues = frame.values;
+    return frame.active;
   }
 
   $effect(() => {
@@ -326,27 +279,6 @@
           : hint,
   );
 
-  // Wake the gauge loop for exactly the state GaugeEngine reads. The loop parks
-  // once a run settles, so untracked state leaves the dial frozen.
-  $effect(() => {
-    void store.phase;
-    void store.throughput.length;
-    void store.latency.length;
-    void gaugeLatency.rttMs;
-    void gaugeLatency.scaleMs;
-    void store.liveLatencyLost;
-    void store.gaugeScaleBytesPerSec;
-    void store.liveThroughput.length;
-    void throughputEvidence;
-    void store.measuring;
-    void store.unitBase;
-    void store.unitKind;
-    void gaugeUnit;
-    void liveRateValues;
-    void layout;
-    engine?.wake();
-  });
-
   // The live region mirrors a per-frame value. Mid-phase announcements wait a
   // second apart, the time a screen reader needs to finish a sentence. Phase
   // changes and idle updates jump the queue.
@@ -382,36 +314,35 @@
     }
   });
 
+  const dialState = $derived.by<GaugeDialState>(() => {
+    const p = store.phase;
+    const scale = store.gaugeScaleBytesPerSec;
+    return {
+      phase: p,
+      showValue: !unusableStage,
+      valueBytesPerSec: unusableStage
+        ? 0
+        : p === "complete" && headlineArc
+          ? headlineArc.bytesPerSec
+          : store.visualTransferBytesPerSec,
+      scaleBytesPerSec: scale,
+      throughputEvidence:
+        p === "complete" ? terminalArcs.length > 0 : throughputEvidence,
+      latencyScaleMs: gaugeLatency.scaleMs,
+      rtt: gaugeLatency.rttMs,
+      completedKind,
+      resultArcs:
+        p === "complete"
+          ? terminalArcs.map((arc) => ({
+              phase: arc.phase,
+              fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
+              dashed: arc.dashed,
+            }))
+          : [],
+    };
+  });
+
   onMount(() => {
-    engine = new GaugeEngine(() => {
-      const p = store.phase;
-      const scale = store.gaugeScaleBytesPerSec;
-      return {
-        phase: p,
-        showValue: !unusableStage,
-        valueBytesPerSec: unusableStage
-          ? 0
-          : p === "complete" && headlineArc
-            ? headlineArc.bytesPerSec
-            : liveRateValues.transfer,
-        scaleBytesPerSec: scale,
-        throughputEvidence:
-          p === "complete" ? terminalArcs.length > 0 : throughputEvidence,
-        latencyScaleMs: gaugeLatency.scaleMs,
-        layout,
-        rtt: gaugeLatency.rttMs,
-        completedKind,
-        resultArcs:
-          p === "complete"
-            ? terminalArcs.map((arc) => ({
-                phase: arc.phase,
-                fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
-                dashed: arc.dashed,
-              }))
-            : [],
-      };
-    });
-    engine.attach(canvasEl!);
     liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
     const rateMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
     reducedRateMotion = rateMotion.matches;
@@ -420,36 +351,21 @@
       liveRatePresentation?.invalidate();
     };
     rateMotion.addEventListener("change", onRateMotion);
-    const themeObserver = new MutationObserver(() => engine.invalidateTheme());
-    themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-
     const resizeObserver = new ResizeObserver((entries) => {
       const { width, height } = entries[0].contentRect;
       if (gaugeSize.width !== width || gaugeSize.height !== height)
         gaugeSize = { width, height };
-      engine.resize(width, height);
     });
     resizeObserver.observe(stageEl!);
     const { clientWidth: width, clientHeight: height } = stageEl!;
     gaugeSize = { width, height };
-    engine.resize(width, height);
-    const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
-      engine.resize(stageEl!.clientWidth, stageEl!.clientHeight),
-    );
 
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
       rateMotion.removeEventListener("change", onRateMotion);
       liveRatePresentation?.destroy();
       liveRatePresentation = null;
-      liveRateAnimator.reset();
-      engine.destroy();
-      themeObserver.disconnect();
       resizeObserver.disconnect();
-      stopWatchingPixelRatio();
     };
   });
 </script>
@@ -463,7 +379,7 @@
       class="stage"
       style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
     >
-      <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+      <GaugeDial input={dialState} {layout} />
       {#if showGaugeTicks}
         <div class="gauge-ticks" aria-hidden="true">
           {#each layout.labelPoints as point, index (index)}
@@ -677,13 +593,6 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
     overflow: visible;
-  }
-  .canvas {
-    position: absolute;
-    inset: 0;
-    display: block;
-    width: 100%;
-    height: 100%;
   }
   .gauge-ticks {
     position: absolute;

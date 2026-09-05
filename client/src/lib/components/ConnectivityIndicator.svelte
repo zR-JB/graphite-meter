@@ -1,24 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { tooltip } from "../actions/tooltip";
-  import {
-    presentation,
-    type PresentationHandle,
-  } from "../canvas/presentation";
-  import {
-    canvasPixelRatio,
-    watchCanvasPixelRatio,
-  } from "../canvas/canvasResolution";
-
-  // CSS size of the sparkline. Mirrors the canvas width/height attributes and
-  // the .spark rule, so the backing store scales by the device ratio.
-  const CSS_WIDTH = 36;
-  const CSS_HEIGHT = 16;
-  const FALLBACK_COLOR = "#888";
-
-  let canvasEl = $state<HTMLCanvasElement>();
-  let canvasPresentation: PresentationHandle;
 
   const spark = $derived(
     store.pulseLatency
@@ -28,74 +10,16 @@
       ),
   );
 
-  let sparkColor = FALLBACK_COLOR;
-  function resolveColor() {
-    sparkColor =
-      getComputedStyle(document.documentElement)
-        .getPropertyValue("--text-soft")
-        .trim() || FALLBACK_COLOR;
-  }
-
-  // A one-shot repaint, re-armed by invalidate().
-  function draw(): boolean {
-    const canvas = canvasEl;
-    if (!canvas) return false;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return false;
-    const dpr = canvasPixelRatio();
-    const deviceWidth = Math.round(CSS_WIDTH * dpr);
-    const deviceHeight = Math.round(CSS_HEIGHT * dpr);
-    if (canvas.width !== deviceWidth || canvas.height !== deviceHeight) {
-      canvas.width = deviceWidth;
-      canvas.height = deviceHeight;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, CSS_WIDTH, CSS_HEIGHT);
-
-    const samples = spark;
-    if (samples.length < 2) return false;
-    const min = Math.min(...samples);
-    const max = Math.max(...samples);
-    const range = max - min || 1;
-    ctx.strokeStyle = sparkColor;
-    ctx.lineWidth = 1;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    samples.forEach((rttMs, i) => {
-      const x = (i / (samples.length - 1)) * (CSS_WIDTH - 2) + 1;
-      const y = CSS_HEIGHT - 1 - ((rttMs - min) / range) * (CSS_HEIGHT - 2);
-      if (i) ctx.lineTo(x, y);
-      else ctx.moveTo(x, y);
-    });
-    ctx.stroke();
-    return false;
-  }
-
-  $effect(() => {
-    void spark;
-    canvasPresentation?.invalidate();
-  });
-
-  onMount(() => {
-    resolveColor();
-    canvasPresentation = presentation.register(canvasEl!, draw);
-    const themeObserver = new MutationObserver(() => {
-      resolveColor();
-      canvasPresentation.invalidate();
-    });
-    themeObserver.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["data-theme"],
-    });
-    const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
-      canvasPresentation.invalidate(),
-    );
-    return () => {
-      canvasPresentation.destroy();
-      themeObserver.disconnect();
-      stopWatchingPixelRatio();
-    };
+  const points = $derived.by(() => {
+    if (spark.length < 2) return "";
+    const min = Math.min(...spark);
+    const range = Math.max(...spark) - min || 1;
+    return spark
+      .map(
+        (rttMs, i) =>
+          `${1 + (i / (spark.length - 1)) * 34},${15 - ((rttMs - min) / range) * 14}`,
+      )
+      .join(" ");
   });
 </script>
 
@@ -106,13 +30,9 @@
   use:tooltip={`Connection: ${store.effectiveConnectivity}`}
 >
   <span class="dot" data-state={store.effectiveConnectivity}></span>
-  <canvas
-    bind:this={canvasEl}
-    class="spark"
-    width="36"
-    height="16"
-    aria-hidden="true"
-  ></canvas>
+  <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
+    <polyline {points} />
+  </svg>
 </div>
 
 <style>
@@ -133,6 +53,14 @@
     height: 16px;
     display: block;
     opacity: 0.85;
+  }
+
+  polyline {
+    fill: none;
+    stroke: var(--text-soft);
+    stroke-width: 1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 
   /* State tones. */

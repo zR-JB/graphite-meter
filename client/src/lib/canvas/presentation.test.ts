@@ -137,44 +137,15 @@ test("unsettled work is capped at 30 presentation frames per second", () => {
   expect(renders).toBeGreaterThanOrEqual(29);
 });
 
-test("a moving hero gauge uses native frames without waking settled charts", () => {
-  const environment = new FakeEnvironment();
-  const scheduler = new PresentationScheduler(environment);
-  let gaugeRenders = 0;
-  let chartRenders = 0;
-  scheduler.register(
-    {} as Element,
-    () => {
-      gaugeRenders++;
-      return gaugeRenders < 6;
-    },
-    { nativeAnimation: true },
-  );
-  scheduler.register({} as Element, () => {
-    chartRenders++;
-    return false;
-  });
-
-  for (let i = 0; i < 6; i++) environment.frame();
-
-  expect(gaugeRenders).toBe(6);
-  expect(chartRenders).toBe(1);
-  expect(environment.pending).toBe(0);
-});
-
-test("a hidden native animation parks until its gauge becomes visible", () => {
+test("an offscreen animation parks until its surface becomes visible", () => {
   const environment = new FakeEnvironment();
   const scheduler = new PresentationScheduler(environment);
   const gauge = {} as Element;
   let renders = 0;
-  scheduler.register(
-    gauge,
-    () => {
-      renders++;
-      return true;
-    },
-    { nativeAnimation: true },
-  );
+  scheduler.register(gauge, () => {
+    renders++;
+    return true;
+  });
 
   environment.frame();
   environment.setVisible(gauge, false);

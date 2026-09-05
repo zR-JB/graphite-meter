@@ -1,11 +1,10 @@
 // Runs one benchmark cell against a real server, measuring production lanes after warmup.
-// This driver never reads or writes bytes itself; all traffic goes through production workers.
+// Byte lanes and upload accounting use the production transport implementations.
 import {
   fetchLane,
   sessionLane,
   type ByteLane,
   type LaneEvents,
-  type WtProgressRelay,
 } from "../src/lib/runner/real/byteLane";
 import {
   laneUrl,
@@ -14,7 +13,7 @@ import {
   ROUTES,
   type LaneUrlSpec,
 } from "../src/lib/runner/real/backendPure";
-import { uploadProgressWorker } from "../src/lib/runner/real/workerPool";
+import { startUploadFeed } from "../src/lib/runner/real/uploadFeed";
 
 /** Resolution of the within-cell rate series, which yields the stability figure. */
 const BUCKET_MS = 200;
@@ -95,31 +94,32 @@ function openProgressFeed(
   uploadId: string,
   total: ServerTotal,
   errors: string[],
-): { worker: Worker; open: Promise<boolean> } {
-  const worker = uploadProgressWorker();
+): { dispose(): void; open: Promise<boolean> } {
   let resolveOpen!: (opened: boolean) => void;
   const open = new Promise<boolean>((resolve) => (resolveOpen = resolve));
   let opening = true;
-  worker.onmessage = (e: MessageEvent<WtProgressRelay>): void => {
-    const msg = e.data;
-    if (msg.type === "open") {
-      opening = false;
-      resolveOpen(true);
-    } else if (msg.type === "bytes" || msg.type === "complete")
-      total.accept(msg.n);
-    else if (msg.type === "fatal") {
-      errors.push(`progress: ${msg.detail}`);
-      if (opening) {
-        opening = false;
-        resolveOpen(false);
-      }
-    }
-  };
-  worker.postMessage({
-    type: "start",
+  const feed = startUploadFeed({
     url: `${origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`,
+    csrf: {},
+    credentials: "same-origin",
+    onEvent(msg) {
+      if (msg.type === "open") {
+        opening = false;
+        resolveOpen(true);
+      } else if (msg.type === "bytes" || msg.type === "complete")
+        total.accept(msg.n);
+      else if (msg.type === "fatal" || msg.type === "auth-required") {
+        errors.push(
+          `progress: ${msg.type === "fatal" ? msg.detail : "authentication required"}`,
+        );
+        if (opening) {
+          opening = false;
+          resolveOpen(false);
+        }
+      }
+    },
   });
-  return { worker, open };
+  return { dispose: feed.dispose, open };
 }
 
 export async function runCell(spec: CellSpec): Promise<CellResult> {
@@ -173,13 +173,13 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     errors.push("h3 bootstrap: never negotiated h3");
 
   const uploadId = spec.dir === "up" ? await mintUploadId(spec.origin) : "";
-  // Only a fetch upload needs its own feed worker; a session carries its own.
+  // Fetch uploads use the direct HTTP feed; a session carries its own.
   const feed =
     spec.dir === "up" && !rides
       ? openProgressFeed(spec.origin, uploadId, total, errors)
       : null;
   if (feed && !(await feed.open)) {
-    feed.worker.terminate();
+    feed.dispose();
     await fetch(
       `${spec.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`,
       { method: "DELETE", cache: "no-store" },
@@ -257,8 +257,7 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
 
   await Promise.all(lanes.map((lane) => lane.stop()));
   if (feed) {
-    feed.worker.postMessage({ type: "stop" });
-    feed.worker.terminate();
+    feed.dispose();
   }
   if (spec.dir === "up")
     await fetch(

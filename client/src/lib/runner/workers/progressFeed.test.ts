@@ -201,3 +201,60 @@ test("the read that ends the feed flushes the decoder", async () => {
   await read(feedOf(`{"type":"ready"}`, ""));
   expect(streaming).toEqual([true, false]);
 });
+
+test("oversized progress records stop reading, including fragmented records", async () => {
+  for (const fragments of [
+    ["x".repeat(65_537) + "\n"],
+    ["x".repeat(40_000), "x".repeat(30_000)],
+  ]) {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const fragment of fragments)
+          controller.enqueue(new TextEncoder().encode(fragment));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(read(stream)).rejects.toThrow("exceeds 64 Ki characters");
+    expect(cancelled).toBe(true);
+    expect(stream.locked).toBe(false);
+  }
+});
+
+test("the record limit does not cap a chunk containing many valid records", async () => {
+  const records = Array.from({ length: 2_000 }, (_, i) =>
+    JSON.stringify({ type: "progress", bytes: i, nanos: i * 100_000_000 }),
+  );
+  const { events } = await read(feedOf(...records, ""));
+  expect(events).toHaveLength(2_000);
+  expect(events.at(-1)).toEqual({
+    type: "bytes",
+    n: 1_999,
+    t: 199_900_000_000,
+  });
+});
+
+test("terminal records cancel the remaining stream and release its reader", async () => {
+  for (const record of [
+    { type: "complete", bytes: 42, nanos: 9 },
+    { type: "error", code: "ownerMismatch" },
+  ]) {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(JSON.stringify(record) + "\n"),
+        );
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const { end } = await read(stream);
+    expect(end).toBe(record.type === "complete" ? "complete" : "fatal");
+    expect(cancelled).toBe(true);
+    expect(stream.locked).toBe(false);
+  }
+});

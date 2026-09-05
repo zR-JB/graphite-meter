@@ -38,7 +38,7 @@ export interface GaugeLayout {
   }>;
   labelPoints: ReadonlyArray<GaugeLabelLayout>;
 }
-/** One CSS-pixel geometry model for the gauge canvas and DOM tick labels. */
+/** One CSS-pixel geometry model for the gauge surface and DOM tick labels. */
 export function gaugeLayout(width: number, height: number): GaugeLayout {
   const safeWidth = Math.max(1, width);
   const safeHeight = Math.max(1, height);

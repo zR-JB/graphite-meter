@@ -29,142 +29,36 @@ just setup
 
 ## Repository layout
 
-| Path                           | Responsibility                                                               |
-| ------------------------------ | ---------------------------------------------------------------------------- |
-| `api/`                         | JSON schemas and the normative message-bus protocol.                         |
-| `client/`                      | Svelte 5 browser client, workers, browser harness, and throughput benchmark. |
-| `go/cmd/graphite-meter`        | Server entry point and CLI flags.                                            |
-| `go/cmd/graphite-meter-client` | Native Bubble Tea client.                                                    |
-| `go/internal/config`           | Server configuration and validation.                                         |
-| `go/internal/endpoint`         | Measurement, probe, upload progress, and WebTransport handlers.              |
-| `go/internal/server`           | Listener ownership, admission, TLS lifecycle, and routing.                   |
-| `go/internal/transport`        | HTTP protocol evidence, message channels, and QUIC I/O cancellation.                          |
-| `go/internal/static`           | Embedded browser assets and index metadata injection.                        |
-| `container/`                   | OCI image, Compose examples, and Quadlet units.                              |
-| `legal/`                       | Reviewed dependency metadata and generated notices.                          |
-| `scripts/ci/`                  | Workflow policy, release verification, and CI helpers.                       |
+| Path | Responsibility |
+| --- | --- |
+| `api/` | Shared schemas and protocol specifications. |
+| `client/` | Svelte browser client, workers, and browser verification. |
+| `go/cmd/` | Server and native client entry points. |
+| `go/internal/` | Server, transport, measurement, and embedded-asset implementation. |
+| `container/` | Container build and deployment examples. |
+| `legal/` | Reviewed dependency metadata and generated notices. |
+| `scripts/ci/` | CI and release verification. |
 
-## Measurement architecture
+## Architecture
 
-The server and both clients share routes and wire contracts but retain separate measurement
-engines. The protocol definitions in `api/` are the boundary between them.
+The Go server, browser client, and native client share routes and wire contracts, while each
+client owns its measurement engine. Throughput is receiver-authoritative; latency populations
+remain separate by stage. Presentation and animation never define measurement results.
 
-HTTP routes receive the request and response writer directly. WebSocket and WebTransport
-adapters own connection lifetime and supply message channels or byte readers/writers to shared
-measurement operations. Upload adapters pass the authenticated request or CONNECT owner explicitly;
-refused lanes are rejected before their bytes are read. The shared upload loop retains receiver-side
-chunk accounting, while each adapter owns deadlines, stream closure, and transport-specific responses.
+The browser separates connection preparation, measurement execution, and presentation. Workers
+isolate transfer and probe hot paths. The interface uses native SVG/CSS for the gauge and canvas
+for the timeline chart, with responsive layout, reduced motion, and bounded local history.
 
-### Authoritative accounting
+The native client provides the same measurement stages through a terminal interface. Browser
+and native results reflect different runtime constraints and should not be treated as identical
+benchmark targets.
 
-- Download bytes are counted after the receiving browser worker or native client consumes them.
-- Upload bytes and elapsed time come from the receiving server and are returned through the upload
-  progress stream or the WebTransport session.
-- Client upload completion and animated values are presentation hints only. They do not enter the
-  final result reducer.
-- Each final rate uses bytes and elapsed time from one clock domain.
-- Wire-rate estimates are presentation data derived after measurement. They never change the raw
-  application rate.
+The server owns protocol listeners, authentication, admission limits, and connection lifetimes.
+Resource limits bound concurrency without throttling the measured data streams.
 
-### Application latency
-
-The latency worker owns ping pacing and observation timestamps outside the browser main thread.
-WebSocket pings provide RTT through a reliable TCP stream. WebTransport pings use unreliable QUIC
-datagrams, so missing application datagrams remain observable instead of being repaired by TCP.
-
-RTT is measured by the client clock from send to response receipt. It includes the complete
-application path, browser or native scheduling, server work, and transport behavior.
-
-Latency continues during transfer stages when loaded latency is enabled. Idle and loaded samples
-are summarized separately.
-
-### Measurement stages
-
-- Latency establishes the idle RTT profile.
-- Download consumes server payload on one or more lanes.
-- Upload sends bounded incompressible payloads while the server reports received progress.
-- Bidirectional runs the existing upload and download mechanisms concurrently.
-- Loaded latency runs the selected latency channel during transfer stages.
-
-The client probes and commits selected paths before the measured timeline begins. Connection
-preparation and warmup do not consume the configured measurement window.
-
-### Browser client
-
-The application controller owns connection validation, authentication coverage, and the idle
-latency monitor. Each role retains its requested target, actual verified target, observed path
-metadata, server generation, and verification time. A current preparation transaction commits
-those values; starting a run passes a snapshot into a fresh backend. The backend does not repeat
-connection discovery or own the idle monitor.
-
-`RunnerCore` owns the stage timeline, monotonic measurement clock, adaptive finish decision,
-recovery deadline, and final result reducer. `RealBackend` supplies production samples through a
-three-step stage lifecycle: prepare, measure, and end.
-
-Workers isolate the hot paths:
-
-| Worker                      | Responsibility                                                       |
-| --------------------------- | -------------------------------------------------------------------- |
-| `download-worker.ts`        | Consume and count one fetch download lane.                           |
-| `upload-worker.ts`          | Size and submit finite incompressible upload requests.               |
-| `upload-progress-worker.ts` | Parse authoritative server upload progress.                          |
-| `ping-worker.ts`            | Pace WebSocket or WebTransport pings and retain RTT/loss timestamps. |
-| `wt-transfer-worker.ts`     | Own a WebTransport session, streams, datagrams, and finalization.    |
-
-The main-thread scheduler is invalidation-driven, visibility-aware, reduced-motion-aware, and
-capped at 30 frames per second. Presentation interpolation never becomes measurement evidence.
-
-History code and IndexedDB are loaded only when History is visited or an enabled run completes.
-Only validated completed summaries are stored, capped at 2,000 records. Raw graph points and
-aborted runs are not retained.
-
-### Native client
-
-The native client uses the same discovery document, routes, and wire protocol. Its Bubble Tea
-model redraws on state changes and uses no independent animation clock. It supports interactive
-configuration, repeatable setup through flags, browser-approved authentication grants, and the
-same latency, download, upload, bidirectional, and loaded-latency stages.
-
-The native engine emits one ordered `EventDone` after stage results and producer shutdown.
-`Run` and `RunPrepared` also return that error for synchronous callers. User cancellation stops
-measurement while the TUI drains final results; replacing a run or leaving the application can
-cancel delivery too. Stage progress follows the engine's typed stage events.
-
-The browser and native clients are not identical benchmark targets. They have different runtime
-constraints, buffer policies, and browser-only presentation features.
-
-Native latency summaries use received application replies within each measured stage. P50 is the
-midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
-consecutive successful replies in receive order, skipping timeout outcomes and starting a new
-sequence after a reconnect. One reply cannot establish variation; repeated identical replies can
-establish zero variation.
-
-Native probe deadlines are `max(4 * PingInterval, 250ms)`, measured from the client send attempt.
-Replies after that deadline count as probe timeouts, even if the periodic timeout sweep has not
-run. Timeout ratios use only successful replies plus expired probes. At a stage cutoff or channel
-interruption, pending probes whose deadlines have not elapsed are reported as unresolved; local
-send failures are separate. This native cutoff does not add a post-stage drain interval. An empty
-resolved population has no timeout ratio, and timeout-only loaded stages still produce a result.
-Failed stages retain their measured latency population with an incomplete marker and the original
-failure; the elapsed window records only the measured portion. Failures before any probe was measured
-produce an error without a numeric summary. These are application probe observations over WebSocket
-or WebTransport, not TCP/IP packet loss.
-
-### Server
-
-HTTP handlers own request and response behavior. WebSocket and WebTransport adapters own
-connection lifetimes and cancellation, while sharing focused message, download, and upload
-operations. Upload ownership is passed explicitly from the authenticated request or CONNECT.
-Separate native listeners make HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
-The fixed route catalog supplies transport, admission, and authenticated CORS-method metadata.
-Listener setup selects concrete handlers and protocol gates; admission wraps the registered routes.
-
-Admission limits bound active handlers, sessions, and connections. WebTransport sessions consume
-part of the global measurement pool rather than extending it. The server intentionally does not
-rate-limit measurement bodies because that would alter throughput results.
-
-See [Deployment and configuration](DEPLOYMENT.md) for listener, authentication, proxy, and limit
-settings. See [the wire specification](../api/wire.md) for message framing and opcodes.
+See [Measurement definitions](MEASUREMENTS.md) for units, timing, and missing-data behavior,
+[Deployment and configuration](DEPLOYMENT.md) for operational settings, and the
+[wire specification](../api/wire.md) for protocol details.
 
 ## Development commands
 

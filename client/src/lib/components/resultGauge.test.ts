@@ -3,7 +3,6 @@ import type { RunResult, ThroughputResult } from "../runner/contract";
 import {
   primaryResultGaugeArc,
   resultGaugeArcs,
-  resultGaugeFillTarget,
   resultGaugeHeadPlacements,
   sortResultGaugeArcs,
 } from "./resultGauge";
@@ -120,14 +119,6 @@ test("layer ordering paints highest throughput first and preserves ties", () => 
     "download",
   ]);
   expect(layers[1]!.dashed).toBe(true);
-});
-
-test("one, two, and three results all produce bounded layered fill", () => {
-  expect(resultGaugeFillTarget([])).toBe(0);
-  expect(resultGaugeFillTarget([0.4])).toBe(0.4);
-  expect(resultGaugeFillTarget([0.2, 0.8])).toBe(0.8);
-  expect(resultGaugeFillTarget([0.1, 0.7, 1.4])).toBe(1);
-  expect(resultGaugeFillTarget([-1, Number.NaN])).toBe(0);
 });
 
 test("partial result styling remains dashed without marker geometry", () => {

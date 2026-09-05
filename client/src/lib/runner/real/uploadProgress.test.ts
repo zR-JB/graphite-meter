@@ -5,11 +5,12 @@ import {
   UploadProgressChannel,
   type UploadProgressLane,
 } from "./uploadProgress";
-import { TestWorker } from "./test-helpers.test";
 
-const realWorker = globalThis.Worker;
+const realFetch = globalThis.fetch;
+const channels: UploadProgressChannel[] = [];
 afterEach(() => {
-  globalThis.Worker = realWorker;
+  channels.splice(0).forEach((channel) => channel.discard());
+  globalThis.fetch = realFetch;
 });
 const target: FetchThroughputTarget = {
   id: "http://meter.test:7246",
@@ -28,6 +29,7 @@ const target: FetchThroughputTarget = {
 function channelUnderTest(
   laneState: Partial<UploadProgressLane> = {},
   sampleProvesStageLiveness = true,
+  recoveryStartedAt?: number,
 ): {
   channel: UploadProgressChannel;
   failures: string[];
@@ -53,6 +55,8 @@ function channelUnderTest(
   const lane: UploadProgressLane = {
     stage: "upload",
     measuring: false,
+    noteMeasuredProgress: (bytes) => progress.push(bytes),
+    setStalled: (_stalled, detail, cause) => stalls.push({ detail, cause }),
     ...laneState,
   };
   const host = {
@@ -83,20 +87,18 @@ function channelUnderTest(
       return 750;
     },
   } as unknown as CoreHost;
+  const channel = new UploadProgressChannel({
+    host,
+    target,
+    lane,
+    recoveryStartedAt,
+    sampleProvesStageLiveness: () => sampleProvesStageLiveness,
+    discardTransfer: () => {},
+    authoritativePresentation: (bytesPerSec) => presentations.push(bytesPerSec),
+  });
+  channels.push(channel);
   return {
-    channel: new UploadProgressChannel({
-      host: () => host,
-      sampleProvesStageLiveness: () => sampleProvesStageLiveness,
-      target: () => target,
-      lane: () => lane,
-      transferActive: () => true,
-      discardTransfer: () => {},
-      noteLaneProgress: (bytes) => progress.push(bytes),
-      authoritativePresentation: (bytesPerSec) =>
-        presentations.push(bytesPerSec),
-      setLaneStalled: (_stalled, detail, cause) =>
-        stalls.push({ detail, cause }),
-    }),
+    channel,
     failures,
     curve,
     durations,
@@ -111,31 +113,28 @@ function channelUnderTest(
 const bytes = (channel: UploadProgressChannel, n: number, t: number): void =>
   channel.accept({ type: "bytes", n, t: t * 1_000_000_000 });
 
-test("attachExternal: a replaced feed is superseded, not a stage failure", async () => {
+test("discard settles external readiness without failing the stage", async () => {
   const { channel, failures } = channelUnderTest();
-  const first = channel.attachExternal(() => {});
-  const second = channel.attachExternal(() => {});
-  expect(await first).toBe("superseded");
-
-  await channel.teardown(false);
-  expect(await second).toBe("superseded");
+  const ready = channel.attachExternal(() => {});
+  channel.discard();
+  expect(await ready).toBe(false);
   expect(failures).toEqual([]);
 });
-test("an old upload generation cannot feed the replacement meter", async () => {
-  const { channel, curve } = channelUnderTest({ measuring: true });
-  const first = channel.attachExternal(() => {});
-  const oldGeneration = channel.generation;
-  const second = channel.attachExternal(() => {});
-
-  channel.accept({ type: "bytes", n: 9_999, t: 1_000_000_000 }, oldGeneration);
-  expect(curve).toEqual([]);
-
-  bytes(channel, 100, 1);
-  bytes(channel, 250, 2);
-  expect(curve).toEqual([150]);
-  await channel.teardown(false);
-  expect(await first).toBe("superseded");
-  expect(await second).toBe("superseded");
+test("a discarded upload cannot feed the replacement meter", async () => {
+  const old = channelUnderTest({ measuring: true });
+  const oldReady = old.channel.attachExternal(() => {});
+  old.channel.discard();
+  const replacement = channelUnderTest({ measuring: true });
+  const ready = replacement.channel.attachExternal(() => {});
+  replacement.channel.accept({ type: "open" });
+  bytes(old.channel, 9999, 1);
+  bytes(old.channel, 19999, 2);
+  bytes(replacement.channel, 100, 1);
+  bytes(replacement.channel, 250, 2);
+  expect(old.curve).toEqual([]);
+  expect(replacement.curve).toEqual([150]);
+  expect(await oldReady).toBe(false);
+  expect(await ready).toBe(true);
 });
 test("accept: a refusal ends a pending external attach", async () => {
   const { channel, failures } = channelUnderTest({ measuring: true });
@@ -148,7 +147,7 @@ test("accept: a refusal ends a pending external attach", async () => {
   });
   // Racing an already-settled sentinel reports an attach left pending as a value rather than as a whole-test timeout.
   const outcome = await Promise.race([attached, Promise.resolve("pending")]);
-  expect(outcome).toBe("superseded");
+  expect(outcome).toBe(false);
   expect(failures).toEqual([]);
 });
 test("an explicit invalid upload id starts runner-owned recovery", () => {
@@ -173,21 +172,21 @@ test("capacity and ownership refusals cannot trigger upload-id recovery", () => 
     expect(stalls).toEqual([]);
   }
 });
-test("teardown finalizes a dropped session feed, but not a completed one", async () => {
+test("finish finalizes a dropped session feed, but not a completed one", async () => {
   const dropped = channelUnderTest({ measuring: true });
   let droppedFinalizes = 0;
   void dropped.channel.attachExternal(() => droppedFinalizes++);
-  await dropped.channel.teardown(true);
+  await dropped.channel.finish();
   expect(droppedFinalizes).toBe(1);
 
   const { channel } = channelUnderTest({ measuring: true });
   let finalizes = 0;
   const attached = channel.attachExternal(() => finalizes++);
   channel.accept({ type: "open" });
-  expect(await attached).toBe("open");
+  expect(await attached).toBe(true);
 
   channel.accept({ type: "complete", n: 4096, t: 1_000_000_000 });
-  await channel.teardown(true);
+  await channel.finish();
   expect(finalizes).toBe(0);
 });
 test("a server count that arrives behind the last one does not move the curve", () => {
@@ -224,10 +223,7 @@ test("only an advancing server checkpoint refreshes the visual bridge baseline",
 });
 test("the first advancing replacement checkpoint closes a rotation gap", () => {
   const { channel, curve, progress, recoveryGaps, recoveryBytes } =
-    channelUnderTest({
-      measuring: true,
-    });
-  channel.beginRecoveryGap();
+    channelUnderTest({ measuring: true }, true, performance.now());
   bytes(channel, 100, 1);
   expect(recoveryGaps).toHaveLength(1);
   expect(recoveryBytes).toEqual([100]);
@@ -243,32 +239,127 @@ test("the first advancing replacement checkpoint closes a rotation gap", () => {
   expect(curve).toEqual([150, 150]);
   expect(progress).toEqual([100, 150, 150]);
 });
-test("taking a session feed terminates the worker feed it replaces", async () => {
-  globalThis.Worker = TestWorker as unknown as typeof Worker;
-  const { channel, failures } = channelUnderTest();
-  const primed = channel.prime("upload", "gmu_one");
-  const worker = TestWorker.last!;
-
-  const attached = channel.attachExternal(() => {});
-  expect(worker.terminated).toBe(1);
-
-  await channel.teardown(false);
-  expect(await attached).toBe("superseded");
-  expect(await primed).toBe(false);
+function fetchFeed() {
+  const requests: { url: string; init: RequestInit }[] = [];
+  let writer!: ReadableStreamDefaultController<Uint8Array>;
+  let body!: ReadableStream<Uint8Array>;
+  globalThis.fetch = (async (
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+  ) => {
+    requests.push({ url: String(input), init });
+    if (init.method === "DELETE") return new Response(null, { status: 204 });
+    body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        writer = controller;
+        init.signal?.addEventListener(
+          "abort",
+          () => controller.error(init.signal!.reason),
+          { once: true },
+        );
+      },
+    });
+    return new Response(body);
+  }) as typeof fetch;
+  return {
+    requests,
+    write: (record: object) =>
+      writer.enqueue(new TextEncoder().encode(JSON.stringify(record) + "\n")),
+    get locked() {
+      return body.locked;
+    },
+  };
+}
+async function until(predicate: () => boolean) {
+  for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(5);
+  expect(predicate()).toBe(true);
+}
+test("HTTP readiness waits for parsed ready and finish drains final receiver counters", async () => {
+  const feed = fetchFeed();
+  const { channel, curve, failures } = channelUnderTest({ measuring: true });
+  let ready = false;
+  const primed = channel.prime("gmu_one").then((value) => {
+    ready = value;
+    return value;
+  });
+  await Bun.sleep(0);
+  expect(ready).toBe(false);
+  expect(feed.requests[0].url).toBe(
+    "http://meter.test:7246/upload/progress?id=gmu_one",
+  );
+  feed.write({ type: "ready" });
+  expect(await primed).toBe(true);
+  feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
+  await Bun.sleep(0);
+  let finished = false;
+  const finishing = channel.finish().then(() => {
+    finished = true;
+  });
+  expect(feed.requests.map(({ init }) => init.method ?? "GET")).toEqual([
+    "GET",
+    "DELETE",
+  ]);
+  await Bun.sleep(0);
+  expect(finished).toBe(false);
+  feed.write({ type: "complete", bytes: 250, nanos: 2e9 });
+  await finishing;
+  expect(curve).toEqual([150]);
+  expect(feed.requests[0].init.signal?.aborted).toBe(true);
   expect(failures).toEqual([]);
 });
-test("teardown(false) while finalizing resolves the pending grace", async () => {
-  globalThis.Worker = TestWorker as unknown as typeof Worker;
+test("discard settles pending HTTP readiness and final grace", async () => {
+  const feed = fetchFeed();
   const { channel, failures } = channelUnderTest();
-  void channel.prime("upload", "gmu_test");
-  const worker = TestWorker.last!;
-
-  const finalizing = channel.teardown(true);
-  expect(worker.sent).toContainEqual({ type: "stop" });
-  expect(worker.terminated).toBe(0);
-
-  await channel.teardown(false);
-  await finalizing;
-  expect(worker.terminated).toBe(1);
+  const primed = channel.prime("gmu_one");
+  await Bun.sleep(0);
+  const finishing = channel.finish();
+  expect(await primed).toBe(false);
+  channel.discard();
+  await finishing;
+  expect(feed.requests.every(({ init }) => init.signal?.aborted)).toBe(true);
+  await until(() => !feed.locked);
+  expect(failures).toEqual([]);
+});
+test("discard alone settles HTTP readiness and suppresses a late ready response", async () => {
+  let resolve!: (response: Response) => void;
+  globalThis.fetch = (() =>
+    new Promise<Response>((done) => {
+      resolve = done;
+    })) as unknown as typeof fetch;
+  const { channel, curve } = channelUnderTest({ measuring: true });
+  const primed = channel.prime("gmu_old");
+  channel.discard();
+  expect(await primed).toBe(false);
+  resolve(
+    new Response(
+      '{"type":"ready"}\n{"type":"complete","bytes":9999,"nanos":1}\n',
+    ),
+  );
+  await Bun.sleep(0);
+  expect(curve).toEqual([]);
+});
+test("only advancing receiver bytes establish progress after a stall", () => {
+  const { channel, stalls, progress } = channelUnderTest({ measuring: true });
+  bytes(channel, 100, 1);
+  channel.accept({ type: "stall", detail: "connection closed" });
+  channel.accept({ type: "open" });
+  bytes(channel, 100, 2);
+  expect(progress).toEqual([]);
+  expect(stalls).toEqual([{ detail: "connection closed", cause: undefined }]);
+  bytes(channel, 200, 3);
+  expect(progress).toEqual([100]);
+});
+test("missing terminal record expires grace without inventing final counters", async () => {
+  const feed = fetchFeed();
+  const { channel, curve, failures } = channelUnderTest({ measuring: true });
+  const primed = channel.prime("gmu_one");
+  feed.write({ type: "ready" });
+  expect(await primed).toBe(true);
+  feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
+  feed.write({ type: "progress", bytes: 250, nanos: 2e9 });
+  await until(() => curve.length === 1);
+  await channel.finish();
+  expect(curve).toEqual([150]);
+  expect(feed.requests[0].init.signal?.aborted).toBe(true);
   expect(failures).toEqual([]);
 });

@@ -83,3 +83,22 @@ reconstructed into version 2 raw measurements.
 Early Version 2 snapshots without accounting-completeness metadata remain
 readable. They are shown as partial accounting with unknown exact timeout counts;
 a stored percentage is never used to reconstruct a supposedly exact count.
+
+## Native summaries
+
+Native latency summaries use received application replies within each measured stage. P50 is the
+midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
+consecutive successful replies in receive order, skipping timeout outcomes and starting a new
+sequence after a reconnect. One reply cannot establish variation; repeated identical replies can
+establish zero variation.
+
+Native probe deadlines are `max(4 * PingInterval, 250ms)`, measured from the client send attempt.
+Replies after that deadline count as probe timeouts, even if the periodic timeout sweep has not
+run. Timeout ratios use only successful replies plus expired probes. At a stage cutoff or channel
+interruption, pending probes whose deadlines have not elapsed are reported as unresolved; local
+send failures are separate. This native cutoff does not add a post-stage drain interval. An empty
+resolved population has no timeout ratio, and timeout-only loaded stages still produce a result.
+Failed stages retain their measured latency population with an incomplete marker and the original
+failure; the elapsed window records only the measured portion. Failures before any probe was measured
+produce an error without a numeric summary. These are application probe observations over WebSocket
+or WebTransport, not TCP/IP packet loss.
