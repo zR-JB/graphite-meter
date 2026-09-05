@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -243,20 +242,13 @@ func (p *uploadProgress) advance(bytes, nanos uint64) bool {
 	next := &uploadCount{bytes: bytes, nanos: nanos}
 	for {
 		held := p.count.Load()
-		if held != nil && (bytes < held.bytes || (bytes == held.bytes && nanos < held.nanos)) {
+		if held != nil && (bytes < held.bytes || nanos < held.nanos) {
 			return false
 		}
 		if p.count.CompareAndSwap(held, next) {
 			return true
 		}
 	}
-}
-
-type uploadProgressEvent struct {
-	Type    string `json:"type"`
-	Bytes   uint64 `json:"bytes"`
-	Nanos   uint64 `json:"nanos"`
-	Message string `json:"message"`
 }
 
 func withUploadID(base, id string) string {
@@ -433,8 +425,8 @@ func (p *uploadProgress) read(body *uploadFeed, done chan struct{}) {
 		if len(scanner.Bytes()) == 0 {
 			continue
 		}
-		var event uploadProgressEvent
-		if json.Unmarshal(scanner.Bytes(), &event) != nil {
+		event, err := wire.DecodeUploadProgress(scanner.Bytes())
+		if err != nil {
 			continue
 		}
 		switch event.Type {
@@ -448,6 +440,9 @@ func (p *uploadProgress) read(body *uploadFeed, done chan struct{}) {
 			select {
 			case p.changed <- struct{}{}:
 			default:
+			}
+			if event.Type == "complete" {
+				return
 			}
 		case "error":
 			p.signalReady(fmt.Errorf("upload progress: %s", event.Message))

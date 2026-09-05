@@ -95,7 +95,6 @@ test("same-id EOF reconnect keeps monotonic counters and finalize wakes delay", 
   await until(() => owner.events.at(-1)?.type === "complete");
   expect(owner.events.filter((event) => "n" in event)).toEqual([
     { type: "bytes", n: 800, t: 4 },
-    { type: "bytes", n: 800, t: 5 },
     { type: "complete", n: 900, t: 6 },
   ]);
   expect(deletes).toBe(1);

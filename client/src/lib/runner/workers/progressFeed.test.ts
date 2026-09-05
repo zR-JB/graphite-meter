@@ -24,7 +24,7 @@ function feedOf(...lines: string[]): ReadableStream<Uint8Array> {
 
 async function read(
   stream: ReadableStream<Uint8Array>,
-  state: ProgressFeedState = { lastN: 0 },
+  state: ProgressFeedState = { lastN: 0, lastT: 0 },
 ): Promise<{ events: ProgressEvent[]; end: string; state: ProgressFeedState }> {
   const events: ProgressEvent[] = [];
   const end = await readProgressFeed(stream, state, (e) => events.push(e));
@@ -56,8 +56,8 @@ function refusalRecord(name: string, message: string): string {
   return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
 }
 
-// The server counter is authoritative, so a record that goes backwards is a replaced feed catching up rather than.
-test("a byte count never goes backwards", async () => {
+// Superseded feeds can replay stale receiver observations.
+test("stale receiver observations are discarded", async () => {
   const { events } = await read(
     feedOf(
       `{"type":"ready"}`,
@@ -70,23 +70,22 @@ test("a byte count never goes backwards", async () => {
   expect(events.map((e) => ("n" in e ? e.n : e.type))).toEqual([
     "open",
     500,
-    500,
     900,
   ]);
 });
 
-// A session restart re-attaches to the same server-side aggregate, so the clamp is the caller's and outlives one feed.
-test("the clamp carries across a replacement feed", async () => {
-  const state: ProgressFeedState = { lastN: 0 };
+// A session restart reattaches to the same server-side aggregate.
+test("the receiver pair carries across a replacement feed", async () => {
+  const state: ProgressFeedState = { lastN: 0, lastT: 0 };
   await read(
-    feedOf(`{"type":"ready"}`, `{"type":"progress","bytes":800}`, ""),
+    feedOf(`{"type":"ready"}`, `{"type":"progress","bytes":800,"nanos":8}`, ""),
     state,
   );
   const { events } = await read(
-    feedOf(`{"type":"ready"}`, `{"type":"progress","bytes":300}`, ""),
+    feedOf(`{"type":"ready"}`, `{"type":"progress","bytes":300,"nanos":3}`, ""),
     state,
   );
-  expect(events).toEqual([{ type: "open" }, { type: "bytes", n: 800, t: 0 }]);
+  expect(events).toEqual([{ type: "open" }]);
 });
 
 // A replacement feed replays the handshake for an upload the caller already considers open.
@@ -241,4 +240,42 @@ test("terminal records cancel the remaining stream and release its reader", asyn
     expect(cancelled).toBe(true);
     expect(stream.locked).toBe(false);
   }
+});
+
+test("receiver pairs reject stale bytes or timestamps without mixing observations", async () => {
+  const { events } = await read(
+    feedOf(
+      '{"type":"progress","bytes":100,"nanos":10}',
+      '{"type":"progress","bytes":90,"nanos":20}',
+      '{"type":"progress","bytes":110,"nanos":9}',
+      '{"type":"progress","bytes":120,"nanos":30}',
+      "",
+    ),
+  );
+  expect(events).toEqual([
+    { type: "bytes", n: 100, t: 10 },
+    { type: "bytes", n: 120, t: 30 },
+  ]);
+});
+
+test("malformed and stale terminal records cannot complete a feed", async () => {
+  const { events, end } = await read(
+    feedOf(
+      '{"type":"progress","bytes":100,"nanos":10}',
+      '{"type":"complete","bytes":200}',
+      '{"type":"complete","bytes":"200","nanos":20}',
+      '{"type":"complete","bytes":200,"nanos":9}',
+      "",
+    ),
+  );
+  expect(end).toBe("eof");
+  expect(events).toEqual([{ type: "bytes", n: 100, t: 10 }]);
+});
+
+test("an explicit zero receiver window is a terminal observation", async () => {
+  const { events, end } = await read(
+    feedOf('{"type":"complete","bytes":0,"nanos":0}', ""),
+  );
+  expect(end).toBe("complete");
+  expect(events).toEqual([{ type: "complete", n: 0, t: 0 }]);
 });
