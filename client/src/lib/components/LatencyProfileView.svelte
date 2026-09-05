@@ -35,7 +35,7 @@
     showCurrent = false,
     showTimeouts = false,
     jitterDescription = JARGON.jitter,
-    label = "Latency, jitter and loss by phase",
+    label = "Latency, RTT variation and probe timeouts by phase",
   }: Props = $props();
 
   const scale = $derived(domain ?? profileDomain(lanes));
@@ -238,7 +238,7 @@
           {/if}
           {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
             <i
-              class="loss-marker"
+              class="timeout-marker"
               style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
             ></i>
           {/if}
@@ -418,7 +418,7 @@
   .band,
   .center-marker,
   .current-marker,
-  .loss-marker {
+  .timeout-marker {
     position: absolute;
   }
   .range {
@@ -471,7 +471,7 @@
     background: var(--tone);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 20%, transparent);
   }
-  .loss-marker {
+  .timeout-marker {
     top: 0;
     right: 0;
     bottom: 0;
