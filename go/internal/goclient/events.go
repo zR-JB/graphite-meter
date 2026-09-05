@@ -63,11 +63,11 @@ type ThroughputSample struct {
 }
 
 type LatencySample struct {
-	ReflectorHandling *time.Duration // Optional negotiated server interval from this same reply; zero is valid.
+	ReflectorHandling *time.Duration // Validated server interval from this reply; nil for an invalid clock pair.
 	Stage             string
 	RTT               time.Duration
 	UnderLoad         bool
-	Lost              bool // Compatibility event name: true only for an application probe deadline expiry.
+	TimedOut          bool
 }
 
 type Result struct {

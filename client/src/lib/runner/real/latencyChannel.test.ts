@@ -180,7 +180,7 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   channel.teardown();
 });
 
-test("READY cancels the stage channel's warmup establishment deadline", () => {
+test("a matched-probe ready event cancels the warmup establishment deadline", () => {
   let deadline: (() => void) | null = null;
   let deadlineActive = false;
   globalThis.setTimeout = ((handler: TimerHandler) => {

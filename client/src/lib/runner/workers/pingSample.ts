@@ -2,7 +2,7 @@
 export interface PingSample {
   rtt: number;
   lost: boolean;
-  /** Negotiated server application handling interval; milliseconds, same reply as RTT. */
+  /** Validated server application handling interval; milliseconds, same reply as RTT. */
   reflectorHandlingMs?: number;
   /** Probe submission time; determines membership at a stage's stop boundary. */
   sentAtEpochMs?: number;
@@ -51,9 +51,8 @@ export function pingSampleContextTime(
  * retain raw RTT but supply no adjusted diagnostic; never clamp them to zero. */
 export function reflectorHandlingMs(
   rawRttMs: number,
-  nanos: string | undefined,
+  nanos: string,
 ): number | undefined {
-  if (nanos === undefined) return undefined;
   const value = Number(nanos);
   const ms = value / 1_000_000;
   return Number.isSafeInteger(value) &&

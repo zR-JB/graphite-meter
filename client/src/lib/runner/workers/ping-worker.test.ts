@@ -221,7 +221,7 @@ async function waitUntil(predicate: () => boolean) {
   }
 }
 
-test("WebTransport negotiation is reset on reconnect and stale datagrams cannot restore it", async () => {
+test("WebTransport reconnect ignores stale datagrams and retains fresh reply timing", async () => {
   const scenario = new Scenario("timing-reconnect");
   const realm = await start(scenario);
   try {
@@ -232,11 +232,11 @@ test("WebTransport negotiation is reset on reconnect and stale datagrams cannot 
         ) === true,
     );
     const first = scenario.sessions[0];
-    expect(first.sent[0]).toBe("HI,wt;TIMING,1");
+    expect(first.sent[0]).toBe("PING,0");
     realm.send({ type: "measure" });
     await waitUntil(() => first.sent.includes("PING,1"));
-    first.receive("READY,TIMING,1");
-    first.receive("PONG,1;TIME,0;HANDLING,0");
+
+    first.receive("PONG,1,0");
     await waitUntil(() =>
       realm.posted.some((event) => event.type === "samples"),
     );
@@ -251,10 +251,9 @@ test("WebTransport negotiation is reset on reconnect and stale datagrams cannot 
     const id = fresh.sent
       .find((message) => message.startsWith("PING,"))!
       .slice(5);
-    fresh.receive("READY");
-    first.receive("READY,TIMING,1");
-    first.receive(`PONG,${id};TIME,0;HANDLING,0`);
-    fresh.receive(`PONG,${id};TIME,0;HANDLING,0`);
+
+    first.receive(`PONG,${id},0`);
+    fresh.receive(`PONG,${id},0`);
     await waitUntil(
       () =>
         realm.posted.flatMap((event) =>
@@ -264,10 +263,7 @@ test("WebTransport negotiation is reset on reconnect and stale datagrams cannot 
     const samples = realm.posted.flatMap((event) =>
       event.type === "samples" ? event.samples : [],
     );
-    expect(samples.map((sample) => sample.reflectorHandlingMs)).toEqual([
-      0,
-      undefined,
-    ]);
+    expect(samples.map((sample) => sample.reflectorHandlingMs)).toEqual([0, 0]);
     expect(samples.every((sample) => !sample.lost)).toBe(true);
   } finally {
     realm.send({

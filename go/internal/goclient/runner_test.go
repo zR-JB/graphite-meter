@@ -812,20 +812,11 @@ func echoPingHandler() http.Handler {
 			if err != nil {
 				return
 			}
-			f, derr := wire.Decode(string(msg))
+			f, derr := wire.DecodePing(string(msg))
 			if derr != nil {
 				continue
 			}
-			if f.Op == wire.OpHI {
-				if err := conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpREADY}))); err != nil {
-					return
-				}
-				continue
-			}
-			if f.Op != wire.OpPING {
-				continue
-			}
-			pong := wire.Encode(wire.Frame{Op: wire.OpPONG, ID: f.ID, Nanos: uint64(time.Now().UnixNano())})
+			pong := wire.EncodePong(f, 0)
 			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
 				return
 			}

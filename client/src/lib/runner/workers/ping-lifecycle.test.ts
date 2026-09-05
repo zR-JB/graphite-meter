@@ -24,6 +24,7 @@ async function withWorker(
     now: () => number;
     samples: () => PingSample[];
   }) => void | Promise<void>,
+  completeWarmup = true,
 ) {
   let now = 0;
   let nextTimer = 0;
@@ -75,7 +76,7 @@ async function withWorker(
     socket.onopen();
     send({ type: "measure" });
     // Finish the warmup request, starting the first eligible probe at time zero.
-    socket.onmessage({ data: "PONG,0;TIME,0" });
+    if (completeWarmup) socket.onmessage({ data: "PONG,0,0" });
     await run({
       posted,
       socket,
@@ -102,7 +103,7 @@ async function withWorker(
       },
       reply: (id, handling) =>
         socket.onmessage({
-          data: `PONG,${id};TIME,0${handling === undefined ? "" : `;HANDLING,${handling}`}`,
+          data: `PONG,${id},${handling ?? "0"}`,
         }),
       stop: (cutoff = now) =>
         send({ type: "stop", cutoffEpochMs: 10_000 + cutoff }),
@@ -327,56 +328,61 @@ for (const failure of ["failSends", "rejectSends"] as const) {
   });
 }
 
-test("timing capability falls back to raw echoes and survives duplicate acknowledgements", async () => {
+test("application readiness requires one matched valid reply and excludes warmup samples", async () => {
+  await withWorker(({ socket, posted, jump, reply, stop, samples }) => {
+    const readiness = () =>
+      posted.filter((event) => event.type === "ready").length;
+    socket.onmessage({ data: "READY" });
+    socket.onmessage({ data: "PONG,0" });
+    socket.onmessage({ data: "PONG,999999,0" });
+    expect(readiness()).toBe(0);
+    jump(5);
+    reply(0);
+    expect(readiness()).toBe(1);
+    reply(0);
+    expect(readiness()).toBe(1);
+    jump(5);
+    reply(1);
+    stop(10);
+    expect(readiness()).toBe(1);
+    expect(samples()).toHaveLength(1);
+    expect(samples()[0]).toMatchObject({ rtt: 5, lost: false });
+  }, false);
+});
+
+test("incomplete or malformed PONGs cannot resolve a probe or invent zero handling", async () => {
   await withWorker(({ socket, jump, reply, stop, samples }) => {
-    expect(socket.sent[0]).toBe("HI,ws;TIMING,1");
-    socket.onmessage({ data: "READY" });
+    expect(socket.sent[0]).toBe("PING,0");
     jump(5);
+    for (const suffix of ["", ",", ",-1", ",1,2"]) {
+      socket.onmessage({ data: `PONG,1${suffix}` });
+    }
+    expect(socket.pings).toEqual([0, 1]);
+    expect(samples()).toHaveLength(0);
     reply(1, "1000000");
-    socket.onmessage({ data: "READY,TIMING,1" });
-    socket.onmessage({ data: "READY" });
-    jump(5);
-    reply(2, "1000000");
     stop(5);
-    expect(
-      samples().map(({ rtt, reflectorHandlingMs }) => ({
-        rtt,
-        reflectorHandlingMs,
-      })),
-    ).toEqual([
-      { rtt: 5, reflectorHandlingMs: undefined },
-      { rtt: 5, reflectorHandlingMs: 1 },
-    ]);
+    expect(samples()).toHaveLength(1);
+    expect(samples()[0]).toMatchObject({
+      rtt: 5,
+      lost: false,
+      reflectorHandlingMs: 1,
+    });
   });
 });
 
-test("malformed, impossible, and imprecise optional handling never change a raw reply", async () => {
-  await withWorker(({ socket, jump, reply, stop, samples }) => {
-    socket.onmessage({ data: "READY,TIMING,1" });
-    const durations = [
-      "-1",
-      "NaN",
-      "",
-      "1;HANDLING,2",
-      "9007199254740992",
-      "6000000",
-      "0",
-      "5000000",
-    ];
+test("impossible and imprecise handling never change a raw reply", async () => {
+  await withWorker(({ jump, reply, stop, samples }) => {
+    const durations = ["9007199254740992", "6000000", "0", "5000000"];
     for (const [index, duration] of durations.entries()) {
       jump(5);
       reply(index + 1, duration);
     }
-    stop(35);
+    stop(15);
     expect(samples()).toHaveLength(durations.length);
     expect(samples().every((sample) => sample.rtt === 5 && !sample.lost)).toBe(
       true,
     );
     expect(samples().map((sample) => sample.reflectorHandlingMs)).toEqual([
-      undefined,
-      undefined,
-      undefined,
-      undefined,
       undefined,
       undefined,
       0,
@@ -387,7 +393,6 @@ test("malformed, impossible, and imprecise optional handling never change a raw 
 
 test("reordered and duplicated timed replies keep one duration paired with their original probe", async () => {
   await withWorker(({ socket, advance, reply, stop, samples }) => {
-    socket.onmessage({ data: "READY,TIMING,1" });
     advance(10); // The reply-driven backup sends id 2 at 8 ms while id 1 remains pending.
     expect(socket.pings).toEqual([0, 1, 2]);
     reply(2, "1000000");
@@ -407,10 +412,9 @@ test("reordered and duplicated timed replies keep one duration paired with their
   });
 });
 
-test("reconnect clears timing and ignores old socket READY and PONG events", async () => {
+test("reconnect ignores old socket PONG events and retains fresh reply timing", async () => {
   await withWorker(
-    ({ socket, sockets, jump, advance, reply, stop, samples }) => {
-      socket.onmessage({ data: "READY,TIMING,1" });
+    ({ socket, sockets, posted, jump, advance, reply, stop, samples }) => {
       jump(5);
       reply(1, "1000000");
       socket.disconnect();
@@ -418,12 +422,14 @@ test("reconnect clears timing and ignores old socket READY and PONG events", asy
       expect(sockets).toHaveLength(2);
       const fresh = sockets[1];
       fresh.onopen();
-      fresh.onmessage({ data: "READY" });
-      socket.onmessage({ data: "READY,TIMING,1" });
+
       const id = fresh.pings[0];
-      socket.onmessage({ data: `PONG,${id};TIME,0;HANDLING,0` });
+      socket.onmessage({ data: `PONG,${id},0` });
+      fresh.onmessage({ data: "PONG,999999,0" });
+      expect(posted.filter((event) => event.type === "ready")).toHaveLength(1);
       jump(5);
       reply(id, "1000000");
+      expect(posted.filter((event) => event.type === "ready")).toHaveLength(2);
       stop(1_005);
       expect(
         samples().map(({ rtt, reflectorHandlingMs }) => ({
@@ -432,15 +438,14 @@ test("reconnect clears timing and ignores old socket READY and PONG events", asy
         })),
       ).toEqual([
         { rtt: 5, reflectorHandlingMs: 1 },
-        { rtt: 5, reflectorHandlingMs: undefined },
+        { rtt: 5, reflectorHandlingMs: 1 },
       ]);
     },
   );
 });
 
 test("late replies retain only their timeout while drain replies retain paired timing for cutoff filtering", async () => {
-  await withWorker(({ socket, jump, reply, stop, samples }) => {
-    socket.onmessage({ data: "READY,TIMING,1" });
+  await withWorker(({ jump, reply, stop, samples }) => {
     jump(251);
     reply(1, "1000000");
     stop(251);

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/coder/websocket"
+
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -219,4 +221,39 @@ func TestGetPreflight(t *testing.T) {
 			t.Fatal("expected decode error, got nil")
 		}
 	})
+}
+
+func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
+	for _, matching := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unmatched", true: "matched"}[matching], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+				if err != nil {
+					return
+				}
+				defer conn.CloseNow()
+				_, message, err := conn.Read(request.Context())
+				if err != nil {
+					return
+				}
+				if string(message) != "PING,0" {
+					t.Errorf("readiness sent %q", message)
+				}
+				for _, reply := range []string{"READY", "PONG,0", "PONG,1,0"} {
+					if err := conn.Write(request.Context(), websocket.MessageText, []byte(reply)); err != nil {
+						return
+					}
+				}
+				if matching {
+					_ = conn.Write(request.Context(), websocket.MessageText, []byte("PONG,0,0"))
+				}
+			}))
+			defer server.Close()
+			target := testChannel(server.URL, server.URL, false)
+			err := verifyLatencyWebSocket(t.Context(), server.Client(), &target)
+			if (err == nil) != matching {
+				t.Fatalf("readiness error = %v, matching reply = %v", err, matching)
+			}
+		})
+	}
 }

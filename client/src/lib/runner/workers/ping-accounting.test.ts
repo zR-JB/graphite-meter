@@ -53,14 +53,14 @@ async function replay(replies: number) {
     // ID zero was sent during warmup; its reply must stay outside the measured population.
     for (let id = 0; id <= replies; id++) {
       now++;
-      socket!.onmessage({ data: `PONG,${id};TIME,0` });
-      socket!.onmessage({ data: `PONG,${id};TIME,0` });
+      socket!.onmessage({ data: `PONG,${id},0` });
+      socket!.onmessage({ data: `PONG,${id},0` });
     }
     // The last reply started one more probe; expire it, then deliver a late reply and an unknown ID.
     now += 2_000;
     intervals[0]();
-    socket!.onmessage({ data: `PONG,${replies + 1};TIME,0` });
-    socket!.onmessage({ data: "PONG,999999;TIME,0" });
+    socket!.onmessage({ data: `PONG,${replies + 1},0` });
+    socket!.onmessage({ data: "PONG,999999,0" });
     intervals[1]();
     return batches;
   } finally {

@@ -2157,8 +2157,8 @@ func TestLatencyLineHoldsTheLastRoundTripThroughLosses(t *testing.T) {
 func TestApplyLatencyKeepsTheLastRoundTripThroughLosses(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{RTT: 5 * time.Millisecond}})
-	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{Lost: true}})
-	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{Lost: true}})
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{TimedOut: true}})
+	m.apply(goclient.Event{Kind: goclient.EventLatency, Latency: goclient.LatencySample{TimedOut: true}})
 	if m.latency.RTT != 5*time.Millisecond || m.lostStreak != 2 {
 		t.Errorf("after two losses: rtt=%v streak=%d, want the held 5ms and streak 2", m.latency.RTT, m.lostStreak)
 	}

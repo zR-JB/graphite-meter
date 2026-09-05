@@ -21,16 +21,16 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 	for _, row := range []struct {
 		rtt      time.Duration
 		timeout  bool
-		handling *uint64
+		handling uint64
 	}{
-		{10 * time.Millisecond, false, new(uint64(2 * time.Millisecond))},
-		{20 * time.Millisecond, false, new(uint64(0))},
-		{30 * time.Millisecond, false, nil},
-		{40 * time.Millisecond, false, new(uint64(41 * time.Millisecond))},
-		{50 * time.Millisecond, false, new(^uint64(0))},
-		{250 * time.Millisecond, true, new(uint64(200 * time.Millisecond))},
+		{10 * time.Millisecond, false, uint64(2 * time.Millisecond)},
+		{20 * time.Millisecond, false, 0},
+		{30 * time.Millisecond, false, math.MaxUint64},
+		{40 * time.Millisecond, false, uint64(41 * time.Millisecond)},
+		{50 * time.Millisecond, false, math.MaxUint64},
+		{250 * time.Millisecond, true, uint64(200 * time.Millisecond)},
 	} {
-		raw.add(row.rtt, row.timeout, nil)
+		raw.add(row.rtt, row.timeout, math.MaxUint64)
 		timed.add(row.rtt, row.timeout, row.handling)
 	}
 	got := timed.snapshot()
@@ -43,7 +43,7 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 		t.Fatalf("raw statistics changed: %+v != %+v", got, want)
 	}
 	captured := timed.snapshot()
-	timed.add(100*time.Millisecond, false, new(uint64(20*time.Millisecond)))
+	timed.add(100*time.Millisecond, false, uint64(20*time.Millisecond))
 	if *captured.ReflectorTiming != wantTiming {
 		t.Fatal("snapshot mutated after later observations")
 	}
@@ -53,7 +53,7 @@ func TestReflectorTimingDurationBounds(t *testing.T) {
 	for _, nanos := range []uint64{0, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
 		t.Run(fmt.Sprint(nanos), func(t *testing.T) {
 			var stats latencyStats
-			handling := stats.add(time.Duration(math.MaxInt64), false, new(nanos))
+			handling := stats.add(time.Duration(math.MaxInt64), false, nanos)
 			got := stats.snapshot()
 			if got.Count != 1 || got.Mean != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
 				t.Fatalf("optional duration changed raw reply: %+v", got)
@@ -71,13 +71,12 @@ func TestReflectorTimingDurationBounds(t *testing.T) {
 	}
 }
 
-func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
-	for _, scenario := range []string{"legacy", "negotiated", "malformed", "reconnect"} {
+func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
+	for _, scenario := range []string{"zero", "impossible", "reconnect"} {
 		t.Run(scenario, func(t *testing.T) {
 			var connections atomic.Int32
 			var mu sync.Mutex
 			var samples []LatencySample
-			var staleTiming bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 				if err != nil {
@@ -91,21 +90,8 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 					if err != nil {
 						return
 					}
-					frame, err := wire.Decode(string(message))
+					frame, err := wire.DecodePing(string(message))
 					if err != nil {
-						continue
-					}
-					if frame.Op == wire.OpHI {
-						if !frame.Timing {
-							t.Error("native client did not request optional timing")
-						}
-						timing := scenario != "legacy" && (scenario != "reconnect" || generation == 1)
-						if err := conn.Write(request.Context(), websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpREADY, Timing: timing}))); err != nil {
-							return
-						}
-						continue
-					}
-					if frame.Op != wire.OpPING {
 						continue
 					}
 					count++
@@ -113,10 +99,10 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 						return
 					}
 					value := "0"
-					if scenario == "malformed" {
-						value = "-1"
+					if scenario == "impossible" {
+						value = "18446744073709551615"
 					}
-					pong := fmt.Sprintf("PONG,%d;TIME,0;HANDLING,%s", frame.ID, value)
+					pong := fmt.Sprintf("PONG,%d,%s", frame, value)
 					if err := conn.Write(request.Context(), websocket.MessageText, []byte(pong)); err != nil {
 						return
 					}
@@ -128,15 +114,12 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 			}))
 			defer srv.Close()
 			r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(event Event) {
-				if event.Kind != EventLatency || event.Latency.Lost {
+				if event.Kind != EventLatency || event.Latency.TimedOut {
 					return
 				}
 				mu.Lock()
 				defer mu.Unlock()
 				samples = append(samples, event.Latency)
-				if scenario == "reconnect" && connections.Load() > 1 && event.Latency.ReflectorHandling != nil {
-					staleTiming = true
-				}
 			}}
 			attachTestLatencyTarget(r, srv.URL)
 			start := make(chan struct{})
@@ -149,8 +132,8 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if stats.Count == 0 || len(samples) != stats.Count || staleTiming {
-				t.Fatalf("raw/connection observations: stats=%+v events=%d stale=%v", stats, len(samples), staleTiming)
+			if stats.Count == 0 || len(samples) != stats.Count {
+				t.Fatalf("raw/connection observations: stats=%+v events=%d", stats, len(samples))
 			}
 			paired := 0
 			for _, sample := range samples {
@@ -158,7 +141,7 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 					paired++
 				}
 			}
-			if scenario == "legacy" || scenario == "malformed" {
+			if scenario == "impossible" {
 				if stats.ReflectorTiming != nil || paired != 0 {
 					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", stats.ReflectorTiming)
 				}
@@ -169,8 +152,8 @@ func TestNativeReflectorTimingNegotiationAndReconnect(t *testing.T) {
 				if stats.ReflectorTiming.MeanHandling != 0 || stats.ReflectorTiming.MeanAdjustedRTT != stats.ReflectorTiming.MeanRawRTT {
 					t.Fatalf("zero handling altered RTT: %+v", stats.ReflectorTiming)
 				}
-				if scenario == "reconnect" && (connections.Load() != 2 || paired == stats.Count) {
-					t.Fatalf("reconnect failed to clear capability: connections=%d paired=%d replies=%d", connections.Load(), paired, stats.Count)
+				if scenario == "reconnect" && (connections.Load() != 2 || paired != stats.Count) {
+					t.Fatalf("reconnect failed to retain timing: connections=%d paired=%d replies=%d", connections.Load(), paired, stats.Count)
 				}
 			}
 		})

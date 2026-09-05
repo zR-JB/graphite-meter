@@ -123,7 +123,9 @@ func NewUploadStore() *UploadStore {
 	return s
 }
 
-func monoNanos() int64 { return int64(time.Since(startMono)) }
+var uploadMonoOrigin = time.Now()
+
+func monoNanos() int64 { return int64(time.Since(uploadMonoOrigin)) }
 
 func (s *UploadStore) shard(id string) *uploadShard {
 	h := fnv.New32a()

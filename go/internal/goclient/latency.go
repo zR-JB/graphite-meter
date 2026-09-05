@@ -32,43 +32,43 @@ func (b wsBus) Recv(ctx context.Context) (string, error) {
 
 func (b wsBus) Close() { b.conn.Close(websocket.StatusNormalClosure, "") } //nolint:errcheck // the samples are already collected
 
-func (r *runner) dialPingBus(ctx context.Context) (pingBus, string, error) {
+func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	if r.latencyTarget.Transport == wire.TransportWebTransport {
 		sess, err := wtDial(ctx, r.cfg, r.latencyTarget.Origin, r.latencyTarget.Routes.WTPing, nil)
 		if err != nil {
-			return nil, "wt", err
+			return nil, err
 		}
-		return wtBus{sess: sess}, "wt", nil
+		return wtBus{sess: sess}, nil
 	}
 	u, err := wsEndpoint(r.latencyTarget.Origin, r.latencyTarget.Routes.Ping)
 	if err != nil {
-		return nil, "ws", err
+		return nil, err
 	}
 	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		if authErr := authResponseError(response); authErr != nil {
-			return nil, "ws", authErr
+			return nil, authErr
 		}
-		return nil, "ws", err
+		return nil, err
 	}
-	return wsBus{conn: conn}, "ws", nil
+	return wsBus{conn: conn}, nil
 }
 
 const busRedialWindow = 2 * time.Second
 
-func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, string, error) {
+func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, error) {
 	redialCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	var lastErr error
 	for {
 		dialCtx, dialCancel := context.WithTimeout(redialCtx, 3*time.Second)
-		bus, proto, err := r.dialPingBus(dialCtx)
+		bus, err := r.dialPingBus(dialCtx)
 		dialCancel()
 		if err == nil {
-			return bus, proto, nil
+			return bus, nil
 		}
 		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
-			return nil, proto, err
+			return nil, err
 		}
 		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
 			lastErr = err
@@ -76,12 +76,12 @@ func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus
 		select {
 		case <-redialCtx.Done():
 			if ctx.Err() != nil {
-				return nil, proto, ctx.Err()
+				return nil, ctx.Err()
 			}
 			if lastErr != nil {
-				return nil, proto, fmt.Errorf("latency channel not reconnected within %v: %w", busRedialWindow, lastErr)
+				return nil, fmt.Errorf("latency channel not reconnected within %v: %w", busRedialWindow, lastErr)
 			}
-			return nil, proto, redialCtx.Err()
+			return nil, redialCtx.Err()
 		case <-time.After(wtRedialBackoff):
 		}
 	}
@@ -91,11 +91,10 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if r.latencyTarget == nil {
 		return LatencyStats{}, fmt.Errorf("no latency target selected")
 	}
-	conn, proto, err := r.dialPingBus(ctx)
+	conn, err := r.dialPingBus(ctx)
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto, Timing: true}))
 
 	measureCtx, cancel := context.WithCancel(ctx)
 
@@ -140,26 +139,17 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	}
 
 	readLoop := func(bus pingBus) {
-		timingNegotiated := false // Capability state belongs to this bus, never to a replacement reader.
 		for {
 			msg, err := bus.Recv(measureCtx)
 			if err != nil {
 				recvErr <- err
 				return
 			}
-			now := time.Now() // Reply receipt ends raw RTT before optional diagnostic parsing.
-			f, err := wire.Decode(msg)
+			now := time.Now() // Reply receipt ends raw RTT before diagnostic parsing.
+			f, err := wire.DecodePong(msg)
 			if err != nil {
 				continue
 			}
-			if f.Op == wire.OpREADY {
-				timingNegotiated = timingNegotiated || f.Timing
-				continue
-			}
-			if f.Op != wire.OpPONG {
-				continue
-			}
-			everPong.Store(true)
 			mu.Lock()
 			sent, ok := pending[f.ID]
 			if measuring.Load() && !measuredUntil.IsZero() && !now.Before(measuredUntil) {
@@ -167,6 +157,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				continue
 			}
 			if ok {
+				everPong.Store(true)
 				delete(pending, f.ID)
 			}
 			if !ok || !measuring.Load() {
@@ -175,17 +166,13 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			rtt := now.Sub(sent)
 			timedOut := rtt >= timeoutAfter
-			var handlingNanos *uint64
-			if timingNegotiated {
-				handlingNanos = f.HandlingNanos
-			}
-			handling := stats.add(rtt, timedOut, handlingNanos)
+			handling := stats.add(rtt, timedOut, f.HandlingNanos)
 			mu.Unlock()
 			r.emit(Event{
 				Kind:    EventLatency,
 				At:      now,
 				Stage:   stage,
-				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, Lost: timedOut, ReflectorHandling: handling},
+				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, TimedOut: timedOut, ReflectorHandling: handling},
 			})
 		}
 	}
@@ -205,7 +192,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		}
 		pending[id] = now
 		mu.Unlock()
-		err := conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpPING, ID: id}))
+		err := conn.Send(measureCtx, wire.EncodePing(id))
 		if err != nil {
 			mu.Lock()
 			if _, ok := pending[id]; ok {
@@ -262,18 +249,17 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if measuring.Load() && measuredUntil.Before(redialDeadline) {
 				redialDeadline = measuredUntil
 			}
-			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, redialDeadline)
+			fresh, dialErr := r.redialPingBus(measureCtx, redialDeadline)
 			if dialErr != nil {
 				if measureCtx.Err() != nil {
 					return finish(measureCtx.Err())
 				}
 				return finish(fmt.Errorf("latency channel failed: %w", dialErr))
 			}
-			conn, proto = fresh, freshProto
+			conn = fresh
 			mu.Lock()
 			clear(pending)
 			mu.Unlock()
-			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto, Timing: true}))
 			startReader(conn)
 		case <-ticker:
 			_ = send()
@@ -289,12 +275,12 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				if now.Sub(sent) < timeoutAfter {
 					return false
 				}
-				stats.add(0, true, nil)
+				stats.add(0, true, 0)
 				r.emit(Event{
 					Kind:    EventLatency,
 					At:      now,
 					Stage:   stage,
-					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, Lost: true},
+					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, TimedOut: true},
 				})
 				return true
 			})

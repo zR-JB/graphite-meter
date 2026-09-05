@@ -1,6 +1,6 @@
 /* Every measured outcome crosses the boundary with its worker-owned observation time. */
 
-import { encode, decode } from "../real/wire";
+import { encodePing, decodePong } from "../real/wire";
 import {
   observeRtt,
   lossTimeout,
@@ -67,7 +67,6 @@ let measuring = false;
 let stopped = false;
 let stopCutoff: number | null = null;
 let checkAuthentication = false;
-let timingNegotiated = false;
 
 // Tuning: stage workers keep this fixed; the idle worker settles from probe pacing to its one-second keepalive.
 let intervalMs = 250;
@@ -96,6 +95,7 @@ let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
 
 // Connection state.
 let backoff = 0;
+let receivedReply = false;
 let stalledOut = false; // true between a `stall` and its matching `resume`
 
 let scheduler: PingScheduler | null = null;
@@ -155,7 +155,7 @@ function connect(): void {
 }
 
 /* Announces an open bus and starts the chain. */
-function onConnected(proto: string): void {
+function onConnected(): void {
   if (stopped || stopCutoff !== null) return;
   backoff = 0;
   if (stalledOut) {
@@ -163,8 +163,7 @@ function onConnected(proto: string): void {
     stalledOut = false;
   }
   post({ type: "open" });
-  timingNegotiated = false;
-  trySend(encode({ op: "HI", proto, timing: true }));
+  receivedReply = false;
   scheduler?.reset();
   scheduler?.start();
 }
@@ -184,7 +183,7 @@ function connectWebSocket(): void {
   };
   link = connection;
   ws.onopen = (): void => {
-    if (link === connection) onConnected("ws");
+    if (link === connection) onConnected();
   };
   ws.onmessage = (ev: MessageEvent): void => {
     if (link === connection && connection.ready()) onFrame(ev.data);
@@ -287,7 +286,7 @@ async function connectWebTransport(): Promise<void> {
   spendWtToken(token);
   try {
     writer = wt.datagrams.writable.getWriter();
-    onConnected("wt");
+    onConnected();
     const reader = wt.datagrams.readable.getReader();
     for (;;) {
       const { value, done } = await reader.read();
@@ -322,7 +321,6 @@ async function checkSessionThenReconnect(detail: string): Promise<void> {
 function onDisconnect(detail: string): void {
   if (stopped) return;
   link = null;
-  timingNegotiated = false;
   scheduler?.stop();
   sweep();
   if (stopped) return;
@@ -358,21 +356,15 @@ function onFrame(data: unknown): void {
   if (stopped) return;
   const recv = performance.now();
   if (typeof data !== "string") return; // the ping bus is text-only
-  let frame;
-  try {
-    frame = decode(data);
-  } catch {
-    return; // malformed and ERR frames never tear the bus down
-  }
-  if (frame.op === "READY") {
-    timingNegotiated ||= frame.timing === true;
-    post({ type: "ready" });
-    return;
-  }
-  if (frame.op !== "PONG") return;
+  const frame = decodePong(data);
+  if (!frame) return;
 
   const ping = pending.get(frame.id);
   if (ping !== undefined) {
+    if (!receivedReply) {
+      receivedReply = true;
+      post({ type: "ready" });
+    }
     pending.delete(frame.id);
     const rtt = recv - ping.sentAt;
     rttEstimate = observeRtt(rttEstimate, rtt); // always: keeps the loss timeout accurate; reply-driven localhost.
@@ -381,7 +373,7 @@ function onFrame(data: unknown): void {
         ping,
         recv >= ping.expiresAt,
         recv >= ping.expiresAt ? ping.expiresAt : recv,
-        timingNegotiated ? frame.handlingNanos : undefined,
+        reflectorHandlingMs(rtt, frame.handlingNanos),
       );
     if (!replyDriven || frame.id === replyHeadId) scheduler?.complete();
     serviceDrain();
@@ -426,7 +418,7 @@ function sendPing(now: number): void {
     serviceDrain();
   };
   try {
-    const sent = link!.send(encode({ op: "PING", id }));
+    const sent = link!.send(encodePing(id));
     if (sent) {
       void sent.then(() => {
         ping.writeConfirmed = true;
@@ -446,14 +438,6 @@ function replyBackupDelay(): number {
     REPLY_BACKUP_FLOOR_MS,
     REPLY_BACKUP_CEIL_MS,
   );
-}
-
-function trySend(msg: string): void {
-  try {
-    void link?.send(msg)?.catch(() => {});
-  } catch {
-    /* closed mid-send: the close handler drives the reconnect */
-  }
 }
 
 /* Resolve each probe against the deadline fixed when it was submitted. */
@@ -484,11 +468,9 @@ function recordOutcome(
   ping: PendingPing,
   lost: boolean,
   observedAt: number,
-  handlingNanos?: string,
+  handlingMs?: number,
 ): void {
-  const handling = lost
-    ? undefined
-    : reflectorHandlingMs(observedAt - ping.sentAt, handlingNanos);
+  const handling = lost ? undefined : handlingMs;
   record({
     ...pingSample(observedAt - ping.sentAt, lost, observedAt),
     sentAtEpochMs: performance.timeOrigin + ping.sentAt,

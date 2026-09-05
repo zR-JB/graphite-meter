@@ -153,7 +153,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 			return
 		}
 		total++
-		if e.Latency.Lost {
+		if e.Latency.TimedOut {
 			lost++
 			return
 		}
@@ -211,7 +211,7 @@ func wsPingSpam(ctx context.Context, url string, pings *atomic.Uint64) error {
 	return pingSpam(ctx, pings,
 		func() error {
 			id++
-			return conn.Write(ctx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+			return conn.Write(ctx, websocket.MessageText, []byte(wire.EncodePing(id)))
 		},
 		func(ctx context.Context) (string, error) {
 			_, msg, err := conn.Read(ctx)
@@ -232,7 +232,7 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 	return pingSpam(ctx, pings,
 		func() error {
 			id++
-			return sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpPING, ID: id})))
+			return sess.SendDatagram([]byte(wire.EncodePing(id)))
 		},
 		func(ctx context.Context) (string, error) {
 			msg, err := sess.ReceiveDatagram(ctx)
@@ -249,7 +249,7 @@ func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error, rece
 		if err != nil {
 			return nil
 		}
-		if f, err := wire.Decode(msg); err != nil || f.Op != wire.OpPONG {
+		if _, err := wire.DecodePong(msg); err != nil {
 			continue
 		}
 		pings.Add(1)

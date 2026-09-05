@@ -92,28 +92,28 @@ Early Version 2 snapshots without accounting-completeness metadata remain
 readable. They are shown as partial accounting with unknown exact timeout counts;
 a stored percentage is never used to reconstruct a supposedly exact count.
 
-## Optional server timing diagnostics
+## Paired server timing diagnostics
 
-Negotiated reflector handling time accompanies an individual reply in nanoseconds.
+Version 0.7 requires reflector handling time on every valid wire reply, in nanoseconds.
 The measured server interval runs from immediately after its message receive call
 to immediately before reply encoding. Browser clients convert an exactly
 representable duration to milliseconds and reject diagnostics that exceed that
-reply's raw RTT. Clock-quantized or malformed timing is omitted, never corrected
+reply's raw RTT. Malformed wire fields invalidate the reply. A clock-quantized or unrepresentable
+pair is omitted from the diagnostic, never corrected
 by clamping the adjusted value to zero.
 
 Each stage may expose `reflectorTiming` with `sampleCount`, `meanRawRttMs`,
 `meanHandlingMs`, and `meanAdjustedRttMs`. All three means use the **same paired
 population**: successful replies received within the measurement window with valid
-negotiated handling time. Timeout, interrupted, failed-send, late, post-cutoff,
-and missing-timing outcomes do not enter this diagnostic population. A measured
+handling time. Timeout, interrupted, failed-send, late, post-cutoff,
+and invalid clock-pair outcomes do not enter this diagnostic population. A measured
 zero duration is valid. No valid pairs means the entire diagnostic is absent.
 The paired raw mean may differ from the stage's full-population mean or median.
 
 Adjusted RTT subtracts only this instrumented server handling interval. It retains
 network delays, receive and send queues outside that interval, browser scheduling,
 and other endpoint delays. Raw application RTT remains primary for latency,
-variation, confidence, loaded responsiveness, and timeout estimation. Version 2
-history may retain the optional paired summary; older snapshots are not backfilled.
+variation, confidence, loaded responsiveness, and timeout estimation. History retains the paired summary when valid pairs are available.
 
 ## Native summaries
 
@@ -159,10 +159,11 @@ or WebTransport, not TCP/IP packet loss.
 
 
 Native raw RTT ends immediately after the message adapter receives the reply,
-before wire decoding, so optional metadata parsing cannot inflate it.
-Native clients negotiate the same optional server timing capability independently
-on each bus. A stage's `ReflectorTiming` contains paired count and mean raw RTT,
-server handling, and adjusted RTT as nanosecond-resolution durations. Only native
-successful in-window replies enter those paired means; the native cutoff policy
-above remains unchanged. Unnegotiated, absent, malformed, or greater-than-RTT
-handling durations leave the raw result intact and omit only the diagnostic.
+before wire decoding, so metadata parsing cannot inflate it. A stage's
+`ReflectorTiming` contains paired count and mean raw RTT, server handling, and
+adjusted RTT as nanosecond-resolution durations. Only successful in-window
+replies with valid clock pairs enter those means; the native cutoff policy above
+remains unchanged. Unrepresentable or greater-than-RTT durations leave the raw
+result intact and omit only the paired diagnostic. Missing or malformed wire
+fields invalidate the reply as a protocol error. Version 0.6 and 0.7 peers must
+not be mixed.

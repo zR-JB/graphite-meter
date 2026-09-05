@@ -1,164 +1,62 @@
 package wire
 
 import (
-	"bufio"
-	"errors"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
 )
 
-const corpusPath = "../../../api/wire.testvectors.txt"
-
-// vector is one row of api/wire.testvectors.txt: a direction, an input, and the expected output.
-type vector struct {
-	line     int
-	dir      string // "encode" | "decode"
-	input    string
-	expected string
-}
-
-// loadCorpus parses the shared wire corpus, skipping comment/blank lines.
-func loadCorpus(t *testing.T) []vector {
-	t.Helper()
-	f, err := os.Open(corpusPath)
+func TestCodecMatchesCorpus(t *testing.T) {
+	corpus, err := os.ReadFile("../../../api/wire.testvectors.txt")
 	if err != nil {
-		t.Fatalf("open corpus: %v", err)
+		t.Fatal(err)
 	}
-	defer f.Close()
-
-	var vectors []vector
-	scanner := bufio.NewScanner(f)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+	for line := range strings.SplitSeq(string(corpus), "\n") {
+		if strings.HasPrefix(line, "#") || line == "" {
 			continue
 		}
 		parts := strings.Split(line, "|")
 		if len(parts) != 3 {
-			t.Fatalf("line %d: want 3 fields, got %d: %q", lineNo, len(parts), line)
+			t.Fatalf("malformed corpus row: %s", line)
 		}
-		dir := strings.TrimSpace(parts[0])
-		if dir != "encode" && dir != "decode" {
-			t.Fatalf("line %d: bad dir %q", lineNo, dir)
-		}
-		vectors = append(vectors, vector{
-			line:     lineNo,
-			dir:      dir,
-			input:    strings.TrimSpace(parts[1]),
-			expected: strings.TrimSpace(parts[2]),
+		op, input, expected := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+		t.Run(op+"/"+input, func(t *testing.T) {
+			var actual string
+			var err error
+			switch op {
+			case "encode-ping":
+				id, parseErr := strconv.ParseUint(input, 10, 32)
+				if parseErr != nil {
+					t.Fatal(parseErr)
+				}
+				actual = EncodePing(uint32(id))
+			case "encode-pong":
+				values := strings.Split(input, ",")
+				id, idErr := strconv.ParseUint(values[0], 10, 32)
+				handling, handlingErr := strconv.ParseUint(values[1], 10, 64)
+				if idErr != nil || handlingErr != nil {
+					t.Fatalf("invalid fixture %s", input)
+				}
+				actual = EncodePong(uint32(id), handling)
+			case "decode-ping":
+				var id uint32
+				id, err = DecodePing(input)
+				actual = strconv.FormatUint(uint64(id), 10)
+			case "decode-pong":
+				var pong Pong
+				pong, err = DecodePong(input)
+				actual = strconv.FormatUint(uint64(pong.ID), 10) + "," + strconv.FormatUint(pong.HandlingNanos, 10)
+			default:
+				t.Fatalf("unknown corpus operation %s", op)
+			}
+			if expected == "INVALID" {
+				if err == nil {
+					t.Fatalf("accepted malformed message %q", input)
+				}
+			} else if err != nil || actual != expected {
+				t.Fatalf("got %q (%v), want %q", actual, err, expected)
+			}
 		})
 	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan corpus: %v", err)
-	}
-	if len(vectors) == 0 {
-		t.Fatal("corpus is empty — expected populated test vectors")
-	}
-	return vectors
-}
-
-func TestCodecMatchesCorpus(t *testing.T) {
-	for _, v := range loadCorpus(t) {
-		switch v.dir {
-		case "decode":
-			f, err := Decode(v.input)
-			if want, ok := strings.CutPrefix(v.expected, "ERR:"); ok {
-				de, isDecodeErr := errors.AsType[*DecodeError](err)
-				if !isDecodeErr {
-					t.Errorf("line %d: Decode(%q) = (%+v, %v); want *DecodeError code %q",
-						v.line, v.input, f, err, want)
-				} else if de.Code != want {
-					t.Errorf("line %d: Decode(%q) code = %q; want %q", v.line, v.input, de.Code, want)
-				}
-				continue
-			}
-			if err != nil {
-				t.Errorf("line %d: Decode(%q) unexpected error: %v", v.line, v.input, err)
-				continue
-			}
-			if got := render(f); got != v.expected {
-				t.Errorf("line %d: Decode(%q) rendered\n got  %s\n want %s", v.line, v.input, got, v.expected)
-			}
-		case "encode":
-			f := parseCanonical(t, v.line, v.input)
-			if got := Encode(f); got != v.expected {
-				t.Errorf("line %d: Encode(%q)\n got  %s\n want %s", v.line, v.input, got, v.expected)
-			}
-		}
-	}
-}
-
-// render produces the canonical "op=…;k=v;…" form the decode rows pin.
-func render(f Frame) string {
-	timing := ""
-	if f.Timing {
-		timing = ";timing=true"
-	}
-	handling := ""
-	if f.HandlingNanos != nil {
-		handling = ";handling=" + strconv.FormatUint(*f.HandlingNanos, 10)
-	}
-	switch f.Op {
-	case OpREADY:
-		return "op=READY" + timing
-	case OpBYE:
-		return "op=BYE"
-	case OpPING:
-		return "op=PING;id=" + strconv.FormatUint(uint64(f.ID), 10)
-	case OpPONG:
-		return "op=PONG;id=" + strconv.FormatUint(uint64(f.ID), 10) + ";nanos=" + strconv.FormatUint(f.Nanos, 10) + handling
-	case OpHI:
-		return "op=HI;proto=" + f.Proto + timing
-	case OpERR:
-		return "op=ERR;code=" + f.Code + ";text=" + f.Text
-	default:
-		return "op=?"
-	}
-}
-
-// parseCanonical turns an "op=…;k=v;…" spec (the encode rows' input column) into a Frame to feed Encode.
-func parseCanonical(t *testing.T, line int, spec string) Frame {
-	t.Helper()
-	var f Frame
-	for kv := range strings.SplitSeq(spec, ";") {
-		k, v, _ := strings.Cut(kv, "=")
-		switch k {
-		case "op":
-			f.Op = v
-		case "id":
-			n, err := strconv.ParseUint(v, 10, 32)
-			if err != nil {
-				t.Fatalf("line %d: bad id %q: %v", line, v, err)
-			}
-			f.ID = uint32(n)
-		case "timing":
-			f.Timing = v == "true"
-		case "handling":
-			f.HandlingNanos = new(mustU64(t, line, v))
-		case "nanos":
-			f.Nanos = mustU64(t, line, v)
-		case "proto":
-			f.Proto = v
-		case "code":
-			f.Code = v
-		case "text":
-			f.Text = v
-		default:
-			t.Fatalf("line %d: unknown canonical key %q", line, k)
-		}
-	}
-	return f
-}
-
-func mustU64(t *testing.T, line int, v string) uint64 {
-	t.Helper()
-	n, err := strconv.ParseUint(v, 10, 64)
-	if err != nil {
-		t.Fatalf("line %d: bad uint %q: %v", line, v, err)
-	}
-	return n
 }
