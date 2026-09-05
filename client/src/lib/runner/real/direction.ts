@@ -1,7 +1,7 @@
 // One transfer direction: its lanes, their restarts and the byte accounting that turns them into samples.
 import type { CoreHost } from "../core";
 import type { FlowDirection, PhaseActivity, RecoveryCause } from "../contract";
-import { redirectToLogin } from "../../auth";
+import { reportAuthenticationRequired } from "../../auth";
 import { laneStaggerMs } from "./backendPure";
 import type { ByteLane, LaneEvents, WtProgressRelay } from "./byteLane";
 import {
@@ -229,7 +229,7 @@ export class TransferDirection {
       onUploadProgress: (msg) => this.#deps.uploadProgress(msg),
       onAuthRequired: () => {
         this.#deps.discardTransfer();
-        redirectToLogin();
+        reportAuthenticationRequired();
       },
     };
   }

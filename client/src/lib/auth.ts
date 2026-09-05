@@ -1,10 +1,10 @@
+import { readJSONResponse, parseSessionLifetime } from "./api/decode";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "./request-auth";
 
-let redirecting = false;
 let pendingClassification: Promise<boolean> | null = null;
 
 export const authEnabled =
@@ -13,12 +13,17 @@ export const authEnabled =
     .querySelector('meta[name="graphite-meter-auth"]')
     ?.getAttribute("content") === "enabled";
 
-/* `expired` is the phrasing key the server-rendered login page reads. */
-export function redirectToLogin(reason = "expired"): void {
-  if (!authEnabled || redirecting) return;
-  redirecting = true;
-  window.dispatchEvent(new Event("graphite-meter-auth-required"));
-  location.replace(`/login?reason=${encodeURIComponent(reason)}`);
+export const AUTHENTICATION_REQUIRED_EVENT = "graphite-meter-auth-required";
+export type AuthenticationReason = "expired" | "renew";
+
+/** Transport code reports evidence; the active application owns navigation. */
+export function reportAuthenticationRequired(
+  reason: AuthenticationReason = "expired",
+): void {
+  if (!authEnabled) return;
+  window.dispatchEvent(
+    new CustomEvent(AUTHENTICATION_REQUIRED_EVENT, { detail: reason }),
+  );
 }
 
 export class SessionCoverageError extends Error {}
@@ -36,20 +41,15 @@ export function classifySessionCoverage(
   remainingMs: unknown,
   maximumLifetimeMs: unknown,
 ): SessionCoverage {
-  if (
-    !Number.isFinite(requiredMs) ||
-    requiredMs < 0 ||
-    typeof remainingMs !== "number" ||
-    !Number.isFinite(remainingMs) ||
-    remainingMs < 0 ||
-    typeof maximumLifetimeMs !== "number" ||
-    !Number.isFinite(maximumLifetimeMs) ||
-    maximumLifetimeMs <= 0 ||
-    remainingMs > maximumLifetimeMs
-  )
+  if (!Number.isFinite(requiredMs) || requiredMs < 0) return "invalid";
+  let lifetime;
+  try {
+    lifetime = parseSessionLifetime({ remainingMs, maximumLifetimeMs });
+  } catch {
     return "invalid";
-  if (requiredMs > maximumLifetimeMs) return "too-long";
-  return requiredMs > remainingMs ? "renew" : "enough";
+  }
+  if (requiredMs > lifetime.maximumLifetimeMs) return "too-long";
+  return requiredMs > lifetime.remainingMs ? "renew" : "enough";
 }
 
 export function sessionBudgetCovers(
@@ -91,9 +91,10 @@ export async function requireSessionCoverage(
     });
     if (!response.ok)
       throw new SessionCoverageError("Could not verify the session lifetime.");
-    const body = (await response.json()) as Record<string, unknown>;
-    const remainingMs = body.remainingMs;
-    const maximumLifetimeMs = body.maximumLifetimeMs;
+    const { remainingMs, maximumLifetimeMs } = parseSessionLifetime(
+      await readJSONResponse(response),
+    );
+    localSignal?.throwIfAborted();
     const coverage = classifySessionCoverage(
       requiredMs,
       remainingMs,
@@ -106,14 +107,14 @@ export async function requireSessionCoverage(
         "This test is longer than the maximum session lifetime. Shorten it before starting.",
       );
     if (coverage === "renew") {
-      redirectToLogin("renew");
+      reportAuthenticationRequired("renew");
       throw new SessionCoverageError(
         "Sign in again before starting this long test.",
       );
     }
     return {
-      remainingMs: remainingMs as number,
-      maximumLifetimeMs: maximumLifetimeMs as number,
+      remainingMs,
+      maximumLifetimeMs,
       checkedAt: performance.now(),
     };
   } catch (cause) {
@@ -148,7 +149,7 @@ export async function classifyAuthenticationFailure(
   ));
   try {
     const required = await pending;
-    if (required) redirectToLogin();
+    if (required && !localSignal?.aborted) reportAuthenticationRequired();
     return required;
   } finally {
     if (pendingClassification === pending) pendingClassification = null;
@@ -173,8 +174,8 @@ export async function authenticatedFetch(
     credentials,
     redirect: redirectForCredentials(credentials),
   });
-  if (authenticationRequired(response)) {
-    redirectToLogin();
+  if (!init?.signal?.aborted && authenticationRequired(response)) {
+    reportAuthenticationRequired();
   }
   return response;
 }
