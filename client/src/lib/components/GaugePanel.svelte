@@ -543,9 +543,10 @@
       <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
-    <div class="run-slot"><RunButton /></div>
-
-    <div class="stage-head"><StageTrack /></div>
+    <div class="instrument-controls">
+      <div class="run-slot"><RunButton /></div>
+      <div class="stage-head"><StageTrack /></div>
+    </div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
@@ -570,7 +571,7 @@
   .gauge-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--space-3);
     padding: 0;
     background: transparent;
     /* Query context for .instrument, so a docked panel shrinking this column
@@ -581,7 +582,7 @@
   /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3) var(--space-2);
     flex: 0 0 auto;
     min-height: 0;
     /* One readable gauge size across live and completed states. The profile
@@ -589,8 +590,7 @@
     --gauge-well-height: clamp(280px, 35svh, 360px);
     grid-template:
       "gauge" var(--gauge-well-height)
-      "run" auto
-      "stagehead" auto
+      "controls" auto
       "latency" auto
       / 1fr;
   }
@@ -598,8 +598,7 @@
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "gauge" var(--gauge-well-height)
-      "run" auto
-      "stagehead" auto
+      "controls" auto
       / 1fr;
   }
   /* Wide instruments pair the two readings and their controls in two columns. */
@@ -607,16 +606,14 @@
     .instrument {
       grid-template:
         "gauge latency" minmax(var(--gauge-well-height), auto)
-        "run run" auto
-        "stagehead stagehead" auto
+        "controls controls" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
     /* The gauge keeps its size when latency is disabled. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
-        "run run" auto
-        "stagehead stagehead" auto
+        "controls controls" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
@@ -645,10 +642,28 @@
        dimension that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
-  /* Start test's slot: RunButton centers itself (width:100%, max-width:320px,
-     align-self:center), so this slot only has to be a flex row. */
+  .instrument-controls {
+    --stage-controls-width: 480px;
+    grid-area: controls;
+    display: grid;
+    gap: var(--space-3);
+    width: 100%;
+    padding-block: var(--space-2);
+    justify-self: center;
+    align-items: center;
+  }
+  .instrument-controls:has(:global(.quad)) {
+    --stage-controls-width: 600px;
+  }
+  @container viz (min-width: 1000px) {
+    .instrument-controls {
+      grid-template-columns: 280px minmax(0, 1fr);
+      column-gap: var(--space-5);
+      max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
+    }
+  }
+  /* The action and editable stages form one centered group on wide screens. */
   .run-slot {
-    grid-area: run;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -854,16 +869,13 @@
     color: var(--err);
   }
 
-  /* Stage-head block: Test Stages header plus track, placed by the instrument
-     grid (top on mobile, bottom on desktop). Capped to a comfortable measure
-     and centered so it never stretches across a full two-column span. */
+  /* Narrow layouts stack the action and stages in their natural reading order. */
   .stage-head {
-    grid-area: stagehead;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
     width: 100%;
-    max-width: 600px;
+    max-width: var(--stage-controls-width);
     justify-self: center;
   }
   /* The instrument has an explicit well height, so result content no longer
@@ -876,5 +888,8 @@
     max-width: none;
     align-self: center;
     min-height: 0;
+  }
+  .results-slot:empty {
+    display: none;
   }
 </style>

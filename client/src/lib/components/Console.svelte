@@ -870,7 +870,7 @@
     /* The hero gauge flexes to fill, chart and chips keep their compact
        intrinsic height. This is the flat faceplate, the wells carry the depth. */
     padding: var(--space-2) var(--space-3);
-    gap: var(--space-2);
+    gap: var(--space-3);
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
