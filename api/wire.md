@@ -82,7 +82,7 @@ value for a nonempty token. With authentication off it returns exactly an empty 
 
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
-records as `GET /upload/progress`.
+records as `GET /upload/progress`; see the [upload contract](upload.md).
 
 The `GM_MAX_SESSION_DURATION` bound covers the two **transfer** session routes. `/wt/ping` is not
 one: it lives under the ordinary request bound (`GM_MAX_OPERATION_DURATION`), while sharing the
