@@ -206,3 +206,17 @@ func TestPollPropagatesCancellation(t *testing.T) {
 		t.Fatalf("err=%v, want context.Canceled", err)
 	}
 }
+
+func TestPollRejectsMalformedSuccessfulApproval(t *testing.T) {
+	for _, body := range []string{`{"token":"ok"} {}`, `{"token":""}`, `{"token":"` + strings.Repeat("a", 8193) + `"}`, strings.Repeat(" ", maxControlBytes+1)} {
+		p := &PendingAuthorization{
+			verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {},
+			client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: r}, nil
+			})},
+		}
+		if _, err := p.Poll(t.Context()); err == nil {
+			t.Fatal("accepted malformed approval")
+		}
+	}
+}
