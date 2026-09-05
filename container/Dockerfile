@@ -5,7 +5,7 @@
 # Build from the REPO ROOT:
 #   docker build -f container/Dockerfile -t graphite-meter:latest .
 #
-ARG BUN_VERSION=1.4.1
+ARG BUN_VERSION=1.4.2
 # Direct source builds are explicitly development builds. Release and
 # prerelease automation supplies the public server and client versions.
 ARG VERSION=0.0.0-dev

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { tick } from "svelte";
+  import { focusMenuItem, navigateMenu } from "../actions/menu";
   import { ICON } from "../constants";
   import type { ThemePref } from "../state/persistence";
 
@@ -30,16 +31,26 @@
   let trigger = $state<HTMLButtonElement>();
   let menu = $state<HTMLDivElement>();
 
-  async function toggle() {
-    open = !open;
-    if (open) {
-      await tick();
-      menu?.querySelector<HTMLButtonElement>("button")?.focus();
-    }
+  const menuId = $props.id();
+  async function show(last = false) {
+    open = true;
+    await tick();
+    if (open) focusMenuItem(menu, last);
+  }
+  function toggle() {
+    if (open) open = false;
+    else void show();
+  }
+  function triggerKeydown(event: KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    event.stopPropagation();
+    void show(event.key === "ArrowUp");
   }
 
   function choose(action: () => void) {
     open = false;
+    trigger?.focus({ preventScroll: true });
     action();
   }
 
@@ -57,16 +68,14 @@
     onEndpoint(trigger);
   }
 
-  onMount(() => {
-    const outside = (event: PointerEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (!trigger?.contains(target) && !menu?.contains(target)) open = false;
-    };
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  });
+  function outside(event: PointerEvent) {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!trigger?.contains(target) && !menu?.contains(target)) open = false;
+  }
 </script>
+
+<svelte:document onpointerdown={outside} />
 
 <div class="more-control">
   <button
@@ -76,6 +85,8 @@
     aria-label="More controls"
     aria-haspopup="menu"
     aria-expanded={open}
+    aria-controls={open ? menuId : undefined}
+    onkeydown={triggerKeydown}
     onclick={toggle}
   >
     {@html ICON.more}
@@ -83,21 +94,19 @@
   {#if open}
     <div
       bind:this={menu}
+      id={menuId}
       class="more-menu"
       role="menu"
       tabindex="-1"
       aria-label="More controls"
-      onkeydown={(event) => {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        open = false;
-        trigger?.focus();
-      }}
+      onkeydown={(event) =>
+        navigateMenu(event, menu, trigger, () => (open = false))}
     >
       {#if showHistory}
         <button
           type="button"
           role="menuitem"
+          tabindex="-1"
           aria-current={historyActive ? "page" : undefined}
           onclick={chooseHistory}
         >
@@ -112,6 +121,7 @@
         <button
           type="button"
           role="menuitem"
+          tabindex="-1"
           aria-current={endpointActive ? "true" : undefined}
           onclick={chooseEndpoint}
         >
@@ -124,7 +134,12 @@
         </button>
       {/if}
       {#if showTheme}
-        <button type="button" role="menuitem" onclick={() => choose(onTheme)}>
+        <button
+          type="button"
+          role="menuitem"
+          tabindex="-1"
+          onclick={() => choose(onTheme)}
+        >
           <span>
             {#if theme === "light"}{@html ICON.sun}{:else if theme === "dark"}{@html ICON.moon}{:else}{@html ICON.contrast}{/if}
           </span>
@@ -214,5 +229,11 @@
     margin-top: 2px;
     color: var(--text-muted);
     font-size: 9px;
+  }
+  @media (pointer: coarse) {
+    .more-trigger {
+      width: 44px;
+      height: 44px;
+    }
   }
 </style>
