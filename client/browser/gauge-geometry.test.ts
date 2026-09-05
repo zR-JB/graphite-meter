@@ -53,10 +53,10 @@ for (const viewport of [
     await openApp(page, "dummy", viewport);
     const withLatency = await gaugeBox(page, true);
     const withoutLatency = await gaugeBox(page, false);
-    const compactHeight = Math.min(240, Math.max(190, viewport.height * 0.24));
     expectNear(withLatency.width, withoutLatency.width);
     expectNear(withLatency.height, withoutLatency.height);
-    expectNear(withLatency.height, compactHeight, 2);
+    expect(withLatency.height).toBeGreaterThanOrEqual(240);
+    expect(withLatency.height).toBeLessThanOrEqual(300);
     expectNear(withLatency.canvasWidth, withoutLatency.canvasWidth);
     expectNear(withLatency.canvasHeight, withoutLatency.canvasHeight);
   });

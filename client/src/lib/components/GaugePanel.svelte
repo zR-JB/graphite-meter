@@ -14,7 +14,6 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMs, reasonLabel } from "../format";
-  import { tooltip } from "../actions/tooltip";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
   import { authoritativeTransferAnnouncement } from "./gaugeAccessibility";
   import {
@@ -120,7 +119,7 @@
     if (unusableStage) return EMPTY_DISPLAY;
     if (p === "latency")
       return store.liveLatencyLost
-        ? { value: "lost", unit: "" }
+        ? { value: "—", unit: "probe timeout" }
         : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
     if (
       p === "idle" ||
@@ -466,19 +465,6 @@
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
-    <div class="stage-head">
-      <div class="controls-head">
-        <span class="controls-title">Test stages</span>
-        <span
-          class="eta"
-          use:tooltip={"Estimated run time at the saved duration"}
-        >
-          ~{(store.totalEtaMs / 1000).toFixed(0)}s
-        </span>
-      </div>
-      <StageTrack />
-    </div>
-
     <div bind:this={stageEl} class="stage">
       <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
       {#if showGaugeTicks}
@@ -555,6 +541,8 @@
 
     <div class="run-slot"><RunButton /></div>
 
+    <div class="stage-head"><StageTrack /></div>
+
     {#if store.latencyEnabled}
       <div class="latency-panel">
         <LatencyProfile />
@@ -578,87 +566,48 @@
   .gauge-panel {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-2);
     padding: 0;
     background: transparent;
     /* Query context for .instrument, so a docked panel shrinking this column
        restyles it. It sits here: a container query only styles descendants. */
     container-type: inline-size;
     container-name: viz;
-    /* Result content sits below the instrument. Its actual occupied height is
-       reserved from the shared gauge well through CSS, never through a
-       resize-observer/viewport feedback loop. */
-    --result-slot-budget: 0px;
   }
-  .gauge-panel:has(:global(.result-chip:nth-child(1))) {
-    --result-slot-budget: 36px;
-  }
-  .gauge-panel:has(:global(.result-chip:nth-child(2))) {
-    --result-slot-budget: 72px;
-  }
-  .gauge-panel:has(:global(.result-chip:nth-child(3))) {
-    --result-slot-budget: 108px;
-  }
-  .gauge-panel:has(:global(.result-chip:nth-child(4))) {
-    --result-slot-budget: 144px;
-  }
-  .gauge-panel:has(:global(.result-cards.reserve)) {
-    --result-slot-budget: 80px;
-  }
-  /* The instrument grid places stage-head, gauge, Start test, and the optional
-     latency panel, so one breakpoint flips the whole arrangement. Its
-     gauge+latency track is content-independent: the latency panel scrolls
-     inside its own height. */
+  /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-2);
     flex: 0 0 auto;
     min-height: 0;
-    /* The stacked mode has intrinsic wells and participates in document flow.
-       Its size is independent of the optional latency row. */
-    /* The shared well is capped by the fixed shell, controls, rail, chart
-       floor, and their gaps. On a windowed desktop it yields before the stage
-       grows a token scrollbar; taller viewports retain the generous 42% well.
-       This remains independent of the optional latency panel. */
-    --instrument-stage-reserve: 458px;
-    --gauge-well-height: clamp(
-      220px,
-      min(
-        42svh,
-        calc(
-          100dvh - var(--instrument-stage-reserve) - var(--result-slot-budget)
-        )
-      ),
-      360px
-    );
+    /* One readable gauge size across live and completed states. The profile
+       contributes its intrinsic height instead of acquiring a nested scroller. */
+    --gauge-well-height: clamp(280px, 35svh, 360px);
     grid-template:
-      "stagehead" auto
       "gauge" var(--gauge-well-height)
       "run" auto
+      "stagehead" auto
       "latency" auto
       / 1fr;
   }
   /* No latency panel: its row disappears at every width. */
   .instrument:not(:has(.latency-panel)) {
     grid-template:
-      "stagehead" auto
       "gauge" var(--gauge-well-height)
       "run" auto
+      "stagehead" auto
       / 1fr;
   }
-  /* Wide: gauge + latency side-by-side (each min-width:240px + gap ≈ 492px;
-     520px leaves a safety margin over the columns' min-width floor). One
-     query moves Start test, the latency panel, and Test Stages together. */
-  @container viz (min-width: 520px) {
+  /* Wide instruments pair the two readings and their controls in two columns. */
+  @container viz (min-width: 760px) {
     .instrument {
       grid-template:
-        "gauge latency" var(--gauge-well-height)
+        "gauge latency" minmax(var(--gauge-well-height), auto)
         "run run" auto
         "stagehead stagehead" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
-    /* With latency disabled, let the gauge well use both wide columns while
-       retaining the same fixed height. */
+    /* The gauge keeps its size when latency is disabled. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
@@ -669,12 +618,11 @@
   }
   @media (max-width: 759px) and (orientation: portrait) {
     .instrument {
-      /* A phone benefits more from keeping latency and result cards in the
-         first viewport than from carrying the desktop-sized hero well. */
-      --gauge-well-height: clamp(190px, 24svh, 240px);
+      /* A phone retains a readable dial while the document carries the results. */
+      --gauge-well-height: clamp(240px, 30svh, 300px);
     }
     .instrument .stage {
-      min-height: 190px;
+      min-height: 240px;
     }
     .canvas,
     .gauge-ticks,
@@ -710,11 +658,12 @@
     justify-content: center;
     min-height: 46px;
   }
-  /* Latency profile: a matching engraved well, sized identically to the gauge
-     so the pair reads as one balanced instrument. Its content scrolls within
-     the shared height rather than forcing the row taller. */
+  /* Latency rows remain fully visible; the instrument owns their height. */
   .latency-panel {
     grid-area: latency;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
     min-width: 240px;
     min-height: 220px;
     padding: var(--space-2);
@@ -722,7 +671,7 @@
     border-radius: var(--r-well);
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
-    overflow: auto;
+    overflow: visible;
   }
   .canvas {
     position: absolute;
@@ -962,33 +911,6 @@
     max-width: 600px;
     justify-self: center;
   }
-  .controls-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: 18px;
-  }
-  .controls-title {
-    font-size: var(--type-xs);
-    font-weight: 700;
-    letter-spacing: var(--track-wide);
-    text-transform: uppercase;
-    color: var(--text-soft);
-  }
-  .eta {
-    display: inline-block;
-    min-width: 6ch;
-    text-align: right;
-    font-family: var(--font-mono);
-    font-size: var(--type-sm);
-    font-weight: 700;
-    color: var(--text-muted);
-    letter-spacing: 0;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-  }
-
   /* The instrument has an explicit well height, so result content no longer
      needs a phantom reserve to keep it stable. Let cards occupy only their
      real height; otherwise the empty reserve becomes a visual gulf above the
@@ -996,7 +918,7 @@
   .results-slot {
     flex: 0 0 auto;
     width: 100%;
-    max-width: 760px;
+    max-width: none;
     align-self: center;
     min-height: 0;
   }

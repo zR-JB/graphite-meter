@@ -70,7 +70,11 @@
       class:on={s.selected}
       role="switch"
       aria-checked={s.selected}
-      aria-label="{s.label} stage{s.reason ? ` (${s.reason})` : ''}"
+      aria-label="{s.label} stage{s.reason
+        ? ` (${s.reason})`
+        : s.state === 'complete'
+          ? ' (complete)'
+          : ''}"
       use:tooltip={s.failure
         ? `${s.label} — ${failureDetail(s.failure.message)}`
         : s.reason
@@ -308,14 +312,14 @@
   .seg-row {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 4px;
     min-width: 0;
     min-height: 18px;
   }
   .seg-main {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: 4px;
     min-width: 0;
     flex: 1 1 auto;
   }
@@ -368,5 +372,16 @@
   .seg--partial .seg-tag {
     border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
     color: var(--err);
+  }
+  @container viz (max-width: 480px) {
+    .seg-row {
+      flex-wrap: wrap;
+    }
+    .seg-main {
+      flex-shrink: 0;
+    }
+    .seg-check {
+      display: none;
+    }
   }
 </style>

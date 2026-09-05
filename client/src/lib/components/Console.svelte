@@ -869,8 +869,8 @@
     grid-area: stage;
     /* The hero gauge flexes to fill, chart and chips keep their compact
        intrinsic height. This is the flat faceplate, the wells carry the depth. */
-    padding: var(--space-3);
-    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    gap: var(--space-2);
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
@@ -883,12 +883,10 @@
     flex: 0 0 auto;
     min-height: 0;
   }
-  /* The chart takes leftover height, capped so a tall viewport returns the
-     excess to the gauge. Its outer tile needs room for the 140px plot plus
-     its own inset and border; otherwise the plot leaks beyond the recess. */
+  /* The plot keeps a 140px readable floor; its single border needs two more pixels. */
   .stage > :global(.chart) {
-    flex: 1 1 164px;
-    min-height: 164px;
+    flex: 1 1 142px;
+    min-height: 142px;
     max-height: 340px;
   }
   .status {

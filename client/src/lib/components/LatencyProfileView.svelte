@@ -38,7 +38,7 @@
     showCurrent = false,
     showTimeouts = false,
     jitterDescription = JARGON.jitter,
-    label = "Latency, RTT variation and probe timeouts by phase",
+    label = "Latency, jitter and probe timeouts by phase",
   }: Props = $props();
 
   const scale = $derived(domain ?? profileDomain(lanes));
@@ -169,6 +169,11 @@
   role="group"
   aria-label={label}
 >
+  <div class="ticks" aria-hidden="true">
+    {#each ticks as tick, index (index)}
+      <span style={`left:${pos(tick, scale)}%`}>{tickLabel(tick)} ms</span>
+    {/each}
+  </div>
   {#each lanes as lane (lane.key)}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
@@ -187,7 +192,7 @@
         >
         {#if lane.jitter != null}
           <em class="jit" use:tooltip={jitterDescription}
-            >{fmtMs(lane.jitter)} ms variation</em
+            >{fmtMs(lane.jitter)} ms jitter</em
           >
         {/if}
         <em class="range-label">
@@ -210,12 +215,6 @@
         </p>
       {/if}
       <div class="strip">
-        <div class="ticks" aria-hidden="true">
-          {#each ticks as tick, index (`${lane.key}-${index}`)}
-            <span style={`left:${pos(tick, scale)}%`}>{tickLabel(tick)}</span>
-          {/each}
-        </div>
-
         <button
           type="button"
           class="track"
@@ -312,16 +311,16 @@
   }
   .lanes {
     display: grid;
-    gap: var(--space-2);
+    gap: 6px;
     min-width: 0;
     padding: 0;
   }
   .lane {
     --tone: var(--phase-latency);
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-1);
     min-width: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: 6px var(--space-3);
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-well);
     background: var(--surface-1);
@@ -347,7 +346,8 @@
   .lane-meta {
     display: flex;
     align-items: baseline;
-    gap: var(--space-2);
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
     min-width: 0;
   }
   .lane-icon {
@@ -403,7 +403,7 @@
   .ticks {
     position: relative;
     height: 13px;
-    margin: 0 var(--space-1);
+    margin: 0 calc(var(--space-3) + 1px);
   }
   .ticks span {
     position: absolute;

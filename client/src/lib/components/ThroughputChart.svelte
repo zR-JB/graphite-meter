@@ -242,18 +242,11 @@
 </section>
 
 <style>
-  /* Flat milled tile on the faceplate, quieter than the gauge well. The flex
-     column lets the plot stretch into whatever height Console's
-     .stage > .chart rule grants, down to the 140px floor in stacked flow. */
+  /* One chart surface preserves plot space without a second padded frame. */
   .chart {
     display: flex;
     flex-direction: column;
-    min-height: 164px;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
+    min-height: 142px;
   }
   /* Secondary to the gauge hero: a shallow recess in the tile, filling the
      granted height down to the compact floor. */
@@ -261,7 +254,8 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 140px;
-    border-radius: var(--r-well);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
     overflow: hidden;
