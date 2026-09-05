@@ -179,6 +179,9 @@ var serverPresets = []serverPreset{
 }
 
 type model struct {
+	lifetime context.Context
+	shutdown context.CancelFunc
+
 	cfg   goclient.Config
 	mode  mode
 	width int
@@ -213,6 +216,8 @@ type model struct {
 	prepared      *goclient.PreparedConnection
 	discovery     *wire.Preflight
 	prepareSeq    int
+	prepareCtx    context.Context
+	prepareCancel context.CancelFunc
 	prepareStatus string
 	prepareStep   prepareStep
 	prepareError  string
@@ -232,11 +237,15 @@ type model struct {
 const animationFPS = 20
 
 func newModel(cfg goclient.Config) model {
+	lifetime, shutdown := context.WithCancel(context.Background())
 	dial := spinner.MiniDot
 	dial.FPS = time.Second / animationFPS
 	spin := spinner.New(spinner.WithSpinner(dial))
 	spin.Style = accentStyle
 	return model{
+		lifetime:      lifetime,
+		shutdown:      shutdown,
+		prepareCtx:    lifetime,
 		cfg:           cfg,
 		mode:          modeConfigure,
 		openApproval:  (*goclient.PendingAuthorization).Open,
@@ -308,9 +317,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Editing server URL. Enter applies, esc cancels."
 		return m, nil
 	case key.Matches(msg, keys.quit):
-		if m.cancel != nil {
-			m.cancel()
-		}
+		m.close()
 		return m, tea.Quit
 	case m.cancelPrompt:
 		return m.answerCancelPrompt(msg)
@@ -411,9 +418,7 @@ func (m model) confirm() (tea.Model, tea.Cmd) {
 func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
-		if m.cancel != nil {
-			m.cancel()
-		}
+		m.close()
 		return m, tea.Quit
 	case key.Matches(msg, keys.discard):
 		m.notice = "Edit canceled."
