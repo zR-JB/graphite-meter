@@ -179,6 +179,12 @@ export class LatencyChannel {
     return promise;
   }
 
+  /** Hard stage failure cannot establish which buffered or pending outcomes were discarded. */
+  discard(): void {
+    if (this.#worker) this.#deps.host().ingestLatencyAccountingIncomplete();
+    this.teardown();
+  }
+
   /* Stop + terminate the ping worker, which drops its bus without a close frame: the server's read ends with the. */
   teardown(): void {
     this.#active = false;

@@ -717,7 +717,7 @@ export class RealBackend implements RunnerBackend {
   onStageEnd(_activity: PhaseActivity, flush = true): void | Promise<void> {
     if (!flush) {
       this.#discardTransfer();
-      this.#latency.teardown();
+      this.#latency.discard();
       // Reset the stage stall latch; otherwise later healthy bytes cannot refresh the core watchdog.
       this.#stalled = false;
       this.#transferActivity = null;

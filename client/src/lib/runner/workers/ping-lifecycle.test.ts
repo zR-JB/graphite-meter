@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { LatencyAccumulator } from "../latencySummary";
 import type { PingSample } from "./pingSample";
 
 type Output =
@@ -291,3 +292,41 @@ test("disconnect preserves a deadline outcome that preceded the connection gap",
     expect(samples()[0].lost).toBe(true);
   });
 });
+
+for (const failure of ["failSends", "rejectSends"] as const) {
+  test(`${failure} preserves buffered reply order across the jitter interruption`, async () => {
+    await withWorker(async ({ advance, reply, stop, socket, posted }) => {
+      advance(1);
+      reply(1);
+      advance(2);
+      socket[failure] = true;
+      reply(2);
+      await Promise.resolve();
+      stop();
+      const outcomes = posted.filter(
+        (message) =>
+          message.type === "samples" || message.type === "interrupted",
+      );
+      expect(outcomes.map((message) => message.type)).toEqual([
+        "samples",
+        "interrupted",
+      ]);
+      const accumulator = new LatencyAccumulator();
+      for (const outcome of outcomes) {
+        if (outcome.type === "samples") {
+          for (const sample of outcome.samples)
+            accumulator.observe(sample.rtt, sample.lost, 0);
+        } else if (outcome.type === "interrupted")
+          accumulator.interrupt(outcome.sentAtEpochMs.length, "send-failed");
+      }
+      // A later reply must not form an RTT variation pair across the failed send.
+      accumulator.observe(99, false, 0);
+      expect(accumulator.snapshot()).toMatchObject({
+        probeCount: 3,
+        sendFailureCount: 1,
+        jitterPairs: 1,
+        jitterMs: 1,
+      });
+    });
+  });
+}

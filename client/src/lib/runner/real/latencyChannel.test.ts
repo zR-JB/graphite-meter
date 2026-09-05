@@ -361,3 +361,24 @@ test("an unresponsive worker cannot hold stage finalization past the acknowledge
   expect(stalls).toEqual(["ping worker did not finish its pending probes"]);
   expect(accountingComplete()).toBe(false);
 });
+
+test("discarding an active stage marks unknown accounting before terminating its worker", () => {
+  const { channel, worker, accountingComplete } = finalizingChannel();
+  const terminate = worker.terminate.bind(worker);
+  worker.terminate = () => {
+    expect(accountingComplete()).toBe(false);
+    terminate();
+  };
+  channel.discard();
+  expect(accountingComplete()).toBe(false);
+  expect(worker.terminated).toBe(1);
+});
+
+test("discarding an already drained stage does not invent missing outcomes", async () => {
+  const { channel, worker, accountingComplete } = finalizingChannel();
+  const ending = channel.finish();
+  worker.emit({ type: "stopped" });
+  await ending;
+  channel.discard();
+  expect(accountingComplete()).toBe(true);
+});

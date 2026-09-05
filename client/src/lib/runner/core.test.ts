@@ -349,6 +349,60 @@ test("a failed transfer preserves qualifying evidence and continues later stages
   expect(backend.calls).toContain("begin:upload");
 });
 
+test("failed-stage shutdown reports discarded probe accounting before the partial result", async () => {
+  class InterruptedBackend extends FakeBackend {
+    override onStageEnd(
+      activity: PhaseActivity,
+      flush = true,
+    ): void | Promise<void> {
+      if (!flush) {
+        this.host.ingestLatencyAccountingIncomplete();
+        return;
+      }
+      return super.onStageEnd(activity);
+    }
+  }
+  const { core, events } = await startCore(
+    {
+      stages: { download: true, upload: true },
+      duration: { downloadMs: 1_000, uploadMs: 100 },
+    },
+    new InterruptedBackend(),
+  );
+  core.ingestThroughput("down", 1_000, 900, 0.9);
+  core.ingestLatency({ rttMs: 12, lost: false, observedAtMs: fakeNow });
+  core.failStage(
+    "download",
+    "connection-lost",
+    "transfer failed with pending probes",
+  );
+  const summaryBeforeResult = events.slice(
+    0,
+    events.findIndex(
+      (event) => event.type === "stageResult" && event.stage === "download",
+    ),
+  );
+  expect(
+    typedEvents(summaryBeforeResult, "latencySummary").at(-1)?.summary,
+  ).toMatchObject({
+    accountingComplete: false,
+    probeCount: 1,
+    timeoutCount: 0,
+    meanMs: 12,
+  });
+  advance(0);
+  advance(100);
+  expectComplete(events, (result) => {
+    expect(result.download?.totalBytes).toBe(900);
+    expect(result.latencyByStage.download).toMatchObject({
+      accountingComplete: false,
+      probeCount: 1,
+      timeoutCount: 0,
+      meanMs: 12,
+    });
+  });
+});
+
 test("a terminal runner error retains previously reduced bidirectional lanes", async () => {
   const { core, events } = await startCore({
     stages: { download: false, bidirectional: true },

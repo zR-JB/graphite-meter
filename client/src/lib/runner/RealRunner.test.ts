@@ -511,6 +511,7 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       bidirectionalMs: 1,
     };
     const failures: string[] = [];
+    let incompleteAccounting = 0;
     const discoveries: import("./contract").TransportDiscovery[] = [];
     const uploadBytes: number[] = [];
     const stalls: StallInfo[] = [];
@@ -521,6 +522,9 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
       },
       failStage(_stage, _reason, message) {
         failures.push(message);
+      },
+      ingestLatencyAccountingIncomplete() {
+        incompleteAccounting++;
       },
       ingestThroughput(_dir, _rate, bytes) {
         uploadBytes.push(bytes);
@@ -654,6 +658,11 @@ test("real backend: probe refresh keeps the negotiated protocol per role, and th
     });
     expect(stalls.at(-1)?.transport).toBe("fetch-stream");
     await backend.onStageEnd(loaded);
+    expect(incompleteAccounting).toBe(0);
+    backend.onStageBegin(loaded);
+    backend.onStageMeasure(loaded);
+    backend.onStageEnd(loaded, false);
+    expect(incompleteAccounting).toBe(1);
     started.length = 0;
     uploadBytes.length = 0;
     const preparation = backend.onStageBegin({

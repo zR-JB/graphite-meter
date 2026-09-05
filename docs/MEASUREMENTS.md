@@ -49,15 +49,17 @@ while a stop message was in transit are excluded. The boundary uses comparable
 worker/window performance-clock coordinates, so batching cannot change membership.
 
 Disconnects leave pending probes unresolved. Rejected local sends are recorded as
-send failures. Neither becomes timeout evidence. The worker flushes resolved
-outcomes and interruption counts before acknowledging its stop; only then does
+send failures. Neither becomes timeout evidence. Buffered replies are delivered
+before a later interruption so RTT variation never crosses that interruption.
+The worker flushes resolved outcomes and interruption counts before acknowledging its stop; only then does
 the owner terminate it and finalize the stage. Cancellation can stop this drain
 immediately. If the worker crashes or fails to acknowledge within the bounded
 wait, the owner reports an interruption without inventing outcomes for the
 unknown pending population.
 Its stage summary retains `accountingComplete: false`, including when no known
 outcome was delivered, so the missing population cannot look like a complete
-zero-timeout measurement.
+zero-timeout measurement. A failed stage that must discard its active worker
+reports incomplete accounting before reducing the stage's retained partial result.
 
 - Min, max, mean, and percentiles cover replies received within the measured stage.
 - P50 is the midpoint median. P10, P90, and P95 use nearest rank.

@@ -401,12 +401,15 @@ function sendPing(now: number): void {
   const failed = (): void => {
     if (pending.get(id) !== ping) return;
     pending.delete(id);
-    if (eligible(ping))
+    if (eligible(ping)) {
+      // The interruption must follow any replies already observed in this batch.
+      flush();
       post({
         type: "interrupted",
         sentAtEpochMs: [performance.timeOrigin + ping.sentAt],
         reason: "send-failed",
       });
+    }
     serviceDrain();
   };
   try {
