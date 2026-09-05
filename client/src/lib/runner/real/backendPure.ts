@@ -20,6 +20,7 @@ import { kindsForRole } from "./transports";
 
 /* Server route paths, the TS half of a cross-language pin. */
 export const ROUTES = {
+  preflight: "/preflight",
   probe: "/probe",
   download: "/download",
   upload: "/upload",
@@ -418,7 +419,7 @@ export function selectLatencyTarget(
       (usable.length === 1 ? usable[0] : null)
     );
   };
-  // Automatic prefers the datagram bus, whose losses are real packet loss.
+  // Automatic prefers the datagram bus for probe timeout evidence without stream retransmission.
   return only("webtransport") ?? only("websocket");
 }
 

@@ -31,12 +31,13 @@ HTTP/1.1, HTTP/2, or HTTP/3 instead of depending only on protocol negotiation.
 | Download                | Payload bytes consumed by the receiving client over measured time.                                                         | Browser, host, server, and path limits can all constrain the result.                               |
 | Upload                  | Payload bytes received and timed by the server, so bytes merely queued by the sender are not counted as delivered.         | A proxy or server that terminates or buffers the measured request becomes part of the path.        |
 | Idle and loaded latency | Client-clock application send-to-receive time before and during each selected transfer stage, with percentiles and jitter. | It includes browser, server, transport, and scheduler time. It is not ICMP latency.                |
-| Datagram loss           | Missing WebTransport datagram replies on the selected application path.                                                    | This estimates loss for that QUIC exchange, not universal Ethernet, IP, radio, or physical loss.   |
+| Probe timeouts          | Resolved application probes whose reply deadline expired, labelled by WebSocket or datagram transport.                     | Network and endpoint queues can cause timeouts; this does not identify physical or directional IP loss. |
 | Wire-rate estimate      | A separately labelled estimate derived from payload rate and observed protocol evidence.                                   | It is not packet capture and cannot include unknown tunnel, encapsulation, VLAN, or path overhead. |
 
 WebSocket latency remains available when WebTransport is unavailable. It measures application RTT,
-but TCP retransmission and head-of-line blocking mean it cannot expose physical packet loss in the
-same way as an unreliable datagram exchange.
+including TCP retransmission and head-of-line blocking. WebTransport datagrams avoid stream
+retransmission, but their timeouts also include endpoint queueing and drops.
+See [measurement definitions](docs/MEASUREMENTS.md) for exact populations, missing evidence, and statistics.
 
 ## Start a server
 

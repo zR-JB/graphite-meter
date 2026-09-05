@@ -6,6 +6,8 @@ import (
 	"maps"
 	"net/http"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 const (
@@ -83,11 +85,8 @@ func (s *Service) expireWTTokensLocked(now time.Time) {
 }
 
 func isWebTransportRoute(path string) bool {
-	switch path {
-	case "/wt/download", "/wt/upload", "/wt/ping":
-		return true
-	}
-	return false
+	spec, ok := route.Lookup(path)
+	return ok && spec.Kind == route.WebTransport
 }
 
 func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {

@@ -1,15 +1,17 @@
 import { test, expect } from "bun:test";
 import {
   pos,
+  probeAccountingDetails,
+  hasProbeAccountingNotice,
   rangeWidth,
   tickLabel,
-  lossLabel,
+  timeoutLabel,
   entries,
   nearestMetric,
   hoverContext,
   metricLabel,
   profileDomain,
-  savedLatencyHasDatagramLossEvidence,
+  savedLatencyHasProbeEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -26,7 +28,11 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     centerKind: "average",
     current: 55,
     jitter: 5,
-    lossRatio: 0,
+    timeoutRatio: 0,
+    accountingComplete: true,
+    timeoutCount: 0,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
     count: 100,
     active: false,
     ...over,
@@ -62,18 +68,18 @@ test("tickLabel: non-positive collapses to a bare zero", () => {
   expect(tickLabel(12)).not.toBe("0");
 });
 
-test("lossLabel: hidden at zero, extra precision under one percent", () => {
-  expect(lossLabel(0)).toBe("");
-  expect(lossLabel(-1)).toBe("");
-  expect(lossLabel(0.005)).toBe("0.50% loss");
-  expect(lossLabel(0.05)).toBe("5.0% loss");
+test("timeoutLabel: hidden at zero, extra precision under one percent", () => {
+  expect(timeoutLabel(0)).toBe("");
+  expect(timeoutLabel(-1)).toBe("");
+  expect(timeoutLabel(0.005)).toBe("0.50% timeouts");
+  expect(timeoutLabel(0.05)).toBe("5.0% timeouts");
 });
 
 test("saved datagram loss requires WebTransport latency provenance", () => {
-  expect(savedLatencyHasDatagramLossEvidence("webtransport")).toBe(true);
-  expect(savedLatencyHasDatagramLossEvidence("websocket")).toBe(false);
-  expect(savedLatencyHasDatagramLossEvidence(null)).toBe(false);
-  expect(savedLatencyHasDatagramLossEvidence("unknown")).toBe(false);
+  expect(savedLatencyHasProbeEvidence("webtransport")).toBe(true);
+  expect(savedLatencyHasProbeEvidence("websocket")).toBe(true);
+  expect(savedLatencyHasProbeEvidence(null)).toBe(false);
+  expect(savedLatencyHasProbeEvidence("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {
@@ -112,4 +118,22 @@ test("center labels and hover context follow the lane's semantics", () => {
   expect(hoverContext(result, "center")).toContain("Range");
   expect(hoverContext(lane({ p10: null }), "p90")).toBe("");
   expect(hoverContext(lane({ center: null }), "current")).toBe("");
+});
+
+test("incomplete accounting stays visible without turning unknown outcomes into zero", () => {
+  const incomplete = lane({
+    accountingComplete: false,
+    count: 0,
+    timeoutCount: 0,
+  });
+  expect(hasProbeAccountingNotice(incomplete)).toBe(true);
+  expect(probeAccountingDetails(incomplete)).toBe(
+    "Known: 0 resolved · 0 timeouts · 0 unresolved · 0 send failures. Additional outcomes unknown.",
+  );
+  expect(hasProbeAccountingNotice(lane())).toBe(false);
+  expect(hasProbeAccountingNotice(lane({ unresolvedCount: 2 }))).toBe(true);
+});
+
+test("legacy lane details do not invent missing exact outcome counts", () => {
+  expect(probeAccountingDetails({ count: 140 })).toBe("140 resolved");
 });

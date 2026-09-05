@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { HISTORY_LIMIT } from "./types";
 import { retainNewest } from "./repository";
-import type { HistoryRecordV1 } from "./types";
+import type { HistoryRecord } from "./types";
 
-function record(index: number): HistoryRecordV1 {
+function record(index: number): HistoryRecord {
   return {
     schemaVersion: 1,
     id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,

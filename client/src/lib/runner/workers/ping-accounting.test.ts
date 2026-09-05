@@ -88,8 +88,8 @@ test("reply-driven accounting retains nine replies and one timeout regardless of
   expect(samples[0].observedAtEpochMs).toBe(51_002);
   const accum = new RunAccumulator();
   for (const sample of samples)
-    accum.pushLatency(sample.rtt, false, sample.lost);
-  expect(accum.latencyResult(DEFAULT_CONFIG, 0).packetLossPct).toBe(10);
+    accum.pushLatency("latency", sample.rtt, sample.lost);
+  expect(accum.latencyResult(DEFAULT_CONFIG)!.probeTimeoutPct).toBe(10);
 });
 
 test("a fast reply burst produces bounded batches without discarding outcomes", async () => {

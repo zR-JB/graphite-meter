@@ -95,28 +95,43 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err != nil {
 		return LatencyStats{}, err
 	}
-	defer func() { conn.Close() }()
 	_ = conn.Send(ctx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
 
 	measureCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	pending := make(map[uint32]time.Time)
 	var mu sync.Mutex // guards pending and stats
 	var nextID uint32
 	stats := latencyStats{}
+	timeoutAfter := max(4*r.cfg.PingInterval, 250*time.Millisecond)
 	recvErr := make(chan error, 1)
 	var everPong atomic.Bool
 	var measuring atomic.Bool
+	var readers sync.WaitGroup
 	var measureTimer <-chan time.Time
-	snapshot := func() LatencyStats {
+	var measuredUntil time.Time // guarded by mu, like pending and stats
+	defer func() {
+		cancel()
+		readers.Wait()
+		conn.Close()
+	}()
+	finish := func(failure error) (LatencyStats, error) {
 		mu.Lock()
-		defer mu.Unlock()
-		return stats.snapshot()
-	}
-	finish := func() (LatencyStats, error) {
-		_ = conn.Send(context.Background(), wire.Encode(wire.Frame{Op: wire.OpBYE}))
-		return snapshot(), nil
+		var elapsed time.Duration
+		if measuring.Load() {
+			cutoff := time.Now()
+			if measuredUntil.Before(cutoff) {
+				cutoff = measuredUntil
+			}
+			elapsed = cutoff.Sub(measuredUntil.Add(-duration))
+			stats.closePending(pending, cutoff, timeoutAfter)
+		}
+		measuring.Store(false)
+		clear(pending)
+		out := stats.snapshot()
+		out.TimeoutAfter, out.Elapsed = timeoutAfter, elapsed
+		mu.Unlock()
+		return out, failure
 	}
 
 	readLoop := func(bus pingBus) {
@@ -137,6 +152,10 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			now := time.Now()
 			mu.Lock()
 			sent, ok := pending[f.ID]
+			if measuring.Load() && !measuredUntil.IsZero() && !now.Before(measuredUntil) {
+				mu.Unlock()
+				continue
+			}
 			if ok {
 				delete(pending, f.ID)
 			}
@@ -145,17 +164,19 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				continue
 			}
 			rtt := now.Sub(sent)
-			stats.add(rtt, false)
+			timedOut := rtt >= timeoutAfter
+			stats.add(rtt, timedOut)
 			mu.Unlock()
 			r.emit(Event{
 				Kind:    EventLatency,
 				At:      now,
 				Stage:   stage,
-				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad},
+				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, Lost: timedOut},
 			})
 		}
 	}
-	go readLoop(conn)
+	startReader := func(bus pingBus) { readers.Go(func() { readLoop(bus) }) }
+	startReader(conn)
 
 	ticker := time.Tick(r.cfg.PingInterval)
 	timeoutTicker := time.Tick(50 * time.Millisecond)
@@ -163,50 +184,81 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		mu.Lock()
 		id := nextID
 		nextID++
-		pending[id] = time.Now()
+		now := time.Now()
+		if measuring.Load() && !now.Before(measuredUntil) {
+			mu.Unlock()
+			return nil
+		}
+		pending[id] = now
 		mu.Unlock()
-		return conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpPING, ID: id}))
+		err := conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpPING, ID: id}))
+		if err != nil {
+			mu.Lock()
+			if _, ok := pending[id]; ok {
+				delete(pending, id)
+				if measuring.Load() {
+					stats.sendFailures++
+				}
+			}
+			mu.Unlock()
+		}
+		return err
 	}
 	if err := send(); err != nil {
-		return LatencyStats{}, err
+		return finish(err)
 	}
-	lossAfter := max(4*r.cfg.PingInterval, 250*time.Millisecond)
 	for {
 		select {
 		case <-start:
 			start = nil
 			mu.Lock()
 			clear(pending)
-			mu.Unlock()
 			measuring.Store(true)
+			measuredUntil = time.Now().Add(duration)
+			mu.Unlock()
 			timer := time.NewTimer(duration)
 			defer timer.Stop()
 			measureTimer = timer.C
 		case <-measureCtx.Done():
-			return finish()
+			return finish(measureCtx.Err())
 		case <-measureTimer:
-			return finish()
+			return finish(nil)
 		case err := <-recvErr:
 			if measureCtx.Err() != nil {
-				return snapshot(), nil
+				return finish(measureCtx.Err())
 			}
 			if !everPong.Load() {
-				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", err)
+				return finish(fmt.Errorf("latency channel failed: %w", err))
 			}
+			mu.Lock()
+			if measuring.Load() {
+				at := time.Now()
+				if measuredUntil.Before(at) {
+					at = measuredUntil
+				}
+				stats.closePending(pending, at, timeoutAfter)
+			}
+			clear(pending)
+			stats.breakContinuity()
+			mu.Unlock()
 			conn.Close()
-			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, time.Now().Add(busRedialWindow))
+			redialDeadline := time.Now().Add(busRedialWindow)
+			if measuring.Load() && measuredUntil.Before(redialDeadline) {
+				redialDeadline = measuredUntil
+			}
+			fresh, freshProto, dialErr := r.redialPingBus(measureCtx, redialDeadline)
 			if dialErr != nil {
 				if measureCtx.Err() != nil {
-					return snapshot(), nil
+					return finish(measureCtx.Err())
 				}
-				return LatencyStats{}, fmt.Errorf("latency channel failed: %w", dialErr)
+				return finish(fmt.Errorf("latency channel failed: %w", dialErr))
 			}
 			conn, proto = fresh, freshProto
 			mu.Lock()
 			clear(pending)
 			mu.Unlock()
 			_ = conn.Send(measureCtx, wire.Encode(wire.Frame{Op: wire.OpHI, Proto: proto}))
-			go readLoop(conn)
+			startReader(conn)
 		case <-ticker:
 			_ = send()
 		case now := <-timeoutTicker:
@@ -214,8 +266,11 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 				continue
 			}
 			mu.Lock()
+			if !measuredUntil.IsZero() && measuredUntil.Before(now) {
+				now = measuredUntil
+			}
 			maps.DeleteFunc(pending, func(_ uint32, sent time.Time) bool {
-				if now.Sub(sent) < lossAfter {
+				if now.Sub(sent) < timeoutAfter {
 					return false
 				}
 				stats.add(0, true)
@@ -230,4 +285,17 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Unlock()
 		}
 	}
+}
+
+// closePending separates known deadline expirations from probes interrupted before their deadline.
+func (s *latencyStats) closePending(pending map[uint32]time.Time, cutoff time.Time, timeout time.Duration) {
+	for _, sent := range pending {
+		if cutoff.Sub(sent) >= timeout {
+			s.timeouts++
+		} else {
+			s.unresolved++
+		}
+	}
+	clear(pending)
+	s.breakContinuity()
 }

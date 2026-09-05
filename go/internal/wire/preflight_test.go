@@ -111,8 +111,8 @@ func TestTargetJSONUsesStrictNativeV2Decoding(t *testing.T) {
 	}
 
 	var target ThroughputTarget
-	if err := json.Unmarshal([]byte(`{"BaseUrl":"https://speed.example:7246"}`), &target); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal([]byte(`{"BaseUrl":"https://speed.example:7246"}`), &target); err == nil {
+		t.Fatal("accepted missing case-sensitive baseUrl")
 	}
 	if target.Origin != "" {
 		t.Fatalf("case-insensitive field match populated Origin=%q", target.Origin)
@@ -154,4 +154,55 @@ func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 		t.Fatalf("marshal preflight: %v", err)
 	}
 	mustValidate(t, loadSchema(t, "preflight"), data)
+}
+
+func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
+	for _, origin := range []string{"https://u:p@example.com", "https://example.com/", "https://example.com/path", "https://example.com?", "https://example.com#", "//example.com", "ftp://example.com", "https://example.com:99999"} {
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var target ThroughputTarget
+		if err := json.Unmarshal(data, &target); err == nil {
+			t.Errorf("accepted origin %q", origin)
+		}
+	}
+	for _, document := range []string{`{"baseUrl":".","protocol":"http4"}`, `{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
+		var target ThroughputTarget
+		if err := json.Unmarshal([]byte(document), &target); err == nil {
+			t.Errorf("accepted target %s", document)
+		}
+	}
+	for _, origin := range []string{".", "https://[::1]:7247", "http://other.example:7246"} {
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var target ThroughputTarget
+		if err := json.Unmarshal(data, &target); err != nil {
+			t.Errorf("rejected origin %q: %v", origin, err)
+		}
+	}
+}
+
+func TestDiscoveryMetadataAndProbeEvidenceBounds(t *testing.T) {
+	valid := Preflight{Generation: "a", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{}, LatencyTargets: []LatencyTarget{}}}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []Preflight{{}, {Generation: "a"}, {Generation: "a", Capabilities: Capabilities{ThroughputTargets: make([]ThroughputTarget, 33), LatencyTargets: []LatencyTarget{}}}} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatal("accepted invalid discovery")
+		}
+	}
+	probe := Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2"}
+	if err := probe.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, load := range []*ProbeLoad{{Active: -1, Max: 2}, {Active: 0, Max: 0}} {
+		probe.Load = load
+		if err := probe.Validate(); err == nil {
+			t.Fatal("accepted invalid occupancy")
+		}
+	}
 }

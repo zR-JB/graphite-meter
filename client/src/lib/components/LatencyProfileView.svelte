@@ -4,8 +4,11 @@
   import { fmtMs } from "../format";
   import {
     entries,
+    probeAccountingHelp,
+    probeAccountingDetails,
+    hasProbeAccountingNotice,
     hoverContext,
-    lossLabel,
+    timeoutLabel,
     metricLabel,
     metricValue,
     nearestMetric,
@@ -23,7 +26,8 @@
     domain?: LatencyProfileDomain;
     variant?: "bare" | "compact";
     showCurrent?: boolean;
-    showLoss?: boolean;
+    showTimeouts?: boolean;
+    jitterDescription?: string;
     label?: string;
   }
 
@@ -32,8 +36,9 @@
     domain,
     variant = "bare",
     showCurrent = false,
-    showLoss = false,
-    label = "Latency, jitter and loss by phase",
+    showTimeouts = false,
+    jitterDescription = JARGON.jitter,
+    label = "Latency, RTT variation and probe timeouts by phase",
   }: Props = $props();
 
   const scale = $derived(domain ?? profileDomain(lanes));
@@ -147,8 +152,11 @@
         ? null
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
-      showLoss && lane.lossRatio > 0 ? lossLabel(lane.lossRatio) : null,
-      lane.count == null ? null : `${lane.count} samples`,
+      showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
+        ? timeoutLabel(lane.timeoutRatio)
+        : null,
+      lane.accountingComplete === false ? "Partial accounting" : null,
+      probeAccountingDetails(lane) || null,
     ].filter((value): value is string => value !== null);
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
   }
@@ -170,14 +178,16 @@
         <span class="lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
-            ? "waiting"
+            ? lane.accountingComplete === false || (lane.count ?? 0) > 0
+              ? "unavailable"
+              : "waiting"
             : lane.centerKind === "average"
               ? `avg ${fmtMs(lane.center)} ms`
               : `${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
-          <em class="jit" use:tooltip={JARGON.jitter}
-            >± {fmtMs(lane.jitter)} jit</em
+          <em class="jit" use:tooltip={jitterDescription}
+            >{fmtMs(lane.jitter)} ms variation</em
           >
         {/if}
         <em class="range-label">
@@ -187,6 +197,18 @@
         </em>
       </div>
 
+      {#if hasProbeAccountingNotice(lane)}
+        <p class="probe-accounting">
+          {#if lane.accountingComplete === false}
+            <span
+              class="accounting-warning"
+              role="note"
+              use:tooltip={probeAccountingHelp(lane)}>Partial accounting</span
+            >
+          {/if}
+          <span>{probeAccountingDetails(lane)}</span>
+        </p>
+      {/if}
       <div class="strip">
         <div class="ticks" aria-hidden="true">
           {#each ticks as tick, index (`${lane.key}-${index}`)}
@@ -232,10 +254,10 @@
               style={`left:${pos(lane.current, scale)}%`}
             ></i>
           {/if}
-          {#if showLoss && lane.lossRatio > 0}
+          {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
             <i
-              class="loss-marker"
-              style={`width:${Math.min(34, Math.max(8, lane.lossRatio * 100))}%`}
+              class="timeout-marker"
+              style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
             ></i>
           {/if}
 
@@ -264,8 +286,8 @@
                   >{hoverContext(lane, hover.metric)}</span
                 >
               {/if}
-              {#if showLoss && lane.lossRatio > 0}
-                <em>{lossLabel(lane.lossRatio)}</em>
+              {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+                <em>{timeoutLabel(lane.timeoutRatio)}</em>
               {/if}
             </span>
           {/if}
@@ -276,6 +298,18 @@
 </div>
 
 <style>
+  .probe-accounting {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1) var(--space-2);
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+  .accounting-warning {
+    color: var(--warn);
+    font-weight: 600;
+  }
   .lanes {
     display: grid;
     gap: var(--space-2);
@@ -414,7 +448,7 @@
   .band,
   .center-marker,
   .current-marker,
-  .loss-marker {
+  .timeout-marker {
     position: absolute;
   }
   .range {
@@ -467,7 +501,7 @@
     background: var(--tone);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--tone) 20%, transparent);
   }
-  .loss-marker {
+  .timeout-marker {
     top: 0;
     right: 0;
     bottom: 0;

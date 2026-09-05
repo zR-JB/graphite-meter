@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"math"
 	"slices"
 	"sync"
 	"time"
@@ -131,28 +132,43 @@ func (s *rateStats) result(stage string, dir Direction, serverAuth bool) Result 
 }
 
 type latencyStats struct {
-	values []time.Duration
-	lost   int
+	values                             []time.Duration
+	timeouts, unresolved, sendFailures int
+	previous                           time.Duration
+	hasPrevious                        bool
+	variation                          time.Duration
+	pairs                              int
 }
 
-func (s *latencyStats) add(rtt time.Duration, lost bool) {
-	if lost {
-		s.lost++
+func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
+
+func (s *latencyStats) add(rtt time.Duration, timeout bool) {
+	if timeout {
+		s.timeouts++
 		return
 	}
-	if rtt > 0 {
-		s.values = append(s.values, rtt)
+	if rtt <= 0 {
+		return
 	}
+	if s.hasPrevious {
+		delta := rtt - s.previous
+		if delta < 0 {
+			delta = -delta
+		}
+		s.variation += delta
+		s.pairs++
+	}
+	s.previous, s.hasPrevious = rtt, true
+	s.values = append(s.values, rtt)
 }
 
 func (s *latencyStats) snapshot() LatencyStats {
+	out := LatencyStats{Count: len(s.values), Timeouts: s.timeouts, Unresolved: s.unresolved, SendFailures: s.sendFailures, JitterPairs: s.pairs}
+	if s.pairs > 0 {
+		out.Jitter = s.variation / time.Duration(s.pairs)
+	}
 	if len(s.values) == 0 {
-		total := s.lost
-		loss := 0.0
-		if total > 0 {
-			loss = 1
-		}
-		return LatencyStats{Loss: loss}
+		return out
 	}
 	xs := slices.Clone(s.values)
 	slices.Sort(xs)
@@ -160,44 +176,29 @@ func (s *latencyStats) snapshot() LatencyStats {
 	for _, v := range xs {
 		sum += v
 	}
-	mean := sum / time.Duration(len(xs))
-	var dev time.Duration
-	for _, v := range xs {
-		if v > mean {
-			dev += v - mean
-		} else {
-			dev += mean - v
-		}
-	}
-	total := len(xs) + s.lost
-	loss := 0.0
-	if total > 0 {
-		loss = float64(s.lost) / float64(total)
-	}
-	return LatencyStats{
-		Min:    xs[0],
-		P50:    percentile(xs, 0.50),
-		P95:    percentile(xs, 0.95),
-		Mean:   mean,
-		Jitter: dev / time.Duration(len(xs)),
-		Loss:   loss,
-		Count:  len(xs),
-	}
+	out.Min, out.Max, out.Mean = xs[0], xs[len(xs)-1], sum/time.Duration(len(xs))
+	out.P10, out.P50 = percentile(xs, 0.10), median(xs)
+	out.P90, out.P95 = percentile(xs, 0.90), percentile(xs, 0.95)
+	return out
 }
 
+// median is the midpoint of the two central observations for an even-sized sorted population.
+func median(xs []time.Duration) time.Duration {
+	if len(xs) == 0 {
+		return 0
+	}
+	mid := len(xs) / 2
+	if len(xs)%2 != 0 {
+		return xs[mid]
+	}
+	return xs[mid-1] + (xs[mid]-xs[mid-1])/2
+}
+
+// percentile selects the nearest rank from a sorted observation population.
 func percentile(xs []time.Duration, p float64) time.Duration {
 	if len(xs) == 0 {
 		return 0
 	}
-	if len(xs) == 1 {
-		return xs[0]
-	}
-	pos := p * float64(len(xs)-1)
-	lo := int(pos)
-	hi := lo + 1
-	if hi >= len(xs) {
-		return xs[len(xs)-1]
-	}
-	frac := pos - float64(lo)
-	return time.Duration(float64(xs[lo])*(1-frac) + float64(xs[hi])*frac)
+	rank := max(1, min(len(xs), int(math.Ceil(p*float64(len(xs))))))
+	return xs[rank-1]
 }

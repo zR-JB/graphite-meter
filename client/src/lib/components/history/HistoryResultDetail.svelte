@@ -9,20 +9,23 @@
     formatPercent,
   } from "../../history/format";
   import type {
-    HistoryRecordV1,
+    HistoryRecord,
     LatencyLaneSnapshot,
     ThroughputSnapshot,
   } from "../../history/types";
   import { store } from "../../state/store.svelte";
   import {
-    savedLatencyHasDatagramLossEvidence,
+    savedLatencyHasProbeEvidence,
+    probeAccountingHelp,
+    probeAccountingDetails,
+    hasProbeAccountingNotice,
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
-    record: HistoryRecordV1;
+    record: HistoryRecord;
     onClose: () => void;
     onDelete: () => void;
     region?: HTMLElement;
@@ -38,13 +41,15 @@
     detail: string;
   }
 
-  interface DatagramLossLane {
+  interface ProbeTimeoutLane {
     key: LatencyProfileViewLane["key"];
     label: string;
     icon: string;
     tone: LatencyProfileTone;
     value: string;
-    count: number;
+    details: string;
+    accountingComplete?: boolean;
+    accountingLegacy?: boolean;
   }
 
   let {
@@ -57,7 +62,13 @@
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
-    record.failures.length > 0 ||
+    Object.values(record.stages.latency.lanes).some(
+      (lane) =>
+        lane != null &&
+        record.schemaVersion === 2 &&
+        lane.accountingComplete !== true,
+    ) ||
+      record.failures.length > 0 ||
       [
         record.stages.latency.status,
         record.stages.download.status,
@@ -118,9 +129,23 @@
   );
 
   function usefulLane(lane: LatencyProfileViewLane): boolean {
-    return [lane.min, lane.max, lane.p10, lane.p90, lane.center].some(
-      (value) => value != null,
+    return (
+      hasProbeAccountingNotice(lane) ||
+      [lane.min, lane.max, lane.p10, lane.p90, lane.center].some(
+        (value) => value != null,
+      )
     );
+  }
+
+  function savedAccounting(snapshot: LatencyLaneSnapshot) {
+    return {
+      accountingComplete:
+        record.schemaVersion === 2
+          ? (snapshot.accountingComplete ?? false)
+          : undefined,
+      accountingLegacy:
+        record.schemaVersion === 2 && snapshot.accountingComplete === undefined,
+    };
   }
 
   function finalizedLane(
@@ -136,6 +161,8 @@
       tone,
       centerKind: key === "latency" ? "result" : "average",
       ...snapshot,
+      ...savedAccounting(snapshot),
+      timeoutRatio: snapshot.timeoutRatio ?? snapshot.lossRatio ?? null,
     };
     return usefulLane(lane) ? lane : null;
   }
@@ -168,60 +195,73 @@
       ),
     ].filter((lane): lane is LatencyProfileViewLane => lane !== null),
   );
-  const showDatagramLoss = $derived(
-    savedLatencyHasDatagramLossEvidence(record.transport.latency.kind),
+  const showProbeTimeouts = $derived(
+    savedLatencyHasProbeEvidence(record.transport.latency.kind),
   );
 
-  function datagramLossLane(
+  function probeTimeoutLane(
     key: LatencyProfileViewLane["key"],
     label: string,
     icon: string,
     tone: LatencyProfileTone,
     snapshot: LatencyLaneSnapshot | null,
-  ): DatagramLossLane | null {
-    if (!snapshot || snapshot.count <= 0) return null;
+  ): ProbeTimeoutLane | null {
+    if (!snapshot) return null;
+    const accounting = savedAccounting(snapshot);
+    if (
+      accounting.accountingComplete !== false &&
+      snapshot.count <= 0 &&
+      !snapshot.unresolvedCount &&
+      !snapshot.sendFailureCount
+    )
+      return null;
+    const ratio = snapshot.timeoutRatio ?? snapshot.lossRatio ?? null;
     return {
       key,
       label,
       icon,
       tone,
-      value: formatPercent(snapshot.lossRatio * 100),
-      count: snapshot.count,
+      value:
+        accounting.accountingComplete === false
+          ? "Partial"
+          : formatPercent(ratio == null ? null : ratio * 100),
+      details: probeAccountingDetails({ ...snapshot, ...accounting }),
+      ...accounting,
     };
   }
 
-  const datagramLossLanes = $derived<DatagramLossLane[]>(
-    showDatagramLoss
+  const probeTimeoutLanes = $derived<ProbeTimeoutLane[]>(
+    showProbeTimeouts
       ? [
-          datagramLossLane(
+          probeTimeoutLane(
             "latency",
             "Idle",
             ICON.ping,
             "latency",
             record.stages.latency.lanes.latency,
           ),
-          datagramLossLane(
+          probeTimeoutLane(
             "download",
             "Loaded Down",
             ICON.download,
             "download",
             record.stages.latency.lanes.download,
           ),
-          datagramLossLane(
+          probeTimeoutLane(
             "upload",
             "Loaded Up",
             ICON.upload,
             "upload",
             record.stages.latency.lanes.upload,
           ),
-          datagramLossLane(
+          probeTimeoutLane(
             "bidirectional",
             "Loaded Bi-dir",
             ICON.bidirectional,
             "bidirectional",
             record.stages.latency.lanes.bidirectional,
           ),
-        ].filter((lane): lane is DatagramLossLane => lane !== null)
+        ].filter((lane): lane is ProbeTimeoutLane => lane !== null)
       : [],
   );
 
@@ -396,37 +436,56 @@
           lanes={latencyProfiles}
           variant="compact"
           label="Saved latency distributions"
+          jitterDescription={record.schemaVersion === 1
+            ? "Legacy variation estimate calculated from chart-bucket medians; it is not comparable to the current raw-reply calculation."
+            : undefined}
         />
       </div>
     </section>
   {/if}
 
-  {#if datagramLossLanes.length}
+  {#if record.schemaVersion === 1}
+    <p class="detail-section">
+      Legacy measurement: latency profiles and timeout percentages use the
+      earlier calculation.
+    </p>
+  {/if}
+
+  {#if probeTimeoutLanes.length}
     <section
-      class="detail-section datagram-loss-section"
-      aria-labelledby={`result-${record.id}-datagram-loss`}
+      class="detail-section probe-timeouts-section"
+      aria-labelledby={`result-${record.id}-probe-timeouts`}
     >
       <header class="section-head">
         <span aria-hidden="true">{@html ICON.ping}</span>
-        <h3 id={`result-${record.id}-datagram-loss`}>Datagram loss</h3>
+        <h3 id={`result-${record.id}-probe-timeouts`}>
+          Probe timeouts ({record.transport.latency.kind === "webtransport"
+            ? "datagram"
+            : "WebSocket"})
+        </h3>
         <span
           class="section-help"
           role="note"
-          aria-label="About datagram loss"
-          use:tooltip={"Round-trip WebTransport datagram probes that received no reply. This is end-to-end round-trip loss, not directional raw IP packet loss."}
+          aria-label="About probe timeouts"
+          use:tooltip={"Application probes whose reply deadline expired. WebTransport uses datagrams; WebSocket uses a reliable stream. Neither identifies physical or directional IP packet loss. Interrupted and locally rejected sends are excluded."}
           >{@html ICON.info}</span
         >
       </header>
-      <ul class="section-body datagram-loss-lanes">
-        {#each datagramLossLanes as lane (lane.key)}
+      <ul class="section-body probe-timeouts-lanes">
+        {#each probeTimeoutLanes as lane (lane.key)}
           <li
             data-tone={lane.tone}
-            aria-label={`${lane.label} datagram loss ${lane.value}, ${lane.count} samples`}
+            aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
           >
             <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
             <span>
               <strong>{lane.label}</strong>
-              <small>{lane.count} samples</small>
+              <small>{lane.details}</small>
+              {#if lane.accountingComplete === false}
+                <small role="note" use:tooltip={probeAccountingHelp(lane)}
+                  >Partial accounting</small
+                >
+              {/if}
             </span>
             <em>{lane.value}</em>
           </li>
@@ -730,13 +789,13 @@
     display: grid;
     gap: var(--space-3);
   }
-  .datagram-loss-lanes {
+  .probe-timeouts-lanes {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
     gap: var(--space-2);
     list-style: none;
   }
-  .datagram-loss-lanes li {
+  .probe-timeouts-lanes li {
     --tone: var(--phase-latency);
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -747,21 +806,21 @@
     border-top: 1px solid color-mix(in srgb, var(--tone) 40%, var(--border));
     background: var(--surface-1);
   }
-  .datagram-loss-lanes li > span:not(.phase-icon) {
+  .probe-timeouts-lanes li > span:not(.phase-icon) {
     display: grid;
     min-width: 0;
   }
-  .datagram-loss-lanes strong {
+  .probe-timeouts-lanes strong {
     overflow: hidden;
     font-size: var(--type-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .datagram-loss-lanes small {
+  .probe-timeouts-lanes small {
     color: var(--text-muted);
     font: 500 9px var(--font-mono);
   }
-  .datagram-loss-lanes em {
+  .probe-timeouts-lanes em {
     color: var(--tone);
     font: 700 var(--type-sm) var(--font-mono);
     font-style: normal;

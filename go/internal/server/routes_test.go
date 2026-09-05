@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/quic-go/webtransport-go"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -64,16 +65,17 @@ func TestRoutesMatchPin(t *testing.T) {
 		kind  string
 		paths []string
 	}{
-		"probe":          {"http", []string{routeProbe, throughput.Probe, latency.Probe}},
-		"download":       {"http", []string{routeDownload, throughput.Download}},
-		"upload":         {"http", []string{routeUpload, throughput.Upload}},
-		"uploadSession":  {"http", []string{routeUploadSession, throughput.UploadSession}},
-		"uploadProgress": {"http", []string{routeUploadProgress, throughput.UploadProgress}},
-		"ping":           {"ws", []string{routePing, latency.Ping}},
-		"wtSession":      {"http", []string{routeWTSession, throughput.WTSession, latency.WTSession}},
-		"wtDownload":     {"wt", []string{routeWTDownload, throughput.WTDownload}},
-		"wtUpload":       {"wt", []string{routeWTUpload, throughput.WTUpload}},
-		"wtPing":         {"wt", []string{routeWTPing, latency.WTPing}},
+		"preflight":      {"http", []string{route.Preflight}},
+		"probe":          {"http", []string{route.Probe, throughput.Probe, latency.Probe}},
+		"download":       {"http", []string{route.Download, throughput.Download}},
+		"upload":         {"http", []string{route.Upload, throughput.Upload}},
+		"uploadSession":  {"http", []string{route.UploadSession, throughput.UploadSession}},
+		"uploadProgress": {"http", []string{route.UploadProgress, throughput.UploadProgress}},
+		"ping":           {"ws", []string{route.Ping, latency.Ping}},
+		"wtSession":      {"http", []string{route.WTSession, throughput.WTSession, latency.WTSession}},
+		"wtDownload":     {"wt", []string{route.WTDownload, throughput.WTDownload}},
+		"wtUpload":       {"wt", []string{route.WTUpload, throughput.WTUpload}},
+		"wtPing":         {"wt", []string{route.WTPing, latency.WTPing}},
 	}
 	if len(sites) != len(pinned) {
 		t.Errorf("Go declares %d routes; %d are pinned", len(sites), len(pinned))
@@ -110,9 +112,6 @@ func TestRouteKindsMatchTheRegistry(t *testing.T) {
 	for path, kind := range mounted {
 		name, ok := byPath[path]
 		if !ok {
-			if path == "/preflight" {
-				continue // advertised by every language, never a client route
-			}
 			t.Errorf("%s is registered but not pinned", path)
 			continue
 		}
