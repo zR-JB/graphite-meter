@@ -3,6 +3,7 @@ package goclient
 import (
 	"context"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -45,6 +46,28 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 	timed.add(100*time.Millisecond, false, new(uint64(20*time.Millisecond)))
 	if *captured.ReflectorTiming != wantTiming {
 		t.Fatal("snapshot mutated after later observations")
+	}
+}
+
+func TestReflectorTimingDurationBounds(t *testing.T) {
+	for _, nanos := range []uint64{0, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
+		t.Run(fmt.Sprint(nanos), func(t *testing.T) {
+			var stats latencyStats
+			handling := stats.add(time.Duration(math.MaxInt64), false, new(nanos))
+			got := stats.snapshot()
+			if got.Count != 1 || got.Mean != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
+				t.Fatalf("optional duration changed raw reply: %+v", got)
+			}
+			if nanos > math.MaxInt64 {
+				if handling != nil || got.ReflectorTiming != nil {
+					t.Fatalf("unrepresentable duration produced a diagnostic: %v, %+v", handling, got.ReflectorTiming)
+				}
+				return
+			}
+			if handling == nil || uint64(*handling) != nanos || got.ReflectorTiming == nil || uint64(got.ReflectorTiming.MeanHandling) != nanos {
+				t.Fatalf("representable duration was not retained: %v, %+v", handling, got.ReflectorTiming)
+			}
+		})
 	}
 }
 
