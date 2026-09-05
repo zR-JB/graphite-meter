@@ -2348,3 +2348,28 @@ func TestRunViewNamesThePerDirectionLaneCount(t *testing.T) {
 		t.Errorf("run view does not name the per-direction lane count:\n%s", view)
 	}
 }
+
+func TestPreparingStageIsDistinctAndStopsOnCancellation(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	m.stages = plannedStages(m.cfg)
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StagePreparing, At: time.Now()})
+	if view := strings.Join(m.timelineView(100), "\n"); !strings.Contains(view, "preparing transports") || strings.Contains(view, "warmup") {
+		t.Fatalf("preparing timeline: %s", view)
+	}
+	m.stopStages()
+	for _, stage := range m.stages {
+		if stage.name == "download" && stage.state != stageStopped {
+			t.Fatalf("preparing stage was not stopped: %+v", stage)
+		}
+	}
+}
+
+func TestPartialThroughputResultShowsItsFailure(t *testing.T) {
+	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
+		m := newModel(goclient.DefaultConfig())
+		m.results = []goclient.Result{{Stage: "bidirectional", Direction: dir, MeanBps: 125000, TotalBytes: 125000, Elapsed: time.Second, ServerAuth: dir == goclient.Up, Err: errors.New("transfer interrupted")}}
+		if view := m.resultsView(100); !strings.Contains(view, "Incomplete: transfer interrupted") || !strings.Contains(view, "bidirectional") || !strings.Contains(view, "peak --") || !strings.Contains(view, "█") {
+			t.Fatalf("partial throughput summary lost its attribution: %s", view)
+		}
+	}
+}

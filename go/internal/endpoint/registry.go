@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
+	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -150,7 +151,7 @@ func wsAdapterWithOrigin(parent context.Context, e MessageHandler, allowedOrigin
 
 func httpAdapterWithOrigin(e HTTPHandler, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setCommonHeaders(w, origin)
+		cors.Measurement(w.Header(), origin)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -159,22 +160,4 @@ func httpAdapterWithOrigin(e HTTPHandler, origin string) http.Handler {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
-}
-
-func setCommonHeaders(w http.ResponseWriter, origin string) {
-	h := w.Header()
-	if origin != "" {
-		h.Set("Access-Control-Allow-Origin", origin)
-		h.Set("Access-Control-Allow-Credentials", "true")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
-		h.Set("Access-Control-Expose-Headers", "Graphite-Meter-Auth, Graphite-Meter-Auth-URL")
-		h.Set("Timing-Allow-Origin", origin)
-		h.Add("Vary", "Origin")
-		return
-	}
-	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "*")
-	h.Set("Timing-Allow-Origin", "*")
 }

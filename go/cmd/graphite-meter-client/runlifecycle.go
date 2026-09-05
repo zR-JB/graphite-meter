@@ -16,6 +16,7 @@ type stageState int
 
 const (
 	stagePending stageState = iota
+	stagePreparing
 	stageWarmup
 	stageMeasuring
 	stageDone
@@ -376,6 +377,8 @@ func (m *model) apply(e goclient.Event) {
 func (m *model) enterStage(e goclient.Event) {
 	var state stageState
 	switch e.Phase {
+	case goclient.StagePreparing:
+		state = stagePreparing
 	case goclient.StageWarmup:
 		state = stageWarmup
 	case goclient.StageMeasuring:
@@ -394,7 +397,7 @@ func (m *model) enterStage(e goclient.Event) {
 
 func (m *model) stopStages() {
 	for i := range m.stages {
-		if s := m.stages[i].state; s == stageWarmup || s == stageMeasuring {
+		if s := m.stages[i].state; s == stagePreparing || s == stageWarmup || s == stageMeasuring {
 			m.stages[i].state = stageStopped
 		}
 	}

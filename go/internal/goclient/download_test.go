@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -35,7 +36,7 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	var total atomic.Uint64
 	done := make(chan struct{})
 	go func() {
-		_ = r.downloadLane(ctx, srv.URL, 0, &total)
+		_ = r.downloadLane(ctx, srv.URL, 0, &total, func() {})
 		close(done)
 	}()
 
@@ -77,7 +78,7 @@ func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
 	defer srv.Close()
 	r := &runner{cfg: Config{DownloadBytesPerStream: 1024}, http: srv.Client()}
 	var total atomic.Uint64
-	if err := r.downloadLane(t.Context(), srv.URL, 0, &total); err == nil {
+	if err := r.downloadLane(t.Context(), srv.URL, 0, &total, func() {}); err == nil {
 		t.Fatal("HTTP 429 did not fail the download lane")
 	}
 }
@@ -99,7 +100,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	begin := time.Now()
 	go func() {
 		// The window is long (5s), so a hang trips the test's own deadline well under the stage's configured window.
-		_, _ = r.measureDownload(ctx, "download", 5*time.Second, start)
+		_, _ = r.measureDownload(ctx, "download", 5*time.Second, testStageGate(start))
 		close(done)
 	}()
 
@@ -142,7 +143,7 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	done := make(chan struct{})
 	start := time.Now()
 	go func() {
-		_ = r.downloadLane(ctx, srv.URL, 0, &total)
+		_ = r.downloadLane(ctx, srv.URL, 0, &total, func() {})
 		close(done)
 	}()
 
@@ -181,7 +182,7 @@ func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	res, err := r.measureDownload(ctx, "download", 300*time.Millisecond, start)
+	res, err := r.measureDownload(ctx, "download", 300*time.Millisecond, testStageGate(start))
 	if err == nil {
 		t.Fatalf("a window that carried no bytes reported success: %+v", res)
 	}
@@ -190,7 +191,7 @@ func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	}
 }
 
-func TestMeasureDownloadCancelledEmptyWindowIsACleanStop(t *testing.T) {
+func TestMeasureDownloadCancelledEmptyWindowPreservesCancellation(t *testing.T) {
 	srv := newSilentDownloadServer()
 	defer srv.Close()
 
@@ -203,9 +204,9 @@ func TestMeasureDownloadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
-	res, err := r.measureDownload(ctx, "download", 5*time.Second, start)
-	if err != nil {
-		t.Fatalf("cancelled stage returned %v, want a clean stop", err)
+	res, err := r.measureDownload(ctx, "download", 5*time.Second, testStageGate(start))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
 	}
 	if res.TotalBytes != 0 {
 		t.Errorf("TotalBytes = %d, want 0 from a server that wrote nothing", res.TotalBytes)
@@ -223,7 +224,7 @@ func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 	cancel()
 	start := make(chan struct{}) // never closed: still "warming up"
 
-	_, err := r.measureDownload(ctx, "download", time.Second, start)
+	_, err := r.measureDownload(ctx, "download", time.Second, testStageGate(start))
 	if err == nil {
 		t.Fatal("want an error when the context is already cancelled")
 	}

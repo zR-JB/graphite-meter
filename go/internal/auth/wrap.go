@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
@@ -179,12 +180,7 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
 	securityHeaders(w.Header())
 	if s.public != nil && r.Header.Get("Origin") == s.public.String() {
-		h := w.Header()
-		h.Set("Access-Control-Allow-Origin", s.public.String())
-		h.Set("Access-Control-Allow-Credentials", "true")
-		h.Set("Access-Control-Expose-Headers", "Graphite-Meter-Auth, Graphite-Meter-Auth-URL")
-		h.Set("Timing-Allow-Origin", s.public.String())
-		h.Add("Vary", "Origin")
+		cors.Response(w.Header(), s.public.String())
 	}
 	w.Header().Set("Graphite-Meter-Auth", "required")
 	w.Header().Set("Graphite-Meter-Auth-URL", s.public.String()+"/login")

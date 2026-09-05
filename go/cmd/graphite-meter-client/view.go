@@ -427,6 +427,8 @@ func (m model) timelineView(w int) []string {
 	for _, s := range m.stages {
 		name := labelStyle.Render(fmt.Sprintf("%-14s", s.name))
 		switch s.state {
+		case stagePreparing:
+			lines = append(lines, name+accentStyle.Render("◐ ")+m.spin.View()+mutedStyle.Render(" preparing transports"))
 		case stageWarmup:
 			lines = append(lines, name+accentStyle.Render("◐ ")+m.spin.View()+
 				mutedStyle.Render(" warmup ")+valueStyle.Render(fmtClock(m.now.Sub(s.since))))
@@ -475,12 +477,16 @@ func (m model) resultsView(w int) string {
 		if isLatencyResult(r) {
 			continue
 		}
-		scale = max(scale, r.PeakBps)
+		scale = max(scale, r.PeakBps, r.MeanBps)
 		dir := "down"
 		if r.Direction == goclient.Up {
 			dir = "up"
 		}
-		note := "peak " + fmtRate(r.PeakBps) + "  " + fmtBytes(r.TotalBytes)
+		peak := "--"
+		if r.PeakBps > 0 {
+			peak = fmtRate(r.PeakBps)
+		}
+		note := "peak " + peak + "  " + fmtBytes(r.TotalBytes)
 		if r.ServerAuth {
 			note += "  server-clock"
 		}
@@ -511,6 +517,9 @@ func (m model) resultsView(w int) string {
 		b := bars[next]
 		next++
 		lines = append(lines, b.head+renderBar(r.MeanBps, scale, barW, false)+b.tail)
+		if r.Err != nil {
+			lines = append(lines, errorStyle.Render("  Incomplete: "+r.Err.Error()))
+		}
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }

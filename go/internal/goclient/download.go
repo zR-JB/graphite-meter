@@ -30,9 +30,9 @@ func windowCarriedBytes(ctx context.Context, stage string, dir Direction, stats 
 	return fmt.Errorf("%s %s carried no bytes in %v", stage, dir, stats.elapsed)
 }
 
-func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, gate *stageGate) (result Result, failure error) {
 	var total atomic.Uint64
-	var lane func(context.Context, int) error
+	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
 			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
@@ -41,9 +41,9 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 			return Result{}, err
 		}
 		defer host.close()
-		lane = func(laneCtx context.Context, _ int) error {
+		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
-				return r.downloadLaneWT(lctx, sess, &total)
+				return r.downloadLaneWT(lctx, sess, &total, ready)
 			})
 		}
 	} else {
@@ -51,27 +51,33 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 		if err != nil {
 			return Result{}, err
 		}
-		lane = func(laneCtx context.Context, i int) error {
-			return r.downloadLane(laneCtx, base, i, &total)
+		lane = func(laneCtx context.Context, i int, ready func()) error {
+			return r.downloadLane(laneCtx, base, i, &total, ready)
 		}
 	}
 	streams := r.streams.of(Down)
 	lanes := r.startLanes(ctx, streams, lane)
-	defer lanes.cancel()
-	if err := lanes.waitStart(ctx, start); err != nil {
+	defer lanes.stop()
+	defer func() {
+		if failure != nil {
+			gate.cancel(failure)
+		}
+	}()
+	if err := lanes.waitReady(ctx); err != nil {
 		return Result{}, err
 	}
-	measureCtx, cancel := context.WithTimeout(ctx, duration)
-	stats, err := r.sampleLocalRates(measureCtx, stage, Down, &total, streams, lanes.errs)
-	cancel()
-	lanes.stop()
+	gate.ready <- struct{}{}
+	if err := lanes.waitStart(ctx, gate.start, nil); err != nil {
+		return Result{}, err
+	}
+	stats, err := r.sampleLocalRates(ctx, stage, Down, &total, streams, duration, lanes.errs)
 	if err == nil {
 		err = windowCarriedBytes(ctx, stage, Down, stats)
 	}
 	return stats.result(stage, Down, false), err
 }
 
-func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64) error {
+func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64, ready func()) error {
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
 		u, err := endpointWithQuery(base, url.Values{
@@ -98,6 +104,7 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 			_ = res.Body.Close()
 			return err
 		}
+		ready()
 		for {
 			n, readErr := res.Body.Read(buf)
 			if n > 0 {
@@ -119,14 +126,14 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 	return nil
 }
 
-func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, laneErr <-chan error) (rateStats, error) {
+func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, duration time.Duration, laneErr <-chan error) (rateStats, error) {
 	baseline := total.Load()
 	lastN := baseline
 	startT := time.Now()
 	lastT := startT
 	return rateLoop{
-		cancelEndsWindow: true,
-		laneErr:          laneErr,
+		duration: duration,
+		laneErr:  laneErr,
 		window: func(stats *rateStats) {
 			stats.setWindow(total.Load()-baseline, time.Since(startT))
 		},
