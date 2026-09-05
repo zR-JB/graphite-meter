@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -338,5 +339,29 @@ func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertUnauthenticatedDownload(t, tc.client, tc.base)
 		})
+	}
+}
+
+// CORS stays restricted when authenticated admission refuses a request before endpoint dispatch.
+func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
+	s := newAuthenticatedStack(t)
+	a := newRequestAdmission(1, 0, 1, 1, time.Minute, time.Hour)
+	h := s.authn.Enforce(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("admission dispatched despite zero client capacity")
+	}), nil, s.origin), auth.Listener{})
+	for _, origin := range []string{s.origin, "https://evil.example", ""} {
+		r := httptest.NewRequest(http.MethodGet, s.origin+"/download", nil)
+		r.TLS = &tls.ConnectionState{}
+		r.AddCookie(s.session)
+		r.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if origin == s.origin {
+			if w.Code != http.StatusTooManyRequests || w.Header().Get("Access-Control-Allow-Origin") != s.origin || w.Header().Get("Access-Control-Allow-Credentials") != "true" {
+				t.Fatalf("allowed origin admission: status=%d headers=%v", w.Code, w.Header())
+			}
+		} else if w.Header().Get("Access-Control-Allow-Origin") != "" || w.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("untrusted origin %q exposed by headers=%v", origin, w.Header())
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
@@ -85,14 +86,7 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 			return
 		}
 	}
-	h := w.Header()
-	h.Set("Access-Control-Allow-Origin", s.public.String())
-	h.Set("Access-Control-Allow-Credentials", "true")
-	h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
-	h.Set("Access-Control-Expose-Headers", "Graphite-Meter-Auth, Graphite-Meter-Auth-URL")
-	h.Set("Timing-Allow-Origin", s.public.String())
-	h.Add("Vary", "Origin")
+	cors.Measurement(w.Header(), s.public.String())
 	w.WriteHeader(http.StatusNoContent)
 }
 
