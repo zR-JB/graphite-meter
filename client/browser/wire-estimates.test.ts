@@ -23,6 +23,8 @@ test("default wire estimates stay out of live measurement and concise after comp
   const estimate = resultCards(page).locator(".est");
   await expect(estimate).toContainText("wire +");
   await expect(estimate).not.toContainText("wire estimate");
+  await expect(estimate.locator(".est-num")).toHaveText(/\d/);
+  await expect(estimate).not.toContainText("n/a");
 });
 test("a persisted opt-out hides only wire-estimate presentation", async ({
   page,

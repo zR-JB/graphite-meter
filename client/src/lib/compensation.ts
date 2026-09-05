@@ -23,7 +23,6 @@ export interface CompensationEstimate {
   confidence: CompensationConfidence;
   factors: CompensationFactor[];
   /** Provenance for the exact assumptions that produced this estimate. */
-  path: "ethernet" | "loopback";
   transport: CompensationTransport;
   transportSource: "detected" | "fallback";
   framing:
@@ -31,7 +30,6 @@ export interface CompensationEstimate {
   mtuBytes: number;
   ipVersion: 4 | 6;
   ipVersionSource: "detected" | "fallback";
-  available: boolean;
 }
 
 /* This keeps bidirectional wire occupancy equal to the sum of its lanes even when their measured rates differ. */
@@ -78,14 +76,12 @@ export function combineCompensationEstimates(
       measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
     confidence,
     factors: combineFactors(active, measuredBytesPerSec),
-    path: representative?.path ?? "ethernet",
     transport: representative?.transport ?? "http1-clear",
     transportSource: representative?.transportSource ?? "fallback",
     framing: representative?.framing ?? null,
     mtuBytes: representative?.mtuBytes ?? 1_500,
     ipVersion: representative?.ipVersion ?? 4,
     ipVersionSource: representative?.ipVersionSource ?? "fallback",
-    available: estimates.every((estimate) => estimate.available),
   };
 }
 
@@ -130,7 +126,6 @@ export function estimateCompensation(
   detectedProtocol?: string,
   detectedSecure?: boolean,
   detectedIPVersion?: 4 | 6,
-  detectedClientIP?: string,
   selectedTransport?: TransportKind,
 ): CompensationEstimate {
   const secure =
@@ -161,18 +156,15 @@ export function estimateCompensation(
     : transport === "http3-quic"
       ? "http3-data"
       : null;
-  const loopback = isLoopbackAddress(detectedClientIP);
-  if (bytesPerSec <= 0 || loopback)
+  if (bytesPerSec <= 0)
     return identity(
       bytesPerSec,
       transport,
-      loopback ? "loopback" : "ethernet",
       mtuBytes,
       ipVersion,
       ipVersionSource,
       transportSource,
       framing,
-      !loopback,
     );
 
   let application = 1;
@@ -272,14 +264,12 @@ export function estimateCompensation(
     totalMultiplier: central,
     confidence: low === high ? "high" : "medium",
     factors,
-    path: "ethernet",
     transport,
     transportSource,
     framing,
     mtuBytes,
     ipVersion,
     ipVersionSource,
-    available: true,
   };
 }
 
@@ -294,13 +284,11 @@ function factor(
 function identity(
   bytesPerSec: number,
   transport: CompensationTransport,
-  path: "ethernet" | "loopback",
   mtuBytes: number,
   ipVersion: 4 | 6,
   ipVersionSource: CompensationEstimate["ipVersionSource"],
   transportSource: CompensationEstimate["transportSource"],
   framing: CompensationEstimate["framing"],
-  available = true,
 ): CompensationEstimate {
   return {
     measuredBytesPerSec: bytesPerSec,
@@ -310,25 +298,20 @@ function identity(
     totalMultiplier: 1,
     confidence: "high",
     factors: [],
-    path,
     transport,
     transportSource,
     framing,
     mtuBytes,
     ipVersion,
     ipVersionSource,
-    available,
   };
 }
 
 export function compensationTooltip(estimate: CompensationEstimate): string {
-  if (!estimate.available)
-    return "Wire n/a\nLoopback · No physical-link estimate applies";
-  const path = estimate.path === "ethernet" ? "Local Ethernet" : "Loopback";
   const sourceLabel = (source: CompensationEstimate["transportSource"]) =>
     source === "fallback" ? "assumed" : "detected";
   return [
-    `${path} · ${compensationTransportLabel(estimate.transport)} · assumed`,
+    `Local Ethernet · ${compensationTransportLabel(estimate.transport)} · assumed`,
     `Transport ${sourceLabel(estimate.transportSource)}`,
     `IPv${estimate.ipVersion} ${sourceLabel(estimate.ipVersionSource)} · MTU ${estimate.mtuBytes} B`,
     ...estimate.factors
@@ -338,13 +321,4 @@ export function compensationTooltip(estimate: CompensationEstimate): string {
       ),
     `Total +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
   ].join("\n");
-}
-
-function isLoopbackAddress(address?: string): boolean {
-  if (!address) return false;
-  const value = address
-    .replace(/^\[|\]$/g, "")
-    .split("%")[0]
-    .toLowerCase();
-  return value === "::1" || /^127(?:\.\d{1,3}){3}$/.test(value);
 }

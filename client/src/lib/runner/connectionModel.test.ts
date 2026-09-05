@@ -220,7 +220,6 @@ test("wire evidence follows WebTransport rather than its HTTP probe", () => {
       connection.browserProtocol,
       connection.target?.tls,
       connection.clientIpVersion,
-      connection.clientIp,
       connection.target?.transport,
     );
     expect(connection.target?.transport).toBe("webtransport");

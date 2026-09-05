@@ -380,7 +380,6 @@ class AppStore {
       connection.browserProtocol,
       connection.target?.tls,
       connection.clientIpVersion,
-      connection.clientIp,
       connection.target?.transport,
     );
   }
@@ -615,15 +614,11 @@ class AppStore {
             {
               paths: this.activePaths,
               clientBuild: BUILD.clientVersion,
-              wireDownloadBytesPerSec: downloadWire?.available
-                ? downloadWire.estimatedBytesPerSec
-                : null,
-              wireUploadBytesPerSec: uploadWire?.available
-                ? uploadWire.estimatedBytesPerSec
-                : null,
-              wireBidirectionalBytesPerSec: bidiWire?.available
-                ? bidiWire.estimatedBytesPerSec
-                : null,
+              wireDownloadBytesPerSec:
+                downloadWire?.estimatedBytesPerSec ?? null,
+              wireUploadBytesPerSec: uploadWire?.estimatedBytesPerSec ?? null,
+              wireBidirectionalBytesPerSec:
+                bidiWire?.estimatedBytesPerSec ?? null,
             },
             Date.now(),
           );

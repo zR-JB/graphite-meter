@@ -7,7 +7,6 @@ import {
 test("1500 B Ethernet defaults map expected TCP goodput to wire occupancy", () => {
   const measured = 2_500_000_000 / 8 / ((1500 + 38) / (1500 - 20 - 20 - 12));
   const estimate = estimateCompensation(measured, "http/1.1", false);
-  expect(estimate.path).toBe("ethernet");
   expect(estimate.estimatedBytesPerSec * 8).toBeCloseTo(2_500_000_000, -3);
   expect(estimate.totalMultiplier).toBeCloseTo(1.06215, 4);
   expect(estimate.mtuBytes).toBe(1500);
@@ -54,7 +53,6 @@ test("selected WebTransport mechanism forces QUIC despite an H1/H2 fetch probe",
     "http/1.1",
     false,
     4,
-    "192.0.2.1",
     "webtransport",
   );
   const datagram = estimateCompensation(
@@ -62,7 +60,6 @@ test("selected WebTransport mechanism forces QUIC despite an H1/H2 fetch probe",
     "h2",
     true,
     4,
-    "192.0.2.1",
     "webtransport-datagram",
   );
   expect(stream).toMatchObject({
@@ -107,19 +104,11 @@ test("authoritative preflight IP family changes only IP overhead", () => {
   expect(estimateCompensation(1_000_000).ipVersion).toBe(4);
 });
 
-test("loopback preflight has no physical wire estimate", () => {
-  for (const address of ["127.0.0.1", "127.42.0.9", "::1", "[::1]"]) {
-    const estimate = estimateCompensation(1_000_000, "h2", true, 4, address);
-    expect(estimate.available).toBe(false);
-    expect(estimate.path).toBe("loopback");
-    expect(estimate.totalMultiplier).toBe(1);
-  }
-});
-
-test("non-loopback preflight keeps the physical estimate available", () => {
-  expect(
-    estimateCompensation(1_000_000, "h2", true, 4, "192.0.2.1").available,
-  ).toBe(true);
+test("missing throughput has no invented overhead", () => {
+  const estimate = estimateCompensation(0, "h2", true, 4);
+  expect(estimate.estimatedBytesPerSec).toBe(0);
+  expect(estimate.totalMultiplier).toBe(1);
+  expect(estimate.factors).toEqual([]);
 });
 
 test("bidirectional compensation is the sum of independently modeled lanes", () => {
@@ -136,7 +125,6 @@ test("bidirectional compensation is the sum of independently modeled lanes", () 
   expect(combined.upperBytesPerSec).toBe(
     down.upperBytesPerSec + up.upperBytesPerSec,
   );
-  expect(combined.path).toBe("ethernet");
 });
 
 test("factor contributions sum to the displayed overhead", () => {
@@ -157,14 +145,8 @@ test("factor contributions sum to the displayed overhead", () => {
     }
 });
 
-test("tooltip reports automatic assumptions and loopback boundary", () => {
-  const estimate = estimateCompensation(
-    1_000_000,
-    "h3",
-    true,
-    6,
-    "2001:db8::1",
-  );
+test("tooltip reports automatic assumptions", () => {
+  const estimate = estimateCompensation(1_000_000, "h3", true, 6);
   expect(compensationTooltip(estimate)).toContain("IPv6 detected · MTU 1500 B");
   expect(compensationTooltip(estimate)).toContain("UDP + QUIC");
   expect(compensationTooltip(estimate)).toContain(
@@ -172,8 +154,4 @@ test("tooltip reports automatic assumptions and loopback boundary", () => {
   );
   expect(compensationTooltip(estimate)).toContain("Transport detected");
   expect(compensationTooltip(estimate)).toContain("Total +");
-  const loopback = estimateCompensation(1_000_000, "h2", true, 4, "127.0.0.1");
-  expect(compensationTooltip(loopback)).toBe(
-    "Wire n/a\nLoopback · No physical-link estimate applies",
-  );
 });
