@@ -11,7 +11,6 @@ import {
   waitForCompletion,
   type Page,
 } from "./webview";
-import { gaugeLayout } from "../src/lib/components/gaugeLayout";
 function persistedConfig(latency: boolean) {
   return JSON.stringify({
     config: {
@@ -62,149 +61,50 @@ for (const viewport of [
   });
 }
 async function assertGaugeLabels(page: Page) {
-  const labels = page.locator(".gauge-tick");
-  await expect(labels).toHaveCount(5);
-  const stageSize = await page
-    .locator(".gauge-panel .stage")
-    .evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      const style = getComputedStyle(element);
+  const layout = () =>
+    page.locator(".gauge-panel .stage").evaluate((stage) => {
+      const box = stage.getBoundingClientRect();
+      const labels = [...stage.querySelectorAll(".gauge-tick")].map((tick) =>
+        tick.getBoundingClientRect(),
+      );
+      const ticks = [
+        ...stage.querySelectorAll(
+          '.gauge-dial g[stroke="var(--border-strong)"] path',
+        ),
+      ].map((tick) => tick.getBoundingClientRect());
+      const separate = (a: DOMRect, b: DOMRect) =>
+        a.right <= b.left ||
+        b.right <= a.left ||
+        a.bottom <= b.top ||
+        b.bottom <= a.top;
       return {
-        width:
-          box.width -
-          Number.parseFloat(style.borderLeftWidth) -
-          Number.parseFloat(style.borderRightWidth),
-        height:
-          box.height -
-          Number.parseFloat(style.borderTopWidth) -
-          Number.parseFloat(style.borderBottomWidth),
+        count: labels.length,
+        contained: labels.every(
+          (label) =>
+            label.left >= box.left &&
+            label.right <= box.right &&
+            label.top >= box.top &&
+            label.bottom <= box.bottom,
+        ),
+        separated: labels.every((label, index) =>
+          labels.slice(index + 1).every((other) => separate(label, other)),
+        ),
+        clearOfTicks: labels.every((label) =>
+          ticks.every((tick) => separate(label, tick)),
+        ),
+        ticks: ticks.length,
       };
     });
-  const expected = gaugeLayout(stageSize.width, stageSize.height);
-  const tickOuter = Math.hypot(
-    expected.majorTicks[0]!.to.x - expected.center.x,
-    expected.majorTicks[0]!.to.y - expected.center.y,
-  );
-  const anchors = await labels.evaluateAll((ticks) =>
-    ticks.map((tick) => ({
-      x: tick.getAttribute("data-anchor-x"),
-      y: tick.getAttribute("data-anchor-y"),
-    })),
-  );
-  expect(anchors).toEqual([
-    { x: "end", y: "start" },
-    { x: "end", y: "end" },
-    { x: "center", y: "end" },
-    { x: "start", y: "end" },
-    { x: "start", y: "start" },
-  ]);
-  const boxes = await labels.evaluateAll((ticks) => {
-    const stageElement = ticks[0]!.parentElement!.parentElement!;
-    const stage = stageElement.getBoundingClientRect();
-    const stageStyle = getComputedStyle(stageElement);
-    const borderLeft = Number.parseFloat(stageStyle.borderLeftWidth);
-    const borderTop = Number.parseFloat(stageStyle.borderTopWidth);
-    const transform = new DOMMatrix(
-      getComputedStyle(ticks[0]!.parentElement!).transform,
-    );
-    const center = {
-      x: stage.width / 2 + transform.m41,
-      y:
-        stage.height / 2 +
-        Number.parseFloat(
-          stageStyle.getPropertyValue("--gauge-center-offset"),
-        ) +
-        transform.m42,
-    };
-    return ticks.map((tick) => {
-      const box = tick.getBoundingClientRect();
-      const style = getComputedStyle(tick);
-      const anchor = {
-        x: borderLeft + Number.parseFloat(style.left) + transform.m41,
-        y: borderTop + Number.parseFloat(style.top) + transform.m42,
-      };
-      const left = box.left - stage.left;
-      const right = box.right - stage.left;
-      const top = box.top - stage.top;
-      const bottom = box.bottom - stage.top;
-      return {
-        anchor,
-        box: {
-          left,
-          right,
-          top,
-          bottom,
-        },
-        anchorX: tick.getAttribute("data-anchor-x"),
-        anchorY: tick.getAttribute("data-anchor-y"),
-        anchorRadius: Math.hypot(anchor.x - center.x, anchor.y - center.y),
-        contained:
-          box.left >= stage.left &&
-          box.right <= stage.right &&
-          box.top >= stage.top &&
-          box.bottom <= stage.bottom,
-      };
-    });
+  await expect.poll(layout).toEqual({
+    count: 5,
+    contained: true,
+    separated: true,
+    clearOfTicks: true,
+    ticks: 9,
   });
-  for (const label of boxes) {
-    if (label.anchorX === "end") expectNear(label.box.right, label.anchor.x);
-    if (label.anchorX === "start") expectNear(label.box.left, label.anchor.x);
-    if (label.anchorX === "center")
-      expectNear((label.box.left + label.box.right) / 2, label.anchor.x);
-    if (label.anchorY === "end") expectNear(label.box.bottom, label.anchor.y);
-    if (label.anchorY === "start") expectNear(label.box.top, label.anchor.y);
-    if (label.anchorY === "center")
-      expectNear((label.box.top + label.box.bottom) / 2, label.anchor.y);
-    // Allow opposite CSS-pixel rounding while rejecting material intrusion into the tick ring.
-    expect(label.anchorRadius).toBeGreaterThanOrEqual(tickOuter - 1);
-    expect(label.contained).toBe(true);
-  }
-  for (const [index, first] of boxes.entries()) {
-    for (const second of boxes.slice(index + 1)) {
-      expect(
-        first.box.right <= second.box.left ||
-          second.box.right <= first.box.left ||
-          first.box.bottom <= second.box.top ||
-          second.box.bottom <= first.box.top,
-      ).toBe(true);
-    }
-  }
 }
 
-async function assertGaugeDialAlignment(page: Page) {
-  const boxes = await page.locator(".gauge-panel .stage").evaluate((stage) => {
-    const dial = stage.querySelector(".gauge-dial");
-    if (!(dial instanceof SVGSVGElement)) throw new Error("missing gauge");
-    const stageBox = stage.getBoundingClientRect();
-    const dialBox = dial.getBoundingClientRect();
-    return {
-      stage: {
-        left: stageBox.left,
-        right: stageBox.right,
-        top: stageBox.top,
-        bottom: stageBox.bottom,
-        centerX: (stageBox.left + stageBox.right) / 2,
-        centerY: (stageBox.top + stageBox.bottom) / 2,
-      },
-      dial: {
-        left: dialBox.left,
-        right: dialBox.right,
-        top: dialBox.top,
-        bottom: dialBox.bottom,
-        centerX: (dialBox.left + dialBox.right) / 2,
-        centerY: (dialBox.top + dialBox.bottom) / 2,
-      },
-    };
-  });
-  expectNear(boxes.dial.left, boxes.stage.left);
-  expectNear(boxes.dial.right, boxes.stage.right);
-  expectNear(boxes.dial.top, boxes.stage.top);
-  expectNear(boxes.dial.bottom, boxes.stage.bottom);
-  expectNear(boxes.dial.centerX, boxes.stage.centerX);
-  expectNear(boxes.dial.centerY, boxes.stage.centerY);
-}
-
-test("running and completed gauge geometry stays aligned to the shared layout", async ({
+test("live and completed instruments keep labels and readouts contained", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1024, height: 768 });
@@ -215,29 +115,51 @@ test("running and completed gauge geometry stays aligned to the shared layout", 
     "data-phase",
     "download",
   );
-  await assertGaugeDialAlignment(page);
-  await assertGaugeLabels(page);
+  for (const viewport of [
+    { width: 1024, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await assertGaugeLabels(page);
+  }
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await expect(page.locator(".result-chip")).toHaveCount(3, {
+    timeout: 10_000,
+  });
+  await expectStageFits(page);
   await waitForCompletion(page, 10_000);
-  await assertGaugeDialAlignment(page);
   await assertGaugeLabels(page);
+  await expect(resultCards(page)).toHaveCount(3);
+  await expect(page.locator(".metric-wrap .gauge-value")).toHaveCount(0);
+  await expect(page.locator(".metric-wrap .terminal-readout")).toHaveCount(1);
+  await expect(
+    page.locator(".terminal-readout.download .terminal-number"),
+  ).toHaveText(
+    await page.locator(".result-card:has(.ico.dl) .num").innerText(),
+  );
+  await expect(page.locator(".metric-wrap .terminal-unit")).toHaveText(
+    /(?:bit|B)\/s$/,
+  );
+  await expect(page.locator(".gauge-panel output")).toContainText("Upload");
+  const terminalAlignment = await page
+    .locator(".terminal-readout")
+    .evaluate((readout) => {
+      const number = readout.querySelector(".terminal-number")!;
+      const unit = readout.querySelector(".terminal-unit")!;
+      const numberBox = number.getBoundingClientRect();
+      const unitBox = unit.getBoundingClientRect();
+      return {
+        unitCenter: unitBox.left + unitBox.width / 2,
+        numberCenter: numberBox.left + numberBox.width / 2,
+      };
+    });
+  expect(
+    Math.abs(terminalAlignment.unitCenter - terminalAlignment.numberCenter),
+  ).toBeLessThanOrEqual(1);
+  await expectStageFits(page);
 });
 
-for (const viewport of [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "mobile", width: 390, height: 844 },
-]) {
-  test(`throughput gauge labels stay anchored and separated at ${viewport.name} width`, async ({
-    page,
-  }) => {
-    await openApp(page, "dummy", viewport);
-    await startTest(page);
-    await expect(page.locator("#console")).toHaveAttribute(
-      "data-phase",
-      "download",
-    );
-    await assertGaugeLabels(page);
-  });
-}
 test("a short landscape phone keeps anchored chrome and scrollable flyouts", async ({
   page,
 }) => {
@@ -346,10 +268,6 @@ test("an open phone panel changes from sheet to side flyout on rotation", async 
   expect(rotated.bottom).toBeLessThanOrEqual(rotated.statusTop! + 1);
   expect(rotated.bodyOverflow).toBe("auto");
 });
-async function configureThreeStageRun(page: Page) {
-  const settings = await configureSettings(page, "three-stage");
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-}
 async function expectStageFits(page: Page) {
   const stage = await page
     .locator("#console > section.stage")
@@ -359,46 +277,6 @@ async function expectStageFits(page: Page) {
     }));
   expect(stage.scrollHeight).toBeLessThanOrEqual(stage.clientHeight + 1);
 }
-test("a windowed desktop fits compact and final cards without token scrolling", async ({
-  page,
-}) => {
-  await openApp(page, "dummy", { width: 1024, height: 768 });
-  await configureThreeStageRun(page);
-  await startTest(page);
-  await expect(page.locator(".result-chip")).toHaveCount(3, {
-    timeout: 10_000,
-  });
-  await expectStageFits(page);
-  await waitForCompletion(page, 10_000);
-  await expect(resultCards(page)).toHaveCount(3);
-  await expect(page.locator(".metric-wrap .gauge-value")).toHaveCount(0);
-  await expect(page.locator(".metric-wrap .terminal-readout")).toHaveCount(1);
-  await expect(
-    page.locator(".terminal-readout.download .terminal-number"),
-  ).toHaveText(
-    await page.locator(".result-card:has(.ico.dl) .num").innerText(),
-  );
-  await expect(page.locator(".metric-wrap .terminal-unit")).toHaveText(
-    /(?:bit|B)\/s$/,
-  );
-  await expect(page.locator(".gauge-panel output")).toContainText("Upload");
-  const terminalAlignment = await page
-    .locator(".terminal-readout")
-    .evaluate((readout) => {
-      const number = readout.querySelector(".terminal-number")!;
-      const unit = readout.querySelector(".terminal-unit")!;
-      const numberBox = number.getBoundingClientRect();
-      const unitBox = unit.getBoundingClientRect();
-      return {
-        unitCenter: unitBox.left + unitBox.width / 2,
-        numberCenter: numberBox.left + numberBox.width / 2,
-      };
-    });
-  expect(
-    Math.abs(terminalAlignment.unitCenter - terminalAlignment.numberCenter),
-  ).toBeLessThanOrEqual(1);
-  await expectStageFits(page);
-});
 for (const viewport of [
   { width: 1024, height: 640 },
   { width: 1024, height: 700 },

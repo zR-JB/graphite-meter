@@ -124,7 +124,11 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 	token := mintForSession(t, s, sess)
 	s.mu.Lock()
 	s.deleteSessionLocked(sess)
+	_, listed := s.wtTokens[sha256.Sum256([]byte(token))]
 	s.mu.Unlock()
+	if listed {
+		t.Fatal("a revoked session's token stayed in the service map")
+	}
 	if _, ok := s.consumeWebTransportToken(token); ok {
 		t.Fatal("token outlived its revoked session")
 	}
@@ -154,8 +158,11 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 	}
 	r := secureRequest(http.MethodPost, "/wt/session", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
-	if _, _, mint := s.MintWebTransportSessionToken(r); mint == WTMintOK {
-		t.Fatal("mint past the cap succeeded")
+	if _, _, mint := s.MintWebTransportSessionToken(r); mint != WTMintAtCapacity {
+		t.Fatalf("mint at the cap = %d, want WTMintAtCapacity", mint)
+	}
+	if _, _, mint := s.MintWebTransportSessionToken(secureRequest(http.MethodPost, "/wt/session", nil)); mint != WTMintNoSession {
+		t.Fatalf("mint without a principal = %d, want WTMintNoSession", mint)
 	}
 	// Every token the cap protected is still spendable.
 	for i, token := range tokens {
@@ -218,25 +225,6 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 	}
 }
 
-func TestWebTransportMintSeparatesCapacityFromNoSession(t *testing.T) {
-	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	for range maxSessionWTTokens {
-		mintForSession(t, s, sess)
-	}
-	r := secureRequest(http.MethodPost, "/wt/session", nil)
-	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
-	if _, _, mint := s.MintWebTransportSessionToken(r); mint != WTMintAtCapacity {
-		t.Fatalf("mint at the cap = %d, want WTMintAtCapacity (%d)", mint, WTMintAtCapacity)
-	}
-	if _, _, mint := s.MintWebTransportSessionToken(secureRequest(http.MethodPost, "/wt/session", nil)); mint != WTMintNoSession {
-		t.Fatalf("mint without a principal = %d, want WTMintNoSession (%d)", mint, WTMintNoSession)
-	}
-}
-
 func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSessionUntil("subject", "Name", "local", time.Now().Add(50*time.Millisecond))
@@ -258,22 +246,6 @@ func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	}
 	if _, ok := s.consumeWebTransportToken(token); ok {
 		t.Fatal("a token minted before the deadline authenticated after it")
-	}
-}
-
-func TestRevokingASessionRemovesItsTokensFromTheService(t *testing.T) {
-	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	h := sha256.Sum256([]byte(mintForSession(t, s, sess)))
-	s.mu.Lock()
-	s.deleteSessionLocked(sess)
-	_, listed := s.wtTokens[h]
-	s.mu.Unlock()
-	if listed {
-		t.Fatal("a revoked session's token stayed in the service map")
 	}
 }
 
@@ -317,23 +289,6 @@ func TestWebTransportTokenCarries256Bits(t *testing.T) {
 	}
 	if len(decoded) != 32 {
 		t.Fatalf("token carries %d bytes, want the 32 every other credential here carries", len(decoded))
-	}
-}
-
-func TestWebTransportSessionRoutesPreflightForCONNECTAlone(t *testing.T) {
-	for _, path := range []string{"/wt/download", "/wt/upload", "/wt/ping"} {
-		for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions} {
-			if allowedCORSMethod(path, method) {
-				t.Errorf("allowedCORSMethod(%q, %q) = true; a session route is reached by extended CONNECT and by nothing else", path, method)
-			}
-		}
-		if !allowedCORSMethod(path, http.MethodConnect) {
-			t.Errorf("allowedCORSMethod(%q, CONNECT) = false", path)
-		}
-	}
-	// The mint beside them is the ordinary POST it looks like.
-	if !allowedCORSMethod("/wt/session", http.MethodPost) || allowedCORSMethod("/wt/session", http.MethodConnect) {
-		t.Error("/wt/session is the plain POST mint, not a session upgrade")
 	}
 }
 

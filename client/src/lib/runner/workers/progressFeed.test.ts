@@ -51,13 +51,6 @@ function parseRefusalPin(text: string): Record<string, string> {
 
 const refusals = parseRefusalPin(await Bun.file(refusalPinPath).text());
 
-// A row named here but absent from the pin is a renamed or dropped refusal, not an empty string to feed the parser.
-function refusalMessage(name: string): string {
-  const message = refusals[name];
-  if (message === undefined) throw new Error(`${name} is not pinned`);
-  return message;
-}
-
 // The error record the server sends a refused lane, which is all a WebTransport lane gets: no status line, so the.
 function refusalRecord(name: string, message: string): string {
   return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
@@ -135,21 +128,12 @@ test("a blank heartbeat never reaches the parser", async () => {
   expect(parsed).toEqual([`{"type":"ready"}`, `{"type":"progr`]);
 });
 
-test("a terminal record ends the feed and names why", async () => {
+test("a complete record ends the feed with receiver totals", async () => {
   const complete = await read(
     feedOf(`{"type":"ready"}`, `{"type":"complete","bytes":42,"nanos":9}`, ""),
   );
   expect(complete.end).toBe("complete");
   expect(complete.events.at(-1)).toEqual({ type: "complete", n: 42, t: 9 });
-
-  const ownerMismatch = refusalMessage("ownerMismatch");
-  const refused = await read(
-    feedOf(refusalRecord("ownerMismatch", ownerMismatch), ""),
-  );
-  expect(refused.end).toBe("fatal");
-  expect(refused.events).toEqual([
-    { type: "fatal", detail: ownerMismatch, cause: "owner-mismatch" },
-  ]);
 });
 
 // Every refusal the server can send must reach the caller as a fatal carrying that exact text, not just the owner.

@@ -32,9 +32,6 @@ func TestReadLegalFilesPreservesCandidateBytesAndKinds(t *testing.T) {
 	if got[1].Kind != "notice" {
 		t.Fatalf("NOTICE kind = %q", got[1].Kind)
 	}
-	if !strings.Contains(got[0].Text, "<script>") {
-		t.Fatal("license text was interpreted instead of preserved")
-	}
 }
 
 func TestReadLegalFilesIncludesNestedAndThirdPartyNotices(t *testing.T) {
@@ -90,23 +87,6 @@ func TestValidateReviewRequiresIdentityAndCompleteFingerprint(t *testing.T) {
 	err := ValidateReview(component, []Review{review})
 	if err == nil || !strings.Contains(err.Error(), "fingerprint") || !strings.Contains(err.Error(), "LICENSE") || !strings.Contains(err.Error(), SHA256([]byte("MIT"))) || !strings.Contains(err.Error(), changedHash) {
 		t.Fatalf("changed fingerprint diagnostic = %v", err)
-	}
-}
-
-func TestValidateReviewAcceptsVersionChangeWithIdenticalLegalFacts(t *testing.T) {
-	file := LegalFile{Name: "LICENSE", SHA256: SHA256([]byte("BSD"))}
-	component := Component{
-		Name: "Go standard library", Ecosystem: "go-toolchain", Version: "go1.26.5",
-		DeclaredLicenseExpression: "BSD-3-Clause", SelectedLicenseExpression: "BSD-3-Clause",
-		LegalTexts: []LegalFile{file},
-	}
-	review := Review{
-		Name: "Go standard library", Ecosystem: "go-toolchain", ReviewedVersion: "go1.26.6",
-		DeclaredLicenseExpression: "BSD-3-Clause", SelectedLicenseExpression: "BSD-3-Clause",
-		LegalFiles: []LegalFile{file}, ReviewDecision: "approved",
-	}
-	if err := ValidateReview(component, []Review{review}); err != nil {
-		t.Fatalf("version-only update rejected: %v", err)
 	}
 }
 

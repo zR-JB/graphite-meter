@@ -1,3 +1,4 @@
+import { stubGlobals } from "../../test-helpers.test";
 import { expect, test } from "bun:test";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import { classifyTransportDiscovery, targetOfKind } from "./backendPure";
@@ -58,21 +59,11 @@ const INSECURE_PAGE =
 
 /* Runs body with the page declaring itself insecure, which is what a browser that has the API does on an http://. */
 function onAnInsecurePage(body: () => void) {
-  const had = "isSecureContext" in globalThis;
-  const previous = globalThis.isSecureContext;
-  Object.defineProperty(globalThis, "isSecureContext", {
-    value: false,
-    configurable: true,
-  });
+  const restore = stubGlobals({ isSecureContext: false });
   try {
     body();
   } finally {
-    if (had)
-      Object.defineProperty(globalThis, "isSecureContext", {
-        value: previous,
-        configurable: true,
-      });
-    else delete (globalThis as { isSecureContext?: boolean }).isSecureContext;
+    restore();
   }
 }
 

@@ -253,25 +253,22 @@ performanceTest(
     expect(metrics.longestTask).toBeLessThanOrEqual(100);
   },
 );
-performanceTest(
-  "settings remain contained by their desktop dock",
-  async ({ page }) => {
-    await openApp(page, "dummy", { width: 1440, height: 900 });
-    await openSettings(page);
-    const body = page.locator('[aria-label="Settings"] .panel-body');
-    await expectVisible(body);
-    const desktopSurface = await body.evaluate((element) => ({
-      overflowY: getComputedStyle(element).overflowY,
-      panelBottom: element.closest(".panel")?.getBoundingClientRect().bottom,
-      bodyBottom: element.getBoundingClientRect().bottom,
-      statusTop: document.querySelector(".status")?.getBoundingClientRect().top,
-    }));
-    expect(desktopSurface.overflowY).toBe("auto");
-    expect(desktopSurface.bodyBottom).toBeLessThanOrEqual(
-      desktopSurface.panelBottom! + 1,
-    );
-    expect(desktopSurface.panelBottom).toBeLessThanOrEqual(
-      desktopSurface.statusTop! + 1,
-    );
-  },
-);
+test("settings remain contained by their desktop dock", async ({ page }) => {
+  await openApp(page, "dummy", { width: 1440, height: 900 });
+  await openSettings(page);
+  const body = page.locator('[aria-label="Settings"] .panel-body');
+  await expectVisible(body);
+  const desktopSurface = await body.evaluate((element) => ({
+    overflowY: getComputedStyle(element).overflowY,
+    panelBottom: element.closest(".panel")?.getBoundingClientRect().bottom,
+    bodyBottom: element.getBoundingClientRect().bottom,
+    statusTop: document.querySelector(".status")?.getBoundingClientRect().top,
+  }));
+  expect(desktopSurface.overflowY).toBe("auto");
+  expect(desktopSurface.bodyBottom).toBeLessThanOrEqual(
+    desktopSurface.panelBottom! + 1,
+  );
+  expect(desktopSurface.panelBottom).toBeLessThanOrEqual(
+    desktopSurface.statusTop! + 1,
+  );
+});

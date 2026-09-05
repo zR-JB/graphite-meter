@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"sync"
 	"testing"
 	"time"
 
@@ -117,7 +116,11 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 		t.Fatalf("second admitted conn = %q, want the different client", got)
 	}
 	_ = first.Close()
+	_ = first.Close()
 	_ = second.Close()
+	if got := a.stats().active; got != 0 {
+		t.Fatalf("active connections after repeated close = %d, want 0", got)
+	}
 
 	if _, err := ln.Accept(); !errors.Is(err, io.EOF) {
 		t.Fatalf("drained listener error = %v, want EOF", err)
@@ -150,17 +153,5 @@ func TestBaseServerBoundsIdleConnections(t *testing.T) {
 	s := baseServer(http.NotFoundHandler(), nil)
 	if s.IdleTimeout != 60*time.Second || s.MaxHeaderBytes != 32<<10 {
 		t.Fatalf("server not hardened: idle=%v max=%d", s.IdleTimeout, s.MaxHeaderBytes)
-	}
-}
-
-func TestAdmittedConnReleasesOnce(t *testing.T) {
-	server, client := net.Pipe()
-	defer client.Close()
-	called := 0
-	conn := &admittedConn{Conn: server, release: sync.OnceFunc(func() { called++ })}
-	_ = conn.Close()
-	_ = conn.Close()
-	if called != 1 {
-		t.Fatalf("release called %d times, want 1", called)
 	}
 }

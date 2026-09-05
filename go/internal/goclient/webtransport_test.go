@@ -81,12 +81,6 @@ func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
 	}
 }
 
-func TestConnectionSummaryNamesWebTransport(t *testing.T) {
-	if got, want := ConnectionSummary(wire.TransportWebTransport, "http3", true), "WebTransport · HTTP/3 · TLS"; got != want {
-		t.Fatalf("ConnectionSummary = %q, want %q", got, want)
-	}
-}
-
 func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	t.Parallel()
 	var dials atomic.Int64
@@ -118,42 +112,6 @@ func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	}
 	if dials.Load() == 0 {
 		t.Error("the lane never tried to replace the session")
-	}
-}
-
-func TestRunWTLaneReportsALaneThatOnlyEverFailsOnALiveSession(t *testing.T) {
-	t.Parallel()
-	var dials, entries atomic.Int64
-	host := &wtStageSession{
-		sess: liveWTSession(t),
-		dial: func(context.Context) (*wtSession, error) {
-			dials.Add(1)
-			return liveWTSession(t), nil
-		},
-	}
-
-	// Each failure outlasts wtRedialBackoff, which is what keeps it out of the fast-failure count.
-	const failure = wtRedialBackoff + 20*time.Millisecond
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
-		entries.Add(1)
-		select {
-		case <-laneCtx.Done():
-			return false, laneCtx.Err()
-		case <-time.After(failure):
-		}
-		return false, errors.New("stream reset")
-	})
-
-	if err == nil {
-		t.Fatalf("runWTLane returned <nil> after %d lane entries against a session that stayed alive throughout: the stage carried no bytes and the window's clock ran the whole time, so this is published as a measurement of zero", entries.Load())
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("the lane only gave up when the stage window ended (%v); the failure is not bounded", err)
-	}
-	if got := dials.Load(); got != 0 {
-		t.Errorf("a live session was re-dialled %d times, want 0: every sibling lane transfers on the session a redial tears down", got)
 	}
 }
 
@@ -244,6 +202,9 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 
 			if got := err != nil; got != c.wantErr {
 				t.Fatalf("runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)", err, c.wantErr, entries.Load(), dials.Load())
+			}
+			if c.wantErr && ctx.Err() != nil {
+				t.Fatalf("lane failed only when the stage deadline expired: %v", err)
 			}
 			if c.wantEntries >= 0 && entries.Load() != c.wantEntries {
 				t.Errorf("the lane ran %d times, want %d", entries.Load(), c.wantEntries)

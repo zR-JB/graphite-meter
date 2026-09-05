@@ -1,9 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  GAUGE_LABEL_FRACTIONS,
-  GAUGE_TICK_FRACTIONS,
-  gaugeLayout,
-} from "./gaugeLayout";
+import { gaugeLayout } from "./gaugeLayout";
 
 const layout = gaugeLayout(480, 260);
 
@@ -22,18 +18,6 @@ test("gauge has nine uniform canvas ticks and five every-other labels", () => {
   expect(
     labelDeltas.every((delta) => Math.abs(delta - labelDeltas[0]!) < 1e-10),
   ).toBe(true);
-  expect(GAUGE_TICK_FRACTIONS).toEqual([
-    0,
-    1 / 8,
-    2 / 8,
-    3 / 8,
-    4 / 8,
-    5 / 8,
-    6 / 8,
-    7 / 8,
-    1,
-  ]);
-  expect(GAUGE_LABEL_FRACTIONS).toEqual([0, 2 / 8, 4 / 8, 6 / 8, 1]);
 });
 
 test("label anchors sit on exact tick rays at one fixed radial clearance", () => {

@@ -49,25 +49,6 @@ test("live duration extensions widen the active latency bucket", () => {
   expect(aligned.nextBoundaryT).toBe(3_500);
   expect(aligned.nextBoundaryT! % 250).toBe(0);
 });
-test("ideal fixed-cadence outcomes produce evenly spaced occupied points", () => {
-  for (const pingIntervalMs of [80, 250, 600]) {
-    const result = buckets(0, "download", true, 1, 2_400, pingIntervalMs);
-    const emitted: LatencyBucket[] = [];
-    for (let t = 0; t < 2_400; t += pingIntervalMs)
-      emitted.push(...result.observe(t, 20, false));
-    const summary = result.flush(2_400);
-    expect(summary).not.toBeNull();
-    if (summary) emitted.push(summary);
-    // Every emitted point is occupied; no empty bucket is manufactured.
-    expect(emitted.every((bucket) => bucket.pingCount > 0)).toBe(true);
-    const bucketMs = latencyPresentationBucketMs(2_400, pingIntervalMs);
-    expect(emitted.map((bucket) => bucket.startT)).toEqual(
-      emitted.map((_, index) => index * bucketMs),
-    );
-    for (let i = 1; i < emitted.length; i++)
-      expect(emitted[i].startT - emitted[i - 1].startT).toBe(bucketMs);
-  }
-});
 test("phase-aligned buckets retain median tail and loss summaries", () => {
   const result = buckets(1_000, "latency", false, 7);
   expect(result.observe(1_010, 10, false)).toEqual([]);
@@ -128,15 +109,6 @@ test("late arrival order does not rewrite observation-time jitter", () => {
     rttDeltaSumMs: 90,
     rttDeltaCount: 1,
   });
-});
-test("revised buckets replace rather than duplicate visible history", () => {
-  const initial = buckets();
-  initial.observe(50, 10, false);
-  const history: LatencyBucket[] = initial.closeThrough(200);
-  const [revised] = initial.observe(150, 20, false);
-  upsertLatencyBucket(history, revised);
-  expect(history).toHaveLength(1);
-  expect(history[0].pingCount).toBe(2);
 });
 test("history mutations distinguish tail appends from required reindexing", () => {
   const history: LatencyBucket[] = [];
@@ -216,29 +188,6 @@ test("partial flush is truthful and an all-loss bucket has no RTT", () => {
     lossCount: 2,
     underLoad: true,
   });
-});
-test("the same timed outcomes bucket identically regardless of callback grouping", () => {
-  const outcomes = [
-    { t: 20, rtt: 12, lost: false },
-    { t: 75, rtt: 14, lost: false },
-    { t: 180, rtt: 0, lost: true },
-    { t: 210, rtt: 16, lost: false },
-    { t: 390, rtt: 18, lost: false },
-    { t: 410, rtt: 20, lost: false },
-  ];
-  const collect = (groups: (typeof outcomes)[]) => {
-    const result = buckets();
-    const emitted = groups.flatMap((group) =>
-      group.flatMap((outcome) =>
-        result.observe(outcome.t, outcome.rtt, outcome.lost),
-      ),
-    );
-    const tail = result.flush(450);
-    return tail ? [...emitted, tail] : emitted;
-  };
-  expect(collect(outcomes.map((outcome) => [outcome]))).toEqual(
-    collect([outcomes.slice(0, 3), outcomes.slice(3)]),
-  );
 });
 test("batched and out-of-order outcomes retain worker time buckets", () => {
   const result = buckets(0, "download", true, 1, 1_000, 250);

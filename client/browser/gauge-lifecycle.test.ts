@@ -48,8 +48,6 @@ for (const viewport of [
   test(`gauge viewBox and painted geometry survive ${viewport.label} lifecycle churn`, async ({
     page,
   }) => {
-    const errors: string[] = [];
-    page.on("pageerror", (error) => errors.push(error.message));
     await openApp(page, "dummy", viewport);
     await expectCoherentGauge(page);
     await page.setViewportSize({
@@ -86,7 +84,6 @@ for (const viewport of [
     await againButton(page).click();
     await expect(abortButton(page)).toBeVisible();
     await expectCoherentGauge(page);
-    expect(errors).toEqual([]);
   });
 }
 

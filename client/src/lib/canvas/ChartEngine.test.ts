@@ -1,3 +1,4 @@
+import { stubGlobals } from "../test-helpers.test";
 import { expect, test } from "bun:test";
 import {
   ChartEngine,
@@ -77,16 +78,18 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   engine.destroy();
 });
 
-test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
-  const globals = globalThis as unknown as Record<string, unknown>;
-  const previousWindow = globals.window;
-  const previousDocument = globals.document;
-  const previousGetComputedStyle = globals.getComputedStyle;
+function canvasEnvironment(reducedMotion: boolean) {
+  const counts = { paths: 0 };
   const context = new Proxy({} as CanvasRenderingContext2D, {
-    get: (_target, property) =>
-      property === "createLinearGradient"
-        ? () => ({ addColorStop: () => {} })
-        : () => {},
+    get: (_target, property) => {
+      if (property === "createLinearGradient")
+        return () => ({ addColorStop() {} });
+      if (property === "beginPath")
+        return () => {
+          counts.paths++;
+        };
+      return () => {};
+    },
   });
   const canvas = {
     width: 0,
@@ -94,21 +97,28 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
     getContext: () => context,
     getBoundingClientRect: () => ({ width: 600, height: 240 }),
   } as unknown as HTMLCanvasElement;
-  const media = {
-    matches: true,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  } as unknown as MediaQueryList;
-  const documentValue = {
-    documentElement: {},
-    createElement: () => ({ ...canvas }),
-  } as unknown as Document;
-
-  Object.assign(globalThis, {
-    window: { devicePixelRatio: 1, matchMedia: () => media },
-    document: documentValue,
+  const restore = stubGlobals({
+    window: {
+      devicePixelRatio: 1,
+      matchMedia: () => ({
+        matches: reducedMotion,
+        addEventListener() {},
+        removeEventListener() {},
+      }),
+    },
+    document: {
+      documentElement: {},
+      createElement: () => ({ ...canvas }),
+      addEventListener() {},
+      removeEventListener() {},
+    },
     getComputedStyle: () => ({ getPropertyValue: () => "" }),
   });
+  return { canvas, counts, restore };
+}
+
+test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
+  const { canvas, restore } = canvasEnvironment(true);
 
   try {
     let current = data();
@@ -151,63 +161,12 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
     expect(engine.render(148)).toBe(false);
     engine.destroy();
   } finally {
-    Object.defineProperty(globalThis, "window", {
-      value: previousWindow,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(globalThis, "document", {
-      value: previousDocument,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(globalThis, "getComputedStyle", {
-      value: previousGetComputedStyle,
-      configurable: true,
-      writable: true,
-    });
+    restore();
   }
 });
 
 test("long history is cached across camera, hover, and glyph frames", () => {
-  const globals = globalThis as unknown as Record<string, unknown>;
-  const previousWindow = globals.window;
-  const previousDocument = globals.document;
-  const previousGetComputedStyle = globals.getComputedStyle;
-  const counts = { paths: 0 };
-  const context = new Proxy({} as CanvasRenderingContext2D, {
-    get: (_target, property) => {
-      if (property === "createLinearGradient")
-        return () => ({ addColorStop: () => {} });
-      if (property === "beginPath")
-        return () => {
-          counts.paths++;
-        };
-      return () => {};
-    },
-  });
-  const canvas = {
-    width: 0,
-    height: 0,
-    getContext: () => context,
-    getBoundingClientRect: () => ({ width: 600, height: 240 }),
-  } as unknown as HTMLCanvasElement;
-  const media = {
-    matches: false,
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  } as unknown as MediaQueryList;
-  const documentValue = {
-    documentElement: {},
-    createElement: () => ({ ...canvas }),
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  } as unknown as Document;
-  Object.assign(globalThis, {
-    window: { devicePixelRatio: 1, matchMedia: () => media },
-    document: documentValue,
-    getComputedStyle: () => ({ getPropertyValue: () => "" }),
-  });
+  const { canvas, counts, restore } = canvasEnvironment(false);
 
   const throughput: ThroughputSample[] = Array.from(
     { length: 2_000 },
@@ -273,21 +232,7 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     expect(counts.paths - beforeCameraFrames).toBeLessThan(1_000);
     engine.destroy();
   } finally {
-    Object.defineProperty(globalThis, "window", {
-      value: previousWindow,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(globalThis, "document", {
-      value: previousDocument,
-      configurable: true,
-      writable: true,
-    });
-    Object.defineProperty(globalThis, "getComputedStyle", {
-      value: previousGetComputedStyle,
-      configurable: true,
-      writable: true,
-    });
+    restore();
   }
 });
 

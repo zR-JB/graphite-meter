@@ -65,24 +65,21 @@ test("no mint configured means authentication is off", async () => {
   });
 });
 
-test("a credentialed mint refuses redirects", async () => {
+test("a credentialed mint is an uncached POST with caller headers and no redirects", async () => {
   const capture = captureFetch();
   try {
-    await mintWtToken({ ...MINT, credentials: "include" });
-    expect(capture.init()?.redirect).toBe("error");
-    expect(capture.init()?.credentials).toBe("include");
-  } finally {
-    capture.restore();
-  }
-});
-
-test("a mint is an uncached POST carrying the caller's headers", async () => {
-  const capture = captureFetch();
-  try {
-    await mintWtToken({ ...MINT, headers: { "X-CSRF-Token": "csrf-token" } });
-    expect(capture.init()?.method).toBe("POST");
-    expect(capture.init()?.cache).toBe("no-store");
-    expect(capture.init()?.headers).toEqual({ "X-CSRF-Token": "csrf-token" });
+    await mintWtToken({
+      ...MINT,
+      credentials: "include",
+      headers: { "X-CSRF-Token": "csrf-token" },
+    });
+    expect(capture.init()).toMatchObject({
+      method: "POST",
+      cache: "no-store",
+      redirect: "error",
+      credentials: "include",
+      headers: { "X-CSRF-Token": "csrf-token" },
+    });
   } finally {
     capture.restore();
   }

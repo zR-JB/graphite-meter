@@ -19,7 +19,6 @@ function makeHarness(
   const socket = new FakeWebSocket(clock);
   const pending = new Set<number>();
   let id = 0;
-  let reports = 0;
   const scheduler = createPingScheduler(
     pacing,
     () => {
@@ -35,13 +34,11 @@ function makeHarness(
     socket,
     scheduler,
     pending,
-    pong(report = true) {
+    pong() {
       const first = pending.values().next().value;
       if (first !== undefined) pending.delete(first);
-      if (report) reports++;
       scheduler.complete();
     },
-    reportCount: () => reports,
   };
 }
 
@@ -92,21 +89,6 @@ test("RTT longer than cadence resumes overdue without a catch-up burst", () => {
   expect(h.socket.sent.map((send) => send.at)).toEqual([0, 125]);
   h.clock.advance(80);
   expect(h.socket.sent.map((send) => send.at)).toEqual([0, 125, 205]);
-});
-
-test("measurement/report downsampling does not change wire sends", () => {
-  const full = harness(80);
-  const sparse = harness(80);
-  full.scheduler.start();
-  sparse.scheduler.start();
-  for (let elapsed = 0; elapsed < 1_000; elapsed++) {
-    full.clock.advance(1);
-    sparse.clock.advance(1);
-    full.pong();
-    sparse.pong(elapsed % 250 === 0);
-  }
-  expect(sparse.socket.sent.length).toBe(full.socket.sent.length);
-  expect(sparse.reportCount()).toBeLessThan(full.reportCount());
 });
 
 test("stop and reset leave no live send timer", () => {

@@ -175,8 +175,9 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 	}
 }
 
-func newAbruptCloseUploadServer() *httptest.Server {
+func newAbruptCloseUploadServer(requests *atomic.Int64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		buf := make([]byte, 8*1024)
 		_, _ = r.Body.Read(buf)
 		panic(http.ErrAbortHandler)
@@ -184,7 +185,8 @@ func newAbruptCloseUploadServer() *httptest.Server {
 }
 
 func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
-	srv := newAbruptCloseUploadServer()
+	var requests atomic.Int64
+	srv := newAbruptCloseUploadServer(&requests)
 	defer srv.Close()
 
 	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
@@ -197,8 +199,17 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 		close(done)
 	}()
 
-	// The sleep lets the lane hit and retry past several abrupt drops.
-	time.Sleep(150 * time.Millisecond)
+	defer cancel()
+	deadline := time.After(2 * time.Second)
+	for requests.Load() < 2 {
+		select {
+		case <-done:
+			t.Fatal("upload lane stopped instead of retrying the dropped connection")
+		case <-deadline:
+			t.Fatal("upload lane did not reopen after the dropped connection")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 	cancel()
 	select {
 	case <-done:

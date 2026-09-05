@@ -1,3 +1,4 @@
+import { testClock } from "../workers/test-helpers.test";
 import { test, expect } from "bun:test";
 import {
   TransferDirection,
@@ -18,35 +19,15 @@ interface Clock {
   advance(ms: number): void;
 }
 function withClock<T>(body: (clock: Clock) => T): T {
-  let now = 0,
-    nextId = 1;
-  const timers = new Map<number, { at: number; fn: () => void }>();
+  const clock = testClock();
   const realNow = performance.now.bind(performance),
     realSet = globalThis.setTimeout,
     realClear = globalThis.clearTimeout;
-  performance.now = () => now;
-  globalThis.setTimeout = ((fn: () => void, ms = 0) => {
-    timers.set(nextId, { at: now + ms, fn });
-    return nextId++;
-  }) as unknown as typeof setTimeout;
-  globalThis.clearTimeout = ((id: number) =>
-    timers.delete(id)) as unknown as typeof clearTimeout;
-  const advance = (ms: number): void => {
-    const target = now + ms;
-    for (;;) {
-      let due: [number, { at: number; fn: () => void }] | undefined;
-      for (const entry of timers)
-        if (entry[1].at <= target && (!due || entry[1].at < due[1].at))
-          due = entry;
-      if (!due) break;
-      timers.delete(due[0]);
-      now = due[1].at;
-      due[1].fn();
-    }
-    now = target;
-  };
+  performance.now = clock.now;
+  globalThis.setTimeout = clock.setTimeout as unknown as typeof setTimeout;
+  globalThis.clearTimeout = clock.clearTimeout as typeof clearTimeout;
   try {
-    return body({ now: () => now, advance });
+    return body(clock);
   } finally {
     performance.now = realNow;
     globalThis.setTimeout = realSet;

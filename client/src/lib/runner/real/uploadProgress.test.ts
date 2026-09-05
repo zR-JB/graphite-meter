@@ -113,13 +113,6 @@ function channelUnderTest(
 const bytes = (channel: UploadProgressChannel, n: number, t: number): void =>
   channel.accept({ type: "bytes", n, t: t * 1_000_000_000 });
 
-test("discard settles external readiness without failing the stage", async () => {
-  const { channel, failures } = channelUnderTest();
-  const ready = channel.attachExternal(() => {});
-  channel.discard();
-  expect(await ready).toBe(false);
-  expect(failures).toEqual([]);
-});
 test("a discarded upload cannot feed the replacement meter", async () => {
   const old = channelUnderTest({ measuring: true });
   const oldReady = old.channel.attachExternal(() => {});
@@ -134,6 +127,7 @@ test("a discarded upload cannot feed the replacement meter", async () => {
   expect(old.curve).toEqual([]);
   expect(replacement.curve).toEqual([150]);
   expect(await oldReady).toBe(false);
+  expect(old.failures).toEqual([]);
   expect(await ready).toBe(true);
 });
 test("accept: a refusal ends a pending external attach", async () => {

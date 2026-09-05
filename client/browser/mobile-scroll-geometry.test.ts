@@ -1,6 +1,5 @@
 import {
   expect,
-  openApp,
   prepareApp,
   startTest,
   test,
@@ -14,7 +13,6 @@ async function gaugeHeight(page: import("./webview").Page) {
 test("portrait phone gauge height is stable across live and result content", async ({
   page,
 }) => {
-  await openApp(page, "dummy", { width: 390, height: 844 });
   const settings = await prepareApp(page, "mobile-scroll", "dummy", {
     width: 390,
     height: 844,

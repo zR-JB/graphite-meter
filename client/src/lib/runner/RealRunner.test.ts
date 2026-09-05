@@ -1,3 +1,4 @@
+import { stubGlobals } from "../test-helpers.test";
 import { test, expect } from "bun:test";
 import {
   httpToWs,
@@ -14,7 +15,7 @@ import {
   targetOfKind,
   ROUTES,
 } from "./real/backendPure";
-import { TRANSPORTS, kindsForRole, ridesSession } from "./real/transports";
+import { kindsForRole, ridesSession } from "./real/transports";
 import type {
   PreparedPaths,
   ConnectionRole,
@@ -22,7 +23,6 @@ import type {
   RunnerConfig,
   StallInfo,
   TransportDiscovery,
-  TransportKind,
 } from "./contract";
 import { emptyConnectionValidation } from "./connectionModel";
 import { DEFAULT_CONFIG } from "../state/defaults";
@@ -824,16 +824,12 @@ function stubProbeEnvironment(
   fetchImpl: typeof fetch,
   options: { location?: string; protocol?: string | (() => string) } = {},
 ): () => void {
-  const buildGlobals = globalThis as typeof globalThis &
-    Record<string, unknown>;
-  Object.assign(buildGlobals, TEST_BUILD_TOKENS);
-  const realFetch = globalThis.fetch;
-  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
-  const realEntries = performance.getEntriesByName.bind(performance);
-  Object.defineProperty(globalThis, "location", {
-    configurable: true,
-    value: new URL(options.location ?? "http://meter.test:7246/"),
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    fetch: fetchImpl,
+    location: new URL(options.location ?? "http://meter.test:7246/"),
   });
+  const realEntries = performance.getEntriesByName;
   performance.getEntriesByName = () =>
     [
       {
@@ -843,15 +839,9 @@ function stubProbeEnvironment(
             : (options.protocol ?? "http/1.1"),
       },
     ] as unknown as PerformanceEntry[];
-  globalThis.fetch = fetchImpl;
   return () => {
-    globalThis.fetch = realFetch;
-    if (realLocation)
-      Object.defineProperty(globalThis, "location", realLocation);
-    else Reflect.deleteProperty(globalThis, "location");
     performance.getEntriesByName = realEntries;
-    for (const key of Object.keys(TEST_BUILD_TOKENS))
-      Reflect.deleteProperty(buildGlobals, key);
+    restore();
   };
 }
 class FakePingWorker {
@@ -1120,14 +1110,7 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
   }
 }, 15000);
 
-test("every transport has a registry row saying how it is driven", () => {
-  const kinds: TransportKind[] = [
-    "fetch-stream",
-    "websocket",
-    "webtransport",
-    "webtransport-datagram",
-  ];
-  for (const kind of kinds) expect(TRANSPORTS[kind].kind).toBe(kind);
+test("transport dispatch distinguishes sessions and supported roles", () => {
   expect(ridesSession("webtransport")).toBe(true);
   expect(ridesSession("webtransport-datagram")).toBe(true);
   expect(ridesSession("fetch-stream")).toBe(false);
@@ -1138,19 +1121,4 @@ test("every transport has a registry row saying how it is driven", () => {
     "webtransport-datagram",
   ]);
   expect(kindsForRole("latency")).toEqual(["websocket", "webtransport"]);
-});
-
-test("the datagram setting does not reach selection or dispatch", () => {
-  const origin = "https://meter:7249";
-  const catalog = discovery(
-    [fetchAd(origin), dgAd(origin)],
-    [],
-    origin,
-    true,
-    "h3",
-  );
-  const datagram = selectThroughputTarget(catalog, `${origin}::wtdg`);
-  expect(datagram?.transport).toBe("webtransport-datagram");
-  expect(ridesSession(datagram!.transport)).toBe(true);
-  expect(kindsForRole("throughput")).toContain("webtransport-datagram");
 });

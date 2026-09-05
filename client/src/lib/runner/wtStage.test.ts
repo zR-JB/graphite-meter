@@ -1,3 +1,4 @@
+import { stubGlobals } from "../test-helpers.test";
 import { test, expect } from "bun:test";
 import { emptyConnectionValidation } from "./connectionModel";
 import type { PhaseActivity, RunnerConfig } from "./contract";
@@ -88,22 +89,17 @@ interface Harness {
   session(): FakeWorker;
 }
 async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
-  const globals = globalThis as Record<string, unknown>;
-  Object.assign(globals, TEST_BUILD_TOKENS);
-  const { RealBackend } = await import("./RealRunner");
-  const realFetch = globalThis.fetch;
-  const realWorker = globalThis.Worker;
-  const realWebTransport = globals.WebTransport;
-  const realLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
-  const realEntries = performance.getEntriesByName.bind(performance);
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    WebTransport: LiveWebTransport,
+    Worker: FakeWorker,
+    location: new URL(`${WT_ORIGIN}/`),
+    fetch: globalThis.fetch,
+  });
+  const realEntries = performance.getEntriesByName;
   sessions = [];
   try {
-    globals.WebTransport = LiveWebTransport;
-    globalThis.Worker = FakeWorker as unknown as typeof Worker;
-    Object.defineProperty(globalThis, "location", {
-      configurable: true,
-      value: new URL(`${WT_ORIGIN}/`),
-    });
+    const { RealBackend } = await import("./RealRunner");
     performance.getEntriesByName = () =>
       [{ nextHopProtocol: "h3" }] as unknown as PerformanceEntry[];
     globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -160,22 +156,8 @@ async function withBackend(body: (h: Harness) => Promise<void>): Promise<void> {
       session: () => sessions.at(-1)!,
     });
   } finally {
-    globalThis.fetch = realFetch;
-    globalThis.Worker = realWorker;
     performance.getEntriesByName = realEntries;
-    if (realWebTransport === undefined) delete globals.WebTransport;
-    else globals.WebTransport = realWebTransport;
-    if (realLocation)
-      Object.defineProperty(globalThis, "location", realLocation);
-    for (const key of [
-      "__GM_ALLOW_DUMMY__",
-      "__GM_BUILD_PROFILE__",
-      "__GM_RELEASE_VERSION__",
-      "__GM_SOURCE_REVISION__",
-      "__GM_BUILD_IDENTITY__",
-      "__GM_CLIENT_VERSION__",
-    ])
-      Reflect.deleteProperty(globals, key);
+    restore();
   }
 }
 test("WebTransport download carries bytes and upload is metered by the server feed", async () => {

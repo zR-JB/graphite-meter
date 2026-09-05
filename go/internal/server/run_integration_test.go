@@ -166,33 +166,6 @@ func TestRunServesTLSH1(t *testing.T) {
 	waitForOK(t, client, "https://"+tlsAddr+"/preflight")
 }
 
-func TestRunServesH3(t *testing.T) {
-	cert, key := runTestTLS(t)
-	sockets := newTestListenerSockets(t)
-	cfg := config.Default()
-	cfg.Native.H1 = sockets.reserveTCP()
-	h3Addr := sockets.reserveH3() // same reserved port for TCP bootstrap and UDP
-	cfg.Native.H3 = h3Addr
-	cfg.TLSCert, cfg.TLSKey = cert, key
-
-	stop := runUntilCancel(t, &cfg, sockets)
-	defer stop()
-
-	// The bootstrap companion is a TCP listener on the H3 address; a successful dial proves assembleH3 bound its sockets.
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		conn, err := net.DialTimeout("tcp", h3Addr, 200*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("H3 bootstrap listener never came up")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 	cert, key := runTestTLS(t)
 

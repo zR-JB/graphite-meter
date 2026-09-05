@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import {
   BROWSER_CONNECTION_BUDGET,
   WT_MAX_LANES,
-  MULTIPLEXED_STREAMS,
   describeTransferStreams,
   normalizeStreamCount,
   transferStreamCount,
@@ -25,13 +24,13 @@ test("automatic multiplexed streams follow the per-protocol table", () => {
     transfer: ["down", "up"],
     needsPing: true,
   } as const;
-  expect(MULTIPLEXED_STREAMS.http2).toEqual({ down: 1, up: 4 });
-  expect(MULTIPLEXED_STREAMS.http3).toEqual({ down: 1, up: 1 });
-  for (const protocol of ["http2", "http3"] as const)
-    for (const dir of ["down", "up"] as const)
-      expect(transferStreamCount({ ...base, protocol, dir })).toBe(
-        MULTIPLEXED_STREAMS[protocol][dir],
-      );
+  for (const [protocol, dir, count] of [
+    ["http2", "down", 1],
+    ["http2", "up", 4],
+    ["http3", "down", 1],
+    ["http3", "up", 1],
+  ] as const)
+    expect(transferStreamCount({ ...base, protocol, dir })).toBe(count);
 });
 
 test("automatic H1 reserves control connections and splits bidirectional capacity", () => {

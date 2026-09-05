@@ -43,24 +43,9 @@ test("a persisted opt-out hides only wire-estimate presentation", async ({
   await expect(page.getByLabel("Show estimated wire rate")).not.toBeChecked();
   await startTest(page);
   await expect(page.locator(".gauge-value")).not.toHaveText("—");
+  await waitForCompletion(page);
+  await expect(resultCards(page)).toHaveCount(1);
   await expect(page.locator(".result-card .est")).toHaveCount(0);
-});
-test("bidirectional results use their combined lane estimate", async ({
-  page,
-}) => {
-  const settings = await prepareApp(page, "short");
-  await settings
-    .locator("label.switch", {
-      hasText: "Include concurrent download + upload",
-    })
-    .click();
-  await settings.getByLabel("Download ms").fill("0");
-  await settings.getByLabel("Bidirectional ms").fill("900");
-  await startAndWait(page);
-  const card = resultCards(page).filter({ hasText: "Bi-dir" });
-  await expect(card.locator(".est")).toContainText("wire +");
-  await card.locator(".est-tag").hover();
-  await expect(page.getByRole("tooltip")).toContainText("Total +");
 });
 test("result wire details work with mouse, keyboard, touch, and narrow viewports", async ({
   page,
@@ -100,7 +85,7 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
 
-test("latency jitter and bidirectional details stay compact when wire estimates are hidden", async ({
+test("four-stage result details survive responsive and wire-preference changes", async ({
   page,
 }) => {
   const settings = await prepareApp(
@@ -122,6 +107,10 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
   await settings.getByLabel("Bidirectional ms").fill("900");
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await startAndWait(page);
+  const bidirectional = resultCards(page).filter({ hasText: "Bi-dir" });
+  await expect(bidirectional.locator(".est")).toContainText("wire +");
+  await bidirectional.locator(".est-tag").hover();
+  await expect(page.getByRole("tooltip")).toContainText("Total +");
   const jitter = page.locator(".result-card .jitter");
   await expect(jitter).toHaveText("0.0 ms jitter");
   await expect(
@@ -191,4 +180,19 @@ test("latency jitter and bidirectional details stay compact when wire estimates 
   expect(after.map((card) => card.height)).toEqual(
     before.map((card) => card.height),
   );
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 844],
+    [320, 740],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.locator(".result-cards").scrollIntoViewIfNeeded();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(page.locator(".stat-label")).toHaveCount(4);
+  }
 });

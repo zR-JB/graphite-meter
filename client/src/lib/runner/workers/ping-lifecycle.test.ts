@@ -1,3 +1,4 @@
+import { stubGlobals } from "../../test-helpers.test";
 import { expect, test } from "bun:test";
 import { LatencyAccumulator } from "../latencySummary";
 import type { PingSample } from "./pingSample";
@@ -53,19 +54,8 @@ async function withWorker(
     clearInterval: (id: number) => timers.delete(id),
     onmessage: null,
   };
-  const original = new Map(
-    Object.keys(overrides).map((key) => [
-      key,
-      Object.getOwnPropertyDescriptor(globalThis, key),
-    ]),
-  );
+  const restore = stubGlobals(overrides);
   try {
-    for (const [key, value] of Object.entries(overrides))
-      Object.defineProperty(globalThis, key, {
-        configurable: true,
-        writable: true,
-        value,
-      });
     await import(`./ping-worker.ts?lifecycle=${realm++}`);
     const handler = globalThis.onmessage as (event: MessageEvent) => void;
     const send = (data: unknown) => handler({ data } as MessageEvent);
@@ -115,10 +105,7 @@ async function withWorker(
         ),
     });
   } finally {
-    for (const [key, descriptor] of original) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
+    restore();
   }
 }
 

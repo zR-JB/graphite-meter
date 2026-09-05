@@ -10,7 +10,6 @@ import type {
   RunnerEvent,
   PhaseActivity,
   Phase,
-  ThroughputResult,
 } from "./contract";
 import { latencyPresentationBucketMs } from "./latencyBuckets";
 import { fixedPingIntervalMs } from "./pingCadence";
@@ -300,25 +299,6 @@ test("full run: latency then download — phase order and stage lifecycle", asyn
   });
 });
 
-test("a failed transfer preserves qualifying evidence and continues later stages", async () => {
-  const { backend, events } = await startCore({
-    stages: { download: true, upload: true },
-    duration: { downloadMs: 1_000, uploadMs: 1_000 },
-  });
-  backend.host.ingestThroughput("down", 900, 0.9);
-  backend.host.failStage("download", "connection-lost", "dropped");
-  advance(0);
-  const stageResult = typedEvents(events, "stageResult").find(
-    (event) => event.stage === "download",
-  ) as Extract<RunnerEvent, { type: "stageResult" }> & {
-    stage: "download";
-    result: ThroughputResult;
-  };
-  expect(stageResult?.result.totalBytes).toBe(900);
-  expect(hasEvent(events, "stageSkipped")).toBe(true);
-  expect(backend.calls).toContain("begin:upload");
-});
-
 test("failed-stage shutdown reports discarded probe accounting before the partial result", async () => {
   class InterruptedBackend extends FakeBackend {
     override onStageEnd(
@@ -332,7 +312,7 @@ test("failed-stage shutdown reports discarded probe accounting before the partia
       return super.onStageEnd(activity);
     }
   }
-  const { core, events } = await startCore(
+  const { core, backend, events } = await startCore(
     {
       stages: { download: true, upload: true },
       duration: { downloadMs: 1_000, uploadMs: 100 },
@@ -360,7 +340,14 @@ test("failed-stage shutdown reports discarded probe accounting before the partia
     timeoutCount: 0,
     meanMs: 12,
   });
+  expect(
+    typedEvents(events, "stageResult").find(
+      (event) => event.stage === "download",
+    )?.result,
+  ).toMatchObject({ totalBytes: 900 });
+  expect(hasEvent(events, "stageSkipped")).toBe(true);
   advance(0);
+  expect(backend.calls).toContain("begin:upload");
   advance(100);
   expectComplete(events, (result) => {
     expect(result.download?.totalBytes).toBe(900);
@@ -577,28 +564,32 @@ test("latency presentation closes on bucket time without a later ping", async ()
   });
 });
 
-test("loaded latency presentation follows every fixed cadence", async () => {
-  const durationMs = 2_400;
-  for (const cadence of ["fast", "medium", "slow"] as const) {
+test.each(["fast", "medium", "slow"] as const)(
+  "loaded latency presentation follows %s cadence",
+  async (cadence) => {
+    const durationMs = 2_400;
     const pingIntervalMs = fixedPingIntervalMs(cadence)!;
     const { core, events } = await startCore({
       loadedPingCadence: cadence,
       duration: { downloadMs: durationMs },
     });
-    for (let t = 0; t < durationMs; t += pingIntervalMs)
+    for (let t = 0; t < durationMs; t += pingIntervalMs) {
+      fakeNow = t;
+      core.ingestThroughput("down", 100, pingIntervalMs / 1_000);
       core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: t });
-    // The final runner tick closes the last time bucket and the phase.
+      advance(0);
+    }
     fakeNow = durationMs;
     advance(0);
-
     const samples = eventSamples(events, "latency");
     const bucketMs = latencyPresentationBucketMs(durationMs, pingIntervalMs);
+    expect(samples).toHaveLength(Math.ceil(durationMs / bucketMs));
     expect(samples.every((sample) => sample.pingCount > 0)).toBe(true);
     expect(samples.map((sample) => sample.startT)).toEqual(
       samples.map((_, index) => index * bucketMs),
     );
-  }
-});
+  },
+);
 
 test("queued latency outcomes retain their worker observation buckets", async () => {
   const { core, events } = await startCore({
@@ -657,23 +648,6 @@ test("backend boundary flush is included before stage reduction", async () => {
   );
 });
 
-test("asynchronous boundary flush completes before stage reduction", async () => {
-  const backend = new FakeBackend({ flush: "async" });
-  const { core, events } = await startCore(
-    { duration: { downloadMs: 100 } },
-    backend,
-  );
-  advance(100);
-  expect(core.phase).toBe("download");
-  expect(hasEvent(events, "complete")).toBe(false);
-  backend.flush!();
-  await Promise.resolve();
-  expect(core.phase).toBe("complete");
-  expectComplete(events, (result) =>
-    expect(result.download?.totalBytes).toBe(100),
-  );
-});
-
 test("terminal probe accounting reaches the original stage summary before finalization", async () => {
   const backend = new FakeBackend({ flush: "async" });
   const { core, events } = await startCore(
@@ -694,7 +668,9 @@ test("terminal probe accounting reaches the original stage summary before finali
   core.ingestLatencyInterruption(2, "unresolved");
   backend.flush!();
   await Promise.resolve();
+  expect(core.phase).toBe("complete");
   expectComplete(events, (result) => {
+    expect(result.download?.totalBytes).toBe(100);
     expect(result.latencyByStage.download).toMatchObject({
       probeCount: 3,
       timeoutCount: 1,
@@ -747,8 +723,9 @@ test("a healthy sibling's bytes do not resume a stalled bidirectional stage", as
   core.stall({ reason: "connection-lost" });
   core.ingestThroughput("down", 100, 0.1, false, false);
   expect(hasEvent(events, "resume")).toBe(false);
-  advance(20_001);
+  advance(STAGE_RECOVERY_BUDGET_MS + 1);
   expect(core.phase).toBe("error");
+  expect(typedEvents(events, "error")[0]?.error.reason).toBe("connection-lost");
 });
 
 test("accounting windows cannot overwrite the shared stall presentation", async () => {
@@ -778,18 +755,6 @@ test("a non-liveness throughput sample remains in the result", async () => {
   core.resume();
   advance(100);
   expect(complete()?.result.bidirectional?.down?.totalBytes).toBe(100);
-});
-
-test("a recovery deadline finalizes an otherwise unusable final stage", async () => {
-  const { core, events } = await startCore({ duration: { downloadMs: 60000 } });
-  core.stall({ reason: "connection-lost" });
-  advance(STAGE_RECOVERY_BUDGET_MS + 1);
-  expect(core.phase).toBe("error");
-  const err = events.find((e) => e.type === "error");
-  expect(err).toBeDefined();
-  if (err?.type === "error") {
-    expect(err.error.reason).toBe("connection-lost");
-  }
 });
 
 test("the runner owns recovery request lifetime", async () => {

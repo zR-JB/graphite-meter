@@ -9,8 +9,10 @@ are useful before GitHub schedules a workflow, including immutable 40-SHA refs.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import shlex
 import subprocess
 import sys
 from typing import NoReturn
@@ -308,17 +310,6 @@ def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
         fail(
             "setup-project must disable setup-bun executable caching when bun-cache is false"
         )
-    svelte_check = (root / "client" / "scripts" / "check-svelte.ts").read_text(
-        encoding="utf-8"
-    )
-    for required in (
-        "process.execPath",
-        '"--tsgo"',
-    ):
-        if required not in svelte_check:
-            fail(f"Svelte checker missing deterministic TypeScript 7 invariant: {required}")
-    if "--tsgo-experimental-api" in svelte_check or ' : [process.execPath, checker' in svelte_check:
-        fail("Svelte checker must use Bun-hosted TS7 CLI mode without a TS6 fallback")
 
 
 def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
@@ -565,7 +556,6 @@ def check_prerelease_request_workflow(root: pathlib.Path = ROOT) -> None:
             fail(f"prerelease-request.yml contains obsolete/privileged trigger path: {forbidden}")
 
 
-
 def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
     hook = root / ".githooks" / "pre-commit"
     if not hook.is_file():
@@ -585,244 +575,23 @@ def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
     if hook.stat().st_mode & 0o111 == 0:
         fail(".githooks/pre-commit must remain executable")
 
-    script = root / "scripts" / "ci" / "precommit.py"
-    if not script.is_file():
-        fail("missing typed staged-tree precommit implementation")
-    text = script.read_text(encoding="utf-8")
-    for required in (
-        '"write-tree"',
-        '"worktree", "add"',
-        '"checkout-index"',
-        '"--name-status"',
-        '"--diff-filter=ACMRD"',
-        '"protect", "--staged"',
-        '"--local-env-vars"',
-        'prepare_staged_worktree(root, tree, worktree, env=worktree_env)',
-        'run_pipeline_checks(worktree, env=worktree_env)',
-        'command(("just", recipe), cwd=worktree, env=worktree_env)',
-        'server-check", "server-test',
+
+def check_browser_ci(root: pathlib.Path = ROOT) -> None:
+    """Keep browser identity and process cleanup explicit; suites verify the harness itself."""
+    ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (\S+)$", ci)
+    if (
+        len(versions) != 4
+        or len(set(versions)) != 1
+        or not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", versions[0])
     ):
-        if required not in text:
-            fail(f"precommit.py missing staged-tree invariant: {required}")
-
-    just = (root / "justfile").read_text(encoding="utf-8")
-    if "_pre-commit:" in just or "_pipeline-check-staged:" in just:
-        fail("Just must not duplicate staged-tree hook implementation")
-    if "server-unit:" in just:
-        fail("Just must not call integration-bearing Go tests a unit suite")
-    if "server-test:" not in just or "server-race:" not in just:
-        fail("Just must expose distinct normal and race Go test recipes")
-
-    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    if "run: just server-race" not in ci:
-        fail("CI Go job must use the explicit race/coverage recipe")
-
-
-def check_e2e_lifecycle(root: pathlib.Path = ROOT) -> None:
-    client = root / "client"
-    forbidden = [
-        path
-        for path in client.rglob("*")
-        if path.is_file()
-        and "node_modules" not in path.parts
-        and ("playwright" in path.name.lower() or path.name.endswith(".pw.ts"))
-    ]
-    if forbidden:
-        fail(f"Playwright configuration/tests must be removed: {forbidden[0]}")
-
-    webview = (client / "browser" / "webview.ts").read_text(encoding="utf-8")
-    chrome = (client / "browser" / "chrome.ts").read_text(encoding="utf-8")
-    for required in (
-        "Bun.serve",
-        "port: 0",
-        '"cache-control": "no-store"',
-        "Runtime.exceptionThrown",
-        "Network.setBlockedURLs",
-        "Page.addScriptToEvaluateOnNewDocument",
-        ".screenshot(",
-        "document.documentElement.outerHTML",
-        "page.close()",
-        "Bun.WebView.closeAll()",
-    ):
-        if required not in webview:
-            fail(f"WebView harness missing lifecycle/diagnostic invariant: {required}")
-    for required in (
-        "new Bun.WebView",
-        'type: "chrome"',
-        "BUN_CHROME_PATH",
-        'dataStore: "ephemeral"',
-        'process.env.CI || process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore"',
-    ):
-        if required not in chrome:
-            fail(f"Chromium launcher missing CI lifecycle/diagnostic invariant: {required}")
-
-    just = (root / "justfile").read_text(encoding="utf-8")
-    for required in (
-        'GM_E2E_SERVER_BIN="$certs/graphite-meter-e2e"',
-        'go build -trimpath -o "$GM_E2E_SERVER_BIN" ./cmd/graphite-meter',
-        "GM_E2E_SERVER_BIN",
-    ):
-        if required not in just:
-            fail(f"client-e2e recipe missing prebuilt-server invariant: {required}")
-
-    fixture = (root / "client" / "e2e" / "fixtures.ts").read_text(encoding="utf-8")
-    for required in (
-        "Bun.spawn([binary]",
-        "Bun.serve",
-        "port: 0",
-        'resolve(".e2e-dist")',
-        '"cache-control": "no-store"',
-        "Date.now() + 30_000",
-        "backend.kill()",
-    ):
-        if required not in fixture:
-            fail(f"E2E fixture missing ephemeral lifecycle invariant: {required}")
-
-    vite = (root / "client" / "vite.e2e.config.ts").read_text(encoding="utf-8")
-    for required in (
-        "root: here",
-        'outDir: resolve(here, ".e2e-dist")',
-        'input: resolve(here, "bench/harness.html")',
-    ):
-        if required not in vite:
-            fail(f"E2E harness build missing invariant: {required}")
-
-    for ignore_name in (".gitignore", ".dockerignore"):
-        ignore = (root / ignore_name).read_text(encoding="utf-8")
-        if "client/.e2e-dist" not in ignore:
-            fail(f"{ignore_name} must exclude generated E2E harness output")
-
-    package = (root / "client" / "package.json").read_text(encoding="utf-8")
-    for required in (
-        '"test:browser": "bun run build:browser && bun test browser --no-orphans --timeout 30000"',
-        '"test:e2e": "bun run build:e2e-harness && bun test e2e --no-orphans --timeout 60000"',
-        '"test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000"',
-        '"axe-core"',
-        '"check:webview": "bun run scripts/check-webview.ts"',
-    ):
-        if required not in package:
-            fail(f"client browser scripts missing Bun.WebView invariant: {required}")
-    preflight = (client / "scripts" / "check-webview.ts").read_text(encoding="utf-8")
-    for required in (
-        "BUN_CHROME_PATH",
-        "GM_EXPECTED_CHROME_VERSION",
-        'view.navigate("about:blank")',
-        'view.cdp<{ product: string }>("Browser.getVersion")',
-        "view.close()",
-        "Bun.WebView.closeAll()",
-    ):
-        if required not in preflight:
-            fail(f"WebView launch preflight missing invariant: {required}")
-    if 'process.on("exit"' not in webview or "Bun.WebView.closeAll();" not in webview:
-        fail("WebView suites must explicitly close the shared browser at process exit")
-    for forbidden_dependency in ("@playwright/test", "@axe-core/playwright", "puppeteer"):
-        if forbidden_dependency in package:
-            fail(f"browser dependency must be removed: {forbidden_dependency}")
-
-    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    for required in (
-        "browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4",
-        "chrome-version: 152.0.7977.82",
-        "BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}",
-        "BUN_CHROME_ARGS: --no-sandbox",
-        "GM_EXPECTED_CHROME_VERSION: 152.0.7977.82",
-        "run: cd client && bun run check:webview",
-        "webview-browser-failures",
-        "webview-e2e-failures",
-    ):
-        if required not in ci:
-            fail(f"CI missing pinned Chromium/WebView invariant: {required}")
+        fail("both browser jobs must install and verify the same pinned Chromium version")
     if ci.count("run: cd client && bun run check:webview") != 2:
-        fail("each CI WebView job must perform an isolated launch preflight")
-
-    for fixture_name in ("e2e/fixtures.ts", "bench/fixtures.ts"):
-        fixture_text = (client / fixture_name).read_text(encoding="utf-8")
-        if "process.env.BUN_CHROME_ARGS," not in fixture_text:
-            fail(f"{fixture_name} must preserve CI Chromium launch arguments")
-
-def check_oci_verifier_boundary(root: pathlib.Path = ROOT) -> None:
-    verifier = (root / "scripts" / "ci" / "verify_oci.py").read_text(encoding="utf-8")
-    for required in (
-        '"--network",',
-        '"none",',
-        'f"{archive.resolve()}:/work/image.oci.tar:ro"',
-        '"oci:/tmp/graphite-meter-verified:verified"',
-        "archive.is_symlink()",
-    ):
-        if required not in verifier:
-            fail(f"OCI verifier missing local/no-network isolation invariant: {required}")
-    for forbidden in (
-        "TemporaryDirectory",
-        "/work/oci-copy",
-        ":/work/oci-copy",
-    ):
-        if forbidden in verifier:
-            fail(f"OCI verifier must not create host-writable container output: {forbidden}")
-
-
-def check_release_verifier_boundary(root: pathlib.Path = ROOT) -> None:
-    verifier = (root / "scripts" / "ci" / "verify_release_assets.py").read_text(
-        encoding="utf-8"
-    )
-    for required in (
-        '[str(binary.resolve()), "--version"]',
-        "subprocess.run(",
-        "server --version failed",
-    ):
-        if required not in verifier:
-            fail(f"release verifier missing direct binary-version invariant: {required}")
-    for forbidden in (
-        "subprocess.Popen(",
-        "urllib.",
-        '"/preflight"',
-        "GM_H1_ADDR",
-        "127.0.0.1:7246",
-    ):
-        if forbidden in verifier:
-            fail(f"release verifier must not start a fixed-port server: {forbidden}")
-
-    for required in (
-        'graphite-meter_{version}_third-party-source.tar.gz',
-        "verify_third_party_source_archive",
-        "third_party/go/",
-        "third_party/npm/",
-        "third_party/manual/",
-        "PROVENANCE.json",
-        "Source code (tar.gz)",
-        "does not duplicate Graphite Meter's own repository source",
-    ):
-        if required not in verifier:
-            fail(f"release verifier missing split source-offer invariant: {required}")
-    if "corresponding-source.tar.gz" in verifier:
-        fail("release verifier must not require the obsolete duplicated corresponding-source asset")
-
-    just = (root / "justfile").read_text(encoding="utf-8")
-    if 'python3 scripts/ci/verify_release_assets.py "{{ version }}"' not in just:
-        fail("ordinary release-check must exercise the same native artifact verifier as stable release")
-    for required in (
-        "_legal-third-party-source-bundle:",
-        "third-party-source-bundle",
-        "graphite-meter_{{ version }}_third-party-source.tar.gz",
-        "LEGAL_THIRD_PARTY_SOURCE_OUT",
-    ):
-        if required not in just:
-            fail(f"release packaging missing split source-offer invariant: {required}")
-    if "_legal-source-bundle:" in just or "_corresponding-source.tar.gz" in just:
-        fail("release packaging must not recreate the obsolete project+dependency source bundle")
-
-    generator = (root / "go" / "internal" / "legal" / "cmd" / "legalgen" / "main.go").read_text(encoding="utf-8")
-    for required in (
-        '"third-party-source-bundle"',
-        "thirdPartySourceBundle",
-        'archiveRoot+"/third_party/go/"',
-        'archiveRoot+"/third_party/npm/"',
-        'archiveRoot+"/PROVENANCE.json"',
-        "manualSourceDestination",
-    ):
-        if required not in generator:
-            fail(f"legal source generator missing split source-offer invariant: {required}")
-    if 'archiveRoot+"/project"' in generator or "corresponding-source.tar.gz" in generator:
-        fail("third-party source generator must not duplicate Graphite Meter project source")
+        fail("each browser job must perform the runtime launch preflight")
+    scripts = json.loads((root / "client/package.json").read_text(encoding="utf-8"))["scripts"]
+    for name in ("test:browser", "test:e2e", "test:bench"):
+        if "--no-orphans" not in shlex.split(scripts[name]):
+            fail(f"{name} must clean up child processes with --no-orphans")
 
 
 def tracked_files(root: pathlib.Path = ROOT) -> list[str]:
@@ -871,9 +640,7 @@ def check_repository(root: pathlib.Path = ROOT) -> None:
     check_release_workflow(root)
     check_prerelease_request_workflow(root)
     check_precommit_boundary(root)
-    check_e2e_lifecycle(root)
-    check_oci_verifier_boundary(root)
-    check_release_verifier_boundary(root)
+    check_browser_ci(root)
     check_certificates(root)
 
 

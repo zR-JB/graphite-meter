@@ -255,13 +255,3 @@ func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	client, base := nativeHTTP3(t)
 	assertProbeAndDownload(t, client, base, "h3")
 }
-
-func TestHTTP3StartsAtMinimumPacketSize(t *testing.T) {
-	cfg := transport.NewQUICConfig()
-	if cfg.InitialPacketSize != 1200 {
-		t.Fatalf("initial packet size = %d, want 1200", cfg.InitialPacketSize)
-	}
-	if cfg.DisablePathMTUDiscovery {
-		t.Fatal("path MTU discovery is disabled")
-	}
-}

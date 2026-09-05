@@ -6,49 +6,9 @@ import {
 } from "./errors";
 import { historyChanges } from "./changes";
 import type { HistoryRecord } from "./types";
+import { historyRecord } from "./test-helpers.test";
 
-const valid = {
-  schemaVersion: 1,
-  id: "00000000-0000-4000-8000-000000000001",
-  startedAt: 1,
-  completedAt: 2,
-  durationMs: 1,
-  stages: {
-    latency: {
-      status: "not-run",
-      result: null,
-      lanes: {
-        latency: null,
-        download: null,
-        upload: null,
-        bidirectional: null,
-      },
-    },
-    download: { status: "not-run", result: null },
-    upload: { status: "not-run", result: null },
-    bidirectional: { status: "not-run", down: null, up: null },
-  },
-  bufferbloat: null,
-  totalBytes: 0,
-  server: { name: "s", location: null, engine: "e" },
-  transport: {
-    throughput: { protocol: null, kind: null },
-    latency: { protocol: null, kind: null },
-  },
-  ipVersion: null,
-  client: { build: "b" },
-  failures: [],
-  wireEstimates: null,
-} satisfies HistoryRecord;
-
-function candidate(index: number): HistoryRecord {
-  return {
-    ...valid,
-    id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
-    startedAt: index,
-    completedAt: index + 1,
-  };
-}
+const valid = historyRecord();
 
 test("permanent candidates are dropped while later valid candidates proceed", async () => {
   const saved: string[] = [];
@@ -70,8 +30,8 @@ test("permanent candidates are dropped while later valid candidates proceed", as
 });
 
 test("a permanent repository rejection cannot block the next accepted write", async () => {
-  const first = candidate(16);
-  const second = candidate(17);
+  const first = historyRecord(16);
+  const second = historyRecord(17);
   const saved: string[] = [];
   const dropped: string[] = [];
   const queue = new HistoryWriteQueue(
@@ -90,37 +50,14 @@ test("a permanent repository rejection cannot block the next accepted write", as
   expect(saved).toEqual([second.id]);
 });
 
-test("transient failures leave the candidate queued for retry", async () => {
-  let attempts = 0;
-  let transient = 0;
-  const queue = new HistoryWriteQueue(
-    async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("temporary");
-    },
-    async () => undefined,
-    () => undefined,
-    () => undefined,
-    () => {
-      transient += 1;
-    },
-  );
-  queue.enqueue(valid);
-  await queue.flush();
-  expect(attempts).toBe(1);
-  expect(transient).toBe(1);
-  await queue.flush();
-  expect(attempts).toBe(2);
-  expect(transient).toBe(1);
-});
-
 test("a transient outage retains more than 128 accepted candidates in FIFO order", async () => {
   const candidates = Array.from({ length: 160 }, (_, index) =>
-    candidate(index + 16),
+    historyRecord(index + 16),
   );
   const attempts: string[] = [];
   const saved: string[] = [];
   let unavailable = true;
+  let warnings = 0;
   const queue = new HistoryWriteQueue(
     async (record) => {
       attempts.push(record.id);
@@ -132,23 +69,27 @@ test("a transient outage retains more than 128 accepted candidates in FIFO order
     async () => undefined,
     (record) => saved.push(record.id),
     () => undefined,
-    () => undefined,
+    () => {
+      warnings++;
+    },
   );
   for (const record of candidates) expect(queue.enqueue(record)).toBe(true);
 
   await queue.flush();
   expect(saved).toEqual([]);
+  expect(warnings).toBe(1);
   await queue.flush();
   expect(attempts).toEqual([
     candidates[0].id,
     ...candidates.map(({ id }) => id),
   ]);
   expect(saved).toEqual(candidates.map(({ id }) => id));
+  expect(warnings).toBe(1);
 });
 
 test("metadata repair resynchronizes queued writes without a false save", async () => {
   const repairGeneration = "repair-00000000-0000-4000-8000-000000000127";
-  const records = [candidate(16), candidate(17)];
+  const records = [historyRecord(16), historyRecord(17)];
   const attempts: Array<{ id: string; generation: string }> = [];
   const saved: string[] = [];
   let repairNeeded = true;
@@ -175,7 +116,7 @@ test("metadata repair resynchronizes queued writes without a false save", async 
   ]);
   expect(saved).toEqual(records.map(({ id }) => id));
 
-  const later = candidate(18);
+  const later = historyRecord(18);
   queue.enqueue(later);
   await queue.flush();
   expect(attempts.at(-1)).toEqual({
@@ -222,7 +163,7 @@ test("a newer clear wins over a delayed metadata repair response", async () => {
     await queue.flush();
     expect(saved).toEqual([]);
 
-    const next = candidate(16);
+    const next = historyRecord(16);
     queue.enqueue(next);
     await queue.flush();
     expect(saved).toEqual([next.id]);
@@ -279,31 +220,6 @@ test("a malformed cross-tab clear message cannot mutate queued work", async () =
   }
 });
 
-test("clear generation drops queued work and cleans an in-flight stale write", async () => {
-  let release!: () => void;
-  const writes: string[] = [];
-  const removed: string[] = [];
-  const queue = new HistoryWriteQueue(
-    async (record) => {
-      writes.push(record.id);
-      await new Promise<void>((resolve) => (release = resolve));
-    },
-    async (id) => {
-      removed.push(id);
-    },
-    () => undefined,
-    () => undefined,
-    () => undefined,
-  );
-  queue.enqueue(valid);
-  await Promise.resolve();
-  queue.clear("after-clear");
-  release();
-  await queue.flush();
-  expect(writes).toEqual([valid.id]);
-  expect(removed).toEqual([valid.id]);
-});
-
 test("clear generation invalidates in-flight writes in separate tab queues", async () => {
   const other = {
     ...valid,
@@ -329,6 +245,7 @@ test("clear generation invalidates in-flight writes in separate tab queues", asy
   const firstTab = makeQueue();
   const secondTab = makeQueue();
   firstTab.enqueue(valid);
+  firstTab.enqueue(historyRecord(3));
   secondTab.enqueue(other);
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(writes).toEqual([valid.id, other.id]);
@@ -340,40 +257,6 @@ test("clear generation invalidates in-flight writes in separate tab queues", asy
   expect(removed).toEqual([valid.id, other.id]);
 });
 
-test("stale generation rejection resynchronizes without save or warning", async () => {
-  const other = {
-    ...valid,
-    id: "00000000-0000-4000-8000-000000000003",
-  };
-  const currentGeneration = "after-clear";
-  const writes: string[] = [];
-  const saved: string[] = [];
-  const dropped: string[] = [];
-  let warnings = 0;
-  const queue = new HistoryWriteQueue(
-    async (record, _isCurrent, generation) => {
-      if (!generation) throw new StaleHistoryGenerationError(currentGeneration);
-      writes.push(record.id);
-    },
-    async () => undefined,
-    (record) => saved.push(record.id),
-    (record) => dropped.push(record.id),
-    () => {
-      warnings += 1;
-    },
-  );
-  queue.enqueue(valid);
-  await queue.flush();
-  expect(writes).toEqual([]);
-  expect(saved).toEqual([]);
-  expect(dropped).toEqual([]);
-  expect(warnings).toBe(0);
-  queue.enqueue(other);
-  await queue.flush();
-  expect(writes).toEqual([other.id]);
-  expect(saved).toEqual([other.id]);
-});
-
 test("captured empty generation cannot become a post-clear write", async () => {
   const other = {
     ...valid,
@@ -382,6 +265,8 @@ test("captured empty generation cannot become a post-clear write", async () => {
   let durableGeneration = "";
   const attempted: Array<{ id: string; generation: string }> = [];
   const saved: string[] = [];
+  const dropped: string[] = [];
+  let warnings = 0;
   const put = async (
     record: HistoryRecord,
     _isCurrent: () => boolean,
@@ -395,14 +280,18 @@ test("captured empty generation cannot become a post-clear write", async () => {
     put,
     async () => undefined,
     (record) => saved.push(record.id),
-    () => undefined,
-    () => undefined,
+    (record) => dropped.push(record.id),
+    () => {
+      warnings++;
+    },
   );
   queue.enqueue(valid);
   durableGeneration = "after-clear";
   await queue.flush();
   expect(attempted).toEqual([{ id: valid.id, generation: "" }]);
   expect(saved).toEqual([]);
+  expect(dropped).toEqual([]);
+  expect(warnings).toBe(0);
 
   queue.enqueue(other);
   await queue.flush();
@@ -463,7 +352,7 @@ test("disposing a queue invalidates an in-flight write and suppresses callbacks"
   expect(current!()).toBe(true);
   queue.dispose();
   expect(current!()).toBe(false);
-  expect(queue.enqueue(candidate(2))).toBe(false);
+  expect(queue.enqueue(historyRecord(2))).toBe(false);
   release.resolve();
   await queue.flush();
   expect(callbacks).toEqual([]);

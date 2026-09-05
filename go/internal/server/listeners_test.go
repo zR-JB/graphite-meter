@@ -87,7 +87,7 @@ func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
 		mux.ServeHTTP(rec, req)
-		if rec.Code == http.StatusNotFound && path != "/upload/progress" {
+		if rec.Code == http.StatusNotFound {
 			t.Errorf("%s is not mounted", path)
 		}
 	}

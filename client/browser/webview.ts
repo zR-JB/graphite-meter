@@ -302,7 +302,6 @@ export class Page {
   private initialized = false;
   private firstNavigation = true;
   private storageCleanupScript: { identifier: string } | undefined;
-  private pageErrorHandlers: Array<(error: Error) => void> = [];
   constructor() {
     this.raw = createChromeWebView((type, ...args) =>
       this.console.push(`${type}: ${args.map(String).join(" ")}`),
@@ -363,7 +362,6 @@ export class Page {
         event.data.exceptionDetails?.text ??
         "page exception";
       this.errors.push(message);
-      for (const handler of this.pageErrorHandlers) handler(new Error(message));
     }) as EventListener);
     this.initialized = true;
   }
@@ -461,9 +459,6 @@ export class Page {
         ? [{ name: "prefers-reduced-motion", value: options.reducedMotion }]
         : [],
     });
-  }
-  on(event: string, callback: (error: Error) => void) {
-    if (event === "pageerror") this.pageErrorHandlers.push(callback);
   }
   readonly keyboard = { press: (key: string) => pressKey(this.raw, key) };
   readonly mouse = {

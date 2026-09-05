@@ -202,6 +202,12 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 	if err := os.WriteFile(filepath.Join(certDir, "development.pem"), []byte("private material\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(repo, "go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "go", "cover.out"), []byte("generated profile\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	provenance := []legal.Provenance{{
 		Name:                "sample",
 		LocalPaths:          []string{"manual.txt"},
@@ -233,8 +239,8 @@ func TestThirdPartySourceBundleIsDeterministicAndExcludesProjectSource(t *testin
 	if strings.Contains(joined, "/project/") || strings.Contains(joined, "/LICENSE") {
 		t.Fatal("project source was duplicated into third-party source archive")
 	}
-	if strings.Contains(joined, ".dev-certs") {
-		t.Fatal("developer-local project material leaked into third-party source archive")
+	if strings.Contains(joined, ".dev-certs") || strings.Contains(joined, "cover.out") {
+		t.Fatal("developer-local material or build artifacts leaked into third-party source archive")
 	}
 	root := "graphite-meter_development_third-party-source"
 	for _, want := range []string{
@@ -317,9 +323,6 @@ func TestLegalGeneratorFormattingHelpers(t *testing.T) {
 	}
 	if repositoryURL(map[string]any{"url": "git+https://github.com/example/module.git"}, "x") != "https://github.com/example/module" {
 		t.Fatal("repository URL normalization mismatch")
-	}
-	if inferLicense([]legal.LegalFile{{Text: "MIT License\n"}}) != "MIT" {
-		t.Fatal("license inference mismatch")
 	}
 	components := sortComponents([]legal.Component{
 		{Name: "b", Version: "1", Ecosystem: "go"},
@@ -408,6 +411,7 @@ func TestLicenseInferenceAndApacheNoticeSeparation(t *testing.T) {
 		name, text, want string
 	}{
 		{"MIT", "MIT License\nPermission is hereby granted, free of charge", "MIT"},
+		{"MIT heading", "MIT License\n", "MIT"},
 		{"ISC", "Permission to use, copy, modify, and distribute", "ISC"},
 		{"BSD", "BSD 3-Clause\nRedistribution and use in source and binary forms", "BSD-3-Clause"},
 		{"Apache", "                                  Apache License\n                              Version 2.0", "Apache-2.0"},
@@ -601,26 +605,6 @@ func TestRefreshReviewedVersionsOnlyUpdatesDiscoveredComponents(t *testing.T) {
 	}}}, reviews)
 	if reviews[0].ReviewedVersion != "1.1.0" || reviews[1].ReviewedVersion != "2.0.0" {
 		t.Fatalf("reviewed versions = %#v", reviews)
-	}
-}
-
-func TestThirdPartySourceBundleExcludesProjectBuildArtifacts(t *testing.T) {
-	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, "go"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(repo, "go", "cover.out"), []byte("generated profile\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out := filepath.Join(t.TempDir(), "source.tar.gz")
-	if err := thirdPartySourceBundle(repo, legal.Project{}, "development", nil, nil, nil, nil, out); err != nil {
-		t.Fatal(err)
-	}
-	archive := readTarGz(t, out)
-	for _, name := range archive.names {
-		if strings.Contains(name, "cover.out") {
-			t.Fatalf("project build artifact leaked into third-party source archive: %s", name)
-		}
 	}
 }
 

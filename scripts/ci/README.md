@@ -24,9 +24,8 @@ them. The control plane intentionally has no Pydantic or other PyPI runtime
 dependency.
 
 Python uses only the standard library; tests also execute Bash and jq to exercise the actual
-privileged workflow logic. All Python functions are required by the regression suite to annotate every
-parameter and return value, and `type: ignore` is rejected. `pipeline-test` also
-compiles every `scripts/ci/*.py` module before running tests.
+privileged workflow logic. `pipeline-test` compiles the Python modules and exercises trust decisions,
+artifact verification, and staged-hook isolation through their callable boundaries.
 
 ## Trust boundaries
 
@@ -171,12 +170,14 @@ Other checked invariants include:
 - protected-environment approval before the final mutable trust recheck;
 - GitHub Release target/asset-digest verification;
 - local OCI verification with no network and no writable host output mount;
-- static, dynamically served browser E2E harness instead of a fixed-port dev server;
+- matching pinned browser versions, runtime launch preflights, and child-process cleanup flags;
 - exact staged-tree pre-commit checks, including staged deletions/renames;
 - no tracked certificate/private-key material.
 
 `just pipeline-test` compiles all control-plane Python and runs dependency-free
-positive and negative regression tests. The Git hook is only a two-line launcher
+positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
+Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
+The suite does not duplicate implementation bodies as required source strings. The Git hook is only a two-line launcher
 for `scripts/ci/precommit.py`; Just no longer contains a second hook implementation.
 The typed hook records the exact staged Git tree, materializes that tree in a
 disposable detached worktree, installs client dependencies from that tree's frozen lockfile when

@@ -114,13 +114,6 @@ test("legacy adaptive tuning resets every field to canonical defaults", () => {
   expect(adaptive).not.toHaveProperty("glideMs");
 });
 
-test("legacy adaptive tuning cannot override canonical defaults", () => {
-  expect(
-    loaded({ config: { adaptive: { glideMs: 725, confirmationMs: 900 } } })
-      .config.adaptive.confirmationMs,
-  ).toBe(DEFAULT_CONFIG.adaptive.confirmationMs);
-});
-
 test("saving adaptive settings persists only enabled and restores canonical policy", () => {
   const snapshot = defaultPersisted();
   snapshot.config.adaptive = {
