@@ -66,7 +66,7 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 				if (r.ProtoMajor == 2) != http2 {
 					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
 				}
-				if err := upload.Handle(transport.NewHTTPSession(w, r)); err != nil {
+				if err := upload.HandleHTTP(w, r); err != nil {
 					t.Errorf("upload: %v", err)
 				}
 			}), nil, "")
@@ -410,9 +410,8 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 
 type deadlineEndpoint struct{}
 
-func (deadlineEndpoint) ID() string { return "deadline" }
-func (deadlineEndpoint) Handle(s transport.Session) error {
-	<-s.Context().Done()
+func (deadlineEndpoint) HandleMessages(ctx context.Context, _ transport.MessageBus) error {
+	<-ctx.Done()
 	return nil
 }
 

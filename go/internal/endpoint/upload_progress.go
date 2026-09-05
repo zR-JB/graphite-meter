@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 // UploadProgress streams the selected throughput target's authoritative upload counter as NDJSON.
@@ -22,8 +20,6 @@ type UploadProgress struct {
 func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadProgress {
 	return &UploadProgress{store: store, trusted: optionalPrefixes(trusted)}
 }
-
-func (e *UploadProgress) ID() string { return "upload-progress" }
 
 const (
 	uploadProgressTick      = 100 * time.Millisecond
@@ -55,11 +51,7 @@ func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	}
 }
 
-func (e *UploadProgress) Handle(s transport.Session) error {
-	w, r, ok := s.HTTP()
-	if !ok {
-		return transport.ErrUnsupported
-	}
+func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	id := r.URL.Query().Get("id")
 	// This request-shaped route derives its owner from the HTTP request key.
 	owner := ClientKey(r, e.trusted)
