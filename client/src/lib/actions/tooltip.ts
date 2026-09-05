@@ -27,7 +27,7 @@ function ensureStyles() {
       border-radius: var(--r-chrome);
       background: var(--surface-2);
       color: var(--text);
-      box-shadow: var(--shadow-float);
+      box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
       font-family: var(--font-sans);
       font-size: var(--type-sm);
       line-height: 1.4;

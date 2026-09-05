@@ -611,7 +611,7 @@
   .hover-card {
     position: absolute;
     z-index: 10;
-    top: 50%;
+    top: calc(50% - 12px);
     display: grid;
     gap: var(--space-1);
     min-width: 156px;
@@ -620,7 +620,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: var(--shadow-float);
+    box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
     pointer-events: none;
     transform: translateY(-50%);
   }

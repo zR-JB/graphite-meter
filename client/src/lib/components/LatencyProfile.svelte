@@ -13,7 +13,6 @@
       const lane = store.latencyLanes.find((lane) => lane.key === meta.key)!;
       return {
         ...lane,
-        current: store.isRunning ? lane.current : null,
         ...meta,
         tone: meta.key,
       };
@@ -30,12 +29,7 @@
     </p>
   {/if}
 
-  <LatencyProfileView
-    {lanes}
-    variant="bare"
-    showCurrent={store.isRunning}
-    showTimeouts
-  />
+  <LatencyProfileView {lanes} variant="bare" showCurrent showTimeouts />
 </section>
 
 <style>

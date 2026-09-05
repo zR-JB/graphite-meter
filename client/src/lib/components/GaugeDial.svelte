@@ -397,14 +397,20 @@
     height: 24px;
     padding: 0;
     border: 0;
-    border-radius: var(--r-full);
     background: transparent;
     transform: translate(-50%, -50%);
     cursor: help;
   }
   .result-head-target:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 1px;
+    outline: none;
+  }
+  .result-head-target:focus-visible::after {
+    content: "";
+    position: absolute;
+    inset-inline: 4px;
+    bottom: -2px;
+    height: 2px;
+    background: var(--brand-strong);
   }
 
   .gauge-dial,
