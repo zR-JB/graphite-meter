@@ -123,9 +123,10 @@ constraints, buffer policies, percentile implementations, and browser-only prese
 
 ### Server
 
-Endpoints are implemented against a shared session interface and can run through HTTP,
-WebSockets, or WebTransport without duplicating measurement logic. Separate native listeners make
-HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
+HTTP handlers own request and response behavior. WebSocket and WebTransport adapters own
+connection lifetimes and cancellation, while sharing focused message, download, and upload
+operations. Upload ownership is passed explicitly from the authenticated request or CONNECT.
+Separate native listeners make HTTP/1.1 clear, HTTP/1.1 TLS, HTTP/2, and HTTP/3 selectable paths.
 
 Admission limits bound active handlers, sessions, and connections. WebTransport sessions consume
 part of the global measurement pool rather than extending it. The server intentionally does not
