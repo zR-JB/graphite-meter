@@ -17,6 +17,7 @@ import (
 
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // recordingConn is the datagram half of a session: it replays queued datagrams and records what was sent.
@@ -309,7 +310,7 @@ func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
 	var out strings.Builder
 	NewUploadProgress(NewUploadStore()).HandleStream(t.Context(), "gmu_missing", "owner", &out)
 
-	var event uploadProgressEvent
+	var event wire.UploadProgress
 	if err := json.Unmarshal([]byte(out.String()), &event); err != nil {
 		t.Fatalf("decode %q: %v", out.String(), err)
 	}
@@ -318,20 +319,20 @@ func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
 	}
 }
 
-func nextProgressEvent(t *testing.T, records *bufio.Scanner) uploadProgressEvent {
+func nextProgressEvent(t *testing.T, records *bufio.Scanner) wire.UploadProgress {
 	t.Helper()
 	for records.Scan() {
 		if strings.TrimSpace(records.Text()) == "" {
 			continue
 		}
-		var event uploadProgressEvent
+		var event wire.UploadProgress
 		if err := json.Unmarshal(records.Bytes(), &event); err != nil {
 			t.Fatalf("decode %q: %v", records.Text(), err)
 		}
 		return event
 	}
 	t.Fatal("progress stream ended early")
-	return uploadProgressEvent{}
+	return wire.UploadProgress{}
 }
 
 func datagramSizes(sent [][]byte) []int {

@@ -272,7 +272,7 @@ func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session,
 		return
 	}
 	withWTWriteStream(ctx, str, func() {
-		_ = json.MarshalEncode(jsontext.NewEncoder(str), uploadProgressEvent{
+		_ = json.MarshalEncode(jsontext.NewEncoder(str), wire.UploadProgress{
 			Type:    "error",
 			Message: uploadAccessMessage(access),
 			Code:    uploadAccessCode(access),

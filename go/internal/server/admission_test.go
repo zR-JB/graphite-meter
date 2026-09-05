@@ -61,7 +61,9 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
-			upload := endpoint.NewUpload(nil, nil)
+			store := endpoint.NewUploadStore()
+			upload := endpoint.NewUpload(nil, store)
+			id := store.Mint()
 			finished := make(chan struct{})
 			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if (r.ProtoMajor == 2) != http2 {
@@ -83,7 +85,7 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 			defer writer.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/upload", body)
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/upload?id="+id, body)
 			if err != nil {
 				t.Fatal(err)
 			}

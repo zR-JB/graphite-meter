@@ -52,6 +52,7 @@ export class UploadProgressChannel {
   } | null = null;
   #closed = false;
   #serverBytes = 0;
+  #serverNanos = 0;
   #curveNs: number | null = null;
   #completed = false;
   #recoveryGapStartedAt: number | null;
@@ -173,7 +174,8 @@ export class UploadProgressChannel {
     // Elapsed ns since the server's first byte for this id.
     const serverNs = msg.t;
     const previousServerBytes = this.#serverBytes;
-    if (msg.n < previousServerBytes) return; // stale feed: not time evidence
+    if (msg.n < previousServerBytes || serverNs < this.#serverNanos) return;
+    this.#serverNanos = serverNs;
     const advancing = msg.n > previousServerBytes;
     if (advancing) this.#serverBytes = msg.n; // cumulative + monotonic guard
     if (!lane.measuring) return; // warmup bytes are excluded from the window

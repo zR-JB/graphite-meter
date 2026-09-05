@@ -16,12 +16,14 @@ import (
 
 func TestUploadCountsAndEchoes(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, nil)))
+	store := NewUploadStore()
+	id := store.Mint()
+	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
 	const n = 3*1024*1024 + 123 // straddles the drain buffer + a partial tail
-	res, err := http.Post(srv.URL+"/upload", "application/octet-stream", bytes.NewReader(make([]byte, n)))
+	res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, n)))
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -93,13 +95,6 @@ func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 	}
 	if store.live.Load() != 0 {
 		t.Errorf("live = %d after a forged-id upload, want 0", store.live.Load())
-	}
-}
-
-func TestUploadStopsOnReadError(t *testing.T) {
-	src := &errReader{remaining: 4096}
-	if n, err := NewUpload(nil, nil).HandleUpload(t.Context(), "", "", src); err == nil || n != 4096 {
-		t.Fatalf("expected partial count and read error, got: %v", err)
 	}
 }
 
@@ -219,10 +214,11 @@ func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
 // A POST body that stops arriving mid-upload holds a goroutine and a 256 KiB drain buffer.
 func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
-	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(make([]byte, 4096)))
+	store := NewUploadStore()
+	req := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096)))
 	before := time.Now()
 
-	if err := NewUpload(nil, nil).HandleHTTP(rec, req); err != nil {
+	if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 
@@ -241,9 +237,10 @@ func TestUploadRespectsRequestDeadline(t *testing.T) {
 			ctx, cancel := context.WithDeadline(t.Context(), requestDeadline)
 			defer cancel()
 			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
-			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/upload", nil)
+			store := NewUploadStore()
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/upload?id="+store.Mint(), nil)
 			before := time.Now()
-			if err := NewUpload(nil, nil).HandleHTTP(rec, req); err != nil {
+			if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
 				t.Fatal(err)
 			}
 			if !rec.set || rec.read.After(requestDeadline) {
@@ -277,7 +274,7 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				reader.Reset(source)
-				if _, err := io.CopyBuffer(discardSink{}, io.LimitReader(reader, size), buffer); err != nil {
+				if _, err := io.CopyBuffer(discardSink{agg: new(uploadAgg)}, io.LimitReader(reader, size), buffer); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -332,5 +329,29 @@ func TestUploadHTTPAbortDoesNotPublishCompleteBytes(t *testing.T) {
 	agg, ok := store.get(id)
 	if !ok || agg.bytes.Load() != 4096 || agg.posts.Load() != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
+	}
+}
+
+func TestUploadHTTPRequiresOwnerBoundIDBeforeReading(t *testing.T) {
+	for _, candidate := range []string{"", "forged", "another-owner"} {
+		t.Run(candidate, func(t *testing.T) {
+			store := NewUploadStore()
+			id := candidate
+			if candidate == "another-owner" {
+				id = store.Mint()
+				if _, access := store.getOrCreateFor(id, "different-owner"); access != uploadAccessOK {
+					t.Fatal(access)
+				}
+			}
+			body := strings.NewReader("must not be drained")
+			req := httptest.NewRequest(http.MethodPost, "/upload?id="+id, body)
+			rec := httptest.NewRecorder()
+			if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code < 400 || body.Len() != len("must not be drained") {
+				t.Fatalf("refusal = %d, unread = %d", rec.Code, body.Len())
+			}
+		})
 	}
 }

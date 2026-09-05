@@ -21,7 +21,7 @@ export function startUploadFeed(options: {
   const { url, csrf, credentials, onEvent } = options;
   const controller = new AbortController();
   const { signal } = controller;
-  const feed = { lastN: 0 };
+  const feed = { lastN: 0, lastT: 0 };
   let finishing = false;
   let backoff = 0;
   let wakeReconnect: (() => void) | undefined;
