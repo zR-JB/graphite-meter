@@ -897,9 +897,9 @@ test("deep-linked detail uses contextual focus without outlining its heading", a
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
   await firstTrack.press("ArrowRight");
-  await expect(profile.locator(".hover-card")).toContainText(/P10|Result|P90/);
+  await expect(profile.locator(".hover-card")).toContainText(/P10|Median|P90/);
   await profile.locator(".track").nth(1).focus();
-  await expect(profile.locator(".hover-card")).toContainText(/Avg/);
+  await expect(profile.locator(".hover-card")).toContainText(/Mean/);
   await expect(
     detail.getByRole("button", { name: "Close result" }),
   ).toBeVisible();
@@ -1108,7 +1108,7 @@ test("saved probe timeouts identify their transport and preserve legacy results"
   await expect(lossHelp).toHaveAttribute("tabindex", "0");
   await lossHelp.hover();
   await expect(page.getByRole("tooltip")).toHaveText(
-    "Application probes whose reply deadline expired. WebTransport uses datagrams; WebSocket uses a reliable stream. Neither identifies physical or directional IP packet loss. Interrupted and locally rejected sends are excluded.",
+    /No reply arrived before the probe deadline\.\s+This measures application replies, not IP packet loss\.\s+Unresolved probes and failed sends are counted separately\./,
   );
   await page.mouse.move(0, 0);
   await expect(page.getByRole("tooltip")).toHaveCount(0);
