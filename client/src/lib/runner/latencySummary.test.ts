@@ -124,3 +124,35 @@ test("no measured RTT is never replaced by a preflight hint or loaded result", (
   expect(run.latencyResult(DEFAULT_CONFIG)).toBeNull();
   expect(run.throughputResult("upload", false).probeTimeoutPct).toBeNull();
 });
+
+test("paired timing means use only valid in-window replies and leave raw statistics unchanged", () => {
+  const timed = new LatencyAccumulator();
+  const raw = new LatencyAccumulator();
+  const observations: [number, boolean, boolean, number | undefined][] = [
+    [10, false, true, 2],
+    [20, false, true, 0],
+    [30, false, true, undefined],
+    [40, false, true, 41],
+    [50, false, true, NaN],
+    [60, false, true, -1],
+    [250, true, true, 200],
+    [90, false, false, 30],
+  ];
+  for (const [rtt, timeout, eligible, handling] of observations) {
+    timed.observe(rtt, timeout, 0, eligible, handling);
+    raw.observe(rtt, timeout, 0, eligible);
+  }
+  timed.interrupt(1, "send-failed");
+  raw.interrupt(1, "send-failed");
+  const { reflectorTiming, ...summary } = timed.snapshot()!;
+  expect(summary).toEqual(raw.snapshot()!);
+  expect(reflectorTiming).toEqual({
+    sampleCount: 2,
+    meanRawRttMs: 15,
+    meanHandlingMs: 1,
+    meanAdjustedRttMs: 14,
+  });
+  const missing = new LatencyAccumulator();
+  missing.observe(0, false, 0, true, 0.001);
+  expect(missing.snapshot()?.reflectorTiming).toBeUndefined();
+});

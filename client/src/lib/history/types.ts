@@ -1,5 +1,6 @@
 import type {
   PreparedPaths,
+  ReflectorTimingSummary,
   RunResult,
   StageFailure,
   ThroughputResult,
@@ -55,6 +56,7 @@ interface LatencySnapshot {
   band: "low" | "medium" | "high";
 }
 export interface LatencyLaneSnapshot {
+  reflectorTiming?: ReflectorTimingSummary;
   min: number | null;
   max: number | null;
   p10: number | null;
@@ -263,6 +265,9 @@ export function buildHistoryRecord(
                     ? (result.latency?.reportedMs ?? summary.meanMs)
                     : summary.meanMs,
                 jitter: summary.jitterMs,
+                ...(summary.reflectorTiming
+                  ? { reflectorTiming: { ...summary.reflectorTiming } }
+                  : {}),
                 timeoutRatio: summary.probeCount
                   ? summary.timeoutCount / summary.probeCount
                   : null,
@@ -366,6 +371,36 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     candidate: Record<string, unknown>,
     allowed: readonly string[],
   ) => Object.keys(candidate).every((key) => allowed.includes(key));
+  function validReflectorTiming(
+    value: unknown,
+    replies: number,
+  ): value is ReflectorTimingSummary {
+    if (
+      !isObject(value) ||
+      !hasOnly(value, [
+        "sampleCount",
+        "meanRawRttMs",
+        "meanHandlingMs",
+        "meanAdjustedRttMs",
+      ])
+    )
+      return false;
+    return (
+      Number.isSafeInteger(value.sampleCount) &&
+      nonnegative(value.sampleCount) &&
+      value.sampleCount > 0 &&
+      value.sampleCount <= replies &&
+      nonnegative(value.meanRawRttMs) &&
+      nonnegative(value.meanHandlingMs) &&
+      nonnegative(value.meanAdjustedRttMs) &&
+      value.meanHandlingMs <= value.meanRawRttMs &&
+      value.meanAdjustedRttMs <= value.meanRawRttMs &&
+      Math.abs(
+        value.meanRawRttMs - value.meanHandlingMs - value.meanAdjustedRttMs,
+      ) <=
+        1e-8 * Math.max(1, value.meanRawRttMs)
+    );
+  }
   if (
     !hasOnly(record, [
       "schemaVersion",
@@ -494,6 +529,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
           ? ["lossRatio"]
           : [
               "timeoutRatio",
+              "reflectorTiming",
               "unresolvedCount",
               "sendFailureCount",
               "accountingComplete",
@@ -501,6 +537,11 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
             ]),
         "count",
       ]) &&
+      (candidate.reflectorTiming === undefined ||
+        validReflectorTiming(
+          candidate.reflectorTiming,
+          Number(candidate.count) - Number(candidate.timeoutCount ?? 0),
+        )) &&
       nonnegativeOrNull(candidate.min) &&
       nonnegativeOrNull(candidate.max) &&
       nonnegativeOrNull(candidate.p10) &&

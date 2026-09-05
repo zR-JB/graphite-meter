@@ -2156,3 +2156,87 @@ test("a delete completing after History is destroyed cannot reopen its workspace
   await expect(page.locator(".history-workspace")).toHaveCount(0);
   await expect(page.locator(".measurement-stage")).toBeFocused();
 });
+
+test("saved server timing stays a paired diagnostic in readable keyboard tooltips", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1440, height: 900 });
+  const saved = record(IDS.newest, Date.UTC(2026, 7, 28, 12));
+  saved.schemaVersion = 2;
+  for (const snapshot of [
+    saved.stages.download.result,
+    saved.stages.upload.result,
+    saved.stages.bidirectional.down,
+    saved.stages.bidirectional.up,
+    saved.stages.latency.result,
+  ]) {
+    if (!snapshot) continue;
+    snapshot.probeTimeoutPct = snapshot.packetLossPct ?? null;
+    delete snapshot.packetLossPct;
+  }
+  for (const lane of Object.values(saved.stages.latency.lanes)) {
+    if (!lane) continue;
+    delete lane.lossRatio;
+    lane.timeoutRatio = 0;
+    lane.timeoutCount = 0;
+    lane.unresolvedCount = 0;
+    lane.sendFailureCount = 0;
+    lane.accountingComplete = true;
+  }
+  saved.stages.latency.lanes.download!.reflectorTiming = {
+    sampleCount: 20,
+    meanRawRttMs: 18,
+    meanHandlingMs: 3,
+    meanAdjustedRttMs: 15,
+  };
+  await seedHistory(page, [saved]);
+  await openHistory(page, saved.id);
+  await page.reload();
+  const profile = page.locator(
+    '[data-latency-profile][data-variant="compact"]',
+  );
+  await expect(profile).toBeVisible();
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    const lane = profile.locator('.lane[data-tone="download"]');
+    await page.mouse.move(0, 0);
+    const control = lane.getByRole("img", {
+      name: "Loaded Down: server timing, 20 paired replies",
+    });
+    await control.focus();
+    const diagnostic = page.getByRole("tooltip");
+    await expect(diagnostic).toBeVisible();
+    await expect
+      .poll(() => diagnostic.evaluate((node) => getComputedStyle(node).opacity))
+      .toBe("1");
+    await expect(diagnostic).toContainText("20 paired replies");
+    await expect(diagnostic).toContainText("Mean raw RTT: 18.0 ms");
+    await expect(diagnostic).toContainText("Mean server handling: 3.0 ms");
+    await expect(diagnostic).toContainText("Mean adjusted RTT: 15.0 ms");
+    await expect(diagnostic).toContainText(
+      "Only server handling is subtracted.",
+    );
+    await expect(control).toHaveAttribute("aria-describedby", /gm-tt-/);
+    const box = await diagnostic.boundingBox();
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
+    await expectNoHorizontalOverflow(diagnostic);
+    await expectNoHorizontalOverflow(profile);
+    if (process.env.GM_WEBVIEW_ARTIFACTS)
+      await page.artifact(`reflector-timing-${viewport.width}`);
+  }
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await expect(
+    profile.locator('.lane[data-tone="latency"] .timing-info'),
+  ).toHaveCount(0);
+});

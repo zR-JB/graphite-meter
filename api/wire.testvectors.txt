@@ -1,38 +1,44 @@
-# Graphite Meter — wire-protocol conformance corpus (shared across Go / TS / Rust).
-#
-# Format (one test per non-comment, non-blank line):
-#   <dir> | <input> | <expected>
-#
-#   dir      = "encode" | "decode"
-#   For decode: <input> is the on-wire string; <expected> is a canonical
-#               key=value;... rendering of the parsed frame (op=..., plus args),
-#               or "ERR:<code>" when the input must be rejected.
-#   For encode: <input> is a canonical op=...;arg=... spec; <expected> is the
-#               exact on-wire string the encoder must produce.
-#
-# Opcodes and semantics are defined in api/wire.md. The rows below are the
-# happy-path + boundary set for every channel. Every implementation's wire test
-# loads THIS file as its fixture.
-
-# --- decode ---
-decode | READY | op=READY
-decode | PING,0 | op=PING;id=0
-decode | PING,4294967295 | op=PING;id=4294967295
-decode | PONG,5;TIME,1234 | op=PONG;id=5;nanos=1234
-decode | HI,wt | op=HI;proto=wt
-decode | BYE | op=BYE
-decode | ERR,bad_op,unknown | op=ERR;code=bad_op;text=unknown
-# malformed -> rejected
-decode | PNG,5 | ERR:bad_op
-decode | PING | ERR:bad_args
-decode | PING,abc | ERR:bad_args
-
-# --- encode ---
-encode | op=PING;id=5 | PING,5
-encode | op=PING;id=0 | PING,0
-encode | op=PONG;id=5;nanos=1234 | PONG,5;TIME,1234
-encode | op=PONG;id=4294967295;nanos=18446744073709551615 | PONG,4294967295;TIME,18446744073709551615
-encode | op=READY | READY
-encode | op=HI;proto=ws | HI,ws
-encode | op=BYE | BYE
-encode | op=ERR;code=bad_op;text=unknown | ERR,bad_op,unknown
+# Graphite Meter 0.7 ping protocol conformance corpus.
+# operation | input | expected (INVALID means malformed)
+# Go verifies all directions; the browser verifies encode-ping and decode-pong.
+encode-ping | 0 | PING,0
+encode-ping | 4294967295 | PING,4294967295
+encode-pong | 0,0 | PONG,0,0
+encode-pong | 5,15000000 | PONG,5,15000000
+encode-pong | 4294967295,18446744073709551615 | PONG,4294967295,18446744073709551615
+decode-ping | PING,0 | 0
+decode-ping | PING,00001 | 1
+decode-ping | PING,4294967295 | 4294967295
+decode-ping | PING,4294967296 | INVALID
+decode-ping | PING,00000000000 | INVALID
+decode-ping | PING,+1 | INVALID
+decode-ping | PING,-1 | INVALID
+decode-ping | PING,1.0 | INVALID
+decode-ping | PING, | INVALID
+decode-ping | PING,1,2 | INVALID
+decode-ping | PING | INVALID
+decode-ping | HI,ws | INVALID
+decode-ping | BYE | INVALID
+decode-ping | PONG,1,0 | INVALID
+decode-pong | PONG,0,0 | 0,0
+decode-pong | PONG,00001,00000 | 1,0
+decode-pong | PONG,4294967295,18446744073709551615 | 4294967295,18446744073709551615
+decode-pong | PONG,5,9007199254740992 | 5,9007199254740992
+decode-pong | PONG,4294967296,0 | INVALID
+decode-pong | PONG,00000000000,0 | INVALID
+decode-pong | PONG,1,000000000000000000000 | INVALID
+decode-pong | PONG,1,18446744073709551616 | INVALID
+decode-pong | PONG,1,+1 | INVALID
+decode-pong | PONG,1,-1 | INVALID
+decode-pong | PONG,+1,0 | INVALID
+decode-pong | PONG,-1,0 | INVALID
+decode-pong | PONG,1,NaN | INVALID
+decode-pong | PONG,1,1.0 | INVALID
+decode-pong | PONG,1, | INVALID
+decode-pong | PONG,1 | INVALID
+decode-pong | PONG,,0 | INVALID
+decode-pong | PONG,1,0,0 | INVALID
+decode-pong | PONG,1;TIME,0 | INVALID
+decode-pong | PONG,1;TIME,0;HANDLING,0 | INVALID
+decode-pong | READY | INVALID
+decode-pong | PING,1 | INVALID

@@ -341,3 +341,67 @@ test("V2 persists partial accounting and exact known outcome counts", () => {
   saved.stages.latency.lanes.download!.timeoutCount = 4;
   expect(isHistoryRecord(saved)).toBe(false);
 });
+
+test("optional paired server timing is copied without changing saved raw methodology", () => {
+  const source = structuredClone(result);
+  source.latencyByStage.download!.reflectorTiming = {
+    sampleCount: 2,
+    meanRawRttMs: 18,
+    meanHandlingMs: 3,
+    meanAdjustedRttMs: 15,
+  };
+  const saved = buildHistoryRecord(
+    source,
+    { paths: null, clientBuild: "b" },
+    200,
+  );
+  const lane = saved.stages.latency.lanes.download!;
+  expect(isHistoryRecord(saved)).toBe(true);
+  expect(lane.reflectorTiming).toEqual(
+    source.latencyByStage.download!.reflectorTiming!,
+  );
+  expect(lane.center).toBe(18);
+  expect(lane.min).toBe(11);
+  source.latencyByStage.download!.reflectorTiming!.meanHandlingMs = 99;
+  expect(lane.reflectorTiming!.meanHandlingMs).toBe(3);
+  delete lane.reflectorTiming;
+  expect(isHistoryRecord(saved)).toBe(true);
+});
+
+test("saved timing requires a bounded paired population and consistent finite means", () => {
+  const saved = buildHistoryRecord(
+    result,
+    { paths: null, clientBuild: "b" },
+    200,
+  );
+  const valid = {
+    sampleCount: 2,
+    meanRawRttMs: 18,
+    meanHandlingMs: 3,
+    meanAdjustedRttMs: 15,
+  };
+  const lane = saved.stages.latency.lanes.download!;
+  for (const invalid of [
+    null,
+    { ...valid, sampleCount: 0 },
+    { ...valid, sampleCount: 1.5 },
+    { ...valid, sampleCount: 10 }, // Only nine resolved replies were successful.
+    { ...valid, sampleCount: Number.MAX_SAFE_INTEGER + 1 },
+    { ...valid, meanRawRttMs: Infinity },
+    { ...valid, meanHandlingMs: -1 },
+    { ...valid, meanHandlingMs: 19 },
+    { ...valid, meanAdjustedRttMs: -1 },
+    { ...valid, meanAdjustedRttMs: 14 },
+    { ...valid, unknown: true },
+  ]) {
+    (lane as unknown as Record<string, unknown>).reflectorTiming = invalid;
+    expect(isHistoryRecord(saved)).toBe(false);
+  }
+  lane.reflectorTiming = {
+    sampleCount: 1,
+    meanRawRttMs: 0,
+    meanHandlingMs: 0,
+    meanAdjustedRttMs: 0,
+  };
+  expect(isHistoryRecord(saved)).toBe(true);
+});

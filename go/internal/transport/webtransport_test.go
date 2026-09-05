@@ -42,11 +42,11 @@ func TestWebTransportBus(t *testing.T) {
 	if msg != "PING,1" {
 		t.Errorf("Recv = %q, want PING,1", msg)
 	}
-	if err := bus.Send("PONG,1;TIME,7"); err != nil {
+	if err := bus.Send("PONG,1,7"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if len(conn.sent) != 1 || conn.sent[0] != "PONG,1;TIME,7" {
-		t.Errorf("sent = %v, want [PONG,1;TIME,7]", conn.sent)
+	if len(conn.sent) != 1 || conn.sent[0] != "PONG,1,7" {
+		t.Errorf("sent = %v, want [PONG,1,7]", conn.sent)
 	}
 	if _, err := bus.Recv(); !errors.Is(err, io.EOF) {
 		t.Errorf("Recv after drain = %v, want EOF", err)

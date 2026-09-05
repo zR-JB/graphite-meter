@@ -1,8 +1,8 @@
 // Measure the shipped codec; fixture alternatives do not exercise production code.
-import { decode, encode } from "./wire";
+import { decodePong, encodePing } from "./wire";
 
 const N = 2_000_000;
-const pong = encode({ op: "PONG", id: 4242424, nanos: "1234567890123" });
+const pong = "PONG,4242424,123456789";
 let sink: unknown;
 
 function bench(name: string, fn: () => void): void {
@@ -15,10 +15,10 @@ function bench(name: string, fn: () => void): void {
 
 console.log(`wire codec, ${N.toLocaleString()} iterations each`);
 bench("decode PONG", () => {
-  sink = decode(pong);
+  sink = decodePong(pong);
 });
 console.log("decoded:", JSON.stringify(sink));
 bench("encode PING", () => {
-  sink = encode({ op: "PING", id: 4242424 });
+  sink = encodePing(4242424);
 });
 console.log("encoded:", sink);

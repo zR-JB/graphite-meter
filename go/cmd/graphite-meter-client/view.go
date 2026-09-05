@@ -509,6 +509,9 @@ func (m model) resultsView(w int) string {
 				valueStyle.Render(fmtMs(r.Latency.P95)),
 				mutedStyle.Render(latencyOutcomeSummary(r.Latency)),
 			))
+			if diagnostic := reflectorTimingSummary(r.Latency.ReflectorTiming); diagnostic != "" {
+				lines = append(lines, mutedStyle.Width(max(1, w-2)).MarginLeft(2).Render(diagnostic))
+			}
 			if r.Err != nil {
 				lines = append(lines, errorStyle.Render("  Incomplete: "+r.Err.Error()))
 			}

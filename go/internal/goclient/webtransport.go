@@ -80,8 +80,8 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 	defer sess.close()
 	var lastErr error
 	for verifyCtx.Err() == nil {
-		if err := sess.SendDatagram([]byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "wt"}))); err != nil {
-			return fmt.Errorf("latency WebTransport hello failed: %w", err)
+		if err := sess.SendDatagram([]byte(wire.EncodePing(0))); err != nil {
+			return fmt.Errorf("latency WebTransport probe failed: %w", err)
 		}
 		replyCtx, cancelReply := context.WithTimeout(verifyCtx, wtVerifyReplyTimeout)
 		reply, err := sess.ReceiveDatagram(replyCtx)
@@ -90,7 +90,7 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 			lastErr = err
 			continue
 		}
-		if frame, err := wire.Decode(string(reply)); err == nil && frame.Op == wire.OpREADY {
+		if frame, err := wire.DecodePong(string(reply)); err == nil && frame.ID == 0 {
 			return nil
 		}
 	}

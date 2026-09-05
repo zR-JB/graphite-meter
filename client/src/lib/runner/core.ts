@@ -617,6 +617,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       observedT,
       this.#continuityId,
       observation.rttEligible,
+      observation.reflectorHandlingMs,
     );
     if (wallNow - this.#lastLatencySummaryAt >= 1_000)
       this.#emitLatencySummary(phase);

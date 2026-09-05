@@ -7,31 +7,49 @@ routes](#webtransport-routes)). The plain request/response HTTP endpoints (`/pre
 `/download`, `/upload/session`, `/upload`, `/upload/progress`) are **not** covered here — they use
 normal HTTP (query params, status codes, streaming bodies).
 
-The Go and TypeScript implementations MUST agree with the shared conformance corpus
-`api/wire.testvectors.txt`; every implementation must preserve the same contract. The opcode keywords
-are additionally pinned as a shared constant table in each implemented language
-(`go/internal/wire/opcodes.go`, `client/src/lib/runner/real/wire.ts`).
+The Go server/native client and TypeScript browser client share the conformance
+corpus `api/wire.testvectors.txt`. Version 0.7 is a protocol break: version 0.6
+clients and servers cannot be mixed with 0.7 peers. Deploy matching versions.
 
-## Framing
+## Framing and lifecycle
 
-- **One logical message per WS frame / per WT datagram.** WS frames and QUIC datagrams are already
-  message-delimited, so there is **no length prefix** and **no trailing newline**. WebTransport byte
-  streams carry no messages at all: every parameter rides the session's CONNECT URL.
-- **ASCII text.** Format: `OP` or `OP,arg[,arg...]`. The opcode is a fixed uppercase keyword.
-- **Parsing** is `indexOf(',')` slicing — never JSON, never regex. The id/number args are plain integers.
-- Unknown opcode or malformed args → the receiver replies `ERR,<code>,<text>` (non-fatal) and ignores
-  the message; it never tears down the bus for a single bad frame.
+One WebSocket text message or WebTransport datagram carries one ASCII message,
+with no length prefix or trailing newline. Only two directional forms exist:
 
-## Opcodes
+| Direction | Message | Meaning |
+|---|---|---|
+| Client → server | `PING,<id>` | Client-owned uint32 probe ID. |
+| Server → client | `PONG,<id>,<handling-ns>` | Echoed ID and mandatory uint64 server handling duration, in nanoseconds. |
 
-| Dir | Frame | Channel | Meaning |
-|---|---|---|---|
-| C→S | `HI,<proto>` | ws, wt | Optional hello on bus open. `<proto>` ∈ {`ws`,`wt`}. Lets the bus be primed during warmup without polluting stats. Server MAY reply `READY`. |
-| S→C | `READY` | ws, wt | Bus is up; the client may begin the ping chain. |
-| C→S | `PING,<id>` | ws, wt-dgram | Latency probe. `<id>` = client-owned monotonic **uint32** counter (see Ids). |
-| S→C | `PONG,<id>;TIME,<nanos>` | ws, wt-dgram | Echo. `<id>` copied **verbatim**. `<nanos>` = server monotonic clock (uint64 ns) at receive — **diagnostics/skew only**. RTT is measured purely client-side as `recv − send` using the client's own clock. |
-| C→S | `BYE` | ws, wt | Graceful bus close (optional; a transport close is equally valid). |
-| S→C | `ERR,<code>,<text>` | ws, wt | Non-fatal protocol error. `<code>` is a short token; `<text>` is human detail. |
+Decimal fields contain only digits: no sign, whitespace, exponent, or fraction.
+IDs have at most 10 digits and fit uint32; durations have at most 20 digits and
+fit uint64. Zero is valid. Missing, extra, or malformed fields invalidate the
+entire message. Receivers ignore malformed messages without replying or closing
+the transport, and parsers never invent a zero duration.
+
+A matching valid probe reply establishes application readiness. Unknown IDs,
+duplicate replies, and messages from a replaced connection cannot establish it.
+Native preflight sends an actual probe; datagram verification retries within its
+bounded deadline. Browser warmup probes retain their existing measurement
+exclusion. Transport open/close owns the connection lifetime; there are no hello,
+ready, goodbye, capability, or error frames.
+
+## Reflector handling time
+
+The server interval begins immediately after the message adapter's `Recv` returns
+and ends immediately before PONG encoding. It includes probe parsing and
+application handling, and excludes receive queues, earlier adapter work, reply
+encoding, transport submission, and delivery. No absolute server timestamp is sent.
+
+Raw application RTT uses the client's own receive-minus-send clock and remains
+primary. After strict decoding, clients pair the handling duration with that
+same reply's raw RTT. An imprecise or impossible clock pair (including handling
+greater than raw RTT due to clock quantization) retains the raw reply but is
+omitted from the paired diagnostic, never clamped. This validation does not alter
+probe outcomes, timeout deadlines, or in-flight ownership.
+
+This application measurement is not TWAMP interoperable and does not isolate
+network RTT. See [measurement definitions](../docs/MEASUREMENTS.md) for populations.
 
 ## WebTransport routes
 
@@ -58,12 +76,13 @@ served none, the same rule `bytes=0` follows.
 Under authentication a CONNECT must present a credential before the upgrade: a single-use,
 short-lived, session-linked token minted by `POST /wt/session` and carried as `?token=` (a browser
 CONNECT can send neither cookies nor headers), or an `Authorization: Bearer` grant for native
-clients. `/wt/session` answers with an empty token when authentication is off, so clients mint
-unconditionally.
+clients. `/wt/session` requires both `token` and `expires`; expiry is a finite epoch-millisecond
+value for a nonempty token. With authentication off it returns exactly an empty token and
+`expires: 0`. Clients mint unconditionally.
 
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
-records as `GET /upload/progress`.
+records as `GET /upload/progress`; see the [upload contract](upload.md).
 
 The `GM_MAX_SESSION_DURATION` bound covers the two **transfer** session routes. `/wt/ping` is not
 one: it lives under the ordinary request bound (`GM_MAX_OPERATION_DURATION`), while sharing the
@@ -79,16 +98,15 @@ handshake — is closed after a **30-second linger**. A client MUST treat a boun
 reconnect rather than a stage failure, and re-dial against the same upload `id`: the server keeps
 one aggregate per id, so the counters carry across.
 
-**Discovery compatibility.** `transport` is a required field on both target lists. A client that
-predates it reads every target as its own default (`fetch-stream` / `websocket`), which on an
-HTTP/3 origin turns one advertised origin into several identical ones and can make automatic
-selection ambiguous. Clients built before this field must be updated alongside the server.
+**Discovery contract.** `transport` is required on every throughput and latency target.
+A missing value is invalid; clients never infer a transport from its absence. Upgrade
+clients and servers together for the 0.7 contract.
 
 ## Ids (PING/PONG)
 
 - The **client** owns a per-bus monotonic `uint32` counter: `id = (id + 1) >>> 0` (wraps at 2³²).
-- The **server keeps zero state** — it copies the id bytes straight back into `PONG`. No allocation,
-  no map, no overflow possible server-side.
+- The **server keeps no per-probe state** — it echoes the parsed id in `PONG`. There is no
+  server-side id map or per-bus capability state.
 - Wraparound cannot collide: the live key space is only the in-flight window (a few hundred at most,
   each id removed from the client's pending map within a bounded RTT), so a wrapped value can never
   match a still-pending id.
@@ -96,18 +114,21 @@ selection ambiguous. Clients built before this field must be updated alongside t
 ## RTT, probe timeouts, and reply-driven pacing (client behavior)
 
 - On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>` it computes
-  `rtt = now() − pending[id]`, deletes the entry, and immediately sends the next `PING` (the
-  on-receive→send-next chain).
+  `rtt = now() − pending[id]` and resolves that probe once. Sending policy is separate:
+  browser fixed cadence is start-to-start and a reply never advances the next scheduled send.
+  A full in-flight window waits for a slot, then sends once without a catch-up burst.
+- Browser reply-driven pacing sends immediately after its chain-head reply and uses a bounded
+  RTT-based backup timer when that reply does not arrive. Its reply-dependent sampling density
+  differs from a fixed cadence; neither mode changes which attempted probes enter accounting.
 - A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
   not physical packet loss because TCP retransmits. A timeout on the WT-datagram channel also
   includes possible endpoint queueing or drops; neither identifies physical or directional IP loss.
   See [measurement definitions](../docs/MEASUREMENTS.md) for populations and statistics.
-- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) keeps one delayed or missing response from deadlocking
-  the chain; an interval pacer is the floor and the on-receive send is the responsive fast path.
+- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) limits
+  pending work. Pauses, a saturated window, and scheduling gaps create unsent opportunities,
+  not timeout or unresolved attempts. Requested cadence alone cannot establish a coverage percentage.
 
-## Why text, not binary
+## Text representation
 
-The reference demos already sustain thousands of pings/sec at sub-ms latency; the cost is dominated by
-the network RTT and the WS/datagram syscall, not the ~8-byte ASCII parse. Text is debuggable in a
-packet capture and trivially cross-language. A binary fast-path can hide behind the same `Frame` type
-in each language's `wire` module if profiling demands it, without changing this spec's semantics.
+The two small messages are directly inspectable in packet captures and share
+strict numeric validation across the Go and browser implementations.

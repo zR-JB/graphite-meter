@@ -225,6 +225,7 @@ export class LatencyChannel {
             continue;
           host.ingestLatency({
             rttMs: sample.rtt,
+            reflectorHandlingMs: sample.reflectorHandlingMs,
             lost: sample.lost,
             observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
             rttEligible:

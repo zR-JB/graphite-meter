@@ -2,6 +2,8 @@
 export interface PingSample {
   rtt: number;
   lost: boolean;
+  /** Validated server application handling interval; milliseconds, same reply as RTT. */
+  reflectorHandlingMs?: number;
   /** Probe submission time; determines membership at a stage's stop boundary. */
   sentAtEpochMs?: number;
   /** Reply receipt time or timeout deadline in the worker performance epoch. */
@@ -36,10 +38,27 @@ export function pingSample(
   };
 }
 
-/* Performance time origins are epoch-based and therefore remain comparable even when the worker and window have. */
+/* Epoch-based performance coordinates remain comparable when the worker and window
+ * have different time origins; subtract the receiving realm's origin to translate. */
 export function pingSampleContextTime(
   sample: PingSample,
   timeOriginMs = performance.timeOrigin,
 ): number {
   return sample.observedAtEpochMs - timeOriginMs;
+}
+
+/** The codec has validated uint64 digits. Impossible or imprecise clock pairs
+ * retain raw RTT but supply no adjusted diagnostic; never clamp them to zero. */
+export function reflectorHandlingMs(
+  rawRttMs: number,
+  nanos: string,
+): number | undefined {
+  const value = Number(nanos);
+  const ms = value / 1_000_000;
+  return Number.isSafeInteger(value) &&
+    value >= 0 &&
+    Number.isFinite(rawRttMs) &&
+    ms <= rawRttMs
+    ? ms
+    : undefined;
 }

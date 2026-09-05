@@ -180,7 +180,7 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   channel.teardown();
 });
 
-test("READY cancels the stage channel's warmup establishment deadline", () => {
+test("a matched-probe ready event cancels the warmup establishment deadline", () => {
   let deadline: (() => void) | null = null;
   let deadlineActive = false;
   globalThis.setTimeout = ((handler: TimerHandler) => {
@@ -212,14 +212,14 @@ test("READY cancels the stage channel's warmup establishment deadline", () => {
 });
 
 function finalizingChannel() {
-  const observations: { rttMs: number; rttEligible?: boolean }[] = [];
+  const observations: Parameters<CoreHost["ingestLatency"]>[0][] = [];
   const interruptions: { count: number; reason: string }[] = [];
   const stalls: string[] = [];
   let accountingComplete = true;
   const channel = new LatencyChannel({
     host: {
       config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      ingestLatency(observation: { rttMs: number; rttEligible?: boolean }) {
+      ingestLatency(observation: Parameters<CoreHost["ingestLatency"]>[0]) {
         observations.push(observation);
       },
       ingestLatencyAccountingIncomplete() {
@@ -262,12 +262,14 @@ test("stage finalization keeps terminal outcomes until ack and excludes post-loa
       {
         rtt: 10,
         lost: false,
+        reflectorHandlingMs: 2,
         sentAtEpochMs: stop.cutoffEpochMs - 20,
         observedAtEpochMs: stop.cutoffEpochMs - 10,
       },
       {
         rtt: 30,
         lost: false,
+        reflectorHandlingMs: 9,
         sentAtEpochMs: stop.cutoffEpochMs - 10,
         observedAtEpochMs: stop.cutoffEpochMs + 20,
       },
@@ -280,6 +282,9 @@ test("stage finalization keeps terminal outcomes until ack and excludes post-loa
     ],
   });
   expect(observations.map((sample) => sample.rttMs)).toEqual([10, 30]);
+  expect(observations.map((sample) => sample.reflectorHandlingMs)).toEqual([
+    2, 9,
+  ]);
   expect(observations.map((sample) => sample.rttEligible)).toEqual([
     true,
     false,

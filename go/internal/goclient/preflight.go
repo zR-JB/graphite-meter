@@ -82,18 +82,18 @@ func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.L
 		return fmt.Errorf("latency WebSocket connection failed: %w", err)
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
-	if err := conn.Write(verifyCtx, websocket.MessageText, []byte(wire.Encode(wire.Frame{Op: wire.OpHI, Proto: "ws"}))); err != nil {
-		return fmt.Errorf("latency WebSocket hello failed: %w", err)
+	if err := conn.Write(verifyCtx, websocket.MessageText, []byte(wire.EncodePing(0))); err != nil {
+		return fmt.Errorf("latency WebSocket probe failed: %w", err)
 	}
-	_, message, err := conn.Read(verifyCtx)
-	if err != nil {
-		return fmt.Errorf("latency WebSocket readiness failed: %w", err)
+	for {
+		_, message, err := conn.Read(verifyCtx)
+		if err != nil {
+			return fmt.Errorf("latency WebSocket readiness failed: %w", err)
+		}
+		if pong, err := wire.DecodePong(string(message)); err == nil && pong.ID == 0 {
+			return nil
+		}
 	}
-	frame, err := wire.Decode(string(message))
-	if err != nil || frame.Op != wire.OpREADY {
-		return fmt.Errorf("latency WebSocket did not become ready")
-	}
-	return nil
 }
 
 func httpEndpoint(base, path string) (string, error) {

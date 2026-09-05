@@ -202,8 +202,15 @@ export class RunAccumulator {
     tMs = this.#phaseLatency.at(-1)?.tMs ?? 0,
     continuityId = 0,
     rttEligible = true,
+    reflectorHandlingMs?: number,
   ): void {
-    this.#latency[phase].observe(rttMs, timedOut, continuityId, rttEligible);
+    this.#latency[phase].observe(
+      rttMs,
+      timedOut,
+      continuityId,
+      rttEligible,
+      reflectorHandlingMs,
+    );
     if (phase === "latency" && rttEligible) {
       this.#phaseLatency.push({ tMs, rttMs: timedOut ? null : rttMs });
       const cutoff = tMs - LATENCY_CONFIDENCE_WINDOW_MS;
