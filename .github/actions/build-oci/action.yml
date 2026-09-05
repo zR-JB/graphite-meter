@@ -45,8 +45,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        bun=$(tr -d '[:space:]' < .bun-version)
-        [[ -n "$bun" ]] || { echo "trusted .bun-version is empty" >&2; exit 2; }
+        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
+        [[ -n "$bun" ]] || { echo "trusted mise.toml Bun version is empty" >&2; exit 2; }
         echo "bun=$bun" >>"$GITHUB_OUTPUT"
 
     - name: Prepare OCI output directory

@@ -11,21 +11,18 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from typing import Mapping, Sequence
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
 from github_api import JsonObject, JsonValue
-import precommit
 from precommit import (
     CheckPlan,
     StagedChange,
     is_tls_path,
     parse_staged_changes,
     plan_checks,
-    run_staged_checks,
 )
 from prerelease import (
     PRERELEASE_CI_CONTROL_PLANE,
@@ -351,7 +348,7 @@ class PipelineTests(unittest.TestCase):
         from unittest.mock import patch
 
         required = {
-            ".bun-version",
+            "mise.toml",
             ".github/workflows/ci.yml",
             ".github/workflows/prerelease-request.yml",
             ".github/workflows/prerelease-publish.yml",
@@ -363,7 +360,7 @@ class PipelineTests(unittest.TestCase):
             ".github/ci-paths.yml",
             ".github/actions/setup-project/action.yml",
             ".github/actions/build-oci/action.yml",
-            "justfile",
+            "mise.toml",
             "scripts/ci/workflow_policy.py",
             "scripts/ci/test_pipeline.py",
         }
@@ -392,7 +389,7 @@ class PipelineTests(unittest.TestCase):
                     exact_file_set(root, {"candidate.json"}, "candidate")
 
     def test_precommit_plan_uses_exact_component_gates(self) -> None:
-        for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt", "tools.toml", ".python-version"):
+        for path in ("api/routes.txt", "api/preflight.schema.json", "api/wire.testvectors.txt", "mise.toml", "mise.lock"):
             with self.subTest(path=path):
                 self.assertEqual(plan_checks((path,)), CheckPlan(pipeline=False, recipes=("check",)))
         self.assertEqual(
@@ -407,7 +404,7 @@ class PipelineTests(unittest.TestCase):
             CheckPlan(pipeline=True, recipes=()),
         )
         self.assertEqual(
-            plan_checks(("justfile", "go/internal/server/listeners.go")),
+            plan_checks(("mise.toml", "go/internal/server/listeners.go")),
             CheckPlan(pipeline=False, recipes=("check",)),
         )
         self.assertTrue(is_tls_path("tmp/cert.pem"))
@@ -430,60 +427,6 @@ class PipelineTests(unittest.TestCase):
         )
         plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
         self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
-
-    def test_precommit_executes_the_staged_payload_in_an_isolated_worktree(self) -> None:
-        with tempfile.TemporaryDirectory() as td:
-            repo = pathlib.Path(td) / "repo"
-            repo.mkdir()
-
-            def git(*args: str) -> None:
-                subprocess.run(("git", *args), cwd=repo, check=True, capture_output=True)
-
-            git("init", "-q")
-            (repo / "tracked.txt").write_text("committed base")
-            git("add", ".")
-            git("-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
-            (repo / "tracked.txt").write_text("staged payload")
-            git("add", ".")
-            (repo / "tracked.txt").write_text("unstaged fix")
-            (repo / "client/node_modules").mkdir(parents=True)
-            real_command = precommit.command
-            checked: list[pathlib.Path] = []
-            poisoned = {"GIT_DIR": ".git", "GIT_WORK_TREE": ".", "GIT_INDEX_FILE": ".git/index"}
-
-            def command(
-                args: Sequence[str], *, cwd: pathlib.Path, capture: bool = False,
-                check: bool = True, env: Mapping[str, str] | None = None,
-            ) -> subprocess.CompletedProcess[bytes]:
-                if args[0] != "just":
-                    return real_command(args, cwd=cwd, capture=capture, check=check, env=env)
-                self.assertNotEqual(cwd, repo)
-                self.assertEqual(args, ("just", "server-test"))
-                self.assertEqual((cwd / "tracked.txt").read_text(), "staged payload")
-                self.assertFalse((cwd / "client/node_modules").exists())
-                self.assertIsNotNone(env)
-                assert env is not None
-                self.assertTrue(set(poisoned).isdisjoint(env))
-                self.assertEqual(env["PATH"], os.environ["PATH"])
-                checked.append(cwd)
-                return subprocess.CompletedProcess(args, 0)
-
-            with patch.dict(os.environ, poisoned), patch("precommit.command", side_effect=command):
-                run_staged_checks(repo, CheckPlan(pipeline=False, recipes=("server-test",)))
-            self.assertEqual(len(checked), 1)
-            self.assertFalse(checked[0].exists(), "the staged worktree must be removed")
-            self.assertEqual((repo / "tracked.txt").read_text(), "unstaged fix")
-
-            # The executable hook must also obtain its own Python implementation from the index.
-            implementation = repo / "scripts/ci/precommit.py"
-            implementation.parent.mkdir(parents=True)
-            implementation.write_text("print('staged hook')")
-            git("add", "scripts/ci/precommit.py")
-            implementation.write_text("raise SystemExit('unstaged hook ran')")
-            result = subprocess.run(
-                (str(ROOT / ".githooks/pre-commit"),), cwd=repo, check=True, capture_output=True, text=True,
-            )
-            self.assertEqual(result.stdout.strip(), "staged hook")
 
     def test_policy_requires_dockerignore_to_select_image_checks(self) -> None:
         root = self._copy_policy_tree()
@@ -530,15 +473,23 @@ class PipelineTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/ci.yml"
         original = path.read_text()
-        for field in ("go-version", "bun-version", "python-version"):
-            with self.subTest(field=field):
-                path.write_text(original + f"\n        {field}: 1.0.0\n")
-                with self.assertRaisesRegex(PolicyError, "native toolchain version files"):
+        for action in ("actions/setup-go", "actions/setup-python", "oven-sh/setup-bun"):
+            with self.subTest(action=action):
+                path.write_text(original + f"\n      - uses: {action}@{'a' * 40}\n")
+                with self.assertRaisesRegex(PolicyError, "through mise"):
                     check_toolchain_consumers(root)
         path.write_text(original)
         setup = root / ".github/actions/setup-project/action.yml"
-        setup.write_text(setup.read_text().replace("go-version-file: go/go.mod", "go-version-file: alternate.mod"))
-        with self.assertRaisesRegex(PolicyError, "go/go.mod"):
+        setup.write_text(setup.read_text().replace("install_args: --locked", "unused_args: --locked"))
+        with self.assertRaisesRegex(PolicyError, "install_args"):
+            check_toolchain_consumers(root)
+
+    def test_trusted_python_bootstrap_cannot_enable_shared_tool_cache(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        path = root / ".github/workflows/prerelease-publish.yml"
+        path.write_text(path.read_text().replace("cache: false", "cache: true", 1))
+        with self.assertRaisesRegex(PolicyError, "disable shared caches"):
             check_toolchain_consumers(root)
 
     def test_policy_rejects_unpinned_chrome_version(self) -> None:
@@ -564,7 +515,7 @@ class PipelineTests(unittest.TestCase):
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("          just client-audit\n", ""))
+        path.write_text(path.read_text().replace("          mise run client-audit\n", ""))
         with self.assertRaisesRegex(PolicyError, "networked Bun audit"):
             check_ci_path_map(root)
 
@@ -581,12 +532,15 @@ class PipelineTests(unittest.TestCase):
         dst = pathlib.Path(td)
         shutil.copytree(ROOT / ".github", dst / ".github")
         shutil.copytree(ROOT / ".githooks", dst / ".githooks")
-        shutil.copy2(ROOT / "tools.toml", dst / "tools.toml")
+        shutil.copy2(ROOT / "mise.toml", dst / "mise.toml")
         shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
         shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
         (dst / "client").mkdir()
         shutil.copy2(ROOT / "client/package.json", dst / "client/package.json")
-        (dst / "justfile").write_text((ROOT / "justfile").read_text())
+        for name in ("mise.lock", "go/go.mod", "container/Dockerfile"):
+            target = dst / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / name, target)
         return dst
 
     def test_checksum_verifier_accepts_file_and_rejects_path_escape(self) -> None:
@@ -1078,7 +1032,7 @@ class PipelineTests(unittest.TestCase):
         path = root / ".github/workflows/prerelease-request.yml"
         text = path.read_text().replace(
             "      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
-            "      - name: Execute PR code on host\n        run: just release-build \"1.2.3\"\n\n      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
+            "      - name: Execute PR code on host\n        run: mise run release-build \"1.2.3\"\n\n      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
             1,
         )
         path.write_text(text)
@@ -1379,7 +1333,7 @@ class PipelineTests(unittest.TestCase):
         path.write_text(
             text.replace(
                 'run: python3 scripts/ci/verify_release_assets.py "$VERSION"',
-                'run: just release-check "$VERSION"',
+                'run: mise run release-check "$VERSION"',
                 1,
             )
         )
@@ -1415,22 +1369,22 @@ class PythonTypeGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "scripts/ci").mkdir(parents=True)
-            for name in ("justfile", ".python-version", ".bun-version", "tools.toml"):
+            for name in ("mise.toml", "mise.lock"):
                 shutil.copy2(ROOT / name, root / name)
             (root / "go").mkdir()
             shutil.copy2(ROOT / "go/go.mod", root / "go/go.mod")
             shutil.copy2(ROOT / "scripts/ci/toolchains.py", root / "scripts/ci/toolchains.py")
-            # Run the actual offline recipe with the prepared standalone checker.
-            (root / ".tools").symlink_to(ROOT / ".tools", target_is_directory=True)
+            # Run the actual offline task with shared prepared mise tools.
             probe = root / "scripts/type_error_probe.py"
-            command = ["just", "python-check"]
+            command = ["mise", "run", "python-check"]
+            env = os.environ | {"MISE_TRUSTED_CONFIG_PATHS": str(root), "MISE_AUTO_INSTALL": "0"}
             probe.write_text('def answer() -> int:\n    return "wrong"\n')
-            result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, env=env)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("type_error_probe.py", result.stdout + result.stderr)
             self.assertIn("invalid-return-type", result.stdout + result.stderr)
             probe.write_text('def answer() -> int:\n    return 42\n')
-            result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+            result = subprocess.run(command, cwd=root, capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

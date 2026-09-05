@@ -1,104 +1,109 @@
 name: Setup Graphite Meter project
-description: Set up the pinned project toolchain and optional dependencies
+description: Install the job's pinned tools with mise and optional dependencies
 inputs:
   python:
-    description: Prepare the version-pinned standalone Python type checker
+    description: Include the pinned Python type checker
     required: false
     default: 'false'
   go:
-    description: Set up Go from go/go.mod
+    description: Include the pinned Go toolchain
     required: false
     default: 'false'
   go-cache:
-    description: Enable setup-go dependency caching
+    description: Cache Go modules and build results for this job
     required: false
     default: 'true'
   bun:
-    description: Set up Bun from .bun-version
+    description: Include the pinned Bun runtime
     required: false
     default: 'false'
   client-deps:
-    description: Restore the Bun cache and install client dependencies
+    description: Install frozen client dependencies
     required: false
     default: 'false'
   bun-cache:
-    description: Restore the shared Bun package cache
+    description: Cache Bun packages
+    required: false
+    default: 'true'
+  cache:
+    description: Cache mise and installed tool binaries
     required: false
     default: 'true'
   staticcheck:
-    description: Prepare the pinned staticcheck tool
+    description: Include pinned staticcheck
     required: false
     default: 'false'
   govulncheck:
-    description: Prepare the pinned govulncheck tool
-    required: false
-    default: 'false'
-  gitleaks:
-    description: Prepare the pinned Gitleaks tool
+    description: Include pinned govulncheck
     required: false
     default: 'false'
 outputs:
   chrome-version:
-    description: Exact Chrome for Testing version from tools.toml
+    description: Exact Chrome for Testing version from mise.toml
     value: ${{ steps.versions.outputs.chrome }}
 runs:
   using: composite
   steps:
-    - name: Set up Python
-      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-      with:
-        python-version-file: .python-version
-
-    - id: versions
-      name: Read standalone tool and browser versions
-      shell: bash
-      run: |
-        just=$(python3 scripts/ci/toolchains.py get tools.just)
-        chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)
-        printf 'just=%s\nchrome=%s\n' "$just" "$chrome" >> "$GITHUB_OUTPUT"
-
-    - name: Set up Just
-      uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      with:
-        just-version: ${{ steps.versions.outputs.just }}
-
-    - name: Scope Go cache to the job
-      if: inputs.go == 'true' && inputs.go-cache == 'true'
+    - id: tools
+      name: Select this job's tools
       shell: bash
       env:
-        GO_CACHE_SCOPE: ${{ github.job }}
+        INCLUDE_PYTHON_TOOLS: ${{ inputs.python }}
+        INCLUDE_GO: ${{ inputs.go }}
+        INCLUDE_BUN: ${{ inputs.bun }}
+        INCLUDE_STATICCHECK: ${{ inputs.staticcheck }}
+        INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
       run: |
-        mkdir -p .tools
-        printf '%s\n' "$GO_CACHE_SCOPE" > .tools/go-cache-scope
+        tools=(python)
+        if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
+        if [[ "$INCLUDE_BUN" == true ]]; then tools+=(bun); fi
+        if [[ "$INCLUDE_PYTHON_TOOLS" == true ]]; then tools+=(aqua:astral-sh/ty); fi
+        if [[ "$INCLUDE_STATICCHECK" == true ]]; then tools+=(aqua:dominikh/go-tools/staticcheck); fi
+        if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
+        printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
 
-    - name: Set up Go
-      if: inputs.go == 'true'
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+    - name: Install pinned mise toolchain
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      env:
+        MISE_AUTO_INSTALL: '0'
       with:
-        go-version-file: go/go.mod
-        cache: ${{ inputs.go-cache }}
-        cache-dependency-path: |
-          go/go.sum
-          justfile
-          tools.toml
-          .tools/go-cache-scope
+        version: 2026.9.1
+        install_args: --locked ${{ steps.tools.outputs.install-args }}
+        cache: ${{ inputs.cache }}
 
-    - name: Show Go version
+    - id: versions
+      name: Read toolchain metadata and keep task installs explicit
+      shell: bash
+      run: |
+        printf 'MISE_AUTO_INSTALL=0\n' >> "$GITHUB_ENV"
+        chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)
+        go=$(python3 scripts/ci/toolchains.py get runtime.go)
+        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
+        printf 'chrome=%s\ngo=%s\nbun=%s\n' "$chrome" "$go" "$bun" >> "$GITHUB_OUTPUT"
+
+    - id: go-cache
+      name: Locate Go caches
+      if: inputs.go == 'true' && inputs.go-cache == 'true'
+      shell: bash
+      run: |
+        printf 'modules=%s\n' "$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        printf 'build=%s\n' "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Go modules and build results
+      if: inputs.go == 'true' && inputs.go-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.go-cache.outputs.modules }}
+          ${{ steps.go-cache.outputs.build }}
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ steps.versions.outputs.go }}-${{ hashFiles('go/go.sum') }}
+
+    - name: Show Go version and download dependencies
       if: inputs.go == 'true'
       shell: bash
-      run: go version
-
-    - name: Download Go dependencies
-      if: inputs.go == 'true'
-      shell: bash
-      run: cd go && go mod download
-
-    - name: Set up Bun
-      if: inputs.bun == 'true'
-      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      with:
-        bun-version-file: .bun-version
-        no-cache: ${{ inputs.bun-cache != 'true' }}
+      run: |
+        go version
+        cd go && go mod download
 
     - name: Show Bun version
       if: inputs.bun == 'true'
@@ -112,29 +117,9 @@ runs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
-        key: bun-${{ runner.os }}-${{ hashFiles('client/bun.lock') }}-${{ hashFiles('.bun-version') }}
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.bun }}-${{ hashFiles('client/bun.lock') }}
 
     - name: Install client dependencies
       if: inputs.client-deps == 'true'
       shell: bash
       run: cd client && bun install --frozen-lockfile --prefer-offline
-
-    - name: Prepare pinned staticcheck
-      if: inputs.staticcheck == 'true'
-      shell: bash
-      run: just _install-tools true false false
-
-    - name: Prepare pinned govulncheck
-      if: inputs.govulncheck == 'true'
-      shell: bash
-      run: just _install-tools false true false
-
-    - name: Prepare pinned Gitleaks
-      if: inputs.gitleaks == 'true'
-      shell: bash
-      run: just _install-tools false false true
-
-    - name: Prepare pinned Python tools
-      if: inputs.python == 'true'
-      shell: bash
-      run: just python-setup

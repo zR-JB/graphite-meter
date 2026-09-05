@@ -17,7 +17,7 @@ Self-hosted network throughput, loaded latency, and datagram-loss measurement fo
 
 Graphite Meter combines a server, a responsive browser client, and a native terminal client. Open
 the browser UI from any device, select the stages and transports you want to test, and inspect
-throughput and latency under load. The server is just as quick to start: one container command
+throughput and latency under load. The server is mise run as quick to start: one container command
 provides a usable local instance with no configuration file.
 
 The measurement paths are explicit. Uploads are timed where the server receives them, latency can
@@ -155,8 +155,10 @@ and the ceiling. The method, transport matrix, shaped-path results, and limitati
 ```sh
 git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
-just dev
-just ci
+mise trust
+mise run setup
+mise run dev
+mise run ci
 ```
 
 The required toolchain, focused test commands, generated artifacts, and release workflow are in

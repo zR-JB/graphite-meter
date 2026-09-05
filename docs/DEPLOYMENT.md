@@ -230,7 +230,7 @@ release version and exact source revision.
 To build and run the embedded server directly instead of creating an image:
 
 ```sh
-just server-build-prod
+mise run server-build-prod
 ./go/graphite-meter
 ```
 

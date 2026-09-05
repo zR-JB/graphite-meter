@@ -5,7 +5,8 @@ The hook itself runs from the developer working tree, but component checks run
 in a temporary Git worktree whose index and files are replaced with the exact
 `git write-tree` snapshot. Unstaged fixes therefore cannot make a broken staged
 commit pass. Client dependencies are installed from that snapshot's lockfile;
-prepared tool binaries are shared. Generated outputs and test artifacts stay there.
+mise shares installed tools and download caches, but only staged configuration
+selects their versions. Generated outputs and test artifacts stay there.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ TLS_NAME = re.compile(
 )
 PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 MAX_STAGED_BYTES = 1024 * 1024
-FULL_GATE_FILES = {"justfile", ".bun-version", ".python-version", "tools.toml"}
+FULL_GATE_FILES = {"mise.toml", "mise.lock"}
 PIPELINE_PREFIXES = (".github/", ".githooks/", "scripts/")
 LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/")
 LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/package-tui.sh", "scripts/tui-targets.txt"}
@@ -211,11 +212,25 @@ def plan_checks(paths: tuple[str, ...]) -> CheckPlan:
     return CheckPlan(pipeline=pipeline, recipes=tuple(dict.fromkeys(recipes)))
 
 
-def link_optional_directory(source: Path, destination: Path) -> None:
-    if not source.is_dir() or destination.exists():
-        return
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.symlink_to(source, target_is_directory=True)
+def staged_mise_environment(root: Path, worktree: Path) -> dict[str, str]:
+    """Use staged mise configuration while sharing only installation/download data."""
+    env = staged_worktree_environment(root)
+    for name in tuple(env):
+        if name.startswith(("MISE_", "__MISE_")) and name not in {"MISE_DATA_DIR", "MISE_CACHE_DIR"}:
+            del env[name]
+    env.update({
+        "MISE_CONFIG_DIR": str(worktree.parent / "config"),
+        "MISE_SYSTEM_CONFIG_DIR": str(worktree.parent / "system"),
+        "MISE_CEILING_PATHS": str(worktree.parent),
+        "MISE_TRUSTED_CONFIG_PATHS": str(worktree),
+        "MISE_OVERRIDE_CONFIG_FILENAMES": "mise.toml",
+        "MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES": "none",
+        "MISE_ENV": "",
+        "MISE_AUTO_ENV": "false",
+        "MISE_ENV_CACHE": "false",
+        "MISE_LOCKED": "true",
+    })
+    return env
 
 
 def prepare_staged_worktree(
@@ -231,9 +246,6 @@ def prepare_staged_worktree(
     )
     command(("git", "read-tree", tree), cwd=worktree, env=env)
     command(("git", "checkout-index", "-a", "-f"), cwd=worktree, env=env)
-    # Tool versions are checked by their recipes; application dependencies must
-    # come from the staged lockfile, not the working tree's node_modules.
-    link_optional_directory(root / ".tools", worktree / ".tools")
 
 
 def remove_worktree(root: Path, worktree: Path) -> None:
@@ -253,48 +265,49 @@ def remove_worktree(root: Path, worktree: Path) -> None:
 
 
 def run_pipeline_checks(worktree: Path, *, env: Mapping[str, str]) -> None:
-    command(("python3", "scripts/ci/workflow_policy.py"), cwd=worktree, env=env)
-    command(("just", "pipeline-test"), cwd=worktree, env=env)
+    command(("mise", "run", "workflow-check"), cwd=worktree, env=env)
+    command(("mise", "run", "pipeline-test"), cwd=worktree, env=env)
+
+
+def run_gitleaks(root: Path, worktree: Path, *, env: Mapping[str, str]) -> None:
+    try:
+        manifest = tomllib.loads((worktree / "mise.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise PrecommitError(f"invalid staged mise.toml: {exc}") from exc
+    tools = manifest.get("tools")
+    backend = "aqua:gitleaks/gitleaks"
+    version = tools.get(backend) if isinstance(tools, dict) else None
+    if not isinstance(version, str) or re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        fail("staged mise.toml must pin Gitleaks to an exact version")
+    command(("mise", "install", backend), cwd=worktree, env=env)
+    resolved = command(
+        ("mise", "which", "gitleaks", "--tool", f"{backend}@{version}"),
+        cwd=worktree, env=env, capture=True,
+    )
+    binary = resolved.stdout.decode("utf-8", errors="strict").strip()
+    # The scanner must retain the original hook's Git environment and index.
+    command((binary, "protect", "--staged", "--redact", "-v"), cwd=root)
 
 
 def run_staged_checks(root: Path, plan: CheckPlan) -> None:
-    if not plan.pipeline and not plan.recipes:
-        return
     tree = git_text(root, "write-tree")
-    worktree_env = staged_worktree_environment(root)
     with tempfile.TemporaryDirectory(prefix="graphite-meter-precommit-") as temp_dir:
         worktree = Path(temp_dir) / "staged"
+        worktree_env = staged_mise_environment(root, worktree)
         try:
             prepare_staged_worktree(root, tree, worktree, env=worktree_env)
+            run_gitleaks(root, worktree, env=worktree_env)
             if set(plan.recipes) & {"check", "client-ci", "legal-check"}:
                 command(
-                    ("bun", "install", "--frozen-lockfile", "--prefer-offline"),
-                    cwd=worktree / "client",
-                    env=worktree_env,
+                    ("mise", "exec", "--", "bun", "install", "--frozen-lockfile", "--prefer-offline"),
+                    cwd=worktree / "client", env=worktree_env,
                 )
-            if plan.pipeline or "check" in plan.recipes:
-                command(("just", "python-setup"), cwd=worktree, env=worktree_env)
             if plan.pipeline:
                 run_pipeline_checks(worktree, env=worktree_env)
             for recipe in plan.recipes:
-                command(("just", recipe), cwd=worktree, env=worktree_env)
+                command(("mise", "run", recipe), cwd=worktree, env=worktree_env)
         finally:
             remove_worktree(root, worktree)
-
-
-def run_gitleaks(root: Path) -> None:
-    try:
-        manifest = tomllib.loads(git_text(root, "show", ":tools.toml"))
-    except tomllib.TOMLDecodeError as exc:
-        raise PrecommitError(f"invalid staged tools.toml: {exc}") from exc
-    tools = manifest.get("tools")
-    version = tools.get("gitleaks") if isinstance(tools, dict) else None
-    if not isinstance(version, str) or re.fullmatch(r"v\d+\.\d+\.\d+", version) is None:
-        fail("staged tools.toml must pin tools.gitleaks to an exact version")
-    binary = root / ".tools" / f"gitleaks-{version}" / "gitleaks"
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        fail(f"pinned Gitleaks {version} is missing; run `just setup`")
-    command((str(binary), "protect", "--staged", "--redact", "-v"), cwd=root)
 
 
 def main() -> None:
@@ -315,7 +328,6 @@ def main() -> None:
 
         validate_staged_files(root, changes)
         command(("git", "diff", "--cached", "--check"), cwd=root)
-        run_gitleaks(root)
         run_staged_checks(root, plan_checks(tuple(change.path for change in changes)))
     except PrecommitError as exc:
         raise SystemExit(f"pre-commit: {exc}") from exc

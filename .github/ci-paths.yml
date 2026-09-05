@@ -4,10 +4,8 @@ workflow: &workflow
   - '.github/ci-paths.yml'
   - '.githooks/**'
   - 'scripts/**'
-  - 'justfile'
-  - '.bun-version'
-  - '.python-version'
-  - 'tools.toml'
+  - 'mise.toml'
+  - 'mise.lock'
   - 'go/go.mod'
   - 'go/go.sum'
 

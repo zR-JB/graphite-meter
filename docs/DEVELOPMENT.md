@@ -6,26 +6,35 @@ and the static browser bundle used by release builds.
 
 ## Prerequisites
 
-Use the versions pinned by the repository:
+Install [mise](https://mise.jdx.dev/installing-mise.html) at the exact version in
+`mise.toml` (`vars.mise_version`). Mise prepares the pinned Go, Bun, Python and
+standalone checkers. Git, Bash and jq are required; browser suites also need the
+pinned Chrome for Testing version, and container checks need Docker or Podman.
 
-- Go from `go/go.mod`;
-- Bun from `.bun-version`;
-- Just from `tools.toml` (`tools.just`);
-- Git;
-- Python from `.python-version`, Bash, and jq for the pipeline regression suite;
-- Chrome for Testing for browser and benchmark suites;
-- Docker or Podman for container validation.
+On Windows, install Git for Windows and put its `bash.exe` and `sh.exe` on
+`PATH`. You can invoke mise from PowerShell; tasks using POSIX syntax explicitly
+select Bash or their declared `sh` interpreter. Windows task execution has not
+been verified by the current validation.
 
-Run the setup once:
+Run setup once per checkout:
 
 ```sh
 git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
-just setup
+mise trust
+mise run setup
 ```
 
-`just setup` installs locked dependencies and repository tools, configures the Git hook, and runs
-`just doctor` to detect toolchain drift.
+Review the repository configuration before trusting it: tasks execute repository
+code. Setup installs locked tools and language dependencies, configures the Git
+hook, and runs `mise run doctor` to detect toolchain drift. Shell activation is
+optional; `mise run` supplies the environment for every task. Use `mise exec --`
+for direct commands with the project toolchain, such as `mise exec -- go version`.
+
+`mise prod`, `mise dev` and `mise check` also work interactively. Scripts use
+`mise run <task>` to avoid collisions with built-in commands; in particular,
+`mise doctor` is mise's own diagnostic, while `mise run doctor` checks this project.
+List project commands with `mise tasks`.
 
 ## Repository layout
 
@@ -69,15 +78,15 @@ See [Measurement definitions](MEASUREMENTS.md) for units, timing, and missing-da
 ## Development commands
 
 ```sh
-just dev                 # build the development browser client and run the server
-just prod                # build the production browser profile and run the server
-just client-watch        # run the standalone Vite development server
-just goclient-run        # run the native client
-just check               # deterministic developer gate
-just ci                  # full local CI and release gate
+mise run dev                 # build the development browser client and run the server
+mise run prod                # build the production browser profile and run the server
+mise run client-watch        # run the standalone Vite development server
+mise run goclient-run        # run the native client
+mise run check               # deterministic developer gate
+mise run ci                  # full local CI and release gate
 ```
 
-`just dev` serves Graphite Meter on <http://localhost:7246>. Development builds include diagnostics
+`mise run dev` serves Graphite Meter on <http://localhost:7246>. Development builds include diagnostics
 and the optional dummy backend. Production builds are real-only unless explicitly overridden.
 
 ### Build identities
@@ -89,27 +98,27 @@ native client.
 Build a production server binary:
 
 ```sh
-just server-build-prod
+mise run server-build-prod
 ```
 
 Build the native client:
 
 ```sh
-just goclient-build
+mise run goclient-build
 ```
 
 Build a release-profile server with the production browser client embedded:
 
 ```sh
-VERSION=0.6.0 just release-build 0.6.0
+VERSION=0.6.0 mise run release-build 0.6.0
 ```
 
 ### Browser build flags
 
 | Environment               | Default                    | Meaning                                                      |
 | ------------------------- | -------------------------- | ------------------------------------------------------------ |
-| `GM_CLIENT_BUILD_PROFILE` | set by the recipe          | `dev` or `prod` feature profile.                             |
-| `GM_CLIENT_ALLOW_DUMMY`   | `0` for production recipes | Compile the dummy backend and development controls when `1`. |
+| `GM_CLIENT_BUILD_PROFILE` | set by the task          | `dev` or `prod` feature profile.                             |
+| `GM_CLIENT_ALLOW_DUMMY`   | `0` for production tasks | Compile the dummy backend and development controls when `1`. |
 | `GM_CLIENT_REVISION`      | current short revision     | Source identity for an untagged build.                       |
 | `VERSION`                 | empty                      | Public release version.                                      |
 
@@ -121,7 +130,7 @@ development and browser tests, not release publication.
 ### Fast gate
 
 ```sh
-just check
+mise run check
 ```
 
 This runs toolchain validation, workflow policy, generated checks, formatting, type checks, Bun
@@ -130,14 +139,14 @@ unit tests, Go vet and tests, staticcheck, and legal validation.
 Useful focused commands:
 
 ```sh
-just client-ci
-just server-check
-just server-test
-just client-browser
-just client-e2e
-just tui-cross-build
-just check-generated
-just legal-check
+mise run client-ci
+mise run server-check
+mise run server-test
+mise run client-browser
+mise run client-e2e
+mise run tui-cross-build
+mise run check-generated
+mise run legal-check
 ```
 
 The Bun unit suite is designed for parallel execution. On a constrained sandbox, use
@@ -159,7 +168,7 @@ Rebuild after changing application source. Set `GM_WEBVIEW_DEBUG=1` for browser 
 request diagnostics; failures are saved under `client/test-results/webview`. Use
 `GM_WEBVIEW_ARTIFACTS` to retain them in a different directory.
 
-`just client-e2e` builds and embeds the current production application, then runs it with a
+`mise run client-e2e` builds and embeds the current production application, then runs it with a
 real server and ephemeral TLS certificate. The transport matrix verifies both transfer directions
 over clear and TLS HTTP/1.1, HTTP/2, HTTP/3, and WebTransport streams and datagrams. Protocol probes
 check which protocol the listener actually observed. The stubbed browser suite remains the fast
@@ -167,7 +176,7 @@ way to reproduce layout, keyboard, history, and failure states deterministically
 
 ### Worktree verification
 
-Run `just setup` inside each new worktree. Keep its `node_modules`, generated bundles, embedded
+Run `mise run setup` inside each new worktree. Keep its `node_modules`, generated bundles, embedded
 assets, and browser artifacts local to that checkout; Bun's package cache and Go's build cache
 can be shared. Do not symlink another worktree's `node_modules`: its installed graph can disagree
 with the checked-out lockfile. The pre-commit hook also installs from the exact staged lockfile
@@ -176,7 +185,7 @@ inside its disposable worktree before running client or legal checks.
 Give simultaneous E2E runs separate port ranges:
 
 ```sh
-GM_E2E_PORT_BASE=17256 just client-e2e
+GM_E2E_PORT_BASE=17256 mise run client-e2e
 ```
 
 The base defaults to 7256 and reserves four consecutive port numbers, including TCP and UDP on
@@ -184,7 +193,7 @@ the last port. Readiness requires the identity of the server started by that fix
 server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
 
 In restricted environments, `JUST_TEMPDIR=/tmp` selects a writable directory for Just's scripts.
-Go uses its standard build cache, shared with CI’s setup-go cache. In a restricted environment,
+Go uses its standard build cache, cached per CI job. In a restricted environment,
 set `GOCACHE` to a writable directory if needed. Chromium
 also needs writable `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` directories on Linux. Set
 `BUN_CHROME_PATH` to the browser executable when discovery picks the wrong installation. Real
@@ -195,7 +204,7 @@ and run the normal parallel gate in an environment that permits those subprocess
 ### Full gate
 
 ```sh
-just ci
+mise run ci
 ```
 
 The full gate adds Go race tests and coverage, live vulnerability data, dependency audit, secret
@@ -209,10 +218,10 @@ API client types are generated from the JSON schemas. Authentication assets and 
 are also checked for drift.
 
 ```sh
-just client-gen-types
-just legal-generate
-just check-generated
-just legal-check
+mise run client-gen-types
+mise run legal-generate
+mise run check-generated
+mise run legal-check
 ```
 
 Only regenerate reviewed legal outputs after an intentional dependency or distributed-artifact
@@ -239,13 +248,13 @@ listener.
 Run one cell:
 
 ```sh
-GM_BENCH_SPKI='BASE64_SPKI_PIN' just bench-throughput 'h1-clear/down/lanes=2'
+GM_BENCH_SPKI='BASE64_SPKI_PIN' mise run bench-throughput 'h1-clear/down/lanes=2'
 ```
 
 Run the complete maintained matrix:
 
 ```sh
-GM_BENCH_SPKI='BASE64_SPKI_PIN' just bench-throughput
+GM_BENCH_SPKI='BASE64_SPKI_PIN' mise run bench-throughput
 ```
 
 The complete matrix takes hours. See [Benchmarks](BENCHMARKS.md) before comparing new values with
@@ -256,8 +265,8 @@ the historical reference results.
 Build and verify the source image:
 
 ```sh
-just container-build
-just container-smoke
+mise run container-build
+mise run container-smoke
 ```
 
 The image is built in stages and finishes from `scratch` with the server binary, public CA roots,
@@ -272,7 +281,7 @@ promotion.
 Run the local release gate with an explicit candidate version:
 
 ```sh
-VERSION=0.6.0 just release-check 0.6.0
+VERSION=0.6.0 mise run release-check 0.6.0
 ```
 
 Publication remains a workflow-controlled operation. Do not create or move release tags as part of
@@ -281,10 +290,10 @@ ordinary documentation or feature work.
 
 ### Python build tooling
 
-Use the exact Python patch in `.python-version` for repository tooling locally and in CI.
+Use the exact Python patch in `mise.toml` for repository tooling locally and in CI.
 No pip or Python packages are required.
-`just setup` prepares the version-pinned standalone `ty` binary. `just python-check`
-checks all scripts and their tests; `just pipeline-test`
+`mise run setup` prepares the version-pinned standalone `ty` binary. `mise run python-check`
+checks all scripts and their tests; `mise run pipeline-test`
 combines that check with control-plane and legal regression tests. Legal review,
 inventory rendering and source archives run in Python. Only dependency closure
 discovery invokes Go metadata commands and the Vite build; no legal helper is
@@ -295,26 +304,28 @@ compiled. See `legal/README.md` for the unchanged public legal commands.
 
 | Pin | Owner | Consumers |
 | --- | --- | --- |
-| Go compiler | `go/go.mod` | Go, CI setup, validated Docker builder default |
-| Bun runtime | `.bun-version` | CI setup, local doctor, container build arguments and validated default |
-| Python runtime | `.python-version` | CI setup, local doctor; ty uses its major/minor language level |
-| Standalone Just, Gitleaks, staticcheck, govulncheck, ty | `tools.toml` `[tools]` | Setup, Just recipes, staged Gitleaks hook |
-| Chrome for Testing | `tools.toml` `[browser]` | CI install and browser identity check through setup-project outputs |
-| Utility container images | `tools.toml` `[images]` | Secret scan, validated build/publication workflow literals |
-| Go dependencies | `go/go.mod` and `go/go.sum` | Go module resolution and checksum verification |
-| Browser dependencies | `client/package.json` and `client/bun.lock` | Frozen Bun installs; package ranges express allowed updates |
-| External GitHub Actions | Their `uses:` SHA in YAML | GitHub's workflow loader; policy requires immutable refs |
+| Go, Bun, Python and standalone checkers | `mise.toml` `[tools]` | Local setup/tasks, CI, staged commit checks |
+| Tool downloads | `mise.lock` | Exact resolved artifacts and supported checksums |
+| Mise bootstrap | `mise.toml` `vars.mise_version` | Validated literal in the SHA-pinned CI action |
+| Chrome for Testing | `mise.toml` `vars.browser_chrome` | CI install and browser identity verification |
+| Utility container images | `mise.toml` `vars.image_*` | Secret scan and validated build/publication literals |
+| Go dependencies | `go/go.mod` and `go/go.sum` | Native module resolution and checksum verification |
+| Browser dependencies | `client/package.json` and `client/bun.lock` | Frozen Bun installs |
+| External GitHub Actions | Their `uses:` SHA in YAML | GitHub's workflow loader; immutable refs required |
 
-`tools.toml` contains data only, read with Python's standard-library TOML parser.
-To select the bootstrap Just version before Just is installed, run
-`python3 scripts/ci/toolchains.py get tools.just`. No additional tool manager is needed.
+Edit the owning pin, regenerate `mise.lock` with `mise lock`, then run
+`mise run toolchain-sync`, `mise run setup` and `mise run check`. Tool downloads
+use locked resolution; Go-installed govulncheck retains Go's module checksum
+verification. Dependency updates use their native package commands and lockfiles.
 
-Edit the owner, run `just toolchain-sync`, then `just setup` and `just check`.
-Sync updates only literals required before repository code can execute: Docker
-builder defaults and immutable QEMU/Skopeo workflow references. The no-checkout
-publication jobs keep their image references in trusted workflow source;
-loading repository code with their credentials would change that boundary.
-`just toolchain-check` rejects drift, and `just doctor` checks installed runtimes.
-Direct `docker build -f container/Dockerfile .` remains supported with the same
-validated defaults. Language dependency upgrades use their native package commands
-and update the corresponding lock/checksum files; tool pins are not package locks.
+Sync updates unavoidable literals: the Go module's language directive, Docker
+builder defaults, mise bootstrap versions, and immutable QEMU/Skopeo workflow
+references. No-checkout publication jobs retain trusted literal image references.
+`mise run toolchain-check` rejects drift, and `mise run doctor` checks runtimes.
+Direct `docker build -f container/Dockerfile .` remains supported.
+
+CI explicitly installs each job's required tools and disables automatic tool
+installation during tasks. Verified tools are cached separately from the Go
+module/build and Bun package caches. Tasks do not cache test results or skip
+correctness gates; build, embed, generation and legal checks retain their required
+execution order. Release jobs retain their cache isolation.

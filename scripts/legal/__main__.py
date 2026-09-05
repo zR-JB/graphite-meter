@@ -1,4 +1,4 @@
-"""Run with python3 -m scripts.legal; public commands remain `just legal-*`."""
+"""Run with python3 -m scripts.legal; public commands remain `mise run legal-*`."""
 from __future__ import annotations
 
 import argparse

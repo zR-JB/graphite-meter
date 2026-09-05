@@ -98,7 +98,7 @@ def go_toolchain_component(repo: Path) -> Component:
     actual = legal_go_version(run_go(repo, 'env', 'GOVERSION').strip())
     if actual != expected:
         raise LegalError(f'go toolchain mismatch during legal review: go/go.mod pins {expected} '
-                         f'but go env reports {actual}; run `just doctor`')
+                         f'but go env reports {actual}; run `mise run doctor`')
     files = read_legal_files(repo / 'legal/toolchains/go', recursive=False)
     return component_from_files('go-toolchain', 'Go standard library', expected, 'https://go.dev/', files)
 

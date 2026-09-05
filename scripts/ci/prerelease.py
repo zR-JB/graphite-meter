@@ -63,7 +63,8 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # that defines Gate/publication authority must match exact current main. Pipeline
 # changes merge first; payload PRs then rebase before prerelease authorization.
 PRERELEASE_CI_CONTROL_PLANE: tuple[str, ...] = (
-    ".bun-version",
+    "mise.toml",
+    "mise.lock",
     ".github/workflows/ci.yml",
     ".github/workflows/prerelease-request.yml",
     ".github/workflows/prerelease-publish.yml",
@@ -75,9 +76,6 @@ PRERELEASE_CI_CONTROL_PLANE: tuple[str, ...] = (
     ".github/ci-paths.yml",
     ".github/actions/setup-project/action.yml",
     ".github/actions/build-oci/action.yml",
-    "justfile",
-    ".python-version",
-    "tools.toml",
     "scripts/ci/toolchains.py",
     "scripts/ci/test_toolchains.py",
     "scripts/__init__.py",

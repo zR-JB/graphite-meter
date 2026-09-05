@@ -1,14 +1,43 @@
 #!/bin/sh
-set -u
+set -eu
 
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT HUP INT TERM
+# With no staged changes, skip runtime bootstrap and component checks.
+if git diff --cached --quiet; then
+    exit 0
+fi
 
-# Execute the implementation from the staged index, not the developer working
-# tree. This keeps an unstaged edit to precommit.py from changing the checks for
-# the commit currently being created.
-if ! git show :scripts/ci/precommit.py >"$tmp"; then
-    echo "pre-commit: staged scripts/ci/precommit.py is unavailable" >&2
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT HUP INT TERM
+bootstrap="$scratch/bootstrap"
+mkdir "$bootstrap"
+
+# Both the implementation and its runtime contract come from the index.
+if ! git show :scripts/ci/precommit.py >"$bootstrap/precommit.py" ||
+   ! git show :mise.toml >"$bootstrap/mise.toml" ||
+   ! git show :mise.lock >"$bootstrap/mise.lock"; then
+    echo "pre-commit: staged hook implementation, mise.toml and mise.lock are required" >&2
     exit 1
 fi
-python3 "$tmp"
+
+# Share installed tools and downloads, never shell/global mise configuration.
+mise_data=${MISE_DATA_DIR-}
+mise_cache=${MISE_CACHE_DIR-}
+for name in $(env | sed -n -e 's/^\(MISE_[A-Za-z0-9_]*\)=.*/\1/p' -e 's/^\(__MISE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    unset "$name"
+done
+if [ -n "$mise_data" ]; then export MISE_DATA_DIR="$mise_data"; fi
+if [ -n "$mise_cache" ]; then export MISE_CACHE_DIR="$mise_cache"; fi
+export MISE_CONFIG_DIR="$scratch/config" MISE_SYSTEM_CONFIG_DIR="$scratch/system"
+export MISE_CEILING_PATHS="$scratch" MISE_TRUSTED_CONFIG_PATHS="$bootstrap"
+export MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=none
+export MISE_ENV= MISE_AUTO_ENV=false MISE_ENV_CACHE=false MISE_LOCKED=true
+
+python_version=$(mise --cd "$bootstrap" config get --file "$bootstrap/mise.toml" tools.python)
+if ! printf '%s\n' "$python_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "pre-commit: staged mise.toml must pin Python to an exact version" >&2
+    exit 1
+fi
+# Resolving one configured tool avoids installing every checker for a docs commit.
+mise --cd "$bootstrap" install python
+python=$(mise --cd "$bootstrap" which python3 --tool "python@$python_version")
+"$python" -I "$bootstrap/precommit.py"

@@ -1,14 +1,12 @@
 # Supply-chain-sensitive repository controls and release inputs.
 /.github/                  @zR-JB
-/justfile                  @zR-JB
+/mise.toml                 @zR-JB
+/mise.lock                 @zR-JB
 /container/                @zR-JB
 /scripts/                  @zR-JB
 /go/go.mod                 @zR-JB
 /go/go.sum                 @zR-JB
 /client/bun.lock           @zR-JB
-/.bun-version              @zR-JB
-/.python-version           @zR-JB
-/tools.toml                @zR-JB
 /legal/                    @zR-JB
 /LICENSE                   @zR-JB
 /COPYRIGHT                 @zR-JB
