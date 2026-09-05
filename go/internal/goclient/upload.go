@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"sync"
@@ -22,7 +23,7 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
-func (r *runner) measureUpload(ctx context.Context, stage string, duration time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureUpload(ctx context.Context, stage string, duration time.Duration, gate *stageGate) (result Result, failure error) {
 	id, err := r.mintUploadID(ctx)
 	if err != nil {
 		return Result{}, err
@@ -39,7 +40,7 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	progressURL = withUploadID(progressURL, id)
 
 	var progress *uploadProgress
-	var lane func(context.Context, int) error
+	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
 			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
@@ -49,10 +50,10 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 				return err
 			}
 			if progress == nil {
-				progress, err = r.readUploadProgress(ctx, wtProgressStream{str}, progressURL)
+				progress, err = r.readUploadProgress(ctx, wtProgressFeed(str), progressURL)
 				return err
 			}
-			progress.attach(wtProgressStream{str})
+			progress.attach(wtProgressFeed(str))
 			return nil
 		})
 		if err != nil {
@@ -60,34 +61,51 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		}
 		defer host.close()
 		go r.reattachUploadProgress(progress, progressURL)
-		lane = func(laneCtx context.Context, _ int) error {
+		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
-				return r.uploadLaneWT(lctx, sess, bodyBlock)
+				return r.uploadLaneWT(lctx, sess, bodyBlock, ready)
 			})
 		}
 	} else {
 		if progress, err = r.openUploadProgress(ctx, progressURL); err != nil {
 			return Result{}, err
 		}
-		lane = func(laneCtx context.Context, i int) error {
-			return r.uploadLane(laneCtx, id, i, bodyBlock)
+		lane = func(laneCtx context.Context, i int, ready func()) error {
+			return r.uploadLane(laneCtx, id, i, bodyBlock, ready)
 		}
 	}
-	defer progress.close()
+	defer progress.bye()
 
 	streams := r.streams.of(Up)
 	lanes := r.startLanes(ctx, streams, lane)
-	defer lanes.cancel()
-	if err := lanes.waitStart(ctx, start); err != nil {
+	defer lanes.stop()
+	defer func() {
+		if failure != nil {
+			gate.cancel(failure)
+		}
+	}()
+	if err := lanes.waitReady(ctx); err != nil {
 		return Result{}, err
 	}
-	if !progress.waitNext(ctx, progress.seq.Load()) {
-		return Result{}, progress.failure(fmt.Errorf("upload progress did not advance"))
+	if err := progress.waitNext(ctx, progress.seq.Load(), lanes.errs); err != nil {
+		return Result{}, err
+	}
+	gate.ready <- struct{}{}
+	if err := lanes.waitStart(ctx, gate.start, progress.errs); err != nil {
+		return Result{}, err
+	}
+	// A connected feed can remain silent after warmup. Bound acquisition of the
+	// receiver's baseline separately; its wait is not a measured server window.
+	baselineBudget := min(duration, stageReadyTimeout)
+	baselineCtx, cancelBaseline := context.WithTimeoutCause(ctx, baselineBudget,
+		fmt.Errorf("upload receiver baseline unavailable within %v", baselineBudget))
+	err = progress.waitNext(baselineCtx, progress.seq.Load(), lanes.errs)
+	cancelBaseline()
+	if err != nil {
+		return Result{}, err
 	}
 	baselineN, baselineT := progress.counters()
 	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, streams, duration, baselineN, baselineT, lanes.errs)
-	lanes.stop()
-	progress.bye()
 	if sampleErr == nil {
 		sampleErr = windowCarriedBytes(ctx, stage, Up, stats)
 	}
@@ -111,7 +129,8 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 	return out.UploadID, nil
 }
 
-func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte) error {
+func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte, ready func()) error {
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: ready})
 	path := r.routes().Upload
 	base, err := r.endpoint(path)
 	if err != nil {
@@ -200,7 +219,7 @@ type uploadProgress struct {
 	client    *http.Client
 	url       string
 	mu        sync.Mutex // guards body and done across re-attachments
-	body      io.ReadCloser
+	body      *uploadFeed
 	done      chan struct{}
 	ready     chan error
 	readySent atomic.Bool
@@ -249,20 +268,11 @@ func withUploadID(base, id string) string {
 }
 
 func (r *runner) openUploadProgress(ctx context.Context, target string) (*uploadProgress, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	body, err := r.openUploadProgressWithin(ctx, ctx, target)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/x-ndjson")
-	res, err := r.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if res.StatusCode != http.StatusOK {
-		defer res.Body.Close()
-		return nil, unexpectedStatus(res)
-	}
-	p, err := r.readUploadProgress(ctx, res.Body, target)
+	p, err := r.readUploadProgress(ctx, body, target)
 	if err != nil {
 		return nil, err
 	}
@@ -270,18 +280,19 @@ func (r *runner) openUploadProgress(ctx context.Context, target string) (*upload
 	return p, nil
 }
 
-type cancelReadCloser struct {
+// Interrupting a feed is distinct from closing its body. Its reader owns Close,
+// after Read has returned; HTTP request cancellation interrupts an in-flight read.
+type uploadFeed struct {
 	io.ReadCloser
-	cancel context.CancelFunc
+	interrupt context.CancelFunc
 }
 
-func (b *cancelReadCloser) Close() error {
-	err := b.ReadCloser.Close()
-	b.cancel()
-	return err
+func (f *uploadFeed) Close() error {
+	f.interrupt()
+	return f.ReadCloser.Close()
 }
 
-func (r *runner) openUploadProgressWithin(stageCtx, recoveryCtx context.Context, target string) (io.ReadCloser, error) {
+func (r *runner) openUploadProgressWithin(stageCtx, recoveryCtx context.Context, target string) (*uploadFeed, error) {
 	attemptCtx, cancelAttempt := context.WithCancel(stageCtx)
 	stopRecovery := context.AfterFunc(recoveryCtx, cancelAttempt)
 	defer stopRecovery()
@@ -302,7 +313,7 @@ func (r *runner) openUploadProgressWithin(stageCtx, recoveryCtx context.Context,
 		cancelAttempt()
 		return nil, err
 	}
-	return &cancelReadCloser{ReadCloser: res.Body, cancel: cancelAttempt}, nil
+	return &uploadFeed{ReadCloser: res.Body, interrupt: cancelAttempt}, nil
 }
 
 func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
@@ -372,10 +383,10 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 	}
 }
 
-func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, deleteURL string) (*uploadProgress, error) {
+func (r *runner) readUploadProgress(ctx context.Context, body *uploadFeed, deleteURL string) (*uploadProgress, error) {
 	readCtx, cancel := context.WithCancel(ctx)
 	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}
-	context.AfterFunc(readCtx, p.closeBody)
+	context.AfterFunc(readCtx, p.interruptBody)
 	p.attach(body)
 	select {
 	case err := <-p.ready:
@@ -390,7 +401,7 @@ func (r *runner) readUploadProgress(ctx context.Context, body io.ReadCloser, del
 	return p, nil
 }
 
-func (p *uploadProgress) attach(body io.ReadCloser) {
+func (p *uploadProgress) attach(body *uploadFeed) {
 	done := make(chan struct{})
 	p.mu.Lock()
 	if p.ctx.Err() != nil {
@@ -403,7 +414,7 @@ func (p *uploadProgress) attach(body io.ReadCloser) {
 	p.done = done
 	p.mu.Unlock()
 	if old != nil {
-		_ = old.Close()
+		old.interrupt()
 	}
 	go p.read(body, done)
 }
@@ -414,8 +425,9 @@ func (p *uploadProgress) signalReady(err error) {
 	}
 }
 
-func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
+func (p *uploadProgress) read(body *uploadFeed, done chan struct{}) {
 	defer close(done)
+	defer body.Close() //nolint:errcheck // receiver counters and scanner errors own the outcome
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		if len(scanner.Bytes()) == 0 {
@@ -449,17 +461,22 @@ func (p *uploadProgress) read(body io.ReadCloser, done chan struct{}) {
 	}
 }
 
-func (p *uploadProgress) waitNext(ctx context.Context, after uint64) bool {
+func (p *uploadProgress) waitNext(ctx context.Context, after uint64, laneErr <-chan error) error {
 	for p.seq.Load() <= after {
 		select {
 		case <-ctx.Done():
-			return false
+			return context.Cause(ctx)
+		case err := <-laneErr:
+			return err
 		case <-p.ctx.Done():
-			return p.seq.Load() > after
+			if p.seq.Load() > after {
+				return nil
+			}
+			return p.failure(fmt.Errorf("upload progress did not advance"))
 		case <-p.changed:
 		}
 	}
-	return true
+	return nil
 }
 
 func (p *uploadProgress) failure(fallback error) error {
@@ -479,23 +496,23 @@ func (p *uploadProgress) fail(err error) {
 	p.cancel()
 }
 
-func (p *uploadProgress) current() (io.ReadCloser, chan struct{}) {
+func (p *uploadProgress) current() (*uploadFeed, chan struct{}) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.body, p.done
 }
 
-func (p *uploadProgress) closeBody() {
+func (p *uploadProgress) interruptBody() {
 	body, _ := p.current()
 	if body != nil {
-		_ = body.Close()
+		body.interrupt()
 	}
 }
 
 func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
-		p.closeBody()
+		p.interruptBody()
 		_, done := p.current()
 		if done != nil {
 			<-done

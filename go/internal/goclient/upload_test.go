@@ -141,7 +141,7 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
-		_ = r.uploadLane(ctx, "test-id", 0, block)
+		_ = r.uploadLane(ctx, "test-id", 0, block, func() {})
 		close(done)
 	}()
 
@@ -170,7 +170,7 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := &runner{cfg: Config{BaseURL: srv.URL, UploadBytesPerStream: 1024}, http: srv.Client()}
-	if err := r.uploadLane(t.Context(), "test-id", 0, make([]byte, 1024)); err == nil {
+	if err := r.uploadLane(t.Context(), "test-id", 0, make([]byte, 1024), func() {}); err == nil {
 		t.Fatal("HTTP 503 did not fail the upload lane")
 	}
 }
@@ -195,7 +195,7 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
-		_ = r.uploadLane(ctx, "test-id", 0, block)
+		_ = r.uploadLane(ctx, "test-id", 0, block, func() {})
 		close(done)
 	}()
 
@@ -291,7 +291,7 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, start)
+	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, testStageGate(start))
 	if err != nil {
 		t.Fatalf("measureUpload: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, start)
+	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, testStageGate(start))
 	if err == nil {
 		t.Fatalf("a window that carried no bytes reported success: %+v", res)
 	}
@@ -373,7 +373,7 @@ func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
-	_, err := r.measureUpload(ctx, "upload", 5*time.Second, start)
+	_, err := r.measureUpload(ctx, "upload", 5*time.Second, testStageGate(start))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
 	}
@@ -394,17 +394,17 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
-	p, err := r.readUploadProgress(ctx, live, "http://127.0.0.1/upload/progress")
+	p, err := r.readUploadProgress(ctx, testUploadFeed(live), "http://127.0.0.1/upload/progress")
 	if err != nil {
 		t.Fatalf("readUploadProgress: %v", err)
 	}
 	defer p.close()
-	if !p.waitNext(ctx, 0) {
+	if err := p.waitNext(ctx, 0, nil); err != nil {
 		t.Fatal("the live feed never published a count")
 	}
 
 	stale, staleWriter := io.Pipe()
-	p.attach(stale)
+	p.attach(testUploadFeed(stale))
 	if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), uploadProgressEvent{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
 		t.Fatalf("write the superseded feed's buffered record: %v", err)
 	}
@@ -464,11 +464,22 @@ func newWaitNextProgress(t *testing.T) (*uploadProgress, context.CancelFunc) {
 }
 
 func TestUploadProgressWaitNext(t *testing.T) {
+	t.Run("lane failure", func(t *testing.T) {
+		progress, cancel := newWaitNextProgress(t)
+		defer cancel()
+		laneErr := make(chan error, 1)
+		failure := errors.New("upload lane rejected")
+		laneErr <- failure
+		if err := progress.waitNext(t.Context(), 0, laneErr); !errors.Is(err, failure) {
+			t.Fatalf("waitNext = %v, want lane failure before the first receiver counter", err)
+		}
+	})
+
 	t.Run("already advanced", func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
 		progress.seq.Store(2)
-		if !progress.waitNext(t.Context(), 1) {
+		if err := progress.waitNext(t.Context(), 1, nil); err != nil {
 			t.Fatal("waitNext rejected an available update")
 		}
 	})
@@ -476,11 +487,11 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("notification", func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
-		result := make(chan bool, 1)
-		go func() { result <- progress.waitNext(t.Context(), 0) }()
+		result := make(chan error, 1)
+		go func() { result <- progress.waitNext(t.Context(), 0, nil) }()
 		progress.seq.Store(1)
 		progress.changed <- struct{}{}
-		if !<-result {
+		if err := <-result; err != nil {
 			t.Fatal("waitNext ignored a progress edge")
 		}
 	})
@@ -490,7 +501,7 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		defer cancel()
 		ctx, cancelCaller := context.WithCancel(t.Context())
 		cancelCaller()
-		if progress.waitNext(ctx, 0) {
+		if err := progress.waitNext(ctx, 0, nil); err == nil {
 			t.Fatal("waitNext succeeded after cancellation")
 		}
 	})
@@ -498,7 +509,7 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("terminal", func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		cancel()
-		if progress.waitNext(t.Context(), 0) {
+		if err := progress.waitNext(t.Context(), 0, nil); err == nil {
 			t.Fatal("waitNext succeeded after the progress channel closed")
 		}
 	})
@@ -506,12 +517,12 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("final update", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			progress, cancel := newWaitNextProgress(t)
-			result := make(chan bool, 1)
-			go func() { result <- progress.waitNext(t.Context(), 0) }()
+			result := make(chan error, 1)
+			go func() { result <- progress.waitNext(t.Context(), 0, nil) }()
 			synctest.Wait() // the waiter is parked with nothing published
 			progress.seq.Store(1)
 			cancel()
-			if !<-result {
+			if err := <-result; err != nil {
 				t.Fatal("waitNext dropped the final progress update")
 			}
 		})
@@ -520,8 +531,8 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	t.Run("feed replaced", func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
-		result := make(chan bool, 1)
-		go func() { result <- progress.waitNext(t.Context(), 0) }()
+		result := make(chan error, 1)
+		go func() { result <- progress.waitNext(t.Context(), 0, nil) }()
 		progress.mu.Lock()
 		close(progress.done)
 		progress.done = make(chan struct{})
@@ -533,7 +544,7 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		}
 		progress.seq.Store(1)
 		progress.changed <- struct{}{}
-		if !<-result {
+		if err := <-result; err != nil {
 			t.Fatal("waitNext missed the replacement feed's update")
 		}
 	})
@@ -574,7 +585,7 @@ func TestUploadProgressCounterHoldsUnderConcurrentFeeds(t *testing.T) {
 	for range feeds {
 		body, feed := io.Pipe()
 		done := make(chan struct{})
-		wg.Go(func() { p.read(body, done) })
+		wg.Go(func() { p.read(testUploadFeed(body), done) })
 		wg.Go(func() {
 			defer feed.Close() //nolint:errcheck // the reader's own error path covers this
 			for i := uint64(1); i <= records; i++ {
@@ -655,7 +666,7 @@ func TestAttachRefusesAReaderAfterClose(t *testing.T) {
 	cancel()
 
 	late := &closeRecorder{Reader: strings.NewReader("{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n")}
-	progress.attach(late)
+	progress.attach(testUploadFeed(late))
 
 	if !late.closed.Load() {
 		t.Error("the reader offered after the report ended was adopted instead of released")
@@ -713,17 +724,66 @@ func TestUploadProgressWaitNextEndsWhenTheFeedDiesForGood(t *testing.T) {
 		p.cancel()
 	}()
 
-	done := make(chan bool, 1)
-	go func() { done <- p.waitNext(ctx, p.seq.Load()) }()
+	done := make(chan error, 1)
+	go func() { done <- p.waitNext(ctx, p.seq.Load(), nil) }()
 	select {
-	case advanced := <-done:
-		if advanced {
-			t.Fatal("waitNext reported the counter advanced on a dead feed")
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "not reattached") {
+			t.Fatalf("waitNext = %v, want the feed's own failure", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("waitNext never returned: a dead feed hangs the upload stage")
 	}
-	if got := p.failure(errors.New("fallback")); !strings.Contains(got.Error(), "not reattached") {
-		t.Fatalf("failure() = %v, want the feed's own error", got)
+}
+
+func testUploadFeed(body io.ReadCloser) *uploadFeed {
+	return &uploadFeed{ReadCloser: body, interrupt: func() { _ = body.Close() }}
+}
+
+type ownedProgressBody struct {
+	started         chan struct{}
+	stop            chan struct{}
+	first           bool
+	reading         atomic.Bool
+	concurrentClose atomic.Bool
+	closed          atomic.Bool
+}
+
+func (b *ownedProgressBody) Read(p []byte) (int, error) {
+	if !b.first {
+		b.first = true
+		return copy(p, "{\"type\":\"ready\"}\n"), nil
+	}
+	b.reading.Store(true)
+	close(b.started)
+	<-b.stop
+	b.reading.Store(false)
+	return 0, io.EOF
+}
+
+func (b *ownedProgressBody) Close() error {
+	b.concurrentClose.Store(b.reading.Load())
+	b.closed.Store(true)
+	return nil
+}
+
+func TestUploadFeedReaderOwnsBodyCloseAfterInterruption(t *testing.T) {
+	body := &ownedProgressBody{started: make(chan struct{}), stop: make(chan struct{})}
+	feed := &uploadFeed{ReadCloser: body, interrupt: sync.OnceFunc(func() { close(body.stop) })}
+	r := &runner{}
+	progress, err := r.readUploadProgress(t.Context(), feed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-body.started
+	done := make(chan struct{})
+	go func() { progress.close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("feed cancellation did not join its reader")
+	}
+	if body.concurrentClose.Load() || !body.closed.Load() {
+		t.Fatalf("reader close ownership: concurrent=%v closed=%v", body.concurrentClose.Load(), body.closed.Load())
 	}
 }

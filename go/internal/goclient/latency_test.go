@@ -36,7 +36,7 @@ func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestMeasureLatencyRegistersTimeoutsWithoutResponse(t *testing.T) {
 	defer cancel()
 
 	// timeoutAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestMeasureLatencyMixedTimeoutsComputeRatioAndRTT(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, start)
+	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
 	if err != nil {
 		t.Fatalf("measureLatency: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 	done := make(chan error, 1)
 	begin := time.Now()
 	go func() {
-		_, err := r.measureLatency(ctx, "latency", false, 5*time.Second, start)
+		_, err := r.measureLatency(ctx, "latency", false, 5*time.Second, testStageGate(start))
 		done <- err
 	}()
 
@@ -302,7 +302,7 @@ func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty
 	attachTestLatencyTarget(r, srv.URL)
 	start := make(chan struct{})
 	close(start)
-	stats, err := r.measureLatency(t.Context(), "latency", false, 80*time.Millisecond, start)
+	stats, err := r.measureLatency(t.Context(), "latency", false, 80*time.Millisecond, testStageGate(start))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 	attachTestLatencyTarget(r, srv.URL)
 	start := make(chan struct{})
 	close(start)
-	stats, err := r.measureLatency(t.Context(), "latency", false, 600*time.Millisecond, start)
+	stats, err := r.measureLatency(t.Context(), "latency", false, 600*time.Millisecond, testStageGate(start))
 	if err != nil {
 		t.Fatal(err)
 	}

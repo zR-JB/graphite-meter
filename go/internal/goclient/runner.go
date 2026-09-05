@@ -327,8 +327,6 @@ func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, 
 		target: target, latencyTarget: latencyTarget,
 		emit: emit,
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer func() { cancel(); r.warmups.Wait() }()
 	for _, stage := range cfg.Plan() {
 		if len(stage.Directions) == 0 {
 			err = r.runLatencyStage(ctx, stage.Name, false, stage.Duration)
@@ -352,7 +350,6 @@ type runner struct {
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)
 	idleRTT       time.Duration
-	warmups       sync.WaitGroup
 }
 
 type transferOutcome struct {
@@ -394,8 +391,12 @@ func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
 }
 
 func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bool, duration time.Duration) error {
-	start := r.warmupGate(ctx, stage)
-	stats, err := r.measureLatency(ctx, stage, underLoad, duration, start)
+	gate := r.newStageGate(ctx, stage, 1)
+	defer gate.stop()
+	stats, err := r.measureLatency(gate.ctx, stage, underLoad, duration, gate)
+	if cause := context.Cause(gate.ctx); cause != nil {
+		err = cause
+	}
 	if err == nil && !underLoad && stats.P50 > 0 {
 		r.idleRTT = stats.P50
 	}
@@ -406,60 +407,41 @@ func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bo
 	return err
 }
 
-func stageFailed(err error) bool {
-	return err != nil && !errors.Is(err, context.Canceled)
-}
-
 func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Direction, duration time.Duration) error {
-	start := r.warmupGate(ctx, stage)
-
-	stageCtx, cancelStage := context.WithCancel(ctx)
-	defer cancelStage()
+	participants := len(dirs)
+	if r.cfg.LoadedLatency {
+		participants++
+	}
+	gate := r.newStageGate(ctx, stage, participants)
+	defer gate.stop()
+	stageCtx := gate.ctx
 
 	var wg sync.WaitGroup
-	outcomes := make(chan transferOutcome, len(dirs)+1)
+	outcomes := make(chan transferOutcome, participants)
 	for _, dir := range dirs {
 		wg.Go(func() {
-			res, err := r.measureDirection(stageCtx, stage, dir, duration, start)
+			res, err := r.measureDirection(stageCtx, stage, dir, duration, gate)
 			outcomes <- transferOutcome{result: res, err: err}
 		})
 	}
 
 	if r.cfg.LoadedLatency {
 		wg.Go(func() {
-			stats, err := r.measureLatency(stageCtx, stage, true, duration, start)
+			stats, err := r.measureLatency(stageCtx, stage, true, duration, gate)
 			outcomes <- transferOutcome{result: Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: err}, err: err, latency: true}
 		})
 	}
 
-	remaining := len(dirs)
-	if r.cfg.LoadedLatency {
-		remaining++
-	}
-	collected := make([]transferOutcome, 0, remaining)
-	var stageErr error
-	done := ctx.Done()
-	for remaining > 0 {
-		select {
-		case outcome := <-outcomes:
-			if stageFailed(outcome.err) && stageErr == nil {
-				stageErr = outcome.err
-				cancelStage()
-			}
-			collected = append(collected, outcome)
-			remaining--
-		case <-done:
-			if stageErr == nil {
-				stageErr = ctx.Err()
-			}
-			cancelStage()
-			done = nil
+	collected := make([]transferOutcome, 0, participants)
+	for range participants {
+		outcome := <-outcomes
+		if outcome.err != nil {
+			gate.cancel(outcome.err)
 		}
+		collected = append(collected, outcome)
 	}
 	wg.Wait()
-	if stageErr == nil {
-		stageErr = ctx.Err()
-	}
+	stageErr := context.Cause(stageCtx)
 	for _, outcome := range collected {
 		if !outcome.latency {
 			continue
@@ -471,45 +453,78 @@ func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Dire
 			r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(outcome.result)})
 		}
 	}
-	if stageErr != nil {
-		return stageErr
-	}
 	for _, outcome := range collected {
-		if outcome.latency {
+		if outcome.latency || stageErr != nil && (outcome.result.TotalBytes == 0 || outcome.result.Elapsed <= 0) {
 			continue
 		}
+		outcome.result.Err = stageErr
 		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Direction: outcome.result.Direction, Result: new(outcome.result)})
 	}
-	return nil
+	return stageErr
 }
 
-func (r *runner) measureDirection(ctx context.Context, stage string, dir Direction, duration time.Duration, start <-chan struct{}) (Result, error) {
+func (r *runner) measureDirection(ctx context.Context, stage string, dir Direction, duration time.Duration, gate *stageGate) (Result, error) {
 	if dir == Down {
-		return r.measureDownload(ctx, stage, duration, start)
+		return r.measureDownload(ctx, stage, duration, gate)
 	}
-	return r.measureUpload(ctx, stage, duration, start)
+	return r.measureUpload(ctx, stage, duration, gate)
 }
 
-func (r *runner) warmupGate(ctx context.Context, stage string) <-chan struct{} {
-	start := make(chan struct{})
-	warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT)
-	if warmup <= 0 {
-		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
-		close(start)
-		return start
-	}
-	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageWarmup})
-	r.warmups.Go(func() {
-		timer := time.NewTimer(warmup)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-		case <-timer.C:
-			r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
-			close(start)
+// Stage transport setup is bounded separately from warmup and the measured window.
+const stageReadyTimeout = 10 * time.Second
+
+type stageGate struct {
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+	ready  chan struct{}
+	start  chan struct{}
+	done   chan struct{}
+}
+
+func (g *stageGate) stop() {
+	g.cancel(nil)
+	<-g.done
+}
+
+func (r *runner) newStageGate(ctx context.Context, stage string, participants int) *stageGate {
+	ctx, cancel := context.WithCancelCause(ctx)
+	g := &stageGate{ctx: ctx, cancel: cancel, ready: make(chan struct{}, participants), start: make(chan struct{}), done: make(chan struct{})}
+	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StagePreparing})
+	go func() {
+		defer close(g.done)
+		prepareTimer := time.NewTimer(stageReadyTimeout)
+		defer prepareTimer.Stop()
+		for range participants {
+			select {
+			case <-ctx.Done():
+				return
+			case <-prepareTimer.C:
+				cancel(fmt.Errorf("%s transports were not ready within %v", stage, stageReadyTimeout))
+				return
+			case <-g.ready:
+			}
 		}
-	})
-	return start
+		prepareTimer.Stop()
+		if ctx.Err() != nil {
+			return
+		}
+		if warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT); warmup > 0 {
+			r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageWarmup})
+			timer := time.NewTimer(warmup)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
+		close(g.start)
+	}()
+	return g
 }
 
 func (r *runner) endpoint(path string) (string, error) {

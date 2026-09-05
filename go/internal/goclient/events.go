@@ -27,6 +27,7 @@ const (
 type StagePhase string
 
 const (
+	StagePreparing StagePhase = "prepare"
 	StageWarmup    StagePhase = "warmup"
 	StageMeasuring StagePhase = "measure"
 	StageFinished  StagePhase = "finished"

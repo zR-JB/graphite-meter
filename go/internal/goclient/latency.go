@@ -87,7 +87,7 @@ func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus
 	}
 }
 
-func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, start <-chan struct{}) (LatencyStats, error) {
+func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, gate *stageGate) (result LatencyStats, failure error) {
 	if r.latencyTarget == nil {
 		return LatencyStats{}, fmt.Errorf("no latency target selected")
 	}
@@ -114,6 +114,11 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 		cancel()
 		readers.Wait()
 		conn.Close()
+	}()
+	defer func() {
+		if failure != nil {
+			gate.cancel(failure)
+		}
 	}()
 	finish := func(failure error) (LatencyStats, error) {
 		mu.Lock()
@@ -207,6 +212,8 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err := send(); err != nil {
 		return finish(err)
 	}
+	gate.ready <- struct{}{}
+	start := gate.start
 	for {
 		select {
 		case <-start:

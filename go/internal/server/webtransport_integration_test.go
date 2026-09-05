@@ -886,7 +886,8 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	var mu sync.Mutex
-	closed, downloadResults := false, 0
+	closed := false
+	var downloadResults []goclient.Result
 	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -899,7 +900,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 			}
 		case goclient.EventResult:
 			if ev.Stage == "download" {
-				downloadResults++
+				downloadResults = append(downloadResults, *ev.Result)
 			}
 		}
 	})
@@ -916,8 +917,12 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("stage err = %q, want it to name the unreplaced session (%q)", err, want)
 	}
-	if downloadResults != 0 {
-		t.Fatalf("the failed download emitted %d result events; a stage that could not measure must publish no number at all", downloadResults)
+	if len(downloadResults) != 1 {
+		t.Fatalf("failed download emitted %d results, want one incomplete receiver window", len(downloadResults))
+	}
+	result := downloadResults[0]
+	if result.Err != err || result.TotalBytes == 0 || result.MeanBps <= 0 || result.Elapsed <= 0 || result.Elapsed >= clientCfg.DownloadDuration || result.ServerAuth {
+		t.Fatalf("failed download must retain client receiver bytes and its original error: %+v; run error: %v", result, err)
 	}
 }
 
