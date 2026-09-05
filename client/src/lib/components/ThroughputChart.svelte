@@ -55,7 +55,7 @@
         `upload ${fmtSpeed(store.toUnit(hover.upBytesPerSec))} ${store.unitLabel}`,
       );
     if (hover.rtt != null)
-      details.push(`bucket median latency ${fmtMs(hover.rtt)} milliseconds`);
+      details.push(`RTT median ${fmtMs(hover.rtt)} milliseconds`);
     if (hover.pingCount > 0)
       details.push(
         `probe timeouts ${hover.lossCount} of ${hover.pingCount} resolved probes in bucket`,
@@ -388,7 +388,7 @@
         {/if}
         {#if chartPresentation.latencyEnabled}
           <div class="chip-row">
-            <span>bucket median</span><b
+            <span>RTT median</span><b
               >{hover.rtt == null ? "—" : `${fmtMs(hover.rtt)} ms`}</b
             >
           </div>

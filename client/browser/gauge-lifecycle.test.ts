@@ -18,7 +18,9 @@ async function expectCoherentGauge(page: Page): Promise<void> {
       gaugeStage(page).evaluate((stage: HTMLElement) => {
         const dial = stage.querySelector(".gauge-dial .dial-art");
         if (!(dial instanceof SVGSVGElement)) return false;
-        const stageBox = stage.getBoundingClientRect();
+        const stageBox = stage
+          .querySelector(".gauge-face")!
+          .getBoundingClientRect();
         const box = dial.getBoundingClientRect();
         const viewBox = dial.viewBox.baseVal;
         const painted = Array.from(dial.querySelectorAll("path")).filter(

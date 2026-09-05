@@ -826,6 +826,11 @@
     /* Keep stage scrolling from chaining out to the document (anchored bars). */
     overscroll-behavior: contain;
   }
+  @media (min-height: 1000px) {
+    .measurement-stage {
+      padding-top: var(--space-5);
+    }
+  }
   .history-stage {
     overflow: hidden;
   }
@@ -835,11 +840,23 @@
     flex: 0 0 auto;
     min-height: 0;
   }
-  /* The plot keeps a 140px readable floor; its single border needs two more pixels. */
+  .stage > :global(.gauge-panel),
   .stage > :global(.chart) {
-    flex: 1 1 142px;
-    min-height: 142px;
-    max-height: 340px;
+    width: 100%;
+    max-width: 1180px;
+    align-self: center;
+  }
+  @media (min-width: 1800px) and (min-height: 1000px) {
+    .stage > :global(.gauge-panel),
+    .stage > :global(.chart) {
+      max-width: 1360px;
+    }
+  }
+  /* A compact timeline supports the two primary instruments without taking over. */
+  .stage > :global(.chart) {
+    flex: 0 0 clamp(160px, 20svh, 200px);
+    min-height: 160px;
+    max-height: 200px;
   }
   .status {
     grid-area: status;
