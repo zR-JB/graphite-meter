@@ -1,5 +1,5 @@
 import type { RunResult } from "../runner/contract";
-import { bidirectionalResultPresentation } from "./bidirectionalResult";
+import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
 
 export type ResultArcPhase = "download" | "upload" | "bidirectional";
 
@@ -115,20 +115,18 @@ export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
     const value = result[phase];
     if (value) add(phase, label, value.reportedBytesPerSec);
   }
-  const bidi = bidirectionalResultPresentation(result.bidirectional);
+  const bidi = bidirectionalResultPresentation(
+    result.bidirectional?.down?.reportedBytesPerSec,
+    result.bidirectional?.up?.reportedBytesPerSec,
+  );
   if (bidi.combinedBytesPerSec != null) {
     add("bidirectional", "Bidirectional", bidi.combinedBytesPerSec);
   } else if (bidi.survivingDirection) {
     const value = bidi[bidi.survivingDirection];
-    if (value) {
+    if (value != null) {
       const direction =
         bidi.survivingDirection === "down" ? "download" : "upload";
-      add(
-        "bidirectional",
-        `Bidirectional ${direction}`,
-        value.reportedBytesPerSec,
-        true,
-      );
+      add("bidirectional", `Bidirectional ${direction}`, value, true);
     }
   }
   return sortResultGaugeArcs(arcs);
