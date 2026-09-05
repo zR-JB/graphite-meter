@@ -97,7 +97,6 @@ function safeParse(raw: string | null): unknown {
 }
 
 function coercePingCadence(value: unknown, fallback: PingCadence): PingCadence {
-  if (value === "instant") return "reply-driven";
   return oneOf(value, ["reply-driven", "fast", "medium", "slow"])
     ? value
     : fallback;
@@ -112,10 +111,6 @@ function oneOf<T extends string>(
   values: readonly T[],
 ): value is T {
   return typeof value === "string" && values.includes(value as T);
-}
-
-function firstString(...values: unknown[]): string | undefined {
-  return values.find((value): value is string => typeof value === "string");
 }
 
 export function loadPersisted(): PersistedState {
@@ -159,38 +154,6 @@ export function loadPersisted(): PersistedState {
     parsedConfig?.loadedPingCadence,
     defaults.config.loadedPingCadence,
   );
-  const legacyPingConcurrency = parsedConfig?.pingConcurrency;
-  if (legacyPingConcurrency !== undefined)
-    merged.config.pingCadence = coercePingCadence(
-      legacyPingConcurrency,
-      merged.config.pingCadence,
-    );
-  const legacyTransports = object(parsedConfig?.transports);
-  const throughputTarget = firstString(
-    legacyTransports?.throughputTarget,
-    legacyTransports?.transfer,
-  );
-  const latencyTarget = firstString(
-    legacyTransports?.latencyTarget,
-    legacyTransports?.latency,
-  );
-  if (throughputTarget !== undefined)
-    merged.config.transports.throughputTarget = throughputTarget;
-  if (latencyTarget !== undefined)
-    merged.config.transports.latencyTarget = latencyTarget;
-  if (typeof parsedConfig?.parallelStreams === "number")
-    merged.config.transferStreams.count = normalizeStreamCount(
-      parsedConfig.parallelStreams,
-    );
-  if (
-    merged.config.transports.throughputTarget === "current" ||
-    /^(http[123]|http1-(clear|tls))$/.test(
-      merged.config.transports.throughputTarget,
-    )
-  )
-    merged.config.transports.throughputTarget = "auto";
-  if (/^ws-http1-(clear|tls)$/.test(merged.config.transports.latencyTarget))
-    merged.config.transports.latencyTarget = "auto";
   if (!oneOf(merged.config.transferStreams.mode, ["auto", "forced"]))
     merged.config.transferStreams.mode = "auto";
   merged.config.transferStreams.count = normalizeStreamCount(
