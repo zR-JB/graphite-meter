@@ -21,14 +21,22 @@ const (
 	EventThroughput
 	EventLatency
 	EventResult
-	EventComplete
-	EventError
+	EventDone
+)
+
+type StagePhase string
+
+const (
+	StageWarmup    StagePhase = "warmup"
+	StageMeasuring StagePhase = "measure"
+	StageFinished  StagePhase = "finished"
 )
 
 type Event struct {
 	Kind                                  EventKind
 	At                                    time.Time
 	Stage                                 string
+	Phase                                 StagePhase
 	Direction                             Direction
 	Message                               string
 	ThroughputTarget, LatencyTarget       string

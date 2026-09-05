@@ -32,15 +32,9 @@ type stageProgress struct {
 // plannedStages is the enabled stages in the order the engine runs them.
 func plannedStages(cfg goclient.Config) []stageProgress {
 	var stages []stageProgress
-	add := func(on bool, name string, d time.Duration) {
-		if on {
-			stages = append(stages, stageProgress{name: name, duration: d})
-		}
+	for _, stage := range cfg.Plan() {
+		stages = append(stages, stageProgress{name: stage.Name, duration: stage.Duration})
 	}
-	add(cfg.Stages.Latency, "latency", cfg.LatencyDuration)
-	add(cfg.Stages.Download, "download", cfg.DownloadDuration)
-	add(cfg.Stages.Upload, "upload", cfg.UploadDuration)
-	add(cfg.Stages.Bidirectional, "bidirectional", cfg.BidirectionalDuration)
 	return stages
 }
 
@@ -130,12 +124,6 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 				return eventsMsg{seq: seq, events: batch}
 			}
 		}
-	}
-}
-
-func waitDone(seq int, done <-chan error) tea.Cmd {
-	return func() tea.Msg {
-		return doneMsg{seq: seq, err: <-done}
 	}
 }
 
@@ -239,23 +227,23 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	}
 	m.now = time.Now()
 	for _, event := range msg.events {
+		if event.Kind == goclient.EventDone {
+			return m.finishRun(event.Err)
+		}
 		m.apply(event)
 	}
-	if m.mode == modeRun && m.err == nil {
+	if m.mode == modeRun {
 		return m, waitEvents(m.runSeq, m.events)
 	}
 	return m, nil
 }
 
-func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.runSeq {
-		return m, nil
-	}
+func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
-	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
+	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](err); ok {
 		m.renewPreparation()
 		m.complete = true
 		m.mode = modeConfigure
@@ -266,11 +254,12 @@ func (m model) handleDone(msg doneMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Authorization expired. Preparing the approval page…"
 		return m, tea.Batch(beginAuthorization(m.prepareSeq, m.cfg, authErr.URL), m.spin.Tick)
 	}
-	if msg.err != nil {
-		if errors.Is(msg.err, context.Canceled) {
+	m.status = "complete"
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
 			m.status = "canceled"
 		} else {
-			m.err = msg.err
+			m.err = err
 			m.status = "error"
 		}
 	}
@@ -289,38 +278,32 @@ func (m model) startRun() (model, tea.Cmd) {
 		return m, nil
 	}
 	m.cancelPreparation()
-	if m.cancel != nil {
-		m.cancel()
+	if m.abandon != nil {
+		m.abandon()
 	}
 
 	events := make(chan goclient.Event, 256)
-	done := make(chan error, 1)
-	ctx, cancel := context.WithCancel(m.lifetime)
+	delivery, abandon := context.WithCancel(m.lifetime)
+	ctx, cancel := context.WithCancel(delivery)
 	cfg := m.cfg
 	prepared := m.prepared
 	go func() {
 		defer cancel()
-		run := goclient.Run
-		if prepared.FreshFor(cfg) {
-			run = func(ctx context.Context, cfg goclient.Config, emit func(goclient.Event)) error {
-				return goclient.RunPrepared(ctx, cfg, prepared, emit)
+		defer abandon()
+		defer close(events)
+		_ = goclient.RunPrepared(ctx, cfg, prepared, func(e goclient.Event) {
+			if e.Kind == goclient.EventDone {
+				e.Err = goclient.ClassifyAuthFailure(ctx, cfg, e.Err)
 			}
-		}
-		runErr := run(ctx, cfg, func(e goclient.Event) {
-			select {
-			case events <- e:
-			case <-ctx.Done():
-			}
+			sendRunEvent(ctx, delivery, events, e)
 		})
-		done <- goclient.ClassifyAuthFailure(ctx, cfg, runErr)
-		close(events)
 	}()
 
 	m.mode = modeRun
 	m.runSeq++
 	m.events = events
-	m.done = done
 	m.cancel = cancel
+	m.abandon = abandon
 	m.stage = ""
 	m.status = "connecting"
 	m.server = ""
@@ -339,7 +322,18 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.latency = goclient.LatencySample{}
 	m.stages = plannedStages(cfg)
 	m.notice = "Run started. Press esc to cancel."
-	return m, tea.Batch(waitEvents(m.runSeq, events), waitDone(m.runSeq, done), m.spin.Tick)
+	return m, tea.Batch(waitEvents(m.runSeq, events), m.spin.Tick)
+}
+
+func sendRunEvent(measurement, delivery context.Context, events chan<- goclient.Event, event goclient.Event) {
+	// User cancellation preserves final results. Only replacement or application exit abandons them.
+	if event.Kind == goclient.EventResult || event.Kind == goclient.EventDone {
+		measurement = delivery
+	}
+	select {
+	case events <- event:
+	case <-measurement.Done():
+	}
 }
 
 func (m *model) apply(e goclient.Event) {
@@ -360,7 +354,7 @@ func (m *model) apply(e goclient.Event) {
 		}
 	case goclient.EventStage:
 		m.stage = e.Stage
-		m.status = e.Message
+		m.status = string(e.Phase)
 		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
@@ -375,41 +369,25 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventResult:
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)
-			if e.Result.Err == nil {
-				m.finishStage(e.Result.Stage)
-			}
 		}
-	case goclient.EventComplete:
-		m.status = "complete"
-		m.complete = true
-	case goclient.EventError:
-		m.err = e.Err
-		m.status = "error"
-		m.stopStages()
 	}
 }
 
 func (m *model) enterStage(e goclient.Event) {
 	var state stageState
-	switch e.Message {
-	case "warmup":
+	switch e.Phase {
+	case goclient.StageWarmup:
 		state = stageWarmup
-	case "measure":
+	case goclient.StageMeasuring:
 		state = stageMeasuring
+	case goclient.StageFinished:
+		state = stageDone
 	default:
 		return
 	}
 	for i := range m.stages {
 		if m.stages[i].name == e.Stage {
 			m.stages[i].state, m.stages[i].since = state, e.At
-		}
-	}
-}
-
-func (m *model) finishStage(stage string) {
-	for i := range m.stages {
-		if m.stages[i].name == stage && m.stages[i].state != stagePending {
-			m.stages[i].state = stageDone
 		}
 	}
 }

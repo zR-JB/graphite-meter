@@ -14,6 +14,27 @@ type StageSet struct {
 	Bidirectional bool
 }
 
+type StagePlan struct {
+	Name       string
+	Duration   time.Duration
+	Directions []Direction
+}
+
+// Plan lists enabled stages in execution order, before transport preparation.
+func (c Config) Plan() []StagePlan {
+	var plan []StagePlan
+	add := func(enabled bool, name string, duration time.Duration, directions ...Direction) {
+		if enabled {
+			plan = append(plan, StagePlan{name, duration, directions})
+		}
+	}
+	add(c.Stages.Latency, "latency", c.LatencyDuration)
+	add(c.Stages.Download, "download", c.DownloadDuration, Down)
+	add(c.Stages.Upload, "upload", c.UploadDuration, Up)
+	add(c.Stages.Bidirectional, "bidirectional", c.BidirectionalDuration, Down, Up)
+	return plan
+}
+
 type TransferStreamPolicy struct {
 	AutomaticMax int
 	Forced       int

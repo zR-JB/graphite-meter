@@ -19,15 +19,16 @@
   // A completed result, chart, and endpoint description must identify the
   // same run. Configuration remains editable after completion, so retain its
   // frozen connection evidence until the next run begins.
-  const connections = $derived(store.activeConnections ?? store.connections);
-  const server = $derived(
-    store.transportDiscovery?.server ?? store.infra?.server,
+  const discovery = $derived(
+    store.activePaths?.discovery ?? store.transportDiscovery,
   );
+  const connections = $derived(store.runConnections);
+  const server = $derived(discovery?.server);
   const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
   const pathMode = $derived(
-    store.isRunning ? "running" : store.activeConnections ? "result" : "live",
+    store.isRunning ? "running" : store.activePaths ? "result" : "live",
   );
 
   function clientEvidence(role: PathRole) {
@@ -57,10 +58,7 @@
   }
 
   function capabilities(role: PathRole) {
-    const advertised = advertisedServerCapabilities(
-      store.transportDiscovery,
-      role,
-    );
+    const advertised = advertisedServerCapabilities(discovery, role);
     if (!advertised) return "Checking server";
     const values = advertised.transports.map((value) =>
       capability(value, role),
@@ -89,17 +87,22 @@
     return `${carrier} over ${over}`;
   });
   const serverInstance = $derived.by(() => {
-    const value = store.transportDiscovery?.generation;
+    const value = discovery?.generation;
     if (!value) return "—";
     return `${value.slice(0, 8)}…`;
   });
-  const serverLoad = $derived(serverLoadSummary(store.infra?.serverLoad));
-  const httpPaths = $derived(
-    advertisedServerHttpPaths(store.transportDiscovery),
+  const serverLoad = $derived(
+    serverLoadSummary(
+      (
+        store.activePaths?.throughput ??
+        store.connectionValidation.throughput.path
+      )?.probe.load,
+    ),
   );
+  const httpPaths = $derived(advertisedServerHttpPaths(discovery));
   let copyError = $state(false);
 
-  // Every row here reads the same presentation the path cards do. `store.infra`
+  // Every row here reads the same presentation the path cards do. verified path evidence
   // is the last probe's evidence, which outlives the selection that produced it
   // and is never cleared: reading it directly makes the drawer contradict the
   // card four lines above whenever a role is failed, checking, or moved.
@@ -125,7 +128,7 @@
       {
         client: BUILD,
         server,
-        generation: store.transportDiscovery?.generation,
+        generation: discovery?.generation,
         throughput: connections.throughput,
         latency: connections.latency,
         preTestPingMs: connections.latency.preTestPingMs,
@@ -242,13 +245,13 @@
       <dl>
         <div>
           <dt>Server instance</dt>
-          <dd title={store.transportDiscovery?.generation ?? undefined}>
+          <dd title={discovery?.generation ?? undefined}>
             {serverInstance}
           </dd>
         </div>
         <div>
           <dt>Server version</dt>
-          <dd>{store.transportDiscovery?.engineVersion ?? "—"}</dd>
+          <dd>{discovery?.engineVersion ?? "—"}</dd>
         </div>
         <div>
           <dt>Runner</dt>

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildHistoryRecord, isHistoryRecord } from "./types";
 import type { RunResult } from "../runner/contract";
+import { testPreparedPaths } from "../runner/test-helpers.test";
 
 const throughput = {
   meanBytesPerSec: 100,
@@ -61,30 +62,31 @@ const result: RunResult = {
   durationMs: 80,
 };
 test("builds an immutable sanitized partial snapshot", () => {
+  const paths = testPreparedPaths();
+  paths.discovery.server = { name: "edge", location: "EU" };
+  paths.discovery.engineVersion = "e";
+  paths.throughput.probe.clientIp = "192.0.2.5";
+  paths.throughput.probe.clientIpVersion = 4;
+  paths.throughput.probe.protocolNegotiated = "h2";
+  paths.throughput.target.id = "https://secret.invalid/raw";
+  paths.latency!.probe.protocolNegotiated = "http/1.1";
+  // The persistence boundary rejects a runtime-invalid latency mechanism.
+  (paths.latency!.target as { transport: string }).transport =
+    "webtransport-datagram";
   const record = buildHistoryRecord(
     result,
     {
-      infra: {
-        clientIp: "192.0.2.5",
-        clientIpVersion: 4,
-        clientIpSource: "socket",
-        server: { name: "edge", location: "EU" },
-        preTestPingMs: 4,
-        engineVersion: "e",
-        discoveryGeneration: "g",
-        protocolNegotiated: "h2",
-        selectedThroughputTarget: "https://secret.invalid/raw",
-        selectedThroughputTransport: "webtransport",
-        selectedLatencyTransport: "webtransport-datagram",
-        latencyProtocolNegotiated: "h1",
-      },
+      paths,
       clientBuild: "b",
-      engineVersion: "e",
       wireDownloadBytesPerSec: 101,
       wireBidirectionalBytesPerSec: 102,
     },
     200,
   );
+  paths.discovery.server.name = "changed after completion";
+  paths.throughput.probe.protocolNegotiated = "h3";
+  expect(record.server).toEqual({ name: "edge", location: "EU", engine: "e" });
+  expect(record.transport.throughput.protocol).toBe("h2");
   expect(record.completedAt).toBe(200);
   expect(record.stages.download.result?.peakBytesPerSec).toBe(120);
   expect(record.stages.bidirectional.status).toBe("partial");
@@ -105,7 +107,7 @@ test("builds an immutable sanitized partial snapshot", () => {
 test("V1 records remain readable while V2 fields cannot be mislabeled as legacy", () => {
   const record = buildHistoryRecord(
     result,
-    { infra: null, clientBuild: "b", engineVersion: "e" },
+    { paths: null, clientBuild: "b" },
     200,
   );
   expect(record.schemaVersion).toBe(2);
@@ -139,7 +141,7 @@ test("V1 records remain readable while V2 fields cannot be mislabeled as legacy"
 test("rejects malformed nested records before they reach rendering", () => {
   const valid = buildHistoryRecord(
     result,
-    { infra: null, clientBuild: "b", engineVersion: "e" },
+    { paths: null, clientBuild: "b" },
     200,
   );
   const cases: unknown[] = [
@@ -222,9 +224,8 @@ test("authoritative scalar counts are not rejected by an unrelated ceiling", () 
       },
     },
     {
-      infra: null,
+      paths: null,
       clientBuild: "b",
-      engineVersion: "e",
     },
     200,
   );
@@ -236,24 +237,19 @@ test("authoritative scalar counts are not rejected by an unrelated ceiling", () 
 
 test("record construction bounds persisted display text without losing the run", () => {
   const long = "x".repeat(300);
+  const paths = testPreparedPaths();
+  paths.discovery.server = { name: long, location: long };
+  paths.discovery.engineVersion = long;
+  (
+    paths.throughput.probe as { protocolNegotiated: string }
+  ).protocolNegotiated = long;
+  (paths.latency!.probe as { protocolNegotiated: string }).protocolNegotiated =
+    "https://secret.invalid/raw";
   const record = buildHistoryRecord(
     result,
     {
-      infra: {
-        clientIp: "192.0.2.5",
-        clientIpVersion: 4,
-        clientIpSource: "socket",
-        server: { name: long, location: long },
-        preTestPingMs: 4,
-        engineVersion: long,
-        discoveryGeneration: "g",
-        protocolNegotiated: long,
-        selectedThroughputTransport: "fetch-stream",
-        selectedLatencyTransport: "websocket",
-        latencyProtocolNegotiated: "https://secret.invalid/raw",
-      },
+      paths,
       clientBuild: long,
-      engineVersion: long,
     },
     200,
   );
@@ -282,7 +278,7 @@ test("failure snapshots are bounded by the four authoritative run stages", () =>
         },
       },
     },
-    { infra: null, clientBuild: "b", engineVersion: "e" },
+    { paths: null, clientBuild: "b" },
     200,
   );
   expect(record.failures).toHaveLength(4);
@@ -292,7 +288,7 @@ test("failure snapshots are bounded by the four authoritative run stages", () =>
 test("rejects non-date epochs while retaining valid date bounds", () => {
   const valid = buildHistoryRecord(
     result,
-    { infra: null, clientBuild: "b", engineVersion: "e" },
+    { paths: null, clientBuild: "b" },
     200,
   );
   const maxDate = 8_640_000_000_000_000;
@@ -317,7 +313,7 @@ test("V2 persists partial accounting and exact known outcome counts", () => {
   };
   const saved = buildHistoryRecord(
     partial,
-    { infra: null, clientBuild: "b", engineVersion: "e" },
+    { paths: null, clientBuild: "b" },
     200,
   );
   expect(saved.stages.latency.lanes.download).toMatchObject({

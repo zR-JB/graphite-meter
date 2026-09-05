@@ -10,8 +10,6 @@ import type {
   RunnerEvent,
   PhaseActivity,
   Phase,
-  InfraInfo,
-  EngineInfo,
   ThroughputResult,
 } from "./contract";
 import { latencyPresentationBucketMs } from "./latencyBuckets";
@@ -47,18 +45,6 @@ function advance(ms: number): void {
 type BackendOptions = {
   deferred?: boolean;
   flush?: "sync" | "async";
-  probe?: () => Promise<InfraInfo>;
-  probeError?: Error;
-};
-const fakeInfra: InfraInfo = {
-  clientIp: "127.0.0.1",
-  clientIpVersion: 4,
-  clientIpSource: "socket",
-  server: { name: "fake" },
-  preTestPingMs: 0,
-  engineVersion: "test",
-  discoveryGeneration: "test",
-  protocolNegotiated: "fake",
 };
 class FakeBackend implements RunnerBackend {
   constructor(private readonly options: BackendOptions = {}) {}
@@ -67,23 +53,8 @@ class FakeBackend implements RunnerBackend {
   flush?: () => void;
   calls: string[] = [];
   recoveries: RecoveryRequest[] = [];
-  probes = 0;
   attach(host: CoreHost): void {
     this.host = host;
-  }
-  probe(): Promise<InfraInfo> {
-    this.probes++;
-    if (this.options.probeError) return Promise.reject(this.options.probeError);
-    if (this.options.probe) return this.options.probe();
-    return Promise.resolve(fakeInfra);
-  }
-  describe(): EngineInfo {
-    return {
-      name: "fake",
-      version: "0",
-      latencyTransports: [],
-      throughputTransports: [],
-    };
   }
   onRunStart(): void {
     this.calls.push("runStart");
@@ -231,7 +202,7 @@ async function startCore(
 ): Promise<StartedCore> {
   const run = observeCore(backend),
     cfg = makeConfig(overrides);
-  await run.core.start(cfg);
+  run.core.start(cfg, 0);
   return { ...run, cfg };
 }
 async function startDownload(
@@ -500,38 +471,23 @@ test("warmup->measure seam: same stage, no onStageEnd between begin and measure"
   ]);
 });
 
-test("target verification is a visible phase and abort prevents a late run start", async () => {
-  let resolveProbe!: (info: InfraInfo) => void;
-  const backend = new FakeBackend({
-    probe: () => new Promise((resolve) => (resolveProbe = resolve)),
-  });
-  const { core, events } = observeCore(backend);
-  const start = core.start(makeConfig());
-  expect(core.phase).toBe("connecting");
-  expect(phaseTransitions(events)).toEqual(["connecting"]);
-  core.abort();
-  resolveProbe(await new FakeBackend().probe());
-  await start;
-  expect(core.phase).toBe("aborted");
-  expect(backend.calls).toEqual(["abort"]);
-});
-
-test("start without a prepared selection probes for one itself", async () => {
-  const backend = new FakeBackend();
-  const { core, events } = observeCore(backend);
-  await core.start(makeConfig());
-  expect(backend.probes).toBe(1);
-  expect(events.filter((e) => e.type === "infra")).toHaveLength(1);
-});
-
-test("a prepared selection starts without probing again", async () => {
-  const backend = new FakeBackend({
-    probeError: new Error("unexpected probe"),
-  });
-  const prepared = await new FakeBackend().probe();
+test("aborting stage preparation prevents its late continuation from measuring", async () => {
+  const backend = new FakeBackend({ deferred: true });
   const { core } = observeCore(backend);
-  await core.start(makeConfig(), prepared);
-  expect(backend.calls.slice(0, 2)).toEqual(["runStart", "begin:download"]);
+  core.start(makeConfig(), 0);
+  core.abort();
+  backend.prepared!();
+  await Promise.resolve();
+  expect(core.phase).toBe("aborted");
+  expect(backend.calls).toEqual(["runStart", "begin:download", "abort"]);
+});
+
+test("prepared latency adjusts warmup without moving connection ownership into the core", () => {
+  const { core, backend } = observeCore();
+  core.start(makeConfig({ duration: { warmupMs: 100, downloadMs: 100 } }), 200);
+  expect(core.phase).toBe("warmup");
+  expect(core.config?.duration.warmupMs).toBeGreaterThan(100);
+  expect(backend.calls).toEqual(["runStart", "begin:download"]);
 });
 
 test("asynchronous stage preparation cannot consume the warmup budget", async () => {
@@ -539,6 +495,7 @@ test("asynchronous stage preparation cannot consume the warmup budget", async ()
   const { core, events } = observeCore(backend);
   await core.start(
     makeConfig({ duration: { warmupMs: 100, downloadMs: 100 } }),
+    0,
   );
   advance(1000);
   expect(core.phase).toBe("warmup");
@@ -560,7 +517,7 @@ test("asynchronous stage preparation cannot consume the warmup budget", async ()
 test("asynchronous preparation starts the measured silence budget", async () => {
   const backend = new FakeBackend({ deferred: true });
   const { core, events } = observeCore(backend);
-  await core.start(makeConfig({ duration: { downloadMs: 10_000 } }));
+  core.start(makeConfig({ duration: { downloadMs: 10_000 } }), 0);
   advance(2_000);
   backend.prepared!();
   await Promise.resolve();
@@ -931,7 +888,7 @@ test("default latency policy can confirm early at the fixed slow cadence", async
     },
   });
   cfg.pingCadence = "slow";
-  await core.start(cfg);
+  core.start(cfg, 0);
   advance(10);
   core.ingestLatency({ rttMs: 20, lost: false, observedAtMs: fakeNow });
   for (let i = 1; i < 5; i++) {
@@ -1184,17 +1141,4 @@ test("presentation derives from receiver bytes and intervals while retaining exa
     );
     expect(result.download!.totalBytes).toBe(N * DELTA);
   });
-});
-
-test("setBackgroundActivity reaches the backend so a hidden tab can park", () => {
-  const { backend, core } = observeCore();
-  core.setBackgroundActivity(false);
-  core.setBackgroundActivity(true);
-  expect(backend.calls).toEqual(["background:false", "background:true"]);
-});
-
-test("setBackgroundActivity is optional on a backend that has no keepalive", () => {
-  const { backend, core } = observeCore();
-  delete (backend as Partial<FakeBackend>).setBackgroundActivity;
-  expect(() => core.setBackgroundActivity(false)).not.toThrow();
 });

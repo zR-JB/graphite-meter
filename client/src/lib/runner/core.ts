@@ -8,9 +8,6 @@ import type {
   RunnerError,
   Phase,
   PhaseTransition,
-  InfraInfo,
-  ConnectionRole,
-  EngineInfo,
   ThroughputResult,
   LatencyResult,
   StallInfo,
@@ -110,13 +107,6 @@ export interface CoreHost {
 /* Connections belong to the STAGE, so one connection set spans its warmup and its measured window. */
 export interface RunnerBackend {
   attach(host: CoreHost): void;
-  // Probe may emit negative-timestamp pre-run latency events through host.emit.
-  probe(
-    config: RunnerConfig,
-    signal?: AbortSignal,
-    role?: ConnectionRole,
-  ): Promise<InfraInfo>;
-  describe(): EngineInfo;
   onRunStart(config: RunnerConfig): void;
   // Open and PRIME every connection the activity names.
   onStageBegin(activity: PhaseActivity): void | Promise<void>;
@@ -135,9 +125,7 @@ export interface RunnerBackend {
   onComplete(): void;
   onAbort(): void;
   dispose?(): void;
-  setBackgroundActivity?(enabled: boolean): void;
   onReconfigure?(stages: RunnerConfig["stages"]): void;
-  idleHintMs?(): number;
 }
 
 export class RunnerCore implements NetworkRunner, CoreHost {
@@ -148,8 +136,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   #tickTimer: ReturnType<typeof setTimeout> | null = null;
   #running = false;
-  #prepareAbort: AbortController | null = null;
-  #runGeneration = 0;
   #t0 = 0; // monotonic clock reading at run start
   #segments: Segment[] = [];
   #stagePreparing = false;
@@ -225,25 +211,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     for (const h of this.#handlers) h(e);
   }
 
-  probe(
-    config: RunnerConfig,
-    signal?: AbortSignal,
-    role?: ConnectionRole,
-  ): Promise<InfraInfo> {
-    return this.#backend.probe(config, signal, role);
-  }
-
-  describe(): EngineInfo {
-    return this.#backend.describe();
-  }
-
-  /* ================= START ================= */
-  /* `prepared` is the InfraInfo an earlier probe() resolved. */
-  async start(config: RunnerConfig, prepared?: InfraInfo): Promise<void> {
-    if (this.#running || this.#prepareAbort) this.abort();
-    const generation = ++this.#runGeneration;
-    const prepareAbort = new AbortController();
-    this.#prepareAbort = prepareAbort;
+  /* Connection selection and authentication have completed before a run starts. */
+  start(config: RunnerConfig, preTestPingMs: number): void {
+    if (this.#running) this.abort();
     this.#resetRunState();
 
     const from = this.#phase;
@@ -253,29 +223,11 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       transition: { from, to: "connecting", stage: null, t: 0 },
     });
 
-    let info = prepared;
-    if (!info) {
-      try {
-        info = await this.probe(config, prepareAbort.signal);
-      } catch (cause) {
-        if (generation !== this.#runGeneration || prepareAbort.signal.aborted)
-          return;
-        this.#prepareAbort = null;
-        throw cause;
-      }
-    }
-    if (generation !== this.#runGeneration) return;
-    this.#prepareAbort = null;
-    this.emit({ type: "infra", info });
-
     config = {
       ...config,
       duration: {
         ...config.duration,
-        warmupMs: adaptiveWarmupMs(
-          config.duration.warmupMs,
-          info.preTestPingMs,
-        ),
+        warmupMs: adaptiveWarmupMs(config.duration.warmupMs, preTestPingMs),
       },
     };
     this.#cfg = config;
@@ -330,10 +282,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= ABORT ================= */
   abort(): void {
-    if (!this.#running && !this.#prepareAbort) return;
-    this.#runGeneration++;
-    this.#prepareAbort?.abort();
-    this.#prepareAbort = null;
+    if (!this.#running) return;
     this.#recoveryAbort?.abort();
     this.#recoveryAbort = null;
     if (this.#tickTimer) clearTimeout(this.#tickTimer);
@@ -359,10 +308,6 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   dispose(): void {
     this.#backend.dispose?.();
     this.abort();
-  }
-
-  setBackgroundActivity(enabled: boolean): void {
-    this.#backend.setBackgroundActivity?.(enabled);
   }
 
   /* ================= LIVE RECONFIGURE ================= */

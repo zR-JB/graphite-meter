@@ -24,10 +24,6 @@ type eventsMsg struct {
 	seq    int
 	events []goclient.Event
 }
-type doneMsg struct {
-	seq int
-	err error
-}
 type preparationMsg struct {
 	seq        int
 	connection *goclient.PreparedConnection
@@ -196,10 +192,10 @@ type model struct {
 	now          time.Time
 
 	// runSeq stamps every message a run emits; a superseded run's messages carry an older sequence and are dropped.
-	runSeq int
-	events <-chan goclient.Event
-	done   <-chan error
-	cancel context.CancelFunc
+	runSeq  int
+	events  <-chan goclient.Event
+	cancel  context.CancelFunc
+	abandon context.CancelFunc
 
 	displayRates map[goclient.Direction]float64
 	lostStreak   int
@@ -289,8 +285,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAuthToken(msg)
 	case eventsMsg:
 		return m.handleEvents(msg)
-	case doneMsg:
-		return m.handleDone(msg)
 	default:
 		// The clipboard read behind ctrl+v answers with a message only the text input understands.
 		if m.edit.kind != editNone {
@@ -491,21 +485,16 @@ func (m *model) commitDuration(raw, field string) {
 		m.editRejected("Use a duration like 800ms, 4s, or 1m — a bare number is seconds.")
 		return
 	}
-	type slot struct {
-		ptr       *time.Duration
-		zeroError string
-	}
-	slots := map[string]slot{
-		"warmup":        {&m.cfg.Warmup, ""},
-		"latency":       {&m.cfg.LatencyDuration, "Latency duration must be greater than zero."},
-		"download":      {&m.cfg.DownloadDuration, "Download duration must be greater than zero."},
-		"upload":        {&m.cfg.UploadDuration, "Upload duration must be greater than zero."},
-		"bidirectional": {&m.cfg.BidirectionalDuration, "Bidirectional duration must be greater than zero."},
-		"ping":          {&m.cfg.PingInterval, "Ping interval must be greater than zero."},
-	}
-	if s, ok := slots[field]; ok {
-		if d == 0 && s.zeroError != "" {
-			m.editRejected(s.zeroError)
+	for _, setting := range timingSettings(&m.cfg) {
+		if setting.name != field {
+			continue
+		}
+		if d == 0 && field != "warmup" {
+			label := setting.label
+			if field != "ping" {
+				label += " duration"
+			}
+			m.editRejected(label + " must be greater than zero.")
 			return
 		}
 		if field == "ping" && goclient.PingIntervalBoundApplies(m.cfg.LatencyTransport) {
@@ -514,7 +503,7 @@ func (m *model) commitDuration(raw, field string) {
 				return
 			}
 		}
-		*s.ptr = d
+		*setting.value = d
 	}
 	m.editAccepted("Timing updated.")
 }
@@ -557,21 +546,12 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		m.edit = beginEdit(editURL, "url", m.cfg.BaseURL)
 		m.notice = "Editing server URL. Enter applies, esc cancels."
 	case sectionRunSetup:
-		switch m.row {
-		case 0:
-			m.cfg.Stages.Latency = !m.cfg.Stages.Latency
-		case 1:
-			m.cfg.Stages.Download = !m.cfg.Stages.Download
-		case 2:
-			m.cfg.Stages.Upload = !m.cfg.Stages.Upload
-		case 3:
-			m.cfg.Stages.Bidirectional = !m.cfg.Stages.Bidirectional
-		case 4:
-			m.cfg.LoadedLatency = !m.cfg.LoadedLatency
-		}
+		setting := stageSettings(&m.cfg)[m.row]
+		*setting.value = !*setting.value
 		m.notice = "Stage profile updated."
 	case sectionTiming:
-		m.edit = beginEdit(editDuration, timingFields[m.row], m.durationValue(m.row))
+		setting := timingSettings(&m.cfg)[m.row]
+		m.edit = beginEdit(editDuration, setting.name, setting.value.String())
 		m.notice = "Editing duration. Use values like 800ms, 4s, or 1m."
 	case sectionConnections:
 		switch m.row {
@@ -620,9 +600,9 @@ func (m model) rowCount() int {
 	case sectionServers:
 		return len(serverPresets) + 1
 	case sectionRunSetup:
-		return 5
+		return len(stageSettings(&m.cfg))
 	case sectionTiming:
-		return 6
+		return len(timingSettings(&m.cfg))
 	case sectionConnections:
 		return rowConnectionsCount
 	case sectionRun:
@@ -632,25 +612,30 @@ func (m model) rowCount() int {
 	}
 }
 
-// timingFields names the duration each Timing row edits, in row order.
-var timingFields = []string{"warmup", "latency", "download", "upload", "bidirectional", "ping"}
+type setting[T any] struct {
+	name, label, note string
+	value             *T
+}
 
-func (m model) durationValue(row int) string {
-	switch row {
-	case 0:
-		return m.cfg.Warmup.String()
-	case 1:
-		return m.cfg.LatencyDuration.String()
-	case 2:
-		return m.cfg.DownloadDuration.String()
-	case 3:
-		return m.cfg.UploadDuration.String()
-	case 4:
-		return m.cfg.BidirectionalDuration.String()
-	case 5:
-		return m.cfg.PingInterval.String()
-	default:
-		return ""
+// Resolve pointers against the current model copy; never retain them across Update calls.
+func timingSettings(cfg *goclient.Config) []setting[time.Duration] {
+	return []setting[time.Duration]{
+		{"warmup", "Warmup", "per stage, before the clock starts", &cfg.Warmup},
+		{"latency", "Latency", "measured window", &cfg.LatencyDuration},
+		{"download", "Download", "measured window", &cfg.DownloadDuration},
+		{"upload", "Upload", "measured window", &cfg.UploadDuration},
+		{"bidirectional", "Bidirectional", "measured window", &cfg.BidirectionalDuration},
+		{"ping", "Ping interval", "cadence", &cfg.PingInterval},
+	}
+}
+
+func stageSettings(cfg *goclient.Config) []setting[bool] {
+	return []setting[bool]{
+		{"latency", "Latency", "idle RTT baseline", &cfg.Stages.Latency},
+		{"download", "Download", "server to client", &cfg.Stages.Download},
+		{"upload", "Upload", "client to server", &cfg.Stages.Upload},
+		{"bidirectional", "Bidirectional", "both directions at once", &cfg.Stages.Bidirectional},
+		{"loaded", "Loaded latency", "ping during transfers", &cfg.LoadedLatency},
 	}
 }
 

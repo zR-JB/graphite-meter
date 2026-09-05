@@ -28,11 +28,7 @@ beforeEach(() => {
 
 // The older wait settles itself, but the slot it settles from belongs to the newer one: clearing it drops the ready.
 test("a superseded readiness wait does not silence the newer one", async () => {
-  const keepalive = new IdleKeepalive({
-    host: () => ({ emit() {} }) as unknown as CoreHost,
-    throughputTarget: () => null,
-    latencyTarget: () => target,
-  });
+  const keepalive = new IdleKeepalive(target);
   const abort = new AbortController();
   const superseded = keepalive.verifyReady(abort.signal);
   let ready = false;
@@ -50,17 +46,8 @@ test("a superseded readiness wait does not silence the newer one", async () => {
 
 test("idle latency buckets use each worker observation time", () => {
   const events: Parameters<CoreHost["emit"]>[0][] = [];
-  const keepalive = new IdleKeepalive({
-    host: () =>
-      ({
-        emit(event: Parameters<CoreHost["emit"]>[0]) {
-          events.push(event);
-        },
-      }) as unknown as CoreHost,
-    throughputTarget: () => null,
-    latencyTarget: () => target,
-    timeOriginMs: 10_000,
-  });
+  const keepalive = new IdleKeepalive(target, 10_000);
+  keepalive.onEvent = (event) => events.push(event);
 
   keepalive.start();
   TestWorker.last!.emit({
@@ -82,16 +69,10 @@ test("idle latency buckets use each worker observation time", () => {
 
 test("loss-only keepalive batches do not recover offline connectivity", () => {
   const states: string[] = [];
-  const keepalive = new IdleKeepalive({
-    host: () =>
-      ({
-        emit(event: Parameters<CoreHost["emit"]>[0]) {
-          if (event.type === "connectivity") states.push(event.state);
-        },
-      }) as unknown as CoreHost,
-    throughputTarget: () => null,
-    latencyTarget: () => target,
-  });
+  const keepalive = new IdleKeepalive(target);
+  keepalive.onEvent = (event) => {
+    if (event.type === "connectivity") states.push(event.state);
+  };
 
   keepalive.start();
   TestWorker.last!.emit({ type: "stall", detail: "server stopped answering" });
@@ -105,6 +86,41 @@ test("loss-only keepalive batches do not recover offline connectivity", () => {
     samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
   });
   expect(states).toEqual(["offline", "connected"]);
+  keepalive.stop();
+});
+
+test("adoption replays a provisional stall but does not infer offline from readiness alone", () => {
+  const idle = new IdleKeepalive(target);
+  idle.start();
+  TestWorker.last!.emit({ type: "ready" });
+  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  idle.onEvent = (event) => events.push(event);
+  expect(events).toEqual([]);
+  idle.onEvent = () => {};
+  TestWorker.last!.emit({ type: "stall", detail: "closed" });
+  idle.onEvent = (event) => events.push(event);
+  expect(events).toEqual([{ type: "connectivity", state: "offline" }]);
+  idle.stop();
+});
+
+test("adopting a verified idle monitor replays its proven connectivity without replaying RTTs", () => {
+  const keepalive = new IdleKeepalive(target);
+  keepalive.start();
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+  });
+  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  keepalive.onEvent = (event) => events.push(event);
+  expect(events).toEqual([{ type: "connectivity", state: "connected" }]);
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 9, lost: false, observedAtEpochMs: 2_000 }],
+  });
+  expect(events.filter((event) => event.type === "connectivity")).toHaveLength(
+    1,
+  );
+  expect(events.filter((event) => event.type === "latency")).toHaveLength(1);
   keepalive.stop();
 });
 

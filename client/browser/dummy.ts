@@ -3,12 +3,14 @@
 import type { CoreHost, RunnerBackend } from "../src/lib/runner/core";
 import type {
   EngineInfo,
-  InfraInfo,
   PhaseActivity,
-  RunnerConfig,
   TransportDiscovery,
 } from "../src/lib/runner/contract";
-import { classifyTransportDiscovery } from "../src/lib/runner/real/backendPure";
+import {
+  classifyTransportDiscovery,
+  fetchViewOfOrigin,
+} from "../src/lib/runner/real/backendPure";
+import type { prepareConnections } from "../src/lib/runner/real/prepare";
 
 const DOWN_RATE = 40_000_000;
 const UP_RATE = 8_000_000;
@@ -28,7 +30,7 @@ export class DummyBackend implements RunnerBackend {
     this.#host = host;
   }
 
-  describe(): EngineInfo {
+  static describe(): EngineInfo {
     return {
       name: "dummy",
       version: "browser-fixture",
@@ -41,7 +43,12 @@ export class DummyBackend implements RunnerBackend {
     };
   }
 
-  async probe(config: RunnerConfig, signal?: AbortSignal): Promise<InfraInfo> {
+  static prepare: typeof prepareConnections = async (
+    config,
+    _previous,
+    _roles,
+    signal,
+  ) => {
     signal?.throwIfAborted();
     const origin =
       typeof location === "undefined" ? "http://dummy.test" : location.origin;
@@ -79,7 +86,6 @@ export class DummyBackend implements RunnerBackend {
             : DATAGRAM;
     for (const target of discovery.latency[origin].targets)
       target.id = target.transport === "websocket" ? WS : WT;
-    this.#host?.emit({ type: "transportDiscovery", discovery });
 
     const throughputId = [FETCH, WT, DATAGRAM].includes(
       config.transports.throughputTarget,
@@ -100,29 +106,50 @@ export class DummyBackend implements RunnerBackend {
     );
     if (!throughput || !latency)
       throw new Error("dummy target selection failed");
-    return {
-      // Fixture uses TEST-NET as a remote Ethernet path; loopback is unit-tested.
-      clientIp: "192.0.2.1",
-      clientIpVersion: 4,
-      clientIpSource: "socket",
-      server: discovery.server,
-      preTestPingMs: RTT_MS,
-      engineVersion: discovery.engineVersion,
-      discoveryGeneration: discovery.generation,
-      protocolNegotiated: throughput.protocol === "http3" ? "h3" : "http/1.1",
-      selectedThroughputTarget: throughputId,
-      selectedThroughputProtocol:
-        throughput.protocol === "negotiated" ? "http1" : throughput.protocol,
-      selectedThroughputTransport: throughput.transport,
-      selectedLatencyTarget: latencyId,
-      selectedLatencyTransport: latency.transport,
-      latencyProtocolNegotiated:
-        latency.protocol === "http3" ? "h3" : "http/1.1",
-      firstHopProtocol: "http/1.1",
-      firstHopSecure: tls,
-      serverLoad: { active: 0, max: 1 },
+    const fetch = {
+      ...(throughput.transport === "fetch-stream"
+        ? throughput
+        : fetchViewOfOrigin(discovery, throughput)),
+      protocol: "http1" as const,
     };
-  }
+    const evidence = {
+      clientIp: "192.0.2.1",
+      clientIpVersion: 4 as const,
+      clientIpSource: "socket" as const,
+      protocolNegotiated: "http/1.1" as const,
+    };
+    return {
+      discovery,
+      validation: {
+        throughput: {
+          selection: config.transports.throughputTarget,
+          state: "verified",
+          path: {
+            requested: throughput,
+            target: throughput,
+            fetch,
+            probe: { ...evidence, load: { active: 0, max: 1 } },
+            browserProtocol: "http/1.1",
+            generation: discovery.generation,
+            verifiedAt: Date.now(),
+          },
+        },
+        latency: {
+          selection: config.transports.latencyTarget,
+          state: "verified",
+          path: {
+            requested: latency,
+            target: latency,
+            probe: evidence,
+            rttMs: RTT_MS,
+            generation: discovery.generation,
+            verifiedAt: Date.now(),
+          },
+        },
+      },
+      idle: null,
+    };
+  };
 
   onRunStart(): void {}
   onStageBegin(activity: PhaseActivity): void {
@@ -144,10 +171,6 @@ export class DummyBackend implements RunnerBackend {
   onAbort(): void {
     this.#stop();
   }
-  idleHintMs(): number {
-    return RTT_MS;
-  }
-
   #scheduleSample(): void {
     this.#timer = setTimeout(() => {
       this.#timer = null;

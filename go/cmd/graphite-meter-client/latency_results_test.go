@@ -45,7 +45,7 @@ func TestIncompleteLatencyResultIsStoredWithoutCompletingTheStage(t *testing.T) 
 	m.stages = []stageProgress{{name: "latency", state: stageMeasuring}}
 	result := goclient.Result{Stage: "latency", Latency: goclient.LatencyStats{Timeouts: 2, Unresolved: 1}, Err: failure}
 	m.apply(goclient.Event{Kind: goclient.EventResult, Result: &result})
-	m.apply(goclient.Event{Kind: goclient.EventError, Err: failure})
+	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: failure}}}))
 	if len(m.results) != 1 || !errors.Is(m.results[0].Err, failure) || m.stages[0].state != stageStopped || !errors.Is(m.err, failure) {
 		t.Fatalf("partial result lost or marked complete: results=%+v stages=%+v err=%v", m.results, m.stages, m.err)
 	}

@@ -46,3 +46,26 @@ test("active and recovering stages retain their exact display progress", () => {
       deriveStagePresentation("upload", { ...base, ...state }),
     ).toMatchObject(expected);
 });
+
+test("terminal runs cannot leave an unmeasured stage active", () => {
+  for (const phase of ["complete", "aborted", "error"] as const)
+    for (const measuring of [true, false]) {
+      const input = {
+        ...base,
+        phase,
+        phaseStage: "upload" as const,
+        measuring,
+      };
+      expect(deriveStagePresentation("upload", input)).toMatchObject({
+        status: "pending",
+        fill: 0,
+        warming: false,
+      });
+      expect(
+        deriveStagePresentation("upload", { ...input, hasUsableResult: true }),
+      ).toMatchObject({ status: "complete", fill: 100 });
+      expect(
+        deriveStagePresentation("upload", { ...input, hasFailure: true }),
+      ).toMatchObject({ status: "failed", fill: 0 });
+    }
+});

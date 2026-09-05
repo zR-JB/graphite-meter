@@ -1,388 +1,174 @@
 <script lang="ts">
-  // Result cards for latency, transfer, and bidirectional stages. Each card
-  // blends live readings with finalized per-stage results.
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
   import { tooltip, JARGON } from "../actions/tooltip";
   import { bidirectionalResultPresentation } from "./bidirectionalResult";
   import type { LiveRateValues } from "../presentation/liveRateAnimator";
-  import {
-    compensationTooltip,
-    type CompensationEstimate,
-  } from "../compensation";
+  import { compensationTooltip } from "../compensation";
 
-  interface Props {
+  let {
+    compact = false,
+    liveRates,
+  }: {
     compact?: boolean;
     liveRates?: LiveRateValues;
-  }
-  let { compact = false, liveRates }: Props = $props();
+  } = $props();
 
   const dash = "—";
-
-  function throughputDisplayStability(stabilityPct: number): {
-    score: number;
-    band: "low" | "medium" | "high";
-  } {
-    const score = Math.max(0, Math.min(1, stabilityPct / 100));
-    return {
-      score,
-      band: score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low",
-    };
-  }
-
-  function transferModel(phase: "download" | "upload") {
-    const presentation = store.stagePresentation[phase];
-    const stability = store.liveStability[phase];
-    if (
-      presentation.status === "active" ||
-      presentation.status === "recovering"
-    ) {
-      const live = store.liveCompensation;
-      const measuredBytesPerSec = compact
-        ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
-        : live.measuredBytesPerSec;
-      return {
-        measuredBytesPerSec,
-        authoritativeBytesPerSec: store.liveTransferBytesPerSec,
-        estimatedBytesPerSec: live.estimatedBytesPerSec,
-        available: live.available,
-        multiplier: live.totalMultiplier,
-        compensation: live,
-        band: stability?.band ?? "low",
-        score: stability?.score ?? 0,
-        active: true,
-        has: measuredBytesPerSec > 0,
-        status: presentation.status,
-      };
-    }
-    const stageResult = store.stageResults[phase];
-    const displayStability = stageResult
-      ? throughputDisplayStability(stageResult.stabilityPct)
-      : null;
-    const compensation =
-      phase === "download"
-        ? store.downloadCompensation
-        : store.uploadCompensation;
-    return {
-      measuredBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
-      authoritativeBytesPerSec: stageResult?.reportedBytesPerSec ?? 0,
-      estimatedBytesPerSec: compensation.estimatedBytesPerSec,
-      available: compensation.available,
-      multiplier: compensation.totalMultiplier,
-      compensation,
-      band: displayStability?.band ?? stability?.band ?? "low",
-      score: displayStability?.score ?? stability?.score ?? 0,
-      active: false,
-      has: !!stageResult,
-      status: presentation.status,
-    };
-  }
-
-  const download = $derived.by(() => transferModel("download"));
-  const upload = $derived.by(() => transferModel("upload"));
-
-  const bidi = $derived.by(() => {
-    const presentation = store.stagePresentation.bidirectional;
-    const stability = store.liveStability.bidirectional;
-    if (
-      presentation.status === "active" ||
-      presentation.status === "recovering"
-    ) {
-      const live = (compact
-        ? (liveRates ?? store.visualBidirectional)
-        : store.liveBidirectional) ?? { down: 0, up: 0 };
-      return {
-        down: live.down,
-        up: live.up,
-        combined: live.down + live.up,
-        authoritativeDown: (store.liveBidirectional ?? { down: 0, up: 0 }).down,
-        authoritativeUp: (store.liveBidirectional ?? { down: 0, up: 0 }).up,
-        band: stability?.band ?? "low",
-        score: stability?.score ?? 0,
-        active: true,
-        has: live.down + live.up > 0,
-        status: presentation.status,
-        compensation: store.liveBidirectionalCompensation,
-      };
-    }
-    const result = bidirectionalResultPresentation(
+  const stages = [
+    { key: "download", icon: ICON.download, accent: "dl", label: "Download" },
+    { key: "upload", icon: ICON.upload, accent: "ul", label: "Upload" },
+    {
+      key: "bidirectional",
+      icon: ICON.bidirectional,
+      accent: "bd",
+      label: "Bi-dir",
+    },
+    { key: "latency", icon: ICON.ping, accent: "pg", label: "Ping" },
+  ] as const;
+  const bidirectional = $derived(
+    bidirectionalResultPresentation(
       store.result?.bidirectional ??
         store.error?.partial?.bidirectional ??
         null,
-    );
-    const survivor =
-      result.survivingDirection === "down" ? result.down : result.up;
-    const downDisplay = result.down
-      ? throughputDisplayStability(result.down.stabilityPct)
-      : null;
-    const upDisplay = result.up
-      ? throughputDisplayStability(result.up.stabilityPct)
-      : null;
-    const combinedDisplay =
-      downDisplay && upDisplay
-        ? throughputDisplayStability(
-            Math.min(result.down!.stabilityPct, result.up!.stabilityPct),
-          )
-        : null;
-    return {
-      down: result.down?.reportedBytesPerSec ?? 0,
-      up: result.up?.reportedBytesPerSec ?? 0,
-      combined: result.combinedBytesPerSec,
-      authoritativeDown: result.down?.reportedBytesPerSec ?? 0,
-      authoritativeUp: result.up?.reportedBytesPerSec ?? 0,
-      survivingDirection: result.survivingDirection,
-      band:
-        combinedDisplay?.band ??
-        survivor?.band ??
-        result.down?.band ??
-        result.up?.band ??
-        "low",
-      score: combinedDisplay?.score ?? survivor?.stabilityScore ?? 0,
-      active: false,
-      has: result.combinedBytesPerSec !== null,
-      status: presentation.status,
-      compensation: store.bidirectionalCompensation,
-    };
-  });
-
-  // Below half a percent, the modeled difference is not useful result-card
-  // context. The assumptions remain available through the shared disclosure.
-  function lifted(multiplier: number): boolean {
-    return multiplier >= 1.005;
-  }
-
-  function pctLift(multiplier: number): string {
-    return `+${((multiplier - 1) * 100).toFixed(1)}%`;
-  }
-
-  const ping = $derived.by(() => {
-    const presentation = store.stagePresentation.latency;
-    const stability = store.liveStability.latency;
-    if (
-      presentation.status === "active" ||
-      presentation.status === "recovering"
-    ) {
-      return {
-        ms: store.liveRtt,
-        lost: store.liveLatencyLost,
-        band: stability?.band ?? "low",
-        score: stability?.score ?? 0,
-        active: true,
-        has: store.liveRtt > 0,
-        status: presentation.status,
-      };
-    }
-    const stageResult = store.stageResults.latency;
-    const reported = stageResult?.reportedMs ?? null;
-    return {
-      ms: reported ?? store.liveRtt,
-      lost: false,
-      band: stageResult?.band ?? stability?.band ?? "low",
-      score: stageResult?.stabilityScore ?? stability?.score ?? 0,
-      active: false,
-      has: reported != null,
-      status: presentation.status,
-    };
-  });
-
-  const showPing = $derived(
-    store.stagePresentation.latency.status !== "disabled" &&
-      store.stagePresentation.latency.status !== "pending",
-  );
-  const showDownload = $derived(
-    store.stagePresentation.download.status !== "disabled" &&
-      store.stagePresentation.download.status !== "pending",
-  );
-  const showUpload = $derived(
-    store.stagePresentation.upload.status !== "disabled" &&
-      store.stagePresentation.upload.status !== "pending",
-  );
-  const showBidi = $derived(
-    store.stagePresentation.bidirectional.status !== "disabled" &&
-      store.stagePresentation.bidirectional.status !== "pending",
+    ),
   );
 
-  const downloadInUnit = $derived(store.toUnit(download.measuredBytesPerSec));
-  const uploadInUnit = $derived(store.toUnit(upload.measuredBytesPerSec));
-  const bidiInUnit = $derived(
-    bidi.combined === null ? null : store.toUnit(bidi.combined),
+  // Retain earlier stages during warmup, abort and failure as well as live runs.
+  // Animated rates are visual only; accessible values use receiver accounting.
+  const readouts = $derived.by(() =>
+    stages.flatMap((stage) => {
+      const { key } = stage;
+      const { status } = store.stagePresentation[key];
+      if (status === "disabled" || status === "pending") return [];
+      const active = status === "active" || status === "recovering";
+      let value: number | null;
+      let authoritative: number | null;
+      if (key === "latency") {
+        value = active
+          ? store.liveRtt
+          : (store.stageResults.latency?.reportedMs ?? null);
+        authoritative = value;
+      } else if (key === "bidirectional") {
+        const live = liveRates ?? store.visualBidirectional;
+        value = active
+          ? (live?.down ?? 0) + (live?.up ?? 0)
+          : bidirectional.combinedBytesPerSec;
+        authoritative = active
+          ? (store.liveBidirectional?.down ?? 0) +
+            (store.liveBidirectional?.up ?? 0)
+          : value;
+      } else {
+        value = active
+          ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
+          : (store.stageResults[key]?.reportedBytesPerSec ?? null);
+        authoritative = active ? store.liveTransferBytesPerSec : value;
+      }
+      const hasValue = active ? (value ?? 0) > 0 : value !== null;
+      const lost = key === "latency" && active && store.liveLatencyLost;
+      const format = (n: number) =>
+        key === "latency" ? fmtMs(n) : fmtSpeed(store.toUnit(n));
+      return [
+        {
+          ...stage,
+          status,
+          active,
+          num: lost ? "lost" : hasValue ? format(value!) : dash,
+          accessibleNum: lost
+            ? "lost"
+            : hasValue
+              ? format(authoritative!)
+              : dash,
+          unit: key === "latency" ? (lost ? "" : "ms") : store.unitLabel,
+        },
+      ];
+    }),
   );
 
-  const showWire = $derived(store.showWireEstimates);
-
-  type CardWire =
-    | { kind: "lift"; num: string; pct: string; tooltip: string }
-    | { kind: "na"; tooltip: string }
-    | null;
-  interface CardVM {
-    key: string;
-    icon: string;
-    accent: string; // accent class: dl | ul | bd | pg
-    label: string;
-    term: boolean; // dotted-underline jargon affordance (ping)
-    active: boolean;
-    hasVal: boolean;
-    showPip: boolean;
-    band: "low" | "medium" | "high";
-    score: number;
-    status:
-      | "disabled"
-      | "pending"
-      | "active"
-      | "recovering"
-      | "complete"
-      | "partial"
-      | "failed";
-    num: string; // pre-formatted, or the dash
-    accessibleNum: string;
-    unit: string;
-    sub?: string; // per-direction detail (bidirectional only)
-    jitterMs?: number | null;
-    wire: CardWire;
-  }
-
-  function wireFor(
-    m: {
-      has: boolean;
-      multiplier: number;
-      estimatedBytesPerSec: number;
-      available: boolean;
-      compensation: CompensationEstimate;
-    },
-    status: CardVM["status"],
-  ): CardWire {
-    if (!showWire || !m.has || status !== "complete") return null;
-    const tooltip = compensationTooltip(m.compensation);
-    if (!m.available) return { kind: "na", tooltip };
-    if (lifted(m.multiplier))
-      return {
-        kind: "lift",
-        num: fmtSpeed(store.toUnit(m.estimatedBytesPerSec)),
-        pct: pctLift(m.multiplier),
-        tooltip,
-      };
-    return null;
-  }
-
-  function transferCard(
-    phase: "download" | "upload",
-    model: typeof download,
-    hasVal: boolean,
-    shown: number,
-  ): CardVM {
-    const isDownload = phase === "download";
-    return {
-      key: phase,
-      icon: isDownload ? ICON.download : ICON.upload,
-      accent: isDownload ? "dl" : "ul",
-      label: isDownload ? "Download" : "Upload",
-      term: false,
-      active: model.active,
-      hasVal,
-      showPip: hasVal && model.status === "complete",
-      band: model.band,
-      score: model.score,
-      status: model.status,
-      num: hasVal ? fmtSpeed(shown) : dash,
-      accessibleNum: hasVal
-        ? fmtSpeed(store.toUnit(model.authoritativeBytesPerSec))
-        : dash,
-      unit: store.unitLabel,
-      wire: wireFor(model, model.status),
-    };
-  }
-
-  const cards = $derived.by<CardVM[]>(() => {
-    const out: CardVM[] = [];
-    if (showDownload)
-      out.push(
-        transferCard("download", download, download.has, downloadInUnit),
-      );
-    if (showUpload)
-      out.push(transferCard("upload", upload, upload.has, uploadInUnit));
-    if (showBidi)
-      out.push({
-        key: "bidirectional",
-        icon: ICON.bidirectional,
-        accent: "bd",
-        label: "Bi-dir",
-        term: false,
-        active: bidi.active,
-        hasVal: bidi.has,
-        showPip: bidi.has && bidi.status === "complete",
-        band: bidi.band,
-        score: bidi.score,
-        status: bidi.status,
-        num: bidi.has && bidiInUnit !== null ? fmtSpeed(bidiInUnit) : dash,
-        accessibleNum:
-          bidi.has && bidiInUnit !== null
-            ? fmtSpeed(
-                store.toUnit(bidi.authoritativeDown + bidi.authoritativeUp),
-              )
-            : dash,
-        unit: store.unitLabel,
-        sub: bidi.has
-          ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ↑ ${fmtSpeed(store.toUnit(bidi.up))}`
-          : bidi.survivingDirection === "down"
-            ? `↓ ${fmtSpeed(store.toUnit(bidi.down))} ${store.unitLabel} — upload unavailable`
-            : bidi.survivingDirection === "up"
-              ? `↑ ${fmtSpeed(store.toUnit(bidi.up))} ${store.unitLabel} — download unavailable`
-              : undefined,
-        wire: wireFor(
-          {
-            has: bidi.has,
-            multiplier: bidi.compensation.totalMultiplier,
-            estimatedBytesPerSec: bidi.compensation.estimatedBytesPerSec,
-            available: bidi.compensation.available,
-            compensation: bidi.compensation,
-          },
-          bidi.status,
-        ),
-      });
-    if (showPing)
-      out.push({
-        key: "latency",
-        icon: ICON.ping,
-        accent: "pg",
-        label: "Ping",
-        term: true,
-        active: ping.active,
-        hasVal: ping.has,
-        showPip: ping.has && ping.status === "complete",
-        band: ping.band,
-        score: ping.score,
-        status: ping.status,
-        num:
-          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
-        accessibleNum:
-          ping.active && ping.lost ? "lost" : ping.has ? fmtMs(ping.ms) : dash,
-        unit: ping.active && ping.lost ? "" : "ms",
-        jitterMs: ping.has
-          ? (store.stageResults.latency?.jitterMs ?? null)
-          : undefined,
-        wire: null,
-      });
-    return out;
-  });
-
-  const guidance = $derived.by(() => {
-    if (store.phase === "idle")
-      return "Your results appear here once you press Start test.";
-    return "";
-  });
+  // Only the completed view needs confidence, directional detail and wire estimates.
+  const cards = $derived.by(() =>
+    compact
+      ? []
+      : readouts.map((row) => {
+          const { key, status } = row;
+          let score = 0;
+          let band: "low" | "medium" | "high" = "low";
+          let sub: string | undefined;
+          let jitterMs: number | null | undefined;
+          let compensation;
+          if (key === "latency") {
+            const result = store.stageResults.latency;
+            score = result?.stabilityScore ?? 0;
+            band = result?.band ?? "low";
+            jitterMs =
+              result?.reportedMs != null
+                ? (result.jitterMs ?? null)
+                : undefined;
+          } else {
+            let stabilityPct: number | undefined;
+            if (key === "bidirectional") {
+              const { down, up, combinedBytesPerSec, survivingDirection } =
+                bidirectional;
+              stabilityPct =
+                down && up
+                  ? Math.min(down.stabilityPct, up.stabilityPct)
+                  : undefined;
+              const downText = fmtSpeed(
+                store.toUnit(down?.reportedBytesPerSec ?? 0),
+              );
+              const upText = fmtSpeed(
+                store.toUnit(up?.reportedBytesPerSec ?? 0),
+              );
+              sub =
+                combinedBytesPerSec !== null
+                  ? `↓ ${downText} ↑ ${upText}`
+                  : survivingDirection === "down"
+                    ? `↓ ${downText} ${store.unitLabel} — upload unavailable`
+                    : survivingDirection === "up"
+                      ? `↑ ${upText} ${store.unitLabel} — download unavailable`
+                      : undefined;
+              compensation = store.bidirectionalCompensation;
+            } else {
+              stabilityPct = store.stageResults[key]?.stabilityPct;
+              compensation =
+                key === "download"
+                  ? store.downloadCompensation
+                  : store.uploadCompensation;
+            }
+            score = Math.max(0, Math.min(1, (stabilityPct ?? 0) / 100));
+            band = score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+          }
+          const hasValue = row.num !== dash;
+          const wire =
+            store.showWireEstimates &&
+            hasValue &&
+            status === "complete" &&
+            compensation &&
+            (!compensation.available || compensation.totalMultiplier >= 1.005)
+              ? {
+                  tooltip: compensationTooltip(compensation),
+                  num: compensation.available
+                    ? fmtSpeed(store.toUnit(compensation.estimatedBytesPerSec))
+                    : null,
+                  pct: `+${((compensation.totalMultiplier - 1) * 100).toFixed(1)}%`,
+                }
+              : null;
+          return { ...row, score, band, sub, jitterMs, wire, hasValue };
+        }),
+  );
 </script>
 
-{#snippet resultCard(c: CardVM)}
-  <article class="result-card" class:active={c.active}>
+{#snippet resultCard(c: (typeof cards)[number])}
+  <article class="result-card">
     <header>
       <span class="ico {c.accent}">{@html c.icon}</span>
-      {#if c.term}
+      {#if c.key === "latency"}
         <span class="label term" use:tooltip={JARGON.ping}>{c.label}</span>
       {:else}
         <span class="label">{c.label}</span>
       {/if}
-      {#if c.showPip}
+      {#if c.hasValue && c.status === "complete"}
         <span
           class="pip pip-{c.band}"
           use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
@@ -396,13 +182,10 @@
       {/if}
     </header>
     <div class="result-readout">
-      <div class="val" aria-hidden={compact && c.active ? "true" : undefined}>
+      <div class="val">
         <span class="num">{c.num}</span>
         <span class="unit">{c.unit}</span>
       </div>
-      {#if compact && c.active}
-        <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
-      {/if}
       {#if c.jitterMs !== undefined}
         <div class="jitter">
           <span class="jitter-num"
@@ -414,7 +197,7 @@
       {/if}
       {#if c.wire}
         <div class="est">
-          {#if c.wire.kind === "lift"}
+          {#if c.wire.num !== null}
             <span class="est-num">{c.wire.num}</span>
             <span class="est-tag" use:tooltip={c.wire.tooltip}
               >wire {c.wire.pct}</span
@@ -427,13 +210,13 @@
     </div>
     {#if c.sub}
       <div class="sub">
-        {c.sub}{#if c.hasVal}<span class="sr-only"> {c.unit}</span>{/if}
+        {c.sub}{#if c.hasValue}<span class="sr-only"> {c.unit}</span>{/if}
       </div>
     {/if}
   </article>
 {/snippet}
 
-{#snippet resultChip(c: CardVM)}
+{#snippet resultChip(c: (typeof readouts)[number])}
   <div class="result-chip" class:active={c.active}>
     <span class="ico {c.accent}">{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
@@ -449,20 +232,16 @@
 
 {#if compact}
   <div class="result-chips">
-    {#each cards as c (c.key)}
+    {#each readouts as c (c.key)}
       {@render resultChip(c)}
     {/each}
   </div>
 {:else}
-  <div class="result-cards" class:reserve={store.phase !== "idle"}>
+  <div class="result-cards">
     {#each cards as c (c.key)}
       {@render resultCard(c)}
     {/each}
   </div>
-
-  {#if guidance}
-    <p class="metric-guidance">{guidance}</p>
-  {/if}
 {/if}
 
 <style>
@@ -470,9 +249,6 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-2);
-  }
-  /* Keep an empty result grid from shifting adjacent content. */
-  .result-cards.reserve {
     min-height: 64px;
   }
 
@@ -550,12 +326,6 @@
       opacity: 1;
       transform: translateY(0);
     }
-  }
-  .result-card.active {
-    border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
-    box-shadow:
-      var(--elev-tile),
-      0 0 0 1px color-mix(in srgb, var(--brand) 30%, transparent);
   }
 
   header {
@@ -703,20 +473,6 @@
     outline-offset: 2px;
     border-radius: var(--r-well);
   }
-  .est-flat {
-    color: var(--text-soft);
-    font-size: 11px;
-  }
-
-  /* Guided empty-state line: a quiet invitation while there is no data. */
-  .metric-guidance {
-    margin: var(--space-2) 0 0;
-    text-align: center;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--text-soft);
-  }
-
   /* Compact strip: one slim row per finished or active stage, carrying icon,
      label, and number. Earlier stages stay visible while the next one runs.
      No card chrome, confidence verdict, or wire-estimate line. */

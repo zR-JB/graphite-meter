@@ -91,6 +91,12 @@ preparation and warmup do not consume the configured measurement window.
 
 ### Browser client
 
+The application controller owns connection validation, authentication coverage, and the idle
+latency monitor. Each role retains its requested target, actual verified target, observed path
+metadata, server generation, and verification time. A current preparation transaction commits
+those values; starting a run passes a snapshot into a fresh backend. The backend does not repeat
+connection discovery or own the idle monitor.
+
 `RunnerCore` owns the stage timeline, monotonic measurement clock, adaptive finish decision,
 recovery deadline, and final result reducer. `RealBackend` supplies production samples through a
 three-step stage lifecycle: prepare, measure, and end.
@@ -118,6 +124,11 @@ The native client uses the same discovery document, routes, and wire protocol. I
 model redraws on state changes and uses no independent animation clock. It supports interactive
 configuration, repeatable setup through flags, browser-approved authentication grants, and the
 same latency, download, upload, bidirectional, and loaded-latency stages.
+
+The native engine emits one ordered `EventDone` after stage results and producer shutdown.
+`Run` and `RunPrepared` also return that error for synchronous callers. User cancellation stops
+measurement while the TUI drains final results; replacing a run or leaving the application can
+cancel delivery too. Stage progress follows the engine's typed stage events.
 
 The browser and native clients are not identical benchmark targets. They have different runtime
 constraints, buffer policies, and browser-only presentation features.

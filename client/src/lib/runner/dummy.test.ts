@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { CoreHost } from "./core";
 import type { RunnerConfig, RunnerEvent } from "./contract";
+import { emptyConnectionValidation } from "./connectionModel";
 import { DummyBackend } from "./dummy";
 
 const noop = () => {};
@@ -41,27 +42,23 @@ const activity = {
 };
 
 test("probe publishes a complete browser-fixture connection description", async () => {
-  const backend = new DummyBackend();
-  const host = new Host();
-  backend.attach(host);
-  const info = await backend.probe({
-    transports: { throughputTarget: "auto", latencyTarget: "auto" },
-  } as RunnerConfig);
-
-  expect(info.engineVersion).toBe("browser-fixture");
-  expect(info.selectedThroughputTarget).toBe("dummy-fetch");
-  const event = host.events[0];
-  expect(event?.type).toBe("transportDiscovery");
-  if (event?.type !== "transportDiscovery") return;
-  const origin = Object.keys(event.discovery.throughput)[0];
+  const { discovery, validation } = await DummyBackend.prepare(
+    {
+      transports: { throughputTarget: "auto", latencyTarget: "auto" },
+    } as RunnerConfig,
+    emptyConnectionValidation(),
+    ["throughput", "latency"],
+    new AbortController().signal,
+  );
+  expect(discovery.engineVersion).toBe("browser-fixture");
+  expect(validation.throughput.path?.target.id).toBe("dummy-fetch");
+  const origin = Object.keys(discovery.throughput)[0];
   expect(origin).toBeDefined();
   expect(
-    event.discovery.throughput[origin!].targets.map(
-      (target) => target.transport,
-    ),
+    discovery.throughput[origin!].targets.map((target) => target.transport),
   ).toEqual(["fetch-stream", "webtransport", "webtransport-datagram"]);
   expect(
-    event.discovery.latency[origin!].targets.map((target) => target.transport),
+    discovery.latency[origin!].targets.map((target) => target.transport),
   ).toEqual(["websocket", "webtransport"]);
 });
 

@@ -1,5 +1,6 @@
 // Shared runner contract for phases, config, events, results, and backend interfaces.
 
+import type { Probe } from "../api/probe";
 import type {
   FetchThroughputTarget,
   LatencyTarget,
@@ -260,13 +261,13 @@ export type TerminationReason =
 export type TransportKind =
   "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
 
-/* A backend negotiates once, at stage begin: the warmup primes it and the measured window reuses it, so there is. */
+/** Warmup and measurement belong to the same stage and reuse its connections. */
 export type TransportRole = Extract<
   Phase,
   "latency" | "download" | "upload" | "bidirectional"
 >;
 
-/* A stage that cannot run: the server lacks the capability, no transport can be negotiated, or the connection. */
+/** A failed stage retains any usable measurements and identifies the affected direction when known. */
 export interface StageFailure {
   stage: TransportRole;
   /** The affected lane when a bidirectional stage keeps its other result. */
@@ -296,7 +297,7 @@ export interface StallInfo {
   direction?: FlowDirection;
 }
 
-/* Distinguishing a failure from a user abort (the `"aborted"` phase) and from a clean finish is the runner→webapp. */
+/** Terminal failure is distinct from user cancellation and may retain usable partial measurements. */
 export interface RunnerError {
   /** Failure category; `user-abort` is the `"aborted"` phase instead. */
   reason: Exclude<TerminationReason, "user-abort">;
@@ -330,32 +331,30 @@ export interface EngineInfo {
   throughputTransports: TransportKind[];
 }
 
-/* ---------- Pre-test handshake info ---------- */
-export interface InfraInfo {
-  discovery?: TransportDiscovery;
-  clientIp: string;
-  clientIpVersion: 4 | 6;
-  clientIpSource: "socket" | "forwarded";
-  /** Independent H1/WebSocket latency path; it may select another address family. */
-  latencyClientIp?: string;
-  latencyClientIpVersion?: 4 | 6;
-  latencyClientIpSource?: "socket" | "forwarded";
-  server: { name: string; location?: string };
-  preTestPingMs: number;
-  engineVersion: string;
-  discoveryGeneration: string;
-  protocolNegotiated: string;
-  selectedThroughputTarget?: string;
-  selectedThroughputProtocol?: ProtocolTarget;
-  selectedThroughputTransport?: TransportKind;
-  selectedLatencyTarget?: string;
-  selectedLatencyTransport?: TransportKind;
-  latencyProtocolNegotiated?: string;
-  /** Browser-facing protocol from Resource Timing (e.g. http/1.1, h2, h3). */
-  firstHopProtocol?: string;
-  firstHopSecure?: boolean;
-  /* Measurement occupancy the server reported at probe time. */
-  serverLoad?: { active: number; max: number };
+/** Verified connection values are immutable inputs to one run, separate from live sockets. */
+export interface VerifiedThroughputPath {
+  requested: FetchThroughputTarget | WebTransportThroughputTarget;
+  target: FetchThroughputTarget | WebTransportThroughputTarget;
+  fetch: FetchThroughputTarget;
+  probe: Probe;
+  browserProtocol?: string;
+  generation: string;
+  verifiedAt: number;
+}
+
+export interface VerifiedLatencyPath {
+  requested: LatencyTarget;
+  target: LatencyTarget;
+  probe: Probe;
+  rttMs: number;
+  generation: string;
+  verifiedAt: number;
+}
+
+export interface PreparedPaths {
+  discovery: TransportDiscovery;
+  throughput: VerifiedThroughputPath;
+  latency: VerifiedLatencyPath | null;
 }
 
 type TransportDiscoveryState =
@@ -388,8 +387,6 @@ export interface TransportDiscovery {
 
 /* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
-  | { type: "transportDiscovery"; discovery: TransportDiscovery }
-  | { type: "infra"; info: InfraInfo }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
   /* A short-lived upload-only visual target. */
@@ -435,24 +432,12 @@ export type LiveRunConfig = Pick<
 
 /* ---------- The contract ---------- */
 export interface NetworkRunner {
-  /* Verify the selected target, then run. */
-  start(config: RunnerConfig, prepared?: InfraInfo): Promise<void>;
+  /** Connection preparation belongs to the application; RTT only adjusts warmup. */
+  start(config: RunnerConfig, preTestPingMs: number): void;
   abort(): void;
-  /** Permanently stop background activity owned by this runner. */
-  dispose?(): void;
-  /* A hidden tab suspends it so the browser can park the page; a run is never affected. */
-  setBackgroundActivity?(enabled: boolean): void;
-  /** Pre-test handshake; resolves InfraInfo. Pings every `intervalMs`. */
-  probe(
-    config: RunnerConfig,
-    signal?: AbortSignal,
-    role?: ConnectionRole,
-  ): Promise<InfraInfo>;
-  /** Static engine identity + transport capabilities (no I/O). */
-  describe(): EngineInfo;
-  on(handler: (e: RunnerEvent) => void): () => void; // returns unsubscribe
-  /** Apply settings that are safe to change during a run. */
-  reconfigure?(config: LiveRunConfig): void;
+  dispose(): void;
+  on(handler: (e: RunnerEvent) => void): () => void;
+  reconfigure(config: LiveRunConfig): void;
   readonly phase: Phase;
 }
 

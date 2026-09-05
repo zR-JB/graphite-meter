@@ -2,6 +2,13 @@
 import { fmtMs, niceDomain } from "../format";
 import type { TransportRole } from "../runner/contract";
 
+export const LATENCY_LANES = [
+  { key: "latency", label: "Idle" },
+  { key: "download", label: "Loaded Down" },
+  { key: "upload", label: "Loaded Up" },
+  { key: "bidirectional", label: "Loaded Bi-dir" },
+] as const;
+
 export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
 
 const METRIC_ORDER: readonly MetricKey[] = [

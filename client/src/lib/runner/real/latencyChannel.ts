@@ -1,9 +1,9 @@
-// The ping worker owns its bus, its reconnects and the RTT timestamps; these classes own the worker's lifecycle and.
+// Own ping-worker lifetime and route observations into the active stage or idle view.
 import type { CoreHost } from "../core";
-import type { TransportKind } from "../contract";
-import type { FetchThroughputTarget, LatencyTarget } from "../../api/endpoints";
+import type { RunnerEvent, TransportKind } from "../contract";
+import type { LatencyTarget } from "../../api/endpoints";
 import { authEnabled, csrfHeader, redirectToLogin } from "../../auth";
-import { httpToWs, throughputTargetKey } from "./backendPure";
+import { httpToWs } from "./backendPure";
 import { pingWorker } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
@@ -268,46 +268,41 @@ export class LatencyChannel {
   }
 }
 
-interface IdleKeepaliveDeps {
-  host: () => CoreHost;
-  throughputTarget: () => FetchThroughputTarget | null;
-  latencyTarget: () => LatencyTarget | null;
-  /** Window-realm performance origin. Injectable only for deterministic cross-realm timestamp tests. */
-  timeOriginMs?: number;
-}
-
-/* Separate from the stage-scoped LatencyChannel and never active at the same time (stopped when a run starts. */
+// Idle monitoring owns a separate worker, stopped before any measured run.
 export class IdleKeepalive {
-  #deps: IdleKeepaliveDeps;
+  #emit: (event: RunnerEvent) => void = () => {};
+  set onEvent(handler: (event: RunnerEvent) => void) {
+    this.#emit = handler;
+    if (this.#active && this.#connectivity)
+      handler({ type: "connectivity", state: this.#connectivity });
+  }
+  get onEvent(): (event: RunnerEvent) => void {
+    return this.#emit;
+  }
+  #target: LatencyTarget;
   #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
-  #targetKey = "";
   /* Set while collectRtts() is harvesting the keepalive's first RTTs; `finish` resolves the preflight median wait. */
   #probeCollect: { rtts: number[]; finish: () => void } | null = null;
   #probeReady: { finish: (error?: Error) => void } | null = null;
-  /** True from a stall until the next sample. "connected" emits once, on the offline→online edge. */
-  #offline = false;
+  /** Readiness alone is not liveness; only a pong or stall establishes connectivity. */
+  #connectivity: "connected" | "offline" | null = null;
   /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(deps: IdleKeepaliveDeps) {
-    this.#deps = deps;
-    this.#timeOriginMs = deps.timeOriginMs ?? performance.timeOrigin;
+  constructor(target: LatencyTarget, timeOriginMs = performance.timeOrigin) {
+    this.#target = target;
+    this.#timeOriginMs = timeOriginMs;
   }
 
   /* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
-    const targetKey = `${throughputTargetKey(this.#deps.throughputTarget())}\n${this.#deps.latencyTarget()?.id ?? ""}`;
-    if (this.#active && this.#targetKey === targetKey) return;
-    if (this.#active) this.stop();
-    const channel = this.#deps.latencyTarget();
-    const url = channel && pingUrl(channel, channel.transport);
-    if (!channel || !url) return;
+    if (this.#active) return;
+    const channel = this.#target;
+    const url = pingUrl(channel, channel.transport)!;
     this.#active = true;
-    this.#targetKey = targetKey;
-    // A fresh worker's first samples must emit a "connected" edge to un-latch it.
-    this.#offline = true;
+    this.#connectivity = null;
     const worker = pingWorker();
     worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void =>
       this.#onMessage(e.data);
@@ -339,7 +334,6 @@ export class IdleKeepalive {
   /** Stop the idle keepalive when a run starts (onRunStart) or the app tears down. Idempotent. */
   stop(): void {
     this.#active = false;
-    this.#targetKey = "";
     if (this.#respawnTimer) {
       clearTimeout(this.#respawnTimer);
       this.#respawnTimer = null;
@@ -430,7 +424,6 @@ export class IdleKeepalive {
       redirectToLogin();
       return;
     }
-    const host = this.#deps.host();
     switch (msg.type) {
       case "samples": {
         let receivedPong = false;
@@ -441,7 +434,7 @@ export class IdleKeepalive {
               this.#probeCollect.finish();
           }
           if (!sample.lost) receivedPong = true;
-          host.emit({
+          this.onEvent({
             type: "latency",
             sample: singleLatencyBucket(
               pingSampleContextTime(sample, this.#timeOriginMs),
@@ -451,15 +444,15 @@ export class IdleKeepalive {
           });
         }
         // A loss-only batch proves the worker is running, not that the server answered; recover only after a pong.
-        if (receivedPong && this.#offline) {
-          this.#offline = false;
-          host.emit({ type: "connectivity", state: "connected" });
+        if (receivedPong && this.#connectivity !== "connected") {
+          this.#connectivity = "connected";
+          this.onEvent({ type: "connectivity", state: "connected" });
         }
         break;
       }
       case "stall":
-        this.#offline = true;
-        host.emit({ type: "connectivity", state: "offline" });
+        this.#connectivity = "offline";
+        this.onEvent({ type: "connectivity", state: "offline" });
         break;
       case "resume":
       case "open":

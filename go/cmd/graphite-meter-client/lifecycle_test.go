@@ -122,10 +122,30 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	if _, command := modelAndCmd(m.handlePrepareDue(prepareDueMsg{seq: seq})); command != nil {
 		t.Fatal("a queued preparation started during the run")
 	}
-	select {
-	case <-m.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("run did not finish after invalid configuration")
+	drainRun(t, m.events)
+}
+
+func drainRun(t *testing.T, events <-chan goclient.Event) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	var last goclient.Event
+	terminals := 0
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				if terminals != 1 || last.Kind != goclient.EventDone {
+					t.Fatalf("stream ended without one final outcome: terminals=%d last=%+v", terminals, last)
+				}
+				return
+			}
+			last = event
+			if event.Kind == goclient.EventDone {
+				terminals++
+			}
+		case <-deadline:
+			t.Fatal("run did not close its event stream")
+		}
 	}
 }
 
@@ -133,7 +153,7 @@ func TestDoneDistinguishesWrappedCancellationFromErrorText(t *testing.T) {
 	for _, err := range []error{fmt.Errorf("transfer: %w", context.Canceled), errors.New("server said context canceled")} {
 		m := newModel(goclient.DefaultConfig())
 		defer m.shutdown()
-		m, _ = modelAndCmd(m.handleDone(doneMsg{err: err}))
+		m, _ = modelAndCmd(m.handleEvents(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: err}}}))
 		if errors.Is(err, context.Canceled) {
 			if m.err != nil || m.status != "canceled" {
 				t.Fatalf("wrapped cancellation became a failure: %v", m.err)
@@ -141,5 +161,37 @@ func TestDoneDistinguishesWrappedCancellationFromErrorText(t *testing.T) {
 		} else if m.err != err || m.status != "error" {
 			t.Fatal("an error mentioning cancellation was mistaken for a user cancellation")
 		}
+	}
+}
+
+func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
+	measurement, abort := context.WithCancel(t.Context())
+	abort()
+	for _, kind := range []goclient.EventKind{goclient.EventResult, goclient.EventDone} {
+		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+			delivery, abandon := context.WithCancel(t.Context())
+			defer abandon()
+			events := make(chan goclient.Event, 1)
+			events <- goclient.Event{Kind: goclient.EventLatency}
+			sent := make(chan struct{})
+			go func() {
+				sendRunEvent(measurement, delivery, events, goclient.Event{Kind: kind})
+				close(sent)
+			}()
+			<-events
+			select {
+			case event := <-events:
+				if event.Kind != kind {
+					t.Fatalf("delivered %v, want %v", event.Kind, kind)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("user cancellation discarded the queued final outcome")
+			}
+			<-sent
+			events <- goclient.Event{}
+			abandon()
+			// A superseded run can exit even when its consumer has stopped draining the full queue.
+			sendRunEvent(measurement, delivery, events, goclient.Event{Kind: kind})
+		})
 	}
 }
