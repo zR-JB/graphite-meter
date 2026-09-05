@@ -93,9 +93,9 @@ test("chart inspector exposes the same bucket details to keyboard and touch", as
   await expect(plot.locator(".chip")).toBeVisible();
   await expect(plot).toHaveAttribute(
     "aria-valuetext",
-    /bucket median latency.*probe timeouts/,
+    /RTT median.*probe timeouts/,
   );
-  await expect(plot.locator(".chip")).toContainText("bucket median");
+  await expect(plot.locator(".chip")).toContainText("RTT median");
   await expect(plot.locator(".chip")).not.toContainText("probe timeouts");
   // Capture the committed DOM after the final keyboard selection.
   await page.evaluate(
