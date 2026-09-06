@@ -1,8 +1,6 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
   import type { ServerIdentity } from "../servers/catalog";
-  import { store } from "../state/store.svelte";
-  import { serverAccent } from "../presentation/serverAppearance";
   let {
     servers,
     id = "",
@@ -24,14 +22,9 @@
 
 <span
   class="server-tag"
-  style:--server-accent={server
-    ? serverAccent(server, store.serverCatalog?.servers ?? servers)
-    : "var(--text-soft)"}
   use:tooltip={description}
   aria-label={description.replaceAll("\n", ", ")}
-  ><span class="source-mark" aria-hidden="true"></span><span class="source-name"
-    >{server ? server.name : "All servers"}</span
-  ></span
+  ><span class="source-name">{server ? server.name : "All servers"}</span></span
 >
 
 <style>
@@ -50,13 +43,6 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .source-mark {
-    width: 3px;
-    height: 10px;
-    border-radius: 1px;
-    flex-shrink: 0;
-    background: var(--server-accent);
   }
   .server-tag:focus-visible {
     outline: 2px solid var(--brand);

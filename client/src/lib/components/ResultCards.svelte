@@ -252,6 +252,15 @@
               <span class="jitter-unit">ms</span></span
             >
             <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
+            {#if c.key === "latency" && details && details.selection.length > 1}
+              <div class="result-source">
+                <ServerTag
+                  servers={details.selection}
+                  id={scoped ? selectedServer : store.latencyFocus}
+                  label="Latency source"
+                />
+              </div>
+            {/if}
           </div>
         {/if}
         {#if c.wire}
@@ -266,15 +275,6 @@
     {#if c.sub}
       <div class="sub">
         {c.sub}{#if c.hasValue}<span class="sr-only"> {c.unit}</span>{/if}
-      </div>
-    {/if}
-    {#if c.key === "latency" && details && details.selection.length > 1}
-      <div class="result-source">
-        <ServerTag
-          servers={details.selection}
-          id={scoped ? selectedServer : store.latencyFocus}
-          label="Latency source"
-        />
       </div>
     {/if}
   </article>
@@ -343,19 +343,6 @@
     .result-card:last-child:nth-child(odd) {
       grid-column: 1 / -1;
     }
-    .result-card:last-child:nth-child(3) {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-    .result-card:last-child:nth-child(3) .result-readout {
-      grid-column: 1;
-    }
-    .result-card:last-child:nth-child(3) .result-source {
-      grid-column: 2;
-      grid-row: 2;
-      align-self: end;
-      justify-self: end;
-      max-width: 16ch;
-    }
   }
   @container results (max-width: 301px) {
     .result-cards {
@@ -377,7 +364,6 @@
     box-shadow: var(--elev-tile);
   }
   .result-card header,
-  .result-source,
   .result-readout,
   .sub {
     grid-column: 1 / -1;
@@ -483,7 +469,12 @@
 
   .result-source {
     min-width: 0;
-    padding-top: 2px;
+    margin-left: auto;
+    max-width: 40%;
+    font-size: 10px;
+  }
+  .result-source :global(.server-tag) {
+    font-size: 10px;
   }
   .pip {
     margin-left: auto;

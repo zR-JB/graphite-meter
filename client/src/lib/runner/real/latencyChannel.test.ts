@@ -44,6 +44,32 @@ test("a superseded readiness wait does not silence the newer one", async () => {
   keepalive.stop();
 });
 
+test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
+  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const keepalive = new IdleKeepalive(target);
+  keepalive.onEvent = (event) => events.push(event);
+  keepalive.start();
+  const old = TestWorker.last!;
+  keepalive.stop();
+  keepalive.start();
+  old.emit({ type: "stall", detail: "late close" });
+  old.emit({
+    type: "samples",
+    samples: [{ rtt: 12, lost: false, observedAtEpochMs: 1_000 }],
+  });
+  expect(events).toEqual([]);
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+  });
+  expect(
+    events.some(
+      (event) => event.type === "connectivity" && event.state === "connected",
+    ),
+  ).toBe(true);
+  keepalive.stop();
+});
+
 test("idle latency buckets use each worker observation time", () => {
   const events: Parameters<CoreHost["emit"]>[0][] = [];
   const keepalive = new IdleKeepalive(target, 10_000);

@@ -77,8 +77,12 @@ test("builds an immutable sanitized partial snapshot", () => {
     {
       paths,
       clientBuild: "b",
-      wireDownloadBytesPerSec: 101,
-      wireBidirectionalBytesPerSec: 102,
+      wireEstimates: {
+        version: 1,
+        downloadBytesPerSec: 101,
+        uploadBytesPerSec: null,
+        bidirectionalBytesPerSec: 102,
+      },
     },
     200,
   );

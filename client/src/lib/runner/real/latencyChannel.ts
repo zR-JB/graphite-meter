@@ -323,9 +323,11 @@ export class IdleKeepalive {
     this.#active = true;
     this.#connectivity = null;
     const worker = pingWorker();
-    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void =>
-      this.#onMessage(e.data);
+    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
+      if (this.#worker === worker) this.#onMessage(e.data);
+    };
     worker.onerror = (e: ErrorEvent): void => {
+      if (this.#worker !== worker) return;
       // A worker dying at load time has no in-worker reconnect loop, usually because the bundle-serving server is down.
       this.#onMessage({
         type: "stall",

@@ -1,3 +1,4 @@
+import { historyWireEstimates } from "../history/wire";
 import type {
   RunnerEvent,
   Phase,
@@ -792,11 +793,11 @@ class AppStore {
             {
               paths: this.activePaths,
               clientBuild: BUILD.clientVersion,
-              wireDownloadBytesPerSec:
-                downloadWire?.estimatedBytesPerSec ?? null,
-              wireUploadBytesPerSec: uploadWire?.estimatedBytesPerSec ?? null,
-              wireBidirectionalBytesPerSec:
-                bidiWire?.estimatedBytesPerSec ?? null,
+              wireEstimates: historyWireEstimates(
+                downloadWire,
+                uploadWire,
+                bidiWire,
+              ),
             },
             Date.now(),
           );

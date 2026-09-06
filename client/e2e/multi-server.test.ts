@@ -31,7 +31,7 @@ test("four real servers share one run and retain separate receiver windows and l
   await expect(
     selectionSettings
       .getByRole("group", { name: "Servers to test", exact: true })
-      .getByRole("button")
+      .getByRole("checkbox")
       .first(),
   ).toBeEnabled();
   await selectionSettings
@@ -43,7 +43,7 @@ test("four real servers share one run and retain separate receiver windows and l
   await expect(
     selectionSettings
       .getByRole("group", { name: "Servers to test", exact: true })
-      .getByRole("button")
+      .getByRole("checkbox")
       .first(),
   ).toBeDisabled();
   await selectionSettings
@@ -71,27 +71,28 @@ test("four real servers share one run and retain separate receiver windows and l
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);
   }
-  const resultPills = page.getByRole("radiogroup", {
+  const resultSelector = page.getByRole("radiogroup", {
     name: "Result measurements",
   });
-  await resultPills
-    .getByRole("radio", { name: /All servers, Aggregate throughput/ })
-    .focus();
+  await resultSelector.getByRole("radio", { name: /^Combined,/ }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(resultPills.getByRole("radio", { name: "Home" })).toBeFocused();
   await expect(
-    resultPills.getByRole("radio", { name: "Home" }),
+    resultSelector.getByRole("radio", { name: "Home" }),
+  ).toBeFocused();
+  await expect(
+    resultSelector.getByRole("radio", { name: "Home" }),
   ).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
   await page.keyboard.press("End");
   await expect(
-    resultPills.getByRole("radio", { name: "Helsinki" }),
+    resultSelector.getByRole("radio", { name: "Helsinki" }),
   ).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Home");
   await page.keyboard.press("Escape");
-  await expect(
-    page.getByRole("radio", { name: /All servers, Aggregate throughput/ }),
-  ).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: /^Combined,/ })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
   const audit = await new AxeBuilder({ page })
     .include(".results-slot")
     .analyze();
@@ -149,11 +150,320 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
     name: "Servers to test",
     exact: true,
   });
-  const peer = band.getByRole("button", { name: "Frankfurt" });
+  await band.getByRole("checkbox").nth(1).click();
+  const peer = band.getByRole("checkbox", { name: "Frankfurt" });
   await expect(peer).toBeVisible({ timeout: 15000 });
   await peer.focus();
+  await band.locator("label").nth(1).hover();
   await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
   await page.artifact("origin-only-peer-discovery");
+});
+
+test("server selectors support sliding, keyboard selection, cancellation and narrow layouts", async ({
+  page,
+}) => {
+  await configure(page, ["self", "server-1"]);
+  await ready(page);
+  const settings = await openSettings(page);
+  const selector = settings.getByRole("radiogroup", {
+    name: "Latency measurement servers",
+  });
+  const all = selector.getByRole("radio", { name: /All servers/ });
+  const home = selector.getByRole("radio", { name: "Home" });
+  const peer = selector.getByRole("radio", { name: "Frankfurt" });
+  await all.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(home).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("End");
+  await expect(peer).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Home");
+  await expect(all).toHaveAttribute("aria-checked", "true");
+  const cdp = await page.context.newCDPSession();
+  const point = async (option: typeof all) =>
+    option.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    });
+  const from = await point(all);
+  const to = await point(home);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    ...from,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    ...to,
+    buttons: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    ...to,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  await expect(home).toHaveAttribute("aria-checked", "true");
+  const cancelTo = await point(peer);
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    ...to,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    ...cancelTo,
+    buttons: 1,
+  });
+  await page.keyboard.press("Escape");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    ...cancelTo,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  await expect(home).toHaveAttribute("aria-checked", "true");
+  await expect(settings).toBeVisible();
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(settings.locator(".panel-body"));
+    await expect
+      .poll(() =>
+        selector.evaluate((element) => {
+          const selected = element
+            .querySelector('[aria-checked="true"]')!
+            .getBoundingClientRect();
+          const thumb = element
+            .querySelector(".selector-thumb")!
+            .getBoundingClientRect();
+          return (
+            Math.abs(selected.left - thumb.left) +
+            Math.abs(selected.top - thumb.top) +
+            Math.abs(selected.width - thumb.width) +
+            Math.abs(selected.height - thumb.height)
+          );
+        }),
+      )
+      .toBeLessThan(1);
+  }
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      selector
+        .locator(".selector-thumb")
+        .evaluate((element) =>
+          Number.parseFloat(getComputedStyle(element).transitionDuration),
+        ),
+    )
+    .toBeLessThan(0.0001);
+  await all.click();
+  await expect(all).toHaveAttribute("aria-checked", "true");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .include('[aria-label="Settings"]')
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page.artifact("sliding-server-selector-phone");
+});
+
+test("retrying an upgraded server refreshes capability evidence without checking healthy peers", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ({ peer }) => {
+      const state = globalThis as typeof globalThis & {
+        checkpointsAvailable: boolean;
+        preflightOrigins: string[];
+      };
+      state.checkpointsAvailable = false;
+      state.preflightOrigins = [];
+      const browser = window as {
+        fetch: (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>;
+      };
+      const original = browser.fetch;
+      browser.fetch = async (...args) => {
+        const response = await original(...args);
+        const url = new URL(String(args[0]), location.href);
+        if (url.pathname !== "/preflight") return response;
+        state.preflightOrigins.push(url.origin);
+        if (url.origin !== peer) return response;
+        const body = await response.json();
+        body.capabilities.uploadCheckpoint = state.checkpointsAvailable;
+        const replaced = Response.json(body, {
+          status: response.status,
+          headers: response.headers,
+        });
+        Object.defineProperty(replaced, "url", { value: response.url });
+        return replaced;
+      };
+    },
+    { peer: fleet[1].url },
+  );
+  await configure(page, ["self", "server-1"]);
+  const settings = await openSettings(page);
+  const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
+  await expect(retry).toBeVisible();
+  await expect(settings).toContainText("receiver checkpoint support");
+  await page.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      checkpointsAvailable: boolean;
+      preflightOrigins: string[];
+    };
+    state.checkpointsAvailable = true;
+    state.preflightOrigins = [];
+  });
+  await retry.click();
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { preflightOrigins: string[] })
+          .preflightOrigins,
+    ),
+  ).toEqual([fleet[1].url]);
+});
+
+test("enabling all latency checks only the new peer path and retries leave healthy paths open", async ({
+  page,
+}) => {
+  await configure(
+    page,
+    ["self", "server-1"],
+    1500,
+    {},
+    { mode: "primary", serverId: "self" },
+  );
+  await ready(page);
+  await page.evaluate(
+    ({ healthy, peer }) => {
+      const state = globalThis as typeof globalThis & {
+        pathChecks: { fetches: string[]; workers: number; failPeer: boolean };
+      };
+      state.pathChecks = { fetches: [], workers: 0, failPeer: true };
+      // Idle expiry alone must not turn a new ping choice into a full recheck.
+      const now = Date.now.bind(Date);
+      Date.now = () => now() + 180_000;
+      const browser = window as {
+        fetch: (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>;
+      };
+      const original = browser.fetch;
+      browser.fetch = async (...args) => {
+        const url = new URL(String(args[0]), location.href);
+        if (url.pathname === "/preflight" || url.pathname === "/probe") {
+          state.pathChecks.fetches.push(url.href);
+          if (
+            healthy.includes(url.origin) ||
+            (url.origin === peer &&
+              url.pathname === "/probe" &&
+              state.pathChecks.failPeer)
+          )
+            return new Response(null, { status: 503 });
+        }
+        return original(...args);
+      };
+      window.Worker = new Proxy(window.Worker, {
+        construct(target, args) {
+          state.pathChecks.workers++;
+          return Reflect.construct(target, args);
+        },
+      });
+    },
+    {
+      healthy: [fleet[0].url, fleet[0].http, fleet[0].h2, fleet[0].h3],
+      peer: fleet[1].http,
+    },
+  );
+  const settings = await openSettings(page);
+  const selector = settings.getByRole("radiogroup", {
+    name: "Latency measurement servers",
+  });
+  await expect(selector.getByRole("radio", { name: "Home" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await selector.getByRole("radio", { name: /All servers/ }).click();
+  await expect(
+    settings.getByRole("button", { name: "Retry Frankfurt" }),
+  ).toBeVisible({ timeout: 15000 });
+  const checks = () =>
+    page.evaluate(
+      () =>
+        (
+          globalThis as typeof globalThis & {
+            pathChecks: {
+              fetches: string[];
+              workers: number;
+              failPeer: boolean;
+            };
+          }
+        ).pathChecks,
+    );
+  expect((await checks()).fetches.map((url) => new URL(url).origin)).toEqual([
+    fleet[1].url,
+    fleet[1].http,
+  ]);
+  expect((await checks()).workers).toBe(1);
+  await page.evaluate(() => {
+    (
+      globalThis as typeof globalThis & { pathChecks: { failPeer: boolean } }
+    ).pathChecks.failPeer = false;
+  });
+  await settings.getByRole("button", { name: "Retry Frankfurt" }).click();
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible({ timeout: 15000 });
+  const verified = await checks();
+  expect(verified.fetches.map((url) => new URL(url).origin)).toEqual([
+    fleet[1].url,
+    fleet[1].http,
+    fleet[1].url,
+    fleet[1].http,
+  ]);
+  expect(verified.workers).toBe(2);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await selector.getByRole("radio", { name: "Home" }).click();
+    await selector.getByRole("radio", { name: /All servers/ }).click();
+  }
+  const choices = settings.getByRole("group", {
+    name: "Servers to test",
+    exact: true,
+  });
+  await choices.getByRole("checkbox", { name: "Frankfurt" }).click();
+  await choices.getByRole("checkbox", { name: "Frankfurt" }).click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await openSettings(page);
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible();
+  expect(await checks()).toEqual(verified);
+  // An unselected server receives no path checks until the user adds it.
+  await choices.getByRole("checkbox", { name: "Helsinki" }).click();
+  await expect.poll(async () => (await checks()).fetches.length).toBe(7);
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible({ timeout: 15000 });
+  const added = await checks();
+  expect(added.fetches.slice(4).map((url) => new URL(url).origin)).toEqual([
+    fleet[3].url,
+    fleet[3].url,
+    fleet[3].http,
+  ]);
+  expect(added.workers).toBe(3);
 });
 
 test("a real peer dropout keeps healthy transfers running and persists its failure after reload", async ({
@@ -347,11 +657,11 @@ for (const theme of ["dark", "light"] as const)
       name: "Servers to test",
       exact: true,
     });
-    await expect(band.getByRole("button", { name: "Home" })).toBeDisabled();
-    const peer = band.getByRole("button", { name: "Frankfurt" });
+    await expect(band.getByRole("checkbox", { name: "Home" })).toBeDisabled();
+    const peer = band.getByRole("checkbox", { name: "Frankfurt" });
     await peer.focus();
     await page.keyboard.press("Space");
-    await expect(peer).toHaveAttribute("aria-pressed", "true");
+    await expect(peer).toBeChecked();
     await page.keyboard.press("Escape");
     await openSettings(page);
     await expectNoHorizontalOverflow(settings);
@@ -367,7 +677,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
 }) => {
   await configure(page, ["self", "server-1"]);
   await ready(page);
-  // Change the primary while the preceding policy's discovery is still in flight.
+  // Already verified latency choices must not open another discovery or ping worker.
   await page.evaluate(() => {
     const state = globalThis as typeof globalThis & {
       delayedPreflights: number;
@@ -404,7 +714,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
             .delayedPreflights,
       ),
     )
-    .toBe(2);
+    .toBe(0);
   await settings
     .getByRole("radiogroup", { name: "Latency measurement servers" })
     .getByRole("radio", { name: "Frankfurt" })

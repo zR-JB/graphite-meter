@@ -145,7 +145,6 @@ export function createApplicationController(
     string,
     NonNullable<ConnectionPreparation["idle"]>
   >();
-  let inspection: AbortController | null = null;
   let approval: AbortController | null = null;
   let approvalServerId: string | null = null;
   let approvalPopup: Window | null = null;
@@ -176,7 +175,7 @@ export function createApplicationController(
       : connectionDraftKey(config);
   const catalogSelected = () =>
     selectedInCatalogOrder(store.serverCatalog!, store.selectedServers);
-  const readySelected = () =>
+  const readySelected = (fresh = true) =>
     useCatalog &&
     store.serverCatalog &&
     !store.unresolvedServers.length &&
@@ -189,8 +188,63 @@ export function createApplicationController(
           serverConfig(id),
           store.serverDiscoveries[id] ?? null,
           selectedValidation.get(id) ?? emptyConnectionValidation(),
+          fresh ? CONNECTION_FRESH_MS : Infinity,
         ),
     );
+  function updateSelectedPaths() {
+    for (const id of store.selectedServers) {
+      const config = serverConfig(id);
+      const paths = preparedPaths(
+        config,
+        store.serverDiscoveries[id] ?? null,
+        selectedValidation.get(id) ?? emptyConnectionValidation(),
+        Infinity,
+      );
+      if (
+        paths &&
+        (config.stages.upload || config.stages.bidirectional) &&
+        !paths.discovery.uploadCheckpoint
+      ) {
+        selectedPaths.delete(id);
+        store.serverReadiness[id] = {
+          state: "failed",
+          message:
+            "Receiver checkpoint support is required for uploads. Upgrade this measurement server.",
+        };
+        continue;
+      }
+      if (paths) {
+        paths.credentials = contexts.get(id);
+        selectedPaths.set(id, paths);
+        store.serverReadiness[id] = {
+          ...store.serverReadiness[id],
+          state: "ready",
+        };
+      } else {
+        selectedPaths.delete(id);
+        if (!["failed", "sign-in"].includes(store.serverReadiness[id]?.state))
+          store.serverReadiness[id] = { state: "unchecked" };
+      }
+    }
+  }
+  function invalidateSelected(
+    roles: ConnectionRole[],
+    ids = store.selectedServers,
+  ) {
+    for (const id of ids) {
+      const previous = selectedValidation.get(id);
+      if (previous) {
+        const next = { ...previous };
+        if (roles.includes("throughput"))
+          next.throughput = { ...next.throughput, state: "stale" };
+        if (roles.includes("latency"))
+          next.latency = { ...next.latency, state: "stale" };
+        selectedValidation.set(id, next);
+      }
+      selectedPaths.delete(id);
+      store.serverReadiness[id] = { state: "unchecked" };
+    }
+  }
   const savedSelectionKey = "graphite-meter:server-selection:v1";
 
   async function loadCatalog() {
@@ -215,7 +269,6 @@ export function createApplicationController(
       );
       signal.throwIfAborted();
       validation?.abort.abort();
-      inspection?.abort();
       for (const check of serverChecks.values()) check.abort();
       serverChecks.clear();
       const previousContexts = new Map(contexts);
@@ -270,7 +323,8 @@ export function createApplicationController(
   async function inspectServer(
     server: ServerEntry,
     ownerSignal: AbortSignal,
-    roles: ConnectionRole[] = CONNECTION_ROLES,
+    roles: ConnectionRole[],
+    maxAgeMs: number,
   ): Promise<void> {
     serverChecks.get(server.id)?.abort();
     const check = new AbortController();
@@ -279,6 +333,7 @@ export function createApplicationController(
       ownerSignal,
       check.signal,
       lifetime.signal,
+      AbortSignal.timeout(12_000),
     ]);
     const configKey = draftKey(store.config);
     const current = () =>
@@ -321,14 +376,19 @@ export function createApplicationController(
         throw new Error(
           `${server.name} needs receiver checkpoint support for coordinated uploads. Upgrade this measurement server.`,
         );
-      const paths = preparedPaths(config, result.discovery, result.validation);
+      const paths = preparedPaths(
+        config,
+        result.discovery,
+        result.validation,
+        maxAgeMs,
+      );
       if (!paths) throw new Error("Enabled measurements could not be prepared");
       paths.credentials = contexts.get(server.id);
       selectedPaths.set(server.id, paths);
-      selectedIdle.get(server.id)?.stop();
-      if (result.idle) {
-        result.idle.stop();
-        selectedIdle.set(server.id, result.idle);
+      if (result.idle !== undefined) {
+        selectedIdle.get(server.id)?.stop();
+        if (result.idle) selectedIdle.set(server.id, result.idle);
+        else selectedIdle.delete(server.id);
       }
       store.serverReadiness[server.id] = {
         state: "ready",
@@ -389,13 +449,16 @@ export function createApplicationController(
         "failed",
         "Resolve the selected servers before starting.",
       );
-    for (const monitor of selectedIdle.values()) monitor.stop();
-    if (paths?.latency) {
-      idle = selectedIdle.get(first.id) ?? null;
-      if (idle) {
-        idle.onEvent = ingest;
-        refreshIdle();
-      }
+    const nextIdle = paths?.latency
+      ? (selectedIdle.get(first.id) ?? null)
+      : null;
+    for (const monitor of selectedIdle.values()) {
+      if (monitor !== nextIdle) monitor.stop();
+    }
+    idle = nextIdle;
+    if (idle) {
+      idle.onEvent = (event) => ingest(event, first.id);
+      refreshIdle();
     }
   }
   async function validateServers(
@@ -407,39 +470,59 @@ export function createApplicationController(
       throw new Error("The server catalogue is unavailable");
     if (store.unresolvedServers.length || !store.selectedServers.length)
       throw new Error("Review the saved server selection");
-    if (!force && readySelected()) return;
+    const requireFresh = ownerSignal !== undefined;
+    if (!force && readySelected(requireFresh)) {
+      adoptSelectedEvidence();
+      return;
+    }
+    const pending = catalogSelected().flatMap((server) => {
+      const roles = validationRoles(
+        serverConfig(server.id),
+        selectedValidation.get(server.id) ?? emptyConnectionValidation(),
+        force ? (requestedRole ?? "all") : undefined,
+        store.serverDiscoveries[server.id],
+        requireFresh ? CONNECTION_FRESH_MS : Infinity,
+      );
+      return roles.length ? [{ server, roles }] : [];
+    });
+    if (!pending.length) {
+      updateSelectedPaths();
+      adoptSelectedEvidence();
+      if (!readySelected(requireFresh))
+        throw new Error("Resolve the selected servers before starting");
+      return;
+    }
     validation?.abort.abort();
     const task = {
       abort: new AbortController(),
       draft: draftKey(store.config),
-      roles:
-        store.selectedServers.length === 1
-          ? validationRoles(
-              store.config,
-              store.connectionValidation,
-              requestedRole,
-              store.transportDiscovery,
-            )
-          : CONNECTION_ROLES,
+      roles: [...new Set(pending.flatMap(({ roles }) => roles))],
     };
     validation = task;
     const signal = AbortSignal.any([
       task.abort.signal,
       ...(ownerSignal ? [ownerSignal] : []),
-      AbortSignal.timeout(12_000),
     ]);
     mark(task.roles, "checking");
     try {
-      await Promise.allSettled(
-        catalogSelected().map((server) =>
-          inspectServer(server, signal, task.roles),
-        ),
-      );
+      // Bound simultaneous handshakes; each server retains its own deadline.
+      const worker = async () => {
+        while (pending.length && !signal.aborted) {
+          const { server, roles } = pending.shift()!;
+          await inspectServer(
+            server,
+            signal,
+            roles,
+            requireFresh ? CONNECTION_FRESH_MS : Infinity,
+          ).catch(() => {});
+        }
+      };
+      await Promise.all([worker(), worker()]);
       signal.throwIfAborted();
       if (validation !== task || task.draft !== draftKey(store.config))
         throw new DOMException("Aborted", "AbortError");
       adoptSelectedEvidence();
-      if (!readySelected())
+      if (!readySelected(requireFresh))
         throw new Error(
           store.selectedServers.length === 1
             ? store.serverReadiness[store.selectedServers[0]]?.message ||
@@ -453,43 +536,11 @@ export function createApplicationController(
         validation = null;
         if (task.abort.signal.aborted || task.draft !== draftKey(store.config))
           nextValidationAt = Date.now();
-        else if (!readySelected())
+        else if (!readySelected(requireFresh))
           nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
       }
       schedule();
     }
-  }
-  function inspectAvailableServers() {
-    if (store.isRunning || store.preparing) return;
-    if (!store.serverCatalog) {
-      void retryCatalogue();
-      return;
-    }
-    inspection?.abort();
-    inspection = new AbortController();
-    const signal = AbortSignal.any([
-      inspection.signal,
-      AbortSignal.timeout(12_000),
-    ]);
-    const pending = (store.serverCatalog?.servers ?? []).filter(
-      (server) =>
-        !store.selectedServers.includes(server.id) &&
-        store.serverReadiness[server.id]?.state !== "checking" &&
-        Date.now() - (store.serverReadiness[server.id]?.checkedAt ?? 0) >
-          CONNECTION_FRESH_MS,
-    );
-    // Four bounded discovery tasks; only selected servers own ongoing validation.
-    const worker = async () => {
-      while (pending.length && !signal.aborted) {
-        const server = pending.shift()!;
-        await inspectServer(server, signal).catch(() => {});
-      }
-    };
-    void Promise.all([worker(), worker(), worker(), worker()]);
-  }
-  function cancelServerInspection() {
-    inspection?.abort();
-    inspection = null;
   }
   function applyServers(ids: string[]): boolean {
     if (store.isRunning || store.preparing || !store.serverCatalog)
@@ -510,9 +561,6 @@ export function createApplicationController(
         JSON.stringify(catalogSelected().map(({ id, url }) => ({ id, url }))),
       );
     } catch {}
-    cancelServerInspection();
-    mark(CONNECTION_ROLES, "stale");
-    requestValidation();
     return true;
   }
   function cancelServerApproval() {
@@ -546,10 +594,13 @@ export function createApplicationController(
       const context = await flow.poll(task.signal);
       if (approval !== task) return;
       contexts.set(id, context);
+      selectedPaths.delete(id);
+      selectedValidation.delete(id);
+      store.serverReadiness[id] = { state: "unchecked" };
       store.serverApproval = null;
       // Approval owns the grant exchange; connection validation owns path errors
       // and superseding draft changes after the grant has been accepted.
-      void validateServers(true).catch(() => {});
+      void validateServers(false).catch(() => {});
     } catch (cause) {
       if (!task.signal.aborted) {
         store.serverReadiness[id] = {
@@ -619,10 +670,12 @@ export function createApplicationController(
     timer = undefined;
     if (!booted || store.isRunning || pendingStart || validation || hidden())
       return;
+    // Healthy idle paths need no periodic handshakes. Expiry is checked on start.
+    if (useCatalog && readySelected(false)) return;
     timer = setTimeout(
       () => {
         timer = undefined;
-        void validateConnections(true).catch(() => {});
+        void validateConnections(!useCatalog).catch(() => {});
       },
       Math.max(0, nextValidationAt - Date.now()),
     );
@@ -648,16 +701,22 @@ export function createApplicationController(
       idle?.stop();
     else idle?.start();
   }
-  function ingest(event: RunnerEvent) {
+  function ingest(event: RunnerEvent, serverId?: string) {
+    if (useCatalog && event.type === "serverFailure") {
+      invalidateSelected([event.failure.scope], [event.failure.serverId]);
+      nextValidationAt = Date.now();
+    }
     if (event.type === "connectivity") {
-      if (event.state === "offline") offline();
+      if (event.state === "offline") offline(serverId);
       else onlineAgain();
     }
     if (
       event.type === "error" &&
       CONNECTION_FAILURE_REASONS.has(event.error.reason)
-    )
+    ) {
+      if (useCatalog) invalidateSelected(CONNECTION_ROLES);
       mark(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+    }
     store.ingest(event);
     if (
       event.type === "complete" ||
@@ -668,10 +727,17 @@ export function createApplicationController(
       schedule();
     }
   }
-  function offline() {
-    if (online === false) return;
+  function offline(serverId?: string | Event) {
+    if (online === false && !(serverId instanceof Event)) return;
     online = false;
-    mark(CONNECTION_ROLES, "stale", "Connection changed; check again.");
+    const roles: ConnectionRole[] =
+      typeof serverId === "string" ? ["latency"] : CONNECTION_ROLES;
+    if (useCatalog)
+      invalidateSelected(
+        roles,
+        typeof serverId === "string" ? [serverId] : undefined,
+      );
+    mark(roles, "stale", "Connection changed; check again.");
     requestValidation();
   }
   function onlineAgain() {
@@ -716,7 +782,7 @@ export function createApplicationController(
       roles: validationRoles(
         config,
         store.connectionValidation,
-        requestedRole,
+        force ? (requestedRole ?? "all") : undefined,
         store.transportDiscovery,
       ),
     };
@@ -828,12 +894,10 @@ export function createApplicationController(
         serverDraft = selectionKey();
         if (!booted || (!changed.length && !selectionChanged)) return;
         if (useCatalog) {
-          for (const id of store.selectedServers) {
-            store.serverReadiness[id] = { state: "unchecked" };
-            selectedPaths.delete(id);
-          }
           if (pendingStart) cancelPendingStart();
           validation?.abort.abort();
+          updateSelectedPaths();
+          if (store.selectedServers.length) adoptSelectedEvidence();
           if (!store.isRunning) requestValidation();
           return;
         }
@@ -895,7 +959,8 @@ export function createApplicationController(
       useCatalog &&
       (!store.serverCatalog ||
         store.unresolvedServers.length ||
-        (!readySelected() && (store.serverCatalog?.servers.length ?? 0) > 1))
+        (!readySelected(false) &&
+          (store.serverCatalog?.servers.length ?? 0) > 1))
     ) {
       store.startError =
         "Open Settings to resolve the selected servers before starting.";
@@ -1066,7 +1131,6 @@ export function createApplicationController(
     booted = false;
     lifetime.abort();
     catalogCheck?.abort();
-    inspection?.abort();
     cancelServerApproval();
     for (const monitor of selectedIdle.values()) monitor.stop();
     contexts.clear();
@@ -1112,8 +1176,6 @@ export function createApplicationController(
   return {
     boot,
     dispose,
-    inspectAvailableServers,
-    cancelServerInspection,
     retryCatalogue,
     applyServers,
     signInServer,
@@ -1124,9 +1186,27 @@ export function createApplicationController(
       const server = store.serverCatalog?.servers.find(
         (server) => server.id === id,
       );
-      return server
-        ? inspectServer(server, AbortSignal.timeout(12_000)).catch(() => {})
-        : Promise.resolve();
+      if (
+        !server ||
+        !store.selectedServers.includes(id) ||
+        store.isRunning ||
+        store.preparing
+      )
+        return Promise.resolve();
+      // Capability failures can leave both role probes verified. A manual retry
+      // must rediscover that server after an upgrade, without checking its peers.
+      if (
+        store.serverReadiness[id]?.state === "failed" &&
+        !validationRoles(
+          serverConfig(id),
+          selectedValidation.get(id) ?? emptyConnectionValidation(),
+          undefined,
+          store.serverDiscoveries[id],
+          Infinity,
+        ).length
+      )
+        selectedValidation.delete(id);
+      return validateServers(false).catch(() => {});
     },
     toggleRun,
     cancelPendingStart,

@@ -63,10 +63,11 @@ test("result wire details work with mouse, keyboard, touch, and narrow viewports
   await expect(tag).toHaveCSS("text-decoration-style", "dotted");
   await tag.hover();
   const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toContainText("Estimated Ethernet overhead:");
-  await expect(tooltip).toContainText("(assumed)");
-  await expect(tooltip).toContainText(/IP: IPv[46]/);
-  await expect(tooltip).toContainText("Transport:");
+  await expect(tooltip).toContainText("Ethernet +");
+  await expect(tooltip).toContainText("MTU 1,500 B assumed");
+  await expect(tooltip).toContainText(/IPv[46] \+/);
+  await expect(tooltip).toContainText("TCP + options +");
+  await expect(tooltip).toContainText("IPv4 +");
   await expect(tooltip).toHaveCSS("white-space", "pre-line");
   const box = await tooltip.boundingBox();
   expect(box).not.toBeNull();
@@ -111,9 +112,7 @@ test("four-stage result details survive responsive and wire-preference changes",
   const bidirectional = resultCards(page).filter({ hasText: "Bi-dir" });
   await expect(bidirectional.locator(".est")).toContainText("wire +");
   await bidirectional.locator(".est-tag").hover();
-  await expect(page.getByRole("tooltip")).toContainText(
-    "Estimated Ethernet overhead:",
-  );
+  await expect(page.getByRole("tooltip")).toContainText("Ethernet +");
   const jitter = page.locator(".result-card .jitter");
   await expect(jitter).toHaveText("0.0 ms jitter");
   await expect(

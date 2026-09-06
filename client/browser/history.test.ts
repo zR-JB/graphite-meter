@@ -352,17 +352,18 @@ test("explicitly enabled completion is reachable in History and stays responsive
   expect(savedWireRate).not.toBeNull();
   expect(savedWireRate!).toBeGreaterThan(0);
   await page.locator("a.result-row").first().click();
-  await expect(
-    page.getByRole("heading", { name: "Wire-rate snapshot" }),
-  ).toHaveCount(0);
+  await expect(page.locator(".saved-wire").first()).toHaveCount(0);
   const displaySettings = await openSettings(page);
   await displaySettings
     .getByText("Show estimated wire rate", { exact: true })
     .click();
   await displaySettings.getByRole("button", { name: "Close Settings" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Wire-rate snapshot" }),
-  ).toBeVisible();
+  await expect(page.locator(".saved-wire").first()).toBeVisible();
+  await expect(page.locator(".saved-wire").first()).toContainText(/\+\d+\.\d%/);
+  await page.locator(".saved-wire .wire-label").first().focus();
+  await page.locator(".saved-wire .wire-label").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText("Ethernet +");
+  await expect(page.getByRole("tooltip")).toContainText("MTU 1,500 B assumed");
   await expectNoHorizontalOverflow(page.locator(".history-workspace"));
   await expectNoHorizontalOverflow(page.locator("body"));
 });
@@ -936,6 +937,12 @@ test("deep-linked detail uses contextual focus without outlining its heading", a
   await expect(detail.getByText("Stability", { exact: true })).toBeVisible();
   await expect(detail.locator("details")).toHaveCount(0);
   await expect(detail.locator(".throughput-card")).toHaveCount(3);
+  await expect(detail.locator(".saved-wire").first()).toContainText("+3.0%");
+  await detail.locator(".saved-wire .wire-label").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Per-part breakdown unavailable",
+  );
+  await page.mouse.move(20, 65);
   await expect(detail.locator(".throughput-card em")).toHaveCount(0);
   await expect(detail.locator(".throughput-card")).not.toContainText(/loss/i);
   await expect(

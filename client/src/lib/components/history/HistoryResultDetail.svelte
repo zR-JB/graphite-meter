@@ -7,6 +7,7 @@
 </script>
 
 <script lang="ts">
+  import { historyWirePresentation } from "../../history/wire";
   import { tooltip } from "../../actions/tooltip";
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
   import { ICON } from "../../constants";
@@ -32,7 +33,7 @@
   } from "../latencyProfile";
   import ResultServerContext from "../ResultServerContext.svelte";
   import ServerTag from "../ServerTag.svelte";
-  import ServerPills from "../ServerPills.svelte";
+  import ServerSelector from "../ServerSelector.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -284,24 +285,6 @@
       Boolean(row.value),
     ),
   );
-
-  const wireRows = $derived(
-    record.wireEstimates
-      ? [
-          {
-            label: "Download",
-            value: record.wireEstimates.downloadBytesPerSec,
-          },
-          { label: "Upload", value: record.wireEstimates.uploadBytesPerSec },
-          {
-            label: "Bidirectional",
-            value: record.wireEstimates.bidirectionalBytesPerSec,
-          },
-        ].filter(
-          (row): row is { label: string; value: number } => row.value != null,
-        )
-      : [],
-  );
 </script>
 
 <article
@@ -385,6 +368,16 @@
               <strong>{card.label}</strong>
             </header>
             <p>{card.value}</p>
+            {#if !scoped && store.showWireEstimates}
+              {@const wire = historyWirePresentation(record, card.key)}
+              {#if wire}<div class="saved-wire">
+                  <span>{rate(wire.bytesPerSec)}</span><span
+                    class="wire-label"
+                    use:tooltip={wire.tooltip}
+                    >wire{wire.pct ? ` ${wire.pct}` : ""}</span
+                  >
+                </div>{/if}
+            {/if}
             <small>{card.detail}</small>
           </article>
         {/each}
@@ -406,9 +399,8 @@
       <div class="section-body responsiveness-body">
         {#if record.multiServer && record.multiServer.selection.length > 1}
           <div class="server-focus">
-            <span>Latency</span>
             {#if record.multiServer.servers.filter((server) => server.latencyTarget).length > 1}
-              <ServerPills
+              <ServerSelector
                 servers={record.multiServer.selection}
                 value={focusedId ?? ""}
                 label="Saved latency server"
@@ -556,26 +548,6 @@
     </section>
   {/if}
 
-  {#if wireRows.length && store.showWireEstimates}
-    <section
-      class="detail-section"
-      aria-labelledby={`result-${record.id}-wire`}
-    >
-      <header class="section-head">
-        <span class="wire-icon" aria-hidden="true">W</span>
-        <h3 id={`result-${record.id}-wire`}>Wire-rate snapshot</h3>
-      </header>
-      <dl class="section-body wire-grid">
-        {#each wireRows as row (row.label)}
-          <div>
-            <dt>{row.label}</dt>
-            <dd>{rate(row.value)}</dd>
-          </div>
-        {/each}
-      </dl>
-    </section>
-  {/if}
-
   <footer class="detail-actions">
     <button type="button" onclick={onDelete}>Delete this result</button>
   </footer>
@@ -599,7 +571,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 8px;
     color: var(--text-soft);
     font-size: 12px;
@@ -901,20 +873,17 @@
     padding-left: var(--space-3);
     border-left: 1px solid var(--border-subtle);
   }
-  .context-grid,
-  .wire-grid {
+  .context-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 var(--space-4);
   }
-  .context-grid > div,
-  .wire-grid > div {
+  .context-grid > div {
     min-width: 0;
     padding: 9px 0;
     border-bottom: 1px solid var(--border-subtle);
   }
-  .context-grid dd,
-  .wire-grid dd {
+  .context-grid dd {
     font-size: var(--type-sm);
     line-height: 1.4;
   }
@@ -942,9 +911,26 @@
     color: var(--text-muted);
     text-align: right;
   }
-  .wire-icon {
-    color: var(--text-muted) !important;
-    font: 750 10px var(--font-mono);
+  .saved-wire {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--brand-strong);
+    font: 600 var(--type-xs)/1.4 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .wire-label {
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 500;
+    text-decoration: underline dotted var(--text-soft);
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+  .wire-label:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   .detail-actions {
     display: flex;
@@ -996,8 +982,7 @@
       margin-inline: var(--space-3);
     }
     .throughput-grid,
-    .context-grid,
-    .wire-grid {
+    .context-grid {
       grid-template-columns: 1fr;
     }
     .idle-summary {

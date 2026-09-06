@@ -1,6 +1,6 @@
 <script lang="ts">
   import ServerTag from "./ServerTag.svelte";
-  import ServerPills from "./ServerPills.svelte";
+  import ServerSelector from "./ServerSelector.svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
@@ -29,8 +29,7 @@
 
 {#if servers.length > 1 && focused}
   <div class="latency-focus">
-    <span>Latency</span>
-    {#if measured.length > 1}<ServerPills
+    {#if measured.length > 1}<ServerSelector
         {servers}
         value={store.latencyFocus}
         label="Latency server shown in gauge, profile and chart"
@@ -51,7 +50,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: var(--space-2);
     margin-bottom: var(--space-2);
     color: var(--text-muted);

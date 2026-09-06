@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { MultiServerResult } from "../servers/measurement";
-  import ServerPills from "./ServerPills.svelte";
+  import ServerSelector from "./ServerSelector.svelte";
   let {
     details,
     value,
@@ -26,11 +26,12 @@
         class="scope-caption"
         >{details.participants.length} of {details.selection.length} servers</span
       >{/if}
-    <ServerPills
+    <ServerSelector
       servers={details.selection}
       {value}
       {onchange}
       aggregate
+      aggregateLabel="Combined"
       label="Result measurements"
     />
   </div>
@@ -46,12 +47,14 @@
 
 <style>
   .result-server-context {
+    min-width: 0;
     display: grid;
     gap: var(--space-2);
     color: var(--text-soft);
     font: var(--type-sm)/1.4 var(--font-sans);
   }
   .scope-heading {
+    min-width: 0;
     display: flex;
     flex-wrap: wrap;
     align-items: center;

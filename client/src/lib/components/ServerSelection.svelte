@@ -1,6 +1,7 @@
 <script lang="ts">
-  import ServerPills from "./ServerPills.svelte";
   import { tooltip } from "../actions/tooltip";
+  import ServerSelector from "./ServerSelector.svelte";
+  import { serverAccent, serverLabel } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
@@ -24,48 +25,55 @@
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="server-setting">
     <div class="server-heading">
-      <strong
-        use:tooltip={"Select one to four servers. Every selected server carries throughput traffic."}
-        >Servers</strong
-      >
-      <small>{selected.length} / 4</small>
+      <strong>Test servers</strong>
+      <small>{selected.length} selected</small>
     </div>
-    <ServerPills
-      servers={store.serverCatalog!.servers}
-      value={store.selectedServers}
-      label="Servers to test"
-      multiple
-      expanded
-      disabled={locked}
-      disabledIds={store
-        .serverCatalog!.servers.filter((server) =>
-          selected.length === 1
-            ? store.selectedServers.includes(server.id)
-            : selected.length >= 4 &&
-              !store.selectedServers.includes(server.id),
-        )
-        .map((server) => server.id)}
-      onchange={(id) =>
-        controller.applyServers(
-          store.selectedServers.includes(id)
-            ? store.selectedServers.filter((selected) => selected !== id)
-            : [...store.selectedServers, id],
-        )}
-    />
-    {#if selected.length > 1}
-      <div class="latency-policy">
-        <strong
-          use:tooltip={"Choose which servers measure idle and loaded latency. Throughput still uses every selected server."}
-          >Latency</strong
+    <div class="server-choices" role="group" aria-label="Servers to test">
+      {#each store.serverCatalog!.servers as server (server.id)}
+        {@const checked = store.selectedServers.includes(server.id)}
+        {@const unavailable =
+          locked || (checked ? selected.length === 1 : selected.length >= 4)}
+        <label
+          tabindex="-1"
+          use:tooltip={[server.name, server.location, new URL(server.url).host]
+            .filter(Boolean)
+            .join("\n")}
+          class:checked
+          style:--server-accent={serverAccent(
+            server,
+            store.serverCatalog!.servers,
+          )}
         >
-        <ServerPills
+          <input
+            type="checkbox"
+            {checked}
+            disabled={unavailable}
+            aria-label={[server.name, server.location, new URL(server.url).host]
+              .filter(Boolean)
+              .join(", ")}
+            onchange={() =>
+              controller.applyServers(
+                checked
+                  ? store.selectedServers.filter((id) => id !== server.id)
+                  : [...store.selectedServers, server.id],
+              )}
+          />
+          <span>{serverLabel(server)}</span>
+        </label>
+      {/each}
+    </div>
+    <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
+    {#if selected.length > 1 && store.latencyEnabled}
+      <div class="latency-policy">
+        <strong>Measure ping to</strong>
+        <ServerSelector
           servers={selected}
           value={store.latencySelection.mode === "all"
             ? ""
             : store.primaryLatencyServer}
           label="Latency measurement servers"
           aggregate
-          aggregateDescription="Measure latency on every selected server"
+          aggregateDescription="Ping each server"
           disabled={locked}
           onchange={(id) =>
             controller.configureLatency(
@@ -150,6 +158,8 @@
 <style>
   .server-setting {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     gap: 8px;
     font: var(--type-sm)/1.4 var(--font-sans);
   }
@@ -169,8 +179,106 @@
     font-size: var(--type-xs);
   }
   .latency-policy {
-    min-height: 34px;
+    --selector-width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    width: 100%;
+    justify-items: start;
+    gap: 6px;
+    padding-top: 4px;
   }
+  .server-choices {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
+    gap: 2px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--r-well) + 4px);
+    background: var(--surface-inset);
+  }
+  .server-choices label {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    min-height: 32px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--r-well);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition:
+      background 160ms ease,
+      border-color 160ms ease;
+  }
+  .server-choices label.checked {
+    color: var(--text);
+    border-color: color-mix(
+      in srgb,
+      var(--server-accent) 28%,
+      var(--border-strong)
+    );
+    background: var(--surface-1);
+  }
+  .server-choices input {
+    appearance: none;
+    display: grid;
+    place-content: center;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--brand-strong);
+    cursor: inherit;
+  }
+  .server-choices input:checked {
+    border-color: var(--brand-strong);
+    background: var(--brand-soft);
+  }
+  .server-choices input:checked::after {
+    content: "";
+    width: 7px;
+    height: 4px;
+    border-left: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(-45deg);
+  }
+  .server-choices label:has(input:focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: 1px;
+  }
+  .server-choices label:has(input:disabled) {
+    cursor: default;
+  }
+  .server-choices label:not(.checked):has(input:disabled) {
+    opacity: 0.55;
+  }
+  .server-choices span {
+    text-align: left;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--type-xs);
+    font-weight: 600;
+  }
+  .selection-help {
+    margin: 0;
+    font-size: var(--type-xs);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .server-choices label {
+      transition: none;
+    }
+  }
+
   .server-feedback,
   .selection-notice {
     padding: 10px 0;

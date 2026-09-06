@@ -1,3 +1,4 @@
+import { isWireEstimates, type WireEstimates } from "./wire";
 import { isMultiServerResult } from "../servers/serialization";
 import type { MultiServerResult } from "../servers/measurement";
 import type {
@@ -117,12 +118,7 @@ export interface HistoryRecord {
   ipVersion: 4 | 6 | null;
   client: { build: string };
   failures: FailureSnapshot[];
-  wireEstimates: {
-    version: 1;
-    downloadBytesPerSec: number | null;
-    uploadBytesPerSec: number | null;
-    bidirectionalBytesPerSec: number | null;
-  } | null;
+  wireEstimates: WireEstimates | null;
 }
 
 function throughputTransportKind(
@@ -219,9 +215,7 @@ function historyProtocol(value: string | undefined): string | null {
 interface HistoryBuildContext {
   paths: PreparedPaths | null;
   clientBuild: string;
-  wireDownloadBytesPerSec?: number | null;
-  wireUploadBytesPerSec?: number | null;
-  wireBidirectionalBytesPerSec?: number | null;
+  wireEstimates?: WireEstimates | null;
 }
 export function historyLatencyLanes(
   result: LatencyResult | null,
@@ -344,18 +338,9 @@ export function buildHistoryRecord(
     ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
     client: { build: historyText(context.clientBuild) },
     failures: failureSnapshots(failures),
-    wireEstimates:
-      context.wireDownloadBytesPerSec != null ||
-      context.wireUploadBytesPerSec != null ||
-      context.wireBidirectionalBytesPerSec != null
-        ? {
-            version: 1,
-            downloadBytesPerSec: context.wireDownloadBytesPerSec ?? null,
-            uploadBytesPerSec: context.wireUploadBytesPerSec ?? null,
-            bidirectionalBytesPerSec:
-              context.wireBidirectionalBytesPerSec ?? null,
-          }
-        : null,
+    wireEstimates: context.wireEstimates
+      ? structuredClone(context.wireEstimates)
+      : null,
   };
 }
 
@@ -757,21 +742,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
       !["A", "B", "C", "D", "F"].includes(bufferbloat.grade))
   )
     return false;
-  const wire = record.wireEstimates;
-  return (
-    wire === null ||
-    (isObject(wire) &&
-      hasOnly(wire, [
-        "version",
-        "downloadBytesPerSec",
-        "uploadBytesPerSec",
-        "bidirectionalBytesPerSec",
-      ]) &&
-      wire.version === 1 &&
-      nonnegativeOrNull(wire.downloadBytesPerSec) &&
-      nonnegativeOrNull(wire.uploadBytesPerSec) &&
-      nonnegativeOrNull(wire.bidirectionalBytesPerSec))
-  );
+  return isWireEstimates(record.wireEstimates);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -9,9 +9,13 @@ export async function configure(
   ids: string[],
   duration = 1500,
   config: Partial<RunnerConfig> = {},
+  latencySelection: { mode: "all" | "primary"; serverId: string } = {
+    mode: "all",
+    serverId: "self",
+  },
 ) {
   await page.addInitScript(
-    ({ ids, servers, duration, config }) => {
+    ({ ids, servers, duration, config, latencySelection }) => {
       localStorage.setItem(
         "graphite-meter:server-selection:v1",
         JSON.stringify(
@@ -23,7 +27,7 @@ export async function configure(
       localStorage.setItem(
         "graphite-meter:v1",
         JSON.stringify({
-          latencySelection: { mode: "all", serverId: "self" },
+          latencySelection,
           config: {
             transports: {
               throughputTarget: "auto",
@@ -50,7 +54,7 @@ export async function configure(
         }),
       );
     },
-    { ids, servers: fleet, duration, config },
+    { ids, servers: fleet, duration, config, latencySelection },
   );
   await page.goto(fleet[0].url);
   const settings = await openSettings(page);
