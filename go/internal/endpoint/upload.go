@@ -52,7 +52,7 @@ func (u *Upload) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 		deadline = requestDeadline
 	}
 	_ = http.NewResponseController(w).SetReadDeadline(deadline)
-	n, err := u.HandleUpload(r.Context(), r.URL.Query().Get("id"), ClientKey(r, u.trusted), r.Body)
+	n, err := u.HandleUpload(r.Context(), r.URL.Query().Get("id"), UploadOwner(r, u.trusted), r.Body)
 	if err != nil {
 		if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 			writeUploadAccessError(w, refusal.access)

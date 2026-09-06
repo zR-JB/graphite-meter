@@ -102,6 +102,39 @@ function newDirection(
     lane: (_i, events) => options.makeLane?.(events) ?? lane(),
   });
 }
+test("download readiness requires every lane and does not count excluded warmup bytes", () => {
+  withClock((clock) => {
+    const callbacks: LaneEvents[] = [];
+    let measured = 0;
+    const direction = new TransferDirection({
+      dir: "down",
+      stage: "download",
+      laneCount: 2,
+      warmupMs: 0,
+      host: fakeHost(recording(), clock, {
+        ingestThroughput: (_dir: string, bytes: number) => {
+          measured += bytes;
+        },
+      }),
+      lane: (_index, events) => {
+        callbacks.push(events);
+        return lane();
+      },
+    });
+    direction.spawn();
+    expect(direction.ready).toBe(false);
+    callbacks[0].onProgress(100, 50, 0);
+    expect(direction.ready).toBe(false);
+    callbacks[1].onProgress(100, 50, 0);
+    expect(direction.ready).toBe(true);
+    expect(measured).toBe(0);
+    callbacks[1].onError(true, "connection reset");
+    expect(direction.ready).toBe(false);
+    direction.discard();
+    expect(direction.ready).toBe(false);
+  });
+});
+
 for (const [what, establishMs] of [
   ["a lane refused at once", 0],
   ["a lane that goes silent", ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS],

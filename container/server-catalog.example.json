@@ -1,0 +1,7 @@
+{
+  "defaultSelection": ["self"],
+  "servers": [
+    { "id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt", "location": "Germany" },
+    { "id": "amsterdam", "url": "https://ams.example.net", "name": "Amsterdam", "location": "Netherlands" }
+  ]
+}

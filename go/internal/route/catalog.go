@@ -4,17 +4,20 @@ package route
 import "net/http"
 
 const (
-	Preflight      = "/preflight"
-	Probe          = "/probe"
-	Download       = "/download"
-	Upload         = "/upload"
-	UploadSession  = "/upload/session"
-	UploadProgress = "/upload/progress"
-	WTSession      = "/wt/session"
-	Ping           = "/ws/ping"
-	WTDownload     = "/wt/download"
-	WTUpload       = "/wt/upload"
-	WTPing         = "/wt/ping"
+	Servers          = "/servers"
+	UploadCheckpoint = "/upload/checkpoint"
+	Preflight        = "/preflight"
+	Probe            = "/probe"
+	Download         = "/download"
+	Upload           = "/upload"
+	UploadSession    = "/upload/session"
+	UploadProgress   = "/upload/progress"
+	WTSession        = "/wt/session"
+	WSSession        = "/ws/session"
+	Ping             = "/ws/ping"
+	WTDownload       = "/wt/download"
+	WTUpload         = "/wt/upload"
+	WTPing           = "/wt/ping"
 )
 
 type Kind string
@@ -47,17 +50,20 @@ func (s Spec) AllowsCORSMethod(method string) bool {
 }
 
 var catalog = map[string]Spec{
-	Preflight:      {HTTP, Unmetered, [2]string{http.MethodGet}},
-	Probe:          {HTTP, Unmetered, [2]string{http.MethodGet}},
-	Download:       {HTTP, Request, [2]string{http.MethodGet}},
-	Upload:         {HTTP, Request, [2]string{http.MethodPost}},
-	UploadSession:  {HTTP, Unmetered, [2]string{http.MethodPost}},
-	UploadProgress: {HTTP, Request, [2]string{http.MethodGet, http.MethodDelete}},
-	WTSession:      {HTTP, Unmetered, [2]string{http.MethodPost}},
-	Ping:           {WebSocket, Request, [2]string{http.MethodGet}},
-	WTDownload:     {WebTransport, Session, [2]string{http.MethodConnect}},
-	WTUpload:       {WebTransport, Session, [2]string{http.MethodConnect}},
-	WTPing:         {WebTransport, Request, [2]string{http.MethodConnect}},
+	Servers:          {HTTP, Unmetered, [2]string{http.MethodGet}},
+	UploadCheckpoint: {HTTP, Unmetered, [2]string{http.MethodPost}},
+	Preflight:        {HTTP, Unmetered, [2]string{http.MethodGet}},
+	Probe:            {HTTP, Unmetered, [2]string{http.MethodGet}},
+	Download:         {HTTP, Request, [2]string{http.MethodGet}},
+	Upload:           {HTTP, Request, [2]string{http.MethodPost}},
+	UploadSession:    {HTTP, Unmetered, [2]string{http.MethodPost}},
+	UploadProgress:   {HTTP, Request, [2]string{http.MethodGet, http.MethodDelete}},
+	WTSession:        {HTTP, Unmetered, [2]string{http.MethodPost}},
+	WSSession:        {HTTP, Unmetered, [2]string{http.MethodPost}},
+	Ping:             {WebSocket, Request, [2]string{http.MethodGet}},
+	WTDownload:       {WebTransport, Session, [2]string{http.MethodConnect}},
+	WTUpload:         {WebTransport, Session, [2]string{http.MethodConnect}},
+	WTPing:           {WebTransport, Request, [2]string{http.MethodConnect}},
 }
 
 // Lookup matches an exact measurement path and returns a value copy of its fixed policy.

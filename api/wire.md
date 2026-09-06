@@ -8,8 +8,10 @@ open a receiver-progress stream. The plain request/response HTTP endpoints (`/pr
 normal HTTP (query params, status codes, streaming bodies).
 
 The Go server/native client and TypeScript browser client share the conformance
-corpus `api/wire.testvectors.txt`. Version 0.7 is a protocol break: version 0.6
-clients and servers cannot be mixed with 0.7 peers. Deploy matching versions.
+corpus `api/wire.testvectors.txt`. Version 0.8 adds coordinated receiver checkpoints
+and requires explicit destinations when minting socket tickets. Deploy matching
+client and server versions. The 0.7 PING/PONG handling-time contract remains in use;
+version 0.6 framing is incompatible.
 
 Related contracts: [discovery and control responses](discovery.md),
 [upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
@@ -77,12 +79,9 @@ any value the server cannot read. A spelling of zero or false — `0`, `false`, 
 case-insensitively with surrounding whitespace ignored — is a request for **no** datagrams and is
 served none, the same rule `bytes=0` follows.
 
-Under authentication a CONNECT must present a credential before the upgrade: a single-use,
-short-lived, session-linked token minted by `POST /wt/session` and carried as `?token=` (a browser
-CONNECT can send neither cookies nor headers), or an `Authorization: Bearer` grant for native
-clients. `/wt/session` requires both `token` and `expires`; expiry is a finite epoch-millisecond
-value for a nonempty token. With authentication off it returns exactly an empty token and
-`expires: 0`. Clients mint unconditionally.
+Under authentication a CONNECT must present a credential before the upgrade:
+a socket ticket carried as `?token=`, or an `Authorization: Bearer` grant for native
+clients. See [socket credentials](#socket-credentials).
 
 The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /upload/progress?id=`
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
@@ -104,7 +103,29 @@ one aggregate per id, so the counters carry across.
 
 **Discovery contract.** `transport` is required on every throughput and latency target.
 A missing value is invalid; clients never infer a transport from its absence. Upgrade
-clients and servers together for the 0.7 contract.
+clients and servers together for the 0.8 contract.
+
+## Socket credentials
+
+`POST /wt/session?target=<encoded HTTPS origin and /wt/ route>` mints a
+WebTransport ticket. `POST /ws/session?target=<encoded HTTPS origin and /ws/ route>`
+mints a WebSocket ticket; the target uses HTTPS even though the eventual socket
+URL uses WSS. Targets contain no user information, query, or fragment and must use
+the issuing server's configured hostname. The ticket binds the precise origin,
+port, route, requesting Origin header, principal and grant lifetime.
+
+Both return `{ "token": "…", "expires": <epoch milliseconds> }`. Tickets expire
+after at most 30 seconds, are consumed once, and share the parent login's limit of
+eight outstanding tickets. A wrong destination or requesting origin cannot consume
+a ticket successfully. Logout cancels associated work. With authentication off,
+minting returns exactly `{ "token": "", "expires": 0 }`.
+
+The existing same-origin browser session or an authorized browser measurement grant
+may mint a ticket. Cross-origin mint requests use the grant in an Authorization
+header with cookies omitted. The reusable grant never enters a URL. Browser socket
+constructors carry only the one-use ticket in `?token=`. Native bearer grants remain
+eligible for direct authenticated socket connections, under their existing origin
+rules; they do not use the browser-grant mint path.
 
 ## Ids (PING/PONG)
 

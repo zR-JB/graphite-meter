@@ -15,8 +15,8 @@ listeners when you need deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3, or WebTransp
 | Private tailnet                  | [Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md)   | Tailnet identity, HTTPS certificates, and access policy.     |
 | Features in the current checkout | [Build from source](#build-from-source)                                 | Git and Docker Compose, or the pinned development toolchain. |
 
-This guide covers **v0.7.0**. Read [upgrading to 0.7](#upgrading-to-07) when replacing a 0.6 deployment.
-For reproducible deployments, replace `:latest` with `:0.7.0` or a verified image digest.
+This guide covers **v0.8.0**. Read [upgrading to 0.8](#upgrading-to-08) when replacing an earlier deployment.
+For reproducible deployments, replace `:latest` with `:0.8.0` or a verified image digest.
 
 Jump to [server settings](#server-reference), [terminal flags](#native-terminal-client), or
 [troubleshooting](#troubleshooting). Commands using `container/` paths run from the repository root.
@@ -316,7 +316,8 @@ enabled.
 
 | Flag                       | Default                   | Meaning                                                               |
 | -------------------------- | ------------------------- | --------------------------------------------------------------------- |
-| `--url`                    | `http://127.0.0.1:7246`   | Graphite Meter UI and discovery origin.                               |
+| `--url`                    | `http://127.0.0.1:7246`   | Origin of the operator server catalogue.                               |
+| `--server <id>` | operator defaults | Repeatable server IDs; select one to four catalogue entries. |
 | `--throughput-origin`      | `auto`                    | Discovered throughput origin or `auto`.                               |
 | `--throughput-protocol`    | `auto`                    | `auto`, `http1`, `http2`, or `http3` for a negotiated origin.         |
 | `--throughput-transport`   | `auto`                    | `auto`, `fetch-stream`, or `webtransport`.                            |
@@ -343,19 +344,26 @@ Releases attach native client archives for Linux amd64/arm64, macOS amd64/arm64,
 amd64. The server is distributed through the multi-architecture container image; a standalone
 server binary can be built from source but is not attached to GitHub Releases.
 
-## Upgrading to 0.7
+## Upgrading to 0.8
 
-Deploy the server and native client together. The 0.7 probe replies require server handling time,
-uploads require measured sessions and exact progress counters, and discovery requires explicit
-transports. Version 0.6 peers are incompatible. Reload open browser tabs after replacing the server.
+Deploy the server and native client together and reload open browser tabs. Version 0.8
+requires fresh upload checkpoints for coordinated measurements and an explicit destination
+when minting socket tickets. The 0.7 handling-time probe frames remain in use; 0.6 peers
+remain incompatible.
 
-History accepts schema version 3 only. Earlier records stay in browser storage but are skipped
-and reported as unsupported or malformed; they are not migrated. Clearing history is an explicit
-user action. See [measurement and history definitions](MEASUREMENTS.md#saved-history).
+Existing deployments remain singleton by default. Add an [operator catalogue](SERVERS.md)
+to offer additional servers; each instance keeps the same image and independent configuration.
+No peer connectivity or health dependency is introduced at startup. The browser requires a
+trusted HTTPS page to authorize protected remote servers.
+
+New history uses schema version 4. Version 3 records remain readable with their original
+singleton meaning; missing server identities and aggregation windows are not fabricated.
+Older records remain in storage but are skipped as unsupported. Clearing history remains an
+explicit action. See [measurement and history definitions](MEASUREMENTS.md#saved-history).
 
 ### Browser preferences
 
-Version 0.7 reads current preference fields only. Obsolete cadence names,
+Version 0.8 reads current preference fields only. Obsolete cadence names,
 `pingConcurrency`, `parallelStreams`, and old transport-role aliases are ignored;
 missing or invalid values use current defaults. Target identifiers are preserved
 as stored and resolved against current discovery. The browser storage key is
@@ -385,6 +393,8 @@ arguments.
 | --------------------------- | -------------------------- | ---------------- | ------------------------------------------------------------------------- |
 | `GM_SERVER_NAME`            | `--name`                   | `graphite-meter` | Name reported by preflight and shown in clients.                          |
 | `GM_SERVER_LOCATION`        | `--location`               | empty            | Optional operator-defined location label.                                 |
+| `GM_SERVER_CATALOG` | — | empty | Inline JSON operator catalogue; mutually exclusive with the file option. |
+| `GM_SERVER_CATALOG_FILE` | — | empty | Path to a read-only catalogue file, bounded to 64 KiB. |
 | `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false`          | Default browser preference for saving completed summaries on that device. |
 | `GM_VERBOSE`                | `--verbose`                | `false`          | Log per-second measurement throughput.                                    |
 

@@ -46,6 +46,11 @@ function staticServer() {
         await routeMatch.handler(route);
         if (route.response) return route.response;
       }
+      if (url.pathname === "/servers")
+        return Response.json({
+          defaultSelection: ["self"],
+          servers: [{ id: "self", url: ".", name: "Browser fixture" }],
+        });
       let relative = decodeURIComponent(url.pathname).replace(/^\/+/, "");
       if (!relative) relative = "index.html";
       let path = resolve(dist, relative);

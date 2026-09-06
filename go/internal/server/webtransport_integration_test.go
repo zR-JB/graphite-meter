@@ -883,10 +883,13 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	var mu sync.Mutex
 	closed := false
 	var downloadResults []goclient.Result
+	var details *goclient.RunDetails
 	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch ev.Kind {
+		case goclient.EventServers:
+			details = ev.Servers
 		case goclient.EventThroughput:
 			// Bytes are moving inside the measured window, so the stage's own session is established.
 			if !closed {
@@ -916,8 +919,11 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		t.Fatalf("failed download emitted %d results, want one incomplete receiver window", len(downloadResults))
 	}
 	result := downloadResults[0]
-	if result.Err != err || result.TotalBytes == 0 || result.MeanBps <= 0 || result.Elapsed <= 0 || result.Elapsed >= clientCfg.DownloadDuration || result.ServerAuth {
-		t.Fatalf("failed download must retain client receiver bytes and its original error: %+v; run error: %v", result, err)
+	if result.Err != err || result.TotalBytes == 0 || !result.Unavailable || result.ServerAuth {
+		t.Fatalf("all servers failing must retain bytes and error with an unavailable headline: %+v; run error: %v", result, err)
+	}
+	if details == nil || len(details.Failures) != 1 || len(details.Intervals) < 2 || details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
+		t.Fatalf("earlier receiver window lost: %+v", details)
 	}
 }
 
@@ -937,8 +943,8 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		up.reset()
 		clientCfg := wtClientConfig(httpBase)
 		clientCfg.Stages = goclient.StageSet{Download: true, Upload: true}
-		clientCfg.DownloadDuration = 700 * time.Millisecond
-		clientCfg.UploadDuration = 700 * time.Millisecond
+		clientCfg.DownloadDuration = 1200 * time.Millisecond
+		clientCfg.UploadDuration = 1200 * time.Millisecond
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

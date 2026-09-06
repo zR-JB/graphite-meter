@@ -1,3 +1,5 @@
+import { isMultiServerResult } from "../servers/serialization";
+import type { MultiServerResult } from "../servers/measurement";
 import type {
   PreparedPaths,
   ReflectorTimingSummary,
@@ -10,7 +12,7 @@ import type {
 } from "../runner/contract";
 import { createUuid, isUuid } from "../uuid";
 
-const HISTORY_SCHEMA_VERSION = 3 as const;
+const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const HISTORY_FAILURE_STAGES = [
   "latency",
@@ -73,7 +75,9 @@ type LatencyTransportKind = Extract<
   "websocket" | "webtransport"
 >;
 export interface HistoryRecord {
-  schemaVersion: typeof HISTORY_SCHEMA_VERSION;
+  schemaVersion: 3 | typeof HISTORY_SCHEMA_VERSION;
+  multiServer?: MultiServerResult;
+  outcome?: RunResult["outcome"];
   id: string;
   startedAt: number;
   completedAt: number;
@@ -219,6 +223,42 @@ interface HistoryBuildContext {
   wireUploadBytesPerSec?: number | null;
   wireBidirectionalBytesPerSec?: number | null;
 }
+export function historyLatencyLanes(
+  result: LatencyResult | null,
+  summaries: RunResult["latencyByStage"],
+): HistoryRecord["stages"]["latency"]["lanes"] {
+  return Object.fromEntries(
+    HISTORY_FAILURE_STAGES.map((stage) => {
+      const summary = summaries[stage];
+      return [
+        stage,
+        summary && {
+          min: summary.minMs,
+          max: summary.maxMs,
+          p10: summary.p10Ms,
+          p90: summary.p90Ms,
+          center:
+            stage === "latency"
+              ? (result?.reportedMs ?? summary.meanMs)
+              : summary.meanMs,
+          jitter: summary.jitterMs,
+          ...(summary.reflectorTiming
+            ? { reflectorTiming: { ...summary.reflectorTiming } }
+            : {}),
+          timeoutRatio: summary.probeCount
+            ? summary.timeoutCount / summary.probeCount
+            : null,
+          accountingComplete: summary.accountingComplete,
+          timeoutCount: summary.timeoutCount,
+          unresolvedCount: summary.unresolvedCount,
+          sendFailureCount: summary.sendFailureCount,
+          count: summary.probeCount,
+        },
+      ];
+    }),
+  ) as HistoryRecord["stages"]["latency"]["lanes"];
+}
+
 export function buildHistoryRecord(
   result: RunResult,
   context: HistoryBuildContext,
@@ -232,6 +272,12 @@ export function buildHistoryRecord(
   const bidiUp = throughput(bidi?.up ?? null);
   return {
     schemaVersion: HISTORY_SCHEMA_VERSION,
+    ...(result.multiServer
+      ? {
+          multiServer: structuredClone(result.multiServer),
+          outcome: result.outcome ?? "complete",
+        }
+      : {}),
     id: createUuid(),
     startedAt: Math.trunc(result.startedAt),
     completedAt: Math.trunc(completedAt),
@@ -240,36 +286,7 @@ export function buildHistoryRecord(
       latency: {
         status: status(result.latency, failures.latency),
         result: latency(result.latency),
-        lanes: Object.fromEntries(
-          HISTORY_FAILURE_STAGES.map((stage) => {
-            const summary = result.latencyByStage[stage];
-            return [
-              stage,
-              summary && {
-                min: summary.minMs,
-                max: summary.maxMs,
-                p10: summary.p10Ms,
-                p90: summary.p90Ms,
-                center:
-                  stage === "latency"
-                    ? (result.latency?.reportedMs ?? summary.meanMs)
-                    : summary.meanMs,
-                jitter: summary.jitterMs,
-                ...(summary.reflectorTiming
-                  ? { reflectorTiming: { ...summary.reflectorTiming } }
-                  : {}),
-                timeoutRatio: summary.probeCount
-                  ? summary.timeoutCount / summary.probeCount
-                  : null,
-                accountingComplete: summary.accountingComplete,
-                timeoutCount: summary.timeoutCount,
-                unresolvedCount: summary.unresolvedCount,
-                sendFailureCount: summary.sendFailureCount,
-                count: summary.probeCount,
-              },
-            ];
-          }),
-        ) as HistoryRecord["stages"]["latency"]["lanes"],
+        lanes: historyLatencyLanes(result.latency, result.latencyByStage),
       },
       download: {
         status: status(result.download, failures.download),
@@ -286,13 +303,23 @@ export function buildHistoryRecord(
       },
     },
     bufferbloat: result.bufferbloat && { ...result.bufferbloat },
-    totalBytes:
-      (result.download?.totalBytes ?? 0) +
-      (result.upload?.totalBytes ?? 0) +
-      (bidi?.down?.totalBytes ?? 0) +
-      (bidi?.up?.totalBytes ?? 0),
+    totalBytes: result.multiServer
+      ? result.multiServer.servers.reduce(
+          (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
+          0,
+        )
+      : (result.download?.totalBytes ?? 0) +
+        (result.upload?.totalBytes ?? 0) +
+        (bidi?.down?.totalBytes ?? 0) +
+        (bidi?.up?.totalBytes ?? 0),
     server: {
-      name: historyText(context.paths?.discovery.server.name ?? "Unknown"),
+      name: historyText(
+        result.multiServer?.selection
+          .map((server) => server.name)
+          .join(" + ") ??
+          context.paths?.discovery.server.name ??
+          "Unknown",
+      ),
       location: context.paths?.discovery.server.location
         ? historyText(context.paths.discovery.server.location)
         : null,
@@ -333,7 +360,22 @@ export function buildHistoryRecord(
 }
 
 export function isHistoryRecord(value: unknown): value is HistoryRecord {
-  if (!isObject(value) || value.schemaVersion !== HISTORY_SCHEMA_VERSION)
+  if (
+    !isObject(value) ||
+    (value.schemaVersion !== HISTORY_SCHEMA_VERSION &&
+      value.schemaVersion !== 3)
+  )
+    return false;
+  if (
+    value.schemaVersion === 3 &&
+    (value.multiServer !== undefined || value.outcome !== undefined)
+  )
+    return false;
+  if (
+    value.multiServer !== undefined &&
+    (!isMultiServerResult(value.multiServer) ||
+      !["complete", "partial", "incomplete"].includes(String(value.outcome)))
+  )
     return false;
   const record = value as Record<string, unknown>;
   const stage = (candidate: unknown): candidate is StageStatus =>
@@ -395,6 +437,8 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
   if (
     !hasOnly(record, [
       "schemaVersion",
+      "multiServer",
+      "outcome",
       "id",
       "startedAt",
       "completedAt",
@@ -628,11 +672,15 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     !isUuid(record.id)
   )
     return false;
-  const measuredBytes =
-    (downStage.result?.totalBytes ?? 0) +
-    (uploadStage.result?.totalBytes ?? 0) +
-    (bidiStage.down?.totalBytes ?? 0) +
-    (bidiStage.up?.totalBytes ?? 0);
+  const measuredBytes = record.multiServer
+    ? (record.multiServer as MultiServerResult).servers.reduce(
+        (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
+        0,
+      )
+    : (downStage.result?.totalBytes ?? 0) +
+      (uploadStage.result?.totalBytes ?? 0) +
+      (bidiStage.down?.totalBytes ?? 0) +
+      (bidiStage.up?.totalBytes ?? 0);
   if (record.totalBytes !== measuredBytes) return false;
   const server = record.server;
   if (

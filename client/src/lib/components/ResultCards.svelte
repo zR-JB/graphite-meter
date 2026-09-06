@@ -67,7 +67,12 @@
           : (store.stageResults[key]?.reportedBytesPerSec ?? null);
         authoritative = active ? store.liveTransferBytesPerSec : value;
       }
-      const hasValue = active ? (value ?? 0) > 0 : value !== null;
+      if (active && key !== "latency" && !store.aggregateEvidence) {
+        value = null;
+        authoritative = null;
+      }
+      const hasValue =
+        value !== null && (key !== "latency" || !active || value > 0);
       const lost = key === "latency" && active && store.liveLatencyLost;
       const format = (n: number) =>
         key === "latency" ? fmtMs(n) : fmtSpeed(store.toUnit(n));

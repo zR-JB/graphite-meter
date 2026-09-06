@@ -40,6 +40,7 @@ const (
 
 type endpoints struct {
 	preflight, probe, bootstrapProbe endpoint.HTTPHandler
+	catalog, uploadCheckpoint        endpoint.HTTPHandler
 	uploadSession                    endpoint.HTTPHandler
 	download                         interface {
 		endpoint.HTTPHandler
@@ -93,6 +94,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error)
 	h3Port := publicH3Port(cfg)
 	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxActiveSessions, cfg.MaxSessionsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
 	return &endpoints{
+		catalog: endpoint.NewServerCatalog(cfg), uploadCheckpoint: endpoint.NewUploadCheckpoint(store, cfg.TrustedProxies),
 		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, "", admission.load), bootstrapProbe: endpoint.NewProbe(cfg, h3Port, admission.load),
 		download: endpoint.NewDownload(block, downloadMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies),
 		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
@@ -136,6 +138,7 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 	reg := endpoint.NewRegistry()
 	if topology.discovery {
 		reg.RegisterHTTP(route.Preflight, e.preflight)
+		reg.RegisterHTTP(route.Servers, e.catalog)
 	}
 	if topology.bootstrap {
 		reg.RegisterHTTP(route.Probe, e.bootstrapProbe)
@@ -151,6 +154,7 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 		}
 		register(route.Download, e.download)
 		register(route.UploadSession, e.uploadSession)
+		register(route.UploadCheckpoint, e.uploadCheckpoint)
 		var minter endpoint.WTTokenMinter
 		if authn != nil && authn.Enabled() {
 			minter = authn.MintWebTransportSessionToken
@@ -160,6 +164,11 @@ func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *end
 		register(route.UploadProgress, e.uploadProgress)
 	}
 	if topology.latency {
+		var minter endpoint.WTTokenMinter
+		if authn != nil && authn.Enabled() {
+			minter = authn.MintWebSocketSessionToken
+		}
+		reg.RegisterHTTP(route.WSSession, endpoint.NewWTSession(minter))
 		reg.RegisterWS(route.Ping, e.ping)
 	}
 	if topology.wt != nil {
@@ -227,6 +236,9 @@ func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
 		pinned = authn.PublicOrigin()
 	}
 	return func(r *http.Request) bool {
+		if approved := auth.BrowserOrigin(r); enabled && approved != "" {
+			return r.Header.Get("Origin") == approved
+		}
 		return !enabled || r.Header.Get("Origin") == "" || r.Header.Get("Origin") == pinned
 	}
 }
@@ -280,10 +292,10 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
 		if u, err := url.Parse(cfg.Auth.PublicURL); err == nil {
-			authn.SetConnectOrigins(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()))
+			authn.SetConnectOrigins(append(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()), cfg.ServerCatalog.ConnectSources()...))
 		}
 	} else {
-		spa = static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
+		spa = publicConnectionPolicy(cfg, static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault))
 	}
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)

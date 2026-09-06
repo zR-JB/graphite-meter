@@ -26,6 +26,54 @@ bytes and elapsed receiver time at the server. Sender-queued bytes are not proof
 of delivery. Full-window average and an adaptive stable-window headline remain
 distinct results; chart smoothing does not determine either.
 
+### Coordinated server windows
+
+A selection contains one to four explicitly chosen servers. One coordinator owns
+the stage schedule, readiness, warmup, measurement boundaries, cancellation, and
+membership changes. Server resources and credentials remain separate. Per-server
+contributions describe those paths while sharing the client connection; they are
+not independent server-capacity tests. The browser uses adaptive completion where
+configured; the native client retains its full-window duration policy.
+
+Each aggregation interval has fixed membership. Downloads sum client-consumed
+payload-byte deltas over a common client monotonic window. Uploads take fresh
+`POST /upload/checkpoint` snapshots concurrently at common boundary requests, retain
+each server's byte/time pair, divide each byte delta by that receiver's elapsed
+seconds, then add the resulting bytes-per-second rates. This is a sum of coordinated
+receiver-window means. It is not an exactly synchronized global-clock sample:
+request/response timing and each actual receiver duration remain in the result.
+Receiver durations are never added.
+
+Browser stable-window boundaries are chosen centrally. A headline never adds
+independently selected stable windows or independent per-server peaks. Peak rates
+are taken from the combined boundary samples. Presentation buckets, smoothing and
+latency focus cannot change any of these reductions. Mixed transport wire estimates
+are computed component by component from the chosen window's protocol and IP-family
+evidence; missing evidence makes the estimate unavailable.
+
+Advancing receiver time with unchanged bytes establishes measured zero delivery.
+A missing, stale, or zero-duration component does not establish a zero rate. Missing
+checkpoint evidence interrupts the aggregate interval; recovering evidence starts
+a fresh interval and stability confirmation. Unique measured-byte ledgers are
+independent of headline-window selection and do not count overlapping checkpoints,
+feed reports or interval boundaries twice. Warmup bytes are excluded.
+
+Before any measurement, all selected servers must be ready. After measurement has
+started, a terminal throughput failure removes that server for the remaining run
+after bounded transport recovery. Healthy connections keep running. The current
+interval ends, fresh survivor baselines start a new interval, and stability resets.
+The final headline requires the latest interval to contain at least 800 ms of client
+evidence and, for upload, at least 800 ms in every component's receiver clock. If it
+does not, the headline is unavailable. Earlier valid intervals and failed-server
+contributions remain explicitly earlier evidence in Details. All servers failing
+ends with an incomplete result. A latency-only failure does not remove throughput.
+
+Latency remains keyed by both server and stage. Added latency compares a loaded
+population only with that server's idle baseline. The named latency focus selects
+one population for presentation; there is no averaged multi-server ping or blended
+responsiveness grade. [Server controls and deployment](SERVERS.md) describe selection,
+authorization, shared-origin stream budgets and result details.
+
 ## Round-trip latency and probe timeouts
 
 An RTT is the client's monotonic send-to-receive interval for a matched probe.
@@ -100,11 +148,22 @@ cadence and elapsed time alone.
 
 ## Saved history
 
-Graphite Meter 0.7 accepts only saved history schema version 3. Versions 1 and 2
+Graphite Meter 0.8 writes saved history schema version 4 and still reads version 3.
+Version 3 records remain original singleton results, with no invented server or
+interval metadata. Versions 1 and 2
 are unsupported: existing entries remain in browser storage but are skipped and
 reported as unsupported or malformed. They are neither migrated nor reinterpreted;
 clearing history remains an explicit user action. New results retain the usual
 2,000-entry limit.
+
+Version 4 adds selected server identities, actual surviving participants, per-server
+transport evidence, stage latency populations, aggregate and component windows,
+structured failures, unique byte totals and the presentation-only latency focus.
+The live result and history detail consume the same summaries. At most 128 recent
+aggregation intervals are retained; an omitted count is explicit and byte ledgers
+still cover the full measured run. An incomplete all-server failure is also saved
+when result saving is enabled; user-aborted runs are not saved. Grants and socket
+tickets never enter history or saved preferences.
 
 Version 3 stores one selected throughput headline, `reportedBytesPerSec`, alongside
 the distinct full-window average and peak. Each saved latency lane requires exact
@@ -146,19 +205,15 @@ readiness requirement, so silent paths can still produce timeout observations.
 All selected directions and loaded-latency participants pass this gate before the
 configured/adaptive warmup starts. Warmup data is excluded from every result.
 
-The shared gate opens the measured phase. Download and latency use client monotonic
-time; upload takes its baseline from the first fresh receiver report after that
-gate. Acquiring that receiver baseline has a separate deadline: the shorter of
-the configured measured duration and ten seconds. If no fresh report arrives,
-the stage fails without an upload summary; baseline acquisition time never
-enters a receiver window. Its exact counter window follows the server progress cadence and server
-clock, rather than mixing client timestamps with server byte counts. Download
-and upload full-window means are received bytes divided by their attributable
-elapsed seconds. A direction failure or caller cancellation stops its siblings;
-nonempty measured throughput windows survive with the stage's original failure
-and an incomplete label. Setup-only bytes never become a partial result, and
-empty interrupted transfer windows do not produce numeric summaries. Cleanup
-finishes before the run's terminal outcome is emitted.
+The shared gate opens the measured phase after fresh initial upload checkpoints.
+Download and latency use client monotonic time; uploads use each server's own
+receiver checkpoints, with each concurrent checkpoint batch bounded to 1.5 seconds.
+The coordinator samples boundaries about every 250 ms. Full-window means follow
+the component rules above. A terminal direction failure stops that participant's
+resources and leaves survivors running; caller cancellation stops all resources.
+Setup-only bytes never become a partial result. Earlier measured bytes and windows
+remain in details when the final headline lacks evidence. Cleanup joins resources
+and checkpoint requests before the run's terminal outcome is emitted.
 
 Native latency summaries use received application replies within each measured stage. P50 is the
 midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between

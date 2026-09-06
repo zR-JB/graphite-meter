@@ -66,11 +66,18 @@ List project commands with `mise tasks`.
 
 The Go server, browser client, and native client share routes and wire contracts, while each
 client owns its measurement engine. Throughput is receiver-authoritative; latency populations
-remain separate by stage. Presentation and animation never define measurement results.
+remain separate by server and stage. Presentation and animation never define measurement results.
 
 The browser separates connection preparation, measurement execution, and presentation. Workers
 isolate transfer and probe hot paths. The interface uses native SVG/CSS for the gauge and canvas
 for the timeline chart, with responsive layout, reduced motion, and bounded local history.
+
+A selected-server collection sits below one stage schedule in each client. The coordinator
+owns preparation, warmup, shared boundaries, membership changes, stability, and cancellation;
+participants own connections, credentials, upload IDs, and raw receiver observations. Aggregate
+reducers retain fixed-membership intervals and independent upload receiver windows. Latency
+populations stay per server; changing display focus is a presentation action. History and live
+results consume those same summaries. See [server selection](SERVERS.md).
 
 The native client controller owns preparation, browser-approval polling, and run cancellation.
 Preparation tokens bind delayed commands to their original configuration; replacing one cancels
@@ -124,7 +131,7 @@ mise run goclient-build
 Build a release-profile server with the production browser client embedded:
 
 ```sh
-VERSION=0.7.0 mise run release-build 0.7.0
+VERSION=0.8.0 mise run release-build 0.8.0
 ```
 
 ### Browser build flags
@@ -273,6 +280,21 @@ GM_BENCH_SPKI='BASE64_SPKI_PIN' mise run bench-throughput
 The complete matrix takes hours. See [Benchmarks](BENCHMARKS.md) before comparing new values with
 the historical reference results.
 
+For the coordinated one-, two-, and four-server experiment, Linux user/network namespaces,
+`iproute2` (`ip` and `tc`), `util-linux` (`unshare` and `nsenter`), OpenSSL and curl are required.
+Use the Chrome for Testing version pinned in `mise.toml`:
+
+```sh
+BUN_CHROME_PATH=/path/to/chrome GM_MULTI_BENCH_OUTPUT=/tmp/graphite-meter-servers mise run bench-servers
+```
+
+The task builds the production UI/server, creates a client, router and four independent servers
+inside disposable network namespaces, and writes raw JSONL results and process logs outside
+the checkout. It never changes host interfaces or queue disciplines. Two repetitions cover
+separate server caps, different RTTs, and a shared cap; `GM_MULTI_BENCH_REPEATS` and
+`GM_MULTI_BENCH_PROFILES` (`server-cap,differing-rtt,shared-cap`) restrict manual runs.
+See [the coordinated experiment](MULTI_SERVER_BENCHMARKS.md) for methodology and results.
+
 ## Container build
 
 Build and verify the source image:
@@ -294,7 +316,7 @@ promotion.
 Run the local release gate with an explicit candidate version:
 
 ```sh
-VERSION=0.7.0 mise run release-check 0.7.0
+VERSION=0.8.0 mise run release-check 0.8.0
 ```
 
 Publication remains a workflow-controlled operation. Do not create or move release tags as part of

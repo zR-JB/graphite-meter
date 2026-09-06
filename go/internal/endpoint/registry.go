@@ -99,6 +99,10 @@ func (r *Registry) MountWithOrigin(parent context.Context, mux *http.ServeMux, o
 
 func wsAdapterWithOrigin(parent context.Context, e MessageHandler, allowedOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		allowedOrigin := allowedOrigin
+		if approved := auth.BrowserOrigin(r); approved != "" {
+			allowedOrigin = approved
+		}
 		if allowedOrigin != "" && r.Header.Get("Origin") != "" && r.Header.Get("Origin") != allowedOrigin {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -152,6 +156,9 @@ func wsAdapterWithOrigin(parent context.Context, e MessageHandler, allowedOrigin
 func httpAdapterWithOrigin(e HTTPHandler, origin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cors.Measurement(w.Header(), origin)
+		if approved := auth.BrowserOrigin(r); approved != "" {
+			cors.Bearer(w.Header(), approved)
+		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

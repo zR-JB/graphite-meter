@@ -162,6 +162,10 @@ func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
 }
 
 func setAdmissionHeaders(w http.ResponseWriter, r *http.Request, publicOrigin string) {
+	if approved := auth.BrowserOrigin(r); approved != "" {
+		cors.Bearer(w.Header(), approved)
+		return
+	}
 	if _, ok := auth.PrincipalFromContext(r.Context()); ok {
 		if publicOrigin != "" && r.Header.Get("Origin") == publicOrigin {
 			cors.Response(w.Header(), publicOrigin)

@@ -151,7 +151,7 @@ ctx.onmessage = (e: MessageEvent<InMsg>): void => {
 function connect(): void {
   if (stopped || stopCutoff !== null) return;
   if (transport === "webtransport") void connectWebTransport();
-  else connectWebSocket();
+  else void connectWebSocket();
 }
 
 /* Announces an open bus and starts the chain. */
@@ -168,10 +168,21 @@ function onConnected(): void {
   scheduler?.start();
 }
 
-function connectWebSocket(): void {
+async function connectWebSocket(): Promise<void> {
+  const minted = mint
+    ? await mintWtToken(mint)
+    : { token: "", authRequired: false };
+  if (stopped || stopCutoff !== null) return;
+  if (mint && minted.token === "") {
+    if (minted.authRequired) {
+      post({ type: "auth-required" });
+      finishStop();
+    } else scheduleReconnect("websocket token mint failed");
+    return;
+  }
   let ws: WebSocket;
   try {
-    ws = new WebSocket(url);
+    ws = new WebSocket(withWtToken(url, minted.token));
   } catch (err) {
     scheduleReconnect(String(err));
     return;
@@ -183,7 +194,10 @@ function connectWebSocket(): void {
   };
   link = connection;
   ws.onopen = (): void => {
-    if (link === connection) onConnected();
+    if (link === connection) {
+      spendWtToken(minted.token);
+      onConnected();
+    }
   };
   ws.onmessage = (ev: MessageEvent): void => {
     if (link === connection && connection.ready()) onFrame(ev.data);
@@ -211,10 +225,12 @@ function connectWebSocket(): void {
 
 /** One wire message per datagram, so the read loop needs no framing. */
 async function connectWebTransport(): Promise<void> {
-  const minted = await mintWtToken(mint);
+  const minted = mint
+    ? await mintWtToken(mint)
+    : { token: "", authRequired: false };
   if (stopped || stopCutoff !== null) return;
   // An authenticated bus cannot dial without a token.
-  if (checkAuthentication && mint && minted.token === "") {
+  if (mint && minted.token === "") {
     if (minted.authRequired) {
       post({ type: "auth-required" });
       finishStop();

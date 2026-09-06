@@ -1,0 +1,10 @@
+# Edit server-catalog.example.json and save it as server-catalog.json beside this file.
+# Add this overlay to your usual TLS or reverse-proxy deployment:
+# docker compose -f container/docker-compose.yml -f container/docker-compose.catalog.yml up -d
+# Every listed peer uses the same Graphite Meter image and its own normal configuration.
+services:
+  graphite-meter:
+    environment:
+      GM_SERVER_CATALOG_FILE: /etc/graphite-meter/servers.json
+    volumes:
+      - ./server-catalog.json:/etc/graphite-meter/servers.json:ro

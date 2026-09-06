@@ -13,11 +13,12 @@ import type { CoreHost, RunnerBackend } from "./core";
 import { readJSONResponse, parseResponseToken } from "../api/decode";
 import { BUILD } from "../buildenv";
 import {
-  authenticatedFetch,
-  authEnabled,
-  classifyAuthenticationFailure,
-  csrfHeader,
-} from "../auth";
+  measurementFetch,
+  requestOptions,
+  socketMint,
+  classifyServerAuthentication,
+  reportServerAuthentication,
+} from "../servers/credentials";
 import { transferStreamCount } from "./real/streamPolicy";
 import {
   needsPings,
@@ -33,7 +34,7 @@ import {
   type SessionLaneOptions,
 } from "./real/byteLane";
 import { TransferDirection, transferStageStalled } from "./real/direction";
-import { ESTABLISH_BUDGET_MS } from "./real/budgets";
+import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./real/budgets";
 import { LatencyChannel } from "./real/latencyChannel";
 import { UploadProgressChannel } from "./real/uploadProgress";
 import { UploadPresentationBridge } from "./uploadPresentationBridge";
@@ -47,7 +48,16 @@ export class RealBackend implements RunnerBackend {
   // An upload-id refusal grants one rotation for the whole run, including later stages.
   #uploadRotationUsed = false;
 
-  constructor(paths: PreparedPaths) {
+  readonly #streamCount?: (
+    activity: PhaseActivity,
+    dir: FlowDirection,
+  ) => number;
+
+  constructor(
+    paths: PreparedPaths,
+    streamCount?: (activity: PhaseActivity, dir: FlowDirection) => number,
+  ) {
+    this.#streamCount = streamCount;
     this.#paths = paths;
   }
   attach(host: CoreHost): void {
@@ -81,9 +91,22 @@ export class RealBackend implements RunnerBackend {
       activity,
       this.#streamPolicy,
       this.#cbSeed,
+      this.#streamCount,
     );
     this.#stage = stage;
     return stage.prepare();
+  }
+  flushDownload(now: number): void {
+    this.#stage?.flushDownload(now);
+  }
+  checkpoint(signal: AbortSignal) {
+    return this.#stage?.checkpoint(signal) ?? Promise.resolve(null);
+  }
+  waitForReadiness(signal: AbortSignal): Promise<void> {
+    return (
+      this.#stage?.waitForReadiness(signal) ??
+      Promise.reject(new Error("Stage was cancelled"))
+    );
   }
   onStageMeasure(_activity: PhaseActivity): void {
     this.#stage?.measure();
@@ -140,6 +163,11 @@ class TransportStage {
   readonly #abort = new AbortController();
   #directions: Partial<Record<FlowDirection, TransferDirection>> = {};
   #upload: UploadProgressChannel | null = null;
+  #uploadId: string | null = null;
+  readonly #streamCount?: (
+    activity: PhaseActivity,
+    dir: FlowDirection,
+  ) => number;
   #latency: LatencyChannel | null = null;
   #stalled = false;
   #finishing = false;
@@ -152,12 +180,14 @@ class TransportStage {
     activity: PhaseActivity,
     policy: TransferStreamPolicy,
     cbSeed: string,
+    streamCount?: (activity: PhaseActivity, dir: FlowDirection) => number,
   ) {
     this.#host = host;
     this.#paths = paths;
     this.activity = activity;
     this.#policy = policy;
     this.#cbSeed = cbSeed;
+    this.#streamCount = streamCount;
   }
 
   get hasUpload(): boolean {
@@ -173,11 +203,14 @@ class TransportStage {
         this.#latency = new LatencyChannel({
           host: this.#host,
           target,
+          credentials: this.#paths.credentials,
           stall: (detail) => {
             if (!this.activity.transfer.length) this.#setStalled(true, detail);
+            else this.#host.stallLatency?.(detail);
           },
           resume: () => {
             if (!this.activity.transfer.length) this.#setStalled(false);
+            else this.#host.resumeLatency?.();
           },
         });
         this.#latency.prime(this.activity.stage === "latency");
@@ -198,6 +231,35 @@ class TransportStage {
     for (const direction of Object.values(this.#directions))
       direction.measure();
     this.#latency?.measure();
+  }
+
+  /** The stage's primed resources must work before the shared warmup starts. */
+  async waitForReadiness(ownerSignal: AbortSignal): Promise<void> {
+    const signal = AbortSignal.any([
+      ownerSignal,
+      this.#abort.signal,
+      AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS),
+    ]);
+    let receiverReady = !this.activity.transfer.includes("up");
+    while (!signal.aborted) {
+      if (!receiverReady) {
+        try {
+          receiverReady = (await this.checkpoint(signal)) !== null;
+        } catch {
+          signal.throwIfAborted();
+        }
+      }
+      if (
+        receiverReady &&
+        (!this.#directions.down || this.#directions.down.ready) &&
+        (!this.#latency || this.#latency.ready)
+      )
+        return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("Primed measurement connections did not become ready", {
+      cause: signal.reason,
+    });
   }
 
   async finish(): Promise<void> {
@@ -259,6 +321,7 @@ class TransportStage {
       return;
     }
     if (ownerSignal.aborted || this.#abort.signal.aborted) return;
+    this.#uploadId = id;
     await this.#primeDirection("up", id, recoveryStartedAt);
   }
 
@@ -270,14 +333,16 @@ class TransportStage {
     const path = this.#paths.throughput;
     const fetchTarget = path.fetch;
     const wt = path.target.transport === "fetch-stream" ? null : path.target;
-    const streams = transferStreamCount({
-      protocol: fetchTarget.protocol,
-      policy: this.#policy,
-      transfer: this.activity.transfer,
-      dir,
-      needsPing: needsPings(this.activity),
-      webTransport: wt !== null,
-    });
+    const streams =
+      this.#streamCount?.(this.activity, dir) ??
+      transferStreamCount({
+        protocol: fetchTarget.protocol,
+        policy: this.#policy,
+        transfer: this.activity.transfer,
+        dir,
+        needsPing: needsPings(this.activity),
+        webTransport: wt !== null,
+      });
     const laneCount = wt ? 1 : streams;
     const spec: LaneUrlSpec = {
       dir,
@@ -294,10 +359,11 @@ class TransportStage {
       },
     };
     const url = (i: number) => laneUrl(spec, i, uploadId);
-    const headers = dir === "up" ? csrfHeader() : {};
-    const credentials: RequestCredentials = authEnabled
-      ? "include"
-      : "same-origin";
+    const { headers, credentials } = requestOptions(
+      this.#paths.credentials,
+      fetchTarget.origin,
+      dir === "up" ? "POST" : "GET",
+    );
     const progressUrl =
       dir === "up" && wt
         ? `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(uploadId!)}`
@@ -311,13 +377,12 @@ class TransportStage {
           dir,
           lanes: streams,
           datagrams: wt.transport === "webtransport-datagram",
-          mint: authEnabled
-            ? {
-                url: `${wt.origin}${wt.routes.wtSession}`,
-                headers: csrfHeader(),
-                credentials: "include",
-              }
-            : undefined,
+          mint: socketMint(
+            this.#paths.credentials,
+            wt.origin,
+            dir === "down" ? wt.routes.wtDownload : wt.routes.wtUpload,
+            "wt",
+          ),
           progressUrl,
           headers,
           credentials,
@@ -349,6 +414,8 @@ class TransportStage {
         uploadProgress: (message) => meter?.accept(message),
         beginUploadMeasure: () => meter?.beginMeasure(),
         discardTransfer: () => this.discard(),
+        authenticationRequired: () =>
+          reportServerAuthentication(this.#paths.credentials),
         uploadPresentationHint: (lane, bytes, elapsedMs) => {
           this.#uploadPresentation.hint(
             lane,
@@ -372,6 +439,7 @@ class TransportStage {
       sampleProvesStageLiveness: () => !this.#stalled,
       discardTransfer: () => this.discard(),
       recoveryStartedAt,
+      credentials: this.#paths.credentials,
       authoritativePresentation: (bytesPerSec) => {
         this.#uploadPresentation.authoritative(
           bytesPerSec,
@@ -384,14 +452,14 @@ class TransportStage {
     this.#upload = meter;
     if (progressUrl) {
       const ready = meter.attachExternal(() => {
-        void authenticatedFetch(progressUrl, {
+        void measurementFetch(this.#paths.credentials, progressUrl, {
           method: "DELETE",
           cache: "no-store",
           keepalive: true,
           headers,
           credentials,
         }).catch(() => {});
-      });
+      }, uploadId!);
       // WT opens its same-session meter before writing upload streams.
       direction.spawn();
       return ready.then(() => {});
@@ -399,6 +467,51 @@ class TransportStage {
     return meter.prime(uploadId!).then((ready) => {
       if (ready && !this.#abort.signal.aborted) direction.spawn();
     });
+  }
+
+  flushDownload(now: number): void {
+    this.#directions.down?.flush(now);
+  }
+
+  async checkpoint(
+    signal: AbortSignal,
+  ): Promise<import("./contract").ReceiverCheckpoint | null> {
+    const id = this.#uploadId;
+    if (!id || this.#abort.signal.aborted) return null;
+    const target = this.#paths.throughput.fetch;
+    const requestedAtMs = performance.now();
+    const response = await measurementFetch(
+      this.#paths.credentials,
+      `${target.origin}/upload/checkpoint?id=${encodeURIComponent(id)}`,
+      {
+        method: "POST",
+        cache: "no-store",
+        signal: AbortSignal.any([
+          signal,
+          this.#abort.signal,
+          AbortSignal.timeout(1500),
+        ]),
+      },
+    );
+    if (!response.ok) return null;
+    const snapshot = (await readJSONResponse(response)) as Record<
+      string,
+      unknown
+    >;
+    if (
+      !Number.isSafeInteger(snapshot.bytes) ||
+      (snapshot.bytes as number) < 0 ||
+      !Number.isSafeInteger(snapshot.nanos) ||
+      (snapshot.nanos as number) <= 0
+    )
+      return null;
+    return {
+      id,
+      bytes: snapshot.bytes as number,
+      nanos: snapshot.nanos as number,
+      requestedAtMs,
+      receivedAtMs: performance.now(),
+    };
   }
 
   async #mintUploadSession(ownerSignal: AbortSignal): Promise<string> {
@@ -411,7 +524,8 @@ class TransportStage {
     ]);
     const deadline = setTimeout(() => timeout.abort(), ESTABLISH_BUDGET_MS);
     try {
-      const response = await authenticatedFetch(
+      const response = await measurementFetch(
+        this.#paths.credentials,
         `${target.origin}${target.routes.uploadSession}`,
         { method: "POST", cache: "no-store", signal },
       );
@@ -424,7 +538,7 @@ class TransportStage {
       signal.throwIfAborted();
       return id;
     } catch (cause) {
-      await classifyAuthenticationFailure(signal);
+      await classifyServerAuthentication(this.#paths.credentials, signal);
       throw cause;
     } finally {
       clearTimeout(deadline);

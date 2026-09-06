@@ -228,7 +228,7 @@ func TestAuthenticatedActivityDoesNotExtendSession(t *testing.T) {
 			t.Fatalf("path=%s status=%d cookies=%d", path, rr.Code, len(rr.Result().Cookies()))
 		}
 	}
-	if _, ok := s.consumeWebTransportToken(mintForSession(t, s, sess)); !ok {
+	if _, ok := s.consumeWebTransportToken(mintForSession(t, s, sess), secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("fresh reconnect token was refused")
 	}
 	if !sess.expires.Equal(expires) {
@@ -535,10 +535,10 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 		t.Fatalf("code=%d, want 403", rr.Code)
 	}
 }
-func TestAuthRequiredExposesHeadersOnlyToDeploymentOrigin(t *testing.T) {
+func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *testing.T) {
 	s := testService(t)
 	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
-	for _, origin := range []string{s.public.String(), "https://evil.example", ""} {
+	for _, origin := range []string{s.public.String(), "https://other.example", "http://other.example", "null", ""} {
 		r := secureRequest("GET", "/download", nil)
 		r.Header.Set("Origin", origin)
 		rr := httptest.NewRecorder()
@@ -546,9 +546,12 @@ func TestAuthRequiredExposesHeadersOnlyToDeploymentOrigin(t *testing.T) {
 		if rr.Code != http.StatusForbidden {
 			t.Fatalf("origin %q: status %d", origin, rr.Code)
 		}
-		if origin == s.public.String() {
+		if strings.HasPrefix(origin, "https://") {
 			if rr.Header().Get("Access-Control-Allow-Origin") != origin || !strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "Graphite-Meter-Auth") {
 				t.Fatalf("headers=%v", rr.Header())
+			}
+			if origin != s.public.String() && rr.Header().Get("Access-Control-Allow-Credentials") != "" {
+				t.Fatal("cross-origin session cookies were enabled")
 			}
 		} else if rr.Header().Get("Access-Control-Allow-Origin") != "" || rr.Header().Get("Access-Control-Allow-Credentials") != "" {
 			t.Fatalf("untrusted origin %q exposed by headers=%v", origin, rr.Header())

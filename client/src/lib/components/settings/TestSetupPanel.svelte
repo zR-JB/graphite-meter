@@ -13,6 +13,7 @@
   import { panelReadiness } from "../../runner/connectionModel";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
+  import { serverTransportOptions } from "../../servers/transportOptions";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -39,34 +40,91 @@
   );
   // One card per mechanism an origin advertises. The datagram path is the one
   // gated on its setting, and stays visible while it is the current selection.
-  const throughputTargets = $derived([
-    { value: "auto", label: "Automatic" },
-    ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
-      (entry) =>
-        entry.targets
-          .filter(
-            (target) =>
-              target.transport !== "webtransport-datagram" ||
-              store.config.experimentalDatagramThroughput ||
-              store.config.transports.throughputTarget === target.id,
-          )
-          .map((target) =>
-            // The observed protocol only describes the path actually in use.
-            targetOption(
-              target,
-              store.connections.throughput.target?.id === target.id
-                ? store.connections.throughput.observedProtocol
-                : undefined,
-            ),
+  const simultaneous = $derived(store.selectedServers.length > 1);
+  const selectedServers = $derived(
+    store.serverCatalog?.servers.filter((server) =>
+      store.selectedServers.includes(server.id),
+    ) ?? [],
+  );
+  const globalThroughput = $derived(
+    store.config.transports.throughputTarget.startsWith("protocol:") ||
+      store.config.transports.throughputTarget.startsWith("transport:"),
+  );
+  const globalLatency = $derived(
+    store.config.transports.latencyTarget.startsWith("transport:"),
+  );
+  const throughputTargets = $derived(
+    simultaneous
+      ? serverTransportOptions(
+          "throughput",
+          selectedServers,
+          store.serverDiscoveries,
+          store.config.experimentalDatagramThroughput,
+          store.config.transports.throughputTarget,
+        )
+      : [
+          { value: "auto", label: "Automatic" },
+          ...(globalThroughput
+            ? serverTransportOptions(
+                "throughput",
+                selectedServers,
+                store.serverDiscoveries,
+                store.config.experimentalDatagramThroughput,
+                store.config.transports.throughputTarget,
+              ).filter(
+                (option) =>
+                  option.value === store.config.transports.throughputTarget,
+              )
+            : []),
+          ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
+            (entry) =>
+              entry.targets
+                .filter(
+                  (target) =>
+                    target.transport !== "webtransport-datagram" ||
+                    store.config.experimentalDatagramThroughput ||
+                    store.config.transports.throughputTarget === target.id,
+                )
+                .map((target) =>
+                  // The observed protocol only describes the path actually in use.
+                  targetOption(
+                    target,
+                    store.connections.throughput.target?.id === target.id
+                      ? store.connections.throughput.observedProtocol
+                      : undefined,
+                  ),
+                ),
           ),
-    ),
-  ]);
-  const latencyTargets = $derived([
-    { value: "auto", label: "Automatic" },
-    ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap((entry) =>
-      entry.targets.map((target) => targetOption(target)),
-    ),
-  ]);
+        ],
+  );
+  const latencyTargets = $derived(
+    simultaneous
+      ? serverTransportOptions(
+          "latency",
+          selectedServers,
+          store.serverDiscoveries,
+          false,
+          store.config.transports.latencyTarget,
+        )
+      : [
+          { value: "auto", label: "Automatic" },
+          ...(globalLatency
+            ? serverTransportOptions(
+                "latency",
+                selectedServers,
+                store.serverDiscoveries,
+                false,
+                store.config.transports.latencyTarget,
+              ).filter(
+                (option) =>
+                  option.value === store.config.transports.latencyTarget,
+              )
+            : []),
+          ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
+            (entry) => entry.targets.map((target) => targetOption(target)),
+          ),
+        ],
+  );
 
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
@@ -157,7 +215,9 @@
   }
 
   const readiness = $derived(
-    panelReadiness(store.connections, store.latencyEnabled),
+    store.selectedServers.length > 1 || store.unresolvedServers.length
+      ? store.selectionValidation
+      : panelReadiness(store.connections, store.latencyEnabled),
   );
   const READINESS_LABEL = {
     verified: "Ready",
@@ -178,7 +238,9 @@
       </span>
     </div>
     <p class="intro">
-      Choose separate paths for speed and latency measurements.
+      {simultaneous
+        ? "One preference applies to every selected server. Automatic resolves each path independently."
+        : "Choose separate paths for speed and latency measurements."}
     </p>
     <ConnectionPicker
       role="throughput"
@@ -418,12 +480,12 @@
       onToggle={setForcedStreams}
       disabled={running}
       label="Force exact stream count"
-      tooltip="Automatic chooses concurrency for the protocol, capped by your maximum on HTTP/1.1. Forced uses the exact count per direction."
+      tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
     />
     <label>
       <span
         >{store.config.transferStreams.mode === "forced"
-          ? "Streams per direction"
+          ? "Streams per server and direction"
           : "Maximum H1 streams per direction"}</span
       >
       <input
@@ -437,8 +499,9 @@
     </label>
     {#if store.config.transferStreams.mode === "forced"}
       <p class="hint">
-        Starts exactly {store.config.transferStreams.count} requests per active direction.
-        Browser connection limits may queue HTTP/1.1 requests.
+        Starts exactly {store.config.transferStreams.count} requests per server and
+        active direction. The run reserves progress and control capacity and allows
+        at most 128 streams per direction.
       </p>
     {:else}
       <p class="hint">

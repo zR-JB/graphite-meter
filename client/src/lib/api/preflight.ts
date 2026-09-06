@@ -18,6 +18,10 @@ export interface Preflight {
   engineVersion: string;
   generation: string;
   capabilities: {
+    /**
+     * Fresh owner-checked receiver windows are available.
+     */
+    uploadCheckpoint?: boolean;
     throughput: ThroughputEndpoint[];
     latency: LatencyEndpoint[];
   };

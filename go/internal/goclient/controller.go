@@ -2,6 +2,9 @@ package goclient
 
 import (
 	"context"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 )
@@ -17,6 +20,9 @@ const AuthorizationTimeout = 2 * time.Minute
 // Controller owns preparation, approval polling, and measurement lifetimes for one client.
 // UI sequence guards still decide whether an already queued reply belongs to the current view.
 type Controller struct {
+	catalog     *wire.ServerCatalog
+	selection   []wire.ServerEntry
+	grants      map[string]string
 	mu          sync.Mutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -32,7 +38,7 @@ type activeRun struct {
 
 func NewController(parent context.Context) *Controller {
 	ctx, cancel := context.WithCancel(parent)
-	return &Controller{ctx: ctx, cancel: cancel}
+	return &Controller{ctx: ctx, cancel: cancel, grants: map[string]string{}}
 }
 
 // Preparation captures the configuration and cancellation scope of delayed UI commands.
@@ -43,6 +49,7 @@ type Preparation struct {
 }
 
 func (c *Controller) NewPreparation(cfg Config) *Preparation {
+	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -102,6 +109,37 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 
 // Start abandons a replaced run's delivery, then starts one bounded event stream.
 func (c *Controller) Start(cfg Config, prepared *PreparedConnection) <-chan Event {
+	return c.startEvents(func(ctx context.Context, emit func(Event)) {
+		_ = RunPrepared(ctx, cfg, prepared, func(event Event) {
+			if event.Kind == EventDone {
+				event.Err = ClassifyAuthFailure(ctx, cfg, event.Err)
+			}
+			emit(event)
+		})
+	})
+}
+
+func (c *Controller) StartSelection(cfg Config, prepared *PreparedRun) <-chan Event {
+	c.mu.Lock()
+	grants := maps.Clone(c.grants)
+	previous := slices.Clone(c.selection)
+	c.mu.Unlock()
+	return c.startEvents(func(ctx context.Context, emit func(Event)) {
+		if !prepared.FreshFor(cfg) {
+			preparation, cancel := context.WithTimeout(ctx, preparationTimeout)
+			var err error
+			prepared, err = prepareRun(preparation, cfg, previous, grants)
+			cancel()
+			if err != nil {
+				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
+				return
+			}
+		}
+		_ = RunSelection(ctx, cfg, prepared, emit)
+	})
+}
+
+func (c *Controller) startEvents(run func(context.Context, func(Event))) <-chan Event {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -120,12 +158,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedConnection) <-chan Even
 		defer cancel()
 		defer abandon()
 		defer close(events)
-		_ = RunPrepared(measurement, cfg, prepared, func(event Event) {
-			if event.Kind == EventDone {
-				event.Err = ClassifyAuthFailure(measurement, cfg, event.Err)
-			}
-			sendRunEvent(measurement, delivery, events, event)
-		})
+		run(measurement, func(event Event) { sendRunEvent(measurement, delivery, events, event) })
 	})
 	return events
 }

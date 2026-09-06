@@ -10,17 +10,23 @@
   </head>
   <body>
     <main class="card">
-      <h1>Approve terminal client</h1>
+      {{if .BrowserOrigin}}
+ <h1>Approve browser client</h1>
+ <p>Allow this site to run measurements using your sign-in?</p>
+ <p><strong>{{.BrowserOrigin}}</strong></p>
+ {{else}}
+ <h1>Approve terminal client</h1>
       <p>Only approve a client you started yourself. This grants a terminal
         access to run measurements as you until you sign out.</p>
       <p>Confirm that this code matches the code in your terminal.</p>
-      <code class="code">{{.Code}}</code>
-      <form method="post" action="/auth/cli/approve">
+      {{end}}
+ <code class="code">{{.Code}}</code>
+      <form method="post" action="{{if .BrowserOrigin}}/auth/browser/approve{{else}}/auth/cli/approve{{end}}">
         <input type="hidden" name="csrf" value="{{.CSRF}}">
         <input type="hidden" name="challenge" value="{{.Challenge}}">
         <button type="submit">Approve this client</button>
       </form>
-      <p class="notice">If you did not just start a terminal client, close
+      <p class="notice">If you did not request access for this client, close
         this page and do not approve.</p>
     </main>
     {{template "pending"}}

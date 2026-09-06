@@ -3,10 +3,10 @@ import type { CoreHost } from "../core";
 import type { PhaseActivity, RecoveryCause } from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import {
-  authEnabled,
-  csrfHeader,
-  reportAuthenticationRequired,
-} from "../../auth";
+  requestOptions,
+  reportServerAuthentication,
+  type ServerCredentials,
+} from "../../servers/credentials";
 import type { AuthRequiredMsg } from "./workerPool";
 import { startUploadFeed } from "./uploadFeed";
 import {
@@ -31,6 +31,7 @@ export interface UploadProgressLane {
   setStalled(stalled: boolean, detail?: string, cause?: RecoveryCause): void;
 }
 interface UploadProgressDeps {
+  credentials?: ServerCredentials;
   host: CoreHost;
   target: FetchThroughputTarget;
   lane: UploadProgressLane;
@@ -52,6 +53,7 @@ export class UploadProgressChannel {
   } | null = null;
   #closed = false;
   #serverBytes = 0;
+  #id = "";
   #serverNanos = 0;
   #curveNs: number | null = null;
   #completed = false;
@@ -65,19 +67,23 @@ export class UploadProgressChannel {
   /** Establish the feed before any POST lane can write. */
   prime(uploadId: string): Promise<boolean> {
     if (this.#closed) return Promise.resolve(false);
+    this.#id = uploadId;
     const target = this.#deps.target;
     const ready = this.#awaitReady();
     this.#feed = startUploadFeed({
       url: `${target.origin}${target.routes.uploadProgress}?id=${encodeURIComponent(uploadId)}`,
-      csrf: csrfHeader(),
-      credentials: authEnabled ? "include" : "same-origin",
+      csrf: requestOptions(this.#deps.credentials, target.origin, "POST")
+        .headers,
+      credentials: requestOptions(this.#deps.credentials, target.origin)
+        .credentials,
       onEvent: (event) => this.accept(event),
     });
     return ready;
   }
 
   /** The WT session worker carries this feed and normally performs its finalizing DELETE. */
-  attachExternal(finalize: () => void): Promise<boolean> {
+  attachExternal(finalize: () => void, uploadId = ""): Promise<boolean> {
+    this.#id = uploadId;
     this.#finalize = finalize;
     return this.#awaitReady();
   }
@@ -150,7 +156,13 @@ export class UploadProgressChannel {
     }
     if (msg.type === "auth-required") {
       this.#deps.discardTransfer();
-      reportAuthenticationRequired();
+      reportServerAuthentication(this.#deps.credentials);
+      host.failStage(
+        lane.stage,
+        "connection-lost",
+        "Sign in again to measure upload",
+        "up",
+      );
       return;
     }
     if (msg.type === "fatal") {
@@ -179,6 +191,11 @@ export class UploadProgressChannel {
     const advancing = msg.n > previousServerBytes;
     if (advancing) this.#serverBytes = msg.n; // cumulative + monotonic guard
     if (!lane.measuring) return; // warmup bytes are excluded from the window
+    host.ingestReceiver?.({
+      id: this.#id,
+      bytes: this.#serverBytes,
+      nanos: serverNs,
+    });
 
     // The first measured frame is a baseline; both subsequent deltas use the receiver's counters.
     const delta =

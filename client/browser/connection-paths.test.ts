@@ -245,7 +245,7 @@ test("the readiness badge names a failure over a check in flight", async ({
   await expect(settings.getByText("Checking", { exact: true })).toBeVisible();
   await expect(badge).toHaveText("Path failed");
 });
-test("a delayed stale start can be cancelled and the idle view continues", async ({
+test("unresolved Start opens bounded server checks and Escape returns to the instrument", async ({
   page,
 }) => {
   await page.addInitScript(
@@ -274,27 +274,21 @@ test("a delayed stale start can be cancelled and the idle view continues", async
   });
   await openApp(page, "real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expectVisible(page.getByRole("button", { name: "Cancel" }));
-  await expectVisible(page.getByText("Checking paths", { exact: true }));
-  const live = page.locator('output[aria-live="polite"]');
-  await expect(live).toContainText("Starting test");
-  await expect(live).toContainText("Throughput path");
-  await expect(live).toContainText("Latency path");
+  const chooser = page.getByRole("dialog", { name: "Servers", exact: true });
+  await expectVisible(chooser);
+  await expectVisible(chooser.getByText("Checking…", { exact: true }));
   await page.keyboard.press("Escape");
+  await expect(chooser).toBeHidden();
   await expectVisible(
     page.getByRole("button", { name: "Start the speed test" }),
   );
-  await expect(page.locator('[role="alert"]')).toHaveCount(0);
-  await Bun.sleep(500);
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expectVisible(page.getByRole("button", { name: "Abort test" }));
-  expect(await page.locator("#console").getAttribute("data-phase")).not.toBe(
-    "idle",
-  );
-  await page.getByRole("button", { name: "Abort test" }).click();
-  await expectVisible(page.getByRole("button", { name: "Run the test again" }));
+  const settings = await openSettings(page);
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible();
 });
-test("a failed start names the affected path in the gauge", async ({
+
+test("a failed Start identifies the selected server and offers Retry and Remove", async ({
   page,
 }) => {
   await page.addInitScript(
@@ -305,20 +299,14 @@ test("a failed start names the affected path in the gauge", async ({
   await page.route("**/probe?*", (route) => route.fulfill({ status: 503 }));
   await openApp(page, "real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
-  await expect(
-    page.locator(".gauge-panel").getByText("Connection check failed", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expectVisible(
-    page.getByText("Throughput path is unavailable", { exact: true }),
-  );
-  await expect(
-    page.locator(".gauge-panel").getByText("Connection check failed", {
-      exact: true,
-    }),
-  ).toHaveCount(1);
-  await expect(page.locator(".run-error")).toHaveCount(0);
+  const chooser = page.getByRole("dialog", { name: "Servers", exact: true });
+  await expectVisible(chooser);
+  const row = chooser.locator(".server-row").first();
+  await expect(row.locator("strong")).toHaveText("Browser fixture");
+  await expectVisible(row.getByRole("button", { name: "Retry", exact: true }));
+  await expectVisible(row.getByRole("button", { name: "Remove", exact: true }));
+  await row.locator("summary").click();
+  await expect(row.locator("details")).toContainText("probe returned HTTP 503");
 });
 test("the occupancy row reports slots and cautions only past half", async ({
   page,

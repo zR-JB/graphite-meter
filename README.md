@@ -42,6 +42,10 @@ both the interface and measurement routes on public deployments.
 bytes and timing come from the server, so data waiting in a sender queue does not inflate the
 result. Choose separate download and upload stages, or add simultaneous transfers.
 
+**One to four selected servers.** Choose from the operator's catalogue and measure their combined
+received throughput on one stage schedule. Each server keeps its own latency population. A server
+dropout leaves an explicit partial result and a new measurement window for the survivors.
+
 **Latency under load.** Compare idle latency with latency during download, upload, and simultaneous
 transfers. Each stage has its own distribution, percentiles, RTT variation, and probe timeout
 counts. Paired server timing shows how much of a reply's RTT was spent in the instrumented server
@@ -65,6 +69,8 @@ profiles keep transfer speed and responsiveness visible together.
 
 - **Flexible tests:** stage toggles, duration presets or custom timings, automatic or fixed stream
   counts, and optional early completion when a stage stabilizes.
+- **Server selection:** a separate chooser beside Start, independent sign-in for protected peers,
+  and per-server contributions in result details. Automatic paths resolve separately for each server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
@@ -87,11 +93,15 @@ then run:
 
 ```sh
 ./graphite-meter-client --url http://YOUR_SERVER_IP:7246
+# Select catalogue entries explicitly, including runs without the catalogue host:
+./graphite-meter-client --url https://meter.example.net --server frankfurt --server amsterdam
 ```
 
 Prebuilt clients are available for **Linux and macOS on amd64/arm64**, and **Windows on amd64**
 (`graphite-meter-client.exe`). On authenticated servers, approve the terminal's short code in your
 browser. The client keeps its measurement grant in memory and does not request your operator password.
+Press **s** in setup for the server chooser, **l** to change the displayed latency server, and
+**d** during or after a run for server contributions, intervals, and failures.
 
 [All terminal flags](docs/DEPLOYMENT.md#native-terminal-client) ·
 [Build the client from source](docs/DEVELOPMENT.md#development-commands) ·
@@ -104,9 +114,7 @@ browser. The client keeps its measurement grant in memory and does not request y
 - [Development](docs/DEVELOPMENT.md): architecture, toolchain, testing, and releases.
 - [Benchmarks](docs/BENCHMARKS.md): historical results and reproduction commands.
 - Client contracts: [discovery](api/discovery.md), [uploads](api/upload.md), and [latency / WebTransport](api/wire.md).
-
-The browser currently selects among the paths advertised by one deployment. Choosing independent
-servers and testing several in parallel are planned.
+- [Server catalogue and independent authorization](docs/SERVERS.md): configure available servers and interpret simultaneous results.
 
 ## Contributing
 

@@ -208,7 +208,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err := send(); err != nil {
 		return finish(err)
 	}
-	gate.ready <- struct{}{}
+	gate.markReady()
 	start := gate.start
 	for {
 		select {
@@ -217,9 +217,13 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			mu.Lock()
 			clear(pending)
 			measuring.Store(true)
-			measuredUntil = time.Now().Add(duration)
+			if gate.boundaryStart.IsZero() {
+				measuredUntil = time.Now().Add(duration)
+			} else {
+				measuredUntil = gate.boundaryStart.Add(duration)
+			}
 			mu.Unlock()
-			timer := time.NewTimer(duration)
+			timer := time.NewTimer(max(0, time.Until(measuredUntil)))
 			defer timer.Stop()
 			measureTimer = timer.C
 		case <-measureCtx.Done():

@@ -80,7 +80,12 @@ export function startUploadFeed(options: {
       try {
         const response = await fetch(url, {
           cache: "no-store",
-          headers: { accept: "application/x-ndjson" },
+          headers: {
+            ...(csrf.Authorization
+              ? { Authorization: csrf.Authorization }
+              : {}),
+            accept: "application/x-ndjson",
+          },
           signal,
           credentials,
           redirect: redirectForCredentials(credentials),

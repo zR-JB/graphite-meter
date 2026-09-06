@@ -138,7 +138,70 @@ function emptyStability(): LiveStability {
   return { latency: null, download: null, upload: null, bidirectional: null };
 }
 
+import { serverWireEstimate } from "../servers/wireEstimates";
+
 class AppStore {
+  serverCatalog = $state<import("../servers/catalog").ServerCatalog | null>(
+    null,
+  );
+  selectedServers = $state<string[]>(["self"]);
+  unresolvedServers = $state<import("../servers/catalog").SavedSelection[]>([]);
+  serverReadiness = $state<
+    Record<
+      string,
+      {
+        state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
+        message?: string;
+        checkedAt?: number;
+      }
+    >
+  >({});
+  serverDiscoveries = $state<Record<string, TransportDiscovery>>({});
+  catalogLoading = $state(false);
+  selectionValidation = $derived.by(
+    (): "verified" | "checking" | "failed" | "stale" => {
+      const states = this.selectedServers.map(
+        (id) => this.serverReadiness[id]?.state ?? "unchecked",
+      );
+      if (this.unresolvedServers.length || !states.length) return "failed";
+      if (states.includes("checking")) return "checking";
+      if (states.some((state) => state === "failed" || state === "sign-in"))
+        return "failed";
+      return states.every((state) => state === "ready") ? "verified" : "stale";
+    },
+  );
+  serverChooserOpen = $state(false);
+  serverApproval = $state<{ id: string; url: string; message?: string } | null>(
+    null,
+  );
+  latencyFocus = $state("self");
+  serverDetails = $state<
+    import("../servers/measurement").MultiServerResult | null
+  >(null);
+  latencyByServer = $state<Record<string, LatencyBucket[]>>({});
+  summariesByServer = $state<
+    Record<string, Partial<Record<TransportRole, StageLatencySummary | null>>>
+  >({});
+
+  focusLatencyServer(id: string) {
+    this.latencyFocus = id;
+    this.latency = [...(this.latencyByServer[id] ?? [])];
+    this.latencySummaries = {
+      ...(this.summariesByServer[id] ??
+        this.serverDetails?.servers.find((server) => server.server.id === id)
+          ?.latencyByStage ??
+        {}),
+    };
+    const server = this.serverDetails?.servers.find(
+      (server) => server.server.id === id,
+    );
+    if (server) this.stageResults.latency = server.latency;
+    this.#latencyScale.reset();
+    for (const sample of this.latency)
+      this.latencyScaleMs = this.#latencyScale.observe(sample);
+    this.latencyRevision++;
+  }
+
   #latencyScale = new LatencyScaleController();
   startError = $state("");
   preparationStatus = $state<PreparationStatus>("idle");
@@ -164,6 +227,7 @@ class AppStore {
   throughput = $state<ThroughputSample[]>([]);
   throughputRevision = $state(0);
   liveThroughput = $state<ThroughputSample[]>([]);
+  aggregateEvidence = $state(true);
   #scaleThroughput: Pick<ThroughputSample, "t" | "bytesPerSec">[] = [];
   #throughputTargetSpanMs = 0;
   #sustainedPeakBytesPerSec = $state(0);
@@ -375,7 +439,17 @@ class AppStore {
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
-  #estimateWire(bytesPerSec: number): CompensationEstimate {
+  #estimateWire(
+    bytesPerSec: number,
+    stage?: "download" | "upload" | "bidirectional",
+    dir?: "down" | "up",
+  ): CompensationEstimate | null {
+    if (this.serverDetails && stage && dir)
+      return serverWireEstimate(this.serverDetails, stage, dir);
+    if (
+      (this.serverDetails?.selection.length ?? this.selectedServers.length) > 1
+    )
+      return null;
     const connection = this.runConnections.throughput;
     return estimateCompensation(
       bytesPerSec,
@@ -386,36 +460,66 @@ class AppStore {
     );
   }
 
-  liveCompensation = $derived<CompensationEstimate>(
+  liveCompensation = $derived<CompensationEstimate | null>(
     this.#estimateWire(
       this.phase === "download" || this.phase === "upload"
         ? this.liveTransferBytesPerSec
         : 0,
+      this.phase === "upload" ? "upload" : "download",
+      this.phase === "upload" ? "up" : "down",
     ),
   );
 
-  downloadCompensation = $derived<CompensationEstimate>(
-    this.#estimateWire(this.stageResults.download?.reportedBytesPerSec ?? 0),
+  downloadCompensation = $derived<CompensationEstimate | null>(
+    this.#estimateWire(
+      this.stageResults.download?.reportedBytesPerSec ?? 0,
+      "download",
+      "down",
+    ),
   );
 
-  uploadCompensation = $derived<CompensationEstimate>(
-    this.#estimateWire(this.stageResults.upload?.reportedBytesPerSec ?? 0),
+  uploadCompensation = $derived<CompensationEstimate | null>(
+    this.#estimateWire(
+      this.stageResults.upload?.reportedBytesPerSec ?? 0,
+      "upload",
+      "up",
+    ),
   );
 
-  liveBidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
-    const lanes = this.liveBidirectional ?? { down: 0, up: 0 };
-    return combineCompensationEstimates([
-      this.#estimateWire(lanes.down),
-      this.#estimateWire(lanes.up),
-    ]);
-  });
+  liveBidirectionalCompensation = $derived.by<CompensationEstimate | null>(
+    () => {
+      const lanes = this.liveBidirectional ?? { down: 0, up: 0 };
+      const estimates = [
+        this.#estimateWire(lanes.down, "bidirectional", "down"),
+        this.#estimateWire(lanes.up, "bidirectional", "up"),
+      ];
+      return estimates.every(
+        (value): value is CompensationEstimate => value !== null,
+      )
+        ? combineCompensationEstimates(estimates)
+        : null;
+    },
+  );
 
-  bidirectionalCompensation = $derived.by<CompensationEstimate>(() => {
+  bidirectionalCompensation = $derived.by<CompensationEstimate | null>(() => {
     const result = this.result?.bidirectional;
-    return combineCompensationEstimates([
-      this.#estimateWire(result?.down?.reportedBytesPerSec ?? 0),
-      this.#estimateWire(result?.up?.reportedBytesPerSec ?? 0),
-    ]);
+    const estimates = [
+      this.#estimateWire(
+        result?.down?.reportedBytesPerSec ?? 0,
+        "bidirectional",
+        "down",
+      ),
+      this.#estimateWire(
+        result?.up?.reportedBytesPerSec ?? 0,
+        "bidirectional",
+        "up",
+      ),
+    ];
+    return estimates.every(
+      (value): value is CompensationEstimate => value !== null,
+    )
+      ? combineCompensationEstimates(estimates)
+      : null;
   });
 
   #peakBytesPerSec = $state(0);
@@ -490,6 +594,38 @@ class AppStore {
 
   ingest = (event: RunnerEvent) => {
     switch (event.type) {
+      case "aggregateEvidence":
+        this.aggregateEvidence = event.available;
+        if (!event.available) {
+          this.liveThroughput = [];
+          this.uploadPresentationBytesPerSec = null;
+        }
+        break;
+      case "serverLatency": {
+        const history = (this.latencyByServer[event.serverId] ??= []);
+        upsertLatencyBucket(history, event.sample, PRESENTATION_POINT_LIMIT);
+        if (event.serverId === this.latencyFocus)
+          this.ingest({ type: "latency", sample: event.sample });
+        break;
+      }
+      case "serverLatencySummary":
+        (this.summariesByServer[event.serverId] ??= {})[event.stage] =
+          event.summary;
+        if (event.serverId === this.latencyFocus)
+          this.latencySummaries[event.stage] = event.summary;
+        break;
+      case "serverDetails":
+        this.serverDetails = event.details;
+        break;
+      case "serverFailure":
+        if (this.serverDetails)
+          this.serverDetails = {
+            ...this.serverDetails,
+            participants: event.participants,
+            failures: [...this.serverDetails.failures, event.failure],
+          };
+        break;
+
       case "phase": {
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
@@ -596,21 +732,37 @@ class AppStore {
       case "complete":
         this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
+        this.serverDetails = event.result.multiServer ?? null;
         this.latencySummaries = event.result.latencyByStage;
         if (this.savingResults) {
-          const estimate = (value: ThroughputResult | null) =>
-            value ? this.#estimateWire(value.reportedBytesPerSec) : null;
-          const downloadWire = estimate(event.result.download);
-          const uploadWire = estimate(event.result.upload);
+          const estimate = (
+            value: ThroughputResult | null,
+            stage: "download" | "upload" | "bidirectional",
+            dir: "down" | "up",
+          ) =>
+            value
+              ? this.#estimateWire(value.reportedBytesPerSec, stage, dir)
+              : null;
+          const downloadWire = estimate(
+            event.result.download,
+            "download",
+            "down",
+          );
+          const uploadWire = estimate(event.result.upload, "upload", "up");
           const bidiEstimates = event.result.bidirectional
             ? [
-                estimate(event.result.bidirectional.down),
-                estimate(event.result.bidirectional.up),
+                estimate(
+                  event.result.bidirectional.down,
+                  "bidirectional",
+                  "down",
+                ),
+                estimate(event.result.bidirectional.up, "bidirectional", "up"),
               ].filter((value): value is CompensationEstimate => value !== null)
             : [];
-          const bidiWire = bidiEstimates.length
-            ? combineCompensationEstimates(bidiEstimates)
-            : null;
+          const bidiWire =
+            bidiEstimates.length === 2
+              ? combineCompensationEstimates(bidiEstimates)
+              : null;
           this.historyCandidate = buildHistoryRecord(
             event.result,
             {
@@ -656,8 +808,12 @@ class AppStore {
       throughput: [],
       throughputRevision: 0,
       liveThroughput: [],
+      aggregateEvidence: true,
       bytesTransferred: 0,
       latency: [],
+      latencyByServer: {},
+      summariesByServer: {},
+      serverDetails: null,
       latencySummaries: {},
       phase: "idle" as const,
       phaseStage: null,

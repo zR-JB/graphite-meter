@@ -135,7 +135,7 @@ func (p *Preflight) buildForHost(host string) wire.Preflight {
 	for _, base := range p.cfg.Public.Latency {
 		addLatency(publicBase(base))
 	}
-	return wire.Preflight{Server: wire.ServerInfo{Name: p.cfg.ServerName, Location: p.cfg.ServerLocation}, EngineVersion: p.cfg.EngineVersion, Generation: p.generation, Capabilities: wire.Capabilities{ThroughputTargets: throughput, LatencyTargets: latency}}
+	return wire.Preflight{Server: wire.ServerInfo{Name: p.cfg.ServerName, Location: p.cfg.ServerLocation}, EngineVersion: p.cfg.EngineVersion, Generation: p.generation, Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
 func publicBase(configured string) string {

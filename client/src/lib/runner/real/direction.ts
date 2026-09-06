@@ -1,7 +1,6 @@
 // One transfer direction: its lanes, their restarts and the byte accounting that turns them into samples.
 import type { CoreHost } from "../core";
 import type { FlowDirection, PhaseActivity, RecoveryCause } from "../contract";
-import { reportAuthenticationRequired } from "../../auth";
 import { laneStaggerMs } from "./backendPure";
 import type { ByteLane, LaneEvents, WtProgressRelay } from "./byteLane";
 import {
@@ -46,6 +45,7 @@ export interface DirectionHost {
   beginUploadMeasure: () => void;
   /** Release every direction of the stage. */
   discardTransfer: () => void;
+  authenticationRequired?: () => void;
 }
 
 interface DirectionOptions {
@@ -91,6 +91,7 @@ export class TransferDirection {
   #measureSeq = 0;
   /** False once the stage released this direction, so a released lane never spawns workers no one owns. */
   #live = true;
+  #readyLanes = new Set<number>();
   /** True while graceful lane shutdown can still deliver its final bytes. */
   #stopping = false;
   /* Per-direction measured-byte watchdog. */
@@ -132,6 +133,11 @@ export class TransferDirection {
         this.#startLane(i);
       }, delay);
     }
+  }
+
+  /** Every download lane has consumed payload, including during excluded warmup. */
+  get ready(): boolean {
+    return this.#live && this.#readyLanes.size === this.laneCount;
   }
 
   /* Measure the existing lanes to preserve their warmed connections. */
@@ -229,14 +235,27 @@ export class TransferDirection {
       onUploadProgress: (msg) => this.#deps.uploadProgress(msg),
       onAuthRequired: () => {
         this.#deps.discardTransfer();
-        reportAuthenticationRequired();
+        this.#deps.authenticationRequired?.();
+        this.#deps.host.failStage(
+          this.stage,
+          "connection-lost",
+          "Sign in again to measure throughput",
+          this.dir,
+        );
       },
     };
   }
 
   /* Sum received bytes over the direction’s wall-clock window, including zero-byte intervals. */
-  #aggregate(aggregation: ClientByteAggregation): void {
-    const now = performance.now();
+  flush(now = performance.now()): void {
+    if (this.measuring && this.#aggregation)
+      this.#aggregate(this.#aggregation, now);
+  }
+
+  #aggregate(
+    aggregation: ClientByteAggregation,
+    now = performance.now(),
+  ): void {
     const durationSec = (now - aggregation.lastAggregateAt) / 1000;
     // A window with no duration has nothing to ingest against: leave its lane bytes pending for the next one.
     if (durationSec <= 0) return;
@@ -267,6 +286,7 @@ export class TransferDirection {
     seq?: number,
   ): void {
     if (!this.#live) return; // late message after release
+    if (bytes > 0) this.#readyLanes.add(i);
     if (
       this.dir === "down" &&
       (seq === undefined || seq !== this.#measureSeq || seq <= 0)
@@ -299,6 +319,7 @@ export class TransferDirection {
   ): void {
     // Ignore late errors after release (a stop()/terminate races the worker).
     if (!this.#live || this.#stopping) return;
+    this.#readyLanes.delete(i);
     if (cause === "unknown-upload-id" && this.measuring) {
       // The runner owns the one allowed ID rotation.
       this.setStalled(true, detail, cause);

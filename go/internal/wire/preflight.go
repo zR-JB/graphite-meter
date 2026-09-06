@@ -28,6 +28,7 @@ type ServerInfo struct {
 
 // Capabilities lists the measurement targets a server offers.
 type Capabilities struct {
+	UploadCheckpoint  bool               `json:"uploadCheckpoint,omitempty"`
 	ThroughputTargets []ThroughputTarget `json:"throughput"`
 	LatencyTargets    []LatencyTarget    `json:"latency"`
 }
@@ -58,8 +59,8 @@ type ThroughputTarget struct {
 
 // ThroughputRoutes are the paths a ThroughputTarget serves.
 type ThroughputRoutes struct {
-	Probe, Download, Upload, UploadSession, UploadProgress string
-	WTSession, WTDownload, WTUpload                        string
+	Probe, Download, Upload, UploadSession, UploadProgress, UploadCheckpoint string
+	WTSession, WTDownload, WTUpload                                          string
 }
 
 // LatencyTarget is one ping endpoint.
@@ -79,7 +80,7 @@ type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
 		Probe: route.Probe, Download: route.Download, Upload: route.Upload,
-		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress,
+		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress, UploadCheckpoint: route.UploadCheckpoint,
 		WTSession: route.WTSession, WTDownload: route.WTDownload, WTUpload: route.WTUpload,
 	}
 }

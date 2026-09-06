@@ -9,6 +9,9 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
+  import ServerChooser from "./ServerChooser.svelte";
+  import ServerResultDetails from "./ServerResultDetails.svelte";
+  import LatencyServerSelector from "./LatencyServerSelector.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
@@ -136,6 +139,8 @@
         ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
         : EMPTY_DISPLAY;
     }
+    if (!store.aggregateEvidence)
+      return { value: "—", unit: "awaiting server windows" };
     return {
       value: fmtSpeed(gaugeRate(liveRateValues.transfer)),
       unit: gaugeUnit,
@@ -174,6 +179,8 @@
   // The visible display may follow the bounded upload bridge, but a live
   // announcement describes measured throughput and must remain authoritative.
   const announcementDisplay = $derived.by(() => {
+    if (!store.aggregateEvidence && store.isRunning)
+      return { value: "—", unit: "awaiting server windows" };
     if (
       store.phase === "download" ||
       store.phase === "upload" ||
@@ -471,12 +478,13 @@
     </div>
 
     <div class="instrument-controls">
-      <div class="run-slot"><RunButton /></div>
+      <div class="run-slot"><RunButton /><ServerChooser /></div>
       <div class="stage-head"><StageTrack /></div>
     </div>
 
     {#if store.latencyEnabled}
       <div class="latency-panel">
+        <LatencyServerSelector />
         <LatencyProfile />
       </div>
     {/if}
@@ -488,6 +496,10 @@
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}
+    {#if store.result?.multiServer}<ServerResultDetails
+        details={store.result.multiServer}
+        outcome={store.result.outcome}
+      />{/if}
   </div>
 </section>
 
@@ -600,20 +612,26 @@
     }
     @container viz (min-width: 1000px) {
       .instrument-controls {
-        grid-template-columns: 280px minmax(0, 1fr);
+        grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
         align-items: end;
         column-gap: var(--space-5);
-        max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
+        max-width: calc(420px + var(--space-5) + var(--stage-controls-width));
       }
     }
   }
   /* Short wide windows share a control row; taller screens keep the action above its stages. */
   .run-slot {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     align-items: center;
+    gap: 0.5rem;
     justify-content: center;
     min-height: 46px;
+  }
+  .run-slot :global(.run-button) {
+    flex: 1 1 240px;
+    width: auto;
+    min-width: 220px;
   }
   /* Latency rows remain fully visible; the instrument owns their height. */
   .latency-panel {

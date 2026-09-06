@@ -10,6 +10,7 @@
     formatPercent,
   } from "../../history/format";
   import type { HistoryRecord, ThroughputSnapshot } from "../../history/types";
+  import { historyLatencyLanes } from "../../history/types";
   import { store } from "../../state/store.svelte";
   import {
     LATENCY_LANES,
@@ -21,6 +22,7 @@
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
+  import ServerResultDetails from "../ServerResultDetails.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -47,12 +49,29 @@
     region = $bindable(),
     closeButton = $bindable(),
   }: Props = $props();
+  let chosenServer = $state<string | null>(null);
+  const focused = $derived(
+    record.multiServer?.servers.find(
+      (server) =>
+        server.server.id === (chosenServer ?? record.multiServer?.latencyFocus),
+    ),
+  );
+  const focusedLatency = $derived(
+    focused ? focused.latency : record.stages.latency.result,
+  );
+  const focusedLanes = $derived(
+    focused
+      ? historyLatencyLanes(focused.latency, focused.latencyByStage)
+      : record.stages.latency.lanes,
+  );
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const completedDate = $derived(new Date(record.completedAt));
   const partial = $derived(
-    Object.values(record.stages.latency.lanes).some(
-      (lane) => lane != null && !lane.accountingComplete,
-    ) ||
+    (record.multiServer?.failures.length ?? 0) > 0 ||
+      record.outcome === "incomplete" ||
+      Object.values(record.stages.latency.lanes).some(
+        (lane) => lane != null && !lane.accountingComplete,
+      ) ||
       record.failures.length > 0 ||
       [
         record.stages.latency.status,
@@ -131,7 +150,7 @@
 
   const savedLanes = $derived(
     LATENCY_LANES.flatMap((meta) => {
-      const snapshot = record.stages.latency.lanes[meta.key];
+      const snapshot = focusedLanes[meta.key];
       return snapshot
         ? [
             {
@@ -150,7 +169,11 @@
   );
   const latencyProfiles = $derived(savedLanes.filter(usefulLane));
   const probeTimeoutLanes = $derived(
-    savedLatencyHasProbeEvidence(record.transport.latency.kind)
+    savedLatencyHasProbeEvidence(
+      focused
+        ? (focused.latencyTarget?.transport ?? null)
+        : record.transport.latency.kind,
+    )
       ? savedLanes
           .filter(
             (lane) =>
@@ -315,27 +338,37 @@
         <h3 id={`result-${record.id}-latency`}>Responsiveness</h3>
       </header>
       <div class="section-body responsiveness-body">
-        {#if record.stages.latency.result}
+        {#if record.multiServer && record.multiServer.selection.length > 1}
+          <label class="server-focus"
+            >Latency to
+            <select
+              value={chosenServer ?? record.multiServer?.latencyFocus}
+              onchange={(event) => (chosenServer = event.currentTarget.value)}
+            >
+              {#each record.multiServer.selection as server}<option
+                  value={server.id}>{server.name}</option
+                >{/each}
+            </select>
+          </label>
+        {/if}
+        {#if focusedLatency}
           <dl class="idle-summary" aria-label="Idle latency result">
             <div>
               <dt>Idle result</dt>
-              <dd>{formatLatency(record.stages.latency.result.reportedMs)}</dd>
+              <dd>{formatLatency(focusedLatency.reportedMs)}</dd>
             </div>
             <div>
               <dt>Median (p50)</dt>
-              <dd>{formatLatency(record.stages.latency.result.p50Ms)}</dd>
+              <dd>{formatLatency(focusedLatency.p50Ms)}</dd>
             </div>
             <div>
               <dt>p95</dt>
-              <dd>{formatLatency(record.stages.latency.result.p95Ms)}</dd>
+              <dd>{formatLatency(focusedLatency.p95Ms)}</dd>
             </div>
             <div>
               <dt>Stability</dt>
               <dd>
-                {formatPercent(
-                  record.stages.latency.result.stabilityScore * 100,
-                  0,
-                )}
+                {formatPercent(focusedLatency.stabilityScore * 100, 0)}
               </dd>
             </div>
           </dl>
@@ -468,7 +501,33 @@
   </footer>
 </article>
 
+{#if record.multiServer}<ServerResultDetails
+    details={record.multiServer}
+    outcome={record.outcome}
+  />{/if}
+
 <style>
+  .server-focus {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-soft);
+    font-size: 12px;
+  }
+  .server-focus select {
+    font: inherit;
+    color: var(--text);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    padding: 6px;
+    max-width: 75%;
+  }
+  .server-focus select:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+
   .result-detail {
     min-width: 0;
     background: var(--surface-1);

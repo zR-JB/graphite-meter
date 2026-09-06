@@ -148,10 +148,14 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 	return s
 }
 
-func startOIDC(t *testing.T, s *Service, f *fakeOIDC) (state string, cookie *http.Cookie) {
+func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...string) (state string, cookie *http.Cookie) {
 	t.Helper()
 	csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
-	body := url.Values{"csrf": {csrf}}.Encode()
+	values := url.Values{"csrf": {csrf}}
+	if len(approvalChallenge) > 0 {
+		values.Set("challenge", approvalChallenge[0])
+	}
+	body := values.Encode()
 	r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
 	r.Body = io.NopCloser(strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")

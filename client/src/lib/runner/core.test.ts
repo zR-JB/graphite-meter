@@ -4,6 +4,7 @@ import {
   STAGE_RECOVERY_BUDGET_MS,
   type RunnerBackend,
   type CoreHost,
+  type RunMeasurementSource,
 } from "./core";
 import type {
   RunnerConfig,
@@ -194,6 +195,54 @@ function observeCore(backend = new FakeBackend()): CoreRun {
   core.on((event) => events.push(event));
   return { backend, core, events };
 }
+
+test("a coordinated source owns latency populations without a second mixed presentation stream", () => {
+  const accumulator = new RunAccumulator();
+  const source: RunMeasurementSource = {
+    confidence: (stage) => accumulator.confidence(stage),
+    trackStableRun: () => false,
+    canComplete: () => true,
+    throughputResult: () => null,
+    bidirectionalResult: () => ({ down: null, up: null }),
+    latencyResult: () => null,
+    latencySummaries: () => ({
+      latency: null,
+      download: null,
+      upload: null,
+      bidirectional: null,
+    }),
+    bufferbloatGrade: () => null,
+    details: () => ({
+      selection: [],
+      participants: [],
+      latencyFocus: "",
+      servers: [],
+      intervals: [],
+      omittedIntervals: 0,
+      failures: [],
+    }),
+  };
+  const core = new RunnerCore(new FakeBackend(), source);
+  const events: RunnerEvent[] = [];
+  core.on((event) => events.push(event));
+  core.start(
+    makeConfig({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 1000 },
+      adaptive: { enabled: false },
+    }),
+    0,
+  );
+  advance(1);
+  for (let i = 0; i < 900; i++) {
+    core.ingestLatency({ observedAtMs: fakeNow, rttMs: i % 4, lost: false });
+    advance(1);
+  }
+  expect(events.filter((event) => event.type === "latency")).toEqual([]);
+  advance(1000);
+  expect(events.some((event) => event.type === "complete")).toBe(true);
+  core.dispose();
+});
 type StartedCore = CoreRun & { cfg: RunnerConfig };
 async function startCore(
   overrides: ConfigOverrides = {},

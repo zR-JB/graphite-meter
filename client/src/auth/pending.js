@@ -5,7 +5,11 @@
    fetch, so a rejection swaps the card in place and a success follows the
    redirect. go/internal/auth serves this file verbatim and pins its sha256 in
    the Content-Security-Policy, so it must stay dependency-free. */
-const INPLACE = new Set(["/auth/password", "/auth/cli/approve"]);
+const INPLACE = new Set([
+  "/auth/password",
+  "/auth/cli/approve",
+  "/auth/browser/approve",
+]);
 
 /**
  * @param {HTMLFormElement} form

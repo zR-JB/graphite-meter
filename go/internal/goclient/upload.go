@@ -74,6 +74,9 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		}
 	}
 	defer progress.bye()
+	if r.coordinated != nil {
+		r.coordinated.attachUpload(id, progress)
+	}
 
 	streams := r.streams.of(Up)
 	lanes := r.startLanes(ctx, streams, lane)
@@ -89,9 +92,12 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 	if err := progress.waitNext(ctx, progress.seq.Load(), lanes.errs); err != nil {
 		return Result{}, err
 	}
-	gate.ready <- struct{}{}
+	gate.markReady()
 	if err := lanes.waitStart(ctx, gate.start, progress.errs); err != nil {
 		return Result{}, err
+	}
+	if r.coordinated != nil {
+		return waitCoordinatedTransfer(ctx, lanes.errs, progress.errs)
 	}
 	// A connected feed can remain silent after warmup. Bound acquisition of the
 	// receiver's baseline separately; its wait is not a measured server window.

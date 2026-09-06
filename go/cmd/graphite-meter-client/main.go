@@ -24,7 +24,14 @@ func main() {
 	var stages string
 	var ping string
 	var showVersion bool
-	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "server base URL")
+	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
+	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)", func(id string) error {
+		if id == "" || len(cfg.ServerIDs) >= 4 || slices.Contains(cfg.ServerIDs, id) {
+			return fmt.Errorf("select one to four different server IDs")
+		}
+		cfg.ServerIDs = append(cfg.ServerIDs, id)
+		return nil
+	})
 	flag.StringVar(&cfg.ThroughputTarget, "throughput-origin", cfg.ThroughputTarget, "throughput origin from discovery, or auto")
 	flag.StringVar(&cfg.ThroughputProtocol, "throughput-protocol", cfg.ThroughputProtocol, "protocol for a negotiated throughput origin: auto, http1, http2, or http3")
 	flag.StringVar(&cfg.ThroughputTransport, "throughput-transport", cfg.ThroughputTransport, "throughput transport: auto, fetch-stream, or webtransport")
@@ -37,7 +44,7 @@ func main() {
 	flag.DurationVar(&cfg.UploadDuration, "upload-duration", cfg.UploadDuration, "upload measurement duration")
 	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
 	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum automatic HTTP/1 streams per direction")
-	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per active direction (0 = automatic)")
+	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per server and active direction (0 = automatic; 128 per direction across the run)")
 	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency bus)")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")

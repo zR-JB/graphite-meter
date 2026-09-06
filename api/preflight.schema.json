@@ -20,6 +20,7 @@
       "additionalProperties": false,
       "required": ["throughput", "latency"],
       "properties": {
+        "uploadCheckpoint": { "type": "boolean", "description": "Fresh owner-checked receiver windows are available." },
         "throughput": { "type": "array", "items": { "$ref": "#/$defs/throughputEndpoint" } },
         "latency": { "type": "array", "items": { "$ref": "#/$defs/latencyEndpoint" } }
       }

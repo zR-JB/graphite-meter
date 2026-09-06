@@ -199,6 +199,7 @@ dir = "client"
 run = [
   "bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts",
   "bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts",
+  "bunx json-schema-to-typescript ../api/servers.schema.json -o src/lib/api/servers.ts",
 ]
 
 [tasks.client-check-generated]
@@ -341,6 +342,13 @@ while IFS= read -r target; do
   (cd go && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -o /dev/null ./cmd/graphite-meter-client)
 done < scripts/tui-targets.txt
 '''
+
+[tasks.bench-servers]
+description = "Measure one, two, and four real servers in isolated Linux network namespaces (manual)"
+run = [
+  { task = "server-build-prod" },
+  "bash client/bench/server-collection.sh",
+]
 
 [tasks.release-check]
 description = "Validate release packages and third-party source without publishing"

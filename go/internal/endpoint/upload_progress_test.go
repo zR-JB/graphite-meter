@@ -191,7 +191,7 @@ func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 }
 
 // The feed ticks every 100 ms whether or not bytes moved.
-func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
+func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
 	agg.recordChunk(monoNanos(), 4096)
 
@@ -211,10 +211,10 @@ func TestProgressRepeatsNoRecordForAnUnchangedByteCount(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("the feed emitted no progress record for a counter that moved")
 	}
-	// The counter does not move again, so no further record is owed however many ticks pass.
+	// Repeated receiver observations distinguish zero delivery from a missing feed.
 	time.Sleep(5 * uploadProgressTick)
-	if n := records.Load(); n != 1 {
-		t.Fatalf("%d progress records for one unchanged byte count, want 1: a stalled upload floods the feed every %v", n, uploadProgressTick)
+	if n := records.Load(); n < 3 {
+		t.Fatalf("%d observations, want continuing receiver-time evidence", n)
 	}
 }
 

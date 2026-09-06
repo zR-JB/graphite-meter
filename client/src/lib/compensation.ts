@@ -15,6 +15,7 @@ interface CompensationFactor {
 }
 
 export interface CompensationEstimate {
+  componentCount?: number;
   measuredBytesPerSec: number;
   estimatedBytesPerSec: number;
   lowerBytesPerSec: number;
@@ -62,6 +63,10 @@ export function combineCompensationEstimates(
   );
 
   return {
+    componentCount: estimates.reduce(
+      (sum, estimate) => sum + (estimate.componentCount ?? 1),
+      0,
+    ),
     measuredBytesPerSec,
     estimatedBytesPerSec,
     lowerBytesPerSec: estimates.reduce(
@@ -310,6 +315,12 @@ function identity(
 export function compensationTooltip(estimate: CompensationEstimate): string {
   const sourceLabel = (source: CompensationEstimate["transportSource"]) =>
     source === "fallback" ? "assumed" : "detected";
+  if ((estimate.componentCount ?? 1) > 1)
+    return [
+      `Estimated Ethernet overhead: +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
+      `Sum of ${estimate.componentCount} component estimates using each measured path's protocol and IP family`,
+      `MTU: 1,500 bytes per path (assumed)`,
+    ].join("\n");
   return [
     `Estimated Ethernet overhead: +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
     `MTU: ${estimate.mtuBytes.toLocaleString("en-US")} bytes (assumed)`,

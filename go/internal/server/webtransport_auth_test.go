@@ -19,7 +19,7 @@ import (
 // mintWTToken asks /wt/session for one CONNECT token as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+route.WTSession, nil)
+	req, _ := http.NewRequest(http.MethodPost, s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+route.WTPing), nil)
 	req.Header.Set("Origin", s.origin)
 	req.Header.Set("X-CSRF-Token", s.csrf.Value)
 	req.AddCookie(s.session)
@@ -57,6 +57,9 @@ func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	target := s.h3URL + route.WTPing + query
+	if hdr == nil && strings.Contains(query, "token=") {
+		hdr = http.Header{"Origin": {s.origin}}
+	}
 	for {
 		res, sess, err := d.Dial(ctx, target, hdr)
 		if err == nil {

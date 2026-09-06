@@ -20,6 +20,9 @@ import { kindsForRole } from "./transports";
 
 /* Server route paths, the TS half of a cross-language pin. */
 export const ROUTES = {
+  servers: "/servers",
+  uploadCheckpoint: "/upload/checkpoint",
+  wsSession: "/ws/session",
   preflight: "/preflight",
   probe: "/probe",
   download: "/download",
@@ -307,6 +310,19 @@ export function selectThroughputTarget(
     target && (webTransport || target.transport === "fetch-stream")
       ? target
       : null;
+  if (selection.startsWith("protocol:") || selection.startsWith("transport:")) {
+    const [category, value] = selection.split(":");
+    const targets = Object.values(discovery.throughput)
+      .filter((entry) => entry.state === "advertised")
+      .flatMap((entry) => entry.targets);
+    return runnable(
+      targets.find((target) =>
+        category === "protocol"
+          ? target.transport === "fetch-stream" && target.protocol === value
+          : target.transport === value,
+      ) ?? null,
+    );
+  }
   if (selection !== "current" && selection !== "auto")
     return runnable(advertisedById(discovery.throughput, selection));
   const advertised = Object.values(discovery.throughput).filter(
@@ -390,6 +406,19 @@ export function selectLatencyTarget(
 ): LatencyTarget | null {
   const runnable = (target?: LatencyTarget): boolean =>
     !!target && (webTransport || target.transport !== "webtransport");
+  if (selection.startsWith("transport:")) {
+    const value = selection.slice("transport:".length);
+    return (
+      Object.values(discovery.latency)
+        .filter((entry) => entry.state === "advertised")
+        .flatMap((entry) => entry.targets)
+        .find(
+          (target) =>
+            target.transport === value &&
+            (webTransport || target.transport !== "webtransport"),
+        ) ?? null
+    );
+  }
   if (selection !== "auto") {
     const named = advertisedById(discovery.latency, selection);
     if (named) return runnable(named) ? named : null;
