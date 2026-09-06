@@ -1,6 +1,9 @@
 <script lang="ts">
   // Settings drawer wrapper. The shared SidePanel owns docking, focus,
   // dismissal, and mobile sheet behavior.
+  import { untrack } from "svelte";
+  import { getApplicationController } from "../../runner/controllerContext";
+  const controller = getApplicationController();
   import SidePanel from "../SidePanel.svelte";
   import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
@@ -28,6 +31,12 @@
     onClose,
     onOpenHistory,
   }: Props = $props();
+
+  $effect(() => {
+    if (!open || store.isRunning || store.preparing) return;
+    untrack(() => controller.inspectAvailableServers());
+    return controller.cancelServerInspection;
+  });
 
   let resetConfirmOpen = $state(false);
   let setupResetVersion = $state(0);

@@ -297,6 +297,33 @@ export class AggregateMeasurements {
       record.startMs = record.endMs = boundary.atMs;
       return null;
     }
+    // A final flush can share the preceding browser clock tick or receiver snapshot.
+    // It adds no duration; retain the last valid window without inventing a gap.
+    const last = open.last!;
+    const continuous = record.participants.every((id) =>
+      directions(record.stage).every((dir) => {
+        if (dir === "down") return boundary.down[id] >= last.down[id];
+        const a = last.up[id],
+          b = boundary.up[id];
+        return (
+          !!a &&
+          !!b &&
+          a.id === b.id &&
+          b.bytes >= a.bytes &&
+          (b.nanos > a.nanos || (b.nanos === a.nanos && b.bytes === a.bytes))
+        );
+      }),
+    );
+    if (
+      continuous &&
+      (boundary.atMs === last.atMs ||
+        (boundary.atMs > last.atMs &&
+          directions(record.stage).includes("up") &&
+          record.participants.some(
+            (id) => boundary.up[id]!.nanos === last.up[id]!.nanos,
+          )))
+    )
+      return null;
     const sample = this.#window(open.last!, boundary, record);
     const full = this.#window(open.first, boundary, record);
     if (!sample || !full) {

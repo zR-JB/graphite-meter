@@ -17,6 +17,7 @@ async function run(
     latencyFailure?: boolean;
     initialFailure?: boolean;
     laterPreparationFailure?: boolean;
+    adaptive?: boolean;
   } = {},
 ) {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
@@ -99,7 +100,7 @@ async function run(
     const result = await new Promise<RunResult>((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error("coordinator did not finish")),
-        5000,
+        options.adaptive ? 15000 : 5000,
       );
       timers.push(timeout);
       coordinator.on((event) => {
@@ -116,18 +117,25 @@ async function run(
           stages: {
             latency: false,
             download: true,
-            upload: !!options.laterPreparationFailure,
+            upload: !!(options.adaptive || options.laterPreparationFailure),
             bidirectional: false,
           },
           skipLoadedLatencyWhenStageOff: true,
           duration: {
             warmupMs: 0,
             latencyMs: 0,
-            downloadMs: 1400,
-            uploadMs: options.laterPreparationFailure ? 1400 : 0,
+            downloadMs: options.adaptive ? 6000 : 1400,
+            uploadMs: options.adaptive
+              ? 6000
+              : options.laterPreparationFailure
+                ? 1400
+                : 0,
             bidirectionalMs: 0,
           },
-          adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: false },
+          adaptive: {
+            ...DEFAULT_CONFIG.adaptive,
+            enabled: options.adaptive ?? false,
+          },
         },
         0,
       );
@@ -291,3 +299,17 @@ test("a primary latency server owns probes while every server still transfers", 
     restore();
   }
 });
+
+test("adaptive stage completion retains each result before entering the next stage", async () => {
+  const { result, events } = await run({ adaptive: true });
+  expect(result.download?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+  const downloadResult = events.findIndex(
+    (event) => event.type === "stageResult" && event.stage === "download",
+  );
+  const uploadPhase = events.findIndex(
+    (event) => event.type === "phase" && event.transition.to === "upload",
+  );
+  expect(downloadResult).toBeGreaterThan(-1);
+  expect(downloadResult).toBeLessThan(uploadPhase);
+}, 16000);

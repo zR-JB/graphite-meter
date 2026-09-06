@@ -11,13 +11,13 @@ test("keyboard tooltip survives focus reveal but dismisses on later scroll", asy
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await openApp(page, "dummy", { width: 390, height: 844 });
+  await openApp(page, "dummy", { width: 390, height: 600 });
   const settings = await openSettings(page);
   await page.keyboard.press("Tab");
   const bits = settings.getByRole("button", { name: "Bits", exact: true });
   const scrollport = settings.locator(".panel-body");
   const before = await scrollport.evaluate((node) => node.scrollTop);
-  expect((await bits.boundingBox())!.y).toBeGreaterThan(844);
+  expect((await bits.boundingBox())!.y).toBeGreaterThan(600);
   await bits.focus();
   await page.evaluate(
     () =>

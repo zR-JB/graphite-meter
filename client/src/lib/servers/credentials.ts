@@ -147,6 +147,7 @@ export async function browserApproval(server: ServerEntry): Promise<{
             string,
             unknown
           >;
+          signal.throwIfAborted();
           if (
             typeof value.token !== "string" ||
             !/^[A-Za-z0-9_-]{43}$/.test(value.token) ||
@@ -166,6 +167,7 @@ export async function browserApproval(server: ServerEntry): Promise<{
         await response.body?.cancel().catch(() => {});
         if (response.status !== 202)
           throw new Error(`Approval exchange returned HTTP ${response.status}`);
+        signal.throwIfAborted();
         await new Promise<void>((resolve, reject) => {
           const aborted = () => {
             clearTimeout(timer);

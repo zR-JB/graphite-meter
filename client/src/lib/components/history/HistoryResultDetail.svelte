@@ -1,3 +1,11 @@
+<script module lang="ts">
+  export interface ServerView {
+    recordId: string;
+    resultId: string;
+    latencyId: string | null;
+  }
+</script>
+
 <script lang="ts">
   import { tooltip } from "../../actions/tooltip";
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
@@ -23,6 +31,7 @@
     type LatencyProfileTone,
   } from "../latencyProfile";
   import ResultServerContext from "../ResultServerContext.svelte";
+  import ServerTag from "../ServerTag.svelte";
   import ServerPills from "../ServerPills.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
@@ -32,6 +41,7 @@
     onDelete: () => void;
     region?: HTMLElement;
     closeButton?: HTMLButtonElement;
+    serverView?: ServerView | null;
   }
 
   interface ThroughputCard {
@@ -49,16 +59,10 @@
     onDelete,
     region = $bindable(),
     closeButton = $bindable(),
+    serverView = $bindable(null),
   }: Props = $props();
-  let chosenServer = $state<{ recordId: string; serverId: string } | null>(
-    null,
-  );
-  let resultChoice = $state<{ recordId: string; serverId: string } | null>(
-    null,
-  );
-  const resultId = $derived(
-    resultChoice?.recordId === record.id ? resultChoice.serverId : "",
-  );
+  const view = $derived(serverView?.recordId === record.id ? serverView : null);
+  const resultId = $derived(view?.resultId ?? "");
   const scoped = $derived(
     record.multiServer?.servers.find((server) => server.server.id === resultId),
   );
@@ -76,21 +80,20 @@
         },
   );
   function selectResult(id: string) {
-    resultChoice = { recordId: record.id, serverId: id };
-    if (
-      record.multiServer?.servers.some(
-        (server) => server.server.id === id && server.latencyTarget,
-      )
-    )
-      chosenServer = { recordId: record.id, serverId: id };
+    const measured = record.multiServer?.servers.some(
+      (server) => server.server.id === id && server.latencyTarget,
+    );
+    serverView = {
+      recordId: record.id,
+      resultId: id,
+      latencyId: measured ? id : (view?.latencyId ?? null),
+    };
+  }
+  function selectLatency(id: string) {
+    serverView = { recordId: record.id, resultId, latencyId: id };
   }
   const focusedId = $derived(
-    chosenServer?.recordId === record.id &&
-      record.multiServer?.selection.some(
-        (server) => server.id === chosenServer?.serverId,
-      )
-      ? chosenServer.serverId
-      : record.multiServer?.latencyFocus,
+    view?.latencyId ?? record.multiServer?.latencyFocus,
   );
   const hasServerLatency = $derived(
     (record.multiServer?.selection.length ?? 0) > 1 &&
@@ -403,11 +406,7 @@
       <div class="section-body responsiveness-body">
         {#if record.multiServer && record.multiServer.selection.length > 1}
           <div class="server-focus">
-            <span
-              >Latency to <strong
-                >{focused?.server.name ?? "selected server"}</strong
-              ></span
-            >
+            <span>Latency</span>
             {#if record.multiServer.servers.filter((server) => server.latencyTarget).length > 1}
               <ServerPills
                 servers={record.multiServer.selection}
@@ -416,8 +415,12 @@
                 disabledIds={record.multiServer.servers
                   .filter((server) => !server.latencyTarget)
                   .map((server) => server.server.id)}
-                onchange={(id) =>
-                  (chosenServer = { recordId: record.id, serverId: id })}
+                onchange={selectLatency}
+              />
+            {:else}<ServerTag
+                servers={record.multiServer.selection}
+                id={focusedId}
+                label="Saved idle and loaded latency source"
               />
             {/if}
           </div>
@@ -594,7 +597,9 @@
   }
   .server-focus {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
     color: var(--text-soft);
     font-size: 12px;
@@ -759,7 +764,13 @@
   .throughput-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--space-2);
+    gap: 1px;
+    padding: 0;
+    margin: 0 var(--space-4) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    overflow: clip;
+    background: var(--border);
   }
   .throughput-card {
     --tone: var(--phase-complete);
@@ -767,11 +778,9 @@
     align-content: start;
     gap: 6px;
     min-width: 0;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
+    padding: 10px var(--space-3);
+    border: 0;
     background: var(--surface-1);
-    box-shadow: var(--elev-tile);
   }
   [data-tone="download"] {
     --tone: var(--phase-download);
@@ -801,6 +810,12 @@
   .phase-icon :global(svg) {
     width: 13px;
     height: 13px;
+  }
+  .throughput-card .phase-icon {
+    width: 16px;
+    height: 18px;
+    border: 0;
+    background: transparent;
   }
   .throughput-card header strong {
     min-width: 0;
@@ -962,15 +977,8 @@
     color: var(--err);
   }
   @media (prefers-reduced-motion: no-preference) {
-    .detail-section,
-    .throughput-card {
+    .detail-section {
       animation: detail-content-enter var(--dur-hover) var(--ease-out) both;
-    }
-    .throughput-card:nth-child(2) {
-      animation-delay: 25ms;
-    }
-    .throughput-card:nth-child(3) {
-      animation-delay: 50ms;
     }
     @keyframes detail-content-enter {
       from {
@@ -992,6 +1000,10 @@
     .section-body {
       padding-inline: var(--space-3);
       padding-bottom: var(--space-3);
+    }
+    .throughput-grid {
+      padding: 0;
+      margin-inline: var(--space-3);
     }
     .throughput-grid,
     .context-grid,

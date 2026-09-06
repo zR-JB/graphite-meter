@@ -196,7 +196,7 @@ test("settings group result and advanced controls in the requested order", async
     settings.getByText(/conservative 1500 B Ethernet path/),
   ).toHaveCount(0);
 });
-test("connection paths stay single-column by default and reflow after a dock resize", async ({
+test("connection paths remain compact and contained after a dock resize", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1440, height: 900 });
@@ -209,8 +209,9 @@ test("connection paths stay single-column by default and reflow after a dock res
   const setupGrid = settings.locator(".setup-grid");
   const optionsGrid = settings.locator(".options").first();
   const setupColumns = () => columnCount(setupGrid);
-  const optionColumns = () => columnCount(optionsGrid);
-  expect(await optionColumns()).toBe(1);
+  expect(
+    await optionsGrid.evaluate((element) => getComputedStyle(element).display),
+  ).toBe("flex");
   expect(await setupColumns()).toBe(1);
   const durationTops = await settings
     .locator(".dur-cell")
@@ -226,21 +227,13 @@ test("connection paths stay single-column by default and reflow after a dock res
     name: "Resize Settings panel (arrow keys; Enter to reset)",
   });
   let setupMultiColumnStep = -1;
-  let optionsMultiColumnStep = -1;
-  for (
-    let step = 1;
-    step <= 20 && (setupMultiColumnStep < 0 || optionsMultiColumnStep < 0);
-    step++
-  ) {
+  for (let step = 1; step <= 20 && setupMultiColumnStep < 0; step++) {
     await resize.press("ArrowRight");
     await page.waitForTimeout(50);
     if (setupMultiColumnStep < 0 && (await setupColumns()) > 1)
       setupMultiColumnStep = step;
-    if (optionsMultiColumnStep < 0 && (await optionColumns()) > 1)
-      optionsMultiColumnStep = step;
   }
   expect(setupMultiColumnStep).toBeGreaterThan(0);
-  expect(setupMultiColumnStep).toBe(optionsMultiColumnStep);
   await expectNoHorizontalOverflow(settings.locator(".panel-body"));
 });
 test("endpoint cards own responsive details without panel overflow", async ({

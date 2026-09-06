@@ -79,55 +79,37 @@ for (const theme of ["dark", "light"] as const) {
     await expect(page.locator(".run-slot button")).toHaveCount(1);
     await page.artifact(`server-context-desktop-${theme}`);
     const settings = await openSettings(page);
-    const trigger = settings.getByRole("button", {
-      name: "Change servers, 2 selected",
-    });
-    await expect(trigger).toBeVisible();
-    await trigger.focus();
-    await trigger.click();
-    const dialog = page.getByRole("dialog", {
-      name: "Choose servers",
+    const band = settings.getByRole("group", {
+      name: "Servers to test",
       exact: true,
     });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.locator("details")).toHaveCount(0);
-    await expect(dialog.locator(".server-row").first()).toContainText(
-      "Germany",
+    await expect(band.getByRole("button").first()).toHaveAttribute(
+      "aria-pressed",
+      "true",
     );
-    await expectNoHorizontalOverflow(dialog);
-    await dialog.evaluate(async (element) => {
-      await Promise.all(
-        element
-          .getAnimations()
-          .map((animation: Animation) => animation.finished),
-      );
-    });
-    expect(
-      (await new AxeBuilder({ page }).include(".server-dialog").analyze())
-        .violations,
-    ).toEqual([]);
-    await page.artifact(`server-chooser-desktop-${theme}`);
-    await page.setViewportSize({ width: 320, height: 740 });
-    await expectNoHorizontalOverflow(dialog);
-    await page.artifact(`server-chooser-phone-${theme}`);
-    await dialog.locator('input[type="checkbox"]').first().focus();
-    await page.keyboard.press("Space");
+    await band.getByRole("button").first().focus();
+    await expect(page.getByRole("tooltip")).toContainText("Germany");
     await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-    await expect(trigger).toBeFocused();
-    await expect(settings.locator(".server-heading")).toContainText(
-      "2 selected",
-    );
-    await trigger.focus();
-    await trigger.click();
-    await dialog.locator('input[type="checkbox"]').first().focus();
+    await openSettings(page);
+    await expectNoHorizontalOverflow(settings.locator(".panel-body"));
+    expect(
+      (
+        await new AxeBuilder({ page })
+          .include('[aria-label="Settings"]')
+          .analyze()
+      ).violations,
+    ).toEqual([]);
+    await page.artifact(`server-band-desktop-${theme}`);
+    await page.setViewportSize({ width: 320, height: 740 });
+    await expectNoHorizontalOverflow(settings.locator(".panel-body"));
+    await band.getByRole("button").first().focus();
     await page.keyboard.press("Space");
-    await dialog.getByRole("button", { name: "Apply", exact: true }).click();
-    await expect(dialog).toBeHidden();
+    await expect(band.getByRole("button").first()).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await expect(page.locator(".server-indicator")).toHaveCount(0);
-    await expect(
-      settings.getByRole("button", { name: "Change servers, 1 selected" }),
-    ).toBeVisible();
+    await expect(settings.locator(".server-heading")).toContainText("1 / 4");
     await page.artifact(`server-settings-phone-${theme}`);
   });
 }

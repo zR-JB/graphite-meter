@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ServerTag from "./ServerTag.svelte";
   import ResultServerContext from "./ResultServerContext.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
@@ -156,8 +157,6 @@
             const result = results.latency;
             score = result?.stabilityScore ?? 0;
             band = result?.band ?? "low";
-            if (!scoped && details && details.selection.length > 1)
-              sub = `To ${details.selection.find((server) => server.id === store.latencyFocus)?.name ?? "selected server"}`;
             jitterMs =
               result?.reportedMs != null
                 ? (result.jitterMs ?? null)
@@ -196,7 +195,7 @@
             band = score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
           }
           if (scoped && key === "latency" && !scoped.latencyTarget)
-            sub = "Not measured for this server";
+            sub = "Not measured";
           const hasValue = row.num !== dash;
           const wire =
             !scoped &&
@@ -231,7 +230,8 @@
         <span
           class="pip pip-{c.band}"
           use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
-          >{c.band}</span
+          aria-label={`Measurement stability: ${Math.round(c.score * 100)}%, ${c.band}`}
+          >{Math.round(c.score * 100)}%</span
         >
       {/if}
       {#if c.status === "partial"}
@@ -240,32 +240,41 @@
         <span class="partial">Failed</span>
       {/if}
     </header>
-    <div class="result-readout">
-      <div class="val">
-        <span class="num">{c.num}</span>
-        <span class="unit">{c.unit}</span>
-      </div>
-      {#if c.jitterMs !== undefined}
-        <div class="jitter">
-          <span class="jitter-num"
-            >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}
-            <span class="jitter-unit">ms</span></span
-          >
-          <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
+    {#key selectedServer}<div class="result-readout">
+        <div class="val">
+          <span class="num">{c.num}</span>
+          <span class="unit">{c.unit}</span>
         </div>
-      {/if}
-      {#if c.wire}
-        <div class="est">
-          <span class="est-num">{c.wire.num}</span>
-          <span class="est-tag" use:tooltip={c.wire.tooltip}
-            >wire {c.wire.pct}</span
-          >
-        </div>
-      {/if}
-    </div>
+        {#if c.jitterMs !== undefined}
+          <div class="jitter">
+            <span class="jitter-num"
+              >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}
+              <span class="jitter-unit">ms</span></span
+            >
+            <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
+          </div>
+        {/if}
+        {#if c.wire}
+          <div class="est">
+            <span class="est-num">{c.wire.num}</span>
+            <span class="est-tag" use:tooltip={c.wire.tooltip}
+              >wire {c.wire.pct}</span
+            >
+          </div>
+        {/if}
+      </div>{/key}
     {#if c.sub}
       <div class="sub">
         {c.sub}{#if c.hasValue}<span class="sr-only"> {c.unit}</span>{/if}
+      </div>
+    {/if}
+    {#if c.key === "latency" && details && details.selection.length > 1}
+      <div class="result-source">
+        <ServerTag
+          servers={details.selection}
+          id={scoped ? selectedServer : store.latencyFocus}
+          label="Latency source"
+        />
       </div>
     {/if}
   </article>
@@ -292,44 +301,70 @@
     {/each}
   </div>
 {:else}
-  {#if details && details.selection.length > 1}<div
-      class="result-context"
-      style:max-width={`${Math.min(4, cards.length) * 280}px`}
-    >
-      <ResultServerContext
-        {details}
-        value={selectedServer}
-        onchange={selectResult}
-      />
-    </div>{/if}
-  <div class="result-cards">
-    {#each cards as c (c.key)}
-      {@render resultCard(c)}
-    {/each}
+  <div
+    class="result-bank"
+    style:max-width={`${Math.min(4, cards.length) * 280}px`}
+  >
+    {#if details && details.selection.length > 1}<div class="result-context">
+        <ResultServerContext
+          {details}
+          value={selectedServer}
+          onchange={selectResult}
+        />
+      </div>{/if}
+    <div class="result-cards">
+      {#each cards as c (c.key)}
+        {@render resultCard(c)}
+      {/each}
+    </div>
   </div>
 {/if}
 
 <style>
+  .result-bank {
+    container: results / inline-size;
+    margin-inline: auto;
+  }
   .result-context {
-    max-width: 1120px;
-    margin: 0 auto var(--space-2);
+    margin-bottom: var(--space-2);
   }
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--space-2);
+    gap: 1px;
     min-height: 64px;
-    max-width: 840px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--border);
+    overflow: clip;
     margin-inline: auto;
   }
-  .result-cards:has(> :last-child:nth-child(4)) {
-    max-width: 1120px;
+
+  @container results (max-width: 452px) {
+    .result-cards {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .result-card:last-child:nth-child(odd) {
+      grid-column: 1 / -1;
+    }
+    .result-card:last-child:nth-child(3) {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .result-card:last-child:nth-child(3) .result-readout {
+      grid-column: 1;
+    }
+    .result-card:last-child:nth-child(3) .result-source {
+      grid-column: 2;
+      grid-row: 2;
+      align-self: end;
+      justify-self: end;
+      max-width: 16ch;
+    }
   }
-  .result-cards:has(> :last-child:nth-child(1)) {
-    max-width: 280px;
-  }
-  .result-cards:has(> :last-child:nth-child(2)) {
-    max-width: 560px;
+  @container results (max-width: 301px) {
+    .result-cards {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .result-card {
@@ -340,12 +375,11 @@
     gap: 6px;
     min-height: 64px;
     padding: 10px var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
+    border: 0;
     background: var(--surface-1);
-    box-shadow: var(--elev-tile);
   }
   .result-card header,
+  .result-source,
   .result-readout,
   .sub {
     grid-column: 1 / -1;
@@ -369,6 +403,17 @@
   @media (prefers-reduced-motion: no-preference) {
     .result-chip {
       animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
+    }
+    .result-readout {
+      animation: reading-change 160ms ease-out;
+    }
+  }
+  @keyframes reading-change {
+    from {
+      transform: translateY(1px);
+    }
+    to {
+      transform: translateY(0);
     }
   }
   @keyframes quick-content-enter {
@@ -438,27 +483,42 @@
     border-radius: var(--r-well);
   }
 
+  .result-card .ico {
+    width: 16px;
+    height: 18px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .result-card .label {
+    font-weight: 600;
+  }
+  .result-source {
+    min-width: 0;
+    padding-top: 2px;
+  }
   .pip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     margin-left: auto;
-    padding: 2px 7px;
-    border-radius: var(--r-full);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    color: var(--text-soft);
+    font: 500 10px/1.4 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    cursor: help;
   }
-  .pip-high {
-    background: var(--ok-soft);
-    color: var(--ok);
+  .pip::before {
+    content: "";
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--ok);
   }
-  .pip-medium {
-    background: var(--warn-soft);
-    color: var(--warn);
+  .pip-medium::before {
+    background: var(--warn);
   }
-  .pip-low {
-    background: var(--err-soft);
-    color: var(--err);
+  .pip-low::before {
+    background: var(--err);
   }
 
   .val {

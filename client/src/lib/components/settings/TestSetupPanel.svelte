@@ -14,7 +14,7 @@
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import { serverTransportOptions } from "../../servers/transportOptions";
-  import ServerSelectionButton from "../ServerSelectionButton.svelte";
+  import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -242,15 +242,7 @@
         {READINESS_LABEL[readiness]}
       </span>
     </div>
-    <p class="intro">
-      {simultaneous
-        ? "One preference applies to every selected server. Automatic resolves each path independently."
-        : "Choose separate paths for speed and latency measurements."}
-    </p>
-    {#if running || store.preparing}<p class="hint">
-        Connection and probe settings are fixed for this run.
-      </p>{/if}
-    <ServerSelectionButton />
+    <ServerSelection />
     <ConnectionPicker
       role="throughput"
       options={throughputTargets}
@@ -606,12 +598,6 @@
   .readiness-badge[data-state="failed"] {
     background: var(--err-soft);
     color: var(--err);
-  }
-  .intro {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.5;
   }
   label,
   .field {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ServerTag from "./ServerTag.svelte";
   import ServerPills from "./ServerPills.svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -28,7 +29,7 @@
 
 {#if servers.length > 1 && focused}
   <div class="latency-focus">
-    <span>Latency to <strong>{focused.name}</strong></span>
+    <span>Latency</span>
     {#if measured.length > 1}<ServerPills
         {servers}
         value={store.latencyFocus}
@@ -37,6 +38,10 @@
           .filter((server) => !measured.includes(server))
           .map((server) => server.id)}
         onchange={controller.focusServer}
+      />{:else}<ServerTag
+        {servers}
+        id={focused.id}
+        label="Idle and loaded latency source"
       />{/if}
   </div>
 {/if}
@@ -51,9 +56,5 @@
     margin-bottom: var(--space-2);
     color: var(--text-muted);
     font: var(--type-xs)/1.4 var(--font-sans);
-  }
-  strong {
-    color: var(--text-soft);
-    font-weight: 600;
   }
 </style>

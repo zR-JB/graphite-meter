@@ -2332,6 +2332,22 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   await detail.locator('.server-focus [role="radio"]').nth(1).click();
   await expect(detail.locator(".latency-empty")).toHaveCount(0);
   await expect(detail.locator(".idle-summary")).toContainText("25");
+  const resultServer = () =>
+    detail
+      .getByRole("radiogroup", { name: "Result measurements" })
+      .getByRole("radio", { name: "Healthy latency" });
+  await resultServer().click();
+  for (const width of [900, 1600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(
+      page.locator(width === 900 ? ".inline-inspector" : ".detail-inspector"),
+    ).toBeVisible();
+    await expect(resultServer()).toHaveAttribute("aria-checked", "true");
+    await expect(
+      detail.locator('.server-focus [role="radio"]').nth(1),
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(detail.locator(".idle-summary")).toContainText("25");
+  }
   await page.evaluate((id) => {
     location.hash = `/history/${id}`;
   }, IDS.middle);

@@ -9,7 +9,6 @@
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
-  import ServerChooser from "./ServerChooser.svelte";
   import SettingsPanel from "./settings/SettingsPanel.svelte";
   import TelemetryPanel from "./TelemetryPanel.svelte";
   import PhaseToast from "./PhaseToast.svelte";
@@ -790,7 +789,6 @@
   />
 
   <LegalDialog open={legalOpen} onClose={closeLegal} />
-  <ServerChooser />
 </main>
 
 <style>

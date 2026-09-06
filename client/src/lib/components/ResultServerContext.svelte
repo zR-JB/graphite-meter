@@ -18,20 +18,14 @@
       (failure) => !server || failure.serverId === server.id,
     ),
   );
-  const latencyCount = $derived(
-    details.servers.filter((server) => server.latencyTarget).length,
-  );
 </script>
 
 <div class="result-server-context">
   <div class="scope-heading">
-    <span
-      >{server ? server.name : "Aggregate"}<small
-        >{server
-          ? server.location || new URL(server.url).host
-          : `${details.participants.length < details.selection.length ? `${details.participants.length} of ${details.selection.length} servers` : `${details.selection.length} servers`} · ${latencyCount === 1 ? "One latency server" : `${latencyCount} latency servers`}`}</small
-      ></span
-    >
+    {#if details.participants.length < details.selection.length}<span
+        class="scope-caption"
+        >{details.participants.length} of {details.selection.length} servers</span
+      >{/if}
     <ServerPills
       servers={details.selection}
       {value}
@@ -40,10 +34,6 @@
       label="Result measurements"
     />
   </div>
-  {#if server}<p>
-      Measured during shared load. Server results may use different measurement
-      windows.
-    </p>{/if}
   {#if failures.length}<ul class="issues">
       {#each failures as failure}<li>
           {details.selection.find((server) => server.id === failure.serverId)
@@ -65,24 +55,13 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: var(--space-2);
   }
-  .scope-heading > span {
-    display: grid;
-    gap: 2px;
-    font-weight: 600;
-    min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  small,
-  p {
+  .scope-caption {
     color: var(--text-muted);
     font-size: var(--type-xs);
-    font-weight: 400;
-  }
-  p {
-    margin: 0;
+    font-weight: 500;
   }
   .issues {
     margin: 0;

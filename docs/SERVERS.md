@@ -82,7 +82,7 @@ host or expand a grant's permissions. Reverse proxies must preserve that policy
 and allow streaming traffic and authorization headers.
 
 Public HTTP and HTTPS entries may coexist. An HTTPS browser page cannot use a
-mixed-content HTTP measurement path; the chooser marks that path unavailable.
+mixed-content HTTP measurement path; connection settings mark that path unavailable.
 Protected remote authorization requires HTTPS for both the requesting interface
 and the protected server. The native client can use public HTTP independently of
 the browser's mixed-content rules.
@@ -95,23 +95,22 @@ reach every selected discovery and transport origin.
 
 ## Browser and terminal controls
 
-**Settings → Connection paths → Servers** offers compact toggles for small
-catalogues. Select one to four servers; the final selected server cannot be
-removed. **Change** opens the full chooser for discovery, errors and sign-in.
-The controls appear only when more than one server is configured. A quiet gauge
-indicator identifies the selected or measured server count. Single-server runs
-retain the ordinary instrument and result view.
+**Settings → Connection paths → Servers** offers a compact colored band. Toggle
+one to four servers directly; the final selected server cannot be removed. Names,
+locations and hosts are available on hover, keyboard focus or touch. The band
+appears when more than one server is configured. A quiet gauge indicator shows
+the selected or measured server count. Single-server runs retain the ordinary
+instrument and result view.
 
-Chooser checkboxes edit a draft; Apply commits it and Escape cancels it. `self`
-is labelled “This server” and may be deselected. Opening the chooser checks stale
-entries with at most four concurrent discoveries within a shared twelve-second
-budget. Background readiness refreshes concern selected servers only. Retry and
-Sign in apply to individual unresolved entries. Ready selections start directly.
+Changes apply immediately. Opening Settings checks unselected entries with at
+most four concurrent discoveries within a shared twelve-second budget. Background
+readiness refreshes concern selected servers only. Inline Retry and Sign in actions
+resolve individual unavailable entries. Ready selections start directly.
 
 The browser defaults to measuring **latency against one selected server**, while
 all selected servers perform the speed test. Choose that primary server in Settings
 before starting. Initially it is the first selected entry in catalogue order; a
-saved primary choice is reused while it remains selected. **Every server** enables
+saved primary choice is reused while it remains selected. **All** in the Latency band enables
 separate latency measurements for all selected servers. The choice covers both idle
 and loaded latency, is saved on this device, and is fixed during preparation and
 measurement. An unprobed server has no latency result, rather than a zero RTT.
@@ -127,11 +126,12 @@ an explicit recovery action. Detailed origin selection remains available for a
 single selected server.
 
 The latency pills change the gauge, profile, chart and descriptors together without
-changing measurement targets. With Every server, initial display focus uses the
+changing measurement targets. With All, initial display focus uses the
 lowest successful preflight RTT estimate, with catalogue order breaking ties.
 Each pill exposes the server name, location and host on hover or keyboard focus.
-Result cards and saved history use All / server pills to switch between aggregate
-throughput and individual measurements. Latency always names one server; it is not
+Result cards and saved history share compact All / named server bands to switch
+between aggregate throughput and individual measurements. Quiet latency source captions expose
+the full identity and location in tooltips. Latency belongs to one server; it is not
 pooled. Selecting a result with latency evidence also focuses its latency profile.
 
 Server, connection, stream and probe settings are locked for the active run.
@@ -154,6 +154,8 @@ approval page naming the requesting interface's exact HTTPS origin. If a popup i
 blocked, use the visible Open sign-in page link. Approval uses the server's ordinary
 first-party session and CSRF protection. The requesting page polls a verifier-bound
 exchange, so opener access and cross-origin message delivery are unnecessary.
+Cancel sign-in stops the pending exchange and closes its owned popup. Retrying
+creates a fresh approval; deselecting that server also cancels a pending approval.
 
 The resulting measurement-only bearer grant stays in memory, belongs to its issuer
 and exact requesting origin, and expires with the parent login session. Cross-origin

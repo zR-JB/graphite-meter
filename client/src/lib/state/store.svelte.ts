@@ -170,7 +170,6 @@ class AppStore {
       return states.every((state) => state === "ready") ? "verified" : "stale";
     },
   );
-  serverChooserOpen = $state(false);
   serverApproval = $state<{ id: string; url: string; message?: string } | null>(
     null,
   );
@@ -265,6 +264,7 @@ class AppStore {
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   stageResults = $state<StageResults>(emptyStageResults());
+  completedStages = $state<TransportRole[]>([]);
   error = $state<RunnerError | null>(null);
   stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
@@ -430,6 +430,7 @@ class AppStore {
               phaseFraction: this.phaseFraction,
               measuring: this.measuring,
               hasUsableResult,
+              finished: this.completedStages.includes(stage),
               hasFailure: failure,
             }),
           ];
@@ -636,6 +637,15 @@ class AppStore {
         break;
 
       case "phase": {
+        const previous = event.transition.from;
+        if (
+          STAGE_ORDER.some((stage) => stage === previous) &&
+          event.transition.to !== "aborted" &&
+          event.transition.to !== "error" &&
+          previous !== event.transition.to &&
+          !this.completedStages.includes(previous as TransportRole)
+        )
+          this.completedStages.push(previous as TransportRole);
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
           this.latencyScaleMs = this.#latencyScale.scaleMs;
@@ -741,6 +751,11 @@ class AppStore {
       case "complete":
         this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
+        this.stageResults = {
+          download: event.result.download,
+          upload: event.result.upload,
+          latency: event.result.latency,
+        };
         this.serverDetails = event.result.multiServer ?? null;
         this.latencySummaries = event.result.latencyByStage;
         if (this.savingResults) {
@@ -834,6 +849,7 @@ class AppStore {
       stallInfo: null,
       liveStability: emptyStability(),
       stageResults: emptyStageResults(),
+      completedStages: [],
       stageFailures: {},
       result: null,
       error: null,

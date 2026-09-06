@@ -147,6 +147,8 @@ export function createApplicationController(
   >();
   let inspection: AbortController | null = null;
   let approval: AbortController | null = null;
+  let approvalServerId: string | null = null;
+  let approvalPopup: Window | null = null;
   const selectionKey = () =>
     JSON.stringify([
       store.latencySelection.mode,
@@ -457,9 +459,8 @@ export function createApplicationController(
       schedule();
     }
   }
-  function openServers() {
+  function inspectAvailableServers() {
     if (store.isRunning || store.preparing) return;
-    store.serverChooserOpen = true;
     if (!store.serverCatalog) {
       void retryCatalogue();
       return;
@@ -472,11 +473,12 @@ export function createApplicationController(
     ]);
     const pending = (store.serverCatalog?.servers ?? []).filter(
       (server) =>
+        !store.selectedServers.includes(server.id) &&
         store.serverReadiness[server.id]?.state !== "checking" &&
         Date.now() - (store.serverReadiness[server.id]?.checkedAt ?? 0) >
           CONNECTION_FRESH_MS,
     );
-    // Four bounded discovery tasks at a time; opening the chooser creates no persistent fleet monitor.
+    // Four bounded discovery tasks; only selected servers own ongoing validation.
     const worker = async () => {
       while (pending.length && !signal.aborted) {
         const server = pending.shift()!;
@@ -485,8 +487,7 @@ export function createApplicationController(
     };
     void Promise.all([worker(), worker(), worker(), worker()]);
   }
-  function closeServers() {
-    store.serverChooserOpen = false;
+  function cancelServerInspection() {
     inspection?.abort();
     inspection = null;
   }
@@ -494,6 +495,8 @@ export function createApplicationController(
     if (store.isRunning || store.preparing || !store.serverCatalog)
       return false;
     validateSelection(store.serverCatalog, ids);
+    if (approvalServerId && !ids.includes(approvalServerId))
+      cancelServerApproval();
     cancelPendingStart();
     validation?.abort.abort();
     store.selectedServers = selectedInCatalogOrder(
@@ -507,25 +510,34 @@ export function createApplicationController(
         JSON.stringify(catalogSelected().map(({ id, url }) => ({ id, url }))),
       );
     } catch {}
-    closeServers();
+    cancelServerInspection();
     mark(CONNECTION_ROLES, "stale");
     requestValidation();
     return true;
+  }
+  function cancelServerApproval() {
+    approval?.abort();
+    approval = null;
+    approvalServerId = null;
+    store.serverApproval = null;
+    approvalPopup?.close();
+    approvalPopup = null;
   }
   async function signInServer(id: string) {
     const server = store.serverCatalog?.servers.find(
       (server) => server.id === id,
     );
     if (!server || store.isRunning || store.preparing) return;
-    approval?.abort();
+    cancelServerApproval();
     approval = new AbortController();
+    approvalServerId = id;
     const task = approval;
     // Create the browsing context during the click. The visible URL remains a fallback when popups are blocked.
-    const popup = window.open(
+    const popup = (approvalPopup = window.open(
       "about:blank",
       "_blank",
       "popup,width=520,height=720",
-    );
+    ));
     try {
       const flow = await browserApproval(server);
       task.signal.throwIfAborted();
@@ -535,11 +547,9 @@ export function createApplicationController(
       if (approval !== task) return;
       contexts.set(id, context);
       store.serverApproval = null;
-      await inspectServer(
-        server,
-        AbortSignal.any([task.signal, AbortSignal.timeout(12_000)]),
-      );
-      if (store.selectedServers.includes(id)) adoptSelectedEvidence();
+      // Approval owns the grant exchange; connection validation owns path errors
+      // and superseding draft changes after the grant has been accepted.
+      void validateServers(true).catch(() => {});
     } catch (cause) {
       if (!task.signal.aborted) {
         store.serverReadiness[id] = {
@@ -551,6 +561,13 @@ export function createApplicationController(
             ...store.serverApproval,
             message: "Approval did not finish. Try Sign in again.",
           };
+      }
+    } finally {
+      if (approval === task) {
+        popup?.close();
+        approval = null;
+        approvalServerId = null;
+        approvalPopup = null;
       }
     }
   }
@@ -880,8 +897,8 @@ export function createApplicationController(
         store.unresolvedServers.length ||
         (!readySelected() && (store.serverCatalog?.servers.length ?? 0) > 1))
     ) {
-      openServers();
-      store.startError = "Resolve the selected servers before starting.";
+      store.startError =
+        "Open Settings to resolve the selected servers before starting.";
       return;
     }
     const config = $state.snapshot(store.config);
@@ -1050,7 +1067,7 @@ export function createApplicationController(
     lifetime.abort();
     catalogCheck?.abort();
     inspection?.abort();
-    approval?.abort();
+    cancelServerApproval();
     for (const monitor of selectedIdle.values()) monitor.stop();
     contexts.clear();
     selectedPaths.clear();
@@ -1095,11 +1112,12 @@ export function createApplicationController(
   return {
     boot,
     dispose,
-    openServers,
-    closeServers,
+    inspectAvailableServers,
+    cancelServerInspection,
     retryCatalogue,
     applyServers,
     signInServer,
+    cancelServerApproval,
     focusServer,
     configureLatency,
     retryServer: (id: string) => {

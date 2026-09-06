@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { tooltip } from "../../actions/tooltip";
   import { store } from "../../state/store.svelte";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
+  const descriptionId = $props.id();
   import type { ConnectionRole } from "../../runner/connectionModel";
   import {
     latencyOptionView,
@@ -61,10 +63,20 @@
   }
 </script>
 
-<fieldset>
-  <legend>{title}</legend>
+<fieldset aria-label={title}>
+  <legend
+    ><span>{title}</span>
+    <span
+      class="path-state"
+      data-state={validation}
+      use:tooltip={summary}
+      aria-label={`${title}: ${locked ? "In use" : status}. ${summary}`}
+    >
+      <span class="dot" aria-hidden="true"></span>{locked ? "In use" : status}
+    </span>
+  </legend>
   <div class="options">
-    {#each options as option (option.value)}
+    {#each options as option, index (option.value)}
       {@const view =
         option.detail !== undefined
           ? { disabled: option.disabled ?? false, detail: option.detail }
@@ -73,218 +85,154 @@
         class="choice"
         class:selected={selected === option.value}
         class:unavailable={view.disabled || locked}
+        use:tooltip={view.detail}
+        tabindex="-1"
       >
         <input
           type="radio"
           name={`${role}-target`}
           value={option.value}
+          aria-describedby={`${descriptionId}-${index}`}
           checked={selected === option.value}
           disabled={view.disabled || locked}
           onchange={() => select(option.value)}
         />
-        <span class="radio-dot" aria-hidden="true"></span>
-        <span class="copy">
-          <strong>{option.label}</strong>
-          <small>{view.detail}</small>
-        </span>
+        <span>{option.label}</span>
       </label>
+      <span class="sr-only" id={`${descriptionId}-${index}`}>{view.detail}</span
+      >
     {/each}
   </div>
-  {#if selected !== "auto" && !locked && (options.find((option) => option.value === selected)?.disabled || validation === "failed")}
-    <button type="button" onclick={() => select("auto")}>Use Automatic</button>
-  {/if}
-  <div
-    class="validation"
-    class:error={validation === "failed"}
-    aria-live="polite"
-  >
-    <span class="dot" data-state={validation}></span>
-    <span class="validation-copy">
-      <strong>{locked ? "In use" : status}</strong>
-      <small>{summary}</small>
-    </span>
-    {#if !locked && (validation === "failed" || validation === "stale")}
-      <!-- Both pickers mount at once and a <legend> does not name a descendant
-           button, so without this the rotor reads "Retry, Retry". -->
+  {#if !locked && (validation === "failed" || validation === "stale" || options.find((option) => option.value === selected)?.disabled)}
+    <div class="path-recovery">
+      {#if validation === "failed"}<span role="status">{summary}</span>{/if}
       <button
         type="button"
         aria-label={`Retry ${title}`}
         onclick={() =>
           void controller.validateConnections(true, role).catch(() => {})}
-        >Retry</button
+        >Recheck</button
       >
-    {/if}
-  </div>
+      {#if selected !== "auto"}<button
+          type="button"
+          onclick={() => select("auto")}>Use Automatic</button
+        >{/if}
+    </div>
+  {/if}
 </fieldset>
 
 <style>
   fieldset {
     display: grid;
-    gap: 7px;
+    gap: 6px;
+    border: 0;
     min-width: 0;
     margin: 0;
-    padding: 0;
-    border: 0;
+    padding: 10px 0 0;
+    border-top: 1px solid var(--border);
   }
   legend {
-    margin-bottom: 7px;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     padding: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    color: var(--text);
+    font: 600 var(--type-sm)/1.3 var(--font-sans);
+  }
+  .path-state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font: var(--type-xs)/1.3 var(--font-sans);
+  }
+  .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-muted);
+  }
+  [data-state="verified"] .dot {
+    background: var(--ok);
+  }
+  [data-state="failed"] .dot {
+    background: var(--err);
   }
   .options {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 6px;
-  }
-  /* Settings cards are 180px minimum with a 12px normal-density grid gap:
-     180 + 12 + 180 = 372px, the exact outer-grid two-column breakpoint. */
-  @container settings-grid (min-width: 372px) {
-    .options {
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
-    }
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
   }
   .choice {
     position: relative;
-    display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    min-height: 52px;
-    min-width: 0;
-    padding: 8px 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
+    min-height: 30px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    background: var(--surface-inset);
+    color: var(--text-muted);
+    font: 600 var(--type-xs)/1.3 var(--font-sans);
     cursor: pointer;
     transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
+      background 120ms ease,
+      border-color 120ms ease;
   }
   .choice:hover:not(.unavailable) {
-    border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+    background: var(--surface-3);
+    color: var(--text);
   }
   .choice.selected {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    color: var(--brand-strong);
     background: var(--brand-soft);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--brand) 18%, transparent);
+    border-color: color-mix(in srgb, var(--brand) 60%, transparent);
   }
   .choice.unavailable {
-    opacity: 0.56;
-    cursor: not-allowed;
+    opacity: 0.5;
+    cursor: default;
   }
-  .choice input {
+  input {
     position: absolute;
     width: 1px;
     height: 1px;
     opacity: 0;
-    pointer-events: none;
   }
-  .choice:focus-within {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
-    box-shadow: 0 0 0 3px var(--brand-soft);
+  .choice:has(input:focus-visible) {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
   }
-  .radio-dot {
-    grid-column: 1;
-    box-sizing: border-box;
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--text-soft);
-    border-radius: 50%;
-  }
-  .choice.selected .radio-dot {
-    border: 4px solid var(--brand-strong);
-    background: var(--surface-1);
-  }
-  .copy {
-    grid-column: 2;
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-  }
-  .copy strong {
-    color: var(--text);
-    font-size: 11px;
-    font-weight: 780;
-    overflow-wrap: anywhere;
-  }
-  .copy small {
-    display: -webkit-box;
-    overflow: hidden;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 500;
-    line-height: 1.35;
-    line-clamp: 2;
-    text-overflow: ellipsis;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    white-space: normal;
-  }
-  .validation {
-    display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) auto;
-    gap: var(--space-2);
-    align-items: center;
-    min-height: 28px;
-    padding: 2px 3px;
-  }
-  .validation-copy {
+  .path-recovery {
     display: flex;
-    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
-    align-items: baseline;
+    color: var(--text-muted);
+    font: var(--type-xs)/1.4 var(--font-sans);
   }
-  .validation-copy strong {
-    flex: none;
-    color: var(--text);
-    font-size: 10px;
-    font-weight: 750;
-  }
-  .validation-copy small {
-    overflow: hidden;
-    min-width: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.4;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-soft);
-  }
-  .dot[data-state="verified"] {
-    background: var(--ok);
-  }
-  .dot[data-state="checking"] {
-    background: var(--brand);
-  }
-  .dot[data-state="failed"] {
-    background: var(--warn);
+  .path-recovery > span {
+    flex-basis: 100%;
   }
   button {
     min-height: 28px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 4px 9px;
-    font-family: var(--font-sans);
-    font-size: 10px;
-    font-weight: 700;
+    border: 0;
+    border-radius: 999px;
+    padding: 4px 8px;
+    background: var(--surface-inset);
+    color: var(--brand-strong);
+    font: inherit;
     cursor: pointer;
   }
   button:focus-visible {
-    outline: var(--focus-ring);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .choice {
+      transition: none;
+    }
   }
 </style>

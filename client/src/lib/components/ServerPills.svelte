@@ -11,6 +11,8 @@
     expanded = false,
     multiple = false,
     disabledIds = [],
+    aggregateLabel = "All",
+    aggregateDescription = "Aggregate throughput across the selected servers",
   }: {
     servers: readonly ServerIdentity[];
     value: string | readonly string[];
@@ -21,25 +23,25 @@
     expanded?: boolean;
     multiple?: boolean;
     disabledIds?: readonly string[];
+    aggregateLabel?: string;
+    aggregateDescription?: string;
   } = $props();
   const items = $derived([
     ...(aggregate
       ? [
           {
             id: "",
-            text: "All",
-            description: "Aggregate throughput across the selected servers",
-            location: "",
+            text: aggregateLabel,
+            description: aggregateDescription,
           },
         ]
       : []),
-    ...servers.map((server, index) => ({
+    ...servers.map((server) => ({
       id: server.id,
-      text: expanded ? server.name : `${index + 1}`,
+      text: server.name,
       description: [server.name, server.location, new URL(server.url).host]
         .filter(Boolean)
         .join("\n"),
-      location: server.location ?? new URL(server.url).host,
     })),
   ]);
   const tabId = $derived(
@@ -98,8 +100,8 @@
       aria-checked={multiple ? undefined : selected(item.id)}
       aria-pressed={multiple ? selected(item.id) : undefined}
       aria-label={item.id === ""
-        ? "All servers, aggregate throughput"
-        : `${expanded ? "" : `Server ${item.text}: `}${item.description.replaceAll("\n", ", ")}`}
+        ? `${aggregateLabel} servers, ${aggregateDescription}`
+        : item.description.replaceAll("\n", ", ")}
       tabindex={multiple || item.id === tabId ? 0 : -1}
       disabled={disabled || disabledIds.includes(item.id)}
       class:chosen={selected(item.id)}
@@ -107,69 +109,113 @@
       onclick={() => onchange(item.id)}
       onkeydown={(event) => navigate(event, index)}
     >
-      <span>{item.text}</span>{#if expanded && item.location}<small
-          >{item.location}</small
-        >{/if}
+      <span class="selection-mark" aria-hidden="true"
+        >{selected(item.id) ? "✓" : multiple ? "+" : ""}</span
+      ><span class="server-name">{item.text}</span>
     </button>
   {/each}
 </div>
 
 <style>
   .server-pills {
-    display: flex;
+    display: inline-flex;
     flex-wrap: wrap;
-    gap: 3px;
-    padding: 3px;
+    align-items: stretch;
+    justify-content: center;
     width: fit-content;
     max-width: 100%;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
+    overflow: hidden;
+    border: 1px solid
+      color-mix(in srgb, var(--server-accent) 32%, var(--border));
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--server-accent) 12%, var(--surface-1));
   }
   button {
-    display: grid;
-    align-content: center;
-    gap: 2px;
-    min-width: 34px;
-    min-height: 32px;
-    padding: 4px 10px;
-    border: 1px solid transparent;
-    border-radius: calc(var(--r-chrome) - 2px);
+    position: relative;
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-width: 58px;
+    min-height: 30px;
+    padding: 5px 22px;
+    border: 0;
+    border-radius: 0;
     background: transparent;
     color: var(--text-muted);
-    font: 600 var(--type-sm)/1.3 var(--font-sans);
+    font: 600 var(--type-xs)/1.3 var(--font-sans);
+    text-align: center;
     cursor: pointer;
+    transition:
+      background 160ms ease,
+      color 160ms ease;
   }
-  button:hover:not(:disabled) {
+  button + button {
+    box-shadow: inset 1px 0
+      color-mix(in srgb, var(--server-accent) 20%, transparent);
+  }
+  .server-pills button:not(.chosen):hover:not(:disabled) {
     color: var(--text);
-    background: var(--surface-1);
+    background: color-mix(in srgb, var(--server-accent) 14%, transparent);
+  }
+  button:active:not(:disabled) .server-name {
+    transform: translateY(1px);
   }
   button.chosen {
-    color: var(--brand-strong);
-    background: var(--surface-2);
-    border-color: var(--border-strong);
+    color: var(--text);
+    background: color-mix(in srgb, var(--server-accent) 40%, var(--surface-1));
   }
   button:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 1px;
+    outline: 2px solid var(--server-accent);
+    outline-offset: -3px;
   }
   button:disabled {
-    opacity: 0.5;
+    color: var(--text-soft);
     cursor: default;
+  }
+  button:not(.chosen):disabled .server-name {
+    opacity: 0.55;
   }
   .expanded {
     width: 100%;
   }
   .expanded button {
-    flex: 1 1 110px;
-    text-align: left;
-    min-height: 48px;
-    min-width: 0;
-    overflow-wrap: anywhere;
+    min-height: 34px;
+    max-width: 100%;
   }
-  small {
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    font-weight: 400;
+  .server-name {
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: transform 120ms ease;
+  }
+  .selection-mark {
+    position: absolute;
+    inset-inline-start: 8px;
+    width: 10px;
+    color: var(--text);
+    font-weight: 700;
+    transition:
+      opacity 140ms ease,
+      transform 140ms ease;
+  }
+  button:not(.chosen) .selection-mark {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  .expanded button:not(.chosen) .selection-mark {
+    opacity: 0.55;
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    button,
+    .server-name,
+    .selection-mark {
+      transition: none;
+    }
+    button:active:not(:disabled) .server-name {
+      transform: none;
+    }
   }
 </style>

@@ -29,7 +29,10 @@ test("four real servers share one run and retain separate receiver windows and l
   await ready(page);
   const selectionSettings = await openSettings(page);
   await expect(
-    page.getByRole("button", { name: /Change servers, 4 selected/ }),
+    selectionSettings
+      .getByRole("group", { name: "Servers to test", exact: true })
+      .getByRole("button")
+      .first(),
   ).toBeEnabled();
   await selectionSettings
     .getByRole("button", { name: "Close Settings" })
@@ -38,7 +41,10 @@ test("four real servers share one run and retain separate receiver windows and l
   await startTest(page);
   await openSettings(page);
   await expect(
-    page.getByRole("button", { name: /Change servers, 4 selected/ }),
+    selectionSettings
+      .getByRole("group", { name: "Servers to test", exact: true })
+      .getByRole("button")
+      .first(),
   ).toBeDisabled();
   await selectionSettings
     .getByRole("button", { name: "Close Settings" })
@@ -69,7 +75,7 @@ test("four real servers share one run and retain separate receiver windows and l
     name: "Result measurements",
   });
   await resultPills
-    .getByRole("radio", { name: "All servers, aggregate throughput" })
+    .getByRole("radio", { name: /All servers, Aggregate throughput/ })
     .focus();
   await page.keyboard.press("ArrowRight");
   await expect(resultPills.getByRole("radio", { name: "Home" })).toBeFocused();
@@ -84,7 +90,7 @@ test("four real servers share one run and retain separate receiver windows and l
   await page.keyboard.press("Home");
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("radio", { name: "All servers, aggregate throughput" }),
+    page.getByRole("radio", { name: /All servers, Aggregate throughput/ }),
   ).toHaveAttribute("aria-checked", "true");
   const audit = await new AxeBuilder({ page })
     .include(".results-slot")
@@ -139,19 +145,14 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
 }) => {
   await page.goto(fleet[3].url);
   const settings = await openSettings(page);
-  await settings
-    .getByRole("button", { name: "Change servers, 1 selected" })
-    .click();
-  const dialog = page.getByRole("dialog", {
-    name: "Choose servers",
+  const band = settings.getByRole("group", {
+    name: "Servers to test",
     exact: true,
   });
-  const peer = dialog.locator(".server-row").nth(1);
-  await expect(peer).toContainText(fleet[1].name, { timeout: 15000 });
-  await expect(peer).toContainText("Loopback fixture");
-  await expect(peer.locator(".readiness")).toHaveText("Ready", {
-    timeout: 15000,
-  });
+  const peer = band.getByRole("button", { name: "Frankfurt" });
+  await expect(peer).toBeVisible({ timeout: 15000 });
+  await peer.focus();
+  await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
   await page.artifact("origin-only-peer-discovery");
 });
 
@@ -247,16 +248,41 @@ for (const transport of ["websocket", "webtransport"] as const)
       disableThirdPartyCookieHeuristics: true,
     });
     await openSettings(page);
-    await page
-      .getByRole("button", { name: /Change servers, 2 selected/ })
-      .click();
-    const row = page.locator(".server-row", { hasText: "Private" });
-    await expect(row.getByRole("button", { name: "Sign in…" })).toBeVisible({
-      timeout: 15000,
-    });
-    await row.getByRole("button", { name: "Sign in…" }).click();
+    const row = page.locator(".server-feedback", { hasText: "Private" });
+    await expect(
+      row.getByRole("button", { name: "Sign in to Private" }),
+    ).toBeVisible({ timeout: 15000 });
+    await row.getByRole("button", { name: "Sign in to Private" }).click();
     const link = row.getByRole("link", { name: "Open sign-in page" });
     await expect(link).toBeVisible();
+    const cancelledURL = await link.getAttribute("href");
+    await row.getByRole("button", { name: "Cancel sign-in" }).click();
+    await expect(link).toHaveCount(0);
+    await row.getByRole("button", { name: "Sign in to Private" }).click();
+    await expect(link).toBeVisible();
+    expect(await link.getAttribute("href")).not.toBe(cancelledURL);
+    await page.evaluate((origin) => {
+      const fetch = window.fetch.bind(window);
+      let failOnce = true;
+      window.fetch = ((input, init) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+          location.href,
+        );
+        if (
+          failOnce &&
+          url.origin === origin &&
+          url.pathname === "/preflight" &&
+          new Headers(init?.headers).has("Authorization")
+        ) {
+          failOnce = false;
+          return Promise.resolve(
+            Response.json({ error: "Temporary outage" }, { status: 503 }),
+          );
+        }
+        return fetch(input, init);
+      }) as typeof window.fetch;
+    }, fleet[4].url);
     const approval = new Page();
     try {
       await approval.goto((await link.getAttribute("href"))!);
@@ -271,8 +297,16 @@ for (const transport of ["websocket", "webtransport"] as const)
       await approval
         .getByRole("button", { name: "Approve this client" })
         .click();
-      await expect(row.locator(".readiness")).toHaveText("Ready");
-      await page.getByRole("button", { name: "Apply", exact: true }).click();
+      // A connection error after approval must keep the accepted grant and offer
+      // a path retry, instead of incorrectly asking the user to sign in again.
+      await expect(
+        row.getByRole("button", { name: "Retry Private" }),
+      ).toBeVisible();
+      await expect(
+        row.getByRole("button", { name: "Sign in to Private" }),
+      ).toHaveCount(0);
+      await row.getByRole("button", { name: "Retry Private" }).click();
+      await expect(row).toHaveCount(0);
       await ready(page);
       // Every WebView shares Chromium's cookie jar. Remove cookies locally without
       // logging out the parent session; the requesting page must rely on its grant.
@@ -297,7 +331,7 @@ for (const transport of ["websocket", "webtransport"] as const)
   });
 
 for (const theme of ["dark", "light"] as const)
-  test(`phone server chooser supports keyboard, ${theme} theme and reduced motion`, async ({
+  test(`phone server band supports keyboard, ${theme} theme and reduced motion`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -308,31 +342,21 @@ for (const theme of ["dark", "light"] as const)
       (value) => document.documentElement.setAttribute("data-theme", value),
       theme,
     );
-    await openSettings(page);
-    const trigger = page.getByRole("button", {
-      name: /Change servers, 1 selected/,
-    });
-    await trigger.focus();
-    await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", {
-      name: "Choose servers",
+    const settings = await openSettings(page);
+    const band = settings.getByRole("group", {
+      name: "Servers to test",
       exact: true,
     });
-    await expect(dialog).toBeVisible();
-    await expectNoHorizontalOverflow(dialog);
-    const first = dialog.locator('input[type="checkbox"]').first();
-    await first.focus();
+    await expect(band.getByRole("button", { name: "Home" })).toBeDisabled();
+    const peer = band.getByRole("button", { name: "Frankfurt" });
+    await peer.focus();
     await page.keyboard.press("Space");
-    await expect(
-      dialog.getByRole("button", { name: "Apply", exact: true }),
-    ).toBeDisabled();
+    await expect(peer).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("Escape");
-    await expect(dialog).toBeHidden();
-    await expect(trigger).toBeFocused();
-    await trigger.click();
-    await expect(dialog).toBeVisible();
+    await openSettings(page);
+    await expectNoHorizontalOverflow(settings);
     const scan = await new AxeBuilder({ page })
-      .include(".server-dialog")
+      .include('[aria-label="Settings"]')
       .analyze();
     expect(scan.violations).toEqual([]);
     await page.artifact(`multi-server-phone-${theme}`);
@@ -369,7 +393,8 @@ test("primary latency selection is fixed for the run and saved alongside every t
   });
   const settings = await openSettings(page);
   await settings
-    .getByRole("button", { name: "One server", exact: true })
+    .getByRole("radiogroup", { name: "Latency measurement servers" })
+    .getByRole("radio", { name: "Home" })
     .click();
   await expect
     .poll(() =>
@@ -381,7 +406,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
     )
     .toBe(2);
   await settings
-    .getByRole("radiogroup", { name: "Primary latency server" })
+    .getByRole("radiogroup", { name: "Latency measurement servers" })
     .getByRole("radio", { name: "Frankfurt" })
     .click();
   await expect
@@ -399,11 +424,13 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await startTest(page);
   await openSettings(page);
   await expect(
-    settings.getByRole("button", { name: "Every server", exact: true }),
+    settings
+      .getByRole("radiogroup", { name: "Latency measurement servers" })
+      .getByRole("radio", { name: /All servers/ }),
   ).toBeDisabled();
   await expect(
     settings
-      .getByRole("radiogroup", { name: "Primary latency server" })
+      .getByRole("radiogroup", { name: "Latency measurement servers" })
       .getByRole("radio", { name: "Home" }),
   ).toBeDisabled();
   await settings.getByRole("button", { name: "Close Settings" }).click();
@@ -428,32 +455,36 @@ test("primary latency selection is fixed for the run and saved alongside every t
   expect(primary.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
   expect(primary.latencyByStage.download?.probeCount).toBeGreaterThan(0);
   expect(saved.multiServer?.latencyFocus).toBe("server-1");
-  await expect(page.locator(".latency-focus")).toContainText("Frankfurt");
+  await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
+    "aria-label",
+    /Frankfurt/,
+  );
   await expect(page.locator(".latency-focus [role=radio]")).toHaveCount(0);
   await page
     .getByRole("radiogroup", { name: "Result measurements" })
     .getByRole("radio", { name: "Home" })
     .click();
-  await expect(page.locator(".result-cards")).toContainText(
-    "Not measured for this server",
+  await expect(page.locator(".result-cards")).toContainText("Not measured");
+  await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
+    "aria-label",
+    /Frankfurt/,
   );
-  await expect(page.locator(".latency-focus")).toContainText("Frankfurt");
   await page.artifact("primary-latency-result");
   await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await expect(page.locator(".saved-server-context")).toContainText(
-    "One latency server",
-  );
+  await expect(page.locator(".saved-server-context")).toBeVisible();
   await page
     .locator(".saved-server-context")
     .getByRole("radiogroup", { name: "Result measurements" })
     .getByRole("radio", { name: "Frankfurt" })
     .click();
-  await expect(page.locator(".saved-server-context")).toContainText(
-    "Frankfurt",
-  );
+  await expect(
+    page
+      .locator(".saved-server-context")
+      .getByRole("radio", { name: "Frankfurt" }),
+  ).toHaveAttribute("aria-checked", "true");
   await page.artifact("primary-latency-history");
 });
 
@@ -471,10 +502,11 @@ for (const theme of ["light", "dark"] as const)
     );
     const settings = await openSettings(page);
     await settings
-      .getByRole("button", { name: "One server", exact: true })
+      .getByRole("radiogroup", { name: "Latency measurement servers" })
+      .getByRole("radio", { name: "Home" })
       .click();
     const primary = settings.getByRole("radiogroup", {
-      name: "Primary latency server",
+      name: "Latency measurement servers",
     });
     await primary.getByRole("radio", { name: "Home" }).focus();
     await page.keyboard.press("ArrowRight");
