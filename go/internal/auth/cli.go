@@ -19,10 +19,11 @@ const (
 )
 
 type cliApproval struct {
-	code     string
-	session  *session
-	expires  time.Time
-	approved bool
+	browserOrigin string
+	code          string
+	session       *session
+	expires       time.Time
+	approved      bool
 }
 
 func validChallenge(v string) bool {
@@ -49,6 +50,10 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	challenge := r.URL.Query().Get("challenge")
 	if !validChallenge(challenge) {
 		forbidden(w)
+		return
+	}
+	if dest := s.browserApprovalRedirect(challenge); dest != "" {
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
 	p, ok := s.authenticate(r)
@@ -97,7 +102,7 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 	challenge := r.FormValue("challenge")
 	s.mu.Lock()
 	approval := s.approvals[challenge]
-	if approval == nil || approval.session != p.session || !s.now().Before(approval.expires) {
+	if approval == nil || approval.session != p.session || (approval.browserOrigin != "") != (r.URL.Path == "/auth/browser/approve") || !s.now().Before(approval.expires) {
 		s.mu.Unlock()
 		forbidden(w)
 		return
@@ -106,7 +111,7 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 	s.counters.cliApproval.Add(1)
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = cliDoneTemplate.Execute(w, map[string]any{"Styles": authStyles})
+	_ = cliDoneTemplate.Execute(w, map[string]any{"Styles": authStyles, "Browser": r.URL.Path == "/auth/browser/approve"})
 }
 
 func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +129,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	s.mu.Lock()
 	approval := s.approvals[challenge]
-	if approval == nil || !approval.approved || !now.Before(approval.expires) || !now.Before(approval.session.expires) || approval.session.ctx.Err() != nil {
+	if approval == nil || approval.browserOrigin != "" || !approval.approved || !now.Before(approval.expires) || !now.Before(approval.session.expires) || approval.session.ctx.Err() != nil {
 		s.mu.Unlock()
 		s.writeGrantPending(w)
 		return
@@ -136,7 +141,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	if len(sess.grants) >= maxSessionGrants {
 		for old := range maps.Keys(sess.grants) {
 			delete(sess.grants, old)
-			delete(s.grants, old)
+			s.deleteGrantLocked(old)
 			break
 		}
 	}

@@ -204,11 +204,16 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
   });
 
   channel.prime(true);
+  expect(channel.ready).toBe(false);
+  TestWorker.last!.emit({ type: "open" });
+  expect(channel.ready).toBe(false);
   TestWorker.last!.emit({ type: "ready" });
+  expect(channel.ready).toBe(true);
   if (deadlineActive) (deadline as (() => void) | null)?.();
 
   expect(failures).toEqual([]);
   channel.teardown();
+  expect(channel.ready).toBe(false);
 });
 
 function finalizingChannel() {

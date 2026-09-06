@@ -5,3 +5,4 @@ test-results/
 .svelte-check/
 bun.lock
 src/lib/api/preflight.ts
+src/lib/api/servers.ts

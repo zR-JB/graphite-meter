@@ -65,17 +65,20 @@ func TestRoutesMatchPin(t *testing.T) {
 		kind  string
 		paths []string
 	}{
-		"preflight":      {"http", []string{route.Preflight}},
-		"probe":          {"http", []string{route.Probe, throughput.Probe, latency.Probe}},
-		"download":       {"http", []string{route.Download, throughput.Download}},
-		"upload":         {"http", []string{route.Upload, throughput.Upload}},
-		"uploadSession":  {"http", []string{route.UploadSession, throughput.UploadSession}},
-		"uploadProgress": {"http", []string{route.UploadProgress, throughput.UploadProgress}},
-		"ping":           {"ws", []string{route.Ping, latency.Ping}},
-		"wtSession":      {"http", []string{route.WTSession, throughput.WTSession, latency.WTSession}},
-		"wtDownload":     {"wt", []string{route.WTDownload, throughput.WTDownload}},
-		"wtUpload":       {"wt", []string{route.WTUpload, throughput.WTUpload}},
-		"wtPing":         {"wt", []string{route.WTPing, latency.WTPing}},
+		"servers":          {"http", []string{route.Servers}},
+		"wsSession":        {"http", []string{route.WSSession}},
+		"uploadCheckpoint": {"http", []string{route.UploadCheckpoint}},
+		"preflight":        {"http", []string{route.Preflight}},
+		"probe":            {"http", []string{route.Probe, throughput.Probe, latency.Probe}},
+		"download":         {"http", []string{route.Download, throughput.Download}},
+		"upload":           {"http", []string{route.Upload, throughput.Upload}},
+		"uploadSession":    {"http", []string{route.UploadSession, throughput.UploadSession}},
+		"uploadProgress":   {"http", []string{route.UploadProgress, throughput.UploadProgress}},
+		"ping":             {"ws", []string{route.Ping, latency.Ping}},
+		"wtSession":        {"http", []string{route.WTSession, throughput.WTSession, latency.WTSession}},
+		"wtDownload":       {"wt", []string{route.WTDownload, throughput.WTDownload}},
+		"wtUpload":         {"wt", []string{route.WTUpload, throughput.WTUpload}},
+		"wtPing":           {"wt", []string{route.WTPing, latency.WTPing}},
 	}
 	if len(sites) != len(pinned) {
 		t.Errorf("Go declares %d routes; %d are pinned", len(sites), len(pinned))

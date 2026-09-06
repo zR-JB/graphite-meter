@@ -229,7 +229,7 @@ func NewWTUpload(upload UploadHandler, progress *UploadProgress, trusted []netip
 func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	query := r.URL.Query()
 	// A stream carries no request, so its CONNECT identifies the upload owner.
-	owner := ClientKey(r, h.trusted)
+	owner := UploadOwner(r, h.trusted)
 	// The progress feed is server-generated, so its heartbeat must not count as activity.
 	ctx, live := watchSession(ctx, h.idleBound)
 	go h.serveProgress(ctx, sess, query.Get("id"), owner)

@@ -32,6 +32,9 @@ func windowCarriedBytes(ctx context.Context, stage string, dir Direction, stats 
 
 func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, gate *stageGate) (result Result, failure error) {
 	var total atomic.Uint64
+	if r.coordinated != nil {
+		r.coordinated.attachDownload(&total)
+	}
 	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
@@ -66,9 +69,12 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	if err := lanes.waitReady(ctx); err != nil {
 		return Result{}, err
 	}
-	gate.ready <- struct{}{}
+	gate.markReady()
 	if err := lanes.waitStart(ctx, gate.start, nil); err != nil {
 		return Result{}, err
+	}
+	if r.coordinated != nil {
+		return waitCoordinatedTransfer(ctx, lanes.errs, nil)
 	}
 	stats, err := r.sampleLocalRates(ctx, stage, Down, &total, streams, duration, lanes.errs)
 	if err == nil {

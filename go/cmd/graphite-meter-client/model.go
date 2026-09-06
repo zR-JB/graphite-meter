@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ type eventsMsg struct {
 	events []goclient.Event
 }
 type preparationMsg struct {
+	run        *goclient.PreparedRun
 	seq        int
 	connection *goclient.PreparedConnection
 	err        error
@@ -175,7 +177,21 @@ var serverPresets = []serverPreset{
 }
 
 type model struct {
-	controller *goclient.Controller
+	serverDetailsOpen  bool
+	detailsScroll      int
+	serverResults      map[string][]goclient.Result
+	preparedRun        *goclient.PreparedRun
+	runDetails         *goclient.RunDetails
+	serverChooser      bool
+	chooseAfterPrepare bool
+	serverDraft        []string
+	serverRow          int
+	height             int
+	latencyFocus       string
+	latencyByServer    map[string]goclient.LatencySample
+	lostByServer       map[string]int
+	authServerID       string
+	controller         *goclient.Controller
 
 	cfg   goclient.Config
 	mode  mode
@@ -265,6 +281,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -293,6 +310,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case m.serverDetailsOpen:
+		return m.handleServerDetailsKey(msg)
+	case m.serverChooser:
+		return m.handleServerChooserKey(msg)
 	case m.edit.kind != editNone:
 		return m.handleEditKey(msg)
 	case m.auth != nil && !m.authOpened && key.Matches(msg, keys.approve):
@@ -300,6 +321,10 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.authOpened = true
 		m.notice = "Approval page opened in the browser."
 		return m, nil
+	case m.mode == modeConfigure && key.Matches(msg, keys.servers):
+		return m.openServerChooser()
+	case m.mode == modeConfigure && key.Matches(msg, keys.automatic):
+		return m.useAutomatic()
 	case m.urlRowRune(msg):
 		// A bracketed paste arrives as one rune message and lands whole.
 		m.edit = beginEdit(editURL, "url", string(msg.Runes))
@@ -325,6 +350,10 @@ func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		step = -1
 	}
 	switch {
+	case key.Matches(msg, keys.servers):
+		return m.openServerChooser()
+	case key.Matches(msg, keys.automatic):
+		return m.useAutomatic()
 	case key.Matches(msg, keys.sections):
 		m.section = section((int(m.section) + step + int(sectionCount)) % int(sectionCount))
 		m.row = clamp(m.row, 0, m.rowCount()-1)
@@ -347,6 +376,15 @@ func (m model) urlRowRune(msg tea.KeyMsg) bool {
 }
 
 func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, keys.serverDetails) && m.runDetails != nil {
+		m.serverDetailsOpen = true
+		m.detailsScroll = 0
+		return m, nil
+	}
+	if key.Matches(msg, keys.latencyFocus) {
+		m.nextLatencyFocus()
+		return m, nil
+	}
 	if !m.complete {
 		if key.Matches(msg, keys.cancel) {
 			m.cancelPrompt = true
@@ -396,7 +434,7 @@ func (m model) confirm() (tea.Model, tea.Cmd) {
 	if next.mode != modeConfigure || next.edit.kind != editNone {
 		return next, cmd
 	}
-	if next.cfg != before || (m.section == sectionServers && m.row < len(serverPresets)) {
+	if !reflect.DeepEqual(next.cfg, before) || (m.section == sectionServers && m.row < len(serverPresets)) {
 		return next.reprepare(cmd)
 	}
 	return next, cmd
@@ -414,7 +452,7 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.apply):
 		before, wasURL := m.cfg, m.edit.kind == editURL
 		m.commitEdit()
-		if m.cfg != before || (wasURL && m.edit.kind == editNone) {
+		if !reflect.DeepEqual(m.cfg, before) || (wasURL && m.edit.kind == editNone) {
 			return m.reprepare(nil)
 		}
 		return m, nil
@@ -551,12 +589,12 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 		case rowThroughputPath:
 			next := nextPath(m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, m.throughputPaths())
 			m.cfg.ThroughputTarget, m.cfg.ThroughputTransport = next.target, next.transport
-			if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+			if t := m.selectedThroughputPath(); !m.multipleServers() && t != nil && t.Protocol != protocolNegotiated {
 				m.cfg.ThroughputProtocol = "auto"
 			}
 			m.notice = "Throughput path set to " + next.label + "."
 		case rowThroughputProtocol:
-			if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+			if t := m.selectedThroughputPath(); !m.multipleServers() && t != nil && t.Protocol != protocolNegotiated {
 				m.notice = "This path serves " + goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS) + " only."
 				break
 			}
@@ -663,6 +701,9 @@ func automaticPath(note string) pathChoice {
 }
 
 func (m model) throughputPaths() []pathChoice {
+	if m.multipleServers() {
+		return m.sharedPaths(false)
+	}
 	resolved := ""
 	if m.prepared != nil {
 		resolved = shortOrigin(m.cfg.BaseURL, m.prepared.ThroughputTarget.Origin)
@@ -689,6 +730,9 @@ func (m model) throughputPaths() []pathChoice {
 }
 
 func (m model) latencyPaths() []pathChoice {
+	if m.multipleServers() {
+		return m.sharedPaths(true)
+	}
 	resolved := ""
 	if m.prepared != nil && m.prepared.LatencyTarget != nil {
 		resolved = shortOrigin(m.cfg.BaseURL, m.prepared.LatencyTarget.Origin)

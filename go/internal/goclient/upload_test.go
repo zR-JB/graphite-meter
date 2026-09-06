@@ -220,6 +220,12 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 }
 
 func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.Time) {
+	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, r *http.Request) {
+		_ = jsonv2.MarshalWrite(w, struct {
+			Bytes uint64 `json:"bytes"`
+			Nanos uint64 `json:"nanos"`
+		}{served.Load(), uint64(time.Since(started))})
+	})
 	finished := make(chan struct{})
 	var once sync.Once
 	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {

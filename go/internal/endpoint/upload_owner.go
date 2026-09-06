@@ -23,6 +23,16 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	return addr.String()
 }
 
+// UploadOwner separates delegated browser access without multiplying admission budgets.
+func UploadOwner(r *http.Request, trusted []netip.Prefix) string {
+	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
+		if owner := p.MeasurementOwner(); owner != "" {
+			return owner
+		}
+	}
+	return ClientKey(r, trusted)
+}
+
 // SessionKey buckets the per-client session budget.
 func SessionKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {

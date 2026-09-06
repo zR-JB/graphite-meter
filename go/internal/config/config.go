@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // EngineVersion is the server build version, stamped at link time.
@@ -59,6 +60,7 @@ type AuthConfig struct {
 
 // Config is the resolved server configuration.
 type Config struct {
+	ServerCatalog                             wire.ServerCatalog
 	Native                                    NativeListeners
 	NativePublic                              NativeOrigins
 	AdvertisedNative                          map[string]bool
@@ -83,6 +85,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
+		ServerCatalog:    wire.SingletonCatalog(),
 		Native:           NativeListeners{H1: ":7246"},
 		AdvertisedNative: map[string]bool{}, AdvertiseAllNative: true,
 		ServerName: "graphite-meter", EngineVersion: EngineVersion,
@@ -141,6 +144,9 @@ func Load() (Config, error) {
 		}
 	}
 	var err error
+	if c.ServerCatalog, err = loadServerCatalog(); err != nil {
+		return Config{}, err
+	}
 	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
 		return Config{}, err
 	}
@@ -282,6 +288,11 @@ func validOrigin(value, scheme string, allowSelf bool) bool {
 
 // Validate returns the first inconsistency in the configuration, or nil.
 func (c Config) Validate() error {
+	if len(c.ServerCatalog.Servers) > 0 {
+		if err := c.ServerCatalog.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := c.validateAuth(); err != nil {
 		return err
 	}

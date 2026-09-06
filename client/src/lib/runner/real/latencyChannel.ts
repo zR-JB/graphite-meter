@@ -2,11 +2,12 @@
 import type { CoreHost } from "../core";
 import type { RunnerEvent, TransportKind } from "../contract";
 import type { LatencyTarget } from "../../api/endpoints";
+import { authEnabled } from "../../auth";
 import {
-  authEnabled,
-  csrfHeader,
-  reportAuthenticationRequired,
-} from "../../auth";
+  socketMint,
+  reportServerAuthentication,
+  type ServerCredentials,
+} from "../../servers/credentials";
 import { httpToWs } from "./backendPure";
 import { pingWorker } from "./workerPool";
 import { TransportUnavailableError } from "./transportError";
@@ -48,22 +49,18 @@ function pingUrl(
 }
 
 /* Token mint for a WebTransport ping dial, when authentication is on. */
-function pingMint(target: LatencyTarget | null):
-  | {
-      url: string;
-      headers?: Record<string, string>;
-      credentials?: RequestCredentials;
-    }
-  | undefined {
-  if (!authEnabled || target?.transport !== "webtransport") return undefined;
-  return {
-    url: target.origin + target.routes.wtSession,
-    headers: csrfHeader(),
-    credentials: "include",
-  };
+function pingMint(
+  target: LatencyTarget | null,
+  credentials?: ServerCredentials,
+) {
+  if (!target) return undefined;
+  return target.transport === "webtransport"
+    ? socketMint(credentials, target.origin, target.routes.wtPing, "wt")
+    : socketMint(credentials, target.origin, target.routes.ping, "ws");
 }
 
 interface LatencyChannelDeps {
+  credentials?: ServerCredentials;
   host: CoreHost;
   target: LatencyTarget;
   /* Reconnect edges reported by the ping worker. */
@@ -79,6 +76,7 @@ export class LatencyChannel {
   #worker: Worker | null = null;
   /** True from prime to teardown. Gates late worker messages. */
   #active = false;
+  #ready = false;
   /* A timeout reports a stall; the runner owns whether the latency stage eventually expires. */
   #establishTimer: ReturnType<typeof setTimeout> | null = null;
   #timeOriginMs: number;
@@ -141,19 +139,25 @@ export class LatencyChannel {
       type: "start",
       url,
       transport: kind,
-      mint: pingMint(channel),
+      mint: pingMint(channel, this.#deps.credentials),
       intervalMs,
       replyDriven,
       maxInFlight,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: authEnabled,
+      checkAuthentication: this.#deps.credentials
+        ? this.#deps.credentials.kind === "session"
+        : authEnabled,
     });
   }
 
   /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
   measure(): void {
     this.#worker?.postMessage({ type: "measure" });
+  }
+
+  get ready(): boolean {
+    return this.#active && this.#ready;
   }
 
   /** Stop sends at this clock boundary, then admit terminal outcomes before terminating the worker. */
@@ -193,6 +197,7 @@ export class LatencyChannel {
   /* Terminating the ping worker also releases its transport. */
   teardown(): void {
     this.#active = false;
+    this.#ready = false;
     this.#clearEstablishTimer();
     if (this.#worker) {
       this.#worker.terminate();
@@ -210,7 +215,9 @@ export class LatencyChannel {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
-      reportAuthenticationRequired();
+      reportServerAuthentication(this.#deps.credentials);
+      this.#deps.host.ingestLatencyAccountingIncomplete();
+      this.#deps.stall("Sign in again to measure latency");
       return;
     }
     switch (msg.type) {
@@ -250,12 +257,14 @@ export class LatencyChannel {
         this.teardown();
         break;
       case "stall":
+        this.#ready = false;
         this.#deps.stall(msg.detail);
         break;
       case "resume":
         // Socket establishment alone does not restore latency evidence.
         break;
       case "ready":
+        this.#ready = true;
         // Warmup pongs stay in the worker, so waiting for a measured sample can outlive warmup.
         this.#clearEstablishTimer();
         break;
@@ -284,6 +293,7 @@ export class IdleKeepalive {
     return this.#emit;
   }
   #target: LatencyTarget;
+  #credentials?: ServerCredentials;
   #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
@@ -295,8 +305,13 @@ export class IdleKeepalive {
   /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(target: LatencyTarget, timeOriginMs = performance.timeOrigin) {
+  constructor(
+    target: LatencyTarget,
+    timeOriginMs = performance.timeOrigin,
+    credentials?: ServerCredentials,
+  ) {
     this.#target = target;
+    this.#credentials = credentials;
     this.#timeOriginMs = timeOriginMs;
   }
 
@@ -322,13 +337,15 @@ export class IdleKeepalive {
       type: "start",
       url,
       transport: channel.transport,
-      mint: pingMint(channel),
+      mint: pingMint(channel, this.#credentials),
       intervalMs,
       replyDriven: false,
       maxInFlight: 2,
       lossK: PING_LOSS_K,
       lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: authEnabled,
+      checkAuthentication: this.#credentials
+        ? this.#credentials.kind === "session"
+        : authEnabled,
     });
     // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });
@@ -425,7 +442,7 @@ export class IdleKeepalive {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
       this.stop();
-      reportAuthenticationRequired();
+      reportServerAuthentication(this.#credentials);
       return;
     }
     switch (msg.type) {

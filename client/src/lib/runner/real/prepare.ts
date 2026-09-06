@@ -17,11 +17,12 @@ import {
   parseWtToken,
 } from "../../api/decode";
 import {
-  authenticatedFetch,
-  authEnabled,
-  classifyAuthenticationFailure,
-  csrfHeader,
-} from "../../auth";
+  measurementFetch,
+  classifyServerAuthentication,
+  socketMint,
+  type ServerCredentials,
+} from "../../servers/credentials";
+import { validateServerDiscovery } from "../../servers/catalog";
 import { BUILD } from "../../buildenv";
 import {
   CONNECTION_ROLES,
@@ -64,17 +65,23 @@ export async function prepareConnections(
   previous: ConnectionValidation,
   roles: ConnectionRole[],
   signal: AbortSignal,
+  credentials?: ServerCredentials,
 ): Promise<ConnectionPreparation> {
   let discovery: TransportDiscovery;
   try {
     const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-    const response = await authenticatedFetch(`/preflight${ident}`, {
-      cache: "no-store",
-      signal,
-    });
+    const response = await measurementFetch(
+      credentials,
+      `${credentials?.server.url ?? ""}/preflight${ident}`,
+      {
+        cache: "no-store",
+        signal,
+      },
+    );
     if (!response.ok)
       throw new Error(`preflight returned HTTP ${response.status}`);
     const pf = parsePreflight(await readJSONResponse(response));
+    if (credentials) validateServerDiscovery(credentials.server, pf);
     const origin = new URL(response.url, location.href).origin;
     const protocol = (
       performance.getEntriesByName(response.url, "resource").at(-1) as
@@ -88,6 +95,7 @@ export async function prepareConnections(
         location.protocol === "https:",
         protocol,
       ),
+      uploadCheckpoint: pf.capabilities.uploadCheckpoint,
       generation: pf.generation,
       engineVersion: pf.engineVersion,
       server: pf.server,
@@ -95,7 +103,7 @@ export async function prepareConnections(
     };
   } catch (cause) {
     signal.throwIfAborted();
-    await classifyAuthenticationFailure(signal);
+    await classifyServerAuthentication(credentials, signal);
     throw new PreflightUnavailableError("preflight unavailable", { cause });
   }
   signal.throwIfAborted();
@@ -119,13 +127,19 @@ export async function prepareConnections(
           : config.transports.latencyTarget;
       try {
         if (role === "throughput") {
-          const path = await prepareThroughput(discovery, selection, signal);
+          const path = await prepareThroughput(
+            discovery,
+            selection,
+            signal,
+            credentials,
+          );
           result.validation.throughput = { selection, state: "verified", path };
         } else if (latencyPathNeeded(config)) {
           const { path, idle } = await prepareLatency(
             discovery,
             selection,
             signal,
+            credentials,
           );
           result.idle = idle;
           result.validation.latency = { selection, state: "verified", path };
@@ -156,9 +170,10 @@ export async function prepareConnections(
 async function pathProbe(
   url: string,
   signal: AbortSignal,
+  credentials?: ServerCredentials,
 ): Promise<{ probe: Probe; response: Response }> {
   try {
-    const response = await authenticatedFetch(url, {
+    const response = await measurementFetch(credentials, url, {
       cache: "no-store",
       signal,
     });
@@ -166,7 +181,7 @@ async function pathProbe(
     return { response, probe: parseProbe(await readJSONResponse(response)) };
   } catch (cause) {
     signal.throwIfAborted();
-    await classifyAuthenticationFailure(signal);
+    await classifyServerAuthentication(credentials, signal);
     throw cause;
   }
 }
@@ -175,6 +190,7 @@ async function prepareThroughput(
   discovery: TransportDiscovery,
   selection: string,
   signal: AbortSignal,
+  credentials?: ServerCredentials,
 ): Promise<VerifiedThroughputPath> {
   const requested = selectThroughputTarget(discovery, selection, true);
   if (!requested)
@@ -205,6 +221,7 @@ async function prepareThroughput(
       const response = await pathProbe(
         `${fetchTarget.origin}${fetchTarget.routes.probe}?cb=${performance.now()}-${attempt}`,
         probeSignal,
+        credentials,
       );
       probe = response.probe;
       browserProtocol = await resourceProtocol(
@@ -238,7 +255,7 @@ async function prepareThroughput(
   let target = requested.transport === "fetch-stream" ? fetchTarget : requested;
   if (requested.transport !== "fetch-stream") {
     try {
-      await verifyWtThroughput(requested, signal);
+      await verifyWtThroughput(requested, signal, credentials);
     } catch (cause) {
       signal.throwIfAborted();
       if (selection !== "auto" && selection !== "current") throw cause;
@@ -260,6 +277,7 @@ async function prepareLatency(
   discovery: TransportDiscovery,
   selection: string,
   signal: AbortSignal,
+  credentials?: ServerCredentials,
 ): Promise<{ path: VerifiedLatencyPath; idle: IdleKeepalive }> {
   const requested = selectLatencyTarget(
     discovery,
@@ -272,7 +290,7 @@ async function prepareLatency(
       { role: "latency" },
     );
   let target = requested;
-  let idle = new IdleKeepalive(target);
+  let idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
   const abort = () => idle.stop();
   signal.addEventListener("abort", abort, { once: true });
   try {
@@ -286,12 +304,13 @@ async function prepareLatency(
       const fallback = selectLatencyTarget(discovery, selection, false);
       if (!fallback) throw cause;
       target = fallback;
-      idle = new IdleKeepalive(target);
+      idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
       await idle.verifyReady(signal);
     }
     const { probe } = await pathProbe(
       `${target.origin}${target.routes.probe}?cb=${performance.now()}`,
       signal,
+      credentials,
     );
     const rtts = await idle.collectRtts(signal);
     signal.throwIfAborted();
@@ -318,15 +337,23 @@ async function prepareLatency(
 async function verifyWtThroughput(
   target: WebTransportThroughputTarget,
   signal: AbortSignal,
+  credentials?: ServerCredentials,
 ): Promise<void> {
   let established = false;
   try {
     let url = `${target.origin}${target.routes.wtDownload}?bytes=${16 * 1024}`;
-    if (authEnabled) {
-      const minted = await authenticatedFetch(
-        `${target.origin}${target.routes.wtSession}`,
-        { method: "POST", cache: "no-store", signal, headers: csrfHeader() },
-      );
+    const mint = socketMint(
+      credentials,
+      target.origin,
+      target.routes.wtDownload,
+      "wt",
+    );
+    if (mint) {
+      const minted = await measurementFetch(credentials, mint.url, {
+        method: "POST",
+        cache: "no-store",
+        signal,
+      });
       if (!minted.ok)
         throw new Error(`webtransport token mint refused (${minted.status})`);
       url += `&token=${encodeURIComponent(parseWtToken(await readJSONResponse(minted)).token)}`;

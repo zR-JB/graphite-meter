@@ -32,12 +32,22 @@ export MISE_CEILING_PATHS="$scratch" MISE_TRUSTED_CONFIG_PATHS="$bootstrap"
 export MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=none
 export MISE_ENV= MISE_AUTO_ENV=false MISE_ENV_CACHE=false MISE_LOCKED=true
 
-python_version=$(mise --cd "$bootstrap" config get --file "$bootstrap/mise.toml" tools.python)
+# Tool backends may invoke Git in their own repositories while installing Python.
+# Keep the hook's staged index for validation, but never pass it into that bootstrap.
+git_local_vars=$(git rev-parse --local-env-vars)
+bootstrap_mise() (
+    for git_name in $git_local_vars; do
+        unset "$git_name"
+    done
+    mise "$@"
+)
+
+python_version=$(bootstrap_mise --cd "$bootstrap" config get --file "$bootstrap/mise.toml" tools.python)
 if ! printf '%s\n' "$python_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "pre-commit: staged mise.toml must pin Python to an exact version" >&2
     exit 1
 fi
 # Resolving one configured tool avoids installing every checker for a docs commit.
-mise --cd "$bootstrap" install python
-python=$(mise --cd "$bootstrap" which python3 --tool "python@$python_version")
+bootstrap_mise --cd "$bootstrap" install python
+python=$(bootstrap_mise --cd "$bootstrap" which python3 --tool "python@$python_version")
 "$python" -I "$bootstrap/precommit.py"

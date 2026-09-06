@@ -69,7 +69,7 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
 	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ struct{}) bool {
-		delete(s.grants, grant)
+		s.deleteGrantLocked(grant)
 		return true
 	})
 	maps.DeleteFunc(sess.wtTokens, func(token [32]byte, _ struct{}) bool {

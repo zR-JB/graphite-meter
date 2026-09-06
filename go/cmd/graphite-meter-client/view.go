@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/help"
@@ -21,7 +22,11 @@ func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(m.header(w))
 	b.WriteString("\n\n")
-	if m.mode == modeRun {
+	if m.serverDetailsOpen {
+		b.WriteString(m.serverDetailsOverlay(w))
+	} else if m.serverChooser {
+		b.WriteString(m.serverChooserView(w))
+	} else if m.mode == modeRun {
 		b.WriteString(m.runView(w))
 	} else {
 		b.WriteString(m.configView(w))
@@ -169,7 +174,7 @@ func (m model) sectionView(w int) string {
 const serverURLColumn = 21
 
 func (m model) serversView(w int) string {
-	lines := []string{accentStyle.Render("Server Selection")}
+	lines := []string{accentStyle.Render("Catalogue origin"), mutedStyle.Render("Press s to select measurement servers")}
 	active := activePreset(m.cfg.BaseURL)
 	row := func(selected bool, name, url, note string) string {
 		return strings.TrimRight(fmt.Sprintf("%s %-10s %s  %s", checkbox(selected), name, url, note), " ")
@@ -235,7 +240,7 @@ func (m model) networkView(w int) string {
 }
 
 func (m model) throughputProtocolRow() string {
-	if t := m.selectedThroughputPath(); t != nil && t.Protocol != protocolNegotiated {
+	if t := m.selectedThroughputPath(); !m.multipleServers() && t != nil && t.Protocol != protocolNegotiated {
 		return inertValueLine("HTTP version", protocolChoiceLabel(t.Protocol), "fixed by this path")
 	}
 	return valueLine("HTTP version", protocolChoiceLabel(m.cfg.ThroughputProtocol), "where the path negotiates")
@@ -288,14 +293,14 @@ func (m model) planView() string {
 	value := valueStyle
 	if p := m.prepared; p != nil {
 		throughput, latency, observed = p.ThroughputSummary(), p.LatencySummary(), p.Probe.ProtocolNegotiated
-		if !p.FreshFor(m.cfg) {
+		if m.preparedRun != nil && !m.preparedRun.FreshFor(m.cfg) || m.preparedRun == nil && !p.FreshFor(m.cfg) {
 			value = mutedStyle
 		}
 	}
 	lines := []string{accentStyle.Render("Connection readiness")}
 	lines = append(lines, m.checklistView()...)
 	if m.prepareError != "" {
-		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("Press v to retry."))
+		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("v retries · s servers · a Use Automatic"))
 	}
 	lines = append(lines,
 		"",
@@ -372,9 +377,13 @@ func (m model) runView(w int) string {
 		b.WriteString("\n\n")
 		b.WriteString(live)
 	}
-	if len(m.results) > 0 {
+	if len(m.visibleResults()) > 0 {
 		b.WriteString("\n\n")
 		b.WriteString(panelStyle.Width(w - 2).Render(fitBlock(m.resultsView(w-6), w-6)))
+	}
+	if m.runDetails != nil {
+		b.WriteString("\n\n")
+		b.WriteString(fitLine(m.serverResultNotice()+" · d Details", w))
 	}
 	if m.err != nil {
 		b.WriteString("\n\n")
@@ -386,6 +395,32 @@ func (m model) runView(w int) string {
 func (m model) summaryView(w int) string {
 	server := m.server
 	server = cmp.Or(server, "probing "+m.cfg.BaseURL)
+	throughput := m.runPath(m.throughputTransport, m.throughputProtocol, m.target)
+	latency := m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)
+	streams := m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport)
+	if m.runDetails != nil {
+		names := make([]string, 0, len(m.runDetails.Selection))
+		paths := []string{}
+		for _, participant := range m.runDetails.Servers {
+			names = append(names, participant.Server.Name)
+			path := participant.Throughput.Transport + " / " + participant.Throughput.Protocol
+			if !slices.Contains(paths, path) {
+				paths = append(paths, path)
+			}
+			if participant.Server.ID == m.latencyFocus && participant.LatencyTarget != nil {
+				latency = participant.Server.Name + " · " + participant.LatencyTarget.Transport + " · " + participant.LatencyTarget.Origin
+			}
+		}
+		server = strings.Join(names, ", ")
+		throughput = strings.Join(paths, " + ")
+		if len(names) > 1 {
+			throughput = "Combined · " + throughput
+			streams = "Automatic per server"
+			if m.cfg.TransferStreams.Forced > 0 {
+				streams = fmt.Sprintf("%d per server / direction", m.cfg.TransferStreams.Forced)
+			}
+		}
+	}
 	mark := ""
 	switch {
 	case m.complete:
@@ -398,9 +433,9 @@ func (m model) summaryView(w int) string {
 		field("Target", valueStyle.Render(server)),
 		field("Stage", mark+valueStyle.Render(emptyDash(m.stage))+mutedStyle.Render(" / "+emptyDash(m.status))),
 		field("Profile", valueStyle.Render(stageSummary(m.cfg.Stages))),
-		field("Throughput", m.runPath(m.throughputTransport, m.throughputProtocol, m.target)),
-		field("Latency", m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)),
-		field("Streams", valueStyle.Render(m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport))+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
+		field("Throughput", throughput),
+		field("Latency", latency),
+		field("Streams", valueStyle.Render(streams)+mutedStyle.Render("  warmup "+m.cfg.Warmup.String()+"  ping "+m.cfg.PingInterval.String())),
 		"",
 	}
 	lines = append(lines, m.timelineView(w)...)
@@ -455,9 +490,12 @@ func (m model) liveView(w int) string {
 	scale := m.rateScale()
 	lines := []string{
 		accentStyle.Render("Live Telemetry"),
-		rateLine("download", m.displayRates[goclient.Down], scale, w),
-		rateLine("upload  ", m.displayRates[goclient.Up], scale, w),
+		m.liveRateLine("download", goclient.Down, scale, w),
+		m.liveRateLine("upload  ", goclient.Up, scale, w),
 		latencyLine(m.latency, m.lostStreak),
+	}
+	if name := m.latencyServerName(); name != "" {
+		lines = append(lines, mutedStyle.Render("Latency to "+name+" · l switches server"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -473,7 +511,7 @@ func (m model) resultsView(w int) string {
 	var scale float64
 	var bars []row
 	fixed := 0
-	for _, r := range m.results {
+	for _, r := range m.visibleResults() {
 		if isLatencyResult(r) {
 			continue
 		}
@@ -490,9 +528,13 @@ func (m model) resultsView(w int) string {
 		if r.ServerAuth {
 			note += "  server-clock"
 		}
+		rate := fmtRate(r.MeanBps)
+		if r.Unavailable {
+			rate = "--"
+		}
 		b := row{
 			head: mutedStyle.Render(pad(r.Stage, 13)) + " " + accentStyle.Render(pad(dir, 4)) + " ",
-			tail: "  " + valueStyle.Render(fmt.Sprintf("%13s", fmtRate(r.MeanBps))) + "  " + mutedStyle.Render(note),
+			tail: "  " + valueStyle.Render(fmt.Sprintf("%13s", rate)) + "  " + mutedStyle.Render(note),
 		}
 		bars = append(bars, b)
 		fixed = max(fixed, lipgloss.Width(b.head)+lipgloss.Width(b.tail))
@@ -500,7 +542,7 @@ func (m model) resultsView(w int) string {
 	barW := clamp(w-fixed, 8, 48)
 
 	next := 0
-	for _, r := range m.results {
+	for _, r := range m.visibleResults() {
 		if isLatencyResult(r) {
 			lines = append(lines, fmt.Sprintf("%s %s   p50 %s  p95 %s  %s",
 				mutedStyle.Render(pad(r.Stage, 13)),
@@ -528,11 +570,11 @@ func (m model) resultsView(w int) string {
 }
 
 func (m model) finalReport() string {
-	if len(m.results) == 0 || !m.complete && m.err == nil {
+	if len(m.visibleResults()) == 0 || !m.complete && m.err == nil {
 		return ""
 	}
 	lipgloss.SetColorProfile(termenv.Ascii)
-	return m.resultsView(m.innerWidth())
+	return m.resultsView(m.innerWidth()) + "\n\n" + m.serverResultsView(m.innerWidth())
 }
 
 // isLatencyResult includes directionless timeout-only and unresolved-only latency summaries.
@@ -543,7 +585,7 @@ func isLatencyResult(r goclient.Result) bool {
 // helpView is the footer. The model is the key map it renders, so the listing follows whichever screen is on show.
 func (m model) helpView() string {
 	m.help.Width = m.innerWidth()
-	return m.help.View(m)
+	return fitBlock(m.help.View(m), m.innerWidth())
 }
 
 // newHelp is the footer renderer, dressed in this program's styles rather than the bubble's defaults.
@@ -554,4 +596,11 @@ func newHelp() help.Model {
 	h.Styles.ShortSeparator, h.Styles.FullSeparator = subtleRuleStyle, subtleRuleStyle
 	h.Styles.Ellipsis = subtleRuleStyle
 	return h
+}
+
+func (m model) liveRateLine(label string, dir goclient.Direction, scale float64, w int) string {
+	if m.rates[dir].Unavailable {
+		return fitLine(label+"  --  awaiting current server window", w)
+	}
+	return rateLine(label, m.displayRates[dir], scale, w)
 }

@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,14 +218,15 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 			break
 		}
 	}
-	if owner != "" {
+	budget := uploadBudget(owner)
+	if budget != "" {
 		s.ownersMu.Lock()
-		if s.byOwner[owner] >= maxLiveUploadsPerClient {
+		if s.byOwner[budget] >= maxLiveUploadsPerClient {
 			s.ownersMu.Unlock()
 			s.live.Add(-1)
 			return nil, uploadAccessClientFull
 		}
-		s.byOwner[owner]++
+		s.byOwner[budget]++
 		s.ownersMu.Unlock()
 	}
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
@@ -234,15 +236,22 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 }
 
 func (s *UploadStore) releaseOwner(agg *uploadAgg) {
-	if agg.owner == "" {
+	budget := uploadBudget(agg.owner)
+	if budget == "" {
 		return
 	}
 	s.ownersMu.Lock()
-	s.byOwner[agg.owner]--
-	if s.byOwner[agg.owner] == 0 {
-		delete(s.byOwner, agg.owner)
+	s.byOwner[budget]--
+	if s.byOwner[budget] == 0 {
+		delete(s.byOwner, budget)
 	}
 	s.ownersMu.Unlock()
+}
+
+// Delegated owners share their subject's retention budget while keeping distinct access rights.
+func uploadBudget(owner string) string {
+	budget, _, _ := strings.Cut(owner, "\x00")
+	return budget
 }
 
 // finishFor marks id's upload complete on behalf of owner, releasing the progress stream to emit its terminal record.

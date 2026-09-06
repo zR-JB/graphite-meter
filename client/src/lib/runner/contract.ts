@@ -1,5 +1,6 @@
 // Shared runner contract for phases, config, events, results, and backend interfaces.
 
+import type { ServerCredentials } from "../servers/credentials";
 import type { Probe } from "../api/probe";
 import type {
   FetchThroughputTarget,
@@ -171,6 +172,8 @@ export interface PhaseTransition {
 
 /* ---------- Aggregate result (emitted on complete) ---------- */
 export interface RunResult {
+  multiServer?: import("../servers/measurement").MultiServerResult;
+  outcome?: "complete" | "partial" | "incomplete";
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
   /** The bidirectional phase's concurrent lanes, or null when that stage is off. */
@@ -364,7 +367,16 @@ export interface VerifiedLatencyPath {
   verifiedAt: number;
 }
 
+export interface ReceiverCheckpoint {
+  id: string;
+  bytes: number;
+  nanos: number;
+  requestedAtMs: number;
+  receivedAtMs: number;
+}
+
 export interface PreparedPaths {
+  credentials?: ServerCredentials;
   discovery: TransportDiscovery;
   throughput: VerifiedThroughputPath;
   latency: VerifiedLatencyPath | null;
@@ -387,6 +399,7 @@ export type DiscoveredLatency = DiscoveredTarget<LatencyTarget>;
 
 /* Server-advertised transports classified against the page that uses them. */
 export interface TransportDiscovery {
+  uploadCheckpoint?: boolean;
   generation: string;
   engineVersion: string;
   server: { name: string; location?: string };
@@ -400,8 +413,25 @@ export interface TransportDiscovery {
 
 /* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
+  | { type: "serverLatency"; serverId: string; sample: LatencyBucket }
+  | {
+      type: "serverLatencySummary";
+      serverId: string;
+      stage: TransportRole;
+      summary: StageLatencySummary | null;
+    }
+  | {
+      type: "serverFailure";
+      failure: import("../servers/measurement").ServerFailure;
+      participants: string[];
+    }
+  | {
+      type: "serverDetails";
+      details: import("../servers/measurement").MultiServerResult;
+    }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
+  | { type: "aggregateEvidence"; available: boolean }
   /* A short-lived upload-only visual target. */
   | { type: "uploadPresentation"; bytesPerSec: number | null }
   | { type: "latency"; sample: LatencyBucket }
@@ -452,6 +482,7 @@ export interface NetworkRunner {
   on(handler: (e: RunnerEvent) => void): () => void;
   reconfigure(config: LiveRunConfig): void;
   readonly phase: Phase;
+  focusServer?(id: string): void;
 }
 
 /* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

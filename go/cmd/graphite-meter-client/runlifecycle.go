@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -41,14 +42,18 @@ func plannedStages(cfg goclient.Config) []stageProgress {
 
 func prepareConnection(preparation *goclient.Preparation, seq int) tea.Cmd {
 	return func() tea.Msg {
-		connection, err := preparation.Prepare()
-		return preparationMsg{seq: seq, connection: connection, err: err}
+		run, err := preparation.PrepareRun()
+		var connection *goclient.PreparedConnection
+		if run != nil && len(run.Servers) > 0 {
+			connection = run.Servers[0].Connection
+		}
+		return preparationMsg{seq: seq, run: run, connection: connection, err: err}
 	}
 }
 
-func beginAuthorization(preparation *goclient.Preparation, seq int, authURL string) tea.Cmd {
+func beginAuthorization(preparation *goclient.Preparation, seq int, authURL string, serverID string) tea.Cmd {
 	return func() tea.Msg {
-		pending, err := preparation.BeginAuthorization(authURL)
+		pending, err := preparation.BeginServerAuthorization(serverID, authURL)
 		return authChallengeMsg{seq: seq, pending: pending, err: err}
 	}
 }
@@ -133,6 +138,27 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
 	}
+	if msg.run != nil {
+		m.preparedRun = msg.run
+		if len(msg.run.Servers) > 0 {
+			m.cfg.ServerIDs = msg.run.SelectedIDs()
+		}
+		if m.chooseAfterPrepare {
+			m.chooseAfterPrepare = false
+			m.serverChooser = true
+			m.serverRow = 0
+			m.serverDraft = slices.Clone(m.cfg.ServerIDs)
+		}
+	}
+	m.authServerID = ""
+	if msg.run != nil {
+		for _, server := range msg.run.Servers {
+			if _, ok := errors.AsType[*goclient.AuthRequiredError](server.Err); ok {
+				m.authServerID = server.Server.ID
+				break
+			}
+		}
+	}
 	preparationErr, preflightDecoded := errors.AsType[*goclient.PreparationError](msg.err)
 	if preflightDecoded {
 		pf := preparationErr.Preflight
@@ -148,7 +174,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 			m.prepareError = ""
 			m.focusServer()
 			m.notice = "This server requires authorization. Preparing the approval page…"
-			return m, tea.Batch(beginAuthorization(m.preparation, m.prepareSeq, authErr.URL), m.spin.Tick)
+			return m, tea.Batch(beginAuthorization(m.preparation, m.prepareSeq, authErr.URL, m.authServerID), m.spin.Tick)
 		}
 		m.prepareStatus = "failed"
 		m.prepareStep = stepReach
@@ -165,6 +191,11 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	m.prepareStep = stepReady
 	m.prepareError = ""
 	m.prepared = msg.connection
+	if msg.connection == nil {
+		m.prepareStatus = "failed"
+		m.prepareError = "Selected server evidence is unavailable"
+		return m, nil
+	}
 	pf := msg.connection.Preflight
 	m.discovery = new(pf)
 	return m, nil
@@ -198,13 +229,28 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		m.prepareError = msg.err.Error()
 		return m, nil
 	}
-	currentOrigin, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL)
+	expectedOrigin := m.cfg.BaseURL
+	if m.authServerID != "" && m.preparedRun != nil {
+		for _, server := range m.preparedRun.Catalog.Servers {
+			if server.ID == m.authServerID {
+				expectedOrigin = server.URL
+			}
+		}
+	}
+	currentOrigin, err := goclient.CanonicalServerOrigin(expectedOrigin)
 	if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
 		m.notice = "Server changed while approval was pending. Authorization was discarded."
 		return m.reprepare(nil)
 	}
-	m.cfg.AuthToken = msg.token
-	m.cfg.AuthOrigin = msg.origin
+	if err := m.controller.AcceptAuthorization(msg.origin, msg.token); err != nil {
+		m.prepareStatus = "failed"
+		m.prepareError = err.Error()
+		return m, nil
+	}
+	if base, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL); err == nil && base == msg.origin {
+		m.cfg.AuthToken = msg.token
+		m.cfg.AuthOrigin = msg.origin
+	}
 	m.notice = "Client approved. Verifying authenticated transports…"
 	return m.reprepare(nil)
 }
@@ -237,7 +283,7 @@ func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
 		m.prepareStep = max(m.prepareStep, stepPreflight)
 		m.focusServer()
 		m.notice = "Authorization expired. Preparing the approval page…"
-		return m, tea.Batch(beginAuthorization(m.preparation, m.prepareSeq, authErr.URL), m.spin.Tick)
+		return m, tea.Batch(beginAuthorization(m.preparation, m.prepareSeq, authErr.URL, m.authServerID), m.spin.Tick)
 	}
 	m.status = "complete"
 	if err != nil {
@@ -247,6 +293,9 @@ func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
 			m.err = err
 			m.status = "error"
 		}
+	}
+	if m.runDetails != nil && m.runDetails.Outcome == "incomplete" {
+		m.status = "incomplete"
 	}
 	m.stopStages()
 	m.complete = true
@@ -263,7 +312,7 @@ func (m model) startRun() (model, tea.Cmd) {
 		return m, nil
 	}
 	m.invalidatePreparation()
-	events := m.controller.Start(m.cfg, m.prepared)
+	events := m.controller.StartSelection(m.cfg, m.preparedRun)
 
 	m.mode = modeRun
 	m.runSeq++
@@ -282,6 +331,14 @@ func (m model) startRun() (model, tea.Cmd) {
 	m.peaks = map[goclient.Direction]float64{}
 	m.displayRates = map[goclient.Direction]float64{}
 	m.lostStreak = 0
+	m.runDetails = nil
+	m.latencyFocus = ""
+	m.latencyByServer = map[string]goclient.LatencySample{}
+	m.lostByServer = map[string]int{}
+	m.serverResults = map[string][]goclient.Result{}
+	if m.preparedRun != nil {
+		m.latencyFocus = m.preparedRun.LatencyFocus
+	}
 	m.results = nil
 	m.latency = goclient.LatencySample{}
 	m.stages = plannedStages(m.cfg)
@@ -291,6 +348,17 @@ func (m model) startRun() (model, tea.Cmd) {
 
 func (m *model) apply(e goclient.Event) {
 	switch e.Kind {
+	case goclient.EventServers:
+		m.runDetails = e.Servers
+		if m.latencyFocus == "" && e.Servers != nil {
+			m.latencyFocus = e.Servers.LatencyFocus
+		}
+		return
+	case goclient.EventServerFailure:
+		if e.Failure != nil {
+			m.notice = fmt.Sprintf("%s: %s", e.ServerID, e.Failure.Message)
+		}
+		return
 	case goclient.EventPreflight:
 		if e.Preflight != nil {
 			m.target = e.ThroughputTarget
@@ -311,8 +379,26 @@ func (m *model) apply(e goclient.Event) {
 		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
+		if e.Throughput.Unavailable {
+			m.displayRates[e.Direction] = 0
+		}
 		m.peaks[e.Direction] = max(m.peaks[e.Direction], e.Throughput.BytesPerSec)
 	case goclient.EventLatency:
+		if e.ServerID != "" {
+			if m.latencyByServer == nil {
+				m.latencyByServer = map[string]goclient.LatencySample{}
+				m.lostByServer = map[string]int{}
+			}
+			if e.Latency.TimedOut {
+				m.lostByServer[e.ServerID]++
+			} else {
+				m.lostByServer[e.ServerID] = 0
+				m.latencyByServer[e.ServerID] = e.Latency
+			}
+			if e.ServerID != m.latencyFocus {
+				return
+			}
+		}
 		if e.Latency.TimedOut {
 			m.lostStreak++
 		} else {
@@ -320,6 +406,13 @@ func (m *model) apply(e goclient.Event) {
 			m.latency = e.Latency
 		}
 	case goclient.EventResult:
+		if e.ServerID != "" && e.Result != nil {
+			if m.serverResults == nil {
+				m.serverResults = map[string][]goclient.Result{}
+			}
+			m.serverResults[e.ServerID] = append(m.serverResults[e.ServerID], *e.Result)
+			return
+		}
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)
 		}

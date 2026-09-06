@@ -103,7 +103,10 @@ test("the served application measures real traffic and reloads its saved result"
     )
       await settings.getByText(label, { exact: true }).click();
   }
-  await settings.getByLabel("Streams per direction").fill("1");
+  await expect(
+    settings.getByLabel("Streams per server and direction"),
+  ).toBeVisible();
+  await settings.getByLabel("Streams per server and direction").fill("1");
   // Keep this application smoke on the local HTTP/WebSocket path; the transport
   // matrix separately verifies TLS, multiplexed HTTP, and WebTransport workers.
   for (const role of ["throughput", "latency"])

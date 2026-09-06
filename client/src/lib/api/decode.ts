@@ -89,6 +89,9 @@ export function parsePreflight(value: unknown): Preflight {
     engineVersion: string(input.engineVersion, 256, true),
     generation: string(input.generation, 256),
     capabilities: {
+      ...(capabilities.uploadCheckpoint === undefined
+        ? {}
+        : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
       throughput: targets(capabilities.throughput).map((value) => {
         const target = record(value);
         return {

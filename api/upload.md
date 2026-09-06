@@ -1,4 +1,4 @@
-# Upload measurement protocol (0.7)
+# Upload measurement protocol (0.8)
 
 Every upload belongs to a server-minted, owner-bound measurement session. Clients
 must update alongside the server for 0.7: HTTP uploads without an ID are rejected,
@@ -21,6 +21,15 @@ receiver windows from presentation.
    byte count; this response does not replace the aggregate progress feed.
 4. `DELETE /upload/progress?id=...` finalizes the aggregate. The progress feed
    emits `complete` after active data lanes have drained, then closes.
+
+`POST /upload/checkpoint?id=...` returns a fresh `{ "bytes": N, "nanos": N }`
+snapshot of an **existing** receiver aggregate with `Cache-Control: no-store`.
+It applies the same owner check as data and progress. It never allocates an
+aggregate, replaces a progress reader, finalizes the upload, or refreshes its
+activity/idle-retention lifetime. Missing/expired IDs and foreign owners use the
+usual upload refusal codes. Both fields obey the same counter contract below.
+The discovery capability `uploadCheckpoint: true` advertises this operation;
+coordinated upload tests require it before starting.
 
 WebTransport `/wt/upload?id=...` uses the same aggregate and ownership rules. Its
 server-opened unidirectional stream carries the same NDJSON feed; client streams
@@ -58,6 +67,11 @@ the entire observation is stale and is ignored; a client never combines retained
 bytes with a new timestamp. Equal counters can be repeated, and a final record
 can confirm the last observation without adding bytes. Monotonic state belongs
 to the upload ID and survives feed replacement.
+
+After the first accepted chunk, progress records continue every 100 ms even when
+the byte count is unchanged, with advancing receiver time. This provides evidence
+of zero delivery in that receiver window. A blank heartbeat or missing record
+provides no byte/time evidence.
 
 Malformed or unknown records are not observations. An invalid or stale
 `complete` record is not evidence that the receiver aggregate finalized. EOF

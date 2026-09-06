@@ -48,7 +48,7 @@ func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	id := r.URL.Query().Get("id")
 	// This request-shaped route derives its owner from the HTTP request key.
-	owner := ClientKey(r, e.trusted)
+	owner := UploadOwner(r, e.trusted)
 	if r.Method == http.MethodDelete {
 		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)
@@ -123,7 +123,6 @@ func (e *UploadProgress) streamProgress(done <-chan struct{}, id, owner string, 
 func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
 	tick := time.Tick(uploadProgressTick)
 	beat := time.Tick(uploadProgressHeartbeat)
-	var lastBytes uint64
 	for {
 		select {
 		case <-done:
@@ -147,8 +146,7 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wir
 		case <-tick:
 			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
 			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
-			if n != lastBytes {
-				lastBytes = n
+			if elapsed > 0 {
 				if !emit(wire.UploadProgress{Type: "progress", Bytes: n, Nanos: elapsed}) {
 					return
 				}

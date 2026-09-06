@@ -70,6 +70,27 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 }
 
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
+	if clientOrigin, valid := secureBrowserOrigin(r.Header.Get("Origin")); secure && valid && clientOrigin != s.public.String() && browserGrantRoute(r.URL.Path) {
+		allowed := false
+		for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
+			h := strings.ToLower(strings.TrimSpace(raw))
+			if h == "authorization" {
+				allowed = true
+			} else if h != "" && h != "content-type" {
+				forbidden(w)
+				return
+			}
+		}
+		if !allowed || !allowedCORSMethod(r.URL.Path, r.Header.Get("Access-Control-Request-Method")) {
+			forbidden(w)
+			return
+		}
+		cors.Bearer(w.Header(), clientOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if !secure || r.Header.Get("Origin") != s.public.String() {
 		forbidden(w)
 		return

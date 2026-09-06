@@ -22,6 +22,8 @@ const (
 	EventLatency
 	EventResult
 	EventDone
+	EventServers
+	EventServerFailure
 )
 
 type StagePhase string
@@ -34,6 +36,9 @@ const (
 )
 
 type Event struct {
+	ServerID                              string
+	Servers                               *RunDetails
+	Failure                               *ServerFailure
 	Kind                                  EventKind
 	At                                    time.Time
 	Stage                                 string
@@ -54,6 +59,7 @@ type Event struct {
 }
 
 type ThroughputSample struct {
+	Unavailable bool
 	Stage       string
 	Direction   Direction
 	BytesPerSec float64
@@ -71,16 +77,17 @@ type LatencySample struct {
 }
 
 type Result struct {
-	Stage      string
-	Direction  Direction
-	MeanBps    float64
-	PeakBps    float64
-	TotalBytes uint64
-	Samples    int
-	ServerAuth bool
-	Latency    LatencyStats
-	Elapsed    time.Duration
-	Err        error // Non-nil marks an incomplete stage summary and preserves its failure.
+	Unavailable bool
+	Stage       string
+	Direction   Direction
+	MeanBps     float64
+	PeakBps     float64
+	TotalBytes  uint64
+	Samples     int
+	ServerAuth  bool
+	Latency     LatencyStats
+	Elapsed     time.Duration
+	Err         error // Non-nil marks an incomplete stage summary and preserves its failure.
 }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.

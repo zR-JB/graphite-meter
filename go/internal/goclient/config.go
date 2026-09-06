@@ -141,6 +141,8 @@ func (p TransferStreamPolicy) Label(protocol, transport string) string {
 }
 
 type Config struct {
+	ServerIDs              []string
+	server                 *wire.ServerEntry
 	BaseURL                string
 	ThroughputTarget       string
 	ThroughputProtocol     string

@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
@@ -21,6 +20,7 @@ import (
 )
 
 type PreparedConnection struct {
+	PreflightRTT     time.Duration
 	Preflight        wire.Preflight
 	ThroughputTarget wire.ThroughputTarget
 	LatencyTarget    *wire.LatencyTarget
@@ -67,6 +67,7 @@ func (c Config) authToken() string {
 }
 
 type authTransport struct {
+	server          *wire.ServerEntry
 	token, hostname string
 	base            http.RoundTripper
 }
@@ -75,7 +76,7 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if t.token == "" {
 		return t.base.RoundTrip(r)
 	}
-	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
+	if r.URL.Scheme != "https" || !(strings.EqualFold(r.URL.Hostname(), t.hostname) || t.server != nil && t.server.AllowsOrigin(r.URL.Scheme+"://"+r.URL.Host)) {
 		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 	}
 	clone := r.Clone(r.Context())
@@ -94,8 +95,8 @@ func pinnedHostname(origin string) string {
 
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 	token := cfg.authToken()
-	client := &http.Client{Transport: authTransport{token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
-	if token != "" {
+	client := &http.Client{Transport: authTransport{server: cfg.server, token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
+	if token != "" || cfg.server != nil {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
 		}
@@ -208,6 +209,11 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	fail := func(err error) (*PreparedConnection, error) {
 		return nil, &PreparationError{Preflight: pf, Err: err}
 	}
+	if cfg.server != nil {
+		if err := cfg.server.ValidateDiscovery(pf); err != nil {
+			return fail(err)
+		}
+	}
 	advertisedTarget, err := selectTarget(cfg, pf)
 	if err != nil {
 		return fail(err)
@@ -248,6 +254,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		return fail(latencyErr)
 	}
 	var latencyProbe *wire.Probe
+	var preflightRTT time.Duration
 	if !needsLatency {
 		latencyTarget = nil
 	} else if latencyTarget != nil {
@@ -271,10 +278,12 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 				return fail(err)
 			}
 		}
+		probeStarted := time.Now()
 		p, _, err := getJSONProbe(ctx, wsClient, latencyTarget.Origin, latencyTarget.Routes.Probe, "latency probe")
 		if err != nil {
 			return fail(err)
 		}
+		preflightRTT = time.Since(probeStarted)
 		latencyProbe = new(p)
 		if latencyTarget.Transport == wire.TransportWebSocket {
 			if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
@@ -282,66 +291,32 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 			}
 		}
 	}
-	return &PreparedConnection{Preflight: pf, ThroughputTarget: target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
+	return &PreparedConnection{PreflightRTT: preflightRTT, Preflight: pf, ThroughputTarget: target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
 }
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	return RunPrepared(ctx, cfg, nil, emit)
 }
 
-// RunPrepared emits exactly one EventDone after all stage events, including on cancellation.
-// The returned error is the same terminal outcome for synchronous callers.
-func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) (err error) {
-	defer func() { emit(Event{Kind: EventDone, At: time.Now(), Err: err}) }()
+// RunPrepared runs a direct, single-server connection through the same coordinator
+// used by catalogue selections. The controller owns catalogue-based preparation.
+func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) error {
 	cfg = cfg.normalized()
 	if !prepared.FreshFor(cfg) {
+		var err error
 		prepared, err = Prepare(ctx, cfg)
 		if err != nil {
+			emit(Event{Kind: EventDone, At: time.Now(), Err: err})
 			return err
 		}
 	}
-	target := &prepared.ThroughputTarget
-	transfer, closeTransfer := protocolClient(cfg, target.Protocol, func() *http.Transport { return baseTransport(cfg) })
-	defer closeTransfer()
-	wsClient, closeWebSocket := websocketClient(cfg)
-	defer closeWebSocket()
-	pf := prepared.Preflight
-	probe := prepared.Probe
-	latencyTarget := prepared.LatencyTarget
-	latencyProbe := prepared.LatencyProbe
-	throughputProtocol := targetProtocolEvidence(target.Protocol)
-	if target.Protocol == "negotiated" {
-		throughputProtocol = probe.ProtocolNegotiated
-	}
-	event := Event{Kind: EventPreflight, At: time.Now(), Preflight: new(pf), Probe: new(probe), LatencyProbe: latencyProbe, Message: target.ID, ThroughputTarget: target.ID, ThroughputProtocol: throughputProtocol, ThroughputTransport: target.Transport}
-	if latencyTarget != nil {
-		event.LatencyTarget = latencyTarget.ID
-		event.LatencyTransport = latencyTarget.Transport
-		event.LatencyProtocol = latencyBusEvidence(latencyTarget, latencyProbe)
-	}
-	emit(event)
-
-	r := runner{
-		cfg: cfg, streams: cfg.TransferStreams.lanes(target.Protocol, target.Transport),
-		http: transfer, websocketHTTP: wsClient,
-		target: target, latencyTarget: latencyTarget,
-		emit: emit,
-	}
-	for _, stage := range cfg.Plan() {
-		if len(stage.Directions) == 0 {
-			err = r.runLatencyStage(ctx, stage.Name, false, stage.Duration)
-		} else {
-			err = r.runTransferStage(ctx, stage.Name, stage.Directions, stage.Duration)
-		}
-		if err != nil {
-			return err
-		}
-		emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StageFinished})
-	}
-	return nil
+	identity := wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: prepared.Preflight.Server.Name}
+	selection := &PreparedRun{Servers: []PreparedServer{{Server: identity, Connection: prepared, config: cfg}}, LatencyFocus: "self"}
+	return RunSelection(ctx, cfg, selection, emit)
 }
 
 type runner struct {
+	coordinated   *participantCounters
 	cfg           Config
 	streams       streamCounts
 	http          *http.Client
@@ -350,12 +325,6 @@ type runner struct {
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)
 	idleRTT       time.Duration
-}
-
-type transferOutcome struct {
-	result  Result
-	err     error
-	latency bool
 }
 
 const laneStagger = 75 * time.Millisecond
@@ -390,79 +359,6 @@ func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
 	}
 }
 
-func (r *runner) runLatencyStage(ctx context.Context, stage string, underLoad bool, duration time.Duration) error {
-	gate := r.newStageGate(ctx, stage, 1)
-	defer gate.stop()
-	stats, err := r.measureLatency(gate.ctx, stage, underLoad, duration, gate)
-	if cause := context.Cause(gate.ctx); cause != nil {
-		err = cause
-	}
-	if err == nil && !underLoad && stats.P50 > 0 {
-		r.idleRTT = stats.P50
-	}
-	if err == nil || stats.HasObservations() {
-		res := Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: err}
-		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(res)})
-	}
-	return err
-}
-
-func (r *runner) runTransferStage(ctx context.Context, stage string, dirs []Direction, duration time.Duration) error {
-	participants := len(dirs)
-	if r.cfg.LoadedLatency {
-		participants++
-	}
-	gate := r.newStageGate(ctx, stage, participants)
-	defer gate.stop()
-	stageCtx := gate.ctx
-
-	var wg sync.WaitGroup
-	outcomes := make(chan transferOutcome, participants)
-	for _, dir := range dirs {
-		wg.Go(func() {
-			res, err := r.measureDirection(stageCtx, stage, dir, duration, gate)
-			outcomes <- transferOutcome{result: res, err: err}
-		})
-	}
-
-	if r.cfg.LoadedLatency {
-		wg.Go(func() {
-			stats, err := r.measureLatency(stageCtx, stage, true, duration, gate)
-			outcomes <- transferOutcome{result: Result{Stage: stage, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: err}, err: err, latency: true}
-		})
-	}
-
-	collected := make([]transferOutcome, 0, participants)
-	for range participants {
-		outcome := <-outcomes
-		if outcome.err != nil {
-			gate.cancel(outcome.err)
-		}
-		collected = append(collected, outcome)
-	}
-	wg.Wait()
-	stageErr := context.Cause(stageCtx)
-	for _, outcome := range collected {
-		if !outcome.latency {
-			continue
-		}
-		if stageErr != nil {
-			outcome.result.Err = stageErr
-		}
-		if stageErr == nil || outcome.result.Latency.HasObservations() {
-			r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Result: new(outcome.result)})
-		}
-	}
-	for _, outcome := range collected {
-		if outcome.latency || stageErr != nil && (outcome.result.TotalBytes == 0 || outcome.result.Elapsed <= 0) {
-			continue
-		}
-		outcome.result.Err = stageErr
-		r.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage, Direction: outcome.result.Direction, Result: new(outcome.result)})
-	}
-	return stageErr
-}
-
 func (r *runner) measureDirection(ctx context.Context, stage string, dir Direction, duration time.Duration, gate *stageGate) (Result, error) {
 	if dir == Down {
 		return r.measureDownload(ctx, stage, duration, gate)
@@ -474,57 +370,21 @@ func (r *runner) measureDirection(ctx context.Context, stage string, dir Directi
 const stageReadyTimeout = 10 * time.Second
 
 type stageGate struct {
-	ctx    context.Context
-	cancel context.CancelCauseFunc
-	ready  chan struct{}
-	start  chan struct{}
-	done   chan struct{}
+	reportReady   func()
+	boundaryStart time.Time
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	ready         chan struct{}
+	start         chan struct{}
+	done          chan struct{}
 }
 
-func (g *stageGate) stop() {
-	g.cancel(nil)
-	<-g.done
-}
-
-func (r *runner) newStageGate(ctx context.Context, stage string, participants int) *stageGate {
-	ctx, cancel := context.WithCancelCause(ctx)
-	g := &stageGate{ctx: ctx, cancel: cancel, ready: make(chan struct{}, participants), start: make(chan struct{}), done: make(chan struct{})}
-	r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StagePreparing})
-	go func() {
-		defer close(g.done)
-		prepareTimer := time.NewTimer(stageReadyTimeout)
-		defer prepareTimer.Stop()
-		for range participants {
-			select {
-			case <-ctx.Done():
-				return
-			case <-prepareTimer.C:
-				cancel(fmt.Errorf("%s transports were not ready within %v", stage, stageReadyTimeout))
-				return
-			case <-g.ready:
-			}
-		}
-		prepareTimer.Stop()
-		if ctx.Err() != nil {
-			return
-		}
-		if warmup := adaptiveWarmup(r.cfg.Warmup, r.idleRTT); warmup > 0 {
-			r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageWarmup})
-			timer := time.NewTimer(warmup)
-			defer timer.Stop()
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-			}
-		}
-		if ctx.Err() != nil {
-			return
-		}
-		r.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage, Phase: StageMeasuring})
-		close(g.start)
-	}()
-	return g
+func (g *stageGate) markReady() {
+	if g.reportReady != nil {
+		g.reportReady()
+		return
+	}
+	g.ready <- struct{}{}
 }
 
 func (r *runner) endpoint(path string) (string, error) {
@@ -580,7 +440,7 @@ func selectTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.Th
 	if selection == "auto" {
 		for i := range pf.Capabilities.ThroughputTargets {
 			t := &pf.Capabilities.ThroughputTargets[i]
-			if t.Transport != mechanism {
+			if t.Transport != mechanism || cfg.ThroughputProtocol != "" && cfg.ThroughputProtocol != "auto" && t.Protocol != "negotiated" && t.Protocol != cfg.ThroughputProtocol {
 				continue
 			}
 			if origin.Equal(t.Origin, cfg.BaseURL) {
@@ -590,7 +450,7 @@ func selectTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.Th
 		var candidate *wire.ThroughputTarget
 		for i := range pf.Capabilities.ThroughputTargets {
 			t := &pf.Capabilities.ThroughputTargets[i]
-			if t.Transport == mechanism {
+			if t.Transport == mechanism && (cfg.ThroughputProtocol == "" || cfg.ThroughputProtocol == "auto" || t.Protocol == "negotiated" || t.Protocol == cfg.ThroughputProtocol) {
 				if candidate != nil {
 					return nil, fmt.Errorf("multiple throughput endpoints available; select an origin")
 				}

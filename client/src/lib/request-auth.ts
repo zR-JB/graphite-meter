@@ -1,7 +1,9 @@
 export function redirectForCredentials(
   credentials: RequestCredentials | undefined,
 ): RequestRedirect | undefined {
-  return credentials === "include" ? "error" : undefined;
+  return credentials === "include" || credentials === "omit"
+    ? "error"
+    : undefined;
 }
 
 /* Only the explicit marker means an expired session. */

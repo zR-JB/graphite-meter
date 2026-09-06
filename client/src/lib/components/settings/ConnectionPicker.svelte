@@ -11,6 +11,8 @@
   interface Option {
     value: string;
     label: string;
+    disabled?: boolean;
+    detail?: string;
   }
   interface Props {
     role: ConnectionRole;
@@ -25,13 +27,22 @@
       : store.config.transports.latencyTarget,
   );
   const connection = $derived(store.connections[role]);
+  const simultaneous = $derived(store.selectedServers.length > 1);
+  const validation = $derived(
+    simultaneous ? store.selectionValidation : connection.validation,
+  );
+  const summary = $derived(
+    simultaneous
+      ? `${store.selectedServers.filter((id) => store.serverReadiness[id]?.state === "ready").length} of ${store.selectedServers.length} servers ready. Paths resolve independently.`
+      : (connection.message ?? connection.summary),
+  );
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
   );
   const status = $derived(
-    connection.validation === "verified"
+    validation === "verified"
       ? "Ready"
-      : connection.validation[0].toUpperCase() + connection.validation.slice(1),
+      : validation[0].toUpperCase() + validation.slice(1),
   );
 
   function select(value: string) {
@@ -49,7 +60,10 @@
   <legend>{title}</legend>
   <div class="options">
     {#each options as option (option.value)}
-      {@const view = optionView(option.value)}
+      {@const view =
+        option.detail !== undefined
+          ? { disabled: option.disabled ?? false, detail: option.detail }
+          : optionView(option.value)}
       <label
         class="choice"
         class:selected={selected === option.value}
@@ -71,17 +85,20 @@
       </label>
     {/each}
   </div>
+  {#if selected !== "auto" && !locked && (options.find((option) => option.value === selected)?.disabled || validation === "failed")}
+    <button type="button" onclick={() => select("auto")}>Use Automatic</button>
+  {/if}
   <div
     class="validation"
-    class:error={connection.validation === "failed"}
+    class:error={validation === "failed"}
     aria-live="polite"
   >
-    <span class="dot" data-state={connection.validation}></span>
+    <span class="dot" data-state={validation}></span>
     <span class="validation-copy">
       <strong>{locked ? "In use" : status}</strong>
-      <small>{connection.message ?? connection.summary}</small>
+      <small>{summary}</small>
     </span>
-    {#if !locked && (connection.validation === "failed" || connection.validation === "stale")}
+    {#if !locked && (validation === "failed" || validation === "stale")}
       <!-- Both pickers mount at once and a <legend> does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
       <button

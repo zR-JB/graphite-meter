@@ -329,7 +329,7 @@ func TestRunDownloadStageEndToEnd(t *testing.T) {
 	if result.Samples == 0 || result.MeanBps <= 0 {
 		t.Fatalf("download result lacks throughput samples or a positive window rate: %+v", result)
 	}
-	if terminals != 1 || events[len(events)-1].Kind != EventDone || events[len(events)-2].Phase != StageFinished {
+	if terminals != 1 || events[len(events)-1].Kind != EventDone || events[len(events)-2].Kind != EventServers {
 		t.Fatalf("want one terminal outcome after the finished stage, got %+v", events)
 	}
 }
@@ -571,7 +571,7 @@ func TestRunBidirectionalStageEndToEnd(t *testing.T) {
 		duration time.Duration
 	}{
 		{"single stream", 1, 500 * time.Millisecond},
-		{"clamped to the max of 128", 999, 2 * time.Second},
+		{"two streams per direction", 2, 2 * time.Second},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -107,14 +107,15 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(isHistoryRecord({ ...record, id: "bad" })).toBe(false);
 });
 
-test("accepts only the current history schema and rejects obsolete fields", () => {
+test("writes v4, preserves v3 singletons and rejects obsolete fields", () => {
   const record = buildHistoryRecord(
     result,
     { paths: null, clientBuild: "b" },
     200,
   );
-  expect(record.schemaVersion).toBe(3);
-  for (const schemaVersion of [undefined, 1, 2, 4])
+  expect(record.schemaVersion).toBe(4);
+  expect(isHistoryRecord({ ...record, schemaVersion: 3 })).toBe(true);
+  for (const schemaVersion of [undefined, 1, 2, 5])
     expect(isHistoryRecord({ ...record, schemaVersion })).toBe(false);
   for (const obsolete of ["meanBytesPerSec", "packetLossPct"]) {
     const saved = structuredClone(record);

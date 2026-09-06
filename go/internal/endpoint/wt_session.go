@@ -33,6 +33,9 @@ func (e *WTSession) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 	if e.mint != nil {
 		token, expires, mint := e.mint(r)
 		switch mint {
+		case auth.WTMintInvalidTarget:
+			http.Error(w, "invalid socket target", http.StatusBadRequest)
+			return nil
 		case auth.WTMintAtCapacity:
 			// Capacity, not permission: the login is intact and its oldest outstanding token expires within the token lifetime.
 			w.Header().Set("Retry-After", "1")

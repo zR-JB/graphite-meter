@@ -30,6 +30,7 @@ type Service struct {
 	mu             sync.Mutex
 	sessions       map[[32]byte]*session
 	grants         map[[32]byte]*session
+	browserGrants  map[[32]byte]*browserGrant
 	wtTokens       map[[32]byte]wtToken
 	attempts       map[string]loginAttempt
 	exchanges      map[string]loginAttempt
@@ -52,7 +53,7 @@ func (s *Service) SetConnectOrigins(origins []string) {
 }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
-	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, wtTokens: map[[32]byte]wtToken{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
+	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, browserGrants: map[[32]byte]*browserGrant{}, wtTokens: map[[32]byte]wtToken{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
 	if cfg.Mode == "off" {
 		return s, nil
 	}
@@ -152,6 +153,9 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("GET /auth/session", s.sessionInfo)
 	mux.HandleFunc("POST /auth/logout", s.logout)
+	mux.HandleFunc("GET /auth/browser", s.browserPage)
+	mux.HandleFunc("POST /auth/browser/approve", s.cliApprove)
+	mux.HandleFunc("POST /auth/browser/token", s.browserToken)
 	mux.HandleFunc("GET /auth/cli", s.cliPage)
 	mux.HandleFunc("POST /auth/cli/approve", s.cliApprove)
 	mux.HandleFunc("POST /auth/cli/token", s.cliToken)

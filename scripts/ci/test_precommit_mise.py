@@ -7,6 +7,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -37,6 +38,41 @@ def repository(parent: pathlib.Path) -> pathlib.Path:
 
 
 class StagedMiseTests(unittest.TestCase):
+    def test_python_bootstrap_cannot_replace_the_calling_worktree_index(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base = pathlib.Path(td)
+            repo = repository(base)
+            implementation = repo / "scripts/ci/precommit.py"
+            implementation.parent.mkdir(parents=True)
+            index = str(repo / ".git/index")
+            implementation.write_text(f"import os\nassert os.environ['GIT_INDEX_FILE'] == {index!r}\n")
+            git(repo, "add", "scripts/ci/precommit.py")
+            before = (repo / ".git/index").read_bytes()
+            backend = base / "backend"
+            backend.mkdir()
+            binaries = base / "bin"
+            binaries.mkdir()
+            mise = binaries / "mise"
+            mise.write_text(f"""#!{sys.executable}
+import os, pathlib, subprocess, sys
+assert not any(name in os.environ for name in ('GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE'))
+if 'config' in sys.argv:
+    print('3.14.7')
+elif 'which' in sys.argv:
+    print({sys.executable!r})
+elif 'install' in sys.argv:
+    backend = pathlib.Path({str(backend)!r})
+    subprocess.run(['git', 'init', '-q'], cwd=backend, check=True)
+    (backend / 'backend.txt').write_text('tool source')
+    subprocess.run(['git', 'add', '.'], cwd=backend, check=True)
+""")
+            mise.chmod(0o755)
+            env = dict(os.environ, PATH=str(binaries) + os.pathsep + os.environ["PATH"], GIT_INDEX_FILE=index)
+            result = subprocess.run((str(ROOT / ".githooks/pre-commit"),), cwd=repo, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((repo / ".git/index").read_bytes(), before)
+            self.assertTrue((backend / ".git/index").exists())
+
     @unittest.skipUnless(MISE, "mise is needed for the configuration-resolution integration check")
     def test_actual_mise_ignores_parent_local_global_and_system_configuration(self) -> None:
         assert MISE is not None

@@ -13,7 +13,7 @@ import (
 
 func mintForSession(t *testing.T, s *Service, sess *session) string {
 	t.Helper()
-	r := secureRequest(http.MethodPost, "/wt/session", nil)
+	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	p := Principal{Subject: sess.subject, session: sess}
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
 	token, expires, mint := s.MintWebTransportSessionToken(r)
@@ -54,7 +54,7 @@ func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 	s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Listener{}).ServeHTTP(w, r)
 
 	// Unspent: the same token still authenticates on the listener that serves it.
-	if _, ok := s.consumeWebTransportToken(token); !ok {
+	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a CONNECT to a listener without the session routes spent the token")
 	}
 }
@@ -129,7 +129,7 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 	if listed {
 		t.Fatal("a revoked session's token stayed in the service map")
 	}
-	if _, ok := s.consumeWebTransportToken(token); ok {
+	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("token outlived its revoked session")
 	}
 }
@@ -144,7 +144,7 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 	base := time.Now()
 	offset := wtTokenLifetime + time.Second
 	s.now = func() time.Time { return base.Add(offset) }
-	if _, ok := s.consumeWebTransportToken(stale); ok {
+	if _, ok := s.consumeWebTransportToken(stale, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("expired token accepted")
 	}
 
@@ -156,17 +156,17 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 	if len(sess.wtTokens) != maxSessionWTTokens {
 		t.Fatalf("session holds %d tokens, want the %d cap", len(sess.wtTokens), maxSessionWTTokens)
 	}
-	r := secureRequest(http.MethodPost, "/wt/session", nil)
+	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
 	if _, _, mint := s.MintWebTransportSessionToken(r); mint != WTMintAtCapacity {
 		t.Fatalf("mint at the cap = %d, want WTMintAtCapacity", mint)
 	}
-	if _, _, mint := s.MintWebTransportSessionToken(secureRequest(http.MethodPost, "/wt/session", nil)); mint != WTMintNoSession {
+	if _, _, mint := s.MintWebTransportSessionToken(secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)); mint != WTMintNoSession {
 		t.Fatalf("mint without a principal = %d, want WTMintNoSession", mint)
 	}
 	// Every token the cap protected is still spendable.
 	for i, token := range tokens {
-		if _, ok := s.consumeWebTransportToken(token); !ok {
+		if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 			t.Fatalf("token %d refused after a mint hit the cap", i)
 		}
 	}
@@ -193,7 +193,7 @@ func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 		_, _, mint := s.MintWebTransportSessionToken(r)
 		minted = mint == WTMintOK
 	})
-	r := secureRequest(http.MethodPost, "/wt/session", nil)
+	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r.Header.Set("Authorization", "Bearer "+grant)
 	w := httptest.NewRecorder()
 	s.Enforce(next, Listener{}).ServeHTTP(w, r)
@@ -244,7 +244,7 @@ func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	if !listed {
 		t.Fatal("the token was already swept, so this no longer covers the deadline")
 	}
-	if _, ok := s.consumeWebTransportToken(token); ok {
+	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("a token minted before the deadline authenticated after it")
 	}
 }
@@ -268,7 +268,7 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 		t.Fatalf("cleartext CONNECT: reached=%t status=%d, want a 403 refusal", reached, w.Code)
 	}
 	// Refused before the credential was read, so it is still spendable.
-	if _, ok := s.consumeWebTransportToken(token); !ok {
+	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a cleartext CONNECT spent the token it was refused for")
 	}
 }

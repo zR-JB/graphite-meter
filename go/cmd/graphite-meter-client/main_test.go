@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -975,7 +976,7 @@ func TestActivate_NetworkCases(t *testing.T) {
 			}
 			m, _ = modelAndCmd(m.activate())
 			if c.reset {
-				if want := goclient.DefaultConfig(); m.cfg != want {
+				if want := goclient.DefaultConfig(); !reflect.DeepEqual(m.cfg, want) {
 					t.Errorf("cfg after reset = %+v, want default %+v", m.cfg, want)
 				}
 			} else if m.cfg.InsecureSkipTLSVerify == before {

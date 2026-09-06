@@ -34,7 +34,10 @@ async function withBootRunner(
   const restoreGlobals = stubEngineGlobals();
   const { createApplicationController } = await import("./engine.svelte");
   const { store } = await import("../state/store.svelte");
-  const engine = createApplicationController(store);
+  const { prepareConnections } = await import("./real/prepare");
+  const engine = createApplicationController(store, {
+    prepare: prepareConnections,
+  });
   const restoreEnvironment = setup();
   try {
     await engine.boot();
