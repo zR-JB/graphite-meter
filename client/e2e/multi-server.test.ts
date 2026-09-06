@@ -701,7 +701,7 @@ test("enabling all latency checks only the new peer path and retries leave healt
     },
     {
       healthy: [fleet[0].url, fleet[0].http, fleet[0].h2, fleet[0].h3],
-      peer: fleet[1].http,
+      peer: fleet[1].url,
       peerPage: fleet[1].url,
     },
   );
@@ -731,7 +731,7 @@ test("enabling all latency checks only the new peer path and retries leave healt
     );
   expect((await checks()).fetches.map((url) => new URL(url).origin)).toEqual([
     fleet[1].url,
-    fleet[1].http,
+    fleet[1].url,
   ]);
   expect((await checks()).workers).toBe(1);
   await page.evaluate(() => {
@@ -746,9 +746,9 @@ test("enabling all latency checks only the new peer path and retries leave healt
   const verified = await checks();
   expect(verified.fetches.map((url) => new URL(url).origin)).toEqual([
     fleet[1].url,
-    fleet[1].http,
     fleet[1].url,
-    fleet[1].http,
+    fleet[1].url,
+    fleet[1].url,
   ]);
   expect(verified.workers).toBe(2);
   for (let cycle = 0; cycle < 3; cycle++) {
@@ -862,12 +862,16 @@ test("a real peer dropout keeps healthy transfers running and persists its failu
 test("a full remote login offers explicit renewal and discards the old approval link", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
+  await page.addInitScript((peer) => {
     window.open = () => null;
-  });
-  await page.route("**/auth/browser/token", (route) =>
-    route.fulfill({ status: 429, body: "" }),
-  );
+    const original = window.fetch.bind(window);
+    window.fetch = ((input, init) => {
+      const url = new URL(String(input), location.href);
+      return url.origin === peer && url.pathname === "/auth/browser/token"
+        ? Promise.resolve(new Response(null, { status: 429 }))
+        : original(input, init);
+    }) as typeof window.fetch;
+  }, fleet[4].url);
   await configure(page, ["self", fleet[4].id]);
   await openSettings(page);
   const row = page.locator(".server-feedback", { hasText: "Private" });

@@ -221,18 +221,7 @@ export function createApplicationController(
     for (const id of store.selectedServers) {
       const config = serverConfig(id);
       if (!latencyPathNeeded(config)) {
-        const checked = selectedValidation.get(id);
-        if (checked)
-          selectedValidation.set(id, {
-            ...checked,
-            latency: {
-              selection: config.transports.latencyTarget,
-              state: "stale",
-              path: null,
-            },
-          });
         selectedIdle.get(id)?.stop();
-        selectedIdle.delete(id);
       }
       const paths = preparedPaths(
         config,

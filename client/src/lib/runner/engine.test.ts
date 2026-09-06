@@ -805,11 +805,12 @@ test("fresh preparation is reused by start and all latency disables release the 
       const previous = JSON.parse(JSON.stringify(store.config));
       try {
         const before = idleStops();
+        const verifiedLatency = store.connectionValidation.latency.path;
         store.config.skipLoadedLatencyWhenStageOff = true;
         store.config.stages.latency = false;
         await settleValidation();
         expect(idleStops()).toBeGreaterThan(before);
-        expect(store.connectionValidation.latency.path).toBeNull();
+        expect(store.connectionValidation.latency.path).toBe(verifiedLatency);
         expect(probeCalls()).toBe(1);
         engine.toggleRun();
         await yieldUntil(() => runner.starts === 1);
@@ -818,8 +819,8 @@ test("fresh preparation is reused by start and all latency disables release the 
         expect(store.activePaths?.latency).toBeNull();
         engine.toggleRun();
         store.config.stages.latency = true;
-        await yieldUntil(() => probeCalls() > 1);
-        expect(probeCalls()).toBe(2);
+        await settleValidation();
+        expect(probeCalls()).toBe(1);
         expect(store.connectionValidation.latency.state).toBe("verified");
       } finally {
         store.config = previous;
