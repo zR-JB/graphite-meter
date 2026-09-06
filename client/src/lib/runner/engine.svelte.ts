@@ -447,9 +447,13 @@ export function createApplicationController(
       failures = 0;
       nextValidationAt = Date.now() + CONNECTION_FRESH_MS;
     } finally {
-      if (validation === task) validation = null;
-      if (!readySelected())
-        nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
+      if (validation === task) {
+        validation = null;
+        if (task.draft !== draftKey(store.config))
+          nextValidationAt = Date.now();
+        else if (!readySelected())
+          nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
+      }
       schedule();
     }
   }

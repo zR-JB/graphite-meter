@@ -343,10 +343,43 @@ test("primary latency selection is fixed for the run and saved alongside every t
 }) => {
   await configure(page, ["self", "server-1"]);
   await ready(page);
+  // Change the primary while the preceding policy's discovery is still in flight.
+  await page.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      delayedPreflights: number;
+    };
+    state.delayedPreflights = 0;
+    const browser = window as {
+      fetch: (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    };
+    const original = browser.fetch;
+    browser.fetch = async (...args) => {
+      if (
+        String(args[0]).includes("/preflight?") &&
+        state.delayedPreflights < 2
+      ) {
+        state.delayedPreflights++;
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      return original(...args);
+    };
+  });
   const settings = await openSettings(page);
   await settings
     .getByRole("button", { name: "One server", exact: true })
     .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (globalThis as typeof globalThis & { delayedPreflights: number })
+            .delayedPreflights,
+      ),
+    )
+    .toBe(2);
   await settings
     .getByRole("radiogroup", { name: "Primary latency server" })
     .getByRole("radio", { name: "Frankfurt" })
