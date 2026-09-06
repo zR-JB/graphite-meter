@@ -449,7 +449,7 @@ export function createApplicationController(
     } finally {
       if (validation === task) {
         validation = null;
-        if (task.draft !== draftKey(store.config))
+        if (task.abort.signal.aborted || task.draft !== draftKey(store.config))
           nextValidationAt = Date.now();
         else if (!readySelected())
           nextValidationAt = Date.now() + connectionFailureBackoff(++failures);
