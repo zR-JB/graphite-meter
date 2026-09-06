@@ -188,3 +188,41 @@ test("progress and overlapping checkpoints cannot double count bytes across inte
   expect(m.result("upload", "up", false)?.totalBytes).toBe(2000);
   expect(m.result("bidirectional", "up", false)?.totalBytes).toBe(500);
 });
+
+test("a final flush in the same browser clock tick retains the completed download", () => {
+  const m = new AggregateMeasurements();
+  m.begin("download", ["a", "b"], 0);
+  m.observe(boundary(0, { a: 0, b: 0 }));
+  m.observe(boundary(2000, { a: 2000, b: 8000 }));
+  m.observe(boundary(2000, { a: 2000, b: 8000 }));
+  m.close();
+  expect(m.intervals).toHaveLength(1);
+  expect(m.intervals[0].complete).toBe(true);
+  expect(m.result("download", "down", false)?.reportedBytesPerSec).toBe(5000);
+});
+test("an unchanged receiver checkpoint adds no window and does not erase prior evidence", () => {
+  const m = new AggregateMeasurements();
+  m.begin("upload", ["a", "b"], 0);
+  m.observe(
+    boundary(0, {}, { a: receiver("a", 0, 1), b: receiver("b", 0, 1) }),
+  );
+  const up = {
+    a: receiver("a", 1000, 1e9 + 1),
+    b: receiver("b", 3000, 1e9 + 1),
+  };
+  m.observe(boundary(1000, {}, up));
+  m.observe(boundary(1001, {}, { ...up, b: receiver("b", 3003, 1001e6 + 1) }));
+  expect(m.result("upload", "up", false)?.reportedBytesPerSec).toBe(4000);
+  expect(m.intervals[0].full?.endMs).toBe(1000);
+  m.observe(
+    boundary(
+      2000,
+      {},
+      { a: receiver("a", 2000, 2e9 + 1), b: receiver("b", 6000, 2e9 + 1) },
+    ),
+  );
+  expect(m.result("upload", "up", false)?.reportedBytesPerSec).toBe(4000);
+  // A restarted receiver is still a real evidence discontinuity, even in the same tick.
+  m.observe(boundary(2000, {}, { ...up, a: receiver("restarted", 0, 1) }));
+  expect(m.result("upload", "up", false)).toBeNull();
+});

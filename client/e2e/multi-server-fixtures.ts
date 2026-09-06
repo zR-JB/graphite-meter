@@ -58,6 +58,9 @@ const processes = fleet.map((server, i) =>
       GM_H3_ADDR: new URL(server.h3).host,
       GM_TLS_CERT: process.env.GM_E2E_TLS_CERT!,
       GM_TLS_KEY: process.env.GM_E2E_TLS_KEY!,
+      ...(i === 1
+        ? { GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls,http2,http3" }
+        : {}),
       ...(i === 0
         ? {
             GM_SERVER_CATALOG: JSON.stringify({
@@ -66,7 +69,9 @@ const processes = fleet.map((server, i) =>
                 .map(({ id, name, url }) => ({ id, name, url })),
             }),
           }
-        : {}),
+        : i === 3
+          ? { GM_SERVER_CATALOG: JSON.stringify([fleet[1].url]) }
+          : {}),
       ...(i === 4
         ? {
             GM_AUTH_MODE: "password",

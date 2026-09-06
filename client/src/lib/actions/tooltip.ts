@@ -35,6 +35,7 @@ function ensureStyles() {
       letter-spacing: 0;
       text-transform: none;
       white-space: pre-line;
+      overflow-wrap: anywhere;
       pointer-events: none;
       opacity: 0;
       transform: translateY(2px);

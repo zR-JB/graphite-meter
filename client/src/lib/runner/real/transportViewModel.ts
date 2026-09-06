@@ -6,6 +6,7 @@ import type {
 } from "../../api/endpoints";
 import {
   isLoopbackHostname,
+  blockedSelectionReason,
   locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
@@ -50,7 +51,10 @@ function advertisedDetail(
 ): string {
   if (entry.state === "not-advertised" || !named) return NOT_ADVERTISED;
   if (entry.state === "browser-blocked")
-    return `Blocked by the browser: a secure page cannot open this clear endpoint · ${named.origin}`;
+    return (
+      entry.blockedReason ??
+      `Blocked by the browser: a secure page cannot open this clear endpoint · ${named.origin}`
+    );
   if (
     discovery.pageSecure &&
     !named.tls &&
@@ -73,6 +77,12 @@ export function throughputOptionView(
   selection: string,
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
+  const restriction = blockedSelectionReason(
+    discovery,
+    "throughput",
+    selection,
+  );
+  if (restriction) return { disabled: true, detail: restriction };
   if (selection === "current" || selection === "auto") {
     // Resolve exactly what the runner resolves, so the automatic card never offers the session path a.
     const runnable = typeof WebTransport !== "undefined";
@@ -109,6 +119,8 @@ export function latencyOptionView(
   selection: string,
 ): TransportOptionView {
   if (!discovery) return { disabled: true, detail: DISCOVERY_PENDING };
+  const restriction = blockedSelectionReason(discovery, "latency", selection);
+  if (restriction) return { disabled: true, detail: restriction };
   // Resolve exactly what the runner resolves, so a card never offers a bus the run would refuse.
   const runnable = typeof WebTransport !== "undefined";
   if (selection === "auto") {

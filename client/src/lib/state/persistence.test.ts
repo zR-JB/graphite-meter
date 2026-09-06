@@ -246,3 +246,22 @@ test("current target identifiers round-trip without historical alias rewriting",
   savePersisted(snapshot);
   expect(loadPersisted()).toEqual(snapshot);
 });
+
+test("latency policy defaults to one server and validates saved preferences", () => {
+  expect(loadPersisted().latencySelection).toEqual({
+    mode: "primary",
+    serverId: "",
+  });
+  const snapshot = defaultPersisted();
+  snapshot.latencySelection = { mode: "all", serverId: "peer" };
+  savePersisted(snapshot);
+  expect(loadPersisted().latencySelection).toEqual(snapshot.latencySelection);
+  expect(
+    loaded({ latencySelection: { mode: "corrupt", serverId: 5 } })
+      .latencySelection,
+  ).toEqual({ mode: "primary", serverId: "" });
+  expect(
+    loaded({ latencySelection: { mode: "primary", serverId: "x".repeat(129) } })
+      .latencySelection.serverId,
+  ).toBe("");
+});

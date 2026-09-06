@@ -69,3 +69,21 @@ test("terminal runs cannot leave an unmeasured stage active", () => {
       ).toMatchObject({ status: "failed", fill: 0 });
     }
 });
+
+test("a past stage without usable evidence never becomes upcoming", () => {
+  expect(
+    deriveStagePresentation("download", {
+      ...base,
+      phase: "upload",
+      phaseStage: "upload",
+      finished: true,
+    }),
+  ).toMatchObject({ status: "failed", fill: 0 });
+  expect(
+    deriveStagePresentation("upload", {
+      ...base,
+      phase: "download",
+      phaseStage: "download",
+    }),
+  ).toMatchObject({ status: "pending" });
+});

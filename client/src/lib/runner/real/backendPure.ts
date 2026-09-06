@@ -17,6 +17,7 @@ import type {
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 import { kindsForRole } from "./transports";
+import { browserOriginRestriction } from "../../servers/catalog";
 
 /* Server route paths, the TS half of a cross-language pin. */
 export const ROUTES = {
@@ -131,15 +132,23 @@ export function classifyTransportDiscovery(
   pageOrigin: string,
   pageSecure: boolean,
   pageProtocol?: string,
+  browserOrigin = pageOrigin,
 ): TransportDiscovery {
   const resolve = (endpoint: { baseUrl?: string; origin?: string }): string => {
     const baseUrl = endpoint.baseUrl ?? endpoint.origin ?? ".";
     return baseUrl === "." ? pageOrigin : new URL(baseUrl, pageOrigin).origin;
   };
-  const stateOf = (origin: string): "advertised" | "browser-blocked" =>
-    usableFromPage(origin, origin.startsWith("https://"), pageSecure)
-      ? "advertised"
-      : "browser-blocked";
+  const stateOf = (
+    origin: string,
+  ): Pick<DiscoveredTarget<never>, "state" | "blockedReason"> => {
+    const blockedReason = browserOriginRestriction(origin, browserOrigin);
+    if (blockedReason) return { state: "browser-blocked", blockedReason };
+    return {
+      state: usableFromPage(origin, origin.startsWith("https://"), pageSecure)
+        ? "advertised"
+        : "browser-blocked",
+    };
+  };
 
   const throughput: TransportDiscovery["throughput"] = {};
   for (const endpoint of throughputEndpoints) {
@@ -147,7 +156,7 @@ export function classifyTransportDiscovery(
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
     const entry = (throughput[origin] ??= {
-      state: stateOf(origin),
+      ...stateOf(origin),
       targets: [],
     });
     if (mechanism === "webtransport" || mechanism === "webtransport-datagram") {
@@ -193,7 +202,7 @@ export function classifyTransportDiscovery(
     const mechanism: string = endpoint.transport;
     const origin = resolve(endpoint);
     const tls = origin.startsWith("https://");
-    const entry = (latency[origin] ??= { state: stateOf(origin), targets: [] });
+    const entry = (latency[origin] ??= { ...stateOf(origin), targets: [] });
     if (mechanism === "webtransport") {
       admit(entry, {
         ...endpoint,
@@ -287,6 +296,35 @@ export function locateTarget<T extends { id: string }>(
     for (const target of entry.targets)
       if (target.id === id) return { entry, target };
   return null;
+}
+
+/** A known browser policy restriction, only when it excludes every matching target. */
+export function blockedSelectionReason(
+  discovery: TransportDiscovery,
+  role: "throughput" | "latency",
+  selection: string,
+): string | undefined {
+  let reason: string | undefined;
+  const entries: DiscoveredTarget<
+    FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget
+  >[] = Object.values(discovery[role]);
+  for (const entry of entries) {
+    const matches = entry.targets.some((target) => {
+      if (selection === "auto" || selection === "current") return true;
+      if (selection.startsWith("protocol:"))
+        return (
+          target.transport === "fetch-stream" &&
+          target.protocol === selection.slice("protocol:".length)
+        );
+      if (selection.startsWith("transport:"))
+        return target.transport === selection.slice("transport:".length);
+      return target.id === selection || target.origin === selection;
+    });
+    if (!matches) continue;
+    if (entry.state === "advertised") return undefined;
+    reason ??= entry.blockedReason;
+  }
+  return reason;
 }
 
 /** What a selection resolves to, or null when its origin is not advertised. */

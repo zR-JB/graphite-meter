@@ -3,6 +3,18 @@ import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type { CoreHost } from "./core";
 import type { PreparedPaths, RunnerConfig } from "./contract";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
+import type { ServerCatalog } from "../servers/catalog";
+
+/** A real self-server selection for controller tests with injected network operations. */
+export async function testServerCatalog(): Promise<ServerCatalog> {
+  return {
+    servers: [{ id: "self", name: "Test server", url: location.origin }],
+    defaultSelection: ["self"],
+  };
+}
+export async function testServerDiscovery() {
+  return testPreparedPaths().discovery;
+}
 
 export const TEST_BUILD_TOKENS = {
   __GM_ALLOW_DUMMY__: false,
@@ -128,6 +140,7 @@ export function testPreparedPaths(
       "http/1.1",
     ),
     generation: "gen-a",
+    uploadCheckpoint: true,
     engineVersion: "1.2.3",
     server: { name: "node-a", location: "Somewhere" },
     fetchedAt: Date.now(),

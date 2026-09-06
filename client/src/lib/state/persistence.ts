@@ -35,7 +35,13 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
 
 export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
 
+export interface LatencySelection {
+  mode: "primary" | "all";
+  serverId: string;
+}
+
 interface PersistedState {
+  latencySelection: LatencySelection;
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";
@@ -55,6 +61,7 @@ export function systemThemeDefault(): "dark" | "light" {
 
 export function defaultPersisted(): PersistedState {
   return {
+    latencySelection: { mode: "primary", serverId: "" },
     config: structuredClone(DEFAULT_CONFIG),
     unitBase: "base10",
     unitKind: "bits",
@@ -141,6 +148,14 @@ export function loadPersisted(): PersistedState {
   merged.historyColumns = historyColumns.length
     ? historyColumns
     : [...DEFAULT_HISTORY_COLUMNS];
+
+  if (!oneOf(merged.latencySelection.mode, ["primary", "all"]))
+    merged.latencySelection.mode = "primary";
+  if (
+    typeof merged.latencySelection.serverId !== "string" ||
+    merged.latencySelection.serverId.length > 128
+  )
+    merged.latencySelection.serverId = "";
 
   const parsedConfig = object(parsed.config);
   const parsedAdaptive = object(parsedConfig?.adaptive);

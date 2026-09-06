@@ -1,4 +1,14 @@
+<script module lang="ts">
+  export interface ServerView {
+    recordId: string;
+    resultId: string;
+    latencyId: string | null;
+  }
+</script>
+
 <script lang="ts">
+  import { historyWirePresentation } from "../../history/wire";
+  import { historyServers } from "../../history/servers";
   import { tooltip } from "../../actions/tooltip";
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
   import { ICON } from "../../constants";
@@ -22,7 +32,9 @@
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
-  import ServerResultDetails from "../ServerResultDetails.svelte";
+  import ResultServerContext from "../ResultServerContext.svelte";
+  import ServerTag from "../ServerTag.svelte";
+  import ServerSelector from "../ServerSelector.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -31,6 +43,7 @@
     onDelete: () => void;
     region?: HTMLElement;
     closeButton?: HTMLButtonElement;
+    serverView?: ServerView | null;
   }
 
   interface ThroughputCard {
@@ -48,12 +61,53 @@
     onDelete,
     region = $bindable(),
     closeButton = $bindable(),
+    serverView = $bindable(null),
   }: Props = $props();
-  let chosenServer = $state<string | null>(null);
+  const view = $derived(serverView?.recordId === record.id ? serverView : null);
+  const resultId = $derived(view?.resultId ?? "");
+  const scoped = $derived(
+    record.multiServer?.servers.find((server) => server.server.id === resultId),
+  );
+  const resultStages = $derived(
+    scoped
+      ? {
+          download: scoped.download,
+          upload: scoped.upload,
+          bidirectional: scoped.bidirectional ?? { down: null, up: null },
+        }
+      : {
+          download: record.stages.download.result,
+          upload: record.stages.upload.result,
+          bidirectional: record.stages.bidirectional,
+        },
+  );
+  function selectResult(id: string) {
+    const measured = record.multiServer?.servers.some(
+      (server) => server.server.id === id && server.latencyTarget,
+    );
+    serverView = {
+      recordId: record.id,
+      resultId: id,
+      latencyId: measured ? id : (view?.latencyId ?? null),
+    };
+  }
+  function selectLatency(id: string) {
+    serverView = { recordId: record.id, resultId, latencyId: id };
+  }
+  const focusedId = $derived(
+    view?.latencyId ?? record.multiServer?.latencyFocus,
+  );
+  const hasServerLatency = $derived(
+    (record.multiServer?.selection.length ?? 0) > 1 &&
+      record.multiServer?.servers.some(
+        (server) =>
+          server.latency !== null ||
+          Object.values(server.latencyByStage).some((lane) => lane !== null),
+      ),
+  );
   const focused = $derived(
     record.multiServer?.servers.find(
-      (server) =>
-        server.server.id === (chosenServer ?? record.multiServer?.latencyFocus),
+      (server) => server.server.id === focusedId,
     ),
   );
   const focusedLatency = $derived(
@@ -84,13 +138,16 @@
     return formatHistoryRate(value, units);
   }
 
-  function bytes(result: ThroughputSnapshot): string {
+  function bytes(result: Pick<ThroughputSnapshot, "totalBytes">): string {
     return formatHistoryBytes(result.totalBytes, store.unitBase);
   }
 
   function throughputCard(
     key: "download" | "upload",
-    result: ThroughputSnapshot | null,
+    result: Pick<
+      ThroughputSnapshot,
+      "reportedBytesPerSec" | "totalBytes"
+    > | null,
   ): ThroughputCard | null {
     if (!result) return null;
     return {
@@ -104,7 +161,7 @@
   }
 
   function bidirectionalCard(): ThroughputCard | null {
-    const stage = record.stages.bidirectional;
+    const stage = resultStages.bidirectional;
     if (!stage.down && !stage.up) return null;
     const model = bidirectionalResultPresentation(
       stage.down?.reportedBytesPerSec,
@@ -133,8 +190,8 @@
 
   const throughputCards = $derived<ThroughputCard[]>(
     [
-      throughputCard("download", record.stages.download.result),
-      throughputCard("upload", record.stages.upload.result),
+      throughputCard("download", resultStages.download),
+      throughputCard("upload", resultStages.upload),
       bidirectionalCard(),
     ].filter((card): card is ThroughputCard => card !== null),
   );
@@ -203,10 +260,6 @@
   const contextRows = $derived(
     [
       {
-        label: "Server",
-        value: `${record.server.name}${record.server.location ? ` · ${record.server.location}` : ""}`,
-      },
-      {
         label: "Throughput transport",
         value: transport(record.transport.throughput.kind),
       },
@@ -229,24 +282,7 @@
       Boolean(row.value),
     ),
   );
-
-  const wireRows = $derived(
-    record.wireEstimates
-      ? [
-          {
-            label: "Download",
-            value: record.wireEstimates.downloadBytesPerSec,
-          },
-          { label: "Upload", value: record.wireEstimates.uploadBytesPerSec },
-          {
-            label: "Bidirectional",
-            value: record.wireEstimates.bidirectionalBytesPerSec,
-          },
-        ].filter(
-          (row): row is { label: string; value: number } => row.value != null,
-        )
-      : [],
-  );
+  const servers = $derived(historyServers(record));
 </script>
 
 <article
@@ -302,6 +338,15 @@
     </dl>
   </header>
 
+  {#if record.multiServer && record.multiServer.selection.length > 1}<div
+      class="saved-server-context"
+    >
+      <ResultServerContext
+        details={record.multiServer}
+        value={resultId}
+        onchange={selectResult}
+      />
+    </div>{/if}
   {#if throughputCards.length}
     <section
       class="detail-section"
@@ -321,14 +366,26 @@
               <strong>{card.label}</strong>
             </header>
             <p>{card.value}</p>
+            {#if !scoped && store.showWireEstimates}
+              {@const wire = historyWirePresentation(record, card.key)}
+              {#if wire}<div class="saved-wire">
+                  <span>{rate(wire.bytesPerSec)}</span><span
+                    class="wire-label"
+                    use:tooltip={wire.tooltip}
+                    >wire{wire.pct ? ` ${wire.pct}` : ""}</span
+                  >
+                </div>{/if}
+            {/if}
             <small>{card.detail}</small>
           </article>
         {/each}
       </div>
     </section>
-  {/if}
+  {:else if scoped}<p class="missing-server-throughput">
+      No throughput measurements available for this server.
+    </p>{/if}
 
-  {#if latencyProfiles.length}
+  {#if latencyProfiles.length || hasServerLatency}
     <section
       class="detail-section"
       aria-labelledby={`result-${record.id}-latency`}
@@ -339,17 +396,24 @@
       </header>
       <div class="section-body responsiveness-body">
         {#if record.multiServer && record.multiServer.selection.length > 1}
-          <label class="server-focus"
-            >Latency to
-            <select
-              value={chosenServer ?? record.multiServer?.latencyFocus}
-              onchange={(event) => (chosenServer = event.currentTarget.value)}
-            >
-              {#each record.multiServer.selection as server}<option
-                  value={server.id}>{server.name}</option
-                >{/each}
-            </select>
-          </label>
+          <div class="server-focus">
+            {#if record.multiServer.servers.filter((server) => server.latencyTarget).length > 1}
+              <ServerSelector
+                servers={record.multiServer.selection}
+                value={focusedId ?? ""}
+                label="Saved latency server"
+                disabledIds={record.multiServer.servers
+                  .filter((server) => !server.latencyTarget)
+                  .map((server) => server.server.id)}
+                onchange={selectLatency}
+              />
+            {:else}<ServerTag
+                servers={record.multiServer.selection}
+                id={focusedId}
+                label="Saved idle and loaded latency source"
+              />
+            {/if}
+          </div>
         {/if}
         {#if focusedLatency}
           <dl class="idle-summary" aria-label="Idle latency result">
@@ -373,11 +437,17 @@
             </div>
           </dl>
         {/if}
-        <LatencyProfileView
-          lanes={latencyProfiles}
-          variant="compact"
-          label="Saved latency distributions"
-        />
+        {#if latencyProfiles.length}
+          <LatencyProfileView
+            lanes={latencyProfiles}
+            variant="compact"
+            label="Saved latency distributions"
+          />
+        {:else if !focusedLatency}
+          <p class="latency-empty">
+            No latency measurements available for this server.
+          </p>
+        {/if}
       </div>
     </section>
   {/if}
@@ -476,56 +546,85 @@
     </section>
   {/if}
 
-  {#if wireRows.length && store.showWireEstimates}
-    <section
-      class="detail-section"
-      aria-labelledby={`result-${record.id}-wire`}
-    >
-      <header class="section-head">
-        <span class="wire-icon" aria-hidden="true">W</span>
-        <h3 id={`result-${record.id}-wire`}>Wire-rate snapshot</h3>
-      </header>
-      <dl class="section-body wire-grid">
-        {#each wireRows as row (row.label)}
+  <section
+    class="detail-section saved-servers-section"
+    aria-labelledby={`result-${record.id}-servers`}
+  >
+    <header class="section-head">
+      <span aria-hidden="true">{@html ICON.server}</span>
+      <h3 id={`result-${record.id}-servers`}>Servers</h3>
+    </header>
+    <ul class="section-body saved-servers">
+      {#each servers as server (server.id)}
+        <li>
           <div>
-            <dt>{row.label}</dt>
-            <dd>{rate(row.value)}</dd>
+            <strong>{server.label}</strong>
+            {#if server.host}<small>{server.host}</small>{/if}
           </div>
-        {/each}
-      </dl>
-    </section>
-  {/if}
+          {#if server.ping}<span class="saved-server-ping">Ping</span>{/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
 
   <footer class="detail-actions">
     <button type="button" onclick={onDelete}>Delete this result</button>
   </footer>
 </article>
 
-{#if record.multiServer}<ServerResultDetails
-    details={record.multiServer}
-    outcome={record.outcome}
-  />{/if}
-
 <style>
+  .saved-servers {
+    margin: 0;
+    list-style: none;
+  }
+  .saved-servers li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding-block: var(--space-2);
+  }
+  .saved-servers li + li {
+    border-top: 1px solid var(--border);
+  }
+  .saved-servers strong {
+    display: block;
+    font-size: var(--type-sm);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .saved-servers small {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font: var(--type-xs)/1.4 var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+  .saved-server-ping {
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  .saved-server-context {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .missing-server-throughput {
+    padding: var(--space-3) var(--space-4);
+    color: var(--text-muted);
+  }
+  .latency-empty {
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    padding-block: var(--space-3);
+  }
   .server-focus {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
     color: var(--text-soft);
     font-size: 12px;
-  }
-  .server-focus select {
-    font: inherit;
-    color: var(--text);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    padding: 6px;
-    max-width: 75%;
-  }
-  .server-focus select:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
   }
 
   .result-detail {
@@ -824,20 +923,17 @@
     padding-left: var(--space-3);
     border-left: 1px solid var(--border-subtle);
   }
-  .context-grid,
-  .wire-grid {
+  .context-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0 var(--space-4);
   }
-  .context-grid > div,
-  .wire-grid > div {
+  .context-grid > div {
     min-width: 0;
     padding: 9px 0;
     border-bottom: 1px solid var(--border-subtle);
   }
-  .context-grid dd,
-  .wire-grid dd {
+  .context-grid dd {
     font-size: var(--type-sm);
     line-height: 1.4;
   }
@@ -865,9 +961,26 @@
     color: var(--text-muted);
     text-align: right;
   }
-  .wire-icon {
-    color: var(--text-muted) !important;
-    font: 750 10px var(--font-mono);
+  .saved-wire {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px;
+    color: var(--brand-strong);
+    font: 600 var(--type-xs)/1.4 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .wire-label {
+    color: var(--text-soft);
+    font-size: 10px;
+    font-weight: 500;
+    text-decoration: underline dotted var(--text-soft);
+    text-underline-offset: 3px;
+    cursor: help;
+  }
+  .wire-label:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   .detail-actions {
     display: flex;
@@ -890,15 +1003,8 @@
     color: var(--err);
   }
   @media (prefers-reduced-motion: no-preference) {
-    .detail-section,
-    .throughput-card {
+    .detail-section {
       animation: detail-content-enter var(--dur-hover) var(--ease-out) both;
-    }
-    .throughput-card:nth-child(2) {
-      animation-delay: 25ms;
-    }
-    .throughput-card:nth-child(3) {
-      animation-delay: 50ms;
     }
     @keyframes detail-content-enter {
       from {
@@ -921,9 +1027,12 @@
       padding-inline: var(--space-3);
       padding-bottom: var(--space-3);
     }
+    .throughput-grid {
+      padding: 0;
+      margin-inline: var(--space-3);
+    }
     .throughput-grid,
-    .context-grid,
-    .wire-grid {
+    .context-grid {
       grid-template-columns: 1fr;
     }
     .idle-summary {

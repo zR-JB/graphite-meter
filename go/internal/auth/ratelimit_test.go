@@ -138,3 +138,31 @@ func TestAttemptStoreStaysBounded(t *testing.T) {
 		t.Fatalf("exchange store grew to %d keys, want at most %d", size, maxBudgetKeys)
 	}
 }
+
+func TestBrowserApprovalBudgetStaysBoundedAndExpires(t *testing.T) {
+	s := testService(t)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	for i := range maxBudgetKeys + 100 {
+		remote := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()
+		allowed := s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", remote))
+		if allowed != (i < maxBudgetKeys) {
+			t.Fatalf("approval address %d admitted=%t", i, allowed)
+		}
+	}
+	if len(s.approvalAttempts) != maxBudgetKeys {
+		t.Fatalf("approval store has %d keys, want %d", len(s.approvalAttempts), maxBudgetKeys)
+	}
+	now = now.Add(attemptWindow + time.Second)
+	if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) || len(s.approvalAttempts) != 1 {
+		t.Fatal("expired approval addresses still occupied the bounded store")
+	}
+	for range maxAddressApprovals - 1 {
+		if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) {
+			t.Fatal("approval address refused before its limit")
+		}
+	}
+	if s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) {
+		t.Fatal("approval address exceeded its limit")
+	}
+}

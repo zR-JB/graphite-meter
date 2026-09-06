@@ -2,7 +2,6 @@
 import type { CompensationTransport, TransportKind } from "./runner/contract";
 import {
   compensationTransportFromProtocol,
-  compensationTransportLabel,
   normalizeHttpProtocol,
 } from "./runner/protocol";
 
@@ -14,14 +13,8 @@ interface CompensationFactor {
   contributionPct: number;
 }
 
-export interface CompensationEstimate {
+export interface CompensationBreakdown {
   componentCount?: number;
-  measuredBytesPerSec: number;
-  estimatedBytesPerSec: number;
-  lowerBytesPerSec: number;
-  upperBytesPerSec: number;
-  totalMultiplier: number;
-  confidence: CompensationConfidence;
   factors: CompensationFactor[];
   /** Provenance for the exact assumptions that produced this estimate. */
   transport: CompensationTransport;
@@ -31,6 +24,15 @@ export interface CompensationEstimate {
   mtuBytes: number;
   ipVersion: 4 | 6;
   ipVersionSource: "detected" | "fallback";
+}
+
+export interface CompensationEstimate extends CompensationBreakdown {
+  measuredBytesPerSec: number;
+  estimatedBytesPerSec: number;
+  lowerBytesPerSec: number;
+  upperBytesPerSec: number;
+  totalMultiplier: number;
+  confidence: CompensationConfidence;
 }
 
 /* This keeps bidirectional wire occupancy equal to the sum of its lanes even when their measured rates differ. */
@@ -95,18 +97,42 @@ function combineFactors(
   measuredBytesPerSec: number,
 ): CompensationFactor[] {
   if (!estimates.length || measuredBytesPerSec <= 0) return [];
-  const template = estimates[0].factors;
-  return template.map((factorTemplate) => {
+  const keys = [
+    ...new Set(
+      estimates.flatMap((estimate) =>
+        estimate.factors.map((factor) => factor.key),
+      ),
+    ),
+  ];
+  const mixedLabels: Record<CompensationFactor["key"], string> = {
+    "application-framing": "Application framing",
+    "tls-records": "TLS records",
+    ethernet: "Ethernet",
+    ip: "IP headers",
+    transport: "Transport headers",
+  };
+  return keys.map((key) => {
+    const labels = new Set(
+      estimates.flatMap((estimate) =>
+        estimate.factors
+          .filter((factor) => factor.key === key)
+          .map((factor) => factor.label),
+      ),
+    );
     const contributionPct =
       estimates.reduce((sum, estimate) => {
         const factor = estimate.factors.find(
-          (candidate) => candidate.key === factorTemplate.key,
+          (candidate) => candidate.key === key,
         );
         return (
           sum + estimate.measuredBytesPerSec * (factor?.contributionPct ?? 0)
         );
       }, 0) / measuredBytesPerSec;
-    return { ...factorTemplate, contributionPct };
+    return {
+      key,
+      label: labels.size === 1 ? [...labels][0] : mixedLabels[key],
+      contributionPct,
+    };
   });
 }
 
@@ -312,19 +338,13 @@ function identity(
   };
 }
 
-export function compensationTooltip(estimate: CompensationEstimate): string {
-  const sourceLabel = (source: CompensationEstimate["transportSource"]) =>
-    source === "fallback" ? "assumed" : "detected";
-  if ((estimate.componentCount ?? 1) > 1)
-    return [
-      `Estimated Ethernet overhead: +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
-      `Sum of ${estimate.componentCount} component estimates using each measured path's protocol and IP family`,
-      `MTU: 1,500 bytes per path (assumed)`,
-    ].join("\n");
+export function compensationTooltip(estimate: CompensationBreakdown): string {
   return [
-    `Estimated Ethernet overhead: +${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
-    `MTU: ${estimate.mtuBytes.toLocaleString("en-US")} bytes (assumed)`,
-    `Transport: ${compensationTransportLabel(estimate.transport)} (${sourceLabel(estimate.transportSource)})`,
-    `IP: IPv${estimate.ipVersion} (${sourceLabel(estimate.ipVersionSource)})`,
+    ...estimate.factors
+      .filter((factor) => factor.contributionPct > 0)
+      .map(
+        (factor) => `${factor.label} +${factor.contributionPct.toFixed(2)}%`,
+      ),
+    `MTU ${estimate.mtuBytes.toLocaleString("en-US")} B assumed`,
   ].join("\n");
 }

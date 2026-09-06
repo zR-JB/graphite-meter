@@ -23,6 +23,30 @@ func chooserModel(t *testing.T) model {
 	m.preparedRun = &goclient.PreparedRun{Catalog: catalog}
 	return m
 }
+
+func TestRemoteAuthorizationExpiryRechecksTheSelection(t *testing.T) {
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = "https://catalogue.example"
+	cfg.ServerIDs = []string{"remote"}
+	m := newModel(cfg)
+	t.Cleanup(m.close)
+	m.mode = modeRun
+	m.prepareStatus = "ready"
+	m.authServerID = "" // Successful preparation has no pending issuer.
+	seq := m.prepareSeq
+	next, command := m.finishRun(&goclient.AuthRequiredError{URL: "https://remote.example/login"})
+	m = next.(model)
+	if command == nil || m.prepareSeq <= seq || m.prepareStatus != "checking" || m.mode != modeConfigure || !m.complete {
+		t.Fatalf("expired remote grant did not restart selection discovery: %+v", m)
+	}
+	if !slices.Equal(m.cfg.ServerIDs, []string{"remote"}) || m.cfg.BaseURL != cfg.BaseURL || m.auth != nil {
+		t.Fatal("reauthorization changed the selected authority or reused an unrelated approval")
+	}
+	commands := command().(tea.BatchMsg)
+	if _, ok := commands[0]().(prepareDueMsg); !ok {
+		t.Fatal("reauthorization skipped catalogue preparation and guessed the issuing server")
+	}
+}
 func TestServerChooserDraftKeyboardAndLimit(t *testing.T) {
 	m := chooserModel(t)
 	next, _ := m.openServerChooser()
@@ -83,5 +107,39 @@ func TestLatencyFocusSwitchesTheWholePopulation(t *testing.T) {
 	m.nextLatencyFocus()
 	if m.latencyFocus != "b" || m.latency.RTT != 90 || m.lostStreak != 3 || m.latencyServerName() != "B" {
 		t.Fatalf("mixed latency population: %+v", m.latency)
+	}
+}
+
+func TestSingletonHasNoSelectionOrResultControls(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	t.Cleanup(m.close)
+	m.preparedRun = &goclient.PreparedRun{Catalog: wire.SingletonCatalog()}
+	next, cmd := m.openServerChooser()
+	if next.(model).serverChooser || cmd != nil {
+		t.Fatal("singleton opened a chooser")
+	}
+	if strings.Contains(m.serversView(80), "Press s") {
+		t.Fatal("singleton advertised selection")
+	}
+	for _, binding := range m.ShortHelp() {
+		if slices.Contains(binding.Keys(), "s") {
+			t.Fatal("singleton advertised s")
+		}
+	}
+	// Single-server runs in a larger catalogue also retain the original result view.
+	m.preparedRun.Catalog.Servers = append(m.preparedRun.Catalog.Servers, wire.ServerEntry{ID: "peer", URL: "https://peer.example", Name: "Peer"})
+	m.mode, m.complete = modeRun, true
+	m.runDetails = &goclient.RunDetails{Selection: wire.SingletonCatalog().Servers, Participants: []string{"self"}, Outcome: "complete"}
+	if m.serverResultsView(80) != "" || m.serverResultNotice() != "" || m.latencyServerName() != "" {
+		t.Fatal("singleton rendered multi-server details")
+	}
+	for _, binding := range m.ShortHelp() {
+		if slices.Contains(binding.Keys(), "l") || slices.Contains(binding.Keys(), "d") {
+			t.Fatal("singleton advertised multi-server result keys")
+		}
+	}
+	next, _ = m.handleRunKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if next.(model).serverDetailsOpen {
+		t.Fatal("singleton opened result breakdown")
 	}
 }

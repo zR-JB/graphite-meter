@@ -1,4 +1,10 @@
+import { isWireEstimates, type WireEstimates } from "./wire";
 import { isMultiServerResult } from "../servers/serialization";
+import {
+  hasLatencyMeasurements,
+  hasThroughputMeasurements,
+  isReflectorTimingSummary,
+} from "./measurementValidation";
 import type { MultiServerResult } from "../servers/measurement";
 import type {
   PreparedPaths,
@@ -117,12 +123,7 @@ export interface HistoryRecord {
   ipVersion: 4 | 6 | null;
   client: { build: string };
   failures: FailureSnapshot[];
-  wireEstimates: {
-    version: 1;
-    downloadBytesPerSec: number | null;
-    uploadBytesPerSec: number | null;
-    bidirectionalBytesPerSec: number | null;
-  } | null;
+  wireEstimates: WireEstimates | null;
 }
 
 function throughputTransportKind(
@@ -219,9 +220,7 @@ function historyProtocol(value: string | undefined): string | null {
 interface HistoryBuildContext {
   paths: PreparedPaths | null;
   clientBuild: string;
-  wireDownloadBytesPerSec?: number | null;
-  wireUploadBytesPerSec?: number | null;
-  wireBidirectionalBytesPerSec?: number | null;
+  wireEstimates?: WireEstimates | null;
 }
 export function historyLatencyLanes(
   result: LatencyResult | null,
@@ -344,18 +343,9 @@ export function buildHistoryRecord(
     ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
     client: { build: historyText(context.clientBuild) },
     failures: failureSnapshots(failures),
-    wireEstimates:
-      context.wireDownloadBytesPerSec != null ||
-      context.wireUploadBytesPerSec != null ||
-      context.wireBidirectionalBytesPerSec != null
-        ? {
-            version: 1,
-            downloadBytesPerSec: context.wireDownloadBytesPerSec ?? null,
-            uploadBytesPerSec: context.wireUploadBytesPerSec ?? null,
-            bidirectionalBytesPerSec:
-              context.wireBidirectionalBytesPerSec ?? null,
-          }
-        : null,
+    wireEstimates: context.wireEstimates
+      ? structuredClone(context.wireEstimates)
+      : null,
   };
 }
 
@@ -391,10 +381,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     Number.isInteger(candidate) &&
     nonnegative(candidate) &&
     !Number.isNaN(new Date(candidate).getTime());
-  const percentage = (candidate: unknown): candidate is number =>
-    nonnegative(candidate) && candidate <= 100;
-  const unitInterval = (candidate: unknown): candidate is number =>
-    nonnegative(candidate) && candidate <= 1;
   const nonnegativeOrNull = (candidate: unknown): candidate is number | null =>
     candidate === null || nonnegative(candidate);
   const text = (candidate: unknown): candidate is string =>
@@ -404,36 +390,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     candidate: Record<string, unknown>,
     allowed: readonly string[],
   ) => Object.keys(candidate).every((key) => allowed.includes(key));
-  function validReflectorTiming(
-    value: unknown,
-    replies: number,
-  ): value is ReflectorTimingSummary {
-    if (
-      !isObject(value) ||
-      !hasOnly(value, [
-        "sampleCount",
-        "meanRawRttMs",
-        "meanHandlingMs",
-        "meanAdjustedRttMs",
-      ])
-    )
-      return false;
-    return (
-      Number.isSafeInteger(value.sampleCount) &&
-      nonnegative(value.sampleCount) &&
-      value.sampleCount > 0 &&
-      value.sampleCount <= replies &&
-      nonnegative(value.meanRawRttMs) &&
-      nonnegative(value.meanHandlingMs) &&
-      nonnegative(value.meanAdjustedRttMs) &&
-      value.meanHandlingMs <= value.meanRawRttMs &&
-      value.meanAdjustedRttMs <= value.meanRawRttMs &&
-      Math.abs(
-        value.meanRawRttMs - value.meanHandlingMs - value.meanAdjustedRttMs,
-      ) <=
-        1e-8 * Math.max(1, value.meanRawRttMs)
-    );
-  }
   if (
     !hasOnly(record, [
       "schemaVersion",
@@ -455,12 +411,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     ])
   )
     return false;
-  const method = (
-    candidate: unknown,
-  ): candidate is "stable-window" | "full-average" =>
-    candidate === "stable-window" || candidate === "full-average";
-  const band = (candidate: unknown): candidate is "low" | "medium" | "high" =>
-    candidate === "low" || candidate === "medium" || candidate === "high";
   const protocol = (candidate: unknown): candidate is string | null =>
     candidate === null || (text(candidate) && !candidate.includes("://"));
   const failureStage = (
@@ -495,16 +445,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         "band",
         "serverAuthoritative",
       ]) &&
-      nonnegative(candidate.reportedBytesPerSec) &&
-      nonnegative(candidate.peakBytesPerSec) &&
-      nonnegative(candidate.fullAverageBytesPerSec) &&
-      method(candidate.method) &&
-      nonnegative(candidate.totalBytes) &&
-      percentage(candidate.stabilityPct) &&
-      (candidate.probeTimeoutPct === null ||
-        percentage(candidate.probeTimeoutPct)) &&
-      unitInterval(candidate.stabilityScore) &&
-      band(candidate.band) &&
+      hasThroughputMeasurements(candidate) &&
       typeof candidate.serverAuthoritative === "boolean"
     );
   };
@@ -523,17 +464,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
         "method",
         "stabilityScore",
         "band",
-      ]) &&
-      nonnegative(candidate.reportedMs) &&
-      nonnegativeOrNull(candidate.minMs) &&
-      nonnegativeOrNull(candidate.p50Ms) &&
-      nonnegativeOrNull(candidate.p95Ms) &&
-      nonnegativeOrNull(candidate.jitterMs) &&
-      (candidate.probeTimeoutPct === null ||
-        percentage(candidate.probeTimeoutPct)) &&
-      method(candidate.method) &&
-      unitInterval(candidate.stabilityScore) &&
-      band(candidate.band)
+      ]) && hasLatencyMeasurements(candidate)
     );
   };
   const lane = (candidate: unknown): candidate is LatencyLaneSnapshot => {
@@ -573,7 +504,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
       Number.isSafeInteger(candidate.sendFailureCount) &&
       nonnegative(candidate.sendFailureCount) &&
       (candidate.reflectorTiming === undefined ||
-        validReflectorTiming(
+        isReflectorTimingSummary(
           candidate.reflectorTiming,
           candidate.count - candidate.timeoutCount,
         ))
@@ -757,21 +688,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
       !["A", "B", "C", "D", "F"].includes(bufferbloat.grade))
   )
     return false;
-  const wire = record.wireEstimates;
-  return (
-    wire === null ||
-    (isObject(wire) &&
-      hasOnly(wire, [
-        "version",
-        "downloadBytesPerSec",
-        "uploadBytesPerSec",
-        "bidirectionalBytesPerSec",
-      ]) &&
-      wire.version === 1 &&
-      nonnegativeOrNull(wire.downloadBytesPerSec) &&
-      nonnegativeOrNull(wire.uploadBytesPerSec) &&
-      nonnegativeOrNull(wire.bidirectionalBytesPerSec))
-  );
+  return isWireEstimates(record.wireEstimates);
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

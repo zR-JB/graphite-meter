@@ -27,13 +27,18 @@
       : store.config.transports.latencyTarget,
   );
   const connection = $derived(store.connections[role]);
-  const simultaneous = $derived(store.selectedServers.length > 1);
+  const serverIds = $derived(
+    role === "latency" && store.latencySelection.mode === "primary"
+      ? [store.primaryLatencyServer]
+      : store.selectedServers,
+  );
+  const simultaneous = $derived(serverIds.length > 1);
   const validation = $derived(
     simultaneous ? store.selectionValidation : connection.validation,
   );
   const summary = $derived(
     simultaneous
-      ? `${store.selectedServers.filter((id) => store.serverReadiness[id]?.state === "ready").length} of ${store.selectedServers.length} servers ready. Paths resolve independently.`
+      ? `${serverIds.filter((id) => store.serverReadiness.get(id)?.state === "ready").length} of ${serverIds.length} servers ready. Paths resolve independently.`
       : (connection.message ?? connection.summary),
   );
   const title = $derived(

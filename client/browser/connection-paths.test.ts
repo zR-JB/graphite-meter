@@ -245,50 +245,7 @@ test("the readiness badge names a failure over a check in flight", async ({
   await expect(settings.getByText("Checking", { exact: true })).toBeVisible();
   await expect(badge).toHaveText("Path failed");
 });
-test("unresolved Start opens bounded server checks and Escape returns to the instrument", async ({
-  page,
-}) => {
-  await page.addInitScript(
-    (value) => localStorage.setItem("graphite-meter:v1", value),
-    persistConfig(false),
-  );
-  await page.route("**/preflight?*", async (route) => {
-    await Bun.sleep(300);
-    await route.fulfill({
-      json: {
-        server: { name: "delayed-start" },
-        engineVersion: "test",
-        generation: "delayed-generation",
-        capabilities: {
-          throughput: [
-            { baseUrl: ".", transport: "fetch-stream", protocol: "negotiated" },
-          ],
-          latency: [],
-        },
-      },
-    });
-  });
-  await page.route("**/probe?*", async (route) => {
-    await Bun.sleep(300);
-    await route.fulfill({ json: PROBE });
-  });
-  await openApp(page, "real");
-  await page.getByRole("button", { name: "Start the speed test" }).click();
-  const chooser = page.getByRole("dialog", { name: "Servers", exact: true });
-  await expectVisible(chooser);
-  await expectVisible(chooser.getByText("Checking…", { exact: true }));
-  await page.keyboard.press("Escape");
-  await expect(chooser).toBeHidden();
-  await expectVisible(
-    page.getByRole("button", { name: "Start the speed test" }),
-  );
-  const settings = await openSettings(page);
-  await expect(
-    settings.locator('.readiness-badge[data-state="verified"]'),
-  ).toBeVisible();
-});
-
-test("a failed Start identifies the selected server and offers Retry and Remove", async ({
+test("single-server Start checks paths without opening server selection", async ({
   page,
 }) => {
   await page.addInitScript(
@@ -299,15 +256,18 @@ test("a failed Start identifies the selected server and offers Retry and Remove"
   await page.route("**/probe?*", (route) => route.fulfill({ status: 503 }));
   await openApp(page, "real");
   await page.getByRole("button", { name: "Start the speed test" }).click();
-  const chooser = page.getByRole("dialog", { name: "Servers", exact: true });
-  await expectVisible(chooser);
-  const row = chooser.locator(".server-row").first();
-  await expect(row.locator("strong")).toHaveText("Browser fixture");
-  await expectVisible(row.getByRole("button", { name: "Retry", exact: true }));
-  await expectVisible(row.getByRole("button", { name: "Remove", exact: true }));
-  await row.locator("summary").click();
-  await expect(row.locator("details")).toContainText("probe returned HTTP 503");
+  await expect(
+    page.getByRole("dialog", { name: "Choose servers", exact: true }),
+  ).toBeHidden();
+  const settings = await openSettings(page);
+  await expect(
+    settings.getByRole("button", { name: /Change servers/ }),
+  ).toHaveCount(0);
+  await expect(
+    settings.getByRole("button", { name: "Retry Throughput path" }),
+  ).toBeVisible();
 });
+
 test("the occupancy row reports slots and cautions only past half", async ({
   page,
 }) => {

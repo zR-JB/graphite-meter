@@ -14,6 +14,7 @@ const (
 	maxAddressAttempts  = 5
 	maxGlobalAttempts   = 60
 	maxAddressExchanges = 10
+	maxAddressApprovals = 10
 	ceilingLogInterval  = time.Minute
 )
 
@@ -85,6 +86,14 @@ func (s *Service) allowAttempt(r *http.Request) bool {
 func (s *Service) allowExchange(r *http.Request) bool {
 	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, func(key string, times []time.Time, now time.Time) bool {
 		s.exchanges[key] = loginAttempt{times: append(times, now)}
+		return true
+	})
+}
+
+// Approval pages are public; their callers cannot spend validated OIDC callbacks' budget.
+func (s *Service) allowBrowserApproval(r *http.Request) bool {
+	return s.allowAddress(r, s.approvalAttempts, "browser-approval", maxAddressApprovals, func(key string, times []time.Time, now time.Time) bool {
+		s.approvalAttempts[key] = loginAttempt{times: append(times, now)}
 		return true
 	})
 }

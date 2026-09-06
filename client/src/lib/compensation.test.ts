@@ -147,12 +147,32 @@ test("factor contributions sum to the displayed overhead", () => {
 
 test("tooltip reports automatic assumptions", () => {
   const estimate = estimateCompensation(1_000_000, "h3", true, 6);
-  expect(compensationTooltip(estimate)).toContain("IP: IPv6 (detected)");
-  expect(compensationTooltip(estimate)).toContain("MTU: 1,500 bytes (assumed)");
-  expect(compensationTooltip(estimate)).toContain(
-    "Transport: HTTP/3 QUIC (detected)",
+  expect(compensationTooltip(estimate)).toContain("IPv6 +");
+  expect(compensationTooltip(estimate)).toContain("MTU 1,500 B assumed");
+  expect(compensationTooltip(estimate)).toContain("UDP + QUIC +");
+  expect(compensationTooltip(estimate)).toContain("Ethernet +");
+});
+
+test("mixed path breakdown keeps every layer and weights it by measured goodput", () => {
+  const clear = estimateCompensation(3_000_000, "http/1.1", false, 4);
+  const encrypted = estimateCompensation(1_000_000, "h2", true, 6);
+  const combined = combineCompensationEstimates([clear, encrypted]);
+  expect(
+    combined.factors.find((part) => part.key === "tls-records")
+      ?.contributionPct,
+  ).toBeCloseTo(
+    encrypted.factors.find((part) => part.key === "tls-records")!
+      .contributionPct / 4,
+    10,
   );
-  expect(compensationTooltip(estimate)).toContain(
-    "Estimated Ethernet overhead:",
+  expect(
+    combined.factors.reduce((sum, part) => sum + part.contributionPct, 0),
+  ).toBeCloseTo((combined.totalMultiplier - 1) * 100, 10);
+  expect(combined.factors.find((part) => part.key === "ip")?.label).toBe(
+    "IP headers",
+  );
+  expect(compensationTooltip(combined)).toContain("TLS 1.3 records +0.03%");
+  expect(compensationTooltip(combined).split("\n")).toHaveLength(
+    combined.factors.length + 1,
   );
 });

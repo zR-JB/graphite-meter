@@ -214,6 +214,131 @@ func TestBrowserGrantCannotOutliveItsParentLogin(t *testing.T) {
 	}
 }
 
+func TestBrowserGrantCapacityOffersExplicitLoginRenewal(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		race bool
+	}{
+		{name: "full before approval page"},
+		{name: "fills before approval submission", race: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testService(t)
+			raw, sess, err := s.createSession("subject", "Name", "local")
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := maxSessionGrants
+			if tc.race {
+				count--
+			}
+			var grants []string
+			for range count {
+				grant, _ := approveBrowser(t, s, raw, sess)
+				grants = append(grants, grant)
+			}
+			mux := http.NewServeMux()
+			s.Mount(mux)
+			handler := s.Enforce(mux, Listener{UI: true})
+			verifier := randomToken(32)
+			hash := sha256.Sum256([]byte(verifier))
+			challenge := base64.RawURLEncoding.EncodeToString(hash[:])
+			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+			assertCapacityPage := func(w *httptest.ResponseRecorder) {
+				t.Helper()
+				body := w.Body.String()
+				if w.Code != http.StatusTooManyRequests || !strings.Contains(body, "Browser client limit reached") || !strings.Contains(body, `href="/login"`) || !strings.Contains(body, "revokes its existing client grants") {
+					t.Fatalf("capacity recovery page: %d %s", w.Code, body)
+				}
+				if strings.Contains(body, "<form") || strings.Contains(body, "/login?") || strings.Contains(body, "Client approved") {
+					t.Fatal("capacity page offered an unusable approval or preserved its old challenge")
+				}
+			}
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), raw))
+			if tc.race {
+				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Approve this client") {
+					t.Fatalf("available approval page: %d", w.Code)
+				}
+				grant, _ := approveBrowser(t, s, raw, sess)
+				grants = append(grants, grant)
+			} else {
+				assertCapacityPage(w)
+			}
+			r := withSessionCookie(secureRequest(http.MethodPost, "/auth/browser/approve", nil), raw)
+			r.Body = io.NopCloser(strings.NewReader(url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.Header.Set("Origin", s.PublicOrigin())
+			w = httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			assertCapacityPage(w)
+			if s.approvals[challenge].approved {
+				t.Fatal("full login approved an unusable browser client")
+			}
+			for _, exchange := range []struct {
+				verifier, origin string
+				status           int
+			}{
+				{verifier, requestingUI, http.StatusTooManyRequests},
+				{verifier, "https://wrong.example", http.StatusAccepted},
+				{randomToken(32), requestingUI, http.StatusAccepted},
+				{"short", requestingUI, http.StatusForbidden},
+			} {
+				w = httptest.NewRecorder()
+				handler.ServeHTTP(w, browserExchangeRequest(exchange.verifier, exchange.origin))
+				if w.Code != exchange.status {
+					t.Fatalf("exchange status=%d, want %d", w.Code, exchange.status)
+				}
+				if w.Header().Get("Access-Control-Allow-Origin") != exchange.origin {
+					t.Fatal("exchange lost its requesting origin's CORS response")
+				}
+			}
+			if len(sess.grants) != maxSessionGrants || sess.ctx.Err() != nil {
+				t.Fatal("capacity recovery changed the existing login or grant budget")
+			}
+			for _, grant := range grants {
+				if _, ok := s.authenticateGrant(grant); !ok {
+					t.Fatal("capacity recovery revoked an existing client")
+				}
+			}
+		})
+	}
+}
+
+func TestPublicBrowserApprovalPagesCannotSpendOIDCExchangeBudget(t *testing.T) {
+	s := testService(t)
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	handler := s.Enforce(mux, Listener{UI: true})
+	const remote = "198.51.100.4:40000"
+	for i := range maxAddressApprovals + 1 {
+		challenge := make([]byte, 32)
+		challenge[0] = byte(i)
+		path := "/auth/browser?" + url.Values{"challenge": {base64.RawURLEncoding.EncodeToString(challenge)}, "client_origin": {"https://other.example"}}.Encode()
+		r := requestFrom(http.MethodGet, path, remote)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		r.Header.Set("Sec-Fetch-Mode", "no-cors")
+		r.Header.Set("Sec-Fetch-Dest", "image")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		want := http.StatusSeeOther
+		if i == maxAddressApprovals {
+			want = http.StatusForbidden
+		}
+		if w.Code != want {
+			t.Fatalf("public approval request %d status=%d, want %d", i, w.Code, want)
+		}
+	}
+	for range maxAddressExchanges {
+		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", remote)) {
+			t.Fatal("unauthenticated approval requests spent the OIDC callback budget")
+		}
+	}
+	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", remote)) {
+		t.Fatal("OIDC callbacks lost their own address limit")
+	}
+}
+
 func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")

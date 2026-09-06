@@ -107,6 +107,12 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	if approval.browserOrigin != "" && len(p.session.grants) >= maxSessionGrants {
+		clientOrigin := approval.browserOrigin
+		s.mu.Unlock()
+		writeBrowserGrantCapacity(w, clientOrigin)
+		return
+	}
 	approval.approved = true
 	s.counters.cliApproval.Add(1)
 	s.mu.Unlock()

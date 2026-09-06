@@ -69,7 +69,7 @@ profiles keep transfer speed and responsiveness visible together.
 
 - **Flexible tests:** stage toggles, duration presets or custom timings, automatic or fixed stream
   counts, and optional early completion when a stage stabilizes.
-- **Server selection:** a separate chooser beside Start, independent sign-in for protected peers,
+- **Server selection:** compact server bands in Settings, independent sign-in for protected peers,
   and per-server contributions in result details. Automatic paths resolve separately for each server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.

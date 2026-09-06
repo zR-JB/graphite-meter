@@ -362,7 +362,8 @@ export interface VerifiedLatencyPath {
   requested: LatencyTarget;
   target: LatencyTarget;
   probe: Probe;
-  rttMs: number;
+  /** Median of successful preparation replies; null when the sample is empty. */
+  rttMs: number | null;
   generation: string;
   verifiedAt: number;
 }
@@ -388,6 +389,7 @@ type TransportDiscoveryState =
 /* One origin and every mechanism it advertises, in picker order. */
 export interface DiscoveredTarget<T> {
   state: TransportDiscoveryState;
+  blockedReason?: string;
   targets: T[];
 }
 
@@ -404,6 +406,8 @@ export interface TransportDiscovery {
   engineVersion: string;
   server: { name: string; location?: string };
   fetchedAt: number;
+  /** One HTTP preflight request through body completion, including connection setup; not probe RTT. */
+  preflightMs?: number;
   pageOrigin: string;
   pageSecure: boolean;
   pageProtocol?: string;

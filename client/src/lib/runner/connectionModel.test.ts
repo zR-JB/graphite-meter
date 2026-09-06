@@ -306,6 +306,12 @@ test("zero latency evidence is retained and absent evidence is not fabricated", 
   const presented = presentConnections(config(), paths.discovery, validation);
   expect(presented.latency.preTestPingMs).toBe(0);
   expect(presented.throughput.browserProtocol).toBeUndefined();
+  validation.latency.path!.rttMs = null;
+  expect(preparedPaths(config(), paths.discovery, validation)).not.toBeNull();
+  expect(
+    presentConnections(config(), paths.discovery, validation).latency
+      .preTestPingMs,
+  ).toBeUndefined();
   validation.latency.path = null;
   expect(
     roleNeedsValidation(config(), validation, "latency", paths.discovery),
@@ -519,4 +525,66 @@ test("the panel names a failure rather than reading as a check", () => {
   expect(panelReadiness(model("failed", "checking"), true)).toBe("failed");
   expect(panelReadiness(model("checking", "stale"), true)).toBe("checking");
   expect(panelReadiness(model("verified", "failed"), false)).toBe("verified");
+});
+
+test("policy changes retain verified roles and check only newly needed latency", () => {
+  const cfg = config();
+  const paths = makePaths();
+  const validation = makeValidation(paths);
+  expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual(
+    [],
+  );
+  cfg.stages.latency = false;
+  cfg.skipLoadedLatencyWhenStageOff = true;
+  validation.latency = { selection: "auto", state: "stale", path: null };
+  expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual(
+    [],
+  );
+  cfg.stages.latency = true;
+  expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual([
+    "latency",
+  ]);
+  expect(validation.throughput.path).toBe(paths.throughput);
+});
+
+test("expiry is an on-demand role check without changing cached timestamps", () => {
+  const cfg = config();
+  const paths = makePaths();
+  const validation = makeValidation(paths);
+  const verifiedAt = Date.now() - CONNECTION_FRESH_MS - 1000;
+  validation.latency.path!.verifiedAt = verifiedAt;
+  expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual([
+    "latency",
+  ]);
+  expect(
+    validationRoles(cfg, validation, undefined, paths.discovery, Infinity),
+  ).toEqual([]);
+  expect(
+    preparedPaths(cfg, paths.discovery, validation, Infinity)?.latency
+      ?.verifiedAt,
+  ).toBe(verifiedAt);
+  expect(
+    validationRoles(cfg, validation, "throughput", paths.discovery, Infinity),
+  ).toEqual(["throughput"]);
+  expect(validationRoles(cfg, validation, "all", paths.discovery)).toEqual([
+    "throughput",
+    "latency",
+  ]);
+});
+
+test("a manual role retry leaves an unrelated failed role available for its own retry", () => {
+  const cfg = config();
+  const paths = makePaths();
+  const validation = makeValidation(paths);
+  validation.latency = {
+    selection: cfg.transports.latencyTarget,
+    state: "failed",
+    path: null,
+  };
+  expect(
+    validationRoles(cfg, validation, "throughput", paths.discovery),
+  ).toEqual(["throughput"]);
+  expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual([
+    "latency",
+  ]);
 });

@@ -1,3 +1,4 @@
+import { historyWireEstimates } from "../history/wire";
 import type {
   RunnerEvent,
   Phase,
@@ -139,6 +140,7 @@ function emptyStability(): LiveStability {
 }
 
 import { serverWireEstimate } from "../servers/wireEstimates";
+import { SvelteMap } from "svelte/reactivity";
 
 class AppStore {
   serverCatalog = $state<import("../servers/catalog").ServerCatalog | null>(
@@ -146,22 +148,21 @@ class AppStore {
   );
   selectedServers = $state<string[]>(["self"]);
   unresolvedServers = $state<import("../servers/catalog").SavedSelection[]>([]);
-  serverReadiness = $state<
-    Record<
-      string,
-      {
-        state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
-        message?: string;
-        checkedAt?: number;
-      }
-    >
-  >({});
-  serverDiscoveries = $state<Record<string, TransportDiscovery>>({});
+  readonly serverReadiness = new SvelteMap<
+    string,
+    {
+      state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
+      message?: string;
+      checkedAt?: number;
+    }
+  >();
+  readonly serverDiscoveries = new SvelteMap<string, TransportDiscovery>();
+  serverMetadataLoading = $state(false);
   catalogLoading = $state(false);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
       const states = this.selectedServers.map(
-        (id) => this.serverReadiness[id]?.state ?? "unchecked",
+        (id) => this.serverReadiness.get(id)?.state ?? "unchecked",
       );
       if (this.unresolvedServers.length || !states.length) return "failed";
       if (states.includes("checking")) return "checking";
@@ -170,24 +171,37 @@ class AppStore {
       return states.every((state) => state === "ready") ? "verified" : "stale";
     },
   );
-  serverChooserOpen = $state(false);
-  serverApproval = $state<{ id: string; url: string; message?: string } | null>(
-    null,
+  serverApproval = $state<{
+    id: string;
+    url: string;
+    code: string;
+    message?: string;
+    renewUrl?: string;
+  } | null>(null);
+  latencySelection = $state<import("./persistence").LatencySelection>({
+    mode: "primary",
+    serverId: "",
+  });
+  primaryLatencyServer = $derived(
+    this.selectedServers.includes(this.latencySelection.serverId)
+      ? this.latencySelection.serverId
+      : (this.selectedServers[0] ?? "self"),
   );
   latencyFocus = $state("self");
   serverDetails = $state<
     import("../servers/measurement").MultiServerResult | null
   >(null);
-  latencyByServer = $state<Record<string, LatencyBucket[]>>({});
-  summariesByServer = $state<
-    Record<string, Partial<Record<TransportRole, StageLatencySummary | null>>>
-  >({});
+  readonly latencyByServer = new SvelteMap<string, LatencyBucket[]>();
+  readonly summariesByServer = new SvelteMap<
+    string,
+    Partial<Record<TransportRole, StageLatencySummary | null>>
+  >();
 
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
-    this.latency = [...(this.latencyByServer[id] ?? [])];
+    this.latency = [...(this.latencyByServer.get(id) ?? [])];
     this.latencySummaries = {
-      ...(this.summariesByServer[id] ??
+      ...(this.summariesByServer.get(id) ??
         this.serverDetails?.servers.find((server) => server.server.id === id)
           ?.latencyByStage ??
         {}),
@@ -256,6 +270,7 @@ class AppStore {
   engineInfo = $state<EngineInfo | null>(null);
   result = $state<RunResult | null>(null);
   stageResults = $state<StageResults>(emptyStageResults());
+  completedStages = $state<TransportRole[]>([]);
   error = $state<RunnerError | null>(null);
   stageFailures = $state<Partial<Record<TransportRole, StageFailure>>>({});
   startEpoch = $state(0);
@@ -421,6 +436,7 @@ class AppStore {
               phaseFraction: this.phaseFraction,
               measuring: this.measuring,
               hasUsableResult,
+              finished: this.completedStages.includes(stage),
               hasFailure: failure,
             }),
           ];
@@ -602,15 +618,21 @@ class AppStore {
         }
         break;
       case "serverLatency": {
-        const history = (this.latencyByServer[event.serverId] ??= []);
+        let history = this.latencyByServer.get(event.serverId);
+        if (!history) {
+          history = [];
+          this.latencyByServer.set(event.serverId, history);
+        }
         upsertLatencyBucket(history, event.sample, PRESENTATION_POINT_LIMIT);
         if (event.serverId === this.latencyFocus)
           this.ingest({ type: "latency", sample: event.sample });
         break;
       }
       case "serverLatencySummary":
-        (this.summariesByServer[event.serverId] ??= {})[event.stage] =
-          event.summary;
+        this.summariesByServer.set(event.serverId, {
+          ...this.summariesByServer.get(event.serverId),
+          [event.stage]: event.summary,
+        });
         if (event.serverId === this.latencyFocus)
           this.latencySummaries[event.stage] = event.summary;
         break;
@@ -627,6 +649,15 @@ class AppStore {
         break;
 
       case "phase": {
+        const previous = event.transition.from;
+        if (
+          STAGE_ORDER.some((stage) => stage === previous) &&
+          event.transition.to !== "aborted" &&
+          event.transition.to !== "error" &&
+          previous !== event.transition.to &&
+          !this.completedStages.includes(previous as TransportRole)
+        )
+          this.completedStages.push(previous as TransportRole);
         if (event.transition.from === "idle") {
           this.#latencyScale.reset();
           this.latencyScaleMs = this.#latencyScale.scaleMs;
@@ -732,6 +763,11 @@ class AppStore {
       case "complete":
         this.uploadPresentationBytesPerSec = null;
         this.result = event.result;
+        this.stageResults = {
+          download: event.result.download,
+          upload: event.result.upload,
+          latency: event.result.latency,
+        };
         this.serverDetails = event.result.multiServer ?? null;
         this.latencySummaries = event.result.latencyByStage;
         if (this.savingResults) {
@@ -768,11 +804,11 @@ class AppStore {
             {
               paths: this.activePaths,
               clientBuild: BUILD.clientVersion,
-              wireDownloadBytesPerSec:
-                downloadWire?.estimatedBytesPerSec ?? null,
-              wireUploadBytesPerSec: uploadWire?.estimatedBytesPerSec ?? null,
-              wireBidirectionalBytesPerSec:
-                bidiWire?.estimatedBytesPerSec ?? null,
+              wireEstimates: historyWireEstimates(
+                downloadWire,
+                uploadWire,
+                bidiWire,
+              ),
             },
             Date.now(),
           );
@@ -802,6 +838,8 @@ class AppStore {
   }
 
   reset() {
+    this.latencyByServer.clear();
+    this.summariesByServer.clear();
     Object.assign(this, {
       startError: "",
       preparationStatus: "idle",
@@ -811,8 +849,6 @@ class AppStore {
       aggregateEvidence: true,
       bytesTransferred: 0,
       latency: [],
-      latencyByServer: {},
-      summariesByServer: {},
       serverDetails: null,
       latencySummaries: {},
       phase: "idle" as const,
@@ -825,6 +861,7 @@ class AppStore {
       stallInfo: null,
       liveStability: emptyStability(),
       stageResults: emptyStageResults(),
+      completedStages: [],
       stageFailures: {},
       result: null,
       error: null,
@@ -844,6 +881,7 @@ class AppStore {
 
   restoreTestDisplayDefaults() {
     const defaults = defaultPersisted();
+    this.latencySelection = { ...defaults.latencySelection };
     this.config = structuredClone(defaults.config);
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
@@ -926,6 +964,7 @@ export function mountStoreEffects(store: AppStore): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
       const snapshot = {
+        latencySelection: $state.snapshot(store.latencySelection),
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
         unitKind: store.unitKind,

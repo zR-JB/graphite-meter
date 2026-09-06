@@ -386,7 +386,13 @@ drain:
 			break drain
 		}
 	}
-	started := c.started.Add(initial.at)
+	// Checkpoint replies finish preparation. The client populations begin only
+	// now; receiver baselines keep their original request/response brackets.
+	started := time.Now()
+	initial.at = started.Sub(c.started)
+	for _, server := range c.active() {
+		initial.down[server.prepared.Server.ID] = server.transport.coordinated.download()
+	}
 	if len(stage.Directions) > 0 {
 		c.aggregate.begin(stage.Name, c.ids(), initial.at, "stage-start")
 		c.aggregate.observe(initial)

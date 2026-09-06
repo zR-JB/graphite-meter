@@ -1,5 +1,10 @@
 import { canonicalOrigin } from "./catalog";
 import type { MultiServerResult } from "./measurement";
+import {
+  hasLatencyMeasurements,
+  hasThroughputMeasurements,
+  isReflectorTimingSummary,
+} from "../history/measurementValidation";
 
 const stages = ["latency", "download", "upload", "bidirectional"];
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -38,17 +43,7 @@ function throughput(value: unknown) {
         "probeTimeoutPct",
         "serverAuthoritative",
       ]) &&
-      [
-        "peakBytesPerSec",
-        "stabilityPct",
-        "totalBytes",
-        "reportedBytesPerSec",
-        "fullAverageBytesPerSec",
-        "stabilityScore",
-      ].every((key) => number(value[key])) &&
-      ["stable-window", "full-average"].includes(String(value.method)) &&
-      ["low", "medium", "high"].includes(String(value.band)) &&
-      optionalNumbers(value, ["probeTimeoutPct"]) &&
+      hasThroughputMeasurements(value) &&
       (value.serverAuthoritative === undefined ||
         typeof value.serverAuthoritative === "boolean"))
   );
@@ -70,17 +65,7 @@ function latency(value: unknown) {
         "band",
       ]) &&
       number(value.idleMs) &&
-      number(value.reportedMs) &&
-      number(value.stabilityScore) &&
-      optionalNumbers(value, [
-        "minMs",
-        "p50Ms",
-        "p95Ms",
-        "jitterMs",
-        "probeTimeoutPct",
-      ]) &&
-      ["stable-window", "full-average"].includes(String(value.method)) &&
-      ["low", "medium", "high"].includes(String(value.band)))
+      hasLatencyMeasurements(value))
   );
 }
 function grade(value: unknown) {
@@ -133,29 +118,17 @@ function latencySummary(value: unknown) {
       "p50Ms",
       "p90Ms",
       "p95Ms",
-      "p95Ms",
       "jitterMs",
     ])
   )
     return false;
-  if (value.reflectorTiming !== undefined) {
-    const timing = value.reflectorTiming;
-    if (
-      !object(timing) ||
-      !keys(timing, [
-        "sampleCount",
-        "meanRawRttMs",
-        "meanHandlingMs",
-        "meanAdjustedRttMs",
-      ]) ||
-      !Object.values(timing).every(number) ||
-      !Number.isSafeInteger(timing.sampleCount) ||
-      (timing.sampleCount as number) >
-        (value.probeCount as number) - (value.timeoutCount as number)
+  return (
+    value.reflectorTiming === undefined ||
+    isReflectorTimingSummary(
+      value.reflectorTiming,
+      (value.probeCount as number) - (value.timeoutCount as number),
     )
-      return false;
-  }
-  return true;
+  );
 }
 function identity(value: unknown) {
   return (

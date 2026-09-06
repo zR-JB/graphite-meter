@@ -145,21 +145,27 @@ export function roleNeedsValidation(
 export function validationRoles(
   config: RunnerConfig,
   validation: ConnectionValidation,
-  requestedRole?: ConnectionRole,
+  requestedRole?: ConnectionRole | "all",
   discovery?: TransportDiscovery | null,
+  maxAgeMs = CONNECTION_FRESH_MS,
 ): ConnectionRole[] {
   return CONNECTION_ROLES.filter((role) => {
-    if (!requestedRole || role === requestedRole) return true;
     if (role === "latency" && !latencyPathNeeded(config)) return false;
+    // Retrying one failed role does not also retry an unchanged failure in the other.
     const check = validation[role];
+    if (
+      requestedRole &&
+      requestedRole !== "all" &&
+      requestedRole !== role &&
+      check.state === "failed" &&
+      check.selection === connectionSelection(config, role)
+    )
+      return false;
     return (
-      check.state === "stale" ||
-      (check.path && discovery
-        ? JSON.stringify(check.path.requested) !==
-          JSON.stringify(
-            selectTarget(discovery, role, connectionSelection(config, role)),
-          )
-        : check.selection !== connectionSelection(config, role))
+      requestedRole === "all" ||
+      role === requestedRole ||
+      roleNeedsValidation(config, validation, role, discovery) ||
+      Date.now() - validation[role].path!.verifiedAt > maxAgeMs
     );
   });
 }
@@ -169,6 +175,7 @@ export function preparedPaths(
   config: RunnerConfig,
   discovery: TransportDiscovery | null,
   validation: ConnectionValidation,
+  maxAgeMs = CONNECTION_FRESH_MS,
 ): PreparedPaths | null {
   if (
     !discovery ||
@@ -176,7 +183,7 @@ export function preparedPaths(
       (role) =>
         roleNeedsValidation(config, validation, role, discovery) ||
         ((role === "throughput" || latencyPathNeeded(config)) &&
-          Date.now() - validation[role].path!.verifiedAt > CONNECTION_FRESH_MS),
+          Date.now() - validation[role].path!.verifiedAt > maxAgeMs),
     )
   )
     return null;
@@ -249,7 +256,8 @@ export function presentConnections(
       clientIp: path?.probe.clientIp,
       clientIpVersion: path?.probe.clientIpVersion,
       clientIpSource: path?.probe.clientIpSource,
-      preTestPingMs: path && "rttMs" in path ? path.rttMs : undefined,
+      preTestPingMs:
+        path && "rttMs" in path ? (path.rttMs ?? undefined) : undefined,
       verifiedAt: path?.verifiedAt,
     };
   };

@@ -9,8 +9,6 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
-  import ServerChooser from "./ServerChooser.svelte";
-  import ServerResultDetails from "./ServerResultDetails.svelte";
   import LatencyServerSelector from "./LatencyServerSelector.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -30,6 +28,20 @@
   import { failureDetail } from "./failurePresentation";
   import { ICON } from "../constants";
 
+  const indicatedServers = $derived(
+    store.serverDetails?.selection ??
+      store.serverCatalog?.servers.filter((server) =>
+        store.selectedServers.includes(server.id),
+      ) ??
+      [],
+  );
+  const serverIndicator = $derived(
+    store.isRunning
+      ? `Testing ${indicatedServers.length} servers`
+      : store.result
+        ? `Tested ${indicatedServers.length} servers`
+        : `${indicatedServers.length} servers selected`,
+  );
   const resultsView = $derived.by<"none" | "partial" | "final">(() => {
     if (store.phase === "complete") return "final";
     if (store.phase === "idle") return "none";
@@ -391,11 +403,28 @@
   });
 </script>
 
-<section class="gauge-panel">
+<section class="gauge-panel" data-phase={store.phase}>
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
     <div class="stage">
+      {#if indicatedServers.length > 1}
+        <div
+          class="server-indicator"
+          title={indicatedServers.map((server) => server.name).join(", ")}
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true"
+            ><rect x="2.5" y="3" width="15" height="5" rx="1.5" /><rect
+              x="2.5"
+              y="12"
+              width="15"
+              height="5"
+              rx="1.5"
+            /><path d="M6 5.5h.01M6 14.5h.01M10 8v4" /></svg
+          >
+          <span>{serverIndicator}</span>
+        </div>
+      {/if}
       <div
         bind:this={stageEl}
         class="gauge-face"
@@ -478,7 +507,7 @@
     </div>
 
     <div class="instrument-controls">
-      <div class="run-slot"><RunButton /><ServerChooser /></div>
+      <div class="run-slot"><RunButton /></div>
       <div class="stage-head"><StageTrack /></div>
     </div>
 
@@ -496,10 +525,6 @@
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}
-    {#if store.result?.multiServer}<ServerResultDetails
-        details={store.result.multiServer}
-        outcome={store.result.outcome}
-      />{/if}
   </div>
 </section>
 
@@ -585,6 +610,24 @@
     box-shadow: var(--elev-inset);
     overflow: hidden;
   }
+  .server-indicator {
+    position: absolute;
+    z-index: 1;
+    inset: var(--space-3) auto auto var(--space-3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-muted);
+    font: 500 var(--type-xs)/1.4 var(--font-sans);
+  }
+  .server-indicator svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+  }
   .gauge-face {
     position: relative;
     flex: 1 1 auto;
@@ -612,26 +655,20 @@
     }
     @container viz (min-width: 1000px) {
       .instrument-controls {
-        grid-template-columns: minmax(360px, 420px) minmax(0, 1fr);
+        grid-template-columns: 280px minmax(0, 1fr);
         align-items: end;
         column-gap: var(--space-5);
-        max-width: calc(420px + var(--space-5) + var(--stage-controls-width));
+        max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
       }
     }
   }
   /* Short wide windows share a control row; taller screens keep the action above its stages. */
   .run-slot {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     align-items: center;
-    gap: 0.5rem;
     justify-content: center;
     min-height: 46px;
-  }
-  .run-slot :global(.run-button) {
-    flex: 1 1 240px;
-    width: auto;
-    min-width: 220px;
   }
   /* Latency rows remain fully visible; the instrument owns their height. */
   .latency-panel {
@@ -839,6 +876,10 @@
     max-width: none;
     align-self: center;
     min-height: 0;
+  }
+  .results-slot :global(.server-results) {
+    max-width: 1120px;
+    margin: var(--space-3) auto 0;
   }
   .results-slot:empty {
     display: none;

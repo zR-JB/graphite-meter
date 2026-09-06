@@ -16,6 +16,8 @@ import { latencyPresentationBucketMs } from "./latencyBuckets";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { RunAccumulator } from "./evaluation";
 import { DEFAULT_CONFIG } from "../state/defaults";
+import { stubGlobals } from "../test-helpers.test";
+import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
 const realNow = performance.now.bind(performance);
@@ -202,6 +204,9 @@ test("a coordinated source owns latency populations without a second mixed prese
     confidence: (stage) => accumulator.confidence(stage),
     trackStableRun: () => false,
     canComplete: () => true,
+    armLatencyEarlyStop: () => accumulator.armLatencyEarlyStop(),
+    cancelLatencyEarlyStop: () => accumulator.cancelLatencyEarlyStop(),
+    confirmLatencyEarlyStop: () => accumulator.confirmLatencyEarlyStop(),
     throughputResult: () => null,
     bidirectionalResult: () => ({ down: null, up: null }),
     latencyResult: () => null,
@@ -243,6 +248,90 @@ test("a coordinated source owns latency populations without a second mixed prese
   expect(events.some((event) => event.type === "complete")).toBe(true);
   core.dispose();
 });
+
+test.each([
+  ["without extending duration", false],
+  ["after extending duration", true],
+] as const)(
+  "coordinated latency retains each confirmed population %s",
+  async (_description, extendDuration) => {
+    const restore = stubGlobals(TEST_BUILD_TOKENS);
+    const { ServerCoordinator } = await import("../servers/coordinator");
+    const hosts: CoreHost[] = [];
+    const coordinator = new ServerCoordinator(
+      ["a", "b"].map((id) => ({
+        server: { id, name: id, url: `https://${id}.example` },
+        paths: testPreparedPaths(),
+      })),
+      "a",
+      () => ({
+        attach(host) {
+          hosts.push(host);
+        },
+        onRunStart() {},
+        onStageBegin() {},
+        onStageMeasure() {},
+        onStageEnd() {},
+        onAbort() {},
+        onComplete() {},
+        flushDownload() {},
+        checkpoint: async () => null,
+      }),
+    );
+    const events: RunnerEvent[] = [];
+    coordinator.on((event) => events.push(event));
+    const cfg = makeConfig({
+      stages: { latency: true, download: false },
+      duration: { latencyMs: 4000 },
+      adaptive: {
+        enabled: true,
+        minCoverageRatio: 0.5,
+        minLatencySamples: 3,
+        confirmationMs: 500,
+      },
+    });
+    const settleStageWork = () =>
+      new Promise<void>((resolve) => realSetTimeout(resolve, 0));
+    try {
+      coordinator.start(cfg, 0);
+      advance(10);
+      await settleStageWork();
+      for (let i = 0; i < 55 && coordinator.phase !== "complete"; i++) {
+        const rtt = fakeNow < 2000 ? 10 : fakeNow < 4000 ? 11 : 12;
+        for (const [index, host] of hosts.entries())
+          host.ingestLatency({
+            rttMs: rtt + index * 20,
+            lost: false,
+            observedAtMs: fakeNow,
+          });
+        if (extendDuration && fakeNow === 2110) {
+          cfg.duration.latencyMs = 8000;
+          coordinator.reconfigure(cfg);
+        }
+        advance(100);
+        await settleStageWork();
+      }
+      expectComplete(events, (result) => {
+        const expected = extendDuration ? 12 : 11;
+        expect(result.latency?.reportedMs).toBe(expected);
+        expect(result.durationMs).toBeLessThan(cfg.duration.latencyMs);
+        expect(
+          result.multiServer?.servers.map(
+            (server) => server.latency?.reportedMs,
+          ),
+        ).toEqual([expected, expected + 20]);
+        expect(result.latencyByStage.latency?.p50Ms).toBeLessThan(expected);
+        expect(
+          result.multiServer?.servers[1].latencyByStage.latency?.p50Ms,
+        ).toBeLessThan(expected + 20);
+      });
+    } finally {
+      coordinator.dispose();
+      restore();
+    }
+  },
+);
+
 type StartedCore = CoreRun & { cfg: RunnerConfig };
 async function startCore(
   overrides: ConfigOverrides = {},
@@ -1167,4 +1256,23 @@ test("presentation derives from receiver bytes and intervals while retaining exa
     );
     expect(result.download!.totalBytes).toBe(N * DELTA);
   });
+});
+
+test("worker observations retain their timeline position across delayed delivery and ticks", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.adaptive.enabled = false;
+  config.duration.warmupMs = 0;
+  config.duration.latencyMs = 4000;
+  core.start(config, 1);
+  advance(200);
+  expect(core.observationTime(195)).toBe(195);
+  // A delivered batch takes time to consume before the next master tick.
+  fakeNow = 275;
+  expect(core.observationTime(195)).toBe(195);
+  expect(core.observationTime(210)).toBe(210);
+  advance(25);
+  expect(core.observationTime(195)).toBe(195);
+  core.dispose();
 });

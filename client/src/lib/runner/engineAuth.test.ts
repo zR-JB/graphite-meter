@@ -1,6 +1,12 @@
 import "../state/runes.test";
+import { stubGlobals } from "../test-helpers.test";
 import { expect, test } from "bun:test";
-import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
+import {
+  TEST_BUILD_TOKENS,
+  testPreparedPaths,
+  testServerCatalog,
+  testServerDiscovery,
+} from "./test-helpers.test";
 import type { NetworkRunner, RunnerEvent } from "./contract";
 
 test("a canceled start cannot overwrite the newer run's session budget when authentication resolves late", async () => {
@@ -80,6 +86,8 @@ test("a canceled start cannot overwrite the newer run's session budget when auth
     },
   };
   const engine = createApplicationController(store, {
+    loadCatalog: testServerCatalog,
+    discover: testServerDiscovery,
     createRunner: () => runner,
     prepare: async (config) => {
       const paths = testPreparedPaths({ latency: null });
@@ -133,5 +141,96 @@ test("a canceled start cannot overwrite the newer run's session budget when auth
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
     }
+  }
+});
+
+test("cancel, deselection, and disposal close owned approval popups before delayed setup can return", async () => {
+  const popups: {
+    closed: boolean;
+    opener: object | null;
+    location: { replace: (url: string) => void };
+    close: () => void;
+  }[] = [];
+  let navigations = 0;
+  let requests = 0;
+  const origin = new URL("https://ui.example/");
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    location: origin,
+    window: {
+      location: origin,
+      open() {
+        const popup = {
+          closed: false,
+          opener: {},
+          location: {
+            replace() {
+              navigations++;
+            },
+          },
+          close() {
+            this.closed = true;
+          },
+        };
+        popups.push(popup);
+        return popup;
+      },
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    },
+    document: {
+      visibilityState: "visible",
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    navigator: { onLine: true },
+    localStorage: { setItem() {} },
+    fetch: async () => {
+      requests++;
+      return Response.json({}, { status: 202 });
+    },
+  });
+  const { createApplicationController } = await import("./engine.svelte");
+  const { store } = await import("../state/store.svelte");
+  const catalog = store.serverCatalog;
+  const selection = store.selectedServers;
+  const latency = store.latencySelection;
+  store.reset();
+  store.serverCatalog = {
+    defaultSelection: ["self"],
+    servers: [
+      { id: "self", name: "Home", url: origin.origin },
+      { id: "peer", name: "Private", url: "https://peer.example" },
+    ],
+  };
+  store.selectedServers = ["self", "peer"];
+  const engine = createApplicationController(store);
+  try {
+    const canceled = engine.signInServer("peer");
+    engine.cancelServerApproval();
+    await canceled;
+    expect(popups[0].closed).toBe(true);
+    expect(popups[0].opener).toBeNull();
+    const deselected = engine.signInServer("peer");
+    engine.applyServers(["self"]);
+    await deselected;
+    expect(popups[1].closed).toBe(true);
+    expect(popups[1].opener).toBeNull();
+    const disposed = engine.signInServer("peer");
+    engine.dispose();
+    await disposed;
+    expect(popups[2].closed).toBe(true);
+    expect(popups[2].opener).toBeNull();
+    expect(store.serverApproval).toBeNull();
+    expect(navigations).toBe(0);
+    expect(requests).toBe(0);
+  } finally {
+    engine.dispose();
+    store.serverCatalog = catalog;
+    store.selectedServers = selection;
+    store.latencySelection = latency;
+    store.reset();
+    restore();
   }
 });

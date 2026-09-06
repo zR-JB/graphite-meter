@@ -14,6 +14,7 @@
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import { serverTransportOptions } from "../../servers/transportOptions";
+  import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -101,7 +102,11 @@
     simultaneous
       ? serverTransportOptions(
           "latency",
-          selectedServers,
+          store.latencySelection.mode === "primary"
+            ? selectedServers.filter(
+                (server) => server.id === store.primaryLatencyServer,
+              )
+            : selectedServers,
           store.serverDiscoveries,
           false,
           store.config.transports.latencyTarget,
@@ -237,20 +242,16 @@
         {READINESS_LABEL[readiness]}
       </span>
     </div>
-    <p class="intro">
-      {simultaneous
-        ? "One preference applies to every selected server. Automatic resolves each path independently."
-        : "Choose separate paths for speed and latency measurements."}
-    </p>
+    <ServerSelection />
     <ConnectionPicker
       role="throughput"
       options={throughputTargets}
-      locked={running}
+      locked={running || store.preparing}
     />
     <ConnectionPicker
       role="latency"
       options={latencyTargets}
-      locked={running}
+      locked={running || store.preparing}
     />
   </section>
 
@@ -262,6 +263,7 @@
           type="button"
           class:active={durationMode === preset}
           aria-pressed={durationMode === preset}
+          disabled={store.preparing}
           onclick={() => setPreset(preset)}>{preset}</button
         >
       {/each}
@@ -269,7 +271,8 @@
     <Switch
       checked={store.config.stages.bidirectional}
       onToggle={setBidirectional}
-      disabled={running && store.phaseStage === "bidirectional"}
+      disabled={store.preparing ||
+        (running && store.phaseStage === "bidirectional")}
       label="Include concurrent download + upload"
     />
     {#if durationMode === "custom"}
@@ -281,6 +284,7 @@
               type="number"
               min="0"
               step="500"
+              disabled={store.preparing}
               value={store.config.duration[key]}
               oninput={(event) => setDuration(key, event)}
             />
@@ -418,6 +422,7 @@
     <Switch
       checked={store.config.adaptive.enabled}
       onToggle={setAdaptiveEnabled}
+      disabled={store.preparing}
       label="Finish stable stages early"
     />
   </section>
@@ -426,7 +431,10 @@
     <h3>Latency timing</h3>
     <label>
       <span>Unloaded ping cadence</span>
-      <select bind:value={store.config.pingCadence} disabled={running}>
+      <select
+        bind:value={store.config.pingCadence}
+        disabled={running || store.preparing}
+      >
         <option value="reply-driven">Reply-driven</option>
         <option value="fast">Fast (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
@@ -435,7 +443,10 @@
     </label>
     <label>
       <span>Loaded ping cadence</span>
-      <select bind:value={store.config.loadedPingCadence} disabled={running}>
+      <select
+        bind:value={store.config.loadedPingCadence}
+        disabled={running || store.preparing}
+      >
         <option value="reply-driven">Reply-driven</option>
         <option value="fast">Fast (80 ms)</option>
         <option value="medium">Medium (250 ms)</option>
@@ -444,7 +455,7 @@
     </label>
     <Switch
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}
-      disabled={running}
+      disabled={running || store.preparing}
       label="Skip loaded latency when latency is off"
     />
   </section>
@@ -465,7 +476,7 @@
     {/if}
     <Switch
       bind:checked={store.config.experimentalDatagramThroughput}
-      disabled={running}
+      disabled={running || store.preparing}
       label="Datagram throughput (experimental)"
     />
     <p class="hint">
@@ -478,7 +489,7 @@
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
       onToggle={setForcedStreams}
-      disabled={running}
+      disabled={running || store.preparing}
       label="Force exact stream count"
       tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
     />
@@ -493,7 +504,7 @@
         min="1"
         max="128"
         step="1"
-        disabled={running}
+        disabled={running || store.preparing}
         bind:value={store.config.transferStreams.count}
       />
     </label>
@@ -587,12 +598,6 @@
   .readiness-badge[data-state="failed"] {
     background: var(--err-soft);
     color: var(--err);
-  }
-  .intro {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.5;
   }
   label,
   .field {

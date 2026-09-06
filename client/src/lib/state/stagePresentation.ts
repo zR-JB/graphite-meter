@@ -34,6 +34,7 @@ interface StagePresentationInput {
   measuring: boolean;
   hasUsableResult: boolean;
   hasFailure: boolean;
+  finished?: boolean;
 }
 
 export function deriveStagePresentation(
@@ -64,5 +65,7 @@ export function deriveStagePresentation(
     status = input.measuring ? "active" : "recovering";
     fill = warming ? 0 : Math.round(input.phaseFraction * 200) / 2;
   }
+  if (status === "pending" && input.configured && input.finished)
+    status = "failed";
   return { ...base, status, fill, warming };
 }

@@ -1,11 +1,27 @@
 import { expect, test } from "bun:test";
 import {
   allowsServerOrigin,
+  browserOriginRestriction,
   parseCatalog,
   reconcileSelection,
   selectedInCatalogOrder,
   validateSelection,
 } from "./catalog";
+
+test("browser IPv6 origins require DNS except for the interface's exact origin", () => {
+  const ui = "http://[::1]:7246";
+  expect(browserOriginRestriction(ui, ui)).toBeUndefined();
+  expect(
+    browserOriginRestriction("https://meter.example:7248", ui),
+  ).toBeUndefined();
+  for (const [origin, page] of [
+    ["http://[::1]:7247", ui],
+    ["https://[::1]:7246", ui],
+    ["http://[::2]:7246", ui],
+    ["https://[2001:db8::1]", "https://meter.example"],
+  ])
+    expect(browserOriginRestriction(origin, page)).toContain("DNS hostname");
+});
 
 const catalog = parseCatalog(
   {

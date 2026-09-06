@@ -181,7 +181,8 @@ func (c *Controller) Close() {
 }
 
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
-	if event.Kind == EventResult || event.Kind == EventDone {
+	terminalServers := event.Kind == EventServers && event.Servers != nil && event.Servers.Outcome != "running"
+	if event.Kind == EventResult || event.Kind == EventDone || terminalServers {
 		measurement = delivery
 	}
 	select {

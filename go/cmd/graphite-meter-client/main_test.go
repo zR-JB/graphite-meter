@@ -1757,8 +1757,8 @@ func TestExpiredGrantReturnsToTheServerSelection(t *testing.T) {
 	if m.mode != modeConfigure || m.section != sectionServers {
 		t.Fatalf("expired grant left the screen at mode %d section %d", m.mode, m.section)
 	}
-	if m.prepareStatus != "authorizing" {
-		t.Errorf("prepareStatus = %q, want authorizing", m.prepareStatus)
+	if m.prepareStatus != "checking" {
+		t.Errorf("prepareStatus = %q, want checking before selecting the expired issuer", m.prepareStatus)
 	}
 }
 

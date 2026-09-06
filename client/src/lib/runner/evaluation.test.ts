@@ -376,3 +376,18 @@ test("bufferbloat is unavailable without both idle and loaded latency evidence",
   accum.pushLatency("download", 40, false);
   expect(accum.bufferbloatGrade()?.increaseMs).toBe(20);
 });
+
+test("dense confidence windows expire outcomes without losing the whole-stage population", () => {
+  const accum = fresh();
+  for (let index = 0; index < 60000; index++)
+    accum.pushLatency("latency", index < 30000 ? 40 : 2, false, index / 5);
+  const recent = accum.confidence("latency");
+  expect(recent.score).toBe(1);
+  expect(recent.sampleCount).toBeGreaterThan(0);
+  expect(recent.sampleCount).toBeLessThan(30001);
+  expect(accum.latencySummary("latency")?.probeCount).toBe(60000);
+  accum.beginPhase();
+  expect(accum.confidence("latency").sampleCount).toBe(0);
+  accum.pushLatency("latency", 7, false, 13000);
+  expect(accum.confidence("latency").sampleCount).toBe(1);
+});

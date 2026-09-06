@@ -156,22 +156,31 @@ func TestControllerCloseCancelsInFlightAuthenticationClassification(t *testing.T
 func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
-	for _, kind := range []EventKind{EventResult, EventDone} {
-		t.Run(fmt.Sprint(kind), func(t *testing.T) {
+	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone}, {Kind: EventServers, Servers: &RunDetails{Outcome: "incomplete"}}} {
+		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
 			delivery, abandon := context.WithCancel(t.Context())
 			defer abandon()
+			// Exercise both ready select arms: cancellation must never compete
+			// with a terminal record, even when delivery has spare capacity.
+			for range 64 {
+				available := make(chan Event, 1)
+				sendRunEvent(measurement, delivery, available, terminal)
+				if len(available) != 1 {
+					t.Fatal("user cancellation discarded an immediately deliverable terminal outcome")
+				}
+			}
 			events := make(chan Event, 1)
 			events <- Event{Kind: EventLatency}
 			sent := make(chan struct{})
 			go func() {
-				sendRunEvent(measurement, delivery, events, Event{Kind: kind})
+				sendRunEvent(measurement, delivery, events, terminal)
 				close(sent)
 			}()
 			<-events
 			select {
 			case event := <-events:
-				if event.Kind != kind {
-					t.Fatalf("delivered %v, want %v", event.Kind, kind)
+				if event.Kind != terminal.Kind || event.Servers != terminal.Servers {
+					t.Fatalf("delivered %+v, want %+v", event, terminal)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("user cancellation discarded the queued final outcome")
@@ -180,7 +189,7 @@ func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 			events <- Event{}
 			abandon()
 			// A superseded run can exit even when its consumer has stopped draining the full queue.
-			sendRunEvent(measurement, delivery, events, Event{Kind: kind})
+			sendRunEvent(measurement, delivery, events, terminal)
 		})
 	}
 }

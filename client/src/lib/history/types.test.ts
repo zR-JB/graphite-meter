@@ -60,6 +60,114 @@ const result: RunResult = {
   startedAt: 100,
   durationMs: 80,
 };
+
+function serverHistoryRecord() {
+  const source = structuredClone(result);
+  const server = { id: "a", name: "A", url: "https://a.example" };
+  source.multiServer = {
+    selection: [server],
+    participants: [server.id],
+    latencyFocus: server.id,
+    intervals: [],
+    omittedIntervals: 0,
+    failures: [],
+    servers: [
+      {
+        server,
+        throughput: {
+          origin: server.url,
+          transport: "fetch-stream",
+          protocol: "http2",
+        },
+        latencyTarget: { origin: server.url, transport: "websocket" },
+        latency: source.latency,
+        latencyByStage: source.latencyByStage,
+        bufferbloat: source.bufferbloat,
+        download: source.download,
+        upload: source.upload,
+        bidirectional: source.bidirectional,
+        totalBytes: { down: 800, up: 0 },
+      },
+    ],
+  };
+  return buildHistoryRecord(source, { paths: null, clientBuild: "b" }, 200);
+}
+
+test("aggregate and per-server history enforce the same measurement bounds", () => {
+  for (const select of [
+    (record: ReturnType<typeof serverHistoryRecord>) =>
+      record.stages.download.result!,
+    (record: ReturnType<typeof serverHistoryRecord>) =>
+      record.multiServer!.servers[0].download!,
+    (record: ReturnType<typeof serverHistoryRecord>) =>
+      record.stages.latency.result!,
+    (record: ReturnType<typeof serverHistoryRecord>) =>
+      record.multiServer!.servers[0].latency!,
+  ]) {
+    const record = serverHistoryRecord();
+    expect(isHistoryRecord(record)).toBe(true);
+    const measurement = select(record);
+    for (const [field, maximum] of [
+      ["probeTimeoutPct", 100],
+      ["stabilityScore", 1],
+      ...("stabilityPct" in measurement
+        ? [["stabilityPct", 100] as const]
+        : []),
+    ] as const) {
+      const values = measurement as unknown as Record<string, unknown>;
+      const original = values[field];
+      for (const invalid of [-1, maximum + 1, Infinity, undefined, "1"]) {
+        values[field] = invalid;
+        expect(isHistoryRecord(record)).toBe(false);
+      }
+      values[field] = maximum;
+      expect(isHistoryRecord(record)).toBe(true);
+      values[field] = original;
+    }
+  }
+});
+
+test("per-server history rejects incomplete or inconsistent paired reflector timing", () => {
+  const valid = {
+    sampleCount: 2,
+    meanRawRttMs: 18,
+    meanHandlingMs: 3,
+    meanAdjustedRttMs: 15,
+  };
+  const record = serverHistoryRecord();
+  const summary = record.multiServer!.servers[0].latencyByStage.download!;
+  const values = summary as unknown as Record<string, unknown>;
+  for (const invalid of [
+    null,
+    { sampleCount: 1 },
+    { ...valid, meanRawRttMs: undefined },
+    { ...valid, meanHandlingMs: undefined },
+    { ...valid, meanAdjustedRttMs: undefined },
+    { ...valid, sampleCount: 0 },
+    { ...valid, sampleCount: 1.5 },
+    { ...valid, sampleCount: 10 },
+    { ...valid, meanRawRttMs: Infinity },
+    { ...valid, meanHandlingMs: -1 },
+    { ...valid, meanHandlingMs: 19 },
+    { ...valid, meanAdjustedRttMs: 14 },
+    { ...valid, unknown: true },
+  ]) {
+    values.reflectorTiming = invalid;
+    expect(isHistoryRecord(record)).toBe(false);
+  }
+  summary.reflectorTiming = valid;
+  expect(isHistoryRecord(record)).toBe(true);
+  summary.reflectorTiming = {
+    sampleCount: 1,
+    meanRawRttMs: 0,
+    meanHandlingMs: 0,
+    meanAdjustedRttMs: 0,
+  };
+  expect(isHistoryRecord(record)).toBe(true);
+  delete summary.reflectorTiming;
+  expect(isHistoryRecord(record)).toBe(true);
+});
+
 test("builds an immutable sanitized partial snapshot", () => {
   const paths = testPreparedPaths();
   paths.discovery.server = { name: "edge", location: "EU" };
@@ -77,8 +185,12 @@ test("builds an immutable sanitized partial snapshot", () => {
     {
       paths,
       clientBuild: "b",
-      wireDownloadBytesPerSec: 101,
-      wireBidirectionalBytesPerSec: 102,
+      wireEstimates: {
+        version: 1,
+        downloadBytesPerSec: 101,
+        uploadBytesPerSec: null,
+        bidirectionalBytesPerSec: 102,
+      },
     },
     200,
   );

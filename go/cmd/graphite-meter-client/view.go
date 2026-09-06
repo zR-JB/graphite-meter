@@ -174,7 +174,10 @@ func (m model) sectionView(w int) string {
 const serverURLColumn = 21
 
 func (m model) serversView(w int) string {
-	lines := []string{accentStyle.Render("Catalogue origin"), mutedStyle.Render("Press s to select measurement servers")}
+	lines := []string{accentStyle.Render("Server")}
+	if m.canChooseServers() {
+		lines = append(lines, mutedStyle.Render("Press s to choose servers for this test"))
+	}
 	active := activePreset(m.cfg.BaseURL)
 	row := func(selected bool, name, url, note string) string {
 		return strings.TrimRight(fmt.Sprintf("%s %-10s %s  %s", checkbox(selected), name, url, note), " ")
@@ -300,7 +303,7 @@ func (m model) planView() string {
 	lines := []string{accentStyle.Render("Connection readiness")}
 	lines = append(lines, m.checklistView()...)
 	if m.prepareError != "" {
-		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render("v retries · s servers · a Use Automatic"))
+		lines = append(lines, warnStyle.Render(m.prepareError), mutedStyle.Render(m.preparationHelp()))
 	}
 	lines = append(lines,
 		"",
@@ -381,7 +384,7 @@ func (m model) runView(w int) string {
 		b.WriteString("\n\n")
 		b.WriteString(panelStyle.Width(w - 2).Render(fitBlock(m.resultsView(w-6), w-6)))
 	}
-	if m.runDetails != nil {
+	if m.hasServerBreakdown() {
 		b.WriteString("\n\n")
 		b.WriteString(fitLine(m.serverResultNotice()+" · d Details", w))
 	}
@@ -398,7 +401,7 @@ func (m model) summaryView(w int) string {
 	throughput := m.runPath(m.throughputTransport, m.throughputProtocol, m.target)
 	latency := m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)
 	streams := m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport)
-	if m.runDetails != nil {
+	if m.hasServerBreakdown() {
 		names := make([]string, 0, len(m.runDetails.Selection))
 		paths := []string{}
 		for _, participant := range m.runDetails.Servers {

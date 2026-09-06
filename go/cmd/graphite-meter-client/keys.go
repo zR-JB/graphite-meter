@@ -1,6 +1,8 @@
 package main
 
 import (
+	"slices"
+
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -60,6 +62,18 @@ func reverse(msg tea.KeyMsg) bool {
 
 // ShortHelp is the footer for the screen on show: every binding it accepts.
 func (m model) ShortHelp() []key.Binding {
+	return slices.DeleteFunc(m.contextHelp(), func(binding key.Binding) bool {
+		keys := binding.Keys()
+		return len(keys) == 1 && ((keys[0] == "s" && !m.canChooseServers()) || ((keys[0] == "l" || keys[0] == "d") && !m.hasServerBreakdown()))
+	})
+}
+func (m model) preparationHelp() string {
+	if m.canChooseServers() {
+		return "v retries · s servers · a Use Automatic"
+	}
+	return "v retries · a Use Automatic"
+}
+func (m model) contextHelp() []key.Binding {
 	switch {
 	case m.serverDetailsOpen:
 		return []key.Binding{keys.rows, keys.discard, keys.quit}

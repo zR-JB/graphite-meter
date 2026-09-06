@@ -1,6 +1,6 @@
 import { stubGlobals } from "../test-helpers.test";
 import "../state/runes.test";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import type {
   PreparedPaths,
   RunnerConfig,
@@ -8,6 +8,7 @@ import type {
   NetworkRunner,
 } from "./contract";
 import {
+  BrowserOriginBlockedError,
   PreflightUnavailableError,
   TransportUnavailableError,
 } from "./real/transportError";
@@ -16,7 +17,12 @@ import {
   CONNECTION_FRESH_MS,
   emptyConnectionValidation,
 } from "./connectionModel";
-import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
+import {
+  TEST_BUILD_TOKENS,
+  testPreparedPaths,
+  testServerCatalog,
+  testServerDiscovery,
+} from "./test-helpers.test";
 
 function stubEngineGlobals(): () => void {
   return stubGlobals({ ...TEST_BUILD_TOKENS, window: undefined });
@@ -32,13 +38,14 @@ async function withBootRunner(
   setup: () => () => void = () => stubBootEnvironment("visible"),
 ): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
+  const restoreEnvironment = setup();
   const { createApplicationController } = await import("./engine.svelte");
   const { store } = await import("../state/store.svelte");
   const { prepareConnections } = await import("./real/prepare");
   const engine = createApplicationController(store, {
+    loadCatalog: testServerCatalog,
     prepare: prepareConnections,
   });
-  const restoreEnvironment = setup();
   try {
     await engine.boot();
     await run(engine);
@@ -77,13 +84,17 @@ function stubGlobal(key: string, value: unknown): () => void {
   return stubGlobals({ [key]: value });
 }
 function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
+  const origin = new URL("https://meter.test/");
   const restores = [
+    stubGlobal("location", origin),
     stubGlobal("window", {
+      location: origin,
       addEventListener() {},
       removeEventListener() {},
     }),
     stubGlobal("document", {
       visibilityState: visibility,
+      querySelector: () => null,
       addEventListener() {},
       removeEventListener() {},
     }),
@@ -94,16 +105,16 @@ function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
   };
 }
 function eventTarget() {
-  const listeners = new Map<string, () => void>();
+  const listeners = new Map<string, (event: Event) => void>();
   return {
-    addEventListener(type: string, listener: () => void) {
+    addEventListener(type: string, listener: (event: Event) => void) {
       listeners.set(type, listener);
     },
     removeEventListener(type: string) {
       listeners.delete(type);
     },
     emit(type: string) {
-      listeners.get(type)?.();
+      listeners.get(type)?.(new Event(type));
     },
   };
 }
@@ -115,6 +126,7 @@ function stubEventBootEnvironment(
   const documentListeners = eventTarget();
   const documentState = {
     visibilityState: visibility,
+    querySelector: () => null,
     addEventListener: documentListeners.addEventListener,
     removeEventListener: documentListeners.removeEventListener,
   };
@@ -123,6 +135,7 @@ function stubEventBootEnvironment(
     removeEventListener: windowListeners.removeEventListener,
   };
   const restores = [
+    stubGlobal("location", new URL("http://meter.test/")),
     stubGlobal("window", windowValue),
     stubGlobal("document", documentState),
     stubGlobal("navigator", { onLine: online }),
@@ -234,6 +247,8 @@ async function withValidationRunner(
   let onEvent: (event: RunnerEvent) => void = () => {};
   const runner = new TestRunner();
   const engine = createApplicationController(store, {
+    loadCatalog: testServerCatalog,
+    discover: testServerDiscovery,
     createRunner: () => runner,
     prepare: async (config, previous) => {
       calls++;
@@ -380,6 +395,10 @@ test("a preflight failure stays idle instead of manufacturing a run error", asyn
 });
 test("connection failures use safe presentation copy", async () => {
   const { connectionFailureMessage } = await import("./engine.svelte");
+  const blocked = new BrowserOriginBlockedError(
+    "Use a DNS hostname for browser connections",
+  );
+  expect(connectionFailureMessage(blocked)).toBe(blocked.message);
   expect(
     connectionFailureMessage(
       new PreflightUnavailableError("preflight unavailable", {
@@ -446,6 +465,8 @@ test("hidden boot defers preparation until visibility returns", async () => {
   const { store } = await import("../state/store.svelte");
   let calls = 0;
   const engine = createApplicationController(store, {
+    loadCatalog: testServerCatalog,
+    discover: testServerDiscovery,
     prepare: async () => {
       calls++;
       throw new Error("offline");
@@ -545,7 +566,7 @@ test("a path-specific validation failure leaves global keepalive state unchanged
   );
 });
 
-test("validation scheduler refreshes, backs off, defers hidden work, and tears down", async () => {
+test("validation scheduler leaves healthy paths idle, backs off failures, and defers hidden or active work", async () => {
   let offline = false;
   const timers = stubValidationTimers();
   try {
@@ -556,44 +577,35 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
       },
       async ({ engine, emit, environment, probeCalls }) => {
         expect(probeCalls()).toBe(1);
-        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+        expect(timers.size()).toBe(0);
         timers.advance(CONNECTION_FRESH_MS);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(2);
+        expect(probeCalls()).toBe(1);
         offline = true;
-        emit({
-          type: "connectivity",
-          state: "offline",
-        });
+        environment.setVisibility("hidden");
+        emit({ type: "connectivity", state: "offline" });
+        expect(timers.size()).toBe(0);
+        environment.setVisibility("visible");
         timers.advance(0);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(3);
+        expect(probeCalls()).toBe(2);
         expect(timers.delays()).toContain(CONNECTION_FAILURE_BACKOFF_MS[0]);
         timers.advance(CONNECTION_FAILURE_BACKOFF_MS[0] - 1);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(3);
+        expect(probeCalls()).toBe(2);
         offline = false;
         timers.advance(1);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(4);
-        timers.advance(CONNECTION_FRESH_MS - 1);
-        await settleMicrotasks();
-        expect(probeCalls()).toBe(4);
-        environment.setVisibility("hidden");
+        expect(probeCalls()).toBe(3);
         expect(timers.size()).toBe(0);
-        timers.advance(2);
-        environment.setVisibility("visible");
-        expect(probeCalls()).toBe(4);
-        timers.advance(0);
-        await settleMicrotasks();
-        expect(probeCalls()).toBe(5);
         emit({
           type: "phase",
           transition: { from: "idle", to: "download", stage: "download", t: 0 },
         });
+        environment.emit("offline");
         timers.advance(CONNECTION_FRESH_MS * 2);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(5);
+        expect(probeCalls()).toBe(3);
         emit({
           type: "phase",
           transition: {
@@ -605,7 +617,7 @@ test("validation scheduler refreshes, backs off, defers hidden work, and tears d
         });
         timers.advance(0);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(6);
+        expect(probeCalls()).toBe(4);
         engine.dispose();
         expect(timers.size()).toBe(0);
       },
@@ -641,7 +653,7 @@ test("validation failures use staged backoff, cap, and reset after recovery", as
         timers.advance(maxRetryDelay);
         await settleMicrotasks();
         expect(probeCalls()).toBe(7);
-        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+        expect(timers.size()).toBe(0);
       },
     );
   } finally {
@@ -676,9 +688,10 @@ test("a disposed validation cannot restore discovery or evidence", async () => {
       const { store } = await import("../state/store.svelte");
       defer = true;
       const pending = engine.validateConnections(true);
+      await yieldUntil(() => release !== undefined);
       engine.dispose();
       release!(PROBE_EVIDENCE);
-      await expect(pending).rejects.toThrow("Aborted");
+      await expect(pending).rejects.toMatchObject({ name: "AbortError" });
       expect(store.connectionValidation).toEqual(emptyConnectionValidation());
       expect(store.transportDiscovery).toBeNull();
     },
@@ -728,6 +741,62 @@ test("live configuration rejects invalid plans before changing draft or runner",
   );
 });
 
+test("a runner rejection leaves live settings and retained throughput unchanged", async () => {
+  await withValidationRunner(
+    async () => PROBE_EVIDENCE,
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts === 1);
+      expect(store.isRunning).toBe(true);
+      for (let i = 0; i < 32; i++)
+        store.ingest({
+          type: "throughput",
+          sample: {
+            t: i * 100,
+            bytesPerSec: 1000 + i,
+            bytesCumulative: i * 100,
+            phase: "download",
+            dir: "down",
+            continuityId: 1,
+          },
+        });
+      const draft = store.config;
+      const active = store.activeConfig;
+      const previous = JSON.parse(JSON.stringify(draft)) as RunnerConfig;
+      const retained = store.throughput.map((sample) => ({ ...sample }));
+      const revision = store.throughputRevision;
+      const compact = spyOn(store, "compactThroughputForDuration");
+      const message =
+        "Forced streams would occupy progress and control capacity";
+      let attempts = 0;
+      runner.reconfigure = () => {
+        attempts++;
+        throw new Error(message);
+      };
+      try {
+        expect(
+          engine.configureRun({
+            duration: { ...previous.duration, uploadMs: 3_600_000 },
+          }),
+        ).toBe(false);
+        expect(attempts).toBe(1);
+        expect(store.config).toBe(draft);
+        expect(store.config).toEqual(previous);
+        expect(store.activeConfig).toBe(active);
+        expect(store.activeConfig).toEqual(previous);
+        expect(store.throughput).toEqual(retained);
+        expect(store.throughputRevision).toBe(revision);
+        expect(compact).not.toHaveBeenCalled();
+        expect(store.startError).toBe(message);
+        expect(store.phase).toBe("download");
+      } finally {
+        compact.mockRestore();
+      }
+    },
+  );
+});
+
 test("fresh preparation is reused by start and all latency disables release the idle monitor", async () => {
   await withValidationRunner(
     async () => testPreparedPaths(),
@@ -736,11 +805,12 @@ test("fresh preparation is reused by start and all latency disables release the 
       const previous = JSON.parse(JSON.stringify(store.config));
       try {
         const before = idleStops();
+        const verifiedLatency = store.connectionValidation.latency.path;
         store.config.skipLoadedLatencyWhenStageOff = true;
         store.config.stages.latency = false;
         await settleValidation();
         expect(idleStops()).toBeGreaterThan(before);
-        expect(store.connectionValidation.latency.path).toBeNull();
+        expect(store.connectionValidation.latency.path).toBe(verifiedLatency);
         expect(probeCalls()).toBe(1);
         engine.toggleRun();
         await yieldUntil(() => runner.starts === 1);
@@ -749,8 +819,8 @@ test("fresh preparation is reused by start and all latency disables release the 
         expect(store.activePaths?.latency).toBeNull();
         engine.toggleRun();
         store.config.stages.latency = true;
-        await yieldUntil(() => probeCalls() > 1);
-        expect(probeCalls()).toBe(2);
+        await settleValidation();
+        expect(probeCalls()).toBe(1);
         expect(store.connectionValidation.latency.state).toBe("verified");
       } finally {
         store.config = previous;
@@ -773,6 +843,7 @@ test("superseded preparation never replaces newer evidence and disposes its prov
       const { store } = await import("../state/store.svelte");
       deferred = true;
       const stale = engine.validateConnections(true);
+      await yieldUntil(() => release !== undefined);
       deferred = false;
       await engine.validateConnections(true);
       const committed = store.connectionValidation.throughput.path;
@@ -780,7 +851,7 @@ test("superseded preparation never replaces newer evidence and disposes its prov
       const outdated = testPreparedPaths();
       outdated.discovery.generation = "outdated";
       release!(outdated);
-      await expect(stale).rejects.toThrow("Aborted");
+      await expect(stale).rejects.toMatchObject({ name: "AbortError" });
       expect(store.transportDiscovery?.generation).toBe("gen-a");
       expect(store.connectionValidation.throughput.path).toBe(committed);
       expect(idleStops()).toBe(stopped + 1);
@@ -797,7 +868,7 @@ test("an idle monitor that stalls before adoption keeps a bounded retry instead 
       async ({ engine, probeCalls }) => {
         const { store } = await import("../state/store.svelte");
         state = "offline";
-        await engine.validateConnections(true);
+        await expect(engine.validateConnections(true)).rejects.toThrow();
         expect(store.connectivity).toBe("offline");
         expect(store.connectionValidation.latency.state).toBe("stale");
         expect(timers.delays()).toContain(CONNECTION_FAILURE_BACKOFF_MS[0]);
@@ -807,7 +878,7 @@ test("an idle monitor that stalls before adoption keeps a bounded retry instead 
         expect(probeCalls()).toBe(3);
         expect(store.connectivity).toBe("connected");
         expect(store.connectionValidation.latency.state).toBe("verified");
-        expect(timers.delays()).toContain(CONNECTION_FRESH_MS);
+        expect(timers.size()).toBe(0);
       },
       () => state,
     );

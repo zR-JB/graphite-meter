@@ -148,6 +148,9 @@ export interface RunMeasurementSource {
     cfg: RunnerConfig["adaptive"],
   ): boolean;
   canComplete(stage: TransportRole): boolean;
+  armLatencyEarlyStop(): void;
+  cancelLatencyEarlyStop(): void;
+  confirmLatencyEarlyStop(): void;
   throughputResult(
     stage: "download" | "upload",
     stable: boolean,
@@ -236,6 +239,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   get elapsed(): number {
     return this.#measuredElapsed;
+  }
+
+  /** Translate a window-clock observation using the last timeline tick, not its delivery time. */
+  observationTime(observedAtMs: number): number {
+    const projectedNow =
+      this.#measuredElapsed +
+      Math.max(0, performance.now() - this.#lastRealNow);
+    return Math.max(
+      this.#activeSeg?.start ?? 0,
+      Math.min(
+        projectedNow,
+        this.#measuredElapsed + observedAtMs - this.#lastRealNow,
+      ),
+    );
   }
 
   on(handler: (e: RunnerEvent) => void): () => void {
@@ -660,15 +677,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     // Translate the window-clock observation into the runner's measured timeline.
     const wallNow = performance.now();
-    const projectedNow =
-      this.#measuredElapsed + Math.max(0, wallNow - this.#lastRealNow);
-    const observedT = Math.max(
-      this.#activeSeg?.start ?? 0,
-      Math.min(
-        projectedNow,
-        this.#measuredElapsed + observation.observedAtMs - this.#lastRealNow,
-      ),
-    );
+    const observedT = this.observationTime(observation.observedAtMs);
     this.#accum.pushLatency(
       phase,
       observation.rttMs,
@@ -970,7 +979,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #cancelEarlyCandidate(): void {
     this.#earlyCandidateSeg = -1;
     this.#earlyCandidateStartedAt = 0;
-    this.#accum.cancelLatencyEarlyStop();
+    (this.#source ?? this.#accum).cancelLatencyEarlyStop();
   }
 
   /** Arm, revoke, or confirm an early finish without changing measured time. */
@@ -1006,12 +1015,14 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#earlyCandidateSeg !== segIndex) {
       this.#earlyCandidateSeg = segIndex;
       this.#earlyCandidateStartedAt = elapsed;
-      if (seg.phase === "latency") this.#accum.armLatencyEarlyStop();
+      if (seg.phase === "latency")
+        (this.#source ?? this.#accum).armLatencyEarlyStop();
     }
     if (elapsed - this.#earlyCandidateStartedAt < cfg.adaptive.confirmationMs)
       return false;
 
-    if (seg.phase === "latency") this.#accum.confirmLatencyEarlyStop();
+    if (seg.phase === "latency")
+      (this.#source ?? this.#accum).confirmLatencyEarlyStop();
     const previousTotalMs = this.#segments.at(-1)?.end ?? 0;
     const truncated = truncateSegmentAt(this.#segments, seg, elapsed);
     this.#segments = truncated.segments;

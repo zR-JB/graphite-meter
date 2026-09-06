@@ -10,10 +10,20 @@
   </head>
   <body>
     <main class="card">
+      {{if .BrowserCapacity}}
+      <h1>Browser client limit reached</h1>
+      <p>This server login already has {{.ClientLimit}} measurement clients.
+        It cannot approve another client yet.</p>
+      <p>Renewing this login revokes its existing client grants and ends
+        their active measurements.</p>
+      <p><a href="/login">Renew this server's login</a>, then return to
+        the requesting Graphite Meter interface and choose Sign in again.</p>
+      {{else}}
       {{if .BrowserOrigin}}
  <h1>Approve browser client</h1>
  <p>Allow this site to run measurements using your sign-in?</p>
  <p><strong>{{.BrowserOrigin}}</strong></p>
+ <p>Confirm that this code matches the code in the requesting Graphite Meter interface.</p>
  {{else}}
  <h1>Approve terminal client</h1>
       <p>Only approve a client you started yourself. This grants a terminal
@@ -28,6 +38,7 @@
       </form>
       <p class="notice">If you did not request access for this client, close
         this page and do not approve.</p>
+      {{end}}
     </main>
     {{template "pending"}}
   </body>

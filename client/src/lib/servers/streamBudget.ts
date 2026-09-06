@@ -17,7 +17,7 @@ export function planServerStreams(
   paths: readonly { id: string; paths: PreparedPaths }[],
   activity: PhaseActivity,
 ): ServerStreamPlan {
-  const plan: ServerStreamPlan = {};
+  const plan: ServerStreamPlan = Object.create(null);
   const h1 = new Map<string, { id: string; direction: FlowDirection }[]>();
   const control = new Map<string, number>();
   for (const server of paths) {
@@ -30,7 +30,7 @@ export function planServerStreams(
         policy: config.transferStreams,
         transfer: activity.transfer,
         dir,
-        needsPing: needsPings(activity),
+        needsPing: needsPings(activity) && server.paths.latency !== null,
         webTransport: wt,
       });
       if (!wt && !["http2", "http3"].includes(throughput.fetch.protocol)) {

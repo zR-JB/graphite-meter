@@ -140,6 +140,22 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 		})
 	}
 	work.Wait()
+	for i := range prepared.Servers {
+		server := &prepared.Servers[i]
+		if server.Connection == nil {
+			continue
+		}
+		metadata := server.Connection.Preflight.Server
+		if metadata.Name != "" {
+			server.Server.Name = metadata.Name
+		}
+		server.Server.Location = metadata.Location
+		for j := range prepared.Catalog.Servers {
+			if prepared.Catalog.Servers[j].ID == server.Server.ID {
+				prepared.Catalog.Servers[j] = server.Server
+			}
+		}
+	}
 	var failures []error
 	var best time.Duration
 	for _, server := range prepared.Servers {

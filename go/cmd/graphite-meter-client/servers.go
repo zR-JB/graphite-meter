@@ -12,6 +12,12 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+func (m model) canChooseServers() bool {
+	return m.preparedRun != nil && len(m.preparedRun.Catalog.Servers) > 1
+}
+func (m model) hasServerBreakdown() bool {
+	return m.runDetails != nil && len(m.runDetails.Selection) > 1
+}
 func (m model) multipleServers() bool { return len(m.cfg.ServerIDs) > 1 }
 func (m model) openServerChooser() (tea.Model, tea.Cmd) {
 	if m.mode == modeRun && !m.complete {
@@ -24,6 +30,9 @@ func (m model) openServerChooser() (tea.Model, tea.Cmd) {
 	if m.preparedRun == nil || len(m.preparedRun.Catalog.Servers) == 0 {
 		m.chooseAfterPrepare = true
 		return m.reprepare(nil)
+	}
+	if !m.canChooseServers() {
+		return m, nil
 	}
 	m.serverChooser = true
 	m.serverRow = 0
@@ -180,7 +189,7 @@ func (m *model) nextLatencyFocus() {
 	m.lostStreak = m.lostByServer[m.latencyFocus]
 }
 func (m model) latencyServerName() string {
-	if m.runDetails != nil {
+	if m.hasServerBreakdown() {
 		for _, server := range m.runDetails.Selection {
 			if server.ID == m.latencyFocus {
 				return server.Name
@@ -196,7 +205,7 @@ func (m model) visibleResults() []goclient.Result {
 }
 func (m model) serverResultsView(w int) string {
 	details := m.runDetails
-	if details == nil {
+	if details == nil || len(details.Selection) < 2 {
 		return ""
 	}
 	notice := fmt.Sprintf("%d selected servers", len(details.Selection))
@@ -248,7 +257,7 @@ func (m model) serverResultsView(w int) string {
 
 func (m model) serverResultNotice() string {
 	details := m.runDetails
-	if details == nil {
+	if details == nil || len(details.Selection) < 2 {
 		return ""
 	}
 	if details.Outcome == "incomplete" {

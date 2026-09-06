@@ -279,8 +279,8 @@ test("idle target ownership includes protocol and public origin", () => {
   ).not.toBe(throughputTargetKey(target));
 });
 
-test("clear loopback targets stay usable from HTTPS", () => {
-  for (const host of ["localhost", "meter.localhost", "127.42.0.9", "[::1]"]) {
+test("clear DNS and IPv4 loopback targets stay usable from HTTPS", () => {
+  for (const host of ["localhost", "meter.localhost", "127.42.0.9"]) {
     const target = testTransfer(
       "http1-clear",
       `http://${host}:7246`,
@@ -294,6 +294,7 @@ test("clear loopback targets stay usable from HTTPS", () => {
     ).toBe("advertised");
   }
   expect(isLoopbackHostname("127.255.1.2")).toBe(true);
+  expect(isLoopbackHostname("[::1]")).toBe(true);
 });
 
 test("httpToWs: maps https:// to wss:// and http:// to ws://", () => {
@@ -844,6 +845,106 @@ function stubProbeEnvironment(
     restore();
   };
 }
+test("cross-origin IPv6 discovery and path preparation fail with DNS guidance before any request", async () => {
+  let requests = 0;
+  const restore = stubProbeEnvironment((async (
+    _input: RequestInfo | URL,
+  ): Promise<Response> => {
+    requests++;
+    throw new Error("unexpected fetch");
+  }) as typeof fetch);
+  try {
+    const { discoverServer, prepareConnections } =
+      await import("./real/prepare");
+    const { BrowserOriginBlockedError } = await import("./real/transportError");
+    const remote = "http://[::1]:7246";
+    await expect(
+      discoverServer(new AbortController().signal, {
+        server: { id: "ipv6", name: "IPv6", url: remote },
+        kind: "public",
+      }),
+    ).rejects.toBeInstanceOf(BrowserOriginBlockedError);
+    const known = classifyTransportDiscovery(
+      [fetchAd(remote, "http1")],
+      [],
+      remote,
+      false,
+      undefined,
+      location.origin,
+    );
+    const prepared = await prepareConnections(
+      DEFAULT_CONFIG,
+      emptyConnectionValidation(),
+      ["throughput"],
+      new AbortController().signal,
+      undefined,
+      known,
+    );
+    expect(prepared.failure).toBeInstanceOf(BrowserOriginBlockedError);
+    expect(prepared.validation.throughput.message).toContain("DNS hostname");
+    expect(requests).toBe(0);
+  } finally {
+    restore();
+  }
+});
+
+test("same-origin IPv6 discovery remains available through the page origin", async () => {
+  const origin = "http://[::1]:7246";
+  const restore = stubProbeEnvironment(
+    probeFetch({
+      ...preflightDocument,
+      capabilities: {
+        throughput: [fetchAd(".", "http1")],
+        latency: [wsAd(".")],
+      },
+    }),
+    { location: `${origin}/` },
+  );
+  try {
+    const { discoverServer } = await import("./real/prepare");
+    const result = await discoverServer(new AbortController().signal, {
+      server: { id: "self", name: "IPv6", url: origin },
+      kind: "public",
+    });
+    expect(selectThroughputTarget(result, "auto")?.origin).toBe(origin);
+    expect(selectLatencyTarget(result, "auto")?.origin).toBe(origin);
+  } finally {
+    restore();
+  }
+});
+
+test("catalogue preflight timing includes the complete response body without probing paths", async () => {
+  let now = 100;
+  let requests = 0;
+  const realNow = performance.now;
+  const restore = stubProbeEnvironment((async (_input: RequestInfo | URL) => {
+    requests++;
+    now = 110;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          now = 145;
+          controller.enqueue(
+            new TextEncoder().encode(JSON.stringify(preflightDocument)),
+          );
+          controller.close();
+        },
+      }),
+    );
+  }) as typeof fetch);
+  performance.now = () => now;
+  try {
+    const { discoverServer } = await import("./real/prepare");
+    const result = await discoverServer(new AbortController().signal);
+    expect(result.preflightMs).toBe(45);
+    expect(requests).toBe(1);
+    expect(result.server.name).toBe("test");
+  } finally {
+    performance.now = realNow;
+    restore();
+  }
+});
+
 class FakePingWorker {
   static all: FakePingWorker[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -985,6 +1086,35 @@ test("a superseded probe does not publish its discovery", async () => {
     restore();
   }
 });
+
+test.each([null, 0])(
+  "preflight RTT preserves %s as distinct missing or zero evidence",
+  async (rtt) => {
+    FakePingWorker.all = [];
+    const restore = stubProbeEnvironment(probeFetch());
+    const realWorker = globalThis.Worker;
+    globalThis.Worker = FakePingWorker as unknown as typeof Worker;
+    const preparation = await preparationHarness();
+    try {
+      let settled = false;
+      const pending = preparation.check(probeConfig(true)).finally(() => {
+        settled = true;
+      });
+      for (let turn = 0; turn < 100 && !settled; turn++) {
+        const worker = FakePingWorker.all.at(-1);
+        worker?.emit({ type: "ready" });
+        if (rtt !== null)
+          worker?.emit({ type: "samples", samples: pingSamples(rtt) });
+        await Promise.resolve();
+      }
+      expect((await pending).latency!.rttMs).toBe(rtt);
+    } finally {
+      preparation.stop();
+      globalThis.Worker = realWorker;
+      restore();
+    }
+  },
+);
 
 test("the preparation owner can park and restart the returned idle monitor", async () => {
   FakePingWorker.all = [];

@@ -26,7 +26,9 @@
   import { store } from "../state/store.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import HistoryManagementControl from "./history/HistoryManagementControl.svelte";
-  import HistoryResultDetail from "./history/HistoryResultDetail.svelte";
+  import HistoryResultDetail, {
+    type ServerView,
+  } from "./history/HistoryResultDetail.svelte";
   import HistoryViewControl from "./history/HistoryViewControl.svelte";
 
   interface Props {
@@ -47,6 +49,7 @@
   let renderedAt = $state(Date.now());
   let workspaceWidth = $state(0);
   let workspace = $state<HTMLElement>();
+  let serverView = $state<ServerView | null>(null);
   let detailRegion = $state<HTMLElement>();
   let detailCloseButton = $state<HTMLButtonElement>();
   let requestedDetailFocus = $state<{
@@ -680,6 +683,7 @@
                     onClose={closeDetail}
                     onDelete={() =>
                       (confirm = { kind: "delete", id: record.id })}
+                    bind:serverView
                     bind:region={detailRegion}
                     bind:closeButton={detailCloseButton}
                   />
@@ -703,6 +707,7 @@
             onClose={closeDetail}
             onDelete={() =>
               (confirm = { kind: "delete", id: selectedRecord.id })}
+            bind:serverView
             bind:region={detailRegion}
             bind:closeButton={detailCloseButton}
           />

@@ -18,7 +18,7 @@ func publicConnectionPolicy(cfg *config.Config, next http.Handler) http.Handler 
 		sources := append([]string{"'self'"}, configured...)
 		for _, raw := range preflight.ConnectOrigins((&url.URL{Host: r.Host}).Hostname()) {
 			parsed := strings.Replace(strings.Replace(raw, "wss://", "https://", 1), "ws://", "http://", 1)
-			if _, err := wire.CanonicalOrigin(parsed); err == nil {
+			if _, err := wire.CanonicalOrigin(parsed); err == nil && wire.BrowserConnectSourceSupported(raw) {
 				sources = append(sources, raw)
 			}
 		}

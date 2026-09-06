@@ -352,17 +352,18 @@ test("explicitly enabled completion is reachable in History and stays responsive
   expect(savedWireRate).not.toBeNull();
   expect(savedWireRate!).toBeGreaterThan(0);
   await page.locator("a.result-row").first().click();
-  await expect(
-    page.getByRole("heading", { name: "Wire-rate snapshot" }),
-  ).toHaveCount(0);
+  await expect(page.locator(".saved-wire").first()).toHaveCount(0);
   const displaySettings = await openSettings(page);
   await displaySettings
     .getByText("Show estimated wire rate", { exact: true })
     .click();
   await displaySettings.getByRole("button", { name: "Close Settings" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Wire-rate snapshot" }),
-  ).toBeVisible();
+  await expect(page.locator(".saved-wire").first()).toBeVisible();
+  await expect(page.locator(".saved-wire").first()).toContainText(/\+\d+\.\d%/);
+  await page.locator(".saved-wire .wire-label").first().focus();
+  await page.locator(".saved-wire .wire-label").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText("Ethernet +");
+  await expect(page.getByRole("tooltip")).toContainText("MTU 1,500 B assumed");
   await expectNoHorizontalOverflow(page.locator(".history-workspace"));
   await expectNoHorizontalOverflow(page.locator("body"));
 });
@@ -936,6 +937,12 @@ test("deep-linked detail uses contextual focus without outlining its heading", a
   await expect(detail.getByText("Stability", { exact: true })).toBeVisible();
   await expect(detail.locator("details")).toHaveCount(0);
   await expect(detail.locator(".throughput-card")).toHaveCount(3);
+  await expect(detail.locator(".saved-wire").first()).toContainText("+3.0%");
+  await detail.locator(".saved-wire .wire-label").first().hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "Per-part breakdown unavailable",
+  );
+  await page.mouse.move(20, 65);
   await expect(detail.locator(".throughput-card em")).toHaveCount(0);
   await expect(detail.locator(".throughput-card")).not.toContainText(/loss/i);
   await expect(
@@ -2245,4 +2252,146 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
   await expect(
     profile.locator('.lane[data-tone="latency"] .timing-info'),
   ).toHaveCount(0);
+});
+
+test("missing per-server latency remains selectable and focus belongs to each saved result", async ({
+  page,
+}) => {
+  const make = (id: string, timestamp: number) => {
+    const value = record(id, timestamp);
+    value.schemaVersion = 4;
+    value.outcome = "partial";
+    value.totalBytes = 0;
+    value.stages.download = { status: "not-run", result: null };
+    value.stages.upload = { status: "not-run", result: null };
+    value.stages.bidirectional = { status: "not-run", down: null, up: null };
+    value.wireEstimates = null;
+    const selection = [
+      { id: "self", name: "Unavailable latency", url: "https://one.example" },
+      { id: "peer", name: "Healthy latency", url: "https://two.example" },
+    ];
+    value.multiServer = {
+      selection,
+      participants: ["self", "peer"],
+      latencyFocus: "self",
+      omittedIntervals: 0,
+      intervals: [],
+      failures: [],
+      servers: selection.map((server, i) => ({
+        server,
+        throughput: {
+          origin: server.url,
+          transport: "fetch-stream",
+          protocol: "http1",
+        },
+        latencyTarget: { origin: server.url, transport: "websocket" },
+        latency:
+          i === 0
+            ? null
+            : {
+                ...value.stages.latency.result!,
+                idleMs: 25,
+                reportedMs: 25,
+                p50Ms: 25,
+              },
+        latencyByStage: {
+          latency:
+            i === 0
+              ? null
+              : {
+                  accountingComplete: true,
+                  probeCount: 30,
+                  timeoutCount: 0,
+                  unresolvedCount: 0,
+                  sendFailureCount: 0,
+                  jitterPairs: 29,
+                  minMs: 20,
+                  maxMs: 30,
+                  meanMs: 25,
+                  p10Ms: 22,
+                  p50Ms: 25,
+                  p90Ms: 28,
+                  p95Ms: 29,
+                  jitterMs: 2,
+                },
+          download: null,
+          upload: null,
+          bidirectional: null,
+        },
+        bufferbloat: null,
+        download: null,
+        upload: null,
+        bidirectional: null,
+        totalBytes: { down: 0, up: 0 },
+      })),
+    };
+    return value;
+  };
+  await openApp(page, "dummy", { width: 1600, height: 1000 });
+  await seedHistory(page, [
+    make(IDS.newest, Date.UTC(2026, 8, 6, 12)),
+    make(IDS.middle, Date.UTC(2026, 8, 6, 11)),
+  ]);
+  await openHistory(page, IDS.newest);
+  const detail = page.locator(".result-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail.locator(".latency-empty")).toBeVisible();
+  await detail.locator('.server-focus [role="radio"]').nth(1).click();
+  await expect(detail.locator(".latency-empty")).toHaveCount(0);
+  await expect(detail.locator(".idle-summary")).toContainText("25");
+  const resultServer = () =>
+    detail
+      .getByRole("radiogroup", { name: "Result measurements" })
+      .getByRole("radio", { name: "Healthy latency" });
+  await resultServer().click();
+  for (const width of [900, 1600]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(
+      page.locator(width === 900 ? ".inline-inspector" : ".detail-inspector"),
+    ).toBeVisible();
+    await expect(resultServer()).toHaveAttribute("aria-checked", "true");
+    await expect(
+      detail.locator('.server-focus [role="radio"]').nth(1),
+    ).toHaveAttribute("aria-checked", "true");
+    await expect(detail.locator(".idle-summary")).toContainText("25");
+  }
+  await page.evaluate((id) => {
+    location.hash = `/history/${id}`;
+  }, IDS.middle);
+  await expect(detail.locator(".latency-empty")).toBeVisible();
+  await expect(
+    detail.locator('.server-focus [role="radio"]').first(),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
+test("legacy saved server identity stays readable at the bottom of history details", async ({
+  page,
+}) => {
+  const saved = record(IDS.newest, Date.UTC(2026, 8, 6, 12));
+  saved.server.name = "Independent measurement server with a long saved name";
+  saved.server.location = "Frankfurt am Main, Germany";
+  await openApp(page, "dummy");
+  await seedHistory(page, [saved]);
+  await openHistory(page, IDS.newest);
+  const servers = page.locator(".saved-servers-section");
+  await expect(servers.locator("li")).toHaveCount(1);
+  await expect(servers).toContainText(saved.server.name);
+  await expect(servers).toContainText(saved.server.location);
+  await expect(servers.locator("small")).toHaveCount(0);
+  expect(
+    await servers.evaluate((section) => section.nextElementSibling?.tagName),
+  ).toBe("FOOTER");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => document.documentElement.setAttribute("data-theme", theme),
+      theme,
+    );
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await servers.scrollIntoViewIfNeeded();
+      await expectNoHorizontalOverflow(servers);
+      if (process.env.GM_WEBVIEW_ARTIFACTS)
+        await page.artifact(`history-saved-server-${theme}-${width}`);
+    }
+  }
 });
