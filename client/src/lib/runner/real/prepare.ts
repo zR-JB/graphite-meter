@@ -59,15 +59,11 @@ export interface ConnectionPreparation {
   failure?: unknown;
 }
 
-/** Preparation owns provisional sockets. Only its caller can commit the returned evidence and monitor. */
-export async function prepareConnections(
-  config: RunnerConfig,
-  previous: ConnectionValidation,
-  roles: ConnectionRole[],
+/** Bounded discovery has no measurement sockets or path-validation side effects. */
+export async function discoverServer(
   signal: AbortSignal,
   credentials?: ServerCredentials,
-): Promise<ConnectionPreparation> {
-  let discovery: TransportDiscovery;
+): Promise<TransportDiscovery> {
   try {
     const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
     const response = await measurementFetch(
@@ -87,7 +83,7 @@ export async function prepareConnections(
       performance.getEntriesByName(response.url, "resource").at(-1) as
         PerformanceResourceTiming | undefined
     )?.nextHopProtocol;
-    discovery = {
+    const discovery: TransportDiscovery = {
       ...classifyTransportDiscovery(
         pf.capabilities.throughput,
         pf.capabilities.latency,
@@ -101,11 +97,26 @@ export async function prepareConnections(
       server: pf.server,
       fetchedAt: Date.now(),
     };
+    signal.throwIfAborted();
+    return discovery;
   } catch (cause) {
     signal.throwIfAborted();
     await classifyServerAuthentication(credentials, signal);
     throw new PreflightUnavailableError("preflight unavailable", { cause });
   }
+}
+
+/** Preparation owns provisional sockets. Only its caller can commit the returned evidence and monitor. */
+export async function prepareConnections(
+  config: RunnerConfig,
+  previous: ConnectionValidation,
+  roles: ConnectionRole[],
+  signal: AbortSignal,
+  credentials?: ServerCredentials,
+  knownDiscovery?: TransportDiscovery,
+): Promise<ConnectionPreparation> {
+  const discovery =
+    knownDiscovery ?? (await discoverServer(signal, credentials));
   signal.throwIfAborted();
   if (
     CONNECTION_ROLES.some(
@@ -320,7 +331,7 @@ async function prepareLatency(
         requested,
         target,
         probe,
-        rttMs: rtts.length ? median(rtts) : 0,
+        rttMs: rtts.length ? median(rtts) : null,
         generation: discovery.generation,
         verifiedAt: Date.now(),
       },

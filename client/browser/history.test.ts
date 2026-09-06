@@ -2363,3 +2363,35 @@ test("missing per-server latency remains selectable and focus belongs to each sa
     detail.locator('.server-focus [role="radio"]').first(),
   ).toHaveAttribute("aria-checked", "true");
 });
+
+test("legacy saved server identity stays readable at the bottom of history details", async ({
+  page,
+}) => {
+  const saved = record(IDS.newest, Date.UTC(2026, 8, 6, 12));
+  saved.server.name = "Independent measurement server with a long saved name";
+  saved.server.location = "Frankfurt am Main, Germany";
+  await openApp(page, "dummy");
+  await seedHistory(page, [saved]);
+  await openHistory(page, IDS.newest);
+  const servers = page.locator(".saved-servers-section");
+  await expect(servers.locator("li")).toHaveCount(1);
+  await expect(servers).toContainText(saved.server.name);
+  await expect(servers).toContainText(saved.server.location);
+  await expect(servers.locator("small")).toHaveCount(0);
+  expect(
+    await servers.evaluate((section) => section.nextElementSibling?.tagName),
+  ).toBe("FOOTER");
+  for (const theme of ["dark", "light"]) {
+    await page.evaluate(
+      (theme) => document.documentElement.setAttribute("data-theme", theme),
+      theme,
+    );
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await servers.scrollIntoViewIfNeeded();
+      await expectNoHorizontalOverflow(servers);
+      if (process.env.GM_WEBVIEW_ARTIFACTS)
+        await page.artifact(`history-saved-server-${theme}-${width}`);
+    }
+  }
+});

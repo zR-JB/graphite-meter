@@ -18,6 +18,180 @@ import { isHistoryRecord } from "../src/lib/history/types";
 
 import { configure, savedResult, ready } from "./multi-server-actions";
 
+interface DiscoveryActivity {
+  requests: string[];
+  inFlight: number;
+  peak: number;
+  probes: number;
+  workers: number;
+  activeWorkers: number;
+  hold: boolean;
+  aborted: number;
+  nowOffset: number;
+}
+
+test("settings and path checks share bounded discovery, cancel on close, and retain only the home ping worker", async ({
+  page,
+}) => {
+  await page.addInitScript((peer) => {
+    localStorage.setItem(
+      "graphite-meter:v1",
+      JSON.stringify({ latencySelection: { mode: "all", serverId: "self" } }),
+    );
+    const state: DiscoveryActivity = ((
+      window as typeof window & { discoveryActivity: DiscoveryActivity }
+    ).discoveryActivity = {
+      requests: [],
+      inFlight: 0,
+      peak: 0,
+      probes: 0,
+      workers: 0,
+      activeWorkers: 0,
+      hold: false,
+      aborted: 0,
+      nowOffset: 0,
+    });
+    const now = Date.now.bind(Date);
+    Date.now = () => now() + state.nowOffset;
+    const browser = window as {
+      fetch: (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    };
+    const original = browser.fetch.bind(window);
+    browser.fetch = async (input, init) => {
+      const url = new URL(String(input), location.href);
+      if (url.pathname === "/probe") state.probes++;
+      if (url.pathname !== "/preflight") return original(input, init);
+      state.requests.push(url.origin);
+      state.peak = Math.max(state.peak, ++state.inFlight);
+      try {
+        if (state.hold && url.origin === peer) {
+          await new Promise<void>((_resolve, reject) => {
+            const abort = () => {
+              state.aborted++;
+              reject(init!.signal!.reason);
+            };
+            if (init?.signal?.aborted) abort();
+            else init?.signal?.addEventListener("abort", abort, { once: true });
+          });
+        }
+        return await original(input, init);
+      } finally {
+        state.inFlight--;
+      }
+    };
+    window.Worker = new Proxy(window.Worker, {
+      construct(target, args) {
+        state.workers++;
+        state.activeWorkers++;
+        const worker = Reflect.construct(target, args) as Worker;
+        const terminate = worker.terminate.bind(worker);
+        let active = true;
+        worker.terminate = () => {
+          if (active) {
+            active = false;
+            state.activeWorkers--;
+          }
+          terminate();
+        };
+        return worker;
+      },
+    });
+  }, fleet[1].url);
+  const activity = () =>
+    page.evaluate(
+      () =>
+        (window as typeof window & { discoveryActivity: DiscoveryActivity })
+          .discoveryActivity,
+    );
+  await page.goto(fleet[0].url);
+  const settings = await openSettings(page);
+  const choices = settings.getByRole("group", {
+    name: "Servers to test",
+    exact: true,
+  });
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(
+    choices.getByRole("checkbox", { name: "Helsinki, Loopback fixture" }),
+  ).toBeVisible();
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  const first = await activity();
+  expect(first.requests).toEqual(fleet.map((server) => server.url));
+  expect(first.peak).toBe(1);
+  expect(first.probes).toBe(2);
+  expect(first.workers).toBe(1);
+  expect(first.activeWorkers).toBe(1);
+  await expect(choices.locator(".server-ping")).toHaveCount(1);
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await openSettings(page);
+  expect(await activity()).toEqual(first);
+
+  // Selecting a discovered peer performs only its role probes, with no second preflight.
+  const peer = choices.getByRole("checkbox", { name: "Frankfurt" });
+  await peer.click();
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible({ timeout: 15000 });
+  await expect.poll(async () => (await activity()).activeWorkers).toBe(1);
+  const selected = await activity();
+  expect(selected.requests).toEqual(first.requests);
+  expect(selected.probes).toBe(4);
+  expect(selected.workers).toBe(2);
+  await expect(choices.locator(".server-ping")).toHaveCount(2);
+  await peer.click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await page.evaluate(() => {
+    (
+      window as typeof window & { discoveryActivity: DiscoveryActivity }
+    ).discoveryActivity.nowOffset = 121_000;
+  });
+  await openSettings(page);
+  await expect.poll(async () => (await activity()).requests.length).toBe(9);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  const refreshed = await activity();
+  expect(refreshed.workers).toBe(2);
+  expect(refreshed.probes).toBe(4);
+  expect(refreshed.peak).toBe(1);
+
+  // Closing Settings aborts the current fetch and prevents the rest of the queue from starting.
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await page.evaluate(() => {
+    const state = (
+      window as typeof window & { discoveryActivity: DiscoveryActivity }
+    ).discoveryActivity;
+    state.nowOffset += 121_000;
+    state.hold = true;
+  });
+  await openSettings(page);
+  await expect.poll(async () => (await activity()).inFlight).toBe(1);
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await expect.poll(async () => (await activity()).aborted).toBe(1);
+  const closed = await activity();
+  expect(closed.inFlight).toBe(0);
+  expect(closed.requests).toHaveLength(10);
+  expect(closed.workers).toBe(2);
+  await page.evaluate(() => {
+    (
+      window as typeof window & { discoveryActivity: DiscoveryActivity }
+    ).discoveryActivity.hold = false;
+  });
+  await openSettings(page);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  await peer.click();
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible({ timeout: 15000 });
+  await choices.getByRole("checkbox", { name: "Home" }).click();
+  await expect.poll(async () => (await activity()).activeWorkers).toBe(0);
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toBeVisible();
+});
+
 test("four real servers share one run and retain separate receiver windows and latency after reload", async ({
   page,
 }) => {
@@ -112,6 +286,18 @@ test("four real servers share one run and retain separate receiver windows and l
   await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await expectNoHorizontalOverflow(page.locator(".result-server-context"));
   await page.artifact("multi-server-history-phone");
+  const servers = page.locator(".saved-servers-section");
+  await servers.scrollIntoViewIfNeeded();
+  await expect(servers.locator("li")).toHaveCount(4);
+  await expect(servers).toContainText("Loopback fixture");
+  await expect(servers).toContainText(new URL(fleet[1].url).host);
+  expect(
+    await servers.evaluate((section) =>
+      section.nextElementSibling?.classList.contains("detail-actions"),
+    ),
+  ).toBe(true);
+  await expectNoHorizontalOverflow(servers);
+  await page.artifact("saved-servers-phone");
   await page.reload();
   await expect(page.locator(".result-server-context")).toBeVisible();
   expect((await savedResult(page)).multiServer?.intervals).toEqual(
@@ -138,6 +324,10 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await expect(page.locator(".result-detail")).toBeVisible();
   await expect(page.locator(".result-server-context")).toHaveCount(0);
   await expect(page.locator(".server-focus")).toHaveCount(0);
+  await expect(page.locator(".saved-servers-section li")).toHaveCount(1);
+  await expect(page.locator(".saved-servers-section")).toContainText(
+    "Home · Loopback fixture",
+  );
   await page.artifact("single-server-fleet-history");
 });
 
@@ -150,9 +340,10 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
     name: "Servers to test",
     exact: true,
   });
-  await band.getByRole("checkbox").nth(1).click();
   const peer = band.getByRole("checkbox", { name: "Frankfurt" });
   await expect(peer).toBeVisible({ timeout: 15000 });
+  expect(await peer.evaluate((input) => input.checked)).toBe(false);
+  await peer.click();
   await peer.focus();
   await band.locator("label").nth(1).hover();
   await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
@@ -346,12 +537,27 @@ test("enabling all latency checks only the new peer path and retries leave healt
     { mode: "primary", serverId: "self" },
   );
   await ready(page);
+  const settings = await openSettings(page);
+  await expect(settings.locator(".server-choices")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
   await page.evaluate(
-    ({ healthy, peer }) => {
+    ({ healthy, peer, peerPage }) => {
       const state = globalThis as typeof globalThis & {
-        pathChecks: { fetches: string[]; workers: number; failPeer: boolean };
+        pathChecks: {
+          fetches: string[];
+          workers: number;
+          failPeer: boolean;
+          watched: string[];
+        };
       };
-      state.pathChecks = { fetches: [], workers: 0, failPeer: true };
+      state.pathChecks = {
+        fetches: [],
+        workers: 0,
+        failPeer: true,
+        watched: [...healthy, peer, peerPage],
+      };
       // Idle expiry alone must not turn a new ping choice into a full recheck.
       const now = Date.now.bind(Date);
       Date.now = () => now() + 180_000;
@@ -364,7 +570,10 @@ test("enabling all latency checks only the new peer path and retries leave healt
       const original = browser.fetch;
       browser.fetch = async (...args) => {
         const url = new URL(String(args[0]), location.href);
-        if (url.pathname === "/preflight" || url.pathname === "/probe") {
+        if (
+          (url.pathname === "/preflight" || url.pathname === "/probe") &&
+          state.pathChecks.watched.includes(url.origin)
+        ) {
           state.pathChecks.fetches.push(url.href);
           if (
             healthy.includes(url.origin) ||
@@ -386,9 +595,9 @@ test("enabling all latency checks only the new peer path and retries leave healt
     {
       healthy: [fleet[0].url, fleet[0].http, fleet[0].h2, fleet[0].h3],
       peer: fleet[1].http,
+      peerPage: fleet[1].url,
     },
   );
-  const settings = await openSettings(page);
   const selector = settings.getByRole("radiogroup", {
     name: "Latency measurement servers",
   });
@@ -445,21 +654,27 @@ test("enabling all latency checks only the new peer path and retries leave healt
   });
   await choices.getByRole("checkbox", { name: "Frankfurt" }).click();
   await choices.getByRole("checkbox", { name: "Frankfurt" }).click();
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  await openSettings(page);
   await expect(
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible();
   expect(await checks()).toEqual(verified);
   // An unselected server receives no path checks until the user adds it.
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  await page.evaluate(
+    (origins) => {
+      (
+        globalThis as typeof globalThis & { pathChecks: { watched: string[] } }
+      ).pathChecks.watched.push(...origins);
+    },
+    [fleet[3].url, fleet[3].http],
+  );
   await choices.getByRole("checkbox", { name: "Helsinki" }).click();
-  await expect.poll(async () => (await checks()).fetches.length).toBe(7);
+  await expect.poll(async () => (await checks()).fetches.length).toBe(6);
   await expect(
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible({ timeout: 15000 });
   const added = await checks();
   expect(added.fetches.slice(4).map((url) => new URL(url).origin)).toEqual([
-    fleet[3].url,
     fleet[3].url,
     fleet[3].http,
   ]);
@@ -678,29 +893,33 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await configure(page, ["self", "server-1"]);
   await ready(page);
   // Already verified latency choices must not open another discovery or ping worker.
-  await page.evaluate(() => {
-    const state = globalThis as typeof globalThis & {
-      delayedPreflights: number;
-    };
-    state.delayedPreflights = 0;
-    const browser = window as {
-      fetch: (
-        input: RequestInfo | URL,
-        init?: RequestInit,
-      ) => Promise<Response>;
-    };
-    const original = browser.fetch;
-    browser.fetch = async (...args) => {
-      if (
-        String(args[0]).includes("/preflight?") &&
-        state.delayedPreflights < 2
-      ) {
-        state.delayedPreflights++;
-        await new Promise((resolve) => setTimeout(resolve, 600));
-      }
-      return original(...args);
-    };
-  });
+  await page.evaluate(
+    (origins) => {
+      const state = globalThis as typeof globalThis & {
+        delayedPreflights: number;
+      };
+      state.delayedPreflights = 0;
+      const browser = window as {
+        fetch: (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>;
+      };
+      const original = browser.fetch;
+      browser.fetch = async (...args) => {
+        if (
+          String(args[0]).includes("/preflight?") &&
+          origins.includes(new URL(String(args[0]), location.href).origin) &&
+          state.delayedPreflights < 2
+        ) {
+          state.delayedPreflights++;
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+        return original(...args);
+      };
+    },
+    [fleet[0].url, fleet[1].url],
+  );
   const settings = await openSettings(page);
   await settings
     .getByRole("radiogroup", { name: "Latency measurement servers" })

@@ -16,6 +16,7 @@ const ALLOWED = new Set([
   "ICON.more",
   "ICON.moon",
   "ICON.ping",
+  "ICON.server",
   "ICON.settings",
   "ICON.sun",
   "ICON.trash",

@@ -362,7 +362,8 @@ export interface VerifiedLatencyPath {
   requested: LatencyTarget;
   target: LatencyTarget;
   probe: Probe;
-  rttMs: number;
+  /** Median of successful preparation replies; null when the sample is empty. */
+  rttMs: number | null;
   generation: string;
   verifiedAt: number;
 }

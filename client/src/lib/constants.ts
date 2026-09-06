@@ -6,6 +6,7 @@ const STROKE =
   'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
 
 export const ICON = {
+  server: `<svg viewBox="0 0 24 24" ${STROKE}><rect x="3" y="3" width="18" height="6" rx="2"/><rect x="3" y="15" width="18" height="6" rx="2"/><path d="M7 6h.01M7 18h.01M12 9v6"/></svg>`,
   bolt: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>`,
   download: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M12 4v12"/><path d="m7 11 5 5 5-5"/><path d="M5 20h14"/></svg>`,
   upload: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M12 20V8"/><path d="m7 13 5-5 5 5"/><path d="M5 4h14"/></svg>`,

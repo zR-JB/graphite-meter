@@ -8,6 +8,7 @@
 
 <script lang="ts">
   import { historyWirePresentation } from "../../history/wire";
+  import { historyServers } from "../../history/servers";
   import { tooltip } from "../../actions/tooltip";
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
   import { ICON } from "../../constants";
@@ -259,10 +260,6 @@
   const contextRows = $derived(
     [
       {
-        label: "Server",
-        value: `${record.server.name}${record.server.location ? ` · ${record.server.location}` : ""}`,
-      },
-      {
         label: "Throughput transport",
         value: transport(record.transport.throughput.kind),
       },
@@ -285,6 +282,7 @@
       Boolean(row.value),
     ),
   );
+  const servers = $derived(historyServers(record));
 </script>
 
 <article
@@ -548,12 +546,64 @@
     </section>
   {/if}
 
+  <section
+    class="detail-section saved-servers-section"
+    aria-labelledby={`result-${record.id}-servers`}
+  >
+    <header class="section-head">
+      <span aria-hidden="true">{@html ICON.server}</span>
+      <h3 id={`result-${record.id}-servers`}>Servers</h3>
+    </header>
+    <ul class="section-body saved-servers">
+      {#each servers as server (server.id)}
+        <li>
+          <div>
+            <strong>{server.label}</strong>
+            {#if server.host}<small>{server.host}</small>{/if}
+          </div>
+          {#if server.ping}<span class="saved-server-ping">Ping</span>{/if}
+        </li>
+      {/each}
+    </ul>
+  </section>
+
   <footer class="detail-actions">
     <button type="button" onclick={onDelete}>Delete this result</button>
   </footer>
 </article>
 
 <style>
+  .saved-servers {
+    margin: 0;
+    list-style: none;
+  }
+  .saved-servers li {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    gap: var(--space-3);
+    padding-block: var(--space-2);
+  }
+  .saved-servers li + li {
+    border-top: 1px solid var(--border);
+  }
+  .saved-servers strong {
+    display: block;
+    font-size: var(--type-sm);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .saved-servers small {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-muted);
+    font: var(--type-xs)/1.4 var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+  .saved-server-ping {
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
   .saved-server-context {
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border);

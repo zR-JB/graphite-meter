@@ -5,6 +5,9 @@
   import { store } from "../../state/store.svelte";
   import TestSetupPanel from "./TestSetupPanel.svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
+  import { untrack } from "svelte";
+  import { getApplicationController } from "../../runner/controllerContext";
+  const controller = getApplicationController();
 
   interface Props {
     open?: boolean;
@@ -33,6 +36,17 @@
   let setupResetVersion = $state(0);
   $effect(() => {
     if (!open) resetConfirmOpen = false;
+  });
+  $effect(() => {
+    if (
+      open &&
+      !store.isRunning &&
+      !store.preparing &&
+      store.selectionValidation !== "checking"
+    ) {
+      untrack(() => controller.loadServerMetadata());
+      return () => controller.cancelServerMetadata();
+    }
   });
 
   function confirmSettingsReset() {

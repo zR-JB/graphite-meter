@@ -306,6 +306,12 @@ test("zero latency evidence is retained and absent evidence is not fabricated", 
   const presented = presentConnections(config(), paths.discovery, validation);
   expect(presented.latency.preTestPingMs).toBe(0);
   expect(presented.throughput.browserProtocol).toBeUndefined();
+  validation.latency.path!.rttMs = null;
+  expect(preparedPaths(config(), paths.discovery, validation)).not.toBeNull();
+  expect(
+    presentConnections(config(), paths.discovery, validation).latency
+      .preTestPingMs,
+  ).toBeUndefined();
   validation.latency.path = null;
   expect(
     roleNeedsValidation(config(), validation, "latency", paths.discovery),

@@ -986,6 +986,35 @@ test("a superseded probe does not publish its discovery", async () => {
   }
 });
 
+test.each([null, 0])(
+  "preflight RTT preserves %s as distinct missing or zero evidence",
+  async (rtt) => {
+    FakePingWorker.all = [];
+    const restore = stubProbeEnvironment(probeFetch());
+    const realWorker = globalThis.Worker;
+    globalThis.Worker = FakePingWorker as unknown as typeof Worker;
+    const preparation = await preparationHarness();
+    try {
+      let settled = false;
+      const pending = preparation.check(probeConfig(true)).finally(() => {
+        settled = true;
+      });
+      for (let turn = 0; turn < 100 && !settled; turn++) {
+        const worker = FakePingWorker.all.at(-1);
+        worker?.emit({ type: "ready" });
+        if (rtt !== null)
+          worker?.emit({ type: "samples", samples: pingSamples(rtt) });
+        await Promise.resolve();
+      }
+      expect((await pending).latency!.rttMs).toBe(rtt);
+    } finally {
+      preparation.stop();
+      globalThis.Worker = realWorker;
+      restore();
+    }
+  },
+);
+
 test("the preparation owner can park and restart the returned idle monitor", async () => {
   FakePingWorker.all = [];
   const restore = stubProbeEnvironment(probeFetch());

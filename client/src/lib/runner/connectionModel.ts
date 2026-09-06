@@ -256,7 +256,8 @@ export function presentConnections(
       clientIp: path?.probe.clientIp,
       clientIpVersion: path?.probe.clientIpVersion,
       clientIpSource: path?.probe.clientIpSource,
-      preTestPingMs: path && "rttMs" in path ? path.rttMs : undefined,
+      preTestPingMs:
+        path && "rttMs" in path ? (path.rttMs ?? undefined) : undefined,
       verifiedAt: path?.verifiedAt,
     };
   };

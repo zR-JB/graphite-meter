@@ -16,7 +16,9 @@ export function serverAccent(
   return `hsl(${(205 + index * 137.508) % 360} 16% 59%)`;
 }
 
-export function serverLabel(server: ServerIdentity): string {
+export function serverLabel(
+  server: Pick<ServerIdentity, "name" | "location">,
+): string {
   return server.location &&
     !server.name.toLowerCase().includes(server.location.toLowerCase())
     ? `${server.name} · ${server.location}`

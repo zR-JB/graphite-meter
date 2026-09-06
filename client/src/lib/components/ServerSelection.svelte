@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
+  import { fmtMs } from "../format";
   import ServerSelector from "./ServerSelector.svelte";
   import { serverAccent, serverLabel } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
@@ -28,9 +29,15 @@
       <strong>Test servers</strong>
       <small>{selected.length} selected</small>
     </div>
-    <div class="server-choices" role="group" aria-label="Servers to test">
+    <div
+      class="server-choices"
+      role="group"
+      aria-label="Servers to test"
+      aria-busy={store.serverMetadataLoading}
+    >
       {#each store.serverCatalog!.servers as server (server.id)}
         {@const checked = store.selectedServers.includes(server.id)}
+        {@const pingMs = store.serverReadiness[server.id]?.preTestPingMs}
         {@const unavailable =
           locked || (checked ? selected.length === 1 : selected.length >= 4)}
         <label
@@ -58,7 +65,12 @@
                   : [...store.selectedServers, server.id],
               )}
           />
-          <span>{serverLabel(server)}</span>
+          <span class="server-name">{serverLabel(server)}</span>
+          {#if pingMs != null}<small
+              class="server-ping"
+              aria-label={`Preflight ping ${fmtMs(pingMs)} milliseconds`}
+              >{fmtMs(pingMs)}<span>ms</span></small
+            >{/if}
         </label>
       {/each}
     </div>
@@ -201,7 +213,7 @@
   }
   .server-choices label {
     display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
+    grid-template-columns: 14px minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
     min-width: 0;
@@ -260,7 +272,7 @@
   .server-choices label:not(.checked):has(input:disabled) {
     opacity: 0.55;
   }
-  .server-choices span {
+  .server-choices .server-name {
     text-align: left;
     min-width: 0;
     overflow: hidden;
@@ -268,6 +280,20 @@
     white-space: nowrap;
     font-size: var(--type-xs);
     font-weight: 600;
+  }
+  .server-ping {
+    display: flex;
+    align-items: baseline;
+    justify-content: flex-end;
+    gap: 2px;
+    color: var(--text-muted);
+    font: var(--type-xs)/1.3 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .server-ping span {
+    color: var(--text-soft);
+    font-size: 9px;
   }
   .selection-help {
     margin: 0;

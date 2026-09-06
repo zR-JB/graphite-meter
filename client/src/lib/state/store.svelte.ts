@@ -154,10 +154,12 @@ class AppStore {
         state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
         message?: string;
         checkedAt?: number;
+        preTestPingMs?: number | null;
       }
     >
   >({});
   serverDiscoveries = $state<Record<string, TransportDiscovery>>({});
+  serverMetadataLoading = $state(false);
   catalogLoading = $state(false);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
