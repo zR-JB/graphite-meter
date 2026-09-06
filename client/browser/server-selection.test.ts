@@ -32,8 +32,13 @@ for (const theme of ["dark", "light"] as const) {
         json: {
           defaultSelection: ["self", "peer"],
           servers: [
-            { id: "self", url: ".", name: "Local" },
-            { id: "peer", url: "http://localhost:45678", name: "Peer" },
+            { id: "self", url: ".", name: "1&1", location: "Berlin" },
+            {
+              id: "peer",
+              url: "http://localhost:45678",
+              name: "Vodafone",
+              location: "Berlin",
+            },
           ],
         },
       }),
@@ -41,7 +46,7 @@ for (const theme of ["dark", "light"] as const) {
     await page.route("**/preflight?*", (route) =>
       route.fulfill({
         json: {
-          server: { name: "Frankfurt", location: "Germany" },
+          server: { name: "1&1", location: "Berlin" },
           engineVersion: "test",
           generation: "selection-test",
           capabilities: {
@@ -87,8 +92,34 @@ for (const theme of ["dark", "light"] as const) {
       "aria-pressed",
       "true",
     );
+    await expect(band.getByRole("button").first()).toHaveText("✓1&1 · Berlin");
+    await expect(band.getByRole("button").nth(1)).toHaveText(
+      "✓Vodafone · Berlin",
+    );
+    const appearance = await band.getByRole("button").evaluateAll((buttons) =>
+      buttons.map((button) => ({
+        accent: button.style.getPropertyValue("--server-accent"),
+        left: button.getBoundingClientRect().left,
+        right: button.getBoundingClientRect().right,
+      })),
+    );
+    expect(appearance[0].accent).not.toBe(appearance[1].accent);
+    expect(appearance[0].right - appearance[1].left).toBeCloseTo(32, 0);
+    expect(
+      await band.getByRole("button").evaluateAll((buttons) => {
+        const next = buttons[1].getBoundingClientRect();
+        return [
+          document
+            .elementFromPoint(next.left + 2, next.top + 2)
+            ?.closest("button") === buttons[0],
+          document
+            .elementFromPoint(next.left + 2, next.top + next.height / 2)
+            ?.closest("button") === buttons[1],
+        ];
+      }),
+    ).toEqual([true, true]);
     await band.getByRole("button").first().focus();
-    await expect(page.getByRole("tooltip")).toContainText("Germany");
+    await expect(page.getByRole("tooltip")).toContainText("Berlin");
     await page.keyboard.press("Escape");
     await openSettings(page);
     await expectNoHorizontalOverflow(settings.locator(".panel-body"));
@@ -108,6 +139,12 @@ for (const theme of ["dark", "light"] as const) {
       "aria-pressed",
       "false",
     );
+    expect(
+      await band
+        .getByRole("button")
+        .nth(1)
+        .evaluate((button) => button.style.getPropertyValue("--server-accent")),
+    ).toBe(appearance[1].accent);
     await expect(page.locator(".server-indicator")).toHaveCount(0);
     await expect(settings.locator(".server-heading")).toContainText("1 / 4");
     await page.artifact(`server-settings-phone-${theme}`);

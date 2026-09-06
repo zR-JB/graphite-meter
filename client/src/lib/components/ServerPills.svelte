@@ -1,6 +1,8 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
   import type { ServerIdentity } from "../servers/catalog";
+  import { store } from "../state/store.svelte";
+  import { serverAccent, serverLabel } from "../presentation/serverAppearance";
   let {
     servers,
     value,
@@ -33,12 +35,14 @@
             id: "",
             text: aggregateLabel,
             description: aggregateDescription,
+            accent: "var(--text-soft)",
           },
         ]
       : []),
     ...servers.map((server) => ({
       id: server.id,
-      text: server.name,
+      text: serverLabel(server),
+      accent: serverAccent(server, store.serverCatalog?.servers ?? servers),
       description: [server.name, server.location, new URL(server.url).host]
         .filter(Boolean)
         .join("\n"),
@@ -53,8 +57,25 @@
           : value.includes(item.id)),
     )?.id ?? items.find((item) => !disabledIds.includes(item.id))?.id,
   );
+  const rowKey = $derived(
+    JSON.stringify(items.map(({ id, text }) => [id, text])),
+  );
   const selected = (id: string) =>
     typeof value === "string" ? value === id : value.includes(id);
+  function joinRows(element: HTMLDivElement) {
+    const buttons = Array.from(element.querySelectorAll("button"));
+    const update = () => {
+      const tops = buttons.map((button) => button.offsetTop);
+      buttons.forEach((button, index) => {
+        button.classList.toggle("row-end", tops[index] !== tops[index + 1]);
+      });
+    };
+    const resize = new ResizeObserver(update);
+    resize.observe(element);
+    buttons.forEach((button) => resize.observe(button));
+    update();
+    return () => resize.disconnect();
+  }
   function navigate(event: KeyboardEvent, index: number) {
     if (multiple || disabled) return;
     const delta =
@@ -92,6 +113,10 @@
   class:expanded
   role={multiple ? "group" : "radiogroup"}
   aria-label={label}
+  {@attach (element) => {
+    rowKey;
+    return joinRows(element);
+  }}
 >
   {#each items as item, index (item.id)}
     <button
@@ -105,6 +130,7 @@
       tabindex={multiple || item.id === tabId ? 0 : -1}
       disabled={disabled || disabledIds.includes(item.id)}
       class:chosen={selected(item.id)}
+      style:--server-accent={item.accent}
       use:tooltip={item.description}
       onclick={() => onchange(item.id)}
       onkeydown={(event) => navigate(event, index)}
@@ -118,16 +144,15 @@
 
 <style>
   .server-pills {
+    --overlap: 32px;
     display: inline-flex;
     flex-wrap: wrap;
     align-items: stretch;
     justify-content: center;
+    row-gap: 4px;
+    padding-inline-start: var(--overlap);
     width: fit-content;
     max-width: 100%;
-    overflow: hidden;
-    border: 1px solid var(--border-strong);
-    border-radius: 16px;
-    background: var(--surface-inset);
   }
   button {
     position: relative;
@@ -135,33 +160,37 @@
     flex: 1 1 auto;
     align-items: center;
     justify-content: center;
-    min-width: 58px;
-    min-height: 30px;
-    padding: 5px 22px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--text-muted);
+    min-width: 72px;
+    min-height: 32px;
+    margin-inline-start: calc(-1 * var(--overlap));
+    padding: 5px calc(16px + var(--overlap)) 5px 16px;
+    border: 1px solid
+      color-mix(in srgb, var(--server-accent) 48%, var(--border));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--server-accent) 24%, var(--surface-1));
+    color: var(--text);
     font: 600 var(--type-xs)/1.3 var(--font-sans);
     text-align: center;
     cursor: pointer;
     transition:
       background 160ms ease,
+      border-color 160ms ease,
       color 160ms ease;
   }
-  button + button {
-    box-shadow: inset 1px 0 var(--border);
+  button:global(.row-end) {
+    padding-inline: calc(16px + var(--overlap) / 2);
   }
   .server-pills button:not(.chosen):hover:not(:disabled) {
     color: var(--text);
-    background: var(--surface-3);
+    border-color: var(--server-accent);
   }
   button:active:not(:disabled) .server-name {
     transform: translateY(1px);
   }
   button.chosen {
     color: var(--text);
-    background: color-mix(in srgb, var(--brand) 18%, var(--surface-1));
+    background: color-mix(in srgb, var(--server-accent) 46%, var(--surface-1));
+    border-color: var(--server-accent);
   }
   button:focus-visible {
     outline: var(--focus-ring);
@@ -178,10 +207,10 @@
     width: 100%;
   }
   .expanded button {
-    min-height: 34px;
-    max-width: 100%;
+    min-height: 32px;
   }
   .server-name {
+    min-width: 0;
     max-width: 18ch;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -190,13 +219,17 @@
   }
   .selection-mark {
     position: absolute;
-    inset-inline-start: 8px;
-    width: 10px;
+    inset-inline-start: 6px;
+    width: 8px;
     color: var(--text);
+    font-size: 10px;
     font-weight: 700;
     transition:
       opacity 140ms ease,
       transform 140ms ease;
+  }
+  button:global(.row-end) .selection-mark {
+    inset-inline-start: calc(6px + var(--overlap) / 2);
   }
   button:not(.chosen) .selection-mark {
     opacity: 0;

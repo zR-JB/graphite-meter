@@ -96,9 +96,11 @@ reach every selected discovery and transport origin.
 ## Browser and terminal controls
 
 **Settings → Connection paths → Servers** offers a compact colored band. Toggle
-one to four servers directly; the final selected server cannot be removed. Names,
-locations and hosts are available on hover, keyboard focus or touch. The band
-appears when more than one server is configured. A quiet gauge indicator shows
+one to four servers directly; the final selected server cannot be removed.
+Overlapping pills show the server name and location, so providers in the same city
+remain separate choices. The band wraps into additional rows, with full names,
+locations and hosts available on hover, keyboard focus or touch. The band appears
+when more than one server is configured. A quiet gauge indicator shows
 the selected or measured server count. Single-server runs retain the ordinary
 instrument and result view.
 
