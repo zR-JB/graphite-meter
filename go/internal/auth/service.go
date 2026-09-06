@@ -17,31 +17,33 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial, replayExpiry, throttled, logout, cliApproval, capacity atomic.Uint64 }
 
 type Service struct {
-	cfg            config.AuthConfig
-	public         *url.URL
-	trusted        []netip.Prefix
-	passwordHash   string
-	argon          chan struct{}
-	mu             sync.Mutex
-	sessions       map[[32]byte]*session
-	grants         map[[32]byte]*session
-	browserGrants  map[[32]byte]*browserGrant
-	wtTokens       map[[32]byte]wtToken
-	attempts       map[string]loginAttempt
-	exchanges      map[string]loginAttempt
-	globalAttempts []time.Time
-	ceilingLogged  map[string]time.Time
-	approvals      map[string]*cliApproval
-	oidc           *oidcState
-	now            func() time.Time
-	verbose        bool
-	counters       authCounters
-	connectSrc     string
+	cfg              config.AuthConfig
+	public           *url.URL
+	trusted          []netip.Prefix
+	passwordHash     string
+	argon            chan struct{}
+	mu               sync.Mutex
+	sessions         map[[32]byte]*session
+	grants           map[[32]byte]*session
+	browserGrants    map[[32]byte]*browserGrant
+	wtTokens         map[[32]byte]wtToken
+	attempts         map[string]loginAttempt
+	exchanges        map[string]loginAttempt
+	approvalAttempts map[string]loginAttempt
+	globalAttempts   []time.Time
+	ceilingLogged    map[string]time.Time
+	approvals        map[string]*cliApproval
+	oidc             *oidcState
+	now              func() time.Time
+	verbose          bool
+	counters         authCounters
+	connectSrc       string
 }
 
 func authModes(mode string) (password, oidc bool) {
@@ -49,11 +51,32 @@ func authModes(mode string) (password, oidc bool) {
 }
 
 func (s *Service) SetConnectOrigins(origins []string) {
-	s.connectSrc = strings.Join(origins, " ")
+	sources := make([]string, 0, len(origins))
+	for _, origin := range origins {
+		if wire.BrowserConnectSourceSupported(origin) {
+			sources = append(sources, origin)
+		}
+	}
+	s.connectSrc = strings.Join(sources, " ")
 }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
-	s := &Service{cfg: cfg, trusted: trusted, sessions: map[[32]byte]*session{}, grants: map[[32]byte]*session{}, browserGrants: map[[32]byte]*browserGrant{}, wtTokens: map[[32]byte]wtToken{}, attempts: map[string]loginAttempt{}, exchanges: map[string]loginAttempt{}, ceilingLogged: map[string]time.Time{}, approvals: map[string]*cliApproval{}, argon: make(chan struct{}, 2), now: time.Now, verbose: verbose}
+	s := &Service{
+		cfg:              cfg,
+		trusted:          trusted,
+		sessions:         map[[32]byte]*session{},
+		grants:           map[[32]byte]*session{},
+		browserGrants:    map[[32]byte]*browserGrant{},
+		wtTokens:         map[[32]byte]wtToken{},
+		attempts:         map[string]loginAttempt{},
+		exchanges:        map[string]loginAttempt{},
+		approvalAttempts: map[string]loginAttempt{},
+		ceilingLogged:    map[string]time.Time{},
+		approvals:        map[string]*cliApproval{},
+		argon:            make(chan struct{}, 2),
+		now:              time.Now,
+		verbose:          verbose,
+	}
 	if cfg.Mode == "off" {
 		return s, nil
 	}

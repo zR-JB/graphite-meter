@@ -11,6 +11,7 @@ import {
   fetchViewOfOrigin,
 } from "../src/lib/runner/real/backendPure";
 import type { prepareConnections } from "../src/lib/runner/real/prepare";
+import type { ServerCatalog } from "../src/lib/servers/catalog";
 
 const DOWN_RATE = 40_000_000;
 const UP_RATE = 8_000_000;
@@ -43,13 +44,22 @@ export class DummyBackend implements RunnerBackend {
     };
   }
 
-  static prepare: typeof prepareConnections = async (
-    config,
-    _previous,
-    _roles,
-    signal,
-  ) => {
-    signal?.throwIfAborted();
+  static async loadCatalog(signal: AbortSignal): Promise<ServerCatalog> {
+    signal.throwIfAborted();
+    return {
+      servers: [
+        {
+          id: "self",
+          url: location.origin,
+          name: "Graphite Meter browser fixture",
+        },
+      ],
+      defaultSelection: ["self"],
+    };
+  }
+
+  static async discover(signal: AbortSignal): Promise<TransportDiscovery> {
+    signal.throwIfAborted();
     const origin =
       typeof location === "undefined" ? "http://dummy.test" : location.origin;
     const tls = origin.startsWith("https:");
@@ -73,6 +83,7 @@ export class DummyBackend implements RunnerBackend {
         "http/1.1",
       ),
       generation: "dummy-browser",
+      uploadCheckpoint: true,
       engineVersion: "browser-fixture",
       server: { name: "Graphite Meter browser fixture", location: "test" },
       fetchedAt: Date.now(),
@@ -86,6 +97,20 @@ export class DummyBackend implements RunnerBackend {
             : DATAGRAM;
     for (const target of discovery.latency[origin].targets)
       target.id = target.transport === "websocket" ? WS : WT;
+    return discovery;
+  }
+
+  static prepare: typeof prepareConnections = async (
+    config,
+    _previous,
+    _roles,
+    signal,
+    _credentials,
+    knownDiscovery,
+  ) => {
+    signal.throwIfAborted();
+    const discovery = knownDiscovery ?? (await DummyBackend.discover(signal));
+    const origin = discovery.pageOrigin;
 
     const throughputId = [FETCH, WT, DATAGRAM].includes(
       config.transports.throughputTarget,

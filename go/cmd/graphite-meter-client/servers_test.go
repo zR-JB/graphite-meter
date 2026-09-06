@@ -23,6 +23,30 @@ func chooserModel(t *testing.T) model {
 	m.preparedRun = &goclient.PreparedRun{Catalog: catalog}
 	return m
 }
+
+func TestRemoteAuthorizationExpiryRechecksTheSelection(t *testing.T) {
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = "https://catalogue.example"
+	cfg.ServerIDs = []string{"remote"}
+	m := newModel(cfg)
+	t.Cleanup(m.close)
+	m.mode = modeRun
+	m.prepareStatus = "ready"
+	m.authServerID = "" // Successful preparation has no pending issuer.
+	seq := m.prepareSeq
+	next, command := m.finishRun(&goclient.AuthRequiredError{URL: "https://remote.example/login"})
+	m = next.(model)
+	if command == nil || m.prepareSeq <= seq || m.prepareStatus != "checking" || m.mode != modeConfigure || !m.complete {
+		t.Fatalf("expired remote grant did not restart selection discovery: %+v", m)
+	}
+	if !slices.Equal(m.cfg.ServerIDs, []string{"remote"}) || m.cfg.BaseURL != cfg.BaseURL || m.auth != nil {
+		t.Fatal("reauthorization changed the selected authority or reused an unrelated approval")
+	}
+	commands := command().(tea.BatchMsg)
+	if _, ok := commands[0]().(prepareDueMsg); !ok {
+		t.Fatal("reauthorization skipped catalogue preparation and guessed the issuing server")
+	}
+}
 func TestServerChooserDraftKeyboardAndLimit(t *testing.T) {
 	m := chooserModel(t)
 	next, _ := m.openServerChooser()

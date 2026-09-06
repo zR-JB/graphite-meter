@@ -22,6 +22,11 @@ export class ServerAuthenticationRequired extends Error {
     super(`Sign in to ${server.name}`);
   }
 }
+export class BrowserApprovalLimitError extends Error {
+  constructor() {
+    super("This server login has reached its limit of authorized clients.");
+  }
+}
 export function serverCredentials(server: ServerEntry): ServerCredentials {
   return {
     server,
@@ -113,8 +118,25 @@ function base64url(bytes: Uint8Array): string {
     .replaceAll("/", "_")
     .replaceAll("=", "");
 }
+function verificationCode(hash: Uint8Array): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let value = 0,
+    bits = 0,
+    code = "";
+  for (const byte of hash.subarray(0, 5)) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      code += alphabet[(value >>> bits) & 31];
+    }
+    value &= (1 << bits) - 1;
+  }
+  return code;
+}
 export async function browserApproval(server: ServerEntry): Promise<{
   url: string;
+  code: string;
   poll: (signal: AbortSignal) => Promise<ServerCredentials>;
 }> {
   if (location.protocol !== "https:" || !server.url.startsWith("https://"))
@@ -122,14 +144,14 @@ export async function browserApproval(server: ServerEntry): Promise<{
       "Open this interface over HTTPS to authorize a remote server",
     );
   const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)));
-  const challenge = base64url(
-    new Uint8Array(
-      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
-    ),
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
   );
+  const challenge = base64url(hash);
   const url = `${server.url}/auth/browser?${new URLSearchParams({ challenge, client_origin: location.origin })}`;
   return {
     url,
+    code: verificationCode(hash),
     async poll(signal) {
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
@@ -165,6 +187,7 @@ export async function browserApproval(server: ServerEntry): Promise<{
           };
         }
         await response.body?.cancel().catch(() => {});
+        if (response.status === 429) throw new BrowserApprovalLimitError();
         if (response.status !== 202)
           throw new Error(`Approval exchange returned HTTP ${response.status}`);
         signal.throwIfAborted();

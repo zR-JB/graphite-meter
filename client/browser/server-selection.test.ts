@@ -90,8 +90,16 @@ for (const theme of ["dark", "light"] as const) {
     });
     await expect(band.getByRole("checkbox").first()).toBeChecked();
     await expect(band.getByRole("checkbox").nth(1)).toBeChecked();
-    await expect(band.locator("label").first()).toHaveText("1&1 · Berlin");
-    await expect(band.locator("label").nth(1)).toHaveText("Vodafone · Berlin");
+    await expect(band.locator(".server-name").first()).toHaveText(
+      "1&1 · Berlin",
+    );
+    await expect(band.locator(".server-name").nth(1)).toHaveText(
+      "Vodafone · Berlin",
+    );
+    await expect(band.locator(".server-preflight")).toHaveCount(1);
+    await expect(
+      band.locator("label").nth(1).locator(".server-preflight"),
+    ).toHaveCount(0);
     const appearance = await band.locator("label").evaluateAll((labels) =>
       labels.map((label) => ({
         accent: label.style.getPropertyValue("--server-accent"),

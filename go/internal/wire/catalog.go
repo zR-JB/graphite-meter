@@ -135,15 +135,23 @@ func (c ServerCatalog) ConnectSources() []string {
 			continue
 		}
 		host := u.Hostname()
-		if strings.Contains(host, ":") {
-			host = "[" + host + "]"
+		if !strings.Contains(host, ":") {
+			out = append(out, "http://"+host+":*", "https://"+host+":*", "ws://"+host+":*", "wss://"+host+":*")
 		}
-		out = append(out, "http://"+host+":*", "https://"+host+":*", "ws://"+host+":*", "wss://"+host+":*")
 		for _, raw := range s.AdditionalOrigins {
-			out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
+			if BrowserConnectSourceSupported(raw) {
+				out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
+			}
 		}
 	}
 	return out
+}
+
+// BrowserConnectSourceSupported excludes IPv6 literals, which browsers cannot
+// represent as CSP host sources. The page's own IPv6 origin is covered by 'self'.
+// Callers still own origin validation; this only filters configured CSP sources.
+func BrowserConnectSourceSupported(raw string) bool {
+	return !strings.Contains(raw, "://[")
 }
 
 // CanonicalOrigin is shared by catalogue decoders and authentication audiences.

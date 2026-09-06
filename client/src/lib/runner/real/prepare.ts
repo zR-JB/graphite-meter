@@ -22,7 +22,10 @@ import {
   socketMint,
   type ServerCredentials,
 } from "../../servers/credentials";
-import { validateServerDiscovery } from "../../servers/catalog";
+import {
+  browserOriginRestriction,
+  validateServerDiscovery,
+} from "../../servers/catalog";
 import { BUILD } from "../../buildenv";
 import {
   CONNECTION_ROLES,
@@ -32,6 +35,7 @@ import {
 import { median } from "../stats";
 import {
   browserProtocolMatchesTarget,
+  blockedSelectionReason,
   classifyTransportDiscovery,
   fetchViewOfOrigin,
   protocolFromNextHop,
@@ -47,6 +51,7 @@ import { IdleKeepalive } from "./latencyChannel";
 import { resourceProtocol } from "./resourceTiming";
 import {
   PreflightUnavailableError,
+  BrowserOriginBlockedError,
   TransportUnavailableError,
 } from "./transportError";
 import { transportRunnable } from "./transports";
@@ -64,8 +69,15 @@ export async function discoverServer(
   signal: AbortSignal,
   credentials?: ServerCredentials,
 ): Promise<TransportDiscovery> {
+  signal.throwIfAborted();
+  const restriction = browserOriginRestriction(
+    credentials?.server.url ?? location.origin,
+    location.origin,
+  );
+  if (restriction) throw new BrowserOriginBlockedError(restriction);
   try {
     const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
+    const startedAt = performance.now();
     const response = await measurementFetch(
       credentials,
       `${credentials?.server.url ?? ""}/preflight${ident}`,
@@ -76,7 +88,9 @@ export async function discoverServer(
     );
     if (!response.ok)
       throw new Error(`preflight returned HTTP ${response.status}`);
-    const pf = parsePreflight(await readJSONResponse(response));
+    const data = await readJSONResponse(response);
+    const preflightMs = performance.now() - startedAt;
+    const pf = parsePreflight(data);
     if (credentials) validateServerDiscovery(credentials.server, pf);
     const origin = new URL(response.url, location.href).origin;
     const protocol = (
@@ -90,12 +104,14 @@ export async function discoverServer(
         origin,
         location.protocol === "https:",
         protocol,
+        location.origin,
       ),
       uploadCheckpoint: pf.capabilities.uploadCheckpoint,
       generation: pf.generation,
       engineVersion: pf.engineVersion,
       server: pf.server,
       fetchedAt: Date.now(),
+      preflightMs,
     };
     signal.throwIfAborted();
     return discovery;
@@ -165,7 +181,10 @@ export async function prepareConnections(
           selection,
           state: "failed",
           path: null,
-          message: "Connection check failed",
+          message:
+            cause instanceof BrowserOriginBlockedError
+              ? cause.message
+              : "Connection check failed",
         };
         if (role === "latency") result.idle = null;
       }
@@ -204,6 +223,13 @@ async function prepareThroughput(
   credentials?: ServerCredentials,
 ): Promise<VerifiedThroughputPath> {
   const requested = selectThroughputTarget(discovery, selection, true);
+  const restriction = blockedSelectionReason(
+    discovery,
+    "throughput",
+    selection,
+  );
+  if (!requested && restriction)
+    throw new BrowserOriginBlockedError(restriction);
   if (!requested)
     throw new TransportUnavailableError(`${selection} target unavailable`, {
       role: "throughput",
@@ -295,6 +321,9 @@ async function prepareLatency(
     selection,
     transportRunnable("webtransport"),
   );
+  const restriction = blockedSelectionReason(discovery, "latency", selection);
+  if (!requested && restriction)
+    throw new BrowserOriginBlockedError(restriction);
   if (!requested)
     throw new TransportUnavailableError(
       `${selection} latency target unavailable`,

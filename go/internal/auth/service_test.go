@@ -301,6 +301,17 @@ func TestAppCSPPinsScriptsAndConnectSrc(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedConnectSourcesExcludeIPv6Literals(t *testing.T) {
+	s := testService(t)
+	s.SetConnectOrigins([]string{"https://[2001:db8::1]:7248", "wss://[2001:db8::1]:7247", "https://meter.example:*", "wss://meter.example:*"})
+	h := http.Header{}
+	s.authenticatedSecurityHeaders(h)
+	policy := h.Get("Content-Security-Policy")
+	if strings.Contains(policy, "[") || !strings.Contains(policy, "connect-src 'self' https://meter.example:* wss://meter.example:*") {
+		t.Fatalf("unexpected authenticated connection policy: %s", policy)
+	}
+}
+
 func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	s := testService(t)
 	s.oidc = &oidcState{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://login.example:8443/oauth2/authorize"}}}

@@ -2,6 +2,7 @@ import type { TransportDiscovery } from "../runner/contract";
 import {
   selectLatencyTarget,
   selectThroughputTarget,
+  blockedSelectionReason,
 } from "../runner/real/backendPure";
 import type { ServerIdentity } from "./catalog";
 
@@ -16,7 +17,7 @@ export interface ServerTransportOption {
 export function serverTransportOptions(
   role: "throughput" | "latency",
   servers: readonly ServerIdentity[],
-  discoveries: Record<string, TransportDiscovery>,
+  discoveries: ReadonlyMap<string, TransportDiscovery>,
   datagrams: boolean,
   selected: string,
   webTransport = typeof WebTransport !== "undefined",
@@ -41,9 +42,9 @@ export function serverTransportOptions(
   if (!candidates.some(([value]) => value === selected))
     candidates.push([selected, "Selected origin"]);
   return candidates.map(([value, label]) => {
-    const missing = servers.filter((server) => !discoveries[server.id]);
+    const missing = servers.filter((server) => !discoveries.has(server.id));
     const incompatible = servers.filter((server) => {
-      const discovery = discoveries[server.id];
+      const discovery = discoveries.get(server.id);
       return (
         discovery &&
         !(role === "throughput"
@@ -51,8 +52,17 @@ export function serverTransportOptions(
           : selectLatencyTarget(discovery, value, webTransport))
       );
     });
-    const detail =
-      value === "auto"
+    const restrictions = incompatible.flatMap((server) => {
+      const reason = blockedSelectionReason(
+        discoveries.get(server.id)!,
+        role,
+        value,
+      );
+      return reason ? [`${server.name}: ${reason}`] : [];
+    });
+    const detail = restrictions.length
+      ? restrictions.join(" ")
+      : value === "auto"
         ? servers.length === 1
           ? `Chooses the available path for ${servers[0].name}`
           : "Resolves independently for every selected server"

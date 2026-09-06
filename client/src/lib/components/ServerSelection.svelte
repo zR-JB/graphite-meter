@@ -17,8 +17,10 @@
       (server) =>
         store.selectedServers.includes(server.id) &&
         ((store.serverCatalog?.servers.length ?? 0) > 1 ||
-          store.serverReadiness[server.id]?.state === "sign-in") &&
-        ["failed", "sign-in"].includes(store.serverReadiness[server.id]?.state),
+          store.serverReadiness.get(server.id)?.state === "sign-in") &&
+        ["failed", "sign-in"].includes(
+          store.serverReadiness.get(server.id)?.state ?? "unchecked",
+        ),
     ),
   );
 </script>
@@ -37,12 +39,21 @@
     >
       {#each store.serverCatalog!.servers as server (server.id)}
         {@const checked = store.selectedServers.includes(server.id)}
-        {@const pingMs = store.serverReadiness[server.id]?.preTestPingMs}
+        {@const preflightMs = store.serverDiscoveries.get(
+          server.id,
+        )?.preflightMs}
         {@const unavailable =
           locked || (checked ? selected.length === 1 : selected.length >= 4)}
         <label
           tabindex="-1"
           use:tooltip={[server.name, server.location, new URL(server.url).host]
+            .concat(
+              preflightMs == null
+                ? []
+                : [
+                    "Preflight request time includes connection setup and the response. It is not steady-state ping.",
+                  ],
+            )
             .filter(Boolean)
             .join("\n")}
           class:checked
@@ -66,10 +77,10 @@
               )}
           />
           <span class="server-name">{serverLabel(server)}</span>
-          {#if pingMs != null}<small
-              class="server-ping"
-              aria-label={`Preflight ping ${fmtMs(pingMs)} milliseconds`}
-              >{fmtMs(pingMs)}<span>ms</span></small
+          {#if preflightMs != null}<small
+              class="server-preflight"
+              aria-label={`Preflight request ${fmtMs(preflightMs)} milliseconds`}
+              >{fmtMs(preflightMs)}<span>ms</span></small
             >{/if}
         </label>
       {/each}
@@ -129,8 +140,8 @@
           >{server.location}</small
         >{/if}
     </div>
-    <p>{store.serverReadiness[server.id]?.message}</p>
-    {#if store.serverReadiness[server.id]?.state === "sign-in"}
+    <p>{store.serverReadiness.get(server.id)?.message}</p>
+    {#if store.serverReadiness.get(server.id)?.state === "sign-in"}
       <button
         type="button"
         disabled={locked ||
@@ -152,22 +163,48 @@
       >
     {/if}
     {#if store.serverApproval?.id === server.id}
+      {#if store.serverApproval.renewUrl}
+        <p>
+          <a
+            href={store.serverApproval.renewUrl}
+            target="_blank"
+            rel="noopener noreferrer">Renew login at {server.name}</a
+          >. Renewing ends the other client connections authorized by that
+          login. Then choose Sign in again here.
+        </p>
+      {:else}
+        <p class="approval-code">
+          Compare this code with the sign-in page:
+          <strong aria-label={`Verification code ${store.serverApproval.code}`}
+            >{store.serverApproval.code}</strong
+          >
+          Approve only if both codes match.
+        </p>
+      {/if}
       <button type="button" onclick={controller.cancelServerApproval}
         >Cancel sign-in</button
       >
-      <p>
-        Complete sign-in in the other window. <a
-          href={store.serverApproval.url}
-          target="_blank"
-          rel="noopener noreferrer">Open sign-in page</a
-        >
-        {store.serverApproval.message ?? ""}
-      </p>
+      {#if !store.serverApproval.renewUrl}
+        <p>
+          Complete sign-in in the other window. <a
+            href={store.serverApproval.url}
+            target="_blank"
+            rel="noopener noreferrer">Open sign-in page</a
+          >
+          {store.serverApproval.message ?? ""}
+        </p>
+      {/if}
     {/if}
   </div>
 {/each}
 
 <style>
+  .approval-code strong {
+    display: block;
+    padding-block: 4px;
+    font: 600 var(--type-lg)/1.4 var(--font-mono);
+    letter-spacing: 0.12em;
+  }
   .server-setting {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -281,7 +318,7 @@
     font-size: var(--type-xs);
     font-weight: 600;
   }
-  .server-ping {
+  .server-preflight {
     display: flex;
     align-items: baseline;
     justify-content: flex-end;
@@ -291,7 +328,7 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  .server-ping span {
+  .server-preflight span {
     color: var(--text-soft);
     font-size: 9px;
   }

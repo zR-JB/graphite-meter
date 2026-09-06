@@ -1,7 +1,11 @@
 import "./state/runes.test";
 import { beforeAll, expect, test } from "bun:test";
 import { stubGlobals } from "./test-helpers.test";
-import { TEST_BUILD_TOKENS } from "./runner/test-helpers.test";
+import {
+  TEST_BUILD_TOKENS,
+  testServerCatalog,
+  testServerDiscovery,
+} from "./runner/test-helpers.test";
 
 // Match the server's authenticated-page marker before importing auth policy.
 let auth: typeof import("./auth");
@@ -151,6 +155,8 @@ test("the application cancels preparation before navigating once and relinquishe
   const { store } = await import("./state/store.svelte");
   let preparing: AbortSignal | null = null;
   const engine = createApplicationController(store, {
+    loadCatalog: testServerCatalog,
+    discover: testServerDiscovery,
     prepare: async (_config, _previous, _roles, signal) => {
       preparing = signal;
       return new Promise((_resolve, reject) =>
@@ -162,6 +168,7 @@ test("the application cancels preparation before navigating once and relinquishe
   });
   try {
     const boot = engine.boot();
+    for (let turn = 0; turn < 20 && !preparing; turn++) await Promise.resolve();
     expect(preparing).not.toBeNull();
     await auth.authenticatedFetch("/auth/session");
     expect(preparing!.aborted).toBe(true);

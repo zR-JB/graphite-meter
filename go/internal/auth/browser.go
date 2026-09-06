@@ -40,7 +40,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	maps.DeleteFunc(s.approvals, func(_ string, a *cliApproval) bool { return !now.Before(a.expires) })
 	a := s.approvals[challenge]
 	s.mu.Unlock()
-	if a == nil && !s.allowExchange(r) {
+	if a == nil && !s.allowBrowserApproval(r) {
 		forbidden(w)
 		return
 	}
@@ -72,13 +72,24 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	if valid {
 		a.session = p.session
 	}
+	atCapacity := valid && len(p.session.grants) >= maxSessionGrants
 	s.mu.Unlock()
 	if !valid {
 		forbidden(w)
 		return
 	}
+	if atCapacity {
+		writeBrowserGrantCapacity(w, clientOrigin)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "Code": a.code, "Challenge": challenge, "CSRF": p.session.csrf, "BrowserOrigin": clientOrigin})
+}
+
+func writeBrowserGrantCapacity(w http.ResponseWriter, clientOrigin string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "BrowserOrigin": clientOrigin, "BrowserCapacity": true, "ClientLimit": maxSessionGrants})
 }
 
 func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +113,7 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 	now := s.now()
 	s.mu.Lock()
 	a := s.approvals[challenge]
-	if a == nil || a.browserOrigin != clientOrigin || !a.approved || a.session == nil || !now.Before(a.expires) || !now.Before(a.session.expires) || a.session.ctx.Err() != nil {
+	if a == nil || a.browserOrigin != clientOrigin || a.session == nil || !now.Before(a.expires) || !now.Before(a.session.expires) || a.session.ctx.Err() != nil {
 		s.mu.Unlock()
 		s.writeGrantPending(w)
 		return
@@ -111,6 +122,11 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 	if len(sess.grants) >= maxSessionGrants {
 		s.mu.Unlock()
 		w.WriteHeader(http.StatusTooManyRequests)
+		return
+	}
+	if !a.approved {
+		s.mu.Unlock()
+		s.writeGrantPending(w)
 		return
 	}
 	raw := randomToken(32)

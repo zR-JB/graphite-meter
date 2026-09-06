@@ -25,6 +25,17 @@ export function canonicalOrigin(value: unknown): string {
   if (!url.hostname || url.port === "0") throw new Error("Invalid origin");
   return url.origin;
 }
+
+/** Literal IPv6 hosts cannot be named in CSP; the page's own origin is covered by 'self'. */
+export function browserOriginRestriction(
+  origin: string,
+  pageOrigin: string,
+): string | undefined {
+  const url = new URL(origin);
+  if (url.hostname.startsWith("[") && url.origin !== new URL(pageOrigin).origin)
+    return "Use a DNS hostname for browser connections to this IPv6 server.";
+}
+
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid server catalogue");

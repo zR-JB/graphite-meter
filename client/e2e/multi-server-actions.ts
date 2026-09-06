@@ -13,6 +13,7 @@ export async function configure(
     mode: "all",
     serverId: "self",
   },
+  pageOrigin = fleet[0].url,
 ) {
   await page.addInitScript(
     ({ ids, servers, duration, config, latencySelection }) => {
@@ -54,9 +55,17 @@ export async function configure(
         }),
       );
     },
-    { ids, servers: fleet, duration, config, latencySelection },
+    {
+      ids,
+      servers: fleet.map((server) =>
+        server.id === "self" ? { ...server, url: pageOrigin } : server,
+      ),
+      duration,
+      config,
+      latencySelection,
+    },
   );
-  await page.goto(fleet[0].url);
+  await page.goto(pageOrigin);
   const settings = await openSettings(page);
   if (
     !(await settings

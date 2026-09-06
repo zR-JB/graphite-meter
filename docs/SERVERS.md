@@ -10,8 +10,9 @@ the physical link's maximum rate.
 
 Every instance uses the same image and deployment model. Peers need no shared
 keys, database, service discovery, peer connections, or special measurement-only
-image. Their embedded interfaces may remain unused. The server never contacts
-catalogue peers during startup, and clients never recursively import peer catalogues.
+image. Their embedded interfaces may remain unused. Servers do not contact each
+other for discovery or measurement: each browser or terminal client connects
+directly to the selected servers. Clients never recursively import peer catalogues.
 
 Set exactly one of `GM_SERVER_CATALOG` (inline JSON) or `GM_SERVER_CATALOG_FILE`
 (a readable JSON file, normally mounted read-only). Restart after changing it.
@@ -81,8 +82,13 @@ policy from these configured destinations. Discovery cannot authorize an unrelat
 host or expand a grant's permissions. Reverse proxies must preserve that policy
 and allow streaming traffic and authorization headers.
 
-Public HTTP and HTTPS entries may coexist. An HTTPS browser page cannot use a
-mixed-content HTTP measurement path; connection settings mark that path unavailable.
+Public HTTP and HTTPS entries may coexist. For example, an interface at
+`http://meter.lan:7246` can measure its local clear server and
+`https://fra.example.net` together. Automatic resolves the advertised paths of
+each server separately; it does not force the interface's protocol onto peers.
+An ordinary HTTP interface uses WebSocket latency when WebTransport is unavailable.
+Graphite blocks non-loopback HTTP measurement paths from an HTTPS interface;
+connection settings mark those mixed-content paths unavailable.
 Protected remote authorization requires HTTPS for both the requesting interface
 and the protected server. The native client can use public HTTP independently of
 the browser's mixed-content rules.
@@ -92,6 +98,28 @@ then use [the catalogue overlay](../container/docker-compose.catalog.yml) alongs
 your normal [TLS or proxy deployment](DEPLOYMENT.md). Publishing a catalogue does
 not expose an otherwise private peer to the internet; clients must be able to
 reach every selected discovery and transport origin.
+
+### Local-network browser permission
+
+The browser may ask to access devices on the local network when a hosted interface
+contacts a private-address server, or when an intranet interface contacts loopback.
+This is permission for direct client requests, not communication between servers.
+Allow it only for an interface and measurement servers you trust. After changing
+the site's permission, use Retry or reopen Settings.
+
+Chrome requires a secure requesting context for this permission. Its local-network
+and loopback permissions also cover WebSocket and WebTransport connections as of
+Chrome 147. See the [Chrome release notes](https://support.google.com/chrome/a/answer/10314655?hl=en)
+for current behavior; other browsers and managed-device policies may differ.
+Permission does not replace a trusted certificate, the server's authorization,
+CORS, or Graphite's content-security and mixed-content checks. Use an HTTPS interface
+and reachable HTTPS measurement origins for public-to-private deployments.
+
+For browser connections to a separate IPv6 origin, use a DNS hostname that resolves
+to that address. Chromium cannot match literal IPv6 hosts in the site's narrowly
+scoped connection policy; Graphite reports that limitation before attempting the
+connection. Same-origin IPv6 paths remain usable, as do literal IPv6 destinations
+in the native client. A different port is a different origin.
 
 ## Browser and terminal controls
 
@@ -104,10 +132,19 @@ when more than one server is configured. A quiet gauge indicator shows
 the selected or measured server count. Single-server runs retain the ordinary
 instrument and result view.
 
-Changes apply immediately. Opening Settings checks unselected entries with at
-most four concurrent discoveries within a shared twelve-second budget. Background
-readiness refreshes concern selected servers only. Inline Retry and Sign in actions
-resolve individual unavailable entries. Ready selections start directly.
+Changes apply immediately. Opening Settings discovers unselected entries serially,
+with five seconds per request and a shared ten-second budget. Closing Settings
+cancels that work. Fresh discoveries are reused; failures and timeouts back off so
+reopening can reach later entries. Background readiness refreshes concern selected
+servers only. Inline Retry and Sign in actions resolve individual unavailable
+entries. Ready selections start directly.
+
+Each successfully discovered entry shows its latest **HTTP preflight request time**
+in milliseconds, including connection setup and the complete response body. This
+is separate from measured ping latency and appears regardless of the latency
+selection. It opens no extra ping workers. Unreachable or unauthorized entries
+have no time; a missing value is never rendered as zero. These catalogue timings
+do not enter run statistics or decide latency focus.
 
 The browser defaults to measuring **latency against one selected server**, while
 all selected servers perform the speed test. Choose that primary server in Settings
@@ -153,7 +190,9 @@ selection. Protected peers each use their own explicit browser approval.
 
 Choosing Sign in opens that server's existing password/OIDC login followed by an
 approval page naming the requesting interface's exact HTTPS origin. If a popup is
-blocked, use the visible Open sign-in page link. Approval uses the server's ordinary
+blocked, use the visible Open sign-in page link. Compare the eight-character code
+shown in Settings with the approval page and approve only when both match.
+Approval uses the server's ordinary
 first-party session and CSRF protection. The requesting page polls a verifier-bound
 exchange, so opener access and cross-origin message delivery are unnecessary.
 Cancel sign-in stops the pending exchange and closes its owned popup. Retrying
@@ -165,6 +204,11 @@ measurement fetches omit cookies and reject redirects. Third-party cookie access
 not required. Reloading the requesting interface requires approving protected peers
 again. Signing out on a peer revokes its grants and cancels their active measurements;
 other participants can continue.
+
+A login session can authorize up to eight browser clients. At that limit, approval
+offers an explicit login renewal instead of silently replacing an existing grant.
+Renewal revokes that login's previous grants and ends their active connections.
+After renewing at the remote server, choose Sign in again in the requesting interface.
 
 WebSocket and WebTransport connections use short-lived, single-use tickets bound to
 the destination, route, requesting origin and grant. Reusable bearer grants never

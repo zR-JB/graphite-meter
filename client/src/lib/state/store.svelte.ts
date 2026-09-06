@@ -140,6 +140,7 @@ function emptyStability(): LiveStability {
 }
 
 import { serverWireEstimate } from "../servers/wireEstimates";
+import { SvelteMap } from "svelte/reactivity";
 
 class AppStore {
   serverCatalog = $state<import("../servers/catalog").ServerCatalog | null>(
@@ -147,24 +148,21 @@ class AppStore {
   );
   selectedServers = $state<string[]>(["self"]);
   unresolvedServers = $state<import("../servers/catalog").SavedSelection[]>([]);
-  serverReadiness = $state<
-    Record<
-      string,
-      {
-        state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
-        message?: string;
-        checkedAt?: number;
-        preTestPingMs?: number | null;
-      }
-    >
-  >({});
-  serverDiscoveries = $state<Record<string, TransportDiscovery>>({});
+  readonly serverReadiness = new SvelteMap<
+    string,
+    {
+      state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
+      message?: string;
+      checkedAt?: number;
+    }
+  >();
+  readonly serverDiscoveries = new SvelteMap<string, TransportDiscovery>();
   serverMetadataLoading = $state(false);
   catalogLoading = $state(false);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
       const states = this.selectedServers.map(
-        (id) => this.serverReadiness[id]?.state ?? "unchecked",
+        (id) => this.serverReadiness.get(id)?.state ?? "unchecked",
       );
       if (this.unresolvedServers.length || !states.length) return "failed";
       if (states.includes("checking")) return "checking";
@@ -173,9 +171,13 @@ class AppStore {
       return states.every((state) => state === "ready") ? "verified" : "stale";
     },
   );
-  serverApproval = $state<{ id: string; url: string; message?: string } | null>(
-    null,
-  );
+  serverApproval = $state<{
+    id: string;
+    url: string;
+    code: string;
+    message?: string;
+    renewUrl?: string;
+  } | null>(null);
   latencySelection = $state<import("./persistence").LatencySelection>({
     mode: "primary",
     serverId: "",
@@ -189,16 +191,17 @@ class AppStore {
   serverDetails = $state<
     import("../servers/measurement").MultiServerResult | null
   >(null);
-  latencyByServer = $state<Record<string, LatencyBucket[]>>({});
-  summariesByServer = $state<
-    Record<string, Partial<Record<TransportRole, StageLatencySummary | null>>>
-  >({});
+  readonly latencyByServer = new SvelteMap<string, LatencyBucket[]>();
+  readonly summariesByServer = new SvelteMap<
+    string,
+    Partial<Record<TransportRole, StageLatencySummary | null>>
+  >();
 
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
-    this.latency = [...(this.latencyByServer[id] ?? [])];
+    this.latency = [...(this.latencyByServer.get(id) ?? [])];
     this.latencySummaries = {
-      ...(this.summariesByServer[id] ??
+      ...(this.summariesByServer.get(id) ??
         this.serverDetails?.servers.find((server) => server.server.id === id)
           ?.latencyByStage ??
         {}),
@@ -615,15 +618,21 @@ class AppStore {
         }
         break;
       case "serverLatency": {
-        const history = (this.latencyByServer[event.serverId] ??= []);
+        let history = this.latencyByServer.get(event.serverId);
+        if (!history) {
+          history = [];
+          this.latencyByServer.set(event.serverId, history);
+        }
         upsertLatencyBucket(history, event.sample, PRESENTATION_POINT_LIMIT);
         if (event.serverId === this.latencyFocus)
           this.ingest({ type: "latency", sample: event.sample });
         break;
       }
       case "serverLatencySummary":
-        (this.summariesByServer[event.serverId] ??= {})[event.stage] =
-          event.summary;
+        this.summariesByServer.set(event.serverId, {
+          ...this.summariesByServer.get(event.serverId),
+          [event.stage]: event.summary,
+        });
         if (event.serverId === this.latencyFocus)
           this.latencySummaries[event.stage] = event.summary;
         break;
@@ -829,6 +838,8 @@ class AppStore {
   }
 
   reset() {
+    this.latencyByServer.clear();
+    this.summariesByServer.clear();
     Object.assign(this, {
       startError: "",
       preparationStatus: "idle",
@@ -838,8 +849,6 @@ class AppStore {
       aggregateEvidence: true,
       bytesTransferred: 0,
       latency: [],
-      latencyByServer: {},
-      summariesByServer: {},
       serverDetails: null,
       latencySummaries: {},
       phase: "idle" as const,

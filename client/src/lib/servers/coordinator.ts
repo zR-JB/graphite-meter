@@ -68,7 +68,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   #handlers = new Set<(event: RunnerEvent) => void>();
   #config: RunnerConfig | null = null;
   #activity: PhaseActivity | null = null;
-  #streamPlan: ServerStreamPlan = {};
+  #streamPlan: ServerStreamPlan = Object.create(null);
   #measuring = false;
   #latencyMeasuring = false;
   #runStart = 0;
@@ -149,6 +149,13 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   }
   start(config: RunnerConfig, preTestPingMs: number): void {
     // Reject resource conflicts before opening any measured connections.
+    this.#validateStreams(config, this.#servers);
+    this.#core.start(config, preTestPingMs);
+  }
+  #validateStreams(
+    config: RunnerConfig,
+    servers: readonly PreparedServer[],
+  ): void {
     const activities: PhaseActivity[] = [
       {
         stage: "download",
@@ -173,13 +180,12 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       if (config.stages[activity.stage])
         planServerStreams(
           config,
-          this.#servers.map((server) => ({
+          servers.map((server) => ({
             id: server.server.id,
             paths: server.paths,
           })),
           activity,
         );
-    this.#core.start(config, preTestPingMs);
   }
   abort(): void {
     this.#core.abort();
@@ -194,7 +200,11 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     return () => this.#handlers.delete(handler);
   }
   reconfigure(config: LiveRunConfig): void {
-    if (this.#config) this.#config = { ...this.#config, ...config };
+    if (this.#config) {
+      const next = { ...this.#config, ...config };
+      this.#validateStreams(next, this.#active());
+      this.#config = next;
+    }
     this.#core.reconfigure(config);
   }
   focusServer(id: string): void {
@@ -345,7 +355,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       down: Object.fromEntries(
         participants.map((server) => [server.server.id, server.down]),
       ),
-      up: {},
+      up: Object.create(null),
     };
     if (final) this.#measuring = false;
     const work = async () => {
@@ -541,6 +551,8 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     server.removed = true;
     this.#cancelRecovery(server);
     this.#resumeLatency(server);
+    // Failed-stage shutdown accounts for buffered probes before their worker is terminated.
+    if (this.#activity) server.backend.onStageEnd(this.#activity, false);
     server.backend.onAbort();
     this.#failure(server, "throughput", reason, message);
     this.#epoch++;
@@ -627,7 +639,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
           server.accum.interruptLatency(owner.#activity.stage, count, reason);
       },
       ingestLatencyAccountingIncomplete() {
-        if (owner.#activity) {
+        if (owner.#latencyMeasuring && owner.#activity) {
           server.accum.markLatencyAccountingIncomplete(owner.#activity.stage);
           owner.#failure(
             server,
@@ -728,6 +740,17 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       .filter((server) => !server.latencyFailed)
       .map((server) => server.accum.trackStableRun(stage, score, cfg))
       .every(Boolean);
+  }
+  armLatencyEarlyStop(): void {
+    for (const server of this.#latencyServers())
+      if (!server.latencyFailed) server.accum.armLatencyEarlyStop();
+  }
+  cancelLatencyEarlyStop(): void {
+    for (const server of this.#servers) server.accum.cancelLatencyEarlyStop();
+  }
+  confirmLatencyEarlyStop(): void {
+    for (const server of this.#latencyServers())
+      if (!server.latencyFailed) server.accum.confirmLatencyEarlyStop();
   }
   canComplete(stage: TransportRole): boolean {
     if (stage === "latency")

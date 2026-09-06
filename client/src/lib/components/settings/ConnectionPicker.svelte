@@ -38,7 +38,7 @@
   );
   const summary = $derived(
     simultaneous
-      ? `${serverIds.filter((id) => store.serverReadiness[id]?.state === "ready").length} of ${serverIds.length} servers ready. Paths resolve independently.`
+      ? `${serverIds.filter((id) => store.serverReadiness.get(id)?.state === "ready").length} of ${serverIds.length} servers ready. Paths resolve independently.`
       : (connection.message ?? connection.summary),
   );
   const title = $derived(

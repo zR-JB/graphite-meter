@@ -16,3 +16,6 @@ export class TransportUnavailableError extends Error {
 
 /** The shared discovery request failed before either role could be checked. */
 export class PreflightUnavailableError extends Error {}
+
+/** A browser policy restriction whose message gives a known configuration remedy. */
+export class BrowserOriginBlockedError extends Error {}

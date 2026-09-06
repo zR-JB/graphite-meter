@@ -165,7 +165,8 @@ Public negotiated origins accept `self` or absolute HTTP/HTTPS origins:
 | `GM_PUBLIC_LATENCY_ORIGINS`    | `--public-latency-origins`    | WebSocket latency only.                 |
 
 An origin cannot be advertised as both deterministic native and negotiated. Use `self` for the
-origin that served the current page.
+origin that served that server's discovery request, including when a different
+server hosts the interface.
 
 ## Reverse proxies
 
@@ -210,7 +211,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
 
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Forwarded-Host $http_host;
@@ -353,8 +354,11 @@ remain incompatible.
 
 Existing deployments remain singleton by default. Add an [operator catalogue](SERVERS.md)
 to offer additional servers; each instance keeps the same image and independent configuration.
-No peer connectivity or health dependency is introduced at startup. The browser requires a
-trusted HTTPS page to authorize protected remote servers.
+Only clients contact the selected peers; no server-to-server connectivity or health
+dependency is introduced. Public HTTP and HTTPS servers can be selected together
+using Automatic paths. The browser requires a trusted HTTPS page to authorize
+protected remote servers. Review [local-network browser permission](SERVERS.md#local-network-browser-permission)
+when a hosted interface reaches private or loopback destinations.
 
 New history uses schema version 4. Version 3 records remain readable with their original
 singleton meaning; missing server identities and aggregation windows are not fabricated.
@@ -376,6 +380,8 @@ unchanged, so current preferences and theme choices remain available.
 | Another device cannot open the page      | Use the server IP rather than `localhost`; publish TCP 7246 and allow it through the host firewall.                          |
 | WebTransport is unavailable              | Use an HTTPS page and trusted certificate; verify browser support, advertised H3 origin, and TCP/UDP reachability.           |
 | An advertised path fails validation      | Public origins must be reachable from the client, with the correct scheme, port, and certificate hostname.                   |
+| A local peer fails only from a hosted page | Review the site's local-network permission and use HTTPS; see [browser reachability](SERVERS.md#local-network-browser-permission). |
+| A browser IPv6 peer requires a hostname  | Use a DNS name for an IPv6 destination outside the interface's exact origin; the native client also supports IPv6 literals. |
 | Uploads fail behind a proxy              | Remove request buffering and restrictive body-size limits; allow streaming progress and sufficiently long request lifetimes. |
 | Throughput is lower than expected        | Check CPU, browser, Wi-Fi, proxy, and container networking; compare the native client and a direct listener.                 |
 | Timeouts or a missing value appear       | Inspect the stage evidence. Unresolved probes and missing receiver counters are not zero-valued measurements.                |

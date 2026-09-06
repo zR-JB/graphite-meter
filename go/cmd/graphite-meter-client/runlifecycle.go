@@ -274,16 +274,15 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 
 func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
 	m.controller.CancelRun()
-	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](err); ok {
-		m.renewPreparation()
+	if _, ok := errors.AsType[*goclient.AuthRequiredError](err); ok {
 		m.complete = true
 		m.mode = modeConfigure
 		m.prepared = nil
-		m.prepareStatus = "authorizing"
-		m.prepareStep = max(m.prepareStep, stepPreflight)
 		m.focusServer()
-		m.notice = "Authorization expired. Preparing the approval page…"
-		return m, tea.Batch(beginAuthorization(m.preparation, m.prepareSeq, authErr.URL, m.authServerID), m.spin.Tick)
+		// Refresh the selection to recover the failed server's identity before
+		// approval. The last prepared issuer may be unrelated to this failure.
+		m.notice = "Authorization expired. Checking the selected servers…"
+		return m.reprepare(nil)
 	}
 	m.status = "complete"
 	if err != nil {

@@ -1,9 +1,58 @@
 import { stubGlobals } from "../../test-helpers.test";
 import { expect, test } from "bun:test";
 import type { FetchThroughputTarget } from "../../api/endpoints";
-import { classifyTransportDiscovery, targetOfKind } from "./backendPure";
+import {
+  classifyTransportDiscovery,
+  targetOfKind,
+  selectThroughputTarget,
+  selectLatencyTarget,
+} from "./backendPure";
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 import { testLatency, testTransfer } from "../test-helpers.test";
+
+test("IPv6 transport choices expose the DNS remedy and preserve exact same-origin targets", () => {
+  const self = "http://[::1]:7246";
+  const alternate = "http://[::1]:7247";
+  const remote = classifyTransportDiscovery(
+    [testTransfer("ipv6", self, "http1", false)],
+    [testLatency("ipv6", self, false)],
+    self,
+    false,
+    "http/1.1",
+    "http://ui.example",
+  );
+  for (const selection of ["auto", self, "protocol:http1"])
+    expect(throughputOptionView(remote, selection)).toEqual({
+      disabled: true,
+      detail: "Use a DNS hostname for browser connections to this IPv6 server.",
+    });
+  for (const selection of ["auto", self, "transport:websocket"])
+    expect(latencyOptionView(remote, selection).detail).toContain(
+      "DNS hostname",
+    );
+  expect(selectThroughputTarget(remote, "auto")).toBeNull();
+  expect(selectLatencyTarget(remote, "auto")).toBeNull();
+
+  const local = classifyTransportDiscovery(
+    [
+      testTransfer("self", self, "http1", false),
+      testTransfer("alternate", alternate, "http1", false),
+    ],
+    [
+      testLatency("self", self, false),
+      testLatency("alternate", alternate, false),
+    ],
+    self,
+    false,
+  );
+  expect(selectThroughputTarget(local, "auto")?.origin).toBe(self);
+  expect(selectLatencyTarget(local, "auto")?.origin).toBe(self);
+  expect(throughputOptionView(local, "auto").disabled).toBe(false);
+  expect(throughputOptionView(local, alternate).detail).toContain(
+    "DNS hostname",
+  );
+  expect(latencyOptionView(local, alternate).detail).toContain("DNS hostname");
+});
 
 test("status copy distinguishes missing, blocked, and trusted loopback targets", () => {
   const blocked = classifyTransportDiscovery(

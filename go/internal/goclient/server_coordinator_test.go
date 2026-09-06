@@ -43,12 +43,13 @@ func (b pacedBody) Read(p []byte) (int, error) {
 }
 
 type serverFixture struct {
-	server           *httptest.Server
-	catalog          wire.ServerCatalog
-	failed           atomic.Bool
-	checkpointFailed atomic.Bool
-	active           atomic.Int32
-	catalogReads     atomic.Int32
+	server               *httptest.Server
+	catalog              wire.ServerCatalog
+	failed               atomic.Bool
+	checkpointFailed     atomic.Bool
+	checkpointDelayNanos atomic.Int64
+	active               atomic.Int32
+	catalogReads         atomic.Int32
 }
 
 func coordinatedFixture(t *testing.T, name string) *serverFixture {
@@ -97,6 +98,17 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.active.Add(1)
 		defer f.active.Add(-1)
+		if r.URL.Path == route.UploadCheckpoint {
+			if delay := time.Duration(f.checkpointDelayNanos.Swap(0)); delay > 0 {
+				timer := time.NewTimer(delay)
+				defer timer.Stop()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-timer.C:
+				}
+			}
+		}
 		if r.URL.Path == route.UploadCheckpoint && f.checkpointFailed.Load() {
 			http.Error(w, "fixture checkpoint unavailable", http.StatusServiceUnavailable)
 			return
@@ -190,6 +202,56 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	for _, component := range window.Up {
 		if component.Clock != "receiver" || component.StartReceiver == nil || component.EndReceiver == nil {
 			t.Fatalf("receiver evidence lost: %+v", component)
+		}
+	}
+}
+
+func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *testing.T) {
+	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+	a.checkpointDelayNanos.Store(int64(900 * time.Millisecond))
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Bidirectional: true}
+	cfg.BidirectionalDuration = time.Second
+	cfg.LoadedLatency = true
+	cfg.PingInterval = 25 * time.Millisecond
+	prepared := prepareFixtureRun(t, cfg, a, b)
+	var measuredAt, finishedAt time.Time
+	var measureEventLag time.Duration
+	var details *RunDetails
+	var mu sync.Mutex
+	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		if e.Kind == EventStage && e.Phase == StageMeasuring {
+			measuredAt = time.Now()
+			measureEventLag = measuredAt.Sub(e.At)
+		}
+		if e.Kind == EventStage && e.Phase == StageFinished {
+			finishedAt = time.Now()
+		}
+		if e.Kind == EventServers {
+			details = e.Servers
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measuredAt.IsZero() || measureEventLag > 500*time.Millisecond || finishedAt.Sub(measuredAt) < 900*time.Millisecond {
+		t.Fatalf("checkpoint wait consumed the client window: event lag=%v measured duration=%v", measureEventLag, finishedAt.Sub(measuredAt))
+	}
+	if details == nil || len(details.Intervals) != 1 || details.Intervals[0].Window == nil {
+		t.Fatalf("missing receiver window: %+v", details)
+	}
+	for _, component := range details.Intervals[0].Window.Up {
+		if component.StartReceiver == nil || component.StartReceiver.ReceivedAt > details.Intervals[0].Start {
+			t.Fatalf("initial receiver bracket was retimed: %+v", component)
+		}
+	}
+	for _, server := range details.Servers {
+		if !slices.ContainsFunc(server.Results, func(r Result) bool {
+			return r.Direction == "" && r.Latency.Count > 0 && r.Latency.Elapsed >= 900*time.Millisecond
+		}) {
+			t.Fatalf("missing loaded latency population: %+v", server.Results)
 		}
 	}
 }

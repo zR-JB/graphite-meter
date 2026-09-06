@@ -57,6 +57,7 @@ test("browser approval binds a fresh verifier and rejects invalid or canceled ex
   const server = { id: "peer", name: "Peer", url: "https://peer.example" };
   const requests: { url: string; init: RequestInit }[] = [];
   let payload: unknown = { token: "a".repeat(43), remainingMs: 60000 };
+  let status = 200;
   let cancel: (() => void) | undefined;
   const restore = stubGlobals({
     ...TEST_BUILD_TOKENS,
@@ -64,14 +65,17 @@ test("browser approval binds a fresh verifier and rejects invalid or canceled ex
     fetch: async (url: unknown, init: RequestInit) => {
       requests.push({ url: String(url), init });
       cancel?.();
-      return Response.json(payload);
+      return Response.json(payload, { status });
     },
   });
   try {
-    const { browserApproval } = await import("./credentials");
+    const { browserApproval, BrowserApprovalLimitError } =
+      await import("./credentials");
     const first = await browserApproval(server);
     const second = await browserApproval(server);
     expect(first.url).not.toBe(second.url);
+    expect(first.code).toMatch(/^[A-Z2-7]{8}$/);
+    expect(first.code).not.toBe(second.code);
     expect(new URL(first.url).searchParams.get("client_origin")).toBe(
       "https://ui.example",
     );
@@ -101,6 +105,11 @@ test("browser approval binds a fresh verifier and rejects invalid or canceled ex
         "Invalid measurement grant",
       );
     }
+    status = 429;
+    await expect(
+      second.poll(new AbortController().signal),
+    ).rejects.toBeInstanceOf(BrowserApprovalLimitError);
+    status = 200;
     payload = { token: "a".repeat(43), remainingMs: 60000 };
     const abort = new AbortController();
     cancel = () => abort.abort(new Error("Canceled sign-in"));

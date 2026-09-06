@@ -125,7 +125,7 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   expect(first.probes).toBe(2);
   expect(first.workers).toBe(1);
   expect(first.activeWorkers).toBe(1);
-  await expect(choices.locator(".server-ping")).toHaveCount(1);
+  await expect(choices.locator(".server-preflight")).toHaveCount(4);
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await openSettings(page);
   expect(await activity()).toEqual(first);
@@ -141,7 +141,7 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   expect(selected.requests).toEqual(first.requests);
   expect(selected.probes).toBe(4);
   expect(selected.workers).toBe(2);
-  await expect(choices.locator(".server-ping")).toHaveCount(2);
+  await expect(choices.locator(".server-preflight")).toHaveCount(4);
   await peer.click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.evaluate(() => {
@@ -190,6 +190,113 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   await expect(
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible();
+});
+
+test("metadata timeouts back off so later catalogue servers are not starved on reopen", async ({
+  page,
+}) => {
+  await page.addInitScript(
+    (heldOrigins) => {
+      const state = window as typeof window & { metadataRequests: string[] };
+      state.metadataRequests = [];
+      const original = window.fetch.bind(window);
+      window.fetch = ((input, init) => {
+        const url = new URL(String(input), location.href);
+        if (url.pathname === "/preflight") {
+          state.metadataRequests.push(url.origin);
+          if (heldOrigins.includes(url.origin))
+            return new Promise<Response>((_resolve, reject) => {
+              const abort = () => reject(init!.signal!.reason);
+              if (init?.signal?.aborted) abort();
+              else
+                init?.signal?.addEventListener("abort", abort, { once: true });
+            });
+        }
+        return original(input, init);
+      }) as typeof window.fetch;
+    },
+    [fleet[1].url, fleet[2].url],
+  );
+  await page.goto(fleet[0].url);
+  const settings = await openSettings(page);
+  const choices = settings.getByRole("group", {
+    name: "Servers to test",
+    exact: true,
+  });
+  await expect(choices).toHaveAttribute("aria-busy", "true");
+  await expect
+    .poll(() => choices.getAttribute("aria-busy"), { timeout: 15000 })
+    .toBe("false");
+  const requests = () =>
+    page.evaluate(
+      () =>
+        (window as typeof window & { metadataRequests: string[] })
+          .metadataRequests,
+    );
+  expect(await requests()).toEqual(
+    fleet.slice(0, 3).map((server) => server.url),
+  );
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await openSettings(page);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  expect(await requests()).toEqual(fleet.map((server) => server.url));
+  await expect(choices.locator(".server-preflight")).toHaveCount(2);
+  await expect(
+    choices.getByRole("checkbox", { name: "Helsinki, Loopback fixture" }),
+  ).toBeVisible();
+});
+
+test("an HTTP page automatically uses its clear server and a TLS-only peer while listing all preflight times", async ({
+  page,
+}) => {
+  // An ordinary non-loopback HTTP page does not expose WebTransport. Exercise
+  // the same fallback with real clear and TLS listeners in the local fixture.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "WebTransport", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  await configure(
+    page,
+    ["self", fleet[1].id],
+    1500,
+    {
+      transports: { throughputTarget: "auto", latencyTarget: "auto" },
+    },
+    { mode: "primary", serverId: "self" },
+    fleet[0].http,
+  );
+  await ready(page);
+  const settings = await openSettings(page);
+  const choices = settings.getByRole("group", {
+    name: "Servers to test",
+    exact: true,
+  });
+  await expect(choices).toHaveAttribute("aria-busy", "false");
+  await expect(choices.locator(".server-preflight")).toHaveCount(4);
+  await expect(settings.getByRole("radio", { name: "Home" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  const startedAt = Date.now();
+  await startTest(page);
+  await waitForCompletion(page, 30000);
+  const saved = await savedResult(page, startedAt);
+  expect(isHistoryRecord(saved)).toBe(true);
+  expect(saved.multiServer?.failures).toEqual([]);
+  const [home, peer] = saved.multiServer!.servers;
+  expect(home.server.url).toBe(fleet[0].http);
+  expect(home.throughput?.origin).toBe(fleet[0].http);
+  expect(peer.server.url).toBe(fleet[1].url);
+  expect(peer.throughput?.origin).toBe(fleet[1].url);
+  expect(home.latencyTarget?.transport).toBe("websocket");
+  expect(peer.latencyTarget).toBeNull();
+  for (const server of [home, peer]) {
+    expect(server.totalBytes.down).toBeGreaterThan(0);
+    expect(server.totalBytes.up).toBeGreaterThan(0);
+  }
 });
 
 test("four real servers share one run and retain separate receiver windows and latency after reload", async ({
@@ -752,6 +859,36 @@ test("a real peer dropout keeps healthy transfers running and persists its failu
   await page.artifact("multi-server-partial-history");
 });
 
+test("a full remote login offers explicit renewal and discards the old approval link", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.open = () => null;
+  });
+  await page.route("**/auth/browser/token", (route) =>
+    route.fulfill({ status: 429, body: "" }),
+  );
+  await configure(page, ["self", fleet[4].id]);
+  await openSettings(page);
+  const row = page.locator(".server-feedback", { hasText: "Private" });
+  await row.getByRole("button", { name: "Sign in to Private" }).click();
+  const renewal = row.getByRole("link", { name: "Renew login at Private" });
+  await expect(renewal).toBeVisible();
+  await expect(renewal).toHaveAttribute("href", `${fleet[4].url}/login`);
+  await expect(renewal).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(row).toContainText(
+    "Renewing ends the other client connections authorized by that login",
+  );
+  await expect(
+    row.getByRole("link", { name: "Open sign-in page" }),
+  ).toHaveCount(0);
+  await row.getByRole("button", { name: "Cancel sign-in" }).click();
+  await expect(renewal).toHaveCount(0);
+  await expect(
+    row.getByRole("button", { name: "Sign in to Private" }),
+  ).toBeEnabled();
+});
+
 for (const transport of ["websocket", "webtransport"] as const)
   test(`protected peer ${transport} approval works without third-party cookies and with the popup fallback`, async ({
     page,
@@ -786,6 +923,10 @@ for (const transport of ["websocket", "webtransport"] as const)
     await row.getByRole("button", { name: "Sign in to Private" }).click();
     await expect(link).toBeVisible();
     expect(await link.getAttribute("href")).not.toBe(cancelledURL);
+    const comparisonCode = await row
+      .locator(".approval-code strong")
+      .textContent();
+    expect(comparisonCode).toMatch(/^[A-Z2-7]{8}$/);
     await page.evaluate((origin) => {
       const fetch = window.fetch.bind(window);
       let failOnce = true;
@@ -819,6 +960,7 @@ for (const transport of ["websocket", "webtransport"] as const)
         approval.getByRole("heading", { name: "Approve browser client" }),
       ).toBeVisible();
       await expect(approval.locator("main")).toContainText(fleet[0].url);
+      await expect(approval.locator("main")).toContainText(comparisonCode!);
       await approval
         .getByRole("button", { name: "Approve this client" })
         .click();

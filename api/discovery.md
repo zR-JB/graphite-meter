@@ -24,7 +24,7 @@ each selected server's `/preflight`; they never import a peer's catalogue.
 Catalogue IDs and canonical HTTP(S) discovery origins are unique. Saved choices
 bind both fields; a removed or changed binding needs user reconciliation. A `.`
 origin means the origin serving the catalogue. Transport discovery may use other
-ports on that configured hostname with the same scheme. Other transport hosts
+HTTP(S) ports on that configured hostname. Other transport hosts
 require an exact entry in `additionalOrigins`. Discovery cannot extend this list.
 Browser mixed-content and secure-context restrictions still apply.
 
@@ -40,6 +40,12 @@ origin. Login and CSRF-protected approval run on the issuing server; verifier-bo
 polling exchanges the single-use approval. The resulting measurement bearer stays
 in memory, is bound to that requesting origin and parent login lifetime, and is
 revoked by logout. It does not authorize importing `/servers`.
+
+Both requesting and approving pages display the same eight-character comparison
+code: the first five SHA-256 bytes of the verifier, encoded as unpadded RFC 4648
+base32. The verifier itself stays with the requesting client. A parent session
+admits at most eight browser grants; a full session returns HTTP 429 without
+approving or evicting another grant. Explicit login renewal revokes the old grants.
 
 Cross-origin measurement fetches omit cookies and reject redirects. An unreadable
 or expired authorization affects its server's readiness or active participation.
