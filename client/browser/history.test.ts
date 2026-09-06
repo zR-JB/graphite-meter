@@ -2246,3 +2246,98 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
     profile.locator('.lane[data-tone="latency"] .timing-info'),
   ).toHaveCount(0);
 });
+
+test("missing per-server latency remains selectable and focus belongs to each saved result", async ({
+  page,
+}) => {
+  const make = (id: string, timestamp: number) => {
+    const value = record(id, timestamp);
+    value.schemaVersion = 4;
+    value.outcome = "partial";
+    value.totalBytes = 0;
+    value.stages.download = { status: "not-run", result: null };
+    value.stages.upload = { status: "not-run", result: null };
+    value.stages.bidirectional = { status: "not-run", down: null, up: null };
+    value.wireEstimates = null;
+    const selection = [
+      { id: "self", name: "Unavailable latency", url: "https://one.example" },
+      { id: "peer", name: "Healthy latency", url: "https://two.example" },
+    ];
+    value.multiServer = {
+      selection,
+      participants: ["self", "peer"],
+      latencyFocus: "self",
+      omittedIntervals: 0,
+      intervals: [],
+      failures: [],
+      servers: selection.map((server, i) => ({
+        server,
+        throughput: {
+          origin: server.url,
+          transport: "fetch-stream",
+          protocol: "http1",
+        },
+        latencyTarget: { origin: server.url, transport: "websocket" },
+        latency:
+          i === 0
+            ? null
+            : {
+                ...value.stages.latency.result!,
+                idleMs: 25,
+                reportedMs: 25,
+                p50Ms: 25,
+              },
+        latencyByStage: {
+          latency:
+            i === 0
+              ? null
+              : {
+                  accountingComplete: true,
+                  probeCount: 30,
+                  timeoutCount: 0,
+                  unresolvedCount: 0,
+                  sendFailureCount: 0,
+                  jitterPairs: 29,
+                  minMs: 20,
+                  maxMs: 30,
+                  meanMs: 25,
+                  p10Ms: 22,
+                  p50Ms: 25,
+                  p90Ms: 28,
+                  p95Ms: 29,
+                  jitterMs: 2,
+                },
+          download: null,
+          upload: null,
+          bidirectional: null,
+        },
+        bufferbloat: null,
+        download: null,
+        upload: null,
+        bidirectional: null,
+        totalBytes: { down: 0, up: 0 },
+      })),
+    };
+    return value;
+  };
+  await openApp(page, "dummy", { width: 1600, height: 1000 });
+  await seedHistory(page, [
+    make(IDS.newest, Date.UTC(2026, 8, 6, 12)),
+    make(IDS.middle, Date.UTC(2026, 8, 6, 11)),
+  ]);
+  await openHistory(page, IDS.newest);
+  const detail = page.locator(".result-detail");
+  await expect(detail).toBeVisible();
+  await expect(detail.locator(".latency-empty")).toBeVisible();
+  await detail.locator(".server-focus select").evaluate((select) => {
+    select.value = "peer";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(detail.locator(".latency-empty")).toHaveCount(0);
+  await expect(detail.locator(".idle-summary")).toContainText("25");
+  await page.evaluate((id) => {
+    location.hash = `/history/${id}`;
+  }, IDS.middle);
+  await expect(detail.locator(".latency-empty")).toBeVisible();
+  await expect(detail.locator(".server-focus select")).toHaveValue("self");
+});

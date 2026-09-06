@@ -17,15 +17,47 @@ Set exactly one of `GM_SERVER_CATALOG` (inline JSON) or `GM_SERVER_CATALOG_FILE`
 (a readable JSON file, normally mounted read-only). Restart after changing it.
 With neither setting, the published catalogue contains only `self`.
 
+For a typical deployment, list only the origins of additional servers:
+
+```yaml
+services:
+  graphite-meter:
+    environment:
+      GM_SERVER_CATALOG: |-
+        [
+          "https://fra.example.net",
+          "https://ams.example.net"
+        ]
+```
+
+Each server configures its own name, location and listeners. Clients obtain those
+values and available transports from its `/preflight`; `/probe` verifies a path
+and reports connection evidence. Do not include either path in the list. No peer
+requests occur during server startup. Until discovery succeeds, the hostname is
+shown. IDs are derived from the canonical origin and remain stable when the list
+is reordered. Changing the origin creates a different identity.
+
+The same JSON array works in a catalogue file, or as one shell variable:
+
+```sh
+export GM_SERVER_CATALOG='["https://fra.example.net","https://ams.example.net"]'
+```
+
+The advanced object form is available when you need named IDs, a different default
+selection, or measurement hosts different from the discovery hostname:
+
 ```json
 {
   "defaultSelection": ["self"],
   "servers": [
-    {"id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt", "location": "Germany"},
+    {"id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt"},
     {"id": "amsterdam", "url": "https://ams.example.net", "name": "Amsterdam", "additionalOrigins": ["https://transfer.ams.example.net:8443"]}
   ]
 }
 ```
+
+Catalogue names and locations are fallbacks; successful discovery supplies the
+server's current display metadata without changing its ID or origin.
 
 The configuration omits `self`; Graphite Meter prepends it with its own name,
 location, discovery origin and configured transport origins. There may be up to
@@ -63,7 +95,10 @@ reach every selected discovery and transport origin.
 
 ## Browser and terminal controls
 
-**Servers · N selected**, beside Start, opens a dialog or phone sheet. Checkboxes
+**Settings → Connection paths → Servers → Change** opens the server chooser.
+It appears only when more than one server is configured. A quiet indicator in the
+gauge identifies a multi-server selection or run; single-server tests retain the
+ordinary instrument and result view. Checkboxes
 edit a draft; Apply commits it and Escape cancels it. `self` is labelled “This
 server” and may be deselected. Opening the chooser checks stale entries with at
 most four concurrent discoveries within a shared twelve-second budget. Background
@@ -87,7 +122,8 @@ until the user changes it; it never changes which servers are measured.
 The TUI uses `--url` as the originating catalogue URL and repeatable `--server ID`
 arguments as the selected set. Without `--server`, operator defaults apply. Press
 **s** in setup, navigate with arrows, toggle with Space, apply with Enter or cancel
-with Escape. **a** applies Automatic paths, **l** rotates latency focus, and **d**
+with Escape. **a** applies Automatic paths. Selection is hidden when the catalogue contains
+only one server. For a multi-server run, **l** rotates latency focus and **d**
 opens scrollable server details. Explicit origin overrides require a singleton
 selection. Protected peers each use their own explicit browser approval.
 

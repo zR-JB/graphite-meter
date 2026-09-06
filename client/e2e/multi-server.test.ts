@@ -26,14 +26,22 @@ test("four real servers share one run and retain separate receiver windows and l
     fleet.slice(0, 4).map((server) => server.id),
   );
   await ready(page);
+  const selectionSettings = await openSettings(page);
   await expect(
-    page.getByRole("button", { name: /Servers · 4 selected/ }),
+    page.getByRole("button", { name: /Change servers, 4 selected/ }),
   ).toBeEnabled();
+  await selectionSettings
+    .getByRole("button", { name: "Close Settings" })
+    .click();
   const startedAt = Date.now();
   await startTest(page);
+  await openSettings(page);
   await expect(
-    page.getByRole("button", { name: /Servers · 4 selected/ }),
+    page.getByRole("button", { name: /Change servers, 4 selected/ }),
   ).toBeDisabled();
+  await selectionSettings
+    .getByRole("button", { name: "Close Settings" })
+    .click();
   await waitForCompletion(page, 30000);
   const saved = await savedResult(page, startedAt);
   expect(isHistoryRecord(saved)).toBe(true);
@@ -61,13 +69,64 @@ test("four real servers share one run and retain separate receiver windows and l
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".server-results")).toBeVisible();
-  await page.locator(".server-results > summary").click();
-  await expect(page.locator(".server-results tbody tr")).toHaveCount(4);
+  await expect(page.locator(".server-results .server-result-row")).toHaveCount(
+    4,
+  );
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await page.locator(".server-results").scrollIntoViewIfNeeded();
+  await page.artifact("multi-server-history-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".server-results").scrollIntoViewIfNeeded();
+  await expectNoHorizontalOverflow(page.locator(".server-results"));
+  await page.artifact("multi-server-history-phone");
   await page.reload();
   await expect(page.locator(".server-results")).toBeVisible();
   expect((await savedResult(page)).multiServer?.intervals).toEqual(
     saved.multiServer?.intervals,
   );
+});
+
+test("a single-server result keeps the ordinary live and history views in a fleet", async ({
+  page,
+}) => {
+  await configure(page, ["self"]);
+  await ready(page);
+  await expect(page.locator(".server-indicator")).toHaveCount(0);
+  const startedAt = Date.now();
+  await startTest(page);
+  await waitForCompletion(page, 30000);
+  const saved = await savedResult(page, startedAt);
+  expect(saved.multiServer?.selection).toHaveLength(1);
+  await expect(page.locator(".server-results")).toHaveCount(0);
+  await expect(page.locator(".server-indicator")).toHaveCount(0);
+  const settings = await openSettings(page);
+  await settings.getByRole("link", { name: "View History" }).click();
+  await page.locator("a.result-row").click();
+  await expect(page.locator(".result-detail")).toBeVisible();
+  await expect(page.locator(".server-results")).toHaveCount(0);
+  await expect(page.locator(".server-focus")).toHaveCount(0);
+  await page.artifact("single-server-fleet-history");
+});
+
+test("an origin-only catalogue discovers peer identity and paths without repeated configuration", async ({
+  page,
+}) => {
+  await page.goto(fleet[3].url);
+  const settings = await openSettings(page);
+  await settings
+    .getByRole("button", { name: "Change servers, 1 selected" })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Choose servers",
+    exact: true,
+  });
+  const peer = dialog.locator(".server-row").nth(1);
+  await expect(peer).toContainText(fleet[1].name, { timeout: 15000 });
+  await expect(peer).toContainText("Loopback fixture");
+  await expect(peer.locator(".readiness")).toHaveText("Ready", {
+    timeout: 15000,
+  });
+  await page.artifact("origin-only-peer-discovery");
 });
 
 test("a real peer dropout keeps healthy transfers running and persists its failure after reload", async ({
@@ -122,17 +181,16 @@ test("a real peer dropout keeps healthy transfers running and persists its failu
     subsequent.every((interval) => !interval.participants.includes("server-2")),
   ).toBe(true);
   expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".server-results > summary")).toContainText(
+  await expect(page.locator(".server-results .result-status")).toContainText(
     "2 of 3 servers",
   );
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await page.reload();
-  await expect(page.locator(".server-results > summary")).toContainText(
+  await expect(page.locator(".server-results .result-status")).toContainText(
     "2 of 3 servers",
   );
-  await page.locator(".server-results > summary").click();
   await expect(page.locator(".server-results")).toContainText("Amsterdam");
   expect((await savedResult(page)).multiServer?.failures).toEqual(
     saved.multiServer?.failures,
@@ -160,7 +218,10 @@ for (const transport of ["websocket", "webtransport"] as const)
       disableThirdPartyCookieMetadata: true,
       disableThirdPartyCookieHeuristics: true,
     });
-    await page.getByRole("button", { name: /Servers · 2 selected/ }).click();
+    await openSettings(page);
+    await page
+      .getByRole("button", { name: /Change servers, 2 selected/ })
+      .click();
     const row = page.locator(".server-row", { hasText: "Private" });
     await expect(row.getByRole("button", { name: "Sign in…" })).toBeVisible({
       timeout: 15000,
@@ -219,10 +280,16 @@ for (const theme of ["dark", "light"] as const)
       (value) => document.documentElement.setAttribute("data-theme", value),
       theme,
     );
-    const trigger = page.getByRole("button", { name: /Servers · 1 selected/ });
+    await openSettings(page);
+    const trigger = page.getByRole("button", {
+      name: /Change servers, 1 selected/,
+    });
     await trigger.focus();
     await page.keyboard.press("Enter");
-    const dialog = page.getByRole("dialog", { name: "Servers", exact: true });
+    const dialog = page.getByRole("dialog", {
+      name: "Choose servers",
+      exact: true,
+    });
     await expect(dialog).toBeVisible();
     await expectNoHorizontalOverflow(dialog);
     const first = dialog.locator('input[type="checkbox"]').first();

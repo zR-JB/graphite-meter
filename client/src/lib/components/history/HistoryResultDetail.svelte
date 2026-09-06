@@ -49,11 +49,28 @@
     region = $bindable(),
     closeButton = $bindable(),
   }: Props = $props();
-  let chosenServer = $state<string | null>(null);
+  let chosenServer = $state<{ recordId: string; serverId: string } | null>(
+    null,
+  );
+  const focusedId = $derived(
+    chosenServer?.recordId === record.id &&
+      record.multiServer?.selection.some(
+        (server) => server.id === chosenServer?.serverId,
+      )
+      ? chosenServer.serverId
+      : record.multiServer?.latencyFocus,
+  );
+  const hasServerLatency = $derived(
+    (record.multiServer?.selection.length ?? 0) > 1 &&
+      record.multiServer?.servers.some(
+        (server) =>
+          server.latency !== null ||
+          Object.values(server.latencyByStage).some((lane) => lane !== null),
+      ),
+  );
   const focused = $derived(
     record.multiServer?.servers.find(
-      (server) =>
-        server.server.id === (chosenServer ?? record.multiServer?.latencyFocus),
+      (server) => server.server.id === focusedId,
     ),
   );
   const focusedLatency = $derived(
@@ -328,7 +345,15 @@
     </section>
   {/if}
 
-  {#if latencyProfiles.length}
+  {#if record.multiServer && record.multiServer.selection.length > 1}
+    <ServerResultDetails
+      embedded
+      details={record.multiServer}
+      outcome={record.outcome}
+    />
+  {/if}
+
+  {#if latencyProfiles.length || hasServerLatency}
     <section
       class="detail-section"
       aria-labelledby={`result-${record.id}-latency`}
@@ -342,8 +367,12 @@
           <label class="server-focus"
             >Latency to
             <select
-              value={chosenServer ?? record.multiServer?.latencyFocus}
-              onchange={(event) => (chosenServer = event.currentTarget.value)}
+              value={focusedId}
+              onchange={(event) =>
+                (chosenServer = {
+                  recordId: record.id,
+                  serverId: event.currentTarget.value,
+                })}
             >
               {#each record.multiServer.selection as server}<option
                   value={server.id}>{server.name}</option
@@ -373,11 +402,17 @@
             </div>
           </dl>
         {/if}
-        <LatencyProfileView
-          lanes={latencyProfiles}
-          variant="compact"
-          label="Saved latency distributions"
-        />
+        {#if latencyProfiles.length}
+          <LatencyProfileView
+            lanes={latencyProfiles}
+            variant="compact"
+            label="Saved latency distributions"
+          />
+        {:else if !focusedLatency}
+          <p class="latency-empty">
+            No latency measurements available for this server.
+          </p>
+        {/if}
       </div>
     </section>
   {/if}
@@ -501,12 +536,12 @@
   </footer>
 </article>
 
-{#if record.multiServer}<ServerResultDetails
-    details={record.multiServer}
-    outcome={record.outcome}
-  />{/if}
-
 <style>
+  .latency-empty {
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    padding-block: var(--space-3);
+  }
   .server-focus {
     display: flex;
     align-items: center;

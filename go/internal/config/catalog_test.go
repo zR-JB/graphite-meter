@@ -60,3 +60,47 @@ func TestServerCatalogRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		t.Fatal("ambiguous sources accepted")
 	}
 }
+
+func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
+	unsetEnv(t, "GM_SERVER_CATALOG_FILE")
+	t.Setenv("GM_SERVER_CATALOG", `["https://EXAMPLE.net:443", "http://[::1]:8080"]`)
+	first, err := loadServerCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Servers) != 3 || first.Servers[1].URL != "https://example.net" || first.Servers[1].Name != "example.net" || first.Servers[2].Name != "[::1]:8080" || first.DefaultSelection[0] != "self" {
+		t.Fatalf("catalogue: %+v", first)
+	}
+	t.Setenv("GM_SERVER_CATALOG", `["http://[::1]:8080", "https://example.net/"]`)
+	second, err := loadServerCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Servers[1].ID != second.Servers[2].ID || first.Servers[2].ID != second.Servers[1].ID {
+		t.Fatal("reordering changed identities")
+	}
+	path := filepath.Join(t.TempDir(), "servers.json")
+	if err := os.WriteFile(path, []byte(`["https://example.net"]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unsetEnv(t, "GM_SERVER_CATALOG")
+	t.Setenv("GM_SERVER_CATALOG_FILE", path)
+	file, err := loadServerCatalog()
+	if err != nil || file.Servers[1].ID != first.Servers[1].ID {
+		t.Fatalf("file catalogue: %+v %v", file, err)
+	}
+}
+
+func TestOriginCatalogueRejectsInvalidEntries(t *testing.T) {
+	unsetEnv(t, "GM_SERVER_CATALOG_FILE")
+	for _, raw := range []string{
+		`["https://example.net", "https://EXAMPLE.net:443"]`, `["https://example.net/probe"]`, `["https://user:pass@example.net"]`, `["https://example.net?x=1"]`, `["https://example.net#x"]`, `["https://*.example.net"]`, `[null]`, `[42]`, `[{}]`, `[`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			t.Setenv("GM_SERVER_CATALOG", raw)
+			if _, err := loadServerCatalog(); err == nil {
+				t.Fatal("invalid origin list accepted")
+			}
+		})
+	}
+}

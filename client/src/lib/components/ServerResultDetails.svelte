@@ -5,8 +5,10 @@
   let {
     details,
     outcome = "complete",
+    embedded = false,
   }: {
     details: MultiServerResult;
+    embedded?: boolean;
     outcome?: "complete" | "partial" | "incomplete";
   } = $props();
   function component(
@@ -32,59 +34,79 @@
   }
 </script>
 
-<details class="server-results">
-  <summary
-    >{outcome === "incomplete"
-      ? "Measurement incomplete"
-      : details.failures.some((failure) => failure.scope === "throughput")
-        ? `Completed with ${details.participants.length} of ${details.selection.length} servers`
-        : details.failures.length
-          ? "Completed · Latency interrupted"
-          : `${details.selection.length} ${details.selection.length === 1 ? "server" : "servers"}`}
-    <span>Details</span></summary
-  >
-  <p>
-    Per-server measurements were taken while sharing the connection. Earlier
-    intervals remain available below.
-  </p>
-  <div class="table-scroll">
-    <table>
-      <thead
-        ><tr
-          ><th>Server</th><th>Download</th><th>Upload</th
-          >{#if details.intervals.some((interval) => interval.stage === "bidirectional")}<th
-              >Concurrent ↓ / ↑</th
-            >{/if}<th>Idle latency</th></tr
-        ></thead
-      ><tbody>
-        {#each details.servers as server (server.server.id)}<tr
-            ><th scope="row"
-              >{server.server.name}<small
-                >{details.participants.includes(server.server.id)
-                  ? server.throughput.transport
-                  : "Earlier partial measurement"}</small
-              ></th
-            ><td
-              >{rate(component(server.server.id, "download")?.bytesPerSec)}</td
-            ><td>{rate(component(server.server.id, "upload")?.bytesPerSec)}</td
-            >{#if details.intervals.some((interval) => interval.stage === "bidirectional")}<td
-                >{rate(
+<section class="server-results" class:embedded aria-label="Per-server results">
+  <header>
+    <h3>Per-server results</h3>
+    <p class="result-status">
+      {outcome === "incomplete"
+        ? "Measurement incomplete"
+        : details.failures.some((failure) => failure.scope === "throughput")
+          ? `Completed with ${details.participants.length} of ${details.selection.length} servers`
+          : details.failures.length
+            ? "Completed · Latency interrupted"
+            : `${details.selection.length} ${details.selection.length === 1 ? "server" : "servers"}`}
+    </p>
+  </header>
+  <p>Contributions measured while these servers shared your connection.</p>
+  <ul class="server-measurements">
+    {#each details.servers as server (server.server.id)}
+      <li class="server-result-row">
+        <div class="server-identity">
+          <strong>{server.server.name}</strong>
+          <small
+            >{details.participants.includes(server.server.id)
+              ? server.server.location || new URL(server.server.url).host
+              : "Earlier partial measurement"}</small
+          >
+        </div>
+        <dl>
+          {#if details.intervals.some((interval) => interval.stage === "download")}
+            <div>
+              <dt>Download</dt>
+              <dd>
+                {rate(component(server.server.id, "download")?.bytesPerSec)}
+              </dd>
+            </div>
+          {/if}
+          {#if details.intervals.some((interval) => interval.stage === "upload")}
+            <div>
+              <dt>Upload</dt>
+              <dd>
+                {rate(component(server.server.id, "upload")?.bytesPerSec)}
+              </dd>
+            </div>
+          {/if}
+          {#if details.intervals.some((interval) => interval.stage === "bidirectional")}
+            <div>
+              <dt>Concurrent ↓</dt>
+              <dd>
+                {rate(
                   component(server.server.id, "bidirectional", "down")
                     ?.bytesPerSec,
-                )} / {rate(
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Concurrent ↑</dt>
+              <dd>
+                {rate(
                   component(server.server.id, "bidirectional", "up")
                     ?.bytesPerSec,
-                )}</td
-              >{/if}<td
-              >{server.latency
-                ? `${fmtMs(server.latency.reportedMs)} ms`
-                : "—"}</td
-            ></tr
-          >{/each}
-      </tbody>
-    </table>
-  </div>
-  {#if details.failures.length}<ul>
+                )}
+              </dd>
+            </div>
+          {/if}
+          <div>
+            <dt>Idle latency</dt>
+            <dd>
+              {server.latency ? `${fmtMs(server.latency.reportedMs)} ms` : "—"}
+            </dd>
+          </div>
+        </dl>
+      </li>
+    {/each}
+  </ul>
+  {#if details.failures.length}<ul class="issues">
       {#each details.failures as failure}<li>
           <strong
             >{details.selection.find((server) => server.id === failure.serverId)
@@ -96,7 +118,7 @@
         </li>{/each}
     </ul>{/if}
   <details class="intervals">
-    <summary>Measurement intervals</summary>{#if details.omittedIntervals}<p>
+    <summary>Timing and interruptions</summary>{#if details.omittedIntervals}<p>
         {details.omittedIntervals} older intervals omitted after repeated interruptions.
         Per-server byte totals include the whole measurement.
       </p>{/if}{#each details.intervals as interval}<div class="interval">
@@ -131,13 +153,16 @@
             </p>{/if}{/if}
       </div>{/each}
   </details>
-</details>
+</section>
 
 <style>
   .server-results {
-    border-top: 1px solid var(--border);
-    padding-top: 0.75rem;
-    font-size: 0.75rem;
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+    font: 400 var(--type-sm)/1.5 var(--font-sans);
     color: var(--text-muted);
   }
   summary {
@@ -145,64 +170,97 @@
     color: var(--text);
     padding: 0.35rem 0;
   }
-  summary span {
-    color: var(--text-muted);
-    margin-left: 0.5rem;
-    font-size: 0.7rem;
+  .server-results.embedded {
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: transparent;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+  }
+  h3 {
+    margin: 0;
+    font: 600 var(--type-md)/1.4 var(--font-sans);
+    color: var(--text);
+  }
+  .result-status {
+    margin: 0;
+  }
+  .server-results > p {
+    margin: var(--space-2) 0 var(--space-3);
   }
   p {
     line-height: 1.5;
     margin: 0.65rem 0;
   }
-  .table-scroll {
-    overflow: auto;
+  .server-measurements {
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-variant-numeric: tabular-nums;
+  .server-result-row {
+    display: grid;
+    grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr);
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4) 0;
+    margin: 0;
+    border-top: 1px solid var(--border);
   }
-  th,
-  td {
-    text-align: right;
-    padding: 0.6rem 0.65rem;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
+  .server-identity {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
   }
-  th:first-child {
-    text-align: left;
-    padding-left: 0;
-  }
-  thead th {
-    font-size: 0.65rem;
-    font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  tbody th {
-    font-weight: 500;
+  .server-identity strong {
     color: var(--text);
+    font-size: var(--type-sm);
+    font-weight: 600;
+    overflow-wrap: anywhere;
   }
-  small {
-    display: block;
+  .server-identity small {
+    font-size: var(--type-xs);
+    overflow-wrap: anywhere;
+  }
+  dl {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: var(--space-3);
+    margin: 0;
+  }
+  dt {
     color: var(--text-muted);
-    font-size: 0.65rem;
-    font-weight: 400;
-    margin-top: 0.2rem;
+    font-size: var(--type-xs);
   }
-  td {
-    font-family: var(--font-mono);
+  dd {
     color: var(--text);
+    font: 500 var(--type-sm)/1.5 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    margin: 3px 0 0;
   }
-  ul {
+  .server-results {
+    container-type: inline-size;
+  }
+  @container (max-width: 480px) {
+    .server-result-row {
+      grid-template-columns: 1fr;
+      gap: var(--space-3);
+    }
+  }
+  .issues {
     padding-left: 1rem;
   }
-  li {
+  .issues li {
     margin: 0.5rem 0;
     line-height: 1.5;
   }
   .intervals {
-    margin-top: 0.5rem;
+    margin-top: var(--space-3);
   }
   .interval {
     padding: 0.5rem 0;

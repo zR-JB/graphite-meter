@@ -27,6 +27,9 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 	if err != nil || !slices.Equal(selected.SelectedIDs(), []string{"b"}) {
 		t.Fatalf("deselect self: %v %+v", err, selected)
 	}
+	if selected.Servers[0].Server.Name != "b" || selected.Catalog.Servers[1].Name != "b" {
+		t.Fatal("discovery metadata did not replace the catalogue fallback")
+	}
 	if !selected.FreshFor(cfg) {
 		t.Fatal("fresh selection rejected")
 	}

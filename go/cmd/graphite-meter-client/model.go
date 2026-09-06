@@ -321,7 +321,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.authOpened = true
 		m.notice = "Approval page opened in the browser."
 		return m, nil
-	case m.mode == modeConfigure && key.Matches(msg, keys.servers):
+	case m.mode == modeConfigure && m.canChooseServers() && key.Matches(msg, keys.servers):
 		return m.openServerChooser()
 	case m.mode == modeConfigure && key.Matches(msg, keys.automatic):
 		return m.useAutomatic()
@@ -350,7 +350,7 @@ func (m model) handleConfigureKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		step = -1
 	}
 	switch {
-	case key.Matches(msg, keys.servers):
+	case m.canChooseServers() && key.Matches(msg, keys.servers):
 		return m.openServerChooser()
 	case key.Matches(msg, keys.automatic):
 		return m.useAutomatic()
@@ -376,7 +376,7 @@ func (m model) urlRowRune(msg tea.KeyMsg) bool {
 }
 
 func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Matches(msg, keys.serverDetails) && m.runDetails != nil {
+	if key.Matches(msg, keys.serverDetails) && m.hasServerBreakdown() {
 		m.serverDetailsOpen = true
 		m.detailsScroll = 0
 		return m, nil

@@ -6,6 +6,13 @@
   let dialog: HTMLDialogElement;
   let draft = $state<string[]>([]);
   let error = $state("");
+  const labels = {
+    unchecked: "Not checked",
+    checking: "Checking…",
+    ready: "Ready",
+    "sign-in": "Sign in required",
+    failed: "Unavailable",
+  };
   $effect(() => {
     if (!dialog) return;
     if (store.serverChooserOpen && !dialog.open) {
@@ -19,37 +26,24 @@
     if (store.serverChooserOpen) return acquirePageScrollLock();
   });
   function toggle(id: string) {
+    error = "";
     if (draft.includes(id)) draft = draft.filter((value) => value !== id);
     else if (draft.length < 4) draft = [...draft, id];
-    else error = "Select up to four servers.";
   }
   function apply() {
     try {
-      if (controller.applyServers(draft)) error = "";
+      controller.applyServers(draft);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Check the selection";
     }
   }
-  const labels = {
-    unchecked: "Not checked",
-    checking: "Checking…",
-    ready: "Ready",
-    "sign-in": "Sign in required",
-    failed: "Unavailable",
-  };
 </script>
 
-<button
-  class="server-trigger"
-  type="button"
-  onclick={() => controller.openServers()}
-  disabled={store.isRunning || store.preparing}
-  aria-haspopup="dialog"
-  >Servers <span>· {store.selectedServers.length} selected</span></button
->
 <dialog
   bind:this={dialog}
   class="server-dialog"
+  aria-modal="true"
+  onkeydown={(event) => event.stopPropagation()}
   aria-labelledby="server-chooser-title"
   aria-describedby="server-chooser-description"
   oncancel={(event) => {
@@ -58,315 +52,326 @@
   }}
 >
   <header>
-    <h2 id="server-chooser-title">Servers</h2>
-    <span>{draft.length} selected</span><button
+    <div>
+      <h2 id="server-chooser-title">Choose servers</h2>
+      <p id="server-chooser-description">Select up to four to test together.</p>
+    </div>
+    <button
       type="button"
       class="close"
       aria-label="Cancel server selection"
-      onclick={() => controller.closeServers()}>×</button
+      onclick={controller.closeServers}>×</button
     >
   </header>
-  <p id="server-chooser-description">
-    Tests combine the selected servers’ throughput. Choose one to four.
-  </p>
-  {#if store.unresolvedServers.length}
-    <div class="notice" role="status">
-      Saved servers were removed or changed. Apply a selection to continue.
-      {#each store.unresolvedServers as server}<small
-          >{server.id} · {server.url}</small
-        >{/each}
-    </div>
-  {/if}
   <div class="server-list">
+    {#if store.unresolvedServers.length}
+      <p class="notice" role="status">
+        Some saved servers have changed. Choose your servers and apply to
+        continue.
+      </p>
+    {/if}
     {#if !store.serverCatalog}
       <p role="status">
         {store.catalogLoading
           ? "Loading servers…"
-          : store.startError || "The server catalogue is unavailable."}
+          : store.startError || "Could not load servers."}
       </p>
       <button
         type="button"
         disabled={store.catalogLoading}
-        onclick={() => void controller.retryCatalogue()}>Retry catalogue</button
+        onclick={() => void controller.retryCatalogue()}>Retry</button
       >
     {/if}
     {#each store.serverCatalog?.servers ?? [] as server (server.id)}
       {@const readiness = store.serverReadiness[server.id] ?? {
         state: "unchecked",
       }}
-      <section class="server-row" class:selected={draft.includes(server.id)}>
-        <div class="row-main">
-          <label
-            ><input
-              type="checkbox"
-              checked={draft.includes(server.id)}
-              onchange={() => toggle(server.id)}
-              disabled={!draft.includes(server.id) && draft.length >= 4}
-            /><span
-              ><strong>{server.name}</strong><small
-                >{server.id === "self" ? "This server" : ""}{server.id ===
-                  "self" && server.location
-                  ? " · "
-                  : ""}{server.location ?? ""}</small
-              ></span
-            ></label
+      <div class="server-row">
+        <label>
+          <input
+            type="checkbox"
+            checked={draft.includes(server.id)}
+            onchange={() => toggle(server.id)}
+            disabled={!draft.includes(server.id) && draft.length >= 4}
+          />
+          <span class="server-copy"
+            ><strong>{server.name}</strong><small
+              >{[
+                server.location,
+                server.id === "self" ? "This server" : new URL(server.url).host,
+              ]
+                .filter(Boolean)
+                .join(" · ")}</small
+            ></span
           >
-          <span
-            class="readiness"
-            class:ready={readiness.state === "ready"}
-            role="status">{labels[readiness.state]}</span
+          <span class="readiness" data-state={readiness.state}
+            >{labels[readiness.state]}</span
           >
-        </div>
-        <details>
-          <summary>Connection details</summary>
-          <p>{server.url}</p>
-          {#if server.additionalOrigins?.length}<p>
-              Additional origins: {server.additionalOrigins.join(", ")}
-            </p>{/if}{#if readiness.message}<p>{readiness.message}</p>{/if}
-        </details>
+        </label>
         {#if readiness.state === "sign-in" || readiness.state === "failed"}
-          <div class="row-actions">
+          <div class="row-feedback">
+            <p role="status">
+              {readiness.message ||
+                (readiness.state === "sign-in"
+                  ? "Sign in to use this server."
+                  : "Could not connect to this server.")}
+            </p>
             {#if readiness.state === "sign-in"}<button
                 type="button"
                 onclick={() => void controller.signInServer(server.id)}
                 >Sign in…</button
-              >{:else}<button
+              >
+            {:else}<button
                 type="button"
                 onclick={() => void controller.retryServer(server.id)}
                 >Retry</button
               >{/if}
-            {#if draft.includes(server.id)}<button
-                type="button"
-                onclick={() => toggle(server.id)}>Remove</button
-              >{/if}
           </div>
         {/if}
         {#if store.serverApproval?.id === server.id}
-          <p class="approval">
-            Complete approval in the other window. <a
+          <p class="approval" role="status">
+            Complete sign-in in the other window. <a
               href={store.serverApproval.url}
               target="_blank"
               rel="noopener noreferrer">Open sign-in page</a
-            >{store.serverApproval.message ?? ""}
+            >
+            {store.serverApproval.message ?? ""}
           </p>
         {/if}
-      </section>
+      </div>
     {/each}
   </div>
-  {#if error}<p class="notice" role="alert">{error}</p>{/if}
   <footer>
-    <button
-      class="ghost-btn"
-      type="button"
-      onclick={() => controller.closeServers()}>Cancel</button
-    ><button
-      class="apply"
-      type="button"
-      disabled={draft.length < 1 || draft.length > 4}
-      onclick={apply}>Apply</button
-    >
+    <p role="status">
+      {error ||
+        (draft.length === 0
+          ? "Select at least one server."
+          : `${draft.length} of 4 selected`)}
+    </p>
+    <div>
+      <button type="button" onclick={controller.closeServers}>Cancel</button
+      ><button
+        class="apply"
+        type="button"
+        disabled={draft.length < 1 || draft.length > 4}
+        onclick={apply}>Apply</button
+      >
+    </div>
   </footer>
 </dialog>
 
 <style>
-  .server-trigger {
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    padding: 0.55rem 0.8rem;
-    background: var(--surface-1);
+  .server-dialog {
+    margin: auto;
+    width: min(560px, calc(100vw - 32px));
+    max-width: none;
+    max-height: calc(100svh - 32px);
+    padding: 0;
     color: var(--text);
-    font: inherit;
-    font-size: 0.75rem;
-    white-space: nowrap;
+    background: var(--surface-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-pill);
+    box-shadow: 0 16px 64px #0005;
+    font: 400 var(--type-md)/1.5 var(--font-sans);
+    overflow: hidden;
+  }
+  .server-dialog[open] {
+    display: flex;
+    flex-direction: column;
+  }
+  .server-dialog::backdrop {
+    background: #0008;
+    backdrop-filter: blur(3px);
+  }
+  header,
+  footer {
+    display: flex;
+    gap: var(--space-4);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-5);
+    flex: none;
+  }
+  header {
+    align-items: flex-start;
+  }
+  h2 {
+    margin: 0;
+    font: 600 var(--type-lg)/1.3 var(--font-sans);
+    letter-spacing: var(--track-tight);
+  }
+  p {
+    margin: 6px 0 0;
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+  }
+  button {
+    min-height: 40px;
+    padding: 8px 16px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-chrome);
+    background: transparent;
+    color: var(--text);
+    font: 600 var(--type-sm)/1.4 var(--font-sans);
     cursor: pointer;
   }
-  .server-trigger span {
-    color: var(--text-muted);
+  button:hover:not(:disabled) {
+    background: var(--surface-2);
   }
   button:disabled {
     opacity: 0.45;
     cursor: default;
   }
-  .server-dialog {
-    color: var(--text);
-    background: var(--surface-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    box-shadow: var(--shadow-float);
-    width: min(520px, calc(100vw - 2rem));
-    max-height: calc(100svh - 2rem);
-    padding: 1.25rem;
-    overscroll-behavior: contain;
-    transition:
-      opacity 0.16s,
-      transform 0.16s;
-  }
-  .server-dialog::backdrop {
-    background: color-mix(in srgb, var(--canvas) 70%, transparent);
-    backdrop-filter: blur(3px);
-  }
-  header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  h2 {
-    font-size: 1.15rem;
-    flex: 1;
-    margin: 0;
-  }
-  header > span {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  }
   .close {
+    flex: none;
+    padding: 0;
+    width: 36px;
+    min-height: 36px;
     border: 0;
-    background: transparent;
+    font-size: 24px;
     color: var(--text-muted);
-    font-size: 1.5rem;
-    padding: 0.2rem 0.4rem;
-    cursor: pointer;
-  }
-  p {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    line-height: 1.5;
+    margin: -6px -8px 0 0;
   }
   .server-list {
-    display: grid;
-    gap: 0.5rem;
-    margin: 1rem 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 var(--space-5);
+    min-height: 0;
   }
   .server-row {
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    padding: 0.75rem;
+    border-top: 1px solid var(--border);
   }
-  .server-row.selected {
-    border-color: var(--border-strong);
-    background: color-mix(in srgb, var(--text) 3%, transparent);
-  }
-  .row-main {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    justify-content: space-between;
+  .server-row:last-child {
+    border-bottom: 1px solid var(--border);
   }
   label {
-    display: flex;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: var(--space-3);
     align-items: center;
-    gap: 0.75rem;
+    min-height: 76px;
+    padding: var(--space-3) 0;
     cursor: pointer;
-    min-width: 0;
   }
   input {
-    width: 1rem;
-    height: 1rem;
+    width: 18px;
+    height: 18px;
     accent-color: var(--brand);
   }
+  input:disabled {
+    opacity: 0.4;
+  }
+  .server-copy {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+  }
   strong {
-    display: block;
-    font-size: 0.875rem;
-    font-weight: 550;
+    font-weight: 600;
+    font-size: var(--type-md);
     overflow-wrap: anywhere;
   }
   small {
-    display: block;
-    font-size: 0.7rem;
     color: var(--text-muted);
-    margin-top: 0.2rem;
-  }
-  .readiness {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-  .readiness.ready {
-    color: var(--brand);
-  }
-  details {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-    margin: 0.55rem 0 0 1.75rem;
-  }
-  summary {
-    cursor: pointer;
-  }
-  details p {
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
+    font-size: var(--type-sm);
     overflow-wrap: anywhere;
   }
-  .row-actions {
+  .readiness {
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  .readiness[data-state="ready"] {
+    color: var(--ok);
+  }
+  .readiness[data-state="failed"],
+  .readiness[data-state="sign-in"] {
+    color: var(--warn);
+  }
+  .row-feedback {
     display: flex;
-    gap: 0.9rem;
-    margin: 0.6rem 0 0 1.75rem;
+    align-items: center;
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3) 30px;
   }
-  .row-actions button {
-    border: 0;
-    background: none;
-    font: inherit;
-    font-size: 0.75rem;
-    color: var(--text);
-    padding: 0.15rem 0;
-    cursor: pointer;
-    text-decoration: underline;
-    text-underline-offset: 0.2rem;
+  .row-feedback p {
+    margin: 0;
+    flex: 1;
+    overflow-wrap: anywhere;
   }
+  .row-feedback button {
+    flex: none;
+  }
+  .approval,
   .notice {
-    padding: 0.75rem;
-    border-left: 2px solid var(--phase-upload);
+    margin: 0 0 var(--space-3);
+    padding: var(--space-3);
     background: var(--surface-2);
-    font-size: 0.8rem;
-  }
-  .approval {
-    margin-bottom: 0;
+    border-radius: var(--r-well);
+    overflow-wrap: anywhere;
   }
   a {
-    color: var(--text);
+    color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
-  footer {
+  footer p {
+    margin: 0;
+  }
+  footer > div {
     display: flex;
-    justify-content: flex-end;
-    gap: 0.75rem;
-    margin-top: 1rem;
+    gap: var(--space-2);
   }
   .apply {
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--text);
-    color: var(--canvas);
-    padding: 0.55rem 1.4rem;
-    font: inherit;
-    font-size: 0.8rem;
-    cursor: pointer;
+    background: var(--brand);
+    border-color: var(--brand);
+    color: var(--text-inverse);
   }
-  button:focus-visible,
-  summary:focus-visible,
-  a:focus-visible,
-  input:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 3px;
+  .apply:hover:not(:disabled) {
+    background: var(--brand-strong);
   }
-  @starting-style {
-    .server-dialog[open] {
-      opacity: 0;
-      transform: translateY(6px);
+  @media (prefers-reduced-motion: no-preference) {
+    .server-dialog {
+      transition:
+        opacity var(--dur-slide) var(--ease-out),
+        transform var(--dur-slide) var(--ease-out);
+    }
+    @starting-style {
+      .server-dialog[open] {
+        opacity: 0;
+        transform: translateY(6px);
+      }
     }
   }
-  @media (max-width: 600px) {
+  @media (max-width: 480px) {
     .server-dialog {
       margin: auto 0 0;
       width: 100%;
-      max-width: none;
-      max-height: 85svh;
-      border-radius: var(--r-chrome) var(--r-chrome) 0 0;
-      padding-bottom: max(1.25rem, env(safe-area-inset-bottom));
+      max-height: calc(100svh - 24px);
+      border-radius: var(--r-pill) var(--r-pill) 0 0;
     }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .server-dialog {
-      transition: none;
+    header,
+    footer {
+      padding: var(--space-4);
+    }
+    .server-list {
+      padding: 0 var(--space-4);
+    }
+    label {
+      grid-template-columns: 18px minmax(0, 1fr);
+      gap: 4px var(--space-3);
+    }
+    input {
+      grid-row: span 2;
+    }
+    .readiness {
+      grid-column: 2;
+    }
+    footer {
+      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      flex-wrap: wrap;
+    }
+    footer > div {
+      margin-left: auto;
     }
   }
 </style>

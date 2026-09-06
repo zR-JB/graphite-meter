@@ -393,7 +393,7 @@ arguments.
 | --------------------------- | -------------------------- | ---------------- | ------------------------------------------------------------------------- |
 | `GM_SERVER_NAME`            | `--name`                   | `graphite-meter` | Name reported by preflight and shown in clients.                          |
 | `GM_SERVER_LOCATION`        | `--location`               | empty            | Optional operator-defined location label.                                 |
-| `GM_SERVER_CATALOG` | — | empty | Inline JSON operator catalogue; mutually exclusive with the file option. |
+| `GM_SERVER_CATALOG` | — | empty | JSON array of additional server origins (or advanced catalogue object); mutually exclusive with the file option. |
 | `GM_SERVER_CATALOG_FILE` | — | empty | Path to a read-only catalogue file, bounded to 64 KiB. |
 | `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false`          | Default browser preference for saving completed summaries on that device. |
 | `GM_VERBOSE`                | `--verbose`                | `false`          | Log per-second measurement throughput.                                    |

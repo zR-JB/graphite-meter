@@ -85,3 +85,37 @@ func TestLatencyFocusSwitchesTheWholePopulation(t *testing.T) {
 		t.Fatalf("mixed latency population: %+v", m.latency)
 	}
 }
+
+func TestSingletonHasNoSelectionOrResultControls(t *testing.T) {
+	m := newModel(goclient.DefaultConfig())
+	t.Cleanup(m.close)
+	m.preparedRun = &goclient.PreparedRun{Catalog: wire.SingletonCatalog()}
+	next, cmd := m.openServerChooser()
+	if next.(model).serverChooser || cmd != nil {
+		t.Fatal("singleton opened a chooser")
+	}
+	if strings.Contains(m.serversView(80), "Press s") {
+		t.Fatal("singleton advertised selection")
+	}
+	for _, binding := range m.ShortHelp() {
+		if slices.Contains(binding.Keys(), "s") {
+			t.Fatal("singleton advertised s")
+		}
+	}
+	// Single-server runs in a larger catalogue also retain the original result view.
+	m.preparedRun.Catalog.Servers = append(m.preparedRun.Catalog.Servers, wire.ServerEntry{ID: "peer", URL: "https://peer.example", Name: "Peer"})
+	m.mode, m.complete = modeRun, true
+	m.runDetails = &goclient.RunDetails{Selection: wire.SingletonCatalog().Servers, Participants: []string{"self"}, Outcome: "complete"}
+	if m.serverResultsView(80) != "" || m.serverResultNotice() != "" || m.latencyServerName() != "" {
+		t.Fatal("singleton rendered multi-server details")
+	}
+	for _, binding := range m.ShortHelp() {
+		if slices.Contains(binding.Keys(), "l") || slices.Contains(binding.Keys(), "d") {
+			t.Fatal("singleton advertised multi-server result keys")
+		}
+	}
+	next, _ = m.handleRunKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if next.(model).serverDetailsOpen {
+		t.Fatal("singleton opened result breakdown")
+	}
+}

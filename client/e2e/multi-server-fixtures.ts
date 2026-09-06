@@ -66,7 +66,9 @@ const processes = fleet.map((server, i) =>
                 .map(({ id, name, url }) => ({ id, name, url })),
             }),
           }
-        : {}),
+        : i === 3
+          ? { GM_SERVER_CATALOG: JSON.stringify([fleet[1].url]) }
+          : {}),
       ...(i === 4
         ? {
             GM_AUTH_MODE: "password",

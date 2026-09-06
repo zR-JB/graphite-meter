@@ -282,6 +282,20 @@ export function createApplicationController(
       signal.throwIfAborted();
       if (!current()) throw new DOMException("Aborted", "AbortError");
       store.serverDiscoveries[server.id] = result.discovery;
+      const entry = store.serverCatalog?.servers.find(
+        (entry) => entry.id === server.id,
+      );
+      if (entry) {
+        entry.name = result.discovery.server.name || entry.name;
+        entry.location = result.discovery.server.location;
+        const context = contexts.get(server.id);
+        if (context)
+          context.server = {
+            ...context.server,
+            name: entry.name,
+            location: entry.location,
+          };
+      }
       selectedValidation.set(server.id, result.validation);
       if (result.failure) throw result.failure;
       if (
@@ -405,7 +419,12 @@ export function createApplicationController(
         throw new DOMException("Aborted", "AbortError");
       adoptSelectedEvidence();
       if (!readySelected())
-        throw new Error("Resolve the selected servers before starting");
+        throw new Error(
+          store.selectedServers.length === 1
+            ? store.serverReadiness[store.selectedServers[0]]?.message ||
+                "Could not connect to this server"
+            : "Resolve the selected servers before starting",
+        );
       failures = 0;
       nextValidationAt = Date.now() + CONNECTION_FRESH_MS;
     } finally {
@@ -803,7 +822,21 @@ export function createApplicationController(
       cancelPendingStart();
       return;
     }
-    if (useCatalog && (!readySelected() || store.unresolvedServers.length)) {
+    if (
+      useCatalog &&
+      store.unresolvedServers.length &&
+      store.serverCatalog?.servers.length === 1
+    ) {
+      store.startError =
+        "The saved selection changed. Open Settings to use this server.";
+      return;
+    }
+    if (
+      useCatalog &&
+      (!store.serverCatalog ||
+        store.unresolvedServers.length ||
+        (!readySelected() && (store.serverCatalog?.servers.length ?? 0) > 1))
+    ) {
       openServers();
       store.startError = "Resolve the selected servers before starting.";
       return;

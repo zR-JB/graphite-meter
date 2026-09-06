@@ -14,6 +14,7 @@
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import { serverTransportOptions } from "../../servers/transportOptions";
+  import ServerSelectionButton from "../ServerSelectionButton.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
 
   interface Props {
@@ -242,6 +243,7 @@
         ? "One preference applies to every selected server. Automatic resolves each path independently."
         : "Choose separate paths for speed and latency measurements."}
     </p>
+    <ServerSelectionButton />
     <ConnectionPicker
       role="throughput"
       options={throughputTargets}
