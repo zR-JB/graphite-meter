@@ -231,7 +231,7 @@
           class="pip pip-{c.band}"
           use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
           aria-label={`Measurement stability: ${Math.round(c.score * 100)}%, ${c.band}`}
-          >{Math.round(c.score * 100)}%</span
+          >{c.band}</span
         >
       {/if}
       {#if c.status === "partial"}
@@ -331,12 +331,8 @@
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1px;
+    gap: var(--space-2);
     min-height: 64px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--border);
-    overflow: clip;
     margin-inline: auto;
   }
 
@@ -375,8 +371,10 @@
     gap: 6px;
     min-height: 64px;
     padding: 10px var(--space-3);
-    border: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
   }
   .result-card header,
   .result-source,
@@ -483,42 +481,31 @@
     border-radius: var(--r-well);
   }
 
-  .result-card .ico {
-    width: 16px;
-    height: 18px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-  }
-  .result-card .label {
-    font-weight: 600;
-  }
   .result-source {
     min-width: 0;
     padding-top: 2px;
   }
   .pip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
     margin-left: auto;
-    color: var(--text-soft);
-    font: 500 10px/1.4 var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    cursor: help;
+    padding: 2px 7px;
+    border-radius: var(--r-full);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
-  .pip::before {
-    content: "";
-    width: 3px;
-    height: 3px;
-    border-radius: 50%;
-    background: var(--ok);
+  .pip-high {
+    background: var(--ok-soft);
+    color: var(--ok);
   }
-  .pip-medium::before {
-    background: var(--warn);
+  .pip-medium {
+    background: var(--warn-soft);
+    color: var(--warn);
   }
-  .pip-low::before {
-    background: var(--err);
+  .pip-low {
+    background: var(--err-soft);
+    color: var(--err);
   }
 
   .val {

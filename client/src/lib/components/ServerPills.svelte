@@ -125,10 +125,9 @@
     width: fit-content;
     max-width: 100%;
     overflow: hidden;
-    border: 1px solid
-      color-mix(in srgb, var(--server-accent) 32%, var(--border));
+    border: 1px solid var(--border-strong);
     border-radius: 16px;
-    background: color-mix(in srgb, var(--server-accent) 12%, var(--surface-1));
+    background: var(--surface-inset);
   }
   button {
     position: relative;
@@ -151,22 +150,21 @@
       color 160ms ease;
   }
   button + button {
-    box-shadow: inset 1px 0
-      color-mix(in srgb, var(--server-accent) 20%, transparent);
+    box-shadow: inset 1px 0 var(--border);
   }
   .server-pills button:not(.chosen):hover:not(:disabled) {
     color: var(--text);
-    background: color-mix(in srgb, var(--server-accent) 14%, transparent);
+    background: var(--surface-3);
   }
   button:active:not(:disabled) .server-name {
     transform: translateY(1px);
   }
   button.chosen {
     color: var(--text);
-    background: color-mix(in srgb, var(--server-accent) 40%, var(--surface-1));
+    background: color-mix(in srgb, var(--brand) 18%, var(--surface-1));
   }
   button:focus-visible {
-    outline: 2px solid var(--server-accent);
+    outline: var(--focus-ring);
     outline-offset: -3px;
   }
   button:disabled {

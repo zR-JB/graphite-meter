@@ -30,9 +30,5 @@ test("live results stay measurement-first and defer confidence verdicts", async 
   await expect(bidirectional.locator(".chip-val .num")).not.toHaveText("—");
   await waitForCompletion(page, 10_000);
   const completed = page.locator(".result-card", { hasText: "Bi-dir" });
-  await expect(completed.locator(".pip")).toHaveText(/^\d+%$/);
-  await expect(completed.locator(".pip")).toHaveAttribute(
-    "aria-label",
-    /Measurement stability:.*high/,
-  );
+  await expect(completed.locator(".pip")).toHaveText("high");
 });

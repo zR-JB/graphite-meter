@@ -51,7 +51,7 @@
     height: 10px;
     border-radius: 1px;
     flex-shrink: 0;
-    background: var(--server-accent);
+    background: var(--brand);
   }
   .server-tag:focus-visible {
     outline: 2px solid var(--brand);

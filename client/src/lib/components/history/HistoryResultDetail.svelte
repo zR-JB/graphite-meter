@@ -764,13 +764,7 @@
   .throughput-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 1px;
-    padding: 0;
-    margin: 0 var(--space-4) var(--space-4);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    overflow: clip;
-    background: var(--border);
+    gap: var(--space-2);
   }
   .throughput-card {
     --tone: var(--phase-complete);
@@ -778,9 +772,11 @@
     align-content: start;
     gap: 6px;
     min-width: 0;
-    padding: 10px var(--space-3);
-    border: 0;
+    padding: var(--space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
+    box-shadow: var(--elev-tile);
   }
   [data-tone="download"] {
     --tone: var(--phase-download);
@@ -810,12 +806,6 @@
   .phase-icon :global(svg) {
     width: 13px;
     height: 13px;
-  }
-  .throughput-card .phase-icon {
-    width: 16px;
-    height: 18px;
-    border: 0;
-    background: transparent;
   }
   .throughput-card header strong {
     min-width: 0;
