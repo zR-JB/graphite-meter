@@ -22,7 +22,8 @@
     type LatencyProfileViewLane,
     type LatencyProfileTone,
   } from "../latencyProfile";
-  import ServerResultDetails from "../ServerResultDetails.svelte";
+  import ResultServerContext from "../ResultServerContext.svelte";
+  import ServerPills from "../ServerPills.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -52,6 +53,37 @@
   let chosenServer = $state<{ recordId: string; serverId: string } | null>(
     null,
   );
+  let resultChoice = $state<{ recordId: string; serverId: string } | null>(
+    null,
+  );
+  const resultId = $derived(
+    resultChoice?.recordId === record.id ? resultChoice.serverId : "",
+  );
+  const scoped = $derived(
+    record.multiServer?.servers.find((server) => server.server.id === resultId),
+  );
+  const resultStages = $derived(
+    scoped
+      ? {
+          download: scoped.download,
+          upload: scoped.upload,
+          bidirectional: scoped.bidirectional ?? { down: null, up: null },
+        }
+      : {
+          download: record.stages.download.result,
+          upload: record.stages.upload.result,
+          bidirectional: record.stages.bidirectional,
+        },
+  );
+  function selectResult(id: string) {
+    resultChoice = { recordId: record.id, serverId: id };
+    if (
+      record.multiServer?.servers.some(
+        (server) => server.server.id === id && server.latencyTarget,
+      )
+    )
+      chosenServer = { recordId: record.id, serverId: id };
+  }
   const focusedId = $derived(
     chosenServer?.recordId === record.id &&
       record.multiServer?.selection.some(
@@ -101,13 +133,16 @@
     return formatHistoryRate(value, units);
   }
 
-  function bytes(result: ThroughputSnapshot): string {
+  function bytes(result: Pick<ThroughputSnapshot, "totalBytes">): string {
     return formatHistoryBytes(result.totalBytes, store.unitBase);
   }
 
   function throughputCard(
     key: "download" | "upload",
-    result: ThroughputSnapshot | null,
+    result: Pick<
+      ThroughputSnapshot,
+      "reportedBytesPerSec" | "totalBytes"
+    > | null,
   ): ThroughputCard | null {
     if (!result) return null;
     return {
@@ -121,7 +156,7 @@
   }
 
   function bidirectionalCard(): ThroughputCard | null {
-    const stage = record.stages.bidirectional;
+    const stage = resultStages.bidirectional;
     if (!stage.down && !stage.up) return null;
     const model = bidirectionalResultPresentation(
       stage.down?.reportedBytesPerSec,
@@ -150,8 +185,8 @@
 
   const throughputCards = $derived<ThroughputCard[]>(
     [
-      throughputCard("download", record.stages.download.result),
-      throughputCard("upload", record.stages.upload.result),
+      throughputCard("download", resultStages.download),
+      throughputCard("upload", resultStages.upload),
       bidirectionalCard(),
     ].filter((card): card is ThroughputCard => card !== null),
   );
@@ -319,6 +354,15 @@
     </dl>
   </header>
 
+  {#if record.multiServer && record.multiServer.selection.length > 1}<div
+      class="saved-server-context"
+    >
+      <ResultServerContext
+        details={record.multiServer}
+        value={resultId}
+        onchange={selectResult}
+      />
+    </div>{/if}
   {#if throughputCards.length}
     <section
       class="detail-section"
@@ -343,15 +387,9 @@
         {/each}
       </div>
     </section>
-  {/if}
-
-  {#if record.multiServer && record.multiServer.selection.length > 1}
-    <ServerResultDetails
-      embedded
-      details={record.multiServer}
-      outcome={record.outcome}
-    />
-  {/if}
+  {:else if scoped}<p class="missing-server-throughput">
+      No throughput measurements available for this server.
+    </p>{/if}
 
   {#if latencyProfiles.length || hasServerLatency}
     <section
@@ -364,21 +402,25 @@
       </header>
       <div class="section-body responsiveness-body">
         {#if record.multiServer && record.multiServer.selection.length > 1}
-          <label class="server-focus"
-            >Latency to
-            <select
-              value={focusedId}
-              onchange={(event) =>
-                (chosenServer = {
-                  recordId: record.id,
-                  serverId: event.currentTarget.value,
-                })}
+          <div class="server-focus">
+            <span
+              >Latency to <strong
+                >{focused?.server.name ?? "selected server"}</strong
+              ></span
             >
-              {#each record.multiServer.selection as server}<option
-                  value={server.id}>{server.name}</option
-                >{/each}
-            </select>
-          </label>
+            {#if record.multiServer.servers.filter((server) => server.latencyTarget).length > 1}
+              <ServerPills
+                servers={record.multiServer.selection}
+                value={focusedId ?? ""}
+                label="Saved latency server"
+                disabledIds={record.multiServer.servers
+                  .filter((server) => !server.latencyTarget)
+                  .map((server) => server.server.id)}
+                onchange={(id) =>
+                  (chosenServer = { recordId: record.id, serverId: id })}
+              />
+            {/if}
+          </div>
         {/if}
         {#if focusedLatency}
           <dl class="idle-summary" aria-label="Idle latency result">
@@ -537,6 +579,14 @@
 </article>
 
 <style>
+  .saved-server-context {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .missing-server-throughput {
+    padding: var(--space-3) var(--space-4);
+    color: var(--text-muted);
+  }
   .latency-empty {
     color: var(--text-muted);
     font-size: var(--type-sm);
@@ -548,19 +598,6 @@
     gap: 8px;
     color: var(--text-soft);
     font-size: 12px;
-  }
-  .server-focus select {
-    font: inherit;
-    color: var(--text);
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    padding: 6px;
-    max-width: 75%;
-  }
-  .server-focus select:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
   }
 
   .result-detail {

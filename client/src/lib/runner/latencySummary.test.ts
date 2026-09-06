@@ -156,3 +156,24 @@ test("paired timing means use only valid in-window replies and leave raw statist
   missing.observe(0, false, 0, true, 0.001);
   expect(missing.snapshot()?.reflectorTiming).toBeUndefined();
 });
+
+test("repeated result reads reuse exact populations while new outcomes invalidate every affected statistic", () => {
+  const stats = new LatencyAccumulator();
+  expect(stats.snapshot()).toBeNull();
+  for (const value of [100, 20, 40, 80]) stats.observe(value, false, 0);
+  const before = stats.snapshot();
+  expect(stats.medianFrom(1)).toBe(40);
+  expect(stats.medianFrom(1)).toBe(40);
+  expect(stats.medianFrom(0)).toBe(60);
+  stats.observe(60, false, 0);
+  expect(stats.medianFrom(1)).toBe(50);
+  expect(stats.snapshot()?.probeCount).toBe(5);
+  expect(before?.probeCount).toBe(4);
+  stats.observe(0, true, 0);
+  expect(stats.snapshot()?.timeoutCount).toBe(1);
+  stats.interrupt(2, "send-failed");
+  expect(stats.snapshot()?.sendFailureCount).toBe(2);
+  stats.markAccountingIncomplete();
+  expect(stats.snapshot()?.accountingComplete).toBe(false);
+  expect(stats.medianFrom(0)).toBe(60);
+});

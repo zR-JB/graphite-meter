@@ -9,7 +9,6 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
-  import ServerResultDetails from "./ServerResultDetails.svelte";
   import LatencyServerSelector from "./LatencyServerSelector.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
@@ -404,7 +403,7 @@
   });
 </script>
 
-<section class="gauge-panel">
+<section class="gauge-panel" data-phase={store.phase}>
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
@@ -526,10 +525,6 @@
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}
-    {#if store.result?.multiServer && store.result.multiServer.selection.length > 1}<ServerResultDetails
-        details={store.result.multiServer}
-        outcome={store.result.outcome}
-      />{/if}
   </div>
 </section>
 

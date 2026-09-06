@@ -95,29 +95,49 @@ reach every selected discovery and transport origin.
 
 ## Browser and terminal controls
 
-**Settings → Connection paths → Servers → Change** opens the server chooser.
-It appears only when more than one server is configured. A quiet indicator in the
-gauge identifies a multi-server selection or run; single-server tests retain the
-ordinary instrument and result view. Checkboxes
-edit a draft; Apply commits it and Escape cancels it. `self` is labelled “This
-server” and may be deselected. Opening the chooser checks stale entries with at
-most four concurrent discoveries within a shared twelve-second budget. Background
-readiness refreshes concern selected servers only. Retry and Sign in apply to
-individual unresolved entries. Ready selections start directly; selection changes
-are locked during preparation and measurement.
+**Settings → Connection paths → Servers** offers compact toggles for small
+catalogues. Select one to four servers; the final selected server cannot be
+removed. **Change** opens the full chooser for discovery, errors and sign-in.
+The controls appear only when more than one server is configured. A quiet gauge
+indicator identifies the selected or measured server count. Single-server runs
+retain the ordinary instrument and result view.
 
-There is one throughput preference and one latency preference. Automatic resolves
-each independently on each selected server, preferring fetch throughput and
-WebTransport latency where available. Reliable transport mechanisms may differ;
-experimental datagram throughput is always explicit. A forced choice must work on
-every selected server. The client neither silently downgrades it nor removes an
-incompatible server. Use Automatic is an explicit recovery action. Detailed origin
-selection remains available for a single selected server.
+Chooser checkboxes edit a draft; Apply commits it and Escape cancels it. `self`
+is labelled “This server” and may be deselected. Opening the chooser checks stale
+entries with at most four concurrent discoveries within a shared twelve-second
+budget. Background readiness refreshes concern selected servers only. Retry and
+Sign in apply to individual unresolved entries. Ready selections start directly.
 
-The latency selector changes the gauge, profile, chart and descriptors together.
-Its initial focus is the lowest successful preflight RTT estimate, with catalogue
-order breaking ties and supplying a fallback. Focus remains stable during the run
-until the user changes it; it never changes which servers are measured.
+The browser defaults to measuring **latency against one selected server**, while
+all selected servers perform the speed test. Choose that primary server in Settings
+before starting. Initially it is the first selected entry in catalogue order; a
+saved primary choice is reused while it remains selected. **Every server** enables
+separate latency measurements for all selected servers. The choice covers both idle
+and loaded latency, is saved on this device, and is fixed during preparation and
+measurement. An unprobed server has no latency result, rather than a zero RTT.
+If the primary fails, the client does not silently change latency endpoints.
+
+There is one throughput preference and one latency transport preference. Automatic
+resolves each independently, preferring fetch throughput and WebTransport latency
+where available. Reliable transport mechanisms may differ; experimental datagram
+throughput is always explicit. A forced throughput choice must work on every selected
+server; a forced latency choice must work on every server being probed. The client
+neither silently downgrades it nor removes an incompatible server. Use Automatic is
+an explicit recovery action. Detailed origin selection remains available for a
+single selected server.
+
+The latency pills change the gauge, profile, chart and descriptors together without
+changing measurement targets. With Every server, initial display focus uses the
+lowest successful preflight RTT estimate, with catalogue order breaking ties.
+Each pill exposes the server name, location and host on hover or keyboard focus.
+Result cards and saved history use All / server pills to switch between aggregate
+throughput and individual measurements. Latency always names one server; it is not
+pooled. Selecting a result with latency evidence also focuses its latency profile.
+
+Server, connection, stream and probe settings are locked for the active run.
+Supported live changes remain available for active/future durations, unstarted
+stages and early finish. Display units, visual scales, theme and result inspection
+remain interactive. Preparation locks run configuration until launch or cancellation.
 
 The TUI uses `--url` as the originating catalogue URL and repeatable `--server ID`
 arguments as the selected set. Without `--server`, operator defaults apply. Press
@@ -159,13 +179,18 @@ Each throughput interval has fixed membership. A dropout starts a fresh survivor
 interval and resets stability confirmation. The headline uses the latest interval
 only, with at least 800 ms of client evidence and, for upload, 800 ms in each receiver
 window. An insufficient final interval produces an unavailable headline; earlier
-measurements remain labelled in Details. If all servers fail, the result is incomplete.
+measurements remain available in the affected server's results. If all servers fail, the result is incomplete.
 
-Result and history details use the same server contributions, relative failure times,
-reasons and interval records. Contributions were measured while sharing the connection.
-At most 128 recent intervals are retained; an explicit omitted count reports older
-intervals while unique byte totals retain the whole measured run. History schema 4
-stores this evidence and reads schema 3 as original singleton history.
+Live results and history share compact server controls and failure notices. Each
+server's result uses its own canonical measurement window under the shared load;
+these individual headline values must not be summed to reconstruct the aggregate.
+The aggregate is calculated from common receiver windows by the coordinator.
+
+Saved evidence retains relative failure times, reasons and at most 128 recent
+intervals even though the ordinary UI no longer presents a timing drawer. An omitted
+count records older intervals while unique byte totals retain the whole measured
+run. History schema 4 stores this evidence and reads schema 3 as original singleton
+history.
 
 See [measurement definitions](MEASUREMENTS.md#coordinated-server-windows) for units,
 clock boundaries, aggregate stability, unique byte totals and missing-data rules.

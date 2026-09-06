@@ -209,3 +209,85 @@ test("later preparation failure removes only its server and retains the complete
     },
   ]);
 }, 6000);
+
+test("a primary latency server owns probes while every server still transfers", async () => {
+  const restore = stubGlobals(TEST_BUILD_TOKENS);
+  const { ServerCoordinator } = await import("./coordinator");
+  const servers = ["a", "b"].map((id) => ({
+    server: { id, name: id, url: `https://${id}.example` },
+    paths: { ...testPreparedPaths(), ...(id === "a" ? { latency: null } : {}) },
+  }));
+  const calls: string[] = [];
+  let index = 0;
+  const coordinator = new ServerCoordinator(servers, "b", (paths) => {
+    const id = servers[index++].server.id;
+    let host: CoreHost;
+    return {
+      attach(value) {
+        host = value;
+      },
+      onRunStart() {},
+      onAbort() {},
+      onComplete() {},
+      onStageBegin(activity) {
+        calls.push(`${id}:${activity.stage}`);
+      },
+      onStageMeasure() {
+        if (paths.latency)
+          for (let i = 0; i < 4; i++)
+            host.ingestLatency({
+              rttMs: 2,
+              lost: false,
+              observedAtMs: performance.now(),
+            });
+      },
+      onStageEnd() {},
+      checkpoint: async () => null,
+      flushDownload() {
+        host.ingestThroughput("down", 10000, 0.25);
+      },
+    };
+  });
+  try {
+    const complete = new Promise<RunResult>((resolve, reject) =>
+      coordinator.on((event) => {
+        if (event.type === "complete") resolve(event.result);
+        if (event.type === "error") reject(event.error);
+      }),
+    );
+    coordinator.start(
+      {
+        ...structuredClone(DEFAULT_CONFIG),
+        adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: false },
+        stages: {
+          latency: true,
+          download: true,
+          upload: false,
+          bidirectional: false,
+        },
+        duration: {
+          ...DEFAULT_CONFIG.duration,
+          warmupMs: 0,
+          latencyMs: 50,
+          downloadMs: 1000,
+        },
+      },
+      2,
+    );
+    const result = await complete;
+    expect(calls).toEqual(["b:latency", "a:download", "b:download"]);
+    expect(result.multiServer?.servers[0].latencyTarget).toBeNull();
+    expect(result.multiServer?.servers[0].latencyByStage.latency).toBeNull();
+    expect(
+      result.multiServer?.servers[1].latencyByStage.latency?.probeCount,
+    ).toBe(4);
+    expect(
+      result.multiServer?.servers[1].latencyByStage.download?.probeCount,
+    ).toBe(4);
+    expect(result.multiServer?.participants).toEqual(["a", "b"]);
+    expect(result.multiServer?.failures).toEqual([]);
+  } finally {
+    coordinator.dispose();
+    restore();
+  }
+});

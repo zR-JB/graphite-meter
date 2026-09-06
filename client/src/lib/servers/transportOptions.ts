@@ -53,12 +53,16 @@ export function serverTransportOptions(
     });
     const detail =
       value === "auto"
-        ? "Resolves independently for every selected server"
+        ? servers.length === 1
+          ? `Chooses the available path for ${servers[0].name}`
+          : "Resolves independently for every selected server"
         : incompatible.length
           ? `Unavailable on ${incompatible.map((server) => server.name).join(", ")}`
           : missing.length
             ? `Checking ${missing.map((server) => server.name).join(", ")}`
-            : `Available on all ${servers.length} selected servers`;
+            : servers.length === 1
+              ? `Available on ${servers[0].name}`
+              : `Available on all ${servers.length} selected servers`;
     return {
       value,
       label,

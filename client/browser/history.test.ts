@@ -2329,15 +2329,14 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   const detail = page.locator(".result-detail");
   await expect(detail).toBeVisible();
   await expect(detail.locator(".latency-empty")).toBeVisible();
-  await detail.locator(".server-focus select").evaluate((select) => {
-    select.value = "peer";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  await detail.locator('.server-focus [role="radio"]').nth(1).click();
   await expect(detail.locator(".latency-empty")).toHaveCount(0);
   await expect(detail.locator(".idle-summary")).toContainText("25");
   await page.evaluate((id) => {
     location.hash = `/history/${id}`;
   }, IDS.middle);
   await expect(detail.locator(".latency-empty")).toBeVisible();
-  await expect(detail.locator(".server-focus select")).toHaveValue("self");
+  await expect(
+    detail.locator('.server-focus [role="radio"]').first(),
+  ).toHaveAttribute("aria-checked", "true");
 });

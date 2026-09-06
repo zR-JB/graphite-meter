@@ -212,6 +212,14 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   #active(): Participant[] {
     return this.#servers.filter((server) => !server.removed);
   }
+  #latencyServers(): Participant[] {
+    return this.#active().filter((server) => server.paths.latency !== null);
+  }
+  #stageParticipants(activity: PhaseActivity): Participant[] {
+    return activity.stage === "latency"
+      ? this.#latencyServers()
+      : this.#active();
+  }
   #focused(): Participant {
     return this.#servers.find((server) => server.server.id === this.#focus)!;
   }
@@ -253,7 +261,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       server.rates.up.reset();
     }
     const epoch = ++this.#epoch;
-    const participants = this.#active();
+    const participants = this.#stageParticipants(activity);
     const results = await Promise.allSettled(
       participants.map(async (server) => {
         await server.backend.onStageBegin(activity);
@@ -284,7 +292,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     this.#hasMeasured = true;
     this.#measuring = true;
     this.#latencyMeasuring = true;
-    for (const server of this.#active()) {
+    for (const server of this.#stageParticipants(activity)) {
       server.buckets.reset(
         this.#core.elapsed,
         activity.stage,
@@ -399,7 +407,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     if (flush && activity.transfer.length) await this.#sampleBoundary(true);
     this.#measuring = false;
     await Promise.allSettled(
-      this.#active().map((server) =>
+      this.#stageParticipants(activity).map((server) =>
         server.backend.onStageEnd(activity, flush),
       ),
     );
@@ -667,10 +675,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   #latency(server: Participant, observation: LatencyObservation): void {
     if (!this.#latencyMeasuring || server.removed || !this.#activity) return;
     const stage = this.#activity.stage;
-    const t = Math.max(
-      0,
-      this.#core.elapsed + observation.observedAtMs - performance.now(),
-    );
+    const t = this.#core.observationTime(observation.observedAtMs);
     server.accum.pushLatency(
       stage,
       observation.rttMs,
@@ -707,7 +712,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   confidence(stage: TransportRole) {
     return stage === "latency"
       ? weakestLatencyConfidence(
-          this.#active()
+          this.#latencyServers()
             .filter((server) => !server.latencyFailed)
             .map((server) => server.accum),
         )
@@ -719,7 +724,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     cfg: RunnerConfig["adaptive"],
   ): boolean {
     if (stage !== "latency") return this.#aggregate.trackStable(score, cfg);
-    return this.#active()
+    return this.#latencyServers()
       .filter((server) => !server.latencyFailed)
       .map((server) => server.accum.trackStableRun(stage, score, cfg))
       .every(Boolean);
@@ -727,8 +732,8 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   canComplete(stage: TransportRole): boolean {
     if (stage === "latency")
       return (
-        this.#active().some((server) => !server.latencyFailed) &&
-        this.#active().every(
+        this.#latencyServers().some((server) => !server.latencyFailed) &&
+        this.#latencyServers().every(
           (server) => server.latencyFailed || !server.latencyTimer,
         )
       );

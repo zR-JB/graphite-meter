@@ -30,7 +30,7 @@ export function planServerStreams(
         policy: config.transferStreams,
         transfer: activity.transfer,
         dir,
-        needsPing: needsPings(activity),
+        needsPing: needsPings(activity) && server.paths.latency !== null,
         webTransport: wt,
       });
       if (!wt && !["http2", "http3"].includes(throughput.fetch.protocol)) {

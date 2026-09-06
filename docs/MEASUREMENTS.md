@@ -65,13 +65,16 @@ interval ends, fresh survivor baselines start a new interval, and stability rese
 The final headline requires the latest interval to contain at least 800 ms of client
 evidence and, for upload, at least 800 ms in every component's receiver clock. If it
 does not, the headline is unavailable. Earlier valid intervals and failed-server
-contributions remain explicitly earlier evidence in Details. All servers failing
+measurements remain available in the affected server's individual results. All servers failing
 ends with an incomplete result. A latency-only failure does not remove throughput.
 
 Latency remains keyed by both server and stage. Added latency compares a loaded
 population only with that server's idle baseline. The named latency focus selects
 one population for presentation; there is no averaged multi-server ping or blended
-responsiveness grade. [Server controls and deployment](SERVERS.md) describe selection,
+responsiveness grade. The browser can probe one explicitly selected primary server
+(the default) or every selected server. Primary selection is fixed before the run;
+other servers still generate throughput load, and their unmeasured latency fields
+remain null. Switching the displayed server never starts, stops or retargets probes. [Server controls and deployment](SERVERS.md) describe selection,
 authorization, shared-origin stream budgets and result details.
 
 ## Round-trip latency and probe timeouts

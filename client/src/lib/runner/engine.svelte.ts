@@ -148,12 +148,26 @@ export function createApplicationController(
   let inspection: AbortController | null = null;
   let approval: AbortController | null = null;
   const selectionKey = () =>
-    JSON.stringify(
+    JSON.stringify([
+      store.latencySelection.mode,
+      store.primaryLatencyServer,
       store.selectedServers.map((id) => [
         id,
         store.serverCatalog?.servers.find((server) => server.id === id)?.url,
       ]),
-    );
+    ]);
+  const serverConfig = (id: string) => {
+    const config = $state.snapshot(store.config);
+    if (
+      store.selectedServers.includes(id) &&
+      store.latencySelection.mode === "primary" &&
+      id !== store.primaryLatencyServer
+    ) {
+      config.stages.latency = false;
+      config.skipLoadedLatencyWhenStageOff = true;
+    }
+    return config;
+  };
   const draftKey = (config: typeof store.config) =>
     useCatalog
       ? JSON.stringify([connectionDraftKey(config), selectionKey()])
@@ -170,7 +184,7 @@ export function createApplicationController(
         store.serverReadiness[id]?.state === "ready" &&
         selectedPaths.has(id) &&
         !!preparedPaths(
-          store.config,
+          serverConfig(id),
           store.serverDiscoveries[id] ?? null,
           selectedValidation.get(id) ?? emptyConnectionValidation(),
         ),
@@ -264,12 +278,12 @@ export function createApplicationController(
       check.signal,
       lifetime.signal,
     ]);
-    const configKey = connectionDraftKey(store.config);
+    const configKey = draftKey(store.config);
     const current = () =>
       serverChecks.get(server.id) === check &&
-      configKey === connectionDraftKey(store.config);
+      configKey === draftKey(store.config);
     store.serverReadiness[server.id] = { state: "checking" };
-    const config = $state.snapshot(store.config);
+    const config = serverConfig(server.id);
     let result: ConnectionPreparation | undefined;
     try {
       result = await prepare(
@@ -356,8 +370,13 @@ export function createApplicationController(
     }
   }
   function adoptSelectedEvidence() {
-    const first = catalogSelected()[0],
-      paths = selectedPaths.get(first.id);
+    // Keep the representative paths and discovery in one server generation.
+    const selected = catalogSelected();
+    const first =
+      store.latencySelection.mode === "primary"
+        ? selected.find((server) => server.id === store.primaryLatencyServer)!
+        : selected[0];
+    const paths = selectedPaths.get(first.id);
     const checked = selectedValidation.get(first.id);
     const discovery = store.serverDiscoveries[first.id];
     if (discovery) store.transportDiscovery = discovery;
@@ -531,7 +550,27 @@ export function createApplicationController(
       }
     }
   }
+  function configureLatency(
+    mode: "primary" | "all",
+    serverId = store.primaryLatencyServer,
+  ) {
+    if (
+      store.isRunning ||
+      store.preparing ||
+      !store.selectedServers.includes(serverId)
+    )
+      return false;
+    store.latencySelection = { mode, serverId };
+    return true;
+  }
   function focusServer(id: string) {
+    if (
+      store.serverDetails &&
+      !store.serverDetails.servers.some(
+        (server) => server.server.id === id && server.latencyTarget,
+      )
+    )
+      return;
     store.focusLatencyServer(id);
     runner?.focusServer?.(id);
   }
@@ -898,14 +937,19 @@ export function createApplicationController(
           server,
           paths: selectedPaths.get(server.id)!,
         }));
-        const focus = prepared.reduce(
-          (best, next) =>
-            (next.paths.latency?.rttMs ?? Infinity) <
-            (best.paths.latency?.rttMs ?? Infinity)
-              ? next
-              : best,
-          prepared[0],
-        );
+        const focus =
+          store.latencySelection.mode === "primary"
+            ? prepared.find(
+                (server) => server.server.id === store.primaryLatencyServer,
+              )!
+            : prepared.reduce(
+                (best, next) =>
+                  (next.paths.latency?.rttMs ?? Infinity) <
+                  (best.paths.latency?.rttMs ?? Infinity)
+                    ? next
+                    : best,
+                prepared[0],
+              );
         store.latencyFocus = focus.server.id;
         for (const monitor of selectedIdle.values()) monitor.stop();
         runner = new ServerCoordinator(prepared, focus.server.id);
@@ -946,6 +990,7 @@ export function createApplicationController(
     requestValidation();
   }
   function configureRun(patch: Partial<LiveRunConfig>): boolean {
+    if (store.preparing) return false;
     const config = { ...$state.snapshot(store.config), ...patch };
     config.adaptive = canonicalAdaptiveConfig(config.adaptive);
     if (!Object.values(config.stages).some(Boolean)) return false;
@@ -1052,6 +1097,7 @@ export function createApplicationController(
     applyServers,
     signInServer,
     focusServer,
+    configureLatency,
     retryServer: (id: string) => {
       const server = store.serverCatalog?.servers.find(
         (server) => server.id === id,

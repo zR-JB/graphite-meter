@@ -19,7 +19,6 @@ import {
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
-import { median } from "./stats";
 import { LatencyAccumulator } from "./latencySummary";
 import { FixedRateBuckets, PairedRateBuckets } from "./controlBuckets";
 
@@ -94,6 +93,8 @@ export class RunAccumulator {
   };
   #phaseLatency: { tMs: number; rttMs: number | null }[] = [];
 
+  #phaseLatencyHead = 0;
+
   #latStableStartIndex = -1;
   #biStable = false;
   #latFinalScore = 0;
@@ -115,6 +116,7 @@ export class RunAccumulator {
   beginPhase(): void {
     for (const buckets of Object.values(this.#phaseBuckets)) buckets.reset();
     this.#phaseLatency = [];
+    this.#phaseLatencyHead = 0;
   }
 
   /* ================= SAMPLE INGEST ================= */
@@ -214,7 +216,13 @@ export class RunAccumulator {
     if (phase === "latency" && rttEligible) {
       this.#phaseLatency.push({ tMs, rttMs: timedOut ? null : rttMs });
       const cutoff = tMs - LATENCY_CONFIDENCE_WINDOW_MS;
-      while (this.#phaseLatency[0]?.tMs <= cutoff) this.#phaseLatency.shift();
+      while (this.#phaseLatency[this.#phaseLatencyHead]?.tMs <= cutoff)
+        this.#phaseLatencyHead++;
+      // Amortize removal: shifting the complete window for every reply is quadratic on fast links.
+      if (this.#phaseLatencyHead >= 4096) {
+        this.#phaseLatency.splice(0, this.#phaseLatencyHead);
+        this.#phaseLatencyHead = 0;
+      }
     }
   }
 
@@ -247,13 +255,18 @@ export class RunAccumulator {
 
   /** Return the active phase's confidence score. */
   confidence(phase: StagePhase): ConfidenceScore | LatencyConfidenceScore {
-    if (phase === "latency") return latencyConfidence(this.#phaseLatency);
+    if (phase === "latency")
+      return latencyConfidence(
+        this.#phaseLatency.slice(this.#phaseLatencyHead),
+      );
     return transferConfidence([...this.#phaseBuckets[phase].rates]);
   }
 
   resetPhaseStability(phase: StagePhase): void {
-    if (phase === "latency") this.#phaseLatency = [];
-    else this.#phaseBuckets[phase].reset();
+    if (phase === "latency") {
+      this.#phaseLatency = [];
+      this.#phaseLatencyHead = 0;
+    } else this.#phaseBuckets[phase].reset();
     if (phase === "bidirectional") {
       this.#biStable = false;
     } else if (phase === "latency") this.#latStableStartIndex = -1;
@@ -470,8 +483,9 @@ export class RunAccumulator {
       idle.length,
     );
     const useWindow = windowStart >= 0;
-    const idleWindow = useWindow ? idle.slice(windowStart) : idle;
-    const idleMs = median(idleWindow);
+    const idleMs = this.#latency.latency.medianFrom(
+      useWindow ? windowStart : 0,
+    );
     return {
       idleMs,
       minMs: summary.minMs,
@@ -500,11 +514,11 @@ export class RunAccumulator {
   bufferbloatGrade(): BufferbloatGrade | null {
     const loaded = ["download", "upload", "bidirectional"] as const;
     const medians = loaded.flatMap((phase) => {
-      const rtts = this.#latency[phase].rtts;
-      return rtts.length ? [median(rtts)] : [];
+      const median = this.#latency[phase].snapshot()?.p50Ms;
+      return median == null ? [] : [median];
     });
     if (!this.#latency.latency.rtts.length || !medians.length) return null;
-    const idleMs = median(this.#latency.latency.rtts);
+    const idleMs = this.#latency.latency.medianFrom(0);
     const loadedMs = Math.max(...medians);
     const increaseMs = Math.max(0, loadedMs - idleMs);
     let grade: BufferbloatGrade["grade"];

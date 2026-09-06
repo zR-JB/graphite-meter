@@ -23,6 +23,7 @@ export async function configure(
       localStorage.setItem(
         "graphite-meter:v1",
         JSON.stringify({
+          latencySelection: { mode: "all", serverId: "self" },
           config: {
             transports: {
               throughputTarget: "auto",

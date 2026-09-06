@@ -115,7 +115,9 @@ for (const theme of ["dark", "light"] as const) {
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(trigger).toBeFocused();
-    await expect(trigger).toContainText("2 selected");
+    await expect(settings.locator(".server-heading")).toContainText(
+      "2 selected",
+    );
     await trigger.focus();
     await trigger.click();
     await dialog.locator('input[type="checkbox"]').first().focus();

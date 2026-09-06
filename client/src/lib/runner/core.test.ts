@@ -1168,3 +1168,22 @@ test("presentation derives from receiver bytes and intervals while retaining exa
     expect(result.download!.totalBytes).toBe(N * DELTA);
   });
 });
+
+test("worker observations retain their timeline position across delayed delivery and ticks", () => {
+  const backend = new FakeBackend();
+  const core = new RunnerCore(backend);
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.adaptive.enabled = false;
+  config.duration.warmupMs = 0;
+  config.duration.latencyMs = 4000;
+  core.start(config, 1);
+  advance(200);
+  expect(core.observationTime(195)).toBe(195);
+  // A delivered batch takes time to consume before the next master tick.
+  fakeNow = 275;
+  expect(core.observationTime(195)).toBe(195);
+  expect(core.observationTime(210)).toBe(210);
+  advance(25);
+  expect(core.observationTime(195)).toBe(195);
+  core.dispose();
+});

@@ -174,6 +174,15 @@ class AppStore {
   serverApproval = $state<{ id: string; url: string; message?: string } | null>(
     null,
   );
+  latencySelection = $state<import("./persistence").LatencySelection>({
+    mode: "primary",
+    serverId: "",
+  });
+  primaryLatencyServer = $derived(
+    this.selectedServers.includes(this.latencySelection.serverId)
+      ? this.latencySelection.serverId
+      : (this.selectedServers[0] ?? "self"),
+  );
   latencyFocus = $state("self");
   serverDetails = $state<
     import("../servers/measurement").MultiServerResult | null
@@ -844,6 +853,7 @@ class AppStore {
 
   restoreTestDisplayDefaults() {
     const defaults = defaultPersisted();
+    this.latencySelection = { ...defaults.latencySelection };
     this.config = structuredClone(defaults.config);
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
@@ -926,6 +936,7 @@ export function mountStoreEffects(store: AppStore): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
       const snapshot = {
+        latencySelection: $state.snapshot(store.latencySelection),
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
         unitKind: store.unitKind,

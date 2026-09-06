@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ResultServerContext from "./ResultServerContext.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { ICON } from "../constants";
@@ -15,6 +17,30 @@
     liveRates?: LiveRateValues;
   } = $props();
 
+  const controller = getApplicationController();
+  let selectedServer = $state("");
+  const details = $derived(store.result?.multiServer);
+  const scoped = $derived(
+    details?.servers.find((server) => server.server.id === selectedServer),
+  );
+  const results = $derived(
+    scoped
+      ? {
+          download: scoped.download,
+          upload: scoped.upload,
+          latency: scoped.latency,
+        }
+      : store.stageResults,
+  );
+  function selectResult(id: string) {
+    selectedServer = id;
+    if (
+      details?.servers.some(
+        (server) => server.server.id === id && server.latencyTarget,
+      )
+    )
+      controller.focusServer(id);
+  }
   const dash = "—";
   const stages = [
     { key: "download", icon: ICON.download, accent: "dl", label: "Download" },
@@ -28,7 +54,9 @@
     { key: "latency", icon: ICON.ping, accent: "pg", label: "Ping" },
   ] as const;
   const bidirectionalEvidence = $derived(
-    store.result?.bidirectional ?? store.error?.partial?.bidirectional,
+    scoped
+      ? scoped.bidirectional
+      : (store.result?.bidirectional ?? store.error?.partial?.bidirectional),
   );
   const bidirectional = $derived(
     bidirectionalResultPresentation(
@@ -42,15 +70,35 @@
   const readouts = $derived.by(() =>
     stages.flatMap((stage) => {
       const { key } = stage;
-      const { status } = store.stagePresentation[key];
+      let { status } = store.stagePresentation[key];
+      if (scoped && (status === "complete" || status === "partial")) {
+        const hasResult =
+          key === "bidirectional"
+            ? scoped.bidirectional?.down || scoped.bidirectional?.up
+            : scoped[key];
+        const failed = details?.failures.some(
+          (failure) =>
+            failure.serverId === scoped.server.id &&
+            failure.stage === key &&
+            failure.scope === (key === "latency" ? "latency" : "throughput"),
+        );
+        status =
+          key === "latency" && !scoped.latencyTarget
+            ? "complete"
+            : failed
+              ? hasResult
+                ? "partial"
+                : "failed"
+              : hasResult
+                ? "complete"
+                : "partial";
+      }
       if (status === "disabled" || status === "pending") return [];
       const active = status === "active" || status === "recovering";
       let value: number | null;
       let authoritative: number | null;
       if (key === "latency") {
-        value = active
-          ? store.liveRtt
-          : (store.stageResults.latency?.reportedMs ?? null);
+        value = active ? store.liveRtt : (results.latency?.reportedMs ?? null);
         authoritative = value;
       } else if (key === "bidirectional") {
         const live = liveRates ?? store.visualBidirectional;
@@ -64,7 +112,7 @@
       } else {
         value = active
           ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
-          : (store.stageResults[key]?.reportedBytesPerSec ?? null);
+          : (results[key]?.reportedBytesPerSec ?? null);
         authoritative = active ? store.liveTransferBytesPerSec : value;
       }
       if (active && key !== "latency" && !store.aggregateEvidence) {
@@ -105,9 +153,11 @@
           let jitterMs: number | null | undefined;
           let compensation;
           if (key === "latency") {
-            const result = store.stageResults.latency;
+            const result = results.latency;
             score = result?.stabilityScore ?? 0;
             band = result?.band ?? "low";
+            if (!scoped && details && details.selection.length > 1)
+              sub = `To ${details.selection.find((server) => server.id === store.latencyFocus)?.name ?? "selected server"}`;
             jitterMs =
               result?.reportedMs != null
                 ? (result.jitterMs ?? null)
@@ -136,7 +186,7 @@
                       : undefined;
               compensation = store.bidirectionalCompensation;
             } else {
-              stabilityPct = store.stageResults[key]?.stabilityPct;
+              stabilityPct = results[key]?.stabilityPct;
               compensation =
                 key === "download"
                   ? store.downloadCompensation
@@ -145,8 +195,11 @@
             score = Math.max(0, Math.min(1, (stabilityPct ?? 0) / 100));
             band = score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
           }
+          if (scoped && key === "latency" && !scoped.latencyTarget)
+            sub = "Not measured for this server";
           const hasValue = row.num !== dash;
           const wire =
+            !scoped &&
             store.showWireEstimates &&
             hasValue &&
             status === "complete" &&
@@ -239,6 +292,16 @@
     {/each}
   </div>
 {:else}
+  {#if details && details.selection.length > 1}<div
+      class="result-context"
+      style:max-width={`${Math.min(4, cards.length) * 280}px`}
+    >
+      <ResultServerContext
+        {details}
+        value={selectedServer}
+        onchange={selectResult}
+      />
+    </div>{/if}
   <div class="result-cards">
     {#each cards as c (c.key)}
       {@render resultCard(c)}
@@ -247,6 +310,10 @@
 {/if}
 
 <style>
+  .result-context {
+    max-width: 1120px;
+    margin: 0 auto var(--space-2);
+  }
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

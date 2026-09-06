@@ -238,6 +238,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     return this.#measuredElapsed;
   }
 
+  /** Translate a window-clock observation using the last timeline tick, not its delivery time. */
+  observationTime(observedAtMs: number): number {
+    const projectedNow =
+      this.#measuredElapsed +
+      Math.max(0, performance.now() - this.#lastRealNow);
+    return Math.max(
+      this.#activeSeg?.start ?? 0,
+      Math.min(
+        projectedNow,
+        this.#measuredElapsed + observedAtMs - this.#lastRealNow,
+      ),
+    );
+  }
+
   on(handler: (e: RunnerEvent) => void): () => void {
     this.#handlers.add(handler);
     return () => this.#handlers.delete(handler);
@@ -660,15 +674,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     // Translate the window-clock observation into the runner's measured timeline.
     const wallNow = performance.now();
-    const projectedNow =
-      this.#measuredElapsed + Math.max(0, wallNow - this.#lastRealNow);
-    const observedT = Math.max(
-      this.#activeSeg?.start ?? 0,
-      Math.min(
-        projectedNow,
-        this.#measuredElapsed + observation.observedAtMs - this.#lastRealNow,
-      ),
-    );
+    const observedT = this.observationTime(observation.observedAtMs);
     this.#accum.pushLatency(
       phase,
       observation.rttMs,

@@ -1,3 +1,4 @@
+import "./client-performance";
 import {
   fleet,
   fixturePassword,
@@ -64,23 +65,48 @@ test("four real servers share one run and retain separate receiver windows and l
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);
   }
+  const resultPills = page.getByRole("radiogroup", {
+    name: "Result measurements",
+  });
+  await resultPills
+    .getByRole("radio", { name: "All servers, aggregate throughput" })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(resultPills.getByRole("radio", { name: "Home" })).toBeFocused();
+  await expect(
+    resultPills.getByRole("radio", { name: "Home" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
+  await page.keyboard.press("End");
+  await expect(
+    resultPills.getByRole("radio", { name: "Helsinki" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("radio", { name: "All servers, aggregate throughput" }),
+  ).toHaveAttribute("aria-checked", "true");
+  const audit = await new AxeBuilder({ page })
+    .include(".results-slot")
+    .analyze();
+  expect(audit.violations).toEqual([]);
   await page.artifact("multi-server-desktop-result");
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
-  await expect(page.locator(".server-results")).toBeVisible();
-  await expect(page.locator(".server-results .server-result-row")).toHaveCount(
-    4,
-  );
+  await expect(page.locator(".result-server-context")).toBeVisible();
+  await expect(
+    page.locator('.result-server-context [role="radio"]'),
+  ).toHaveCount(5);
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await page.locator(".server-results").scrollIntoViewIfNeeded();
+  await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await page.artifact("multi-server-history-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator(".server-results").scrollIntoViewIfNeeded();
-  await expectNoHorizontalOverflow(page.locator(".server-results"));
+  await page.locator(".result-server-context").scrollIntoViewIfNeeded();
+  await expectNoHorizontalOverflow(page.locator(".result-server-context"));
   await page.artifact("multi-server-history-phone");
   await page.reload();
-  await expect(page.locator(".server-results")).toBeVisible();
+  await expect(page.locator(".result-server-context")).toBeVisible();
   expect((await savedResult(page)).multiServer?.intervals).toEqual(
     saved.multiServer?.intervals,
   );
@@ -97,13 +123,13 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await waitForCompletion(page, 30000);
   const saved = await savedResult(page, startedAt);
   expect(saved.multiServer?.selection).toHaveLength(1);
-  await expect(page.locator(".server-results")).toHaveCount(0);
+  await expect(page.locator(".result-server-context")).toHaveCount(0);
   await expect(page.locator(".server-indicator")).toHaveCount(0);
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".result-detail")).toBeVisible();
-  await expect(page.locator(".server-results")).toHaveCount(0);
+  await expect(page.locator(".result-server-context")).toHaveCount(0);
   await expect(page.locator(".server-focus")).toHaveCount(0);
   await page.artifact("single-server-fleet-history");
 });
@@ -181,17 +207,19 @@ test("a real peer dropout keeps healthy transfers running and persists its failu
     subsequent.every((interval) => !interval.participants.includes("server-2")),
   ).toBe(true);
   expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".server-results .result-status")).toContainText(
+  await expect(page.locator(".result-server-context")).toContainText(
     "2 of 3 servers",
   );
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await page.reload();
-  await expect(page.locator(".server-results .result-status")).toContainText(
+  await expect(page.locator(".result-server-context")).toContainText(
     "2 of 3 servers",
   );
-  await expect(page.locator(".server-results")).toContainText("Amsterdam");
+  await expect(page.locator(".result-server-context")).toContainText(
+    "Amsterdam",
+  );
   expect((await savedResult(page)).multiServer?.failures).toEqual(
     saved.multiServer?.failures,
   );
@@ -308,4 +336,127 @@ for (const theme of ["dark", "light"] as const)
       .analyze();
     expect(scan.violations).toEqual([]);
     await page.artifact(`multi-server-phone-${theme}`);
+  });
+
+test("primary latency selection is fixed for the run and saved alongside every throughput participant", async ({
+  page,
+}) => {
+  await configure(page, ["self", "server-1"]);
+  await ready(page);
+  const settings = await openSettings(page);
+  await settings
+    .getByRole("button", { name: "One server", exact: true })
+    .click();
+  await settings
+    .getByRole("radiogroup", { name: "Primary latency server" })
+    .getByRole("radio", { name: "Frankfurt" })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          JSON.parse(localStorage.getItem("graphite-meter:v1")!)
+            .latencySelection.serverId,
+      ),
+    )
+    .toBe("server-1");
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await ready(page);
+  const started = Date.now();
+  await startTest(page);
+  await openSettings(page);
+  await expect(
+    settings.getByRole("button", { name: "Every server", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    settings
+      .getByRole("radiogroup", { name: "Primary latency server" })
+      .getByRole("radio", { name: "Home" }),
+  ).toBeDisabled();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await waitForCompletion(page, 30000);
+  const saved = await savedResult(page, started);
+  expect(isHistoryRecord(saved)).toBe(true);
+  expect(saved.multiServer?.failures).toEqual([]);
+  expect(saved.multiServer?.participants).toEqual(["self", "server-1"]);
+  const home = saved.multiServer!.servers.find(
+    (server) => server.server.id === "self",
+  )!;
+  const primary = saved.multiServer!.servers.find(
+    (server) => server.server.id === "server-1",
+  )!;
+  expect(home.latencyTarget).toBeNull();
+  expect(home.latency).toBeNull();
+  expect(
+    Object.values(home.latencyByStage).every((value) => value === null),
+  ).toBe(true);
+  expect(home.totalBytes.down).toBeGreaterThan(0);
+  expect(home.totalBytes.up).toBeGreaterThan(0);
+  expect(primary.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
+  expect(primary.latencyByStage.download?.probeCount).toBeGreaterThan(0);
+  expect(saved.multiServer?.latencyFocus).toBe("server-1");
+  await expect(page.locator(".latency-focus")).toContainText("Frankfurt");
+  await expect(page.locator(".latency-focus [role=radio]")).toHaveCount(0);
+  await page
+    .getByRole("radiogroup", { name: "Result measurements" })
+    .getByRole("radio", { name: "Home" })
+    .click();
+  await expect(page.locator(".result-cards")).toContainText(
+    "Not measured for this server",
+  );
+  await expect(page.locator(".latency-focus")).toContainText("Frankfurt");
+  await page.artifact("primary-latency-result");
+  await openSettings(page);
+  await settings.getByRole("link", { name: "View History" }).click();
+  await page.locator("a.result-row").first().click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await expect(page.locator(".saved-server-context")).toContainText(
+    "One latency server",
+  );
+  await page
+    .locator(".saved-server-context")
+    .getByRole("radiogroup", { name: "Result measurements" })
+    .getByRole("radio", { name: "Frankfurt" })
+    .click();
+  await expect(page.locator(".saved-server-context")).toContainText(
+    "Frankfurt",
+  );
+  await page.artifact("primary-latency-history");
+});
+
+for (const theme of ["light", "dark"] as const)
+  test(`${theme} compact server settings fit touch and keyboard use`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await configure(page, ["self", "server-1"]);
+    await ready(page);
+    await page.evaluate(
+      (value) => document.documentElement.setAttribute("data-theme", value),
+      theme,
+    );
+    const settings = await openSettings(page);
+    await settings
+      .getByRole("button", { name: "One server", exact: true })
+      .click();
+    const primary = settings.getByRole("radiogroup", {
+      name: "Primary latency server",
+    });
+    await primary.getByRole("radio", { name: "Home" }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(
+      primary.getByRole("radio", { name: "Frankfurt" }),
+    ).toBeFocused();
+    await expect(
+      primary.getByRole("radio", { name: "Frankfurt" }),
+    ).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await openSettings(page);
+    await expectNoHorizontalOverflow(settings);
+    const audit = await new AxeBuilder({ page })
+      .include('[aria-label="Settings"]')
+      .analyze();
+    expect(audit.violations).toEqual([]);
+    await page.artifact(`compact-server-settings-phone-${theme}`);
   });

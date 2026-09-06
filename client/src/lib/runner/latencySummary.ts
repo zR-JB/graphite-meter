@@ -1,4 +1,5 @@
 import type { StageLatencySummary } from "./contract";
+import { median } from "./stats";
 
 /** Raw outcomes own statistics; chart buckets never feed this accumulator. */
 export class LatencyAccumulator {
@@ -16,6 +17,8 @@ export class LatencyAccumulator {
   #previous: number | null = null;
   #continuityId = 0;
   #accountingComplete = true;
+  #snapshot: StageLatencySummary | null | undefined;
+  #windowMedian: { start: number; count: number; value: number } | undefined;
 
   get count(): number {
     return this.#replies + this.#timeouts;
@@ -32,6 +35,7 @@ export class LatencyAccumulator {
     rttEligible = true,
     reflectorHandlingMs?: number,
   ): void {
+    this.#snapshot = undefined;
     if (continuityId !== this.#continuityId) this.#previous = null;
     this.#continuityId = continuityId;
     if (timedOut) {
@@ -62,6 +66,7 @@ export class LatencyAccumulator {
 
   interrupt(count: number, reason: "unresolved" | "send-failed"): void {
     if (!Number.isSafeInteger(count) || count <= 0) return;
+    this.#snapshot = undefined;
     if (reason === "unresolved") this.#unresolved += count;
     else this.#sendFailures += count;
     this.#previous = null;
@@ -69,24 +74,37 @@ export class LatencyAccumulator {
 
   markAccountingIncomplete(): void {
     this.#accountingComplete = false;
+    this.#snapshot = undefined;
     this.#previous = null;
   }
 
+  /** Exact selected-window median; unchanged completed populations need no re-sorting. */
+  medianFrom(start: number): number {
+    if (start <= 0) return this.snapshot()?.p50Ms ?? 0;
+    const cached = this.#windowMedian;
+    if (cached?.start === start && cached.count === this.rtts.length)
+      return cached.value;
+    const value = median(this.rtts.slice(start));
+    this.#windowMedian = { start, count: this.rtts.length, value };
+    return value;
+  }
+
   snapshot(): StageLatencySummary | null {
+    if (this.#snapshot !== undefined) return this.#snapshot;
     if (
       !this.count &&
       !this.#unresolved &&
       !this.#sendFailures &&
       this.#accountingComplete
     )
-      return null;
+      return (this.#snapshot = null);
     const sorted = [...this.rtts].sort((a, b) => a - b);
     const rank = (p: number): number | null =>
       sorted.length
         ? sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)]
         : null;
     const mid = Math.floor(sorted.length / 2);
-    return {
+    return (this.#snapshot = {
       ...(this.#timingCount
         ? {
             reflectorTiming: {
@@ -116,6 +134,6 @@ export class LatencyAccumulator {
       p90Ms: rank(0.9),
       p95Ms: rank(0.95),
       jitterMs: this.#deltaCount ? this.#deltaSum / this.#deltaCount : null,
-    };
+    });
   }
 }

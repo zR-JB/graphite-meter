@@ -63,7 +63,7 @@
   <div class="settings-reset">
     <button
       type="button"
-      disabled={store.isRunning}
+      disabled={store.isRunning || store.preparing}
       onclick={() => (resetConfirmOpen = true)}>Reset settings</button
     >
   </div>
