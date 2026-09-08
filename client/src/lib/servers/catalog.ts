@@ -26,14 +26,35 @@ export function canonicalOrigin(value: unknown): string {
   return url.origin;
 }
 
+export function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1")
+    return true;
+  const octets = host.split(".").map(Number);
+  return (
+    octets.length === 4 &&
+    octets.every(
+      (part) => Number.isInteger(part) && part >= 0 && part <= 255,
+    ) &&
+    octets[0] === 127
+  );
+}
+
 /** Literal IPv6 hosts cannot be named in CSP; the page's own origin is covered by 'self'. */
 export function browserOriginRestriction(
   origin: string,
   pageOrigin: string,
 ): string | undefined {
-  const url = new URL(origin);
-  if (url.hostname.startsWith("[") && url.origin !== new URL(pageOrigin).origin)
+  const url = new URL(origin),
+    page = new URL(pageOrigin);
+  if (url.hostname.startsWith("[") && url.origin !== page.origin)
     return "Use a DNS hostname for browser connections to this IPv6 server.";
+  if (
+    page.protocol === "https:" &&
+    url.protocol === "http:" &&
+    !isLoopbackHostname(url.hostname)
+  )
+    return "Use an HTTPS origin for this server when the interface is HTTPS.";
 }
 
 function object(value: unknown): Record<string, unknown> {

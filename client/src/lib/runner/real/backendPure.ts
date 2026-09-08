@@ -17,7 +17,10 @@ import type {
 import type { LatencyEndpoint, ThroughputEndpoint } from "../../api/preflight";
 import { normalizeHttpProtocol } from "../protocol";
 import { kindsForRole } from "./transports";
-import { browserOriginRestriction } from "../../servers/catalog";
+import {
+  browserOriginRestriction,
+  isLoopbackHostname,
+} from "../../servers/catalog";
 
 /* Server route paths, the TS half of a cross-language pin. */
 export const ROUTES = {
@@ -94,20 +97,6 @@ export function protocolFromNextHop(
 ): ProtocolTarget | undefined {
   const protocol = normalizeHttpProtocol(nextHopProtocol);
   return protocol === "negotiated" ? undefined : protocol;
-}
-
-export function isLoopbackHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host.endsWith(".localhost") || host === "::1")
-    return true;
-  const octets = host.split(".").map(Number);
-  return (
-    octets.length === 4 &&
-    octets.every(
-      (part) => Number.isInteger(part) && part >= 0 && part <= 255,
-    ) &&
-    octets[0] === 127
-  );
 }
 
 function usableFromPage(

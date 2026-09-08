@@ -9,12 +9,12 @@ import {
   selectLatencyTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
-  isLoopbackHostname,
   throughputTargetKey,
   fetchViewOfWebTransport,
   targetOfKind,
   ROUTES,
 } from "./real/backendPure";
+import { isLoopbackHostname } from "../servers/catalog";
 import { kindsForRole, ridesSession } from "./real/transports";
 import type {
   PreparedPaths,
@@ -882,6 +882,40 @@ test("cross-origin IPv6 discovery and path preparation fail with DNS guidance be
     );
     expect(prepared.failure).toBeInstanceOf(BrowserOriginBlockedError);
     expect(prepared.validation.throughput.message).toContain("DNS hostname");
+    expect(requests).toBe(0);
+  } finally {
+    restore();
+  }
+});
+
+test("secure interfaces reject clear non-loopback discovery before any request", async () => {
+  let requests = 0;
+  const restore = stubProbeEnvironment(
+    (async (_input: RequestInfo | URL): Promise<Response> => {
+      requests++;
+      throw new Error("unexpected fetch");
+    }) as typeof fetch,
+    { location: "https://ui.example/" },
+  );
+  try {
+    const { discoverServer } = await import("./real/prepare");
+    const { BrowserOriginBlockedError } = await import("./real/transportError");
+    const failure = await discoverServer(new AbortController().signal, {
+      server: {
+        id: "clear",
+        name: "Clear server",
+        url: "http://meter.example:7246",
+      },
+      kind: "public",
+    }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+    expect(failure).toBeInstanceOf(BrowserOriginBlockedError);
+    expect(failure).toMatchObject({
+      message:
+        "Use an HTTPS origin for this server when the interface is HTTPS.",
+    });
     expect(requests).toBe(0);
   } finally {
     restore();

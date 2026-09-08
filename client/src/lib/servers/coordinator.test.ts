@@ -46,7 +46,7 @@ async function run(
       onStageBegin(activity) {
         calls.push(`begin:${id}`);
         if (
-          id === "a" &&
+          (id === "a" || options.dropAll) &&
           (options.initialFailure ||
             (options.laterPreparationFailure && activity.stage === "upload"))
         )
@@ -230,6 +230,24 @@ test("initial preparation failure requires resolving the selection", async () =>
   await expect(run({ initialFailure: true })).rejects.toMatchObject({
     reason: "protocol-error",
   });
+});
+
+test("all peers failing later preparation retain a valid incomplete history record", async () => {
+  const { result } = await run({
+    laterPreparationFailure: true,
+    dropAll: true,
+    pendingLatency: true,
+  });
+  expect(result.outcome).toBe("incomplete");
+  expect(result.multiServer?.participants).toEqual([]);
+  expect(result.download).not.toBeNull();
+  expect(result.upload).toBeNull();
+  expect(isMultiServerResult(result.multiServer)).toBe(true);
+  expect(
+    isHistoryRecord(
+      buildHistoryRecord(result, { paths: null, clientBuild: "test" }),
+    ),
+  ).toBe(true);
 });
 
 test("later preparation failure removes only its server and retains the completed stage", async () => {

@@ -48,3 +48,14 @@ test("idle and cancellation have no failure presentation", () => {
     preparationFailurePresentation({ ...base, status: "idle" }, "stale error"),
   ).toBeNull();
 });
+
+test("a refused start keeps its recovery instruction above old path failures", () => {
+  const detail =
+    "Open Settings to resolve the selected servers before starting.";
+  expect(
+    preparationFailurePresentation(
+      { status: "blocked", throughput: "failed", latency: "failed" },
+      detail,
+    ),
+  ).toEqual({ headline: "Test cannot start", detail });
+});

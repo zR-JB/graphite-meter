@@ -10,6 +10,8 @@ export function preparationFailurePresentation(
   preparation: Pick<PreparationState, "status" | "throughput" | "latency">,
   startError: string,
 ): PreparationFailurePresentation | null {
+  if (preparation.status === "blocked")
+    return { headline: "Test cannot start", detail: startError };
   if (preparation.status !== "failed") return null;
   const failedThroughput = preparation.throughput === "failed";
   const failedLatency = preparation.latency === "failed";

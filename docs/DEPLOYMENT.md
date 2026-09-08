@@ -227,6 +227,27 @@ server {
 }
 ```
 
+### Nginx Proxy Manager
+
+With Nginx Proxy Manager 2.15.1, create a Proxy Host with WebSocket support enabled
+and caching disabled. Use a negotiated backend (`GM_ADVERTISED_NATIVE_ENDPOINTS=none`,
+`GM_PUBLIC_ORIGINS=self`) and trust only the proxy's address or network.
+
+Put a complete `location / { ... }` block in the host's **Advanced** field, using
+the forwarding, buffering, body-size and timeout directives from the nginx example
+above. In that block, use `proxy_set_header Connection $http_connection;` instead
+of `$connection_upgrade`; the example's `map` belongs in nginx's `http` context,
+not NPM's Advanced field. Set `proxy_pass` to the backend address reachable from NPM.
+Do not also add a `/` entry under Custom Locations. NPM recognizes the Advanced
+location and omits its default one; inspect the generated host file and run
+`nginx -t` after saving.
+
+This explicit location also preserves a nonstandard public port with `$http_host`.
+NPM's default location uses `$host`, which removes that port, and its location-level
+headers override headers placed only at server level. Keep the entire measurement
+route family on this one backend. The [recorded validation](validation-0.8.1-deployments.md)
+includes the actual generated configuration and complete browser upload evidence.
+
 ### Caddy
 
 ```caddyfile

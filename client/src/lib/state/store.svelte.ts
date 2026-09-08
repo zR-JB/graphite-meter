@@ -79,7 +79,7 @@ import { BUILD } from "../buildenv";
 import { buildHistoryRecord, type HistoryRecord } from "../history/types";
 
 type PreparationStatus =
-  "idle" | "authenticating" | "checking" | "launching" | "failed";
+  "idle" | "blocked" | "authenticating" | "checking" | "launching" | "failed";
 
 export interface PreparationState {
   status: PreparationStatus;
@@ -236,7 +236,9 @@ class AppStore {
       : "disabled",
   }));
   preparing = $derived(
-    this.preparation.status !== "idle" && this.preparation.status !== "failed",
+    this.preparation.status === "authenticating" ||
+      this.preparation.status === "checking" ||
+      this.preparation.status === "launching",
   );
   throughput = $state<ThroughputSample[]>([]);
   throughputRevision = $state(0);

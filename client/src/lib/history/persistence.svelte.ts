@@ -1,17 +1,17 @@
 import type { store as applicationStore } from "../state/store.svelte";
 import { HistoryWriteQueue } from "./writeQueue";
 import { broadcastHistory, historyChanges, isHistoryChange } from "./changes";
+import { HistoryRepository } from "./repository";
 
 /** Owns optional result persistence for one mounted application. */
 export function mountHistoryPersistence(
   store: typeof applicationStore,
 ): () => void {
   let disposed = false;
-  let historyRepository: import("./repository").HistoryRepository | null = null;
+  let historyRepository: HistoryRepository | null = null;
   let permanentHistoryWarning = false;
   const historyQueue = new HistoryWriteQueue(
     async (candidate, isCurrent, generation) => {
-      const { HistoryRepository } = await import("./repository");
       if (disposed || !isCurrent()) return;
       historyRepository ??= new HistoryRepository();
       await historyRepository.put(candidate, generation);

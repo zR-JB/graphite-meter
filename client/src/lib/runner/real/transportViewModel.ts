@@ -4,8 +4,8 @@ import type {
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../../api/endpoints";
+import { isLoopbackHostname } from "../../servers/catalog";
 import {
-  isLoopbackHostname,
   blockedSelectionReason,
   locateTarget,
   selectLatencyTarget,
