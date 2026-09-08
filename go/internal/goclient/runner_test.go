@@ -9,13 +9,11 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -162,80 +160,7 @@ func TestRunnerEndpoint(t *testing.T) {
 }
 
 func testStageGate(start chan struct{}) *stageGate {
-	return &stageGate{start: start, ready: make(chan struct{}, 1), cancel: func(error) {}}
-}
-
-func TestStageGateWaitsForEveryParticipantBeforeWarmup(t *testing.T) {
-	for _, warmup := range []time.Duration{0, 30 * time.Millisecond} {
-		t.Run(warmup.String(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				var phases []StagePhase
-				r := &runner{cfg: Config{Warmup: warmup}, emit: func(e Event) { phases = append(phases, e.Phase) }}
-				gate := r.newStageGate(t.Context(), "bidirectional", 2)
-				defer gate.stop()
-				gate.ready <- struct{}{}
-				time.Sleep(200 * time.Millisecond)
-				synctest.Wait()
-				if len(phases) != 1 || phases[0] != StagePreparing {
-					t.Fatalf("one direction still preparing: phases=%v", phases)
-				}
-				gate.ready <- struct{}{}
-				synctest.Wait()
-				if warmup > 0 {
-					select {
-					case <-gate.start:
-						t.Fatal("warmup skipped after readiness")
-					default:
-					}
-					time.Sleep(warmup)
-					synctest.Wait()
-				}
-				select {
-				case <-gate.start:
-				default:
-					t.Fatal("measured window not opened")
-				}
-				want := []StagePhase{StagePreparing, StageMeasuring}
-				if warmup > 0 {
-					want = []StagePhase{StagePreparing, StageWarmup, StageMeasuring}
-				}
-				if !slices.Equal(phases, want) {
-					t.Fatalf("phases=%v, want %v", phases, want)
-				}
-			})
-		})
-	}
-}
-
-func TestStageGateSetupTimeoutAndCancellationCannotEmitMeasuring(t *testing.T) {
-	for _, cancelEarly := range []bool{false, true} {
-		t.Run(fmt.Sprint(cancelEarly), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				var phases []StagePhase
-				r := &runner{emit: func(e Event) { phases = append(phases, e.Phase) }}
-				ctx, cancel := context.WithCancel(t.Context())
-				defer cancel()
-				gate := r.newStageGate(ctx, "download", 1)
-				defer gate.stop()
-				if cancelEarly {
-					cancel()
-				} else {
-					time.Sleep(stageReadyTimeout)
-				}
-				synctest.Wait()
-				if gate.ctx.Err() == nil || !slices.Equal(phases, []StagePhase{StagePreparing}) {
-					t.Fatalf("unready stage: cause=%v phases=%v", context.Cause(gate.ctx), phases)
-				}
-				gate.ready <- struct{}{}
-				synctest.Wait()
-				select {
-				case <-gate.start:
-					t.Fatal("failed readiness opened the window")
-				default:
-				}
-			})
-		})
-	}
+	return &stageGate{start: start, reportReady: func() {}, cancel: func(error) {}}
 }
 
 func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
@@ -248,8 +173,8 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if err := r.runLatencyStage(ctx, "latency", false, captureWindow); err != nil {
-		t.Fatalf("runLatencyStage: %v", err)
+	if err := r.runTestStage(ctx, "latency", captureWindow); err != nil {
+		t.Fatalf("coordinated latency stage: %v", err)
 	}
 	if r.idleRTT <= 0 {
 		t.Error("idleRTT was not captured from the unloaded latency stage")
@@ -678,8 +603,8 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, captureWindow); err != nil {
-		t.Fatalf("runTransferStage: %v", err)
+	if err := r.runTestStage(ctx, "bidirectional", captureWindow); err != nil {
+		t.Fatalf("coordinated transfer stage: %v", err)
 	}
 
 	mu.Lock()
@@ -724,7 +649,7 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	begin := time.Now()
-	err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, 3*time.Second)
+	err := r.runTestStage(ctx, "bidirectional", 3*time.Second)
 	if err == nil {
 		t.Fatal("want an error surfaced from the failed upload session mint")
 	}
@@ -732,12 +657,12 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 		t.Errorf("err = %v, want it to mention the upload session's HTTP 500", err)
 	}
 	if elapsed := time.Since(begin); elapsed > 2*time.Second {
-		t.Errorf("runTransferStage took %v to return after a sibling lane errored, want prompt cancellation well under the 3s duration", elapsed)
+		t.Errorf("coordinated transfer stage took %v to return after a sibling lane errored, want prompt cancellation well under the 3s duration", elapsed)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	for _, event := range events {
-		if event.Kind != EventStage || event.Phase != StagePreparing {
+		if event.Kind == EventThroughput || event.Kind == EventLatency || event.Kind == EventResult || event.Kind == EventStage && event.Phase != StagePreparing {
 			t.Fatalf("preparation failure published measured data: %+v", event)
 		}
 	}
@@ -779,8 +704,8 @@ func TestLoadedLatencyResultPrecedesTheTransferResult(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	if err := r.runTransferStage(ctx, "download", []Direction{Down}, captureWindow); err != nil {
-		t.Fatalf("runTransferStage: %v", err)
+	if err := r.runTestStage(ctx, "download", captureWindow); err != nil {
+		t.Fatalf("coordinated transfer stage: %v", err)
 	}
 
 	mu.Lock()
@@ -881,7 +806,7 @@ func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 				}
 			}}
 			attachTestLatencyTarget(r, ping.URL)
-			if err := r.runTransferStage(t.Context(), "download", []Direction{Down}, duration); err != nil {
+			if err := r.runTestStage(t.Context(), "download", duration); err != nil {
 				t.Fatal(err)
 			}
 			if len(results) != 2 || results[0].Direction != "" || results[1].Direction != Down {

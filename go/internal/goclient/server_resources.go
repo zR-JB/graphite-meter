@@ -46,14 +46,14 @@ func (p *participantCounters) upload() (string, uint64, uint64) {
 	return p.uploadID, bytes, nanos
 }
 
-func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan error) (Result, error) {
+func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan error) error {
 	select {
 	case <-ctx.Done():
-		return Result{}, context.Cause(ctx)
+		return context.Cause(ctx)
 	case err := <-laneErr:
-		return Result{}, err
+		return err
 	case err := <-progressErr:
-		return Result{}, err
+		return err
 	}
 }
 

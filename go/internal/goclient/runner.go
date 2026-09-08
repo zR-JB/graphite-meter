@@ -359,11 +359,11 @@ func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
 	}
 }
 
-func (r *runner) measureDirection(ctx context.Context, stage string, dir Direction, duration time.Duration, gate *stageGate) (Result, error) {
+func (r *runner) measureDirection(ctx context.Context, dir Direction, gate *stageGate) error {
 	if dir == Down {
-		return r.measureDownload(ctx, stage, duration, gate)
+		return r.measureDownload(ctx, gate)
 	}
-	return r.measureUpload(ctx, stage, duration, gate)
+	return r.measureUpload(ctx, gate)
 }
 
 // Stage transport setup is bounded separately from warmup and the measured window.
@@ -372,19 +372,8 @@ const stageReadyTimeout = 10 * time.Second
 type stageGate struct {
 	reportReady   func()
 	boundaryStart time.Time
-	ctx           context.Context
 	cancel        context.CancelCauseFunc
-	ready         chan struct{}
 	start         chan struct{}
-	done          chan struct{}
-}
-
-func (g *stageGate) markReady() {
-	if g.reportReady != nil {
-		g.reportReady()
-		return
-	}
-	g.ready <- struct{}{}
 }
 
 func (r *runner) endpoint(path string) (string, error) {

@@ -23,25 +23,16 @@ func laneRetryPause(ctx context.Context) bool {
 	}
 }
 
-func windowCarriedBytes(ctx context.Context, stage string, dir Direction, stats rateStats) error {
-	if ctx.Err() != nil || stats.total > 0 {
-		return nil
-	}
-	return fmt.Errorf("%s %s carried no bytes in %v", stage, dir, stats.elapsed)
-}
-
-func (r *runner) measureDownload(ctx context.Context, stage string, duration time.Duration, gate *stageGate) (result Result, failure error) {
+func (r *runner) measureDownload(ctx context.Context, gate *stageGate) (failure error) {
 	var total atomic.Uint64
-	if r.coordinated != nil {
-		r.coordinated.attachDownload(&total)
-	}
+	r.coordinated.attachDownload(&total)
 	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
 			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
 		}, nil)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		defer host.close()
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
@@ -52,7 +43,7 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 	} else {
 		base, err := r.endpoint(r.routes().Download)
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		lane = func(laneCtx context.Context, i int, ready func()) error {
 			return r.downloadLane(laneCtx, base, i, &total, ready)
@@ -67,20 +58,13 @@ func (r *runner) measureDownload(ctx context.Context, stage string, duration tim
 		}
 	}()
 	if err := lanes.waitReady(ctx); err != nil {
-		return Result{}, err
+		return err
 	}
-	gate.markReady()
+	gate.reportReady()
 	if err := lanes.waitStart(ctx, gate.start, nil); err != nil {
-		return Result{}, err
+		return err
 	}
-	if r.coordinated != nil {
-		return waitCoordinatedTransfer(ctx, lanes.errs, nil)
-	}
-	stats, err := r.sampleLocalRates(ctx, stage, Down, &total, streams, duration, lanes.errs)
-	if err == nil {
-		err = windowCarriedBytes(ctx, stage, Down, stats)
-	}
-	return stats.result(stage, Down, false), err
+	return waitCoordinatedTransfer(ctx, lanes.errs, nil)
 }
 
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64, ready func()) error {
@@ -130,46 +114,6 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		}
 	}
 	return nil
-}
-
-func (r *runner) sampleLocalRates(ctx context.Context, stage string, dir Direction, total *atomic.Uint64, streams int, duration time.Duration, laneErr <-chan error) (rateStats, error) {
-	baseline := total.Load()
-	lastN := baseline
-	startT := time.Now()
-	lastT := startT
-	return rateLoop{
-		duration: duration,
-		laneErr:  laneErr,
-		window: func(stats *rateStats) {
-			stats.setWindow(total.Load()-baseline, time.Since(startT))
-		},
-		sample: func(now time.Time, stats *rateStats) {
-			n := total.Load()
-			delta := n - lastN
-			dt := now.Sub(lastT).Seconds()
-			lastN = n
-			lastT = now
-			if delta == 0 || dt <= 0 {
-				return
-			}
-			bps := float64(delta) / dt
-			measuredTotal := n - baseline
-			stats.add(bps)
-			r.emit(Event{
-				Kind:      EventThroughput,
-				At:        now,
-				Stage:     stage,
-				Direction: dir,
-				Throughput: ThroughputSample{
-					Stage:       stage,
-					Direction:   dir,
-					BytesPerSec: bps,
-					TotalBytes:  measuredTotal,
-					StreamCount: streams,
-				},
-			})
-		},
-	}.run(ctx)
 }
 
 func unexpectedStatus(res *http.Response) error {
