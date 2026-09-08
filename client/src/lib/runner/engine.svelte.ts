@@ -955,21 +955,29 @@ export function createApplicationController(
       cancelPendingStart();
       return;
     }
-    if (
-      store.unresolvedServers.length &&
-      store.serverCatalog?.servers.length === 1
-    ) {
-      store.startError =
-        "The saved selection changed. Open Settings to use this server.";
+    if (!store.serverCatalog) {
+      store.startError = store.catalogLoading
+        ? "Servers are still loading. Try again in a moment."
+        : "Open Settings to retry loading the server list.";
+      store.preparationStatus = "blocked";
       return;
     }
     if (
-      !store.serverCatalog ||
+      store.unresolvedServers.length &&
+      store.serverCatalog.servers.length === 1
+    ) {
+      store.startError =
+        "The saved selection changed. Open Settings to use this server.";
+      store.preparationStatus = "blocked";
+      return;
+    }
+    if (
       store.unresolvedServers.length ||
-      (!readySelected(false) && (store.serverCatalog?.servers.length ?? 0) > 1)
+      (!readySelected(false) && store.serverCatalog.servers.length > 1)
     ) {
       store.startError =
         "Open Settings to resolve the selected servers before starting.";
+      store.preparationStatus = "blocked";
       return;
     }
     const config = $state.snapshot(store.config);
