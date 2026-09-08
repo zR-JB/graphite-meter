@@ -226,7 +226,7 @@ func (c *nativeCoordinator) stage(ctx context.Context, stage StagePlan) (stageEr
 		r.coordinated = &participantCounters{}
 		r.streams = c.streams[stage.Name][participant.prepared.Server.ID]
 		launch := func(role string, ownCtx context.Context, ownCancel context.CancelCauseFunc) {
-			gate := &stageGate{ctx: ownCtx, cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{participant.prepared.Server.ID, role} }}
+			gate := &stageGate{cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{participant.prepared.Server.ID, role} }}
 			gates = append(gates, gate)
 			work.Go(func() {
 				var result Result
@@ -236,7 +236,7 @@ func (c *nativeCoordinator) stage(ctx context.Context, stage StagePlan) (stageEr
 					err = failure
 					result = Result{Stage: stage.Name, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: failure}
 				} else {
-					result, err = r.measureDirection(ownCtx, stage.Name, Direction(role), stage.Duration, gate)
+					err = r.measureDirection(ownCtx, Direction(role), gate)
 				}
 				outcomes <- resourceOutcome{server: server, role: role, result: result, err: err, at: time.Now()}
 			})
