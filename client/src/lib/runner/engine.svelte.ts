@@ -176,7 +176,6 @@ export function createApplicationController(
   >();
   let approval: AbortController | null = null;
   let approvalServerId: string | null = null;
-  let approvalPopup: Window | null = null;
   const selectionKey = () =>
     JSON.stringify([
       store.latencySelection.mode,
@@ -692,8 +691,6 @@ export function createApplicationController(
     approval = null;
     approvalServerId = null;
     store.serverApproval = null;
-    approvalPopup?.close();
-    approvalPopup = null;
   }
   async function signInServer(id: string) {
     const server = store.serverCatalog?.servers.find(
@@ -704,18 +701,10 @@ export function createApplicationController(
     approval = new AbortController();
     approvalServerId = id;
     const task = approval;
-    // Create the browsing context during the click. The visible URL remains a fallback when popups are blocked.
-    const popup = (approvalPopup = window.open(
-      "about:blank",
-      "_blank",
-      "popup,width=520,height=720",
-    ));
     try {
-      if (popup) popup.opener = null;
       const flow = await browserApproval(server);
       task.signal.throwIfAborted();
       store.serverApproval = { id, url: flow.url, code: flow.code };
-      if (popup) popup.location.replace(flow.url);
       const context = await flow.poll(task.signal);
       if (approval !== task) return;
       contexts.set(id, context);
@@ -749,10 +738,8 @@ export function createApplicationController(
       }
     } finally {
       if (approval === task) {
-        popup?.close();
         approval = null;
         approvalServerId = null;
-        approvalPopup = null;
       }
     }
   }

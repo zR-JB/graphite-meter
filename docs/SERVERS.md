@@ -188,14 +188,17 @@ selection. Protected peers each use their own explicit browser approval.
 
 ## Independent sign-in
 
-Choosing Sign in opens that server's existing password/OIDC login followed by an
-approval page naming the requesting interface's exact HTTPS origin. If a popup is
-blocked, use the visible Open sign-in page link. Compare the eight-character code
+Choosing Sign in shows an Open sign-in page link. Open it in a new tab for that
+server's existing password/OIDC login followed by an approval page naming the
+requesting interface's exact HTTPS origin. Compare the eight-character code
 shown in Settings with the approval page and approve only when both match.
+An existing login on that server is reused; authorizing another interface does
+not renew the login or revoke its other clients.
 Approval uses the server's ordinary
 first-party session and CSRF protection. The requesting page polls a verifier-bound
 exchange, so opener access and cross-origin message delivery are unnecessary.
-Cancel sign-in stops the pending exchange and closes its owned popup. Retrying
+Cancel sign-in stops this interface's pending exchange. The sign-in tab is isolated
+from the requesting interface; close it yourself after approval or cancellation. Retrying
 creates a fresh approval; deselecting that server also cancels a pending approval.
 
 The resulting measurement-only bearer grant stays in memory, belongs to its issuer
