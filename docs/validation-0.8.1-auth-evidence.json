@@ -700,5 +700,227 @@
     "privateMapMemoryProfiling": false,
     "productionInternetIdPDeployment": false,
     "integratedHeadAndCodeQL": "Required separately before issue closure"
+  },
+  "integratedReplay": {
+    "revision": "e1cbcf69642f0d357c1d58a240521edf51f46da6",
+    "vcsModified": false,
+    "binarySha256": "171923487730ffaa01283c6ef478ed398439914ba2bf5d623e151555ae38888c",
+    "serverLabel": "e1cbcf6",
+    "completedAtUTC": "2026-09-08T18:18:40.865322+00:00",
+    "setup": "Same independent HTTPS password and Keycloak origins and cookie/popup settings as docs/validation-0.8.1-auth.md",
+    "results": {
+      "reuse-chrome": [
+        {
+          "name": "existing-login-reuse-password",
+          "browser": "152.0.7977.82",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        },
+        {
+          "name": "existing-login-reuse-oidc",
+          "browser": "152.0.7977.82",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        }
+      ],
+      "reuse-firefox": [
+        {
+          "name": "existing-login-reuse-password",
+          "browser": "155.0",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        },
+        {
+          "name": "existing-login-reuse-oidc",
+          "browser": "155.0",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        }
+      ],
+      "late-response": [
+        {
+          "name": "cancel-after-server-issued-before-delivery",
+          "pollsBefore": 2,
+          "pollsAfter": 2,
+          "grantUsed": false,
+          "approvalUiVisible": 0,
+          "startButton": "START TEST\n~7s"
+        }
+      ],
+      "measurement": [
+        {
+          "name": "approval-password",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "approval-oidc",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "run-start",
+          "readiness": [
+            "Ready"
+          ]
+        },
+        {
+          "name": "fetch-websocket-run",
+          "outcome": "complete",
+          "participants": [
+            "password",
+            "oidc"
+          ],
+          "stages": {
+            "latency": "complete",
+            "download": "complete",
+            "upload": "complete",
+            "bidirectional": "complete"
+          },
+          "totalBytes": 5773123347,
+          "transport": {
+            "throughput": {
+              "protocol": "http/1.1",
+              "kind": "fetch-stream"
+            },
+            "latency": {
+              "protocol": "http/1.1",
+              "kind": "websocket"
+            }
+          },
+          "failures": []
+        },
+        {
+          "name": "grant-binding-password",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "grant-binding-oidc",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "persisted-credentials",
+          "localStorageContainsGrant": false,
+          "historyContainsGrant": false
+        },
+        {
+          "name": "measurement-headers",
+          "observedResponses": 170,
+          "cookieResponses": 0
+        },
+        {
+          "name": "socket-urls",
+          "sockets": [
+            {
+              "origin": "wss://password184.test:8443",
+              "path": "/ws/ping",
+              "queryKeys": [
+                "token"
+              ]
+            },
+            {
+              "origin": "wss://oidc184.test:9443",
+              "path": "/ws/ping",
+              "queryKeys": [
+                "token"
+              ]
+            }
+          ],
+          "reusableGrantInUrl": false,
+          "socketCount": 10
+        }
+      ],
+      "webtransport": [
+        {
+          "name": "approval-password",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "approval-oidc",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "run-start",
+          "readiness": [
+            "Checking paths"
+          ]
+        },
+        {
+          "name": "webtransport-run",
+          "outcome": "complete",
+          "participants": [
+            "password",
+            "oidc"
+          ],
+          "stages": {
+            "latency": "complete",
+            "download": "complete",
+            "upload": "complete",
+            "bidirectional": "complete"
+          },
+          "totalBytes": 638486218,
+          "transport": {
+            "throughput": {
+              "protocol": "h3",
+              "kind": "webtransport"
+            },
+            "latency": {
+              "protocol": "h3",
+              "kind": "webtransport"
+            }
+          },
+          "failures": []
+        },
+        {
+          "name": "grant-binding-password",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "grant-binding-oidc",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "persisted-credentials",
+          "localStorageContainsGrant": false,
+          "historyContainsGrant": false
+        },
+        {
+          "name": "measurement-headers",
+          "observedResponses": 72,
+          "cookieResponses": 0
+        },
+        {
+          "name": "socket-urls",
+          "sockets": [],
+          "reusableGrantInUrl": false
+        }
+      ]
+    }
   }
 }

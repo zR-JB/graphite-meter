@@ -128,3 +128,30 @@ The matrix found no remaining auth defect after these fixes. Closing #184 still
 requires the integrated revision's applicable gates, resolved CodeQL review,
 and a key-flow replay on the integrated build; those release checks are distinct
 from this candidate deployment report.
+
+## Integrated-build replay
+
+The key flows were repeated on 2026-09-08 against
+`e1cbcf69642f0d357c1d58a240521edf51f46da6`, built with
+`vcs.modified=false`. The supplied production binary had SHA-256
+`171923487730ffaa01283c6ef478ed398439914ba2bf5d623e151555ae38888c`;
+all three deployed servers identified themselves as `e1cbcf6`.
+The independent HTTPS/password/Keycloak fixture and cookie settings above were
+retained.
+
+- Chrome 152.0.7977.82 and Firefox 155.0 each authorized two requesting interfaces
+  against both protected peers. The second authorization reused each existing
+  parent login, both old and new grants returned 200, and sign-in tabs had no opener.
+- Canceling after real server issuance but before response delivery stopped
+  polling at two requests. Releasing the response installed no usable grant and
+  started no measurement.
+- Both peers completed idle latency, download, upload, and bidirectional stages
+  over fetch/WebSocket (5,773,123,347 transferred bytes) and WebTransport
+  (638,486,218 bytes), with no failures.
+- The sampled successful bearer responses numbered 170 and 72 respectively;
+  none carried cookies. Wrong requesting origins and issuers returned 403.
+  Reusable grants were absent from socket URLs, localStorage, and saved history.
+
+These results supplement the broader lifecycle matrix. They do not extend its
+stated eight-hour-soak, public-provider, or private-map-profiling coverage.
+Integrated repository gates and CodeQL review are recorded separately.

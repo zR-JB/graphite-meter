@@ -894,7 +894,7 @@ test("a full remote login offers explicit renewal and discards the old approval 
 });
 
 for (const transport of ["websocket", "webtransport"] as const)
-  test(`protected peer ${transport} approval works without third-party cookies and with the popup fallback`, async ({
+  test(`protected peer ${transport} approval works without third-party cookies through the isolated sign-in link`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
