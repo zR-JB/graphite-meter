@@ -196,11 +196,35 @@ clear native paths from HTTPS; Linux WebKit rejected the grouped clear HTTP/WebS
 requests. Operators should expose HTTPS/WSS paths for HTTPS interfaces rather than
 rely on a clear-loopback exception across browsers.
 
+### Actual upgrade and native IPv6 follow-up
+
+The same-origin upgrade fixture replaced the production binary built from the released
+`v0.8.0` source (`f6f32a3f51b229c4b45fae67886e41eb6f6e58cc`) with the production
+`aeab964a0c103fa24bffe566cc456570e77f2778` binary. It kept
+`https://localhost:18361`, the server name, configuration and Chrome profile unchanged.
+After reloading, discovery changed `engineVersion` from `f6f32a3` to `aeab964` and
+reported a different generation. Both measurements completed with authoritative upload.
+History retained the first result and saved the second with their respective engine
+revisions; both selections kept the same `self` ID, URL and name. No page errors occurred.
+This is an actual old-release-source to current-source process replacement, using locally
+built production binaries, not a downloaded release-package or container migration test.
+The evidence retains both binary checksums, discovery payloads and saved records.
+
+A native client built with Go 1.27.1 from current main
+`925a55b0678116e81489108bb9233a0c56552a45` also completed against the `aeab964`
+server at `http://[2001:db8:183::1]:18310`. This non-loopback IPv6 address was assigned
+to the local interface. The probe reports that IPv6 socket source; the client used H1
+fetch throughput and explicitly selected clear WebSocket latency. It completed download,
+upload and latency, displayed `server-clock` upload and exited successfully. The result
+preserves one unresolved idle-latency sample and one unresolved download-latency sample.
+It does not establish routed IPv6 reachability or performance. The alias and fixture were
+removed after the run.
+
 **Untested:** genuine Safari/macOS/iOS, physical mobile/touch hardware, actual public/LAN/VPN
-deployments, recursive/public DNS behavior, routed/global IPv6, native non-loopback IPv6,
+deployments, recursive/public DNS behavior, routed/global IPv6,
 interactive permission-prompt clicks or managed browser policies, production public-CA
-WebTransport trust, multi-backend load-balancer affinity, and an upgrade from an older
-released server binary. Authentication/sign-in controls are covered separately by issue #184.
+WebTransport trust, multi-backend load-balancer affinity, and downloaded release-package
+or container upgrade mechanics. Authentication/sign-in controls are covered separately by issue #184.
 ### Proposed disposition of untested cases
 
 These are explicit coverage gaps, not passes. The recommendation is to keep them as
@@ -212,11 +236,11 @@ retests and the release gates pass. The release owner makes the final dispositio
 | Genuine Safari/macOS/iOS | Linux WebKit now exercises the engine with real measurements and exposed a defect requiring correction; it does not establish Apple platform behavior. Keep Safari/iOS smoke testing as a named follow-up. |
 | Physical mobile/touch hardware | Emulated touch, narrow layout, keyboard focus and reduced motion pass. Hardware input, mobile networking, energy use and rendering performance remain unmeasured. |
 | Actual public/LAN/VPN and routed/global IPv6 | Local interfaces exercise browser address-space rules, multi-server measurement, egress denial and real DNS AAAA resolution. They do not establish routing, VPN interception, MTU or network performance. |
-| Native non-loopback IPv6; recursive/public DNS | Native IPv6-literal measurement and browser AAAA measurement pass separately. Recursive DNS, propagation and native routed IPv6 remain follow-ups. |
+| Recursive/public DNS; native routed IPv6 | Native loopback and non-loopback local-alias IPv6 measurements and browser AAAA measurement pass separately. Recursive DNS, propagation and native routed IPv6 remain follow-ups. |
 | Interactive permission prompts; managed policies | Browser permission states were denied, granted, revoked and regranted through CDP with real blocked/allowed requests. Native prompt interaction and enterprise overrides are separate coverage. |
 | Production public-CA WebTransport trust | Forced H3 carried bytes only with a narrow temporary-certificate accommodation. UDP failure and WebTransport-unavailable fallback pass; public-CA H3 trust remains unverified. |
 | Multiple backend affinity | The documented single-backend NPM deployment carried all upload session/progress/checkpoint routes. No multi-backend deployment is claimed validated. |
-| Upgrade from an older released server | Restart, generation and identity rediscovery pass with the same binary. Old-to-new compatibility still needs a release-upgrade smoke test. |
+| Downloaded package/container upgrade mechanics | Actual replacement of the old-release-source binary with the current binary passes with stable identity, refreshed generation/version and preserved history. Package installation and container migration are separate coverage. |
 
 Authentication/sign-in behavior and its release disposition belong to the separate
 issue #184 validation report.
