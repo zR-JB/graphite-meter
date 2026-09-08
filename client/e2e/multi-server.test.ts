@@ -781,9 +781,10 @@ test("enabling all latency checks only the new peer path and retries leave healt
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible({ timeout: 15000 });
   const added = await checks();
+  // Grouped WebSocket selection keeps the new peer's probe on TLS.
   expect(added.fetches.slice(4).map((url) => new URL(url).origin)).toEqual([
     fleet[3].url,
-    fleet[3].http,
+    fleet[3].url,
   ]);
   expect(added.workers).toBe(3);
 });
