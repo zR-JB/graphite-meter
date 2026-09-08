@@ -1,0 +1,926 @@
+{
+  "issue": 184,
+  "date": "2026-09-08",
+  "baselineRevision": "f6f32a3f51b229c4b45fae67886e41eb6f6e58cc",
+  "changeRevisions": [
+    "a3fa0ed6bca283fef3ca3526cff1999dd79c8c44",
+    "2fb77c2f681da470bc2a27096020eaaabf95c957"
+  ],
+  "exactCandidate": {
+    "revision": "2fb77c2f681da470bc2a27096020eaaabf95c957",
+    "vcsModified": false,
+    "binarySha256": "8e9a1f9d6251b60b2a938da8e3cb08522cba8abf572e7e03238a69b8a7534a6c",
+    "clientAndServerLabel": "2fb77c2",
+    "replayedCases": [
+      "measurement",
+      "reuse-firefox",
+      "late-response"
+    ]
+  },
+  "broaderMatrix": {
+    "note": "Cases not listed in exactCandidate.replayedCases ran during development of these two changes. The initial matrix used the isolated-tab change; reuse cases included the strict-session continuation. No session lifetime, auth counter or resource limit was patched.",
+    "initialBinarySha256": "c2ae1b5cd80304e48c7753fd137bf5b35f5e2b9682d355419ddb7aae8bcd4144",
+    "strictContinuationBinarySha256": "ba2af926709e7c963655f43b57f55ccc3aadd30011a4c2ced4e453fdd0364b52"
+  },
+  "browsers": {
+    "chrome": "152.0.7977.82",
+    "firefox": "155.0"
+  },
+  "provider": {
+    "name": "Keycloak",
+    "version": "26.3.3",
+    "imageDigest": "sha256:6a7217a100bd3e5de4063a27a538ef999a3c5a88c4b4ec0ffc0a642aee7b2597"
+  },
+  "results": {
+    "measurement": [
+      {
+        "name": "approval-password",
+        "exactOrigin": true,
+        "matchingCodeLength": 8,
+        "openerNull": true,
+        "popupClosed": false
+      },
+      {
+        "name": "approval-oidc",
+        "exactOrigin": true,
+        "matchingCodeLength": 8,
+        "openerNull": true,
+        "popupClosed": false
+      },
+      {
+        "name": "run-start",
+        "readiness": [
+          "Ready"
+        ]
+      },
+      {
+        "name": "fetch-websocket-run",
+        "outcome": "complete",
+        "participants": [
+          "password",
+          "oidc"
+        ],
+        "stages": {
+          "latency": "complete",
+          "download": "complete",
+          "upload": "complete",
+          "bidirectional": "complete"
+        },
+        "totalBytes": 5431442070,
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": []
+      },
+      {
+        "name": "grant-binding-password",
+        "correct": 200,
+        "wrongOrigin": 403,
+        "wrongIssuer": 403
+      },
+      {
+        "name": "grant-binding-oidc",
+        "correct": 200,
+        "wrongOrigin": 403,
+        "wrongIssuer": 403
+      },
+      {
+        "name": "persisted-credentials",
+        "localStorageContainsGrant": false,
+        "historyContainsGrant": false
+      },
+      {
+        "name": "measurement-headers",
+        "observedResponses": 170,
+        "cookieResponses": 0
+      },
+      {
+        "name": "socket-urls",
+        "sockets": [
+          {
+            "origin": "wss://password184.test:8443",
+            "path": "/ws/ping",
+            "queryKeys": [
+              "token"
+            ]
+          },
+          {
+            "origin": "wss://oidc184.test:9443",
+            "path": "/ws/ping",
+            "queryKeys": [
+              "token"
+            ]
+          }
+        ],
+        "reusableGrantInUrl": false,
+        "socketCount": 10
+      }
+    ],
+    "webtransport": [
+      {
+        "name": "approval-password",
+        "exactOrigin": true,
+        "matchingCodeLength": 8,
+        "openerNull": true,
+        "popupClosed": false
+      },
+      {
+        "name": "approval-oidc",
+        "exactOrigin": true,
+        "matchingCodeLength": 8,
+        "openerNull": true,
+        "popupClosed": false
+      },
+      {
+        "name": "run-start",
+        "readiness": [
+          "Ready"
+        ]
+      },
+      {
+        "name": "webtransport-run",
+        "outcome": "complete",
+        "participants": [
+          "password",
+          "oidc"
+        ],
+        "stages": {
+          "latency": "complete",
+          "download": "complete",
+          "upload": "complete",
+          "bidirectional": "complete"
+        },
+        "totalBytes": 1075915381,
+        "transport": {
+          "throughput": {
+            "protocol": "h3",
+            "kind": "webtransport"
+          },
+          "latency": {
+            "protocol": "h3",
+            "kind": "webtransport"
+          }
+        },
+        "failures": []
+      },
+      {
+        "name": "grant-binding-password",
+        "correct": 200,
+        "wrongOrigin": 403,
+        "wrongIssuer": 403
+      },
+      {
+        "name": "grant-binding-oidc",
+        "correct": 200,
+        "wrongOrigin": 403,
+        "wrongIssuer": 403
+      },
+      {
+        "name": "persisted-credentials",
+        "localStorageContainsGrant": false,
+        "historyContainsGrant": false
+      },
+      {
+        "name": "measurement-headers",
+        "observedResponses": 74,
+        "cookieResponses": 0
+      },
+      {
+        "name": "socket-urls",
+        "sockets": [],
+        "reusableGrantInUrl": false
+      }
+    ],
+    "capacity": [
+      {
+        "name": "eight-client-limit",
+        "approved": 8,
+        "ninthStatus": 429,
+        "renewalVisible": true
+      },
+      {
+        "name": "upload-owner-isolation",
+        "ownerWrite": 200,
+        "otherInspect": 403,
+        "otherDelete": 403,
+        "otherWrite": 403,
+        "ownerDelete": 204
+      },
+      {
+        "name": "before-renewal",
+        "password": {
+          "closed": false,
+          "pongs": 5,
+          "bytes": 121634816,
+          "downloadEnded": false
+        },
+        "oidc": {
+          "closed": false,
+          "pongs": 4,
+          "bytes": 117440512,
+          "downloadEnded": false
+        }
+      },
+      {
+        "name": "after-renewal",
+        "password": {
+          "closed": true,
+          "pongs": 41,
+          "bytes": 1051590656,
+          "downloadEnded": true
+        },
+        "oidc": {
+          "closed": false,
+          "pongs": 68,
+          "bytes": 1679818752,
+          "downloadEnded": false
+        }
+      },
+      {
+        "name": "renewal-revocation",
+        "oldGrantStatuses": [
+          403,
+          403,
+          403,
+          403,
+          403,
+          403,
+          403,
+          403
+        ],
+        "independentPeer": 200
+      },
+      {
+        "name": "fresh-after-renewal",
+        "approvalStatus": 200,
+        "exchangeStatus": 200,
+        "measurementStatus": 200
+      }
+    ],
+    "cancellation": [
+      {
+        "name": "late-approval",
+        "pollsBefore": 1,
+        "pollsAfter": 1,
+        "grantsReceived": 0,
+        "requesterClosed": false,
+        "selection": [
+          {
+            "id": "password",
+            "url": "https://password184.test:8443"
+          },
+          {
+            "id": "oidc",
+            "url": "https://oidc184.test:9443"
+          }
+        ],
+        "startButton": "START TEST\n~7s"
+      },
+      {
+        "name": "cancel-before-login",
+        "passed": true,
+        "tabUserOwned": true
+      },
+      {
+        "name": "late-approval",
+        "pollsBefore": 2,
+        "pollsAfter": 2,
+        "grantsReceived": 0,
+        "requesterClosed": false,
+        "selection": [
+          {
+            "id": "oidc",
+            "url": "https://oidc184.test:9443"
+          }
+        ],
+        "startButton": "START TEST\n~7s"
+      },
+      {
+        "name": "deselect-before-approval",
+        "passed": true
+      },
+      {
+        "name": "late-approval",
+        "pollsBefore": 3,
+        "pollsAfter": 3,
+        "grantsReceived": 0,
+        "requesterClosed": false,
+        "selection": [
+          {
+            "id": "password",
+            "url": "https://password184.test:8443"
+          },
+          {
+            "id": "oidc",
+            "url": "https://oidc184.test:9443"
+          }
+        ],
+        "startButton": "START TEST\n~7s"
+      },
+      {
+        "name": "reload-before-approval",
+        "passed": true
+      },
+      {
+        "name": "late-approval",
+        "pollsBefore": 4,
+        "pollsAfter": 4,
+        "grantsReceived": 0,
+        "requesterClosed": true,
+        "selection": null,
+        "startButton": null
+      },
+      {
+        "name": "dispose-before-approval",
+        "passed": true
+      }
+    ],
+    "revoke-download": [
+      {
+        "name": "logout-during-download",
+        "status": 200
+      },
+      {
+        "name": "survivor-result",
+        "outcome": "partial",
+        "participants": [
+          "oidc"
+        ],
+        "failures": [
+          {
+            "serverId": "password",
+            "stage": "download",
+            "atMs": 2727.5,
+            "scope": "latency",
+            "reason": "connection-lost",
+            "message": "Latency observations were interrupted"
+          },
+          {
+            "serverId": "password",
+            "stage": "download",
+            "atMs": 2942.7999999998137,
+            "scope": "throughput",
+            "reason": "connection-lost",
+            "message": "Sign in again to measure throughput"
+          }
+        ],
+        "topFailures": [],
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "password",
+              "oidc"
+            ],
+            "reason": "stage-start",
+            "complete": true
+          },
+          {
+            "stage": "download",
+            "participants": [
+              "oidc"
+            ],
+            "reason": "dropout",
+            "complete": true
+          }
+        ],
+        "totalBytes": 12962168832
+      },
+      {
+        "name": "reauthorization-feedback",
+        "feedback": [
+          "Password validation Sign in to Password validation Sign in to Password validation "
+        ]
+      }
+    ],
+    "revoke-upload": [
+      {
+        "name": "logout-during-upload",
+        "status": 200
+      },
+      {
+        "name": "survivor-result",
+        "outcome": "partial",
+        "participants": [
+          "oidc"
+        ],
+        "failures": [
+          {
+            "serverId": "password",
+            "stage": "upload",
+            "atMs": 2891.699999999255,
+            "scope": "latency",
+            "reason": "connection-lost",
+            "message": "Latency observations were interrupted"
+          },
+          {
+            "serverId": "password",
+            "stage": "upload",
+            "atMs": 2894.699999999255,
+            "scope": "throughput",
+            "reason": "connection-lost",
+            "message": "Sign in again to measure upload"
+          }
+        ],
+        "topFailures": [],
+        "intervals": [
+          {
+            "stage": "upload",
+            "participants": [
+              "password",
+              "oidc"
+            ],
+            "reason": "stage-start",
+            "complete": true
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "oidc"
+            ],
+            "reason": "dropout",
+            "complete": true
+          }
+        ],
+        "totalBytes": 5935463235
+      },
+      {
+        "name": "reauthorization-feedback",
+        "feedback": [
+          "Password validation Sign in to Password validation Sign in to Password validation "
+        ]
+      }
+    ],
+    "tickets": [
+      {
+        "name": "socket-single-use",
+        "firstConnection": true,
+        "replayConnection": false,
+        "lifetimeMs": 29974
+      },
+      {
+        "name": "socket-destination-binding",
+        "wrongDestinationStatus": 403,
+        "consumedAfterMismatch": true
+      },
+      {
+        "name": "socket-route-binding",
+        "wrongRouteConnected": false
+      },
+      {
+        "name": "socket-origin-binding",
+        "wrongOriginConnected": false,
+        "reusableAfterMismatch": false
+      },
+      {
+        "name": "third-party-cookie-enforcement",
+        "probeCookieSet": true,
+        "evidence": [
+          {
+            "blockedReasons": [
+              "UserPreferences"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "ticket-expiry-wait",
+        "milliseconds": 29945
+      },
+      {
+        "name": "socket-expiry",
+        "expiredTicketConnected": false
+      }
+    ],
+    "quota": [
+      {
+        "name": "public-approval-capacity",
+        "attempts": 270,
+        "statusCounts": {
+          "303": 255,
+          "403": 15
+        },
+        "existingPasswordPeer": 200
+      },
+      {
+        "name": "callback-during-capacity",
+        "matchingCode": true,
+        "oidcMeasurement": 200
+      },
+      {
+        "name": "expiry-wait",
+        "seconds": 123
+      },
+      {
+        "name": "approval-admission-after-expiry",
+        "status": 200,
+        "existingOidcGrant": 200,
+        "existingPasswordGrant": 200
+      }
+    ],
+    "firefox": [
+      {
+        "name": "browser",
+        "version": "155.0",
+        "thirdPartyCookieBehavior": 1,
+        "popupBlocking": true
+      },
+      {
+        "name": "approval-password",
+        "matchingEightCharacterCode": true,
+        "exactRequesterOrigin": true,
+        "openerNull": true
+      },
+      {
+        "name": "approval-oidc",
+        "matchingEightCharacterCode": true,
+        "exactRequesterOrigin": true,
+        "openerNull": true
+      },
+      {
+        "name": "approved-measurement-access",
+        "password": 200,
+        "oidc": 200
+      },
+      {
+        "name": "third-party-cookie-probe",
+        "observed": true,
+        "cookieSent": false
+      },
+      {
+        "name": "reload-requires-approval",
+        "signInButtons": 2
+      },
+      {
+        "name": "canceled-late-approval",
+        "pollsBefore": 6,
+        "pollsAfter": 6,
+        "waitingUi": 0,
+        "startButton": "START TEST\n~7s"
+      }
+    ],
+    "abandon": [
+      {
+        "name": "wrong-password-recovery",
+        "notice": "Incorrect password. Check it and try again.",
+        "retryField": true
+      },
+      {
+        "name": "approval-declined",
+        "tabClosed": true,
+        "grantCount": 0,
+        "waitSeconds": 123
+      },
+      {
+        "name": "abandoned-approval-expiry",
+        "feedback": [
+          "Approval expired. Sign in again.",
+          "Approval did not finish. Try Sign in again."
+        ],
+        "grantCount": 0
+      },
+      {
+        "name": "retry-after-decline",
+        "freshCode": true,
+        "grantAvailable": true
+      },
+      {
+        "name": "ordinary-log-credential-scan",
+        "reusableCredentialCount": 5,
+        "matchingValues": 0
+      },
+      {
+        "name": "reload-after-success",
+        "signInButtons": 2,
+        "automaticMeasurement": false
+      }
+    ],
+    "late-response": [
+      {
+        "name": "cancel-after-server-issued-before-delivery",
+        "pollsBefore": 2,
+        "pollsAfter": 2,
+        "grantUsed": false,
+        "approvalUiVisible": 0,
+        "startButton": "START TEST\n~7s"
+      }
+    ],
+    "reuse-limit": [
+      {
+        "name": "eight-requester-tabs",
+        "explicitPasswordLogins": 1,
+        "approvals": 8,
+        "firstGrant": 200,
+        "independentOidc": 200
+      },
+      {
+        "name": "ninth-tab-capacity",
+        "peerRenewalLink": true,
+        "requesterRenewalLink": true
+      },
+      {
+        "name": "explicit-renewal-after-eight-tabs",
+        "oldGrantStatuses": [
+          403,
+          403,
+          403,
+          403,
+          403,
+          403,
+          403,
+          403
+        ],
+        "independentOidc": 200
+      },
+      {
+        "name": "fresh-tab-after-renewal",
+        "unnecessaryLogin": false,
+        "measurement": 200
+      }
+    ],
+    "reuse-chrome": [
+      {
+        "name": "existing-login-reuse-password",
+        "browser": "152.0.7977.82",
+        "passwordOrProviderLoginRequested": false,
+        "firstGrantAfterSecondApproval": 200,
+        "secondGrant": 200,
+        "openerNull": true
+      },
+      {
+        "name": "existing-login-reuse-oidc",
+        "browser": "152.0.7977.82",
+        "passwordOrProviderLoginRequested": false,
+        "firstGrantAfterSecondApproval": 200,
+        "secondGrant": 200,
+        "openerNull": true
+      }
+    ],
+    "reuse-firefox": [
+      {
+        "name": "existing-login-reuse-password",
+        "browser": "155.0",
+        "passwordOrProviderLoginRequested": false,
+        "firstGrantAfterSecondApproval": 200,
+        "secondGrant": 200,
+        "openerNull": true
+      },
+      {
+        "name": "existing-login-reuse-oidc",
+        "browser": "155.0",
+        "passwordOrProviderLoginRequested": false,
+        "firstGrantAfterSecondApproval": 200,
+        "secondGrant": 200,
+        "openerNull": true
+      }
+    ],
+    "redirect": [
+      {
+        "name": "measurement-redirect-rejection",
+        "redirectResponses": 1,
+        "redirectDestinationRequests": 0,
+        "feedback": [
+          "Password validation Server could not be reached Retry Password validation ",
+          "OIDC validation Sign in to OIDC validation Sign in to OIDC validation "
+        ]
+      }
+    ]
+  },
+  "coverageDisposition": {
+    "eightHourWallClockSoak": false,
+    "productionExpiryRegression": true,
+    "realApprovalAndTicketExpiry": true,
+    "privateMapMemoryProfiling": false,
+    "productionInternetIdPDeployment": false,
+    "integratedHeadAndCodeQL": "Required separately before issue closure"
+  },
+  "integratedReplay": {
+    "revision": "e1cbcf69642f0d357c1d58a240521edf51f46da6",
+    "vcsModified": false,
+    "binarySha256": "171923487730ffaa01283c6ef478ed398439914ba2bf5d623e151555ae38888c",
+    "serverLabel": "e1cbcf6",
+    "completedAtUTC": "2026-09-08T18:18:40.865322+00:00",
+    "setup": "Same independent HTTPS password and Keycloak origins and cookie/popup settings as docs/validation-0.8.1-auth.md",
+    "results": {
+      "reuse-chrome": [
+        {
+          "name": "existing-login-reuse-password",
+          "browser": "152.0.7977.82",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        },
+        {
+          "name": "existing-login-reuse-oidc",
+          "browser": "152.0.7977.82",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        }
+      ],
+      "reuse-firefox": [
+        {
+          "name": "existing-login-reuse-password",
+          "browser": "155.0",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        },
+        {
+          "name": "existing-login-reuse-oidc",
+          "browser": "155.0",
+          "passwordOrProviderLoginRequested": false,
+          "firstGrantAfterSecondApproval": 200,
+          "secondGrant": 200,
+          "openerNull": true
+        }
+      ],
+      "late-response": [
+        {
+          "name": "cancel-after-server-issued-before-delivery",
+          "pollsBefore": 2,
+          "pollsAfter": 2,
+          "grantUsed": false,
+          "approvalUiVisible": 0,
+          "startButton": "START TEST\n~7s"
+        }
+      ],
+      "measurement": [
+        {
+          "name": "approval-password",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "approval-oidc",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "run-start",
+          "readiness": [
+            "Ready"
+          ]
+        },
+        {
+          "name": "fetch-websocket-run",
+          "outcome": "complete",
+          "participants": [
+            "password",
+            "oidc"
+          ],
+          "stages": {
+            "latency": "complete",
+            "download": "complete",
+            "upload": "complete",
+            "bidirectional": "complete"
+          },
+          "totalBytes": 5773123347,
+          "transport": {
+            "throughput": {
+              "protocol": "http/1.1",
+              "kind": "fetch-stream"
+            },
+            "latency": {
+              "protocol": "http/1.1",
+              "kind": "websocket"
+            }
+          },
+          "failures": []
+        },
+        {
+          "name": "grant-binding-password",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "grant-binding-oidc",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "persisted-credentials",
+          "localStorageContainsGrant": false,
+          "historyContainsGrant": false
+        },
+        {
+          "name": "measurement-headers",
+          "observedResponses": 170,
+          "cookieResponses": 0
+        },
+        {
+          "name": "socket-urls",
+          "sockets": [
+            {
+              "origin": "wss://password184.test:8443",
+              "path": "/ws/ping",
+              "queryKeys": [
+                "token"
+              ]
+            },
+            {
+              "origin": "wss://oidc184.test:9443",
+              "path": "/ws/ping",
+              "queryKeys": [
+                "token"
+              ]
+            }
+          ],
+          "reusableGrantInUrl": false,
+          "socketCount": 10
+        }
+      ],
+      "webtransport": [
+        {
+          "name": "approval-password",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "approval-oidc",
+          "exactOrigin": true,
+          "matchingCodeLength": 8,
+          "openerNull": true,
+          "popupClosed": false
+        },
+        {
+          "name": "run-start",
+          "readiness": [
+            "Checking paths"
+          ]
+        },
+        {
+          "name": "webtransport-run",
+          "outcome": "complete",
+          "participants": [
+            "password",
+            "oidc"
+          ],
+          "stages": {
+            "latency": "complete",
+            "download": "complete",
+            "upload": "complete",
+            "bidirectional": "complete"
+          },
+          "totalBytes": 638486218,
+          "transport": {
+            "throughput": {
+              "protocol": "h3",
+              "kind": "webtransport"
+            },
+            "latency": {
+              "protocol": "h3",
+              "kind": "webtransport"
+            }
+          },
+          "failures": []
+        },
+        {
+          "name": "grant-binding-password",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "grant-binding-oidc",
+          "correct": 200,
+          "wrongOrigin": 403,
+          "wrongIssuer": 403
+        },
+        {
+          "name": "persisted-credentials",
+          "localStorageContainsGrant": false,
+          "historyContainsGrant": false
+        },
+        {
+          "name": "measurement-headers",
+          "observedResponses": 72,
+          "cookieResponses": 0
+        },
+        {
+          "name": "socket-urls",
+          "sockets": [],
+          "reusableGrantInUrl": false
+        }
+      ]
+    }
+  }
+}

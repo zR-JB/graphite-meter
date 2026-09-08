@@ -96,6 +96,71 @@ func browserBearerRequest(path, grant, origin string) *http.Request {
 	return r
 }
 
+func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T) {
+	s := testService(t)
+	raw, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, _ := approveBrowser(t, s, raw, sess)
+	challenge := randomToken(32)
+	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+	r := secureRequest(http.MethodGet, path, nil)
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	r.Header.Set("Sec-Fetch-Mode", "navigate")
+	r.Header.Set("Sec-Fetch-Dest", "document")
+	w := httptest.NewRecorder()
+	s.browserPage(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `http-equiv="refresh"`) ||
+		!strings.Contains(w.Body.String(), "/auth/cli?challenge="+challenge) || strings.Contains(w.Body.String(), "Signed in") {
+		t.Fatalf("cross-site entry did not establish a first-party document: %d %s", w.Code, w.Body.String())
+	}
+	if s.approvals[challenge].session != nil || s.approvals[challenge].approved {
+		t.Fatal("the first-party transition authorized the pending request")
+	}
+	r = withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw)
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.cliPage(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
+		t.Fatal("first-party entry lost the exact browser approval")
+	}
+	r = withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.browserPage(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) ||
+		!strings.Contains(w.Body.String(), verificationCode(challenge)) || !strings.Contains(w.Body.String(), "/auth/browser/approve") {
+		t.Fatal("existing login did not require explicit approval of the new origin and code")
+	}
+	if s.approvals[challenge].session != sess || s.approvals[challenge].approved || len(s.sessions) != 1 {
+		t.Fatal("approval entry replaced the login or approved the new client")
+	}
+	if _, ok := s.authenticateGrant(grant); !ok {
+		t.Fatal("authorizing another interface revoked the first client's grant")
+	}
+}
+
+func TestBrowserApprovalWithoutFirstPartySessionReachesLogin(t *testing.T) {
+	for _, site := range []string{"", "none", "same-origin", "same-site", "cross-site"} {
+		t.Run(site, func(t *testing.T) {
+			s := testService(t)
+			challenge := randomToken(32)
+			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+			r := secureRequest(http.MethodGet, path, nil)
+			r.Header.Set("Sec-Fetch-Site", site)
+			w := httptest.NewRecorder()
+			s.browserPage(w, r)
+			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
+				t.Fatalf("unauthenticated entry looped or bypassed login: %d %s", w.Code, w.Header().Get("Location"))
+			}
+			if len(s.sessions) != 0 || s.approvals[challenge].approved {
+				t.Fatal("fetch metadata authorized an anonymous client")
+			}
+		})
+	}
+}
+
 func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")

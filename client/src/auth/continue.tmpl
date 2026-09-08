@@ -11,8 +11,8 @@
   </head>
   <body>
     <main class="card completion">
-      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="m8.2 12.3 2.4 2.4 5.3-5.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      <h1>Signed in</h1>
+      {{if not .Opening}}<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="m8.2 12.3 2.4 2.4 5.3-5.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>{{end}}
+      <h1>{{if .Opening}}Continue sign-in{{else}}Signed in{{end}}</h1>
       <p>Taking you to Graphite Meter…</p>
       <p><a href="{{if .Challenge}}/auth/cli?challenge={{.Challenge}}{{else}}/{{end}}">Continue</a></p>
     </main>

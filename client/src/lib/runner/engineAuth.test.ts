@@ -144,14 +144,8 @@ test("a canceled start cannot overwrite the newer run's session budget when auth
   }
 });
 
-test("cancel, deselection, and disposal close owned approval popups before delayed setup can return", async () => {
-  const popups: {
-    closed: boolean;
-    opener: object | null;
-    location: { replace: (url: string) => void };
-    close: () => void;
-  }[] = [];
-  let navigations = 0;
+test("cancel, deselection, and disposal stop delayed approval setup without opening a popup", async () => {
+  let popups = 0;
   let requests = 0;
   const origin = new URL("https://ui.example/");
   const restore = stubGlobals({
@@ -160,20 +154,8 @@ test("cancel, deselection, and disposal close owned approval popups before delay
     window: {
       location: origin,
       open() {
-        const popup = {
-          closed: false,
-          opener: {},
-          location: {
-            replace() {
-              navigations++;
-            },
-          },
-          close() {
-            this.closed = true;
-          },
-        };
-        popups.push(popup);
-        return popup;
+        popups++;
+        return null;
       },
       addEventListener() {},
       removeEventListener() {},
@@ -210,26 +192,82 @@ test("cancel, deselection, and disposal close owned approval popups before delay
     const canceled = engine.signInServer("peer");
     engine.cancelServerApproval();
     await canceled;
-    expect(popups[0].closed).toBe(true);
-    expect(popups[0].opener).toBeNull();
     const deselected = engine.signInServer("peer");
     engine.applyServers(["self"]);
     await deselected;
-    expect(popups[1].closed).toBe(true);
-    expect(popups[1].opener).toBeNull();
     const disposed = engine.signInServer("peer");
     engine.dispose();
     await disposed;
-    expect(popups[2].closed).toBe(true);
-    expect(popups[2].opener).toBeNull();
     expect(store.serverApproval).toBeNull();
-    expect(navigations).toBe(0);
+    expect(popups).toBe(0);
     expect(requests).toBe(0);
   } finally {
     engine.dispose();
     store.serverCatalog = catalog;
     store.selectedServers = selection;
     store.latencySelection = latency;
+    store.reset();
+    restore();
+  }
+});
+
+test("canceling an approval ignores a grant returned by an already pending exchange", async () => {
+  const origin = new URL("https://ui.example/");
+  let response: ((value: Response) => void) | undefined;
+  let signal: AbortSignal | undefined;
+  let discoveries = 0;
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    location: origin,
+    window: {
+      location: origin,
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    },
+    document: {
+      visibilityState: "visible",
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    navigator: { onLine: true },
+    fetch: (_input: RequestInfo | URL, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      // A response already in flight may finish after cancellation.
+      return new Promise<Response>((resolve) => (response = resolve));
+    },
+  });
+  const { createApplicationController } = await import("./engine.svelte");
+  const { store } = await import("../state/store.svelte");
+  const catalog = store.serverCatalog;
+  const selection = store.selectedServers;
+  store.reset();
+  store.serverCatalog = {
+    defaultSelection: ["peer"],
+    servers: [{ id: "peer", name: "Private", url: "https://peer.example" }],
+  };
+  store.selectedServers = ["peer"];
+  const engine = createApplicationController(store, {
+    discover: async () => {
+      discoveries++;
+      return testServerDiscovery();
+    },
+  });
+  try {
+    const pending = engine.signInServer("peer");
+    while (!response) await Bun.sleep(1);
+    expect(store.serverApproval?.code).toMatch(/^[A-Z2-7]{8}$/);
+    engine.cancelServerApproval();
+    expect(signal?.aborted).toBe(true);
+    response(Response.json({ token: "a".repeat(43), remainingMs: 60_000 }));
+    await pending;
+    expect(store.serverApproval).toBeNull();
+    expect(discoveries).toBe(0);
+    expect(store.isRunning).toBe(false);
+  } finally {
+    engine.dispose();
+    store.serverCatalog = catalog;
+    store.selectedServers = selection;
     store.reset();
     restore();
   }

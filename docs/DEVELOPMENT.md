@@ -313,10 +313,12 @@ Release workflows stamp one version across the server and both clients, bind pub
 authorized source commit, generate checksums and source offers, and verify the OCI image before
 promotion.
 
-Run the local release gate with an explicit candidate version:
+Use a disposable checkout for the local release gate: preparing versioned legal outputs changes
+tracked files. Generate them with the same candidate version used by the package check:
 
 ```sh
-VERSION=0.8.0 mise run release-check 0.8.0
+VERSION=0.8.1 mise run legal-generate
+VERSION=0.8.1 mise run release-check 0.8.1
 ```
 
 Publication remains a workflow-controlled operation. Do not create or move release tags as part of
