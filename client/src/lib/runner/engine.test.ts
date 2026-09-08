@@ -330,7 +330,7 @@ test("teardown clears the probe evidence; a run reset keeps it", async () => {
     const { store } = await import("../state/store.svelte");
     store.connectionValidation = {
       throughput: {
-        selection: "current",
+        selection: "auto",
         state: "verified",
         path: PROBE_EVIDENCE.throughput,
       },

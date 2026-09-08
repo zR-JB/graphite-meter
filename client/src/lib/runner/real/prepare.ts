@@ -295,7 +295,7 @@ async function prepareThroughput(
       await verifyWtThroughput(requested, signal, credentials);
     } catch (cause) {
       signal.throwIfAborted();
-      if (selection !== "auto" && selection !== "current") throw cause;
+      if (selection !== "auto") throw cause;
       target = fetchTarget;
     }
   }
