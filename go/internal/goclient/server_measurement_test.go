@@ -93,3 +93,19 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 		t.Fatalf("bounds=%d omitted=%d", len(a.intervals), a.omitted)
 	}
 }
+
+func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
+	var measurements aggregateMeasurements
+	measurements.begin("upload", []string{"a"}, 0, "stage-start")
+	measurements.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)}))
+	measurements.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 3000)}))
+	before := measurements.result("upload", Up)
+	if before.Unavailable || before.MeanBps != 1000 || before.TotalBytes != 2000 {
+		t.Fatalf("receiver clock was replaced by the client clock: %+v", before)
+	}
+	measurements.observe(nativeBoundary(1500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 1500)}))
+	after := measurements.result("upload", Up)
+	if !after.Unavailable || after.TotalBytes != before.TotalBytes || measurements.intervals[0].Window == nil {
+		t.Fatalf("regressed receiver clock retained a rate or lost earlier bytes: %+v", after)
+	}
+}

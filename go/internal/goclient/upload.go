@@ -22,19 +22,19 @@ type uploadSessionResponse struct {
 	UploadID string `json:"uploadId"`
 }
 
-func (r *runner) measureUpload(ctx context.Context, stage string, duration time.Duration, gate *stageGate) (result Result, failure error) {
+func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure error) {
 	id, err := r.mintUploadID(ctx)
 	if err != nil {
-		return Result{}, err
+		return err
 	}
 	bodyBlock := make([]byte, 1024*1024)
 	if _, err := rand.Read(bodyBlock); err != nil {
-		return Result{}, err
+		return err
 	}
 
 	progressURL, err := r.endpoint(r.routes().UploadProgress)
 	if err != nil {
-		return Result{}, err
+		return err
 	}
 	progressURL = withUploadID(progressURL, id)
 
@@ -56,10 +56,10 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 			return nil
 		})
 		if err != nil {
-			return Result{}, err
+			return err
 		}
 		defer host.close()
-		go r.reattachUploadProgress(progress, progressURL)
+		progress.work.Go(func() { r.reattachUploadProgress(progress, progressURL) })
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
 				return r.uploadLaneWT(lctx, sess, bodyBlock, ready)
@@ -67,16 +67,14 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		}
 	} else {
 		if progress, err = r.openUploadProgress(ctx, progressURL); err != nil {
-			return Result{}, err
+			return err
 		}
 		lane = func(laneCtx context.Context, i int, ready func()) error {
 			return r.uploadLane(laneCtx, id, i, bodyBlock, ready)
 		}
 	}
 	defer progress.bye()
-	if r.coordinated != nil {
-		r.coordinated.attachUpload(id, progress)
-	}
+	r.coordinated.attachUpload(id, progress)
 
 	streams := r.streams.of(Up)
 	lanes := r.startLanes(ctx, streams, lane)
@@ -87,34 +85,16 @@ func (r *runner) measureUpload(ctx context.Context, stage string, duration time.
 		}
 	}()
 	if err := lanes.waitReady(ctx); err != nil {
-		return Result{}, err
+		return err
 	}
 	if err := progress.waitNext(ctx, progress.seq.Load(), lanes.errs); err != nil {
-		return Result{}, err
+		return err
 	}
-	gate.markReady()
+	gate.reportReady()
 	if err := lanes.waitStart(ctx, gate.start, progress.errs); err != nil {
-		return Result{}, err
+		return err
 	}
-	if r.coordinated != nil {
-		return waitCoordinatedTransfer(ctx, lanes.errs, progress.errs)
-	}
-	// A connected feed can remain silent after warmup. Bound acquisition of the
-	// receiver's baseline separately; its wait is not a measured server window.
-	baselineBudget := min(duration, stageReadyTimeout)
-	baselineCtx, cancelBaseline := context.WithTimeoutCause(ctx, baselineBudget,
-		fmt.Errorf("upload receiver baseline unavailable within %v", baselineBudget))
-	err = progress.waitNext(baselineCtx, progress.seq.Load(), lanes.errs)
-	cancelBaseline()
-	if err != nil {
-		return Result{}, err
-	}
-	baselineN, baselineT := progress.counters()
-	stats, sampleErr := r.sampleServerUpload(ctx, stage, progress, streams, duration, baselineN, baselineT, lanes.errs)
-	if sampleErr == nil {
-		sampleErr = windowCarriedBytes(ctx, stage, Up, stats)
-	}
-	return stats.result(stage, Up, true), sampleErr
+	return waitCoordinatedTransfer(ctx, lanes.errs, progress.errs)
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
@@ -223,7 +203,8 @@ type uploadProgress struct {
 	cancel    context.CancelFunc
 	client    *http.Client
 	url       string
-	mu        sync.Mutex // guards body and done across re-attachments
+	mu        sync.Mutex // guards body, done, and reader registration across re-attachments
+	work      sync.WaitGroup
 	body      *uploadFeed
 	done      chan struct{}
 	ready     chan error
@@ -274,7 +255,7 @@ func (r *runner) openUploadProgress(ctx context.Context, target string) (*upload
 	if err != nil {
 		return nil, err
 	}
-	go r.reattachUploadProgress(p, target)
+	p.work.Go(func() { r.reattachUploadProgress(p, target) })
 	return p, nil
 }
 
@@ -410,11 +391,11 @@ func (p *uploadProgress) attach(body *uploadFeed) {
 	old := p.body
 	p.body = body
 	p.done = done
+	p.work.Go(func() { p.read(body, done) })
 	p.mu.Unlock()
 	if old != nil {
 		old.interrupt()
 	}
-	go p.read(body, done)
 }
 
 func (p *uploadProgress) signalReady(err error) {
@@ -514,10 +495,9 @@ func (p *uploadProgress) close() {
 	p.once.Do(func() {
 		p.cancel()
 		p.interruptBody()
-		_, done := p.current()
-		if done != nil {
-			<-done
-		}
+		// interruptBody takes mu after cancellation, so attach cannot register
+		// another reader once this wait begins. Recovery owns its work too.
+		p.work.Wait()
 	})
 }
 
@@ -536,47 +516,4 @@ func (p *uploadProgress) bye() {
 	case <-ctx.Done():
 	}
 	p.close()
-}
-
-func (r *runner) sampleServerUpload(ctx context.Context, stage string, p *uploadProgress, streams int, duration time.Duration, baselineN, baselineT uint64, laneErr <-chan error) (rateStats, error) {
-	lastN, lastT := baselineN, baselineT
-	return rateLoop{
-		duration: duration,
-		laneErr:  laneErr,
-		stageErr: p.errs,
-		window: func(stats *rateStats) {
-			n, elapsed := p.counters()
-			n, elapsed = max(n, lastN), max(elapsed, lastT)
-			if n >= baselineN && elapsed >= baselineT {
-				stats.setWindow(n-baselineN, time.Duration(elapsed-baselineT)) //nosec G115 -- elapsed is monotonic and bounded
-			}
-		},
-		sample: func(now time.Time, stats *rateStats) {
-			n, active := p.counters()
-			if n <= lastN || active <= lastT {
-				return
-			}
-			dn := n - lastN
-			dt := active - lastT
-			lastN = n
-			lastT = active
-			bps := float64(dn) / (float64(dt) / float64(time.Second))
-			measuredTotal := n - baselineN
-			stats.add(bps)
-			r.emit(Event{
-				Kind:      EventThroughput,
-				At:        now,
-				Stage:     stage,
-				Direction: Up,
-				Throughput: ThroughputSample{
-					Stage:       stage,
-					Direction:   Up,
-					BytesPerSec: bps,
-					TotalBytes:  measuredTotal,
-					StreamCount: streams,
-					ServerAuth:  true,
-				},
-			})
-		},
-	}.run(ctx)
 }

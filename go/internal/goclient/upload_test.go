@@ -293,12 +293,10 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	start := make(chan struct{})
-	close(start)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
-	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, testStageGate(start))
+	res, err := r.testTransferResult(ctx, "upload", 300*time.Millisecond)
 	if err != nil {
 		t.Fatalf("measureUpload: %v", err)
 	}
@@ -313,6 +311,9 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 func newStalledUploadServer() *httptest.Server {
 	started := time.Now()
 	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"bytes":0,"nanos":%d}`, time.Since(started))
+	})
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = jsonv2.MarshalWrite(w, uploadSessionResponse{UploadID: "stalled-upload"})
@@ -344,28 +345,6 @@ func newStalledUploadServer() *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-func TestMeasureUploadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
-	srv := newStalledUploadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-
-	res, err := r.measureUpload(ctx, "upload", 300*time.Millisecond, testStageGate(start))
-	if err == nil {
-		t.Fatalf("a window that carried no bytes reported success: %+v", res)
-	}
-	if !strings.Contains(err.Error(), "carried no bytes") {
-		t.Errorf("err = %v, want it to name the empty window", err)
-	}
-}
-
 func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	srv := newStalledUploadServer()
 	defer srv.Close()
@@ -374,13 +353,11 @@ func TestMeasureUploadCancelledEmptyWindowIsACleanStop(t *testing.T) {
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
 
-	start := make(chan struct{})
-	close(start)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
-	_, err := r.measureUpload(ctx, "upload", 5*time.Second, testStageGate(start))
+	_, err := r.testTransferResult(ctx, "upload", 5*time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
 	}
@@ -422,46 +399,6 @@ func TestUploadProgressHoldsTheForwardPairAcrossFeeds(t *testing.T) {
 	bytes, nanos := p.counters()
 	if bytes != 1000 || nanos != uint64(5*time.Second) {
 		t.Fatalf("counters = (%d bytes, %v), want (1000 bytes, 5s): the superseded feed walked the pair backwards", bytes, time.Duration(nanos))
-	}
-}
-
-func TestSampleServerUploadWindowHoldsTheHighestPair(t *testing.T) {
-	const baselineN = uint64(1000)
-	const baselineT = uint64(time.Second)
-
-	p := &uploadProgress{changed: make(chan struct{}, 1)}
-	p.advance(3000, uint64(3*time.Second))
-
-	sampled := make(chan struct{}, 1)
-	r := &runner{cfg: DefaultConfig(), emit: func(Event) {
-		select {
-		case sampled <- struct{}{}:
-		default:
-		}
-	}}
-
-	laneErr := make(chan error, 1)
-	type outcome struct {
-		stats rateStats
-		err   error
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		stats, err := r.sampleServerUpload(t.Context(), "upload", p, 1, 5*time.Second, baselineN, baselineT, laneErr)
-		done <- outcome{stats, err}
-	}()
-
-	select {
-	case <-sampled:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the sampler never folded in the server's counters")
-	}
-	p.count.Store(&uploadCount{bytes: 3000, nanos: uint64(1500 * time.Millisecond)})
-	laneErr <- fmt.Errorf("lane ended")
-
-	got := <-done
-	if got.stats.total != 2000 || got.stats.elapsed != 2*time.Second {
-		t.Fatalf("window = %d bytes over %v, want 2000 bytes over 2s", got.stats.total, got.stats.elapsed)
 	}
 }
 
@@ -705,13 +642,7 @@ func TestUploadProgressPermanentLossRejectsAStalePrefix(t *testing.T) {
 		}, nil
 	})}, emit: func(Event) {}}
 	go r.reattachUploadProgress(progress, "http://progress.invalid/upload/progress")
-	stats, err := r.sampleServerUpload(t.Context(), "upload", progress, 1, 3*time.Second, 100, uint64(time.Second), make(chan error))
-	if err == nil {
-		err = windowCarriedBytes(t.Context(), "upload", Up, stats)
-	}
-	if err == nil {
-		t.Fatalf("dead progress feed published stale prefix: %+v", stats)
-	}
+	err := waitCoordinatedTransfer(t.Context(), nil, progress.errs)
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("permanent auth refusal = %v, want AuthRequiredError", err)
 	}
@@ -822,4 +753,86 @@ func TestUploadProgressPreservesExplicitZeroWindow(t *testing.T) {
 	if n, ns := p.counters(); n != 0 || ns != 0 || p.seq.Load() != 1 {
 		t.Fatalf("zero window = (%d, %d), sequence=%d", n, ns, p.seq.Load())
 	}
+}
+
+// Closing an old reader may finish after its replacement is already reading.
+type delayedCloseProgressBody struct {
+	ownedProgressBody
+	release chan struct{}
+}
+
+func (b *delayedCloseProgressBody) Close() error {
+	<-b.release
+	return b.ownedProgressBody.Close()
+}
+
+func TestUploadProgressCloseJoinsSupersededReaders(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		body := &delayedCloseProgressBody{
+			started: make(chan struct{}),
+			stop:    make(chan struct{}),
+			release: make(chan struct{}),
+		}
+		feed := &uploadFeed{ReadCloser: body, interrupt: sync.OnceFunc(func() { close(body.stop) })}
+		r := &runner{http: &http.Client{}}
+		progress, err := r.readUploadProgress(t.Context(), feed, "http://fixture.invalid/upload/progress")
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-body.started
+		progress.attach(testUploadFeed(io.NopCloser(strings.NewReader("{\"type\":\"ready\"}\n"))))
+		done := make(chan struct{})
+		go func() { progress.close(); close(done) }()
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Error("cleanup returned while the superseded reader still owned its body")
+		default:
+		}
+		close(body.release)
+		<-done
+		synctest.Wait()
+		if !body.closed.Load() {
+			t.Fatal("superseded reader was not joined")
+		}
+	})
+}
+
+func TestUploadProgressCloseJoinsRecovery(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		started, release := make(chan struct{}), make(chan struct{})
+		requests := 0
+		active := false
+		r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			requests++
+			if requests == 1 {
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"type\":\"ready\"}\n")), Request: req}, nil
+			}
+			active = true
+			defer func() { active = false }()
+			close(started)
+			<-req.Context().Done()
+			<-release
+			return nil, req.Context().Err()
+		})}}
+		progress, err := r.openUploadProgress(t.Context(), "http://fixture.invalid/upload/progress")
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		done := make(chan struct{})
+		go func() { progress.close(); close(done) }()
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Error("cleanup returned while recovery still owned its request")
+		default:
+		}
+		close(release)
+		<-done
+		synctest.Wait()
+		if active {
+			t.Fatal("recovery request was not joined")
+		}
+	})
 }

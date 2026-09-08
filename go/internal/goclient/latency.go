@@ -208,7 +208,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 	if err := send(); err != nil {
 		return finish(err)
 	}
-	gate.markReady()
+	gate.reportReady()
 	start := gate.start
 	for {
 		select {

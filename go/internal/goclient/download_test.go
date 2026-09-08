@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,8 +89,6 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
-	start := make(chan struct{})
-	close(start)
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(150*time.Millisecond, cancel)
 	defer cancel()
@@ -100,7 +97,7 @@ func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
 	begin := time.Now()
 	go func() {
 		// The window is long (5s), so a hang trips the test's own deadline well under the stage's configured window.
-		_, _ = r.measureDownload(ctx, "download", 5*time.Second, testStageGate(start))
+		_, _ = r.testTransferResult(ctx, "download", 5*time.Second)
 		close(done)
 	}()
 
@@ -170,27 +167,6 @@ func newSilentDownloadServer() *httptest.Server {
 	}))
 }
 
-func TestMeasureDownloadRefusesAWindowThatCarriedNoBytes(t *testing.T) {
-	srv := newSilentDownloadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-
-	res, err := r.measureDownload(ctx, "download", 300*time.Millisecond, testStageGate(start))
-	if err == nil {
-		t.Fatalf("a window that carried no bytes reported success: %+v", res)
-	}
-	if !strings.Contains(err.Error(), "carried no bytes") {
-		t.Errorf("err = %v, want it to name the empty window", err)
-	}
-}
-
 func TestMeasureDownloadCancelledEmptyWindowPreservesCancellation(t *testing.T) {
 	srv := newSilentDownloadServer()
 	defer srv.Close()
@@ -198,13 +174,11 @@ func TestMeasureDownloadCancelledEmptyWindowPreservesCancellation(t *testing.T) 
 	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
 
-	start := make(chan struct{})
-	close(start)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	time.AfterFunc(200*time.Millisecond, cancel)
 
-	res, err := r.measureDownload(ctx, "download", 5*time.Second, testStageGate(start))
+	res, err := r.testTransferResult(ctx, "download", 5*time.Second)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
 	}
@@ -222,9 +196,8 @@ func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	start := make(chan struct{}) // never closed: still "warming up"
 
-	_, err := r.measureDownload(ctx, "download", time.Second, testStageGate(start))
+	_, err := r.testTransferResult(ctx, "download", time.Second)
 	if err == nil {
 		t.Fatal("want an error when the context is already cancelled")
 	}
