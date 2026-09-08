@@ -60,7 +60,7 @@ function advertisedDetail(
     !named.tls &&
     isLoopbackHostname(new URL(named.origin).hostname)
   )
-    return `Browser-trusted clear loopback endpoint · ${named.origin}`;
+    return `Clear loopback endpoint · ${named.origin}`;
   return describeTarget(discovery, named).advertisedDetail;
 }
 

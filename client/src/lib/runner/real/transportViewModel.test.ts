@@ -10,6 +10,78 @@ import {
 import { latencyOptionView, throughputOptionView } from "./transportViewModel";
 import { testLatency, testTransfer } from "../test-helpers.test";
 
+test("grouped targets prefer TLS on secure pages, then the server origin", () => {
+  const clear = "http://localhost:7246";
+  const tls = "https://localhost:7247";
+  const otherTLS = "https://localhost:7248";
+  for (const [origins, pageOrigin, pageSecure, expected] of [
+    [[clear, tls], clear, true, tls],
+    [[clear, otherTLS, tls], tls, true, tls],
+    [[clear, tls], "https://ui.example", true, tls],
+    [[tls, clear], clear, false, clear],
+    [[clear, tls], "http://ui.example", false, clear],
+    [[clear], "https://ui.example", true, clear],
+  ] as const) {
+    const discovery = classifyTransportDiscovery(
+      origins.map((origin) =>
+        testTransfer(origin, origin, "http1", origin.startsWith("https:")),
+      ),
+      origins.map((origin) =>
+        testLatency(origin, origin, origin.startsWith("https:")),
+      ),
+      pageOrigin,
+      pageSecure,
+    );
+    for (const selection of ["protocol:http1", "transport:fetch-stream"])
+      expect(selectThroughputTarget(discovery, selection)?.origin).toBe(
+        expected,
+      );
+    expect(selectLatencyTarget(discovery, "transport:websocket")?.origin).toBe(
+      expected,
+    );
+    expect(selectThroughputTarget(discovery, clear)?.origin).toBe(clear);
+    expect(selectLatencyTarget(discovery, clear)?.origin).toBe(clear);
+  }
+});
+
+test("group preferences retain the requested protocol and WebTransport availability", () => {
+  const clear = "http://localhost:7246";
+  const tls = "https://localhost:7247";
+  const discovery = classifyTransportDiscovery(
+    [
+      testTransfer(clear, clear, "http1", false),
+      testTransfer(tls, tls, "http2", true),
+      { baseUrl: tls, transport: "webtransport", protocol: "http3" },
+    ],
+    [
+      testLatency(clear, clear, false),
+      { baseUrl: tls, transport: "webtransport" },
+    ],
+    tls,
+    true,
+  );
+  expect(selectThroughputTarget(discovery, "protocol:http1")?.origin).toBe(
+    clear,
+  );
+  expect(selectThroughputTarget(discovery, "protocol:http2")?.origin).toBe(tls);
+  expect(selectThroughputTarget(discovery, "protocol:http3")).toBeNull();
+  expect(selectLatencyTarget(discovery, "transport:websocket")?.origin).toBe(
+    clear,
+  );
+  expect(
+    selectThroughputTarget(discovery, "transport:webtransport", false),
+  ).toBeNull();
+  expect(
+    selectLatencyTarget(discovery, "transport:webtransport", false),
+  ).toBeNull();
+  expect(
+    selectThroughputTarget(discovery, "transport:webtransport", true)?.origin,
+  ).toBe(tls);
+  expect(
+    selectLatencyTarget(discovery, "transport:webtransport", true)?.origin,
+  ).toBe(tls);
+});
+
 test("IPv6 transport choices expose the DNS remedy and preserve exact same-origin targets", () => {
   const self = "http://[::1]:7246";
   const alternate = "http://[::1]:7247";
@@ -54,7 +126,7 @@ test("IPv6 transport choices expose the DNS remedy and preserve exact same-origi
   expect(latencyOptionView(local, alternate).detail).toContain("DNS hostname");
 });
 
-test("status copy distinguishes missing, blocked, and trusted loopback targets", () => {
+test("status copy distinguishes missing, blocked, and clear loopback targets", () => {
   const blocked = classifyTransportDiscovery(
     [testTransfer("http1-clear", "http://meter.example:7246", "http1", false)],
     [],
@@ -76,7 +148,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
     "http/1.1",
   );
   expect(throughputOptionView(loopback, "http://localhost:7246").detail).toBe(
-    "Browser-trusted clear loopback endpoint · http://localhost:7246",
+    "Clear loopback endpoint · http://localhost:7246",
   );
 });
 

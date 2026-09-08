@@ -149,18 +149,32 @@ for (const interruption of [
       buttons: 1,
     });
     await expect.poll(async () => (await geometry(page)).widths[0]).toBe(432);
-    if (interruption === "capture")
-      await handle.evaluate((node) => {
-        const handle = node as HTMLElement;
-        if (handle.hasPointerCapture(1)) handle.releasePointerCapture(1);
+    if (interruption === "capture") {
+      expect(await handle.evaluate((node) => node.hasPointerCapture(1))).toBe(
+        true,
+      );
+      await handle.evaluate((node) => node.releasePointerCapture(1));
+      // The next pointer event processes pending capture loss, before mouseup.
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: point.x + 33,
+        y: point.y,
+        button: "left",
+        buttons: 1,
       });
+    }
     if (interruption === "close") await page.keyboard.press("Escape");
     if (interruption === "breakpoint")
       await viewportSize(page, { width: 1100, height: 700 });
     if (interruption !== "release")
       await expect
-        .poll(() => page.evaluate(() => document.body.style.cursor))
-        .toBe("crosshair");
+        .poll(() =>
+          page.evaluate(() => ({
+            cursor: document.body.style.cursor,
+            userSelect: document.body.style.userSelect,
+          })),
+        )
+        .toEqual({ cursor: "crosshair", userSelect: "text" });
     await cdp.send("Input.dispatchMouseEvent", {
       type: "mouseReleased",
       ...point,
