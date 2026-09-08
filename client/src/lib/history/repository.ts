@@ -50,25 +50,28 @@ function openHistoryDB(): Promise<IDBDatabase> {
     return Promise.reject(new Error("IndexedDB unavailable"));
   return new Promise((resolve, reject) => {
     const opening = indexedDB.open(HISTORY_DB.name, HISTORY_DB.version);
-    opening.onupgradeneeded = () => {
-      const db = opening.result;
-      const store = db.objectStoreNames.contains(HISTORY_DB.resultsStore)
-        ? opening.transaction!.objectStore(HISTORY_DB.resultsStore)
-        : db.createObjectStore(HISTORY_DB.resultsStore, {
-            keyPath: HISTORY_DB.resultKeyPath,
-          });
-      if (!store.indexNames.contains(HISTORY_DB.completedAtIndex))
-        store.createIndex(
-          HISTORY_DB.completedAtIndex,
-          HISTORY_DB.completedAtIndex,
-          {
-            unique: false,
-          },
+    opening.onupgradeneeded = (event) => {
+      if (event.oldVersion !== 0) {
+        opening.transaction!.abort();
+        reject(
+          new Error(
+            "Unsupported history database version. Saved data has not been changed.",
+          ),
         );
-      if (!db.objectStoreNames.contains(HISTORY_DB.metadataStore))
-        db.createObjectStore(HISTORY_DB.metadataStore, {
-          keyPath: HISTORY_DB.metadataKeyPath,
-        });
+        return;
+      }
+      const db = opening.result;
+      const store = db.createObjectStore(HISTORY_DB.resultsStore, {
+        keyPath: HISTORY_DB.resultKeyPath,
+      });
+      store.createIndex(
+        HISTORY_DB.completedAtIndex,
+        HISTORY_DB.completedAtIndex,
+        { unique: false },
+      );
+      db.createObjectStore(HISTORY_DB.metadataStore, {
+        keyPath: HISTORY_DB.metadataKeyPath,
+      });
     };
     opening.onsuccess = () => {
       opening.result.onversionchange = () => opening.result.close();
