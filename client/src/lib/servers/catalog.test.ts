@@ -23,6 +23,58 @@ test("browser IPv6 origins require DNS except for the interface's exact origin",
     expect(browserOriginRestriction(origin, page)).toContain("DNS hostname");
 });
 
+test.each([
+  {
+    label: "public clear server from HTTPS",
+    origin: "http://meter.example:7246",
+    page: "https://ui.example",
+    restriction:
+      "Use an HTTPS origin for this server when the interface is HTTPS.",
+  },
+  {
+    label: "private clear server from HTTPS",
+    origin: "http://192.168.1.20:7246",
+    page: "https://ui.example",
+    restriction:
+      "Use an HTTPS origin for this server when the interface is HTTPS.",
+  },
+  {
+    label: "localhost clear server from HTTPS",
+    origin: "http://localhost:7246",
+    page: "https://ui.example",
+    restriction: undefined,
+  },
+  {
+    label: "localhost subdomain clear server from HTTPS",
+    origin: "http://meter.localhost:7246",
+    page: "https://ui.example",
+    restriction: undefined,
+  },
+  {
+    label: "IPv4 loopback clear server from HTTPS",
+    origin: "http://127.255.1.2:7246",
+    page: "https://ui.example",
+    restriction: undefined,
+  },
+  {
+    label: "clear server from HTTP",
+    origin: "http://meter.example:7246",
+    page: "http://ui.example",
+    restriction: undefined,
+  },
+  {
+    label: "HTTPS server from HTTP",
+    origin: "https://meter.example:7248",
+    page: "http://ui.example",
+    restriction: undefined,
+  },
+] as const)(
+  "browser origin policy: $label",
+  ({ origin, page, restriction }) => {
+    expect(browserOriginRestriction(origin, page)).toBe(restriction);
+  },
+);
+
 const catalog = parseCatalog(
   {
     defaultSelection: ["b"],

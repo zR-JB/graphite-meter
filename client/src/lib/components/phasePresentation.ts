@@ -1,5 +1,5 @@
 // Pure phase-to-copy mapping behind PhaseToast.svelte.
-import type { Phase } from "../runner/contract";
+import type { Phase, RunResult } from "../runner/contract";
 
 const KICKERS: Record<Phase, string> = {
   idle: "Standby",
@@ -26,10 +26,26 @@ const MESSAGES: Record<Exclude<Phase, "error">, string> = {
   aborted: "Sequence stopped",
 };
 
-export const phaseKicker = (phase: Phase): string => KICKERS[phase];
+export function completionLabel(outcome: RunResult["outcome"]): string {
+  return outcome === "incomplete"
+    ? "Incomplete"
+    : outcome === "partial"
+      ? "Partial"
+      : "Complete";
+}
+
+export const phaseKicker = (
+  phase: Phase,
+  outcome?: RunResult["outcome"],
+): string => (phase === "complete" ? completionLabel(outcome) : KICKERS[phase]);
 
 // errorLabel is reasonLabel(store.error.reason), or null when the phase is "error" without a captured reason.
-export function phaseMessage(phase: Phase, errorLabel: string | null): string {
+export function phaseMessage(
+  phase: Phase,
+  errorLabel: string | null,
+  outcome?: RunResult["outcome"],
+): string {
+  if (phase === "complete") return completionLabel(outcome);
   return phase === "error"
     ? (errorLabel ?? "Runner needs attention")
     : MESSAGES[phase];

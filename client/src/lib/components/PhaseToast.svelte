@@ -51,7 +51,11 @@
   });
 
   const message = (p: typeof store.phase): string =>
-    phaseMessage(p, store.error ? reasonLabel(store.error.reason) : null);
+    phaseMessage(
+      p,
+      store.error ? reasonLabel(store.error.reason) : null,
+      store.result?.outcome,
+    );
 
   $effect(() => {
     const phase = store.phase;
@@ -112,7 +116,7 @@
       ? "Link"
       : skipMessage
         ? "Skipped"
-        : phaseKicker(store.phase)}</span
+        : phaseKicker(store.phase, store.result?.outcome)}</span
   >
   <strong
     >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong

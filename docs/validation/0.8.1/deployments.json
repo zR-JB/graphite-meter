@@ -1,0 +1,4292 @@
+{
+  "revision": "f6f32a3f51b229c4b45fae67886e41eb6f6e58cc",
+  "date": "2026-09-08",
+  "browsers": {
+    "chrome": "152.0.7977.82",
+    "firefox": "155.0 (Playwright build 1543)"
+  },
+  "automation": "Playwright 1.63.0",
+  "measurements": [
+    {
+      "suite": "chrome-matrix",
+      "case": "clear-mixed",
+      "url": "http://localhost:18310",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "http://localhost:18310/probe?cb=177.1999999997206-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=184.5-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18310/probe?cb=204.89999999990687",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=209.6999999997206",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "ab10ff11-41ca-4fab-a111-e57eaa2bceef",
+        "startedAt": 1788888927586,
+        "completedAt": 1788888933215,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "http://localhost:18310",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          },
+          {
+            "id": "peer",
+            "url": "https://localhost:18321",
+            "name": "TLS-only peer"
+          }
+        ],
+        "participants": [
+          "self",
+          "peer"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 2967601152,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 1665551415,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 152477715,
+                "endBytes": 982273238,
+                "bytes": 829795523,
+                "durationMs": 1499.654821,
+                "bytesPerSec": 553324345.9629434,
+                "clock": "receiver",
+                "startNanos": 273280713,
+                "endNanos": 1772935534,
+                "startRequestMs": 6305.200000000186,
+                "startResponseMs": 6317.899999999441,
+                "endRequestMs": 7805.899999999441,
+                "endResponseMs": 7808.5
+              },
+              {
+                "serverId": "peer",
+                "startBytes": 152109042,
+                "endBytes": 987864934,
+                "bytes": 835755892,
+                "durationMs": 1499.668707,
+                "bytesPerSec": 557293679.6633445,
+                "clock": "receiver",
+                "startNanos": 274086372,
+                "endNanos": 1773755079,
+                "startRequestMs": 6305.899999999441,
+                "startResponseMs": 6318.200000000186,
+                "endRequestMs": 7806.5,
+                "endResponseMs": 7810.399999999441
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "http://localhost:18310",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 19
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 19
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        }
+      ]
+    },
+    {
+      "suite": "chrome-matrix",
+      "case": "direct-tls",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18311/probe?cb=122.3999999994412-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18310/probe?cb=136",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "d0a2713c-d7c9-43f3-8c8d-47b8b9f4870b",
+        "startedAt": 1788888935768,
+        "completedAt": 1788888941159,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 2891317248,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 1338392576,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 316424192,
+                "endBytes": 1654816768,
+                "bytes": 1338392576,
+                "durationMs": 1503.462228,
+                "bytesPerSec": 890206984.3021024,
+                "clock": "receiver",
+                "startNanos": 290475906,
+                "endNanos": 1793938134,
+                "startRequestMs": 6039.200000000186,
+                "startResponseMs": 6046.0999999996275,
+                "endRequestMs": 7542.5999999996275,
+                "endResponseMs": 7546.200000000186
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 16
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload",
+          "status": 200,
+          "count": 16
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-matrix",
+      "case": "npm",
+      "url": "https://meter.gm183.test:18443",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://meter.gm183.test:18443/probe?cb=134.3999999994412-0",
+          "nextHopProtocol": "h2"
+        },
+        {
+          "url": "https://meter.gm183.test:18443/probe?cb=154.09999999962747",
+          "nextHopProtocol": "h2"
+        }
+      ],
+      "record": {
+        "id": "8e9af66b-0253-4169-81f8-874c853145d4",
+        "startedAt": 1788888943899,
+        "completedAt": 1788888949286,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://meter.gm183.test:18443",
+            "name": "NPM backend"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 776865399,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 343554383,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 51878021,
+                "endBytes": 395432404,
+                "bytes": 343554383,
+                "durationMs": 1499.098816,
+                "bytesPerSec": 229173940.59231916,
+                "clock": "receiver",
+                "startNanos": 272797204,
+                "endNanos": 1771896020,
+                "startRequestMs": 6036.699999999255,
+                "startResponseMs": 6043.199999999255,
+                "endRequestMs": 7536.5999999996275,
+                "endResponseMs": 7539.5999999996275
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 16
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-matrix",
+      "case": "ipv6",
+      "url": "http://[::1]:18310",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "http://[::1]:18310/probe?cb=123.69999999925494-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://[::1]:18310/probe?cb=138.09999999962747",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "17ad636f-9e12-4e16-a6de-a3bcf9d8e57d",
+        "startedAt": 1788888952050,
+        "completedAt": 1788888957735,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "http://[::1]:18310",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 2875850752,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 697336701,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 147177472,
+                "endBytes": 844514173,
+                "bytes": 697336701,
+                "durationMs": 1503.11661,
+                "bytesPerSec": 463927213.8706524,
+                "clock": "receiver",
+                "startNanos": 315920822,
+                "endNanos": 1819037432,
+                "startRequestMs": 6332.899999999441,
+                "startResponseMs": 6348.399999999441,
+                "endRequestMs": 7835.899999999441,
+                "endResponseMs": 7839.5
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 19
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "firefox-matrix",
+      "case": "clear-mixed",
+      "url": "http://localhost:18310",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "http://localhost:18310/probe?cb=342-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=370-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18310/probe?cb=424",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=450",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "24891b34-b27f-4bd1-868d-4c26c5858a49",
+        "startedAt": 1788888999313,
+        "completedAt": 1788889006075,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "http://localhost:18310",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          },
+          {
+            "id": "peer",
+            "url": "https://localhost:18321",
+            "name": "TLS-only peer"
+          }
+        ],
+        "participants": [
+          "self",
+          "peer"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 361836797,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 328824634,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 8257536,
+                "endBytes": 138214103,
+                "bytes": 129956567,
+                "durationMs": 1487.710745,
+                "bytesPerSec": 87353383.33528,
+                "clock": "receiver",
+                "startNanos": 376837500,
+                "endNanos": 1864548245,
+                "startRequestMs": 7830,
+                "startResponseMs": 7857,
+                "endRequestMs": 9330,
+                "endResponseMs": 9338
+              },
+              {
+                "serverId": "peer",
+                "startBytes": 4063232,
+                "endBytes": 202931299,
+                "bytes": 198868067,
+                "durationMs": 1487.899903,
+                "bytesPerSec": 133656885.5196706,
+                "clock": "receiver",
+                "startNanos": 465539746,
+                "endNanos": 1953439649,
+                "startRequestMs": 7830,
+                "startResponseMs": 7861,
+                "endRequestMs": 9331,
+                "endResponseMs": 9342
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "http://localhost:18310",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 30
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 28
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload",
+          "status": 200,
+          "count": 11
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "firefox-matrix",
+      "case": "direct-tls",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18311/probe?cb=154-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18310/probe?cb=172",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "037901d7-4c51-4e6d-818b-731d43d4195d",
+        "startedAt": 1788889008670,
+        "completedAt": 1788889014391,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 336658432,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 147418700,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 8257536,
+                "endBytes": 155676236,
+                "bytes": 147418700,
+                "durationMs": 1340.88972,
+                "bytesPerSec": 109940957.70978095,
+                "clock": "receiver",
+                "startNanos": 534259849,
+                "endNanos": 1875149569,
+                "startRequestMs": 6394,
+                "startResponseMs": 6618,
+                "endRequestMs": 7875,
+                "endResponseMs": 7898
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 16
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload",
+          "status": 200,
+          "count": 11
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "firefox-matrix",
+      "case": "npm",
+      "url": "https://meter.gm183.test:18443",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://meter.gm183.test:18443/probe?cb=1001-0",
+          "nextHopProtocol": "h2"
+        },
+        {
+          "url": "https://meter.gm183.test:18443/probe?cb=1235",
+          "nextHopProtocol": "h2"
+        }
+      ],
+      "record": {
+        "id": "1440b242-e55b-41d9-a7ad-a05d2dcbba4d",
+        "startedAt": 1788889018298,
+        "completedAt": 1788889023552,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://meter.gm183.test:18443",
+            "name": "NPM backend"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 324730880,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 222067028,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 16646144,
+                "endBytes": 238713172,
+                "bytes": 222067028,
+                "durationMs": 1494.684872,
+                "bytesPerSec": 148571135.06665638,
+                "clock": "receiver",
+                "startNanos": 334572113,
+                "endNanos": 1829256985,
+                "startRequestMs": 6741,
+                "startResponseMs": 6759,
+                "endRequestMs": 8240,
+                "endResponseMs": 8249
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "https://meter.gm183.test:18443",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "firefox-matrix",
+      "case": "ipv6",
+      "url": "http://[::1]:18310",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "http://[::1]:18310/probe?cb=136-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://[::1]:18310/probe?cb=159",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "5604a30c-bb3a-4df1-9709-1ea93e251495",
+        "startedAt": 1788889026215,
+        "completedAt": 1788889031486,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "http://[::1]:18310",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 384368640,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 469762048,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 66977792,
+                "endBytes": 536739840,
+                "bytes": 469762048,
+                "durationMs": 1537.149167,
+                "bytesPerSec": 305606025.8073835,
+                "clock": "receiver",
+                "startNanos": 323579287,
+                "endNanos": 1860728454,
+                "startRequestMs": 5869,
+                "startResponseMs": 5889,
+                "endRequestMs": 7402,
+                "endResponseMs": 7441
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "http://[::1]:18310",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-transports",
+      "case": "h1-tls",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18311/probe?cb=180.5-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18311/probe?cb=202.89999999990687",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "b1b6a075-f4f9-4b70-9a43-ab441b17ca30",
+        "startedAt": 1788888759776,
+        "completedAt": 1788888765398,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 2699165696,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 958197580,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 142884864,
+                "endBytes": 1101082444,
+                "bytes": 958197580,
+                "durationMs": 1500.061825,
+                "bytesPerSec": 638772058.611651,
+                "clock": "receiver",
+                "startNanos": 289804203,
+                "endNanos": 1789866028,
+                "startRequestMs": 6320.100000000093,
+                "startResponseMs": 6331.5,
+                "endRequestMs": 7819.899999999907,
+                "endResponseMs": 7823.799999999814
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 20
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-transports",
+      "case": "h2",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18312/probe?cb=174.59999999962747-0",
+          "nextHopProtocol": "h2"
+        },
+        {
+          "url": "https://localhost:18311/probe?cb=204.39999999990687",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "7aa60d7a-7c8e-4b09-8831-a9c193561b21",
+        "startedAt": 1788888768041,
+        "completedAt": 1788888773443,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "h2",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 1362419338,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 816166330,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 105262542,
+                "endBytes": 921428872,
+                "bytes": 816166330,
+                "durationMs": 1498.179808,
+                "bytesPerSec": 544771946.3590581,
+                "clock": "receiver",
+                "startNanos": 274551861,
+                "endNanos": 1772731669,
+                "startRequestMs": 6088.199999999721,
+                "startResponseMs": 6098.299999999814,
+                "endRequestMs": 7587.399999999907,
+                "endResponseMs": 7591.5999999996275
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 16
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "https://localhost:18312",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-transports",
+      "case": "wt",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18313/probe?cb=118.89999999990687-0",
+          "nextHopProtocol": "h3"
+        },
+        {
+          "url": "https://localhost:18313/probe?cb=145.89999999990687",
+          "nextHopProtocol": "h3"
+        }
+      ],
+      "record": {
+        "id": "519f2aa2-7a56-4853-a1fa-1662a00c8281",
+        "startedAt": 1788888775774,
+        "completedAt": 1788888780837,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "h3",
+            "kind": "webtransport"
+          },
+          "latency": {
+            "protocol": "h3",
+            "kind": "webtransport"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 313058902,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 224002048,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 34406400,
+                "endBytes": 258408448,
+                "bytes": 224002048,
+                "durationMs": 1498.660765,
+                "bytesPerSec": 149468147.31618065,
+                "clock": "receiver",
+                "startNanos": 272290270,
+                "endNanos": 1770951035,
+                "startRequestMs": 5687.100000000093,
+                "startResponseMs": 5694.700000000186,
+                "endRequestMs": 7187.600000000093,
+                "endResponseMs": 7193.700000000186
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18313",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18313",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18313",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 9
+        },
+        {
+          "origin": "https://localhost:18313",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-blocked",
+      "case": "blocked-auto",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18311/probe?cb=337.79999999981374-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18311/probe?cb=3883.899999999441",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "dca2545a-67fa-4023-9666-7b696007d180",
+        "startedAt": 1788888998293,
+        "completedAt": 1788889004653,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 1417412608,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 416060574,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 33554432,
+                "endBytes": 449615006,
+                "bytes": 416060574,
+                "durationMs": 1472.460648,
+                "bytesPerSec": 282561421.63467854,
+                "clock": "receiver",
+                "startNanos": 331368106,
+                "endNanos": 1803828754,
+                "startRequestMs": 15056.599999999627,
+                "startResponseMs": 15118.5,
+                "endRequestMs": 16552.39999999944,
+                "endResponseMs": 16560.39999999944
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 23
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-blocked",
+      "case": "blocked-wt",
+      "url": null,
+      "error": "locator.waitFor: Timeout 18000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Run the test again' }) to be visible\n",
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": null,
+      "record": {
+        "id": null,
+        "startedAt": null,
+        "completedAt": null,
+        "outcome": null,
+        "transport": null,
+        "failures": null,
+        "selection": null,
+        "participants": null,
+        "stages": {},
+        "intervals": []
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-blocked",
+      "case": "blocked-h3",
+      "url": null,
+      "error": "locator.waitFor: Timeout 18000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Run the test again' }) to be visible\n",
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": null,
+      "record": {
+        "id": null,
+        "startedAt": null,
+        "completedAt": null,
+        "outcome": null,
+        "transport": null,
+        "failures": null,
+        "selection": null,
+        "participants": null,
+        "stages": {},
+        "intervals": []
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-egress",
+      "case": "egress-blocked",
+      "url": "http://localhost:18380",
+      "error": null,
+      "webTransportAvailable": null,
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "http://localhost:18380/probe?cb=207.89999999990687-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18390/probe?cb=215.60000000009313-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18380/probe?cb=253.79999999981374",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18390/probe?cb=260.5",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "8e25c720-d589-4cc4-8d75-54a4b066f3ed",
+        "startedAt": 1788888915539,
+        "completedAt": 1788888922290,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "http://localhost:18380",
+            "name": "egress-primary"
+          },
+          {
+            "id": "peer",
+            "url": "http://localhost:18390",
+            "name": "egress-peer"
+          }
+        ],
+        "participants": [
+          "self",
+          "peer"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 3906011136,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 1211152294,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self",
+              "peer"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 18038784,
+                "endBytes": 624729318,
+                "bytes": 606690534,
+                "durationMs": 1498.618047,
+                "bytesPerSec": 404833329.7563712,
+                "clock": "receiver",
+                "startNanos": 350592907,
+                "endNanos": 1849210954,
+                "startRequestMs": 7435,
+                "startResponseMs": 7455,
+                "endRequestMs": 8934.5,
+                "endResponseMs": 8939
+              },
+              {
+                "serverId": "peer",
+                "startBytes": 17711104,
+                "endBytes": 622172864,
+                "bytes": 604461760,
+                "durationMs": 1492.904356,
+                "bytesPerSec": 404889809.2973345,
+                "clock": "receiver",
+                "startNanos": 356876137,
+                "endNanos": 1849780493,
+                "startRequestMs": 7435.799999999814,
+                "startResponseMs": 7455.699999999721,
+                "endRequestMs": 8935.100000000093,
+                "endResponseMs": 8941
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "http://localhost:18380",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 29
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 30
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        },
+        {
+          "origin": "http://localhost:18380",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18390",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "firefox-unavailable",
+      "case": "webtransport-disabled",
+      "url": "https://localhost:18311",
+      "error": null,
+      "webTransportAvailable": "undefined",
+      "pageErrors": [],
+      "probeTiming": [
+        {
+          "url": "https://localhost:18311/probe?cb=219-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "http://localhost:18310/probe?cb=250",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "662f58f0-23e5-419d-a2bd-0cbb85249ac4",
+        "startedAt": 1788889365185,
+        "completedAt": 1788889370454,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "failures": [],
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://localhost:18311",
+            "name": "Direct long operator label Frankfurt edge with receiver authoritative uploads"
+          }
+        ],
+        "participants": [
+          "self"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 389087232,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 303570169,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "intervals": [
+          {
+            "stage": "download",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": null
+          },
+          {
+            "stage": "upload",
+            "participants": [
+              "self"
+            ],
+            "complete": true,
+            "reason": "stage-start",
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 16646144,
+                "endBytes": 320216313,
+                "bytes": 303570169,
+                "durationMs": 1470.204299,
+                "bytesPerSec": 206481622.45647195,
+                "clock": "receiver",
+                "startNanos": 308510881,
+                "endNanos": 1778715180,
+                "startRequestMs": 6014,
+                "startResponseMs": 6050,
+                "endRequestMs": 7515,
+                "endResponseMs": 7520
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://localhost:18311",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "http://localhost:18310",
+          "path": "/probe",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload",
+          "status": 200,
+          "count": 12
+        },
+        {
+          "origin": "https://localhost:18311",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "suite": "chrome-network-measurement",
+      "case": "public-private-loopback",
+      "url": "https://meter.gm183.test:18341",
+      "error": null,
+      "probeTiming": [
+        {
+          "url": "https://meter.gm183.test:18341/probe?cb=227.90000000037253-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=241.1000000005588-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://meter.gm183.test:18341/probe?cb=257.80000000074506",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://localhost:18321/probe?cb=261.80000000074506",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://peer.gm183.test:18351/probe?cb=762.6000000005588-0",
+          "nextHopProtocol": "http/1.1"
+        },
+        {
+          "url": "https://peer.gm183.test:18351/probe?cb=775.7000000001863",
+          "nextHopProtocol": "http/1.1"
+        }
+      ],
+      "record": {
+        "id": "04342e77-6ba0-419b-878a-f3b94307bda4",
+        "startedAt": 1788890073507,
+        "completedAt": 1788890079432,
+        "outcome": "complete",
+        "transport": {
+          "throughput": {
+            "protocol": "http/1.1",
+            "kind": "fetch-stream"
+          },
+          "latency": {
+            "protocol": "http/1.1",
+            "kind": "websocket"
+          }
+        },
+        "selection": [
+          {
+            "id": "self",
+            "url": "https://meter.gm183.test:18341",
+            "name": "Public-address fixture"
+          },
+          {
+            "id": "loopback",
+            "url": "https://localhost:18321",
+            "name": "TLS-only peer"
+          },
+          {
+            "id": "private",
+            "url": "https://peer.gm183.test:18351",
+            "name": "Private-address fixture"
+          }
+        ],
+        "participants": [
+          "self",
+          "loopback",
+          "private"
+        ],
+        "stages": {
+          "latency": {
+            "status": "complete",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          },
+          "download": {
+            "status": "complete",
+            "totalBytes": 2996633600,
+            "serverAuthoritative": false
+          },
+          "upload": {
+            "status": "complete",
+            "totalBytes": 1408227339,
+            "serverAuthoritative": true
+          },
+          "bidirectional": {
+            "status": "not-run",
+            "totalBytes": null,
+            "serverAuthoritative": null
+          }
+        },
+        "receiverIntervals": [
+          {
+            "stage": "upload",
+            "participants": [
+              "self",
+              "loopback",
+              "private"
+            ],
+            "up": [
+              {
+                "serverId": "self",
+                "startBytes": 68452352,
+                "endBytes": 540299342,
+                "bytes": 471846990,
+                "durationMs": 1499.605904,
+                "bytesPerSec": 314647327.50211954,
+                "clock": "receiver",
+                "startNanos": 308765706,
+                "endNanos": 1808371610,
+                "startRequestMs": 6629.800000000745,
+                "startResponseMs": 6642.600000000559,
+                "endRequestMs": 8130.100000000559,
+                "endResponseMs": 8138.700000000186
+              },
+              {
+                "serverId": "loopback",
+                "startBytes": 62875283,
+                "endBytes": 530547322,
+                "bytes": 467672039,
+                "durationMs": 1506.35671,
+                "bytesPerSec": 310465665.8647605,
+                "clock": "receiver",
+                "startNanos": 309004472,
+                "endNanos": 1815361182,
+                "startRequestMs": 6630.800000000745,
+                "startResponseMs": 6642.9000000003725,
+                "endRequestMs": 8131.200000000186,
+                "endResponseMs": 8141.200000000186
+              },
+              {
+                "serverId": "private",
+                "startBytes": 62479959,
+                "endBytes": 531188269,
+                "bytes": 468708310,
+                "durationMs": 1502.137975,
+                "bytesPerSec": 312027468.71504927,
+                "clock": "receiver",
+                "startNanos": 312968899,
+                "endNanos": 1815106874,
+                "startRequestMs": 6630.9000000003725,
+                "startResponseMs": 6643,
+                "endRequestMs": 8131.700000000186,
+                "endResponseMs": 8140.600000000559
+              }
+            ]
+          }
+        ]
+      },
+      "routes": [
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/fonts/instrument-sans-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/fonts/spline-sans-mono-latin.woff2",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/servers",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/favicon.svg",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/preflight",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/probe",
+          "status": 200,
+          "count": 2
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/download",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/upload/session",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/upload/progress",
+          "status": 200,
+          "count": 1
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 23
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 22
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/upload/checkpoint",
+          "status": 200,
+          "count": 22
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/upload",
+          "status": 200,
+          "count": 14
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload",
+          "status": 200,
+          "count": 13
+        },
+        {
+          "origin": "https://meter.gm183.test:18341",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        },
+        {
+          "origin": "https://peer.gm183.test:18351",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        },
+        {
+          "origin": "https://localhost:18321",
+          "path": "/upload/progress",
+          "status": 204,
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "permissions": {
+    "results": [
+      {
+        "id": "public-loopback",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://localhost:18321",
+        "setting": "denied",
+        "result": {
+          "error": "TypeError: Failed to fetch"
+        }
+      },
+      {
+        "id": "public-loopback",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://localhost:18321",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      },
+      {
+        "id": "public-loopback",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://localhost:18321",
+        "setting": "denied",
+        "result": {
+          "error": "TypeError: Failed to fetch"
+        }
+      },
+      {
+        "id": "public-loopback",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://localhost:18321",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      },
+      {
+        "id": "public-private",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://peer.gm183.test:18351",
+        "setting": "denied",
+        "result": {
+          "error": "TypeError: Failed to fetch"
+        }
+      },
+      {
+        "id": "public-private",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://peer.gm183.test:18351",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "Private-address fixture"
+        }
+      },
+      {
+        "id": "public-private",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://peer.gm183.test:18351",
+        "setting": "denied",
+        "result": {
+          "error": "TypeError: Failed to fetch"
+        }
+      },
+      {
+        "id": "public-private",
+        "origin": "https://meter.gm183.test:18341",
+        "target": "https://peer.gm183.test:18351",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "Private-address fixture"
+        }
+      },
+      {
+        "id": "private-loopback",
+        "origin": "https://peer.gm183.test:18351",
+        "target": "https://localhost:18321",
+        "setting": "denied",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      },
+      {
+        "id": "private-loopback",
+        "origin": "https://peer.gm183.test:18351",
+        "target": "https://localhost:18321",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      },
+      {
+        "id": "private-loopback",
+        "origin": "https://peer.gm183.test:18351",
+        "target": "https://localhost:18321",
+        "setting": "denied",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      },
+      {
+        "id": "private-loopback",
+        "origin": "https://peer.gm183.test:18351",
+        "target": "https://localhost:18321",
+        "setting": "granted",
+        "result": {
+          "status": 200,
+          "server": "TLS-only peer"
+        }
+      }
+    ],
+    "net": [
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "error": "net::ERR_FAILED",
+        "cors": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      },
+      {
+        "error": "net::ERR_FAILED",
+        "cors": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Public",
+        "status": 200
+      },
+      {
+        "error": "net::ERR_FAILED",
+        "cors": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "error": "net::ERR_FAILED",
+        "cors": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Local",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      },
+      {
+        "resourceIPAddressSpace": "Loopback",
+        "status": 200
+      }
+    ]
+  },
+  "lifecycle": [
+    {
+      "case": "survivor",
+      "elapsedMs": 9923,
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "reduced": false,
+        "touch": 0,
+        "phase": "complete"
+      },
+      "focus": {
+        "tag": "BUTTON",
+        "label": "Latency stage (complete)",
+        "outline": "solid"
+      },
+      "text": "Graphite\u00a0Meter\nTested 2 servers\n0\n1\n10\n50\n100\n14.11\nGbit/s\n14.11 Gbit/s \u00b7 Download\nDownload 14.11 Gbit/s; Upload 9.52 Gbit/s\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.3 ms\n0.1 ms jitter\n0.0 \u2013 4.6\n0\n5.0\n10.0 ms\nLOADED DOWN\nmean 1.8 ms\n1.2 ms jitter\n0.6 \u2013 4.2\n0\n5.0\n10.0 ms\nLOADED UP\nmean 0.6 ms\n0.4 ms jitter\n0.3 \u2013 1.1\n0\n5.0\n10.0 ms\n1 of 2 servers\nCombined\nprimary\npeer\npeer: upload \u2014 upload session could not be established\nDownload\nHIGH\n14.11\nGbit/s\n15.22\nwire +7.8%\nUpload\nMEDIUM\n9.52\nGbit/s\n10.27\nwire +7.8%\nPing\nHIGH\n0.3\nms\n0.1 ms\njitter\nprimary\n20.00\n10.00\n0.00\n20.0\n10.0\n0.0\n0s\n2s\n4s\n6s\nPING\nDOWNLOAD\nUPLOAD\n14.11 Gbit/s\n9.52 Gbit/s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nComplete\n\u00b7\nelapsed 6.9s\n\u00b7\n7.1 GB xfer\nprod f6f32a3\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nCOMPLETE\nComplete",
+      "newRecords": [
+        {
+          "id": "f48bf4d7-b5a1-43c6-a54e-97ed179d97ef",
+          "startedAt": 1788888732361,
+          "completedAt": 1788888739306,
+          "outcome": "partial",
+          "transport": {
+            "throughput": {
+              "protocol": "http/1.1",
+              "kind": "fetch-stream"
+            },
+            "latency": {
+              "protocol": "http/1.1",
+              "kind": "websocket"
+            }
+          },
+          "failures": [],
+          "selection": [
+            {
+              "id": "self",
+              "url": "https://localhost:18361",
+              "name": "primary"
+            },
+            {
+              "id": "peer",
+              "url": "https://localhost:18371",
+              "name": "peer"
+            }
+          ],
+          "participants": [
+            "self"
+          ],
+          "stages": {
+            "latency": {
+              "status": "complete",
+              "totalBytes": null,
+              "serverAuthoritative": null
+            },
+            "download": {
+              "status": "complete",
+              "totalBytes": 5291016192,
+              "serverAuthoritative": false
+            },
+            "upload": {
+              "status": "complete",
+              "totalBytes": 1783693312,
+              "serverAuthoritative": true
+            },
+            "bidirectional": {
+              "status": "not-run",
+              "totalBytes": null,
+              "serverAuthoritative": null
+            }
+          },
+          "intervals": [
+            {
+              "stage": "download",
+              "participants": [
+                "self",
+                "peer"
+              ],
+              "complete": true,
+              "reason": "stage-start",
+              "up": null
+            },
+            {
+              "stage": "upload",
+              "participants": [
+                "self"
+              ],
+              "complete": true,
+              "reason": "dropout",
+              "up": null
+            },
+            {
+              "stage": "upload",
+              "participants": [
+                "self"
+              ],
+              "complete": true,
+              "reason": "stage-start",
+              "up": [
+                {
+                  "serverId": "self",
+                  "startBytes": 240058368,
+                  "endBytes": 2023751680,
+                  "bytes": 1783693312,
+                  "durationMs": 1499.049547,
+                  "bytesPerSec": 1189882826.4680433,
+                  "clock": "receiver",
+                  "startNanos": 284776977,
+                  "endNanos": 1783826524,
+                  "startRequestMs": 7124.200000000186,
+                  "startResponseMs": 7134.200000000186,
+                  "endRequestMs": 8623.700000000186,
+                  "endResponseMs": 8626.80000000028
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "preparation",
+      "elapsedMs": 6438,
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "reduced": false,
+        "touch": 0,
+        "phase": "error"
+      },
+      "focus": {
+        "tag": "BUTTON",
+        "label": "Latency stage",
+        "outline": "solid"
+      },
+      "text": "Graphite\u00a0Meter\n2 servers selected\n\u2014\n\u2014\nUNEXPECTED SERVER RESPONSE\nPress Run Again to retry\nUnexpected server response \u2014 Press Run Again to retry\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED DOWN\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\n20.0\n10.0\n0.0\n0s\n1s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nError\n\u00b7\nelapsed 0.0s\n\u00b7\n0 B xfer\nprod f6f32a3\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nERROR\nUnexpected server response",
+      "newRecords": []
+    },
+    {
+      "case": "all-stop",
+      "elapsedMs": 7775,
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "reduced": false,
+        "touch": 0,
+        "phase": "complete"
+      },
+      "focus": {
+        "tag": "BUTTON",
+        "label": "Latency stage (complete)",
+        "outline": "solid"
+      },
+      "text": "Graphite\u00a0Meter\nTested 2 servers\n0\n0.1\n1\n5\n10\n1.63\nGbit/s\n1.63 Gbit/s \u00b7 Download\nDownload 1.63 Gbit/s\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.4 ms\n0.8 ms jitter\n0.0 \u2013 13.8\n0\n10.0\n20.0 ms\nLOADED DOWN\nmean 2.5 ms\n2.0 ms jitter\n1.2 \u2013 5.2\n0\n10.0\n20.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n10.0\n20.0 ms\n0 of 2 servers\nCombined\nprimary\npeer\nprimary: upload \u2014 upload session could not be established\npeer: upload \u2014 upload session could not be established\nDownload\nLOW\n1.63\nGbit/s\n1.75\nwire +7.8%\nPing\nHIGH\n0.4\nms\n0.8 ms\njitter\npeer\n10.00\n5.00\n0.00\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\n4s\nWARM-UP\nPING\nDOWNLOAD\n1.63 Gbit/s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nComplete\n\u00b7\nelapsed 4.8s\n\u00b7\n609.4 MB xfer\nprod f6f32a3\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nCOMPLETE\nComplete",
+      "newRecords": []
+    },
+    {
+      "case": "cancel",
+      "elapsedMs": 5142,
+      "layout": {
+        "width": 1280,
+        "scrollWidth": 1280,
+        "reduced": false,
+        "touch": 0,
+        "phase": "aborted"
+      },
+      "focus": {
+        "tag": "BUTTON",
+        "label": "Latency stage (complete)",
+        "outline": "solid"
+      },
+      "text": "Graphite\u00a0Meter\n2 servers selected\n\u2014\n\u2014\nTEST ABORTED\nPress Run Again to restart\nTest aborted \u2014 Press Run Again to restart\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.3 ms\n0.2 ms jitter\n0.0 \u2013 4.9\n0\n5.0\n10.0 ms\nLOADED DOWN\nmean 1.2 ms\n1.2 \u2013 1.2\n0\n5.0\n10.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n5.0\n10.0 ms\nPing\n0.3\nms\n20.00\n10.00\n0.00\n20.0\n10.0\n0.0\n0s\n1s\n2s\nWARM-UP\nPING\nDOWNLOAD\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nAborted\n\u00b7\nelapsed 2.0s\n\u00b7\n866.6 MB xfer\nprod f6f32a3\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nABORTED\nSequence stopped",
+      "newRecords": []
+    },
+    {
+      "case": "mobile",
+      "elapsedMs": 10081,
+      "layout": {
+        "width": 390,
+        "scrollWidth": 390,
+        "reduced": true,
+        "touch": 1,
+        "phase": "complete"
+      },
+      "focus": {
+        "tag": "INPUT",
+        "label": "primary, localhost:18361",
+        "outline": "solid"
+      },
+      "text": "Tested 2 servers\n0\n1\n10\n50\n100\n13.82\nGbit/s\n13.82 Gbit/s \u00b7 Download\nDownload 13.82 Gbit/s; Upload 6.74 Gbit/s\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.3 ms\n0.2 ms jitter\n0\n5.0\n10.0 ms\nLOADED DOWN\nmean 1.8 ms\n2.0 ms jitter\n0\n5.0\n10.0 ms\nLOADED UP\nmean 1.5 ms\n0.5 ms jitter\n0\n5.0\n10.0 ms\nCombined\nprimary\npeer\nDownload\nMEDIUM\n13.82\nGbit/s\n14.90\nwire +7.8%\nUpload\nMEDIUM\n6.74\nGbit/s\n7.27\nwire +7.8%\nPing\nHIGH\n0.3\nms\n0.2 ms\njitter\npeer\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nComplete\n\u00b7\nelapsed 7.1s\n\u00b7\n6.5 GB xfer\nprod f6f32a3\nTEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nReady\nTest servers\n2 selected\nprimary\n11.0\nms\npeer\n13.2\nms\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nprimary\npeer\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nAvailable on all 2 selected servers\nHTTP/2\nUnavailable on primary, peer\nHTTP/3\nUnavailable on primary, peer\nWebTransport streams\nUnavailable on primary, peer\nReady\n2 of 2 servers ready. Paths resolve independently.\nLATENCY PATH\nAutomatic\nResolves independently for every selected server\nWebSocket\nAvailable on all 2 selected servers\nWebTransport\nUnavailable on primary, peer\nReady\n2 of 2 servers ready. Paths resolve independently.\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP MS\nLATENCY MS\nDOWNLOAD MS\nUPLOAD MS\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nSTREAMS PER SERVER AND DIRECTION\n\nStarts exactly 1 requests per server and active direction. The run reserves progress and control capacity and allows at most 128 streams per direction.\n\nReset settings\nINFO\nEndpoint\nSERVER\nNode\npeer\nLocation\nUnavailable\nSERVER CAPABILITIES\nHTTP versions\nHTTP/1.1 \u00b7 TLS\nThroughput\nFetch streams\nLatency\nWebSocket\nTHROUGHPUT PATH\nUsed\nSelected\nFetch stream \u00b7 HTTP/1.1 \u00b7 TLS\nPath evidence\nBrowser observed HTTP/1.1 \u00b7 Server observed HTTP/1.1\nUpload progress\nFetch stream over HTTP/1.1 \u00b7 TLS\nLATENCY PATH\nUsed\nSelected\nWebSocket \u00b7 HTTP/1.1 \u00b7 TLS\nPath evidence\nServer observed HTTP/1.1\nPre-test RTT\n0.6 ms\nDIAGNOSTICS\n\nLegal\nAbout & legal",
+      "newRecords": [
+        {
+          "id": "6d0b80dc-d0d3-4698-b9e6-0765af2e6161",
+          "startedAt": 1788888762252,
+          "completedAt": 1788888769318,
+          "outcome": "complete",
+          "transport": {
+            "throughput": {
+              "protocol": "http/1.1",
+              "kind": "fetch-stream"
+            },
+            "latency": {
+              "protocol": "http/1.1",
+              "kind": "websocket"
+            }
+          },
+          "failures": [],
+          "selection": [
+            {
+              "id": "self",
+              "url": "https://localhost:18361",
+              "name": "primary"
+            },
+            {
+              "id": "peer",
+              "url": "https://localhost:18371",
+              "name": "peer"
+            }
+          ],
+          "participants": [
+            "self",
+            "peer"
+          ],
+          "stages": {
+            "latency": {
+              "status": "complete",
+              "totalBytes": null,
+              "serverAuthoritative": null
+            },
+            "download": {
+              "status": "complete",
+              "totalBytes": 5186191360,
+              "serverAuthoritative": false
+            },
+            "upload": {
+              "status": "complete",
+              "totalBytes": 1264980218,
+              "serverAuthoritative": true
+            },
+            "bidirectional": {
+              "status": "not-run",
+              "totalBytes": null,
+              "serverAuthoritative": null
+            }
+          },
+          "intervals": [
+            {
+              "stage": "download",
+              "participants": [
+                "self",
+                "peer"
+              ],
+              "complete": true,
+              "reason": "stage-start",
+              "up": null
+            },
+            {
+              "stage": "upload",
+              "participants": [
+                "self",
+                "peer"
+              ],
+              "complete": true,
+              "reason": "stage-start",
+              "up": [
+                {
+                  "serverId": "self",
+                  "startBytes": 149006830,
+                  "endBytes": 781489259,
+                  "bytes": 632482429,
+                  "durationMs": 1500.019949,
+                  "bytesPerSec": 421649345.0114776,
+                  "clock": "receiver",
+                  "startNanos": 292066019,
+                  "endNanos": 1792085968,
+                  "startRequestMs": 7261.200000000186,
+                  "startResponseMs": 7281,
+                  "endRequestMs": 8760.80000000028,
+                  "endResponseMs": 8765.700000000186
+                },
+                {
+                  "serverId": "peer",
+                  "startBytes": 147943800,
+                  "endBytes": 780441589,
+                  "bytes": 632497789,
+                  "durationMs": 1500.981528,
+                  "bytesPerSec": 421389455.6335939,
+                  "clock": "receiver",
+                  "startNanos": 291916111,
+                  "endNanos": 1792897639,
+                  "startRequestMs": 7261.9000000003725,
+                  "startResponseMs": 7281.200000000186,
+                  "endRequestMs": 8761.80000000028,
+                  "endResponseMs": 8769.5
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "latencyToggle": {
+    "discoveryCounts": {
+      "beforeToggle": 6,
+      "afterToggle": 6
+    },
+    "record": {
+      "id": "e09a2949-0d30-4ec1-9125-55b3da07cb40",
+      "startedAt": 1788889186921,
+      "completedAt": 1788889194090,
+      "outcome": "complete",
+      "transport": {
+        "throughput": {
+          "protocol": "http/1.1",
+          "kind": "fetch-stream"
+        },
+        "latency": {
+          "protocol": "http/1.1",
+          "kind": "websocket"
+        }
+      },
+      "failures": [],
+      "selection": [
+        {
+          "id": "self",
+          "url": "https://localhost:18361",
+          "name": "primary"
+        },
+        {
+          "id": "peer",
+          "url": "https://localhost:18371",
+          "name": "peer"
+        }
+      ],
+      "participants": [
+        "self",
+        "peer"
+      ],
+      "stages": {
+        "latency": {
+          "status": "complete",
+          "totalBytes": null,
+          "serverAuthoritative": null
+        },
+        "download": {
+          "status": "complete",
+          "totalBytes": 5417598976,
+          "serverAuthoritative": false
+        },
+        "upload": {
+          "status": "complete",
+          "totalBytes": 1512803558,
+          "serverAuthoritative": true
+        },
+        "bidirectional": {
+          "status": "not-run",
+          "totalBytes": null,
+          "serverAuthoritative": null
+        }
+      },
+      "intervals": [
+        {
+          "stage": "download",
+          "participants": [
+            "self",
+            "peer"
+          ],
+          "complete": true,
+          "reason": "stage-start",
+          "up": null
+        },
+        {
+          "stage": "upload",
+          "participants": [
+            "self",
+            "peer"
+          ],
+          "complete": true,
+          "reason": "stage-start",
+          "up": [
+            {
+              "serverId": "self",
+              "startBytes": 121364772,
+              "endBytes": 879077215,
+              "bytes": 757712443,
+              "durationMs": 1496.78937,
+              "bytesPerSec": 506225163.1303341,
+              "clock": "receiver",
+              "startNanos": 290204895,
+              "endNanos": 1786994265,
+              "startRequestMs": 8183.0999999996275,
+              "startResponseMs": 8194.599999999627,
+              "endRequestMs": 9682.5,
+              "endResponseMs": 9685.799999999814
+            },
+            {
+              "serverId": "peer",
+              "startBytes": 122983056,
+              "endBytes": 878074171,
+              "bytes": 755091115,
+              "durationMs": 1496.821598,
+              "bytesPerSec": 504463000.8071276,
+              "clock": "receiver",
+              "startNanos": 290377557,
+              "endNanos": 1787199155,
+              "startRequestMs": 8183.799999999814,
+              "startResponseMs": 8195.099999999627,
+              "endRequestMs": 9683.099999999627,
+              "endResponseMs": 9686.399999999441
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "restart": {
+    "failed": "TEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nChecking paths\nTest servers\n2 selected\nrestart-primary\n22.2\nms\npeer\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nrestart-primary\npeer\npeer\n\nServer could not be reached\n\nRetry peer\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nChecking peer\nHTTP/2\nUnavailable on restart-primary\nHTTP/3\nUnavailable on restart-primary\nWebTransport streams\nUnavailable on restart-primary\nChecking\n0 of 2 servers ready. Paths resolve independently.\nLATENCY PATH\nAutomatic\nChooses the available path for restart-primary\nWebSocket\nAvailable on restart-primary\nWebTransport\nUnavailable on restart-primary\nChecking\nSelection unresolved\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP\n0.8s\nLATENCY\n4s\nDOWNLOAD\n10s\nUPLOAD\n10s\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nMAXIMUM H1 STREAMS PER DIRECTION\n\nAutomatic caps HTTP/1.1 at 4. HTTP/2 and HTTP/3 choose safe multiplexed request counts automatically.\n\nReset settings",
+    "recovered": "TEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nReady\nTest servers\n2 selected\nrestart-primary\n22.2\nms\nrestarted-peer\n21.1\nms\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nrestart-primary\nrestarted-peer\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nAvailable on all 2 selected servers\nHTTP/2\nUnavailable on restart-primary, restarted-peer\nHTTP/3\nUnavailable on restart-primary, restarted-peer\nWebTransport streams\nUnavailable on restart-primary, restarted-peer\nReady\n2 of 2 servers ready. Paths resolve independently.\nLATENCY PATH\nAutomatic\nChooses the available path for restart-primary\nWebSocket\nAvailable on restart-primary\nWebTransport\nUnavailable on restart-primary\nReady\nWebSocket \u00b7 HTTP/1.1 \u00b7 TLS\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP\n0.8s\nLATENCY\n4s\nDOWNLOAD\n10s\nUPLOAD\n10s\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nMAXIMUM H1 STREAMS PER DIRECTION\n\nAutomatic caps HTTP/1.1 at 4. HTTP/2 and HTTP/3 choose safe multiplexed request counts automatically.\n\nReset settings",
+    "refreshed": "  Test & Display Settings   Test Connection paths Ready Test servers 2 selected  restart-primary 12.4ms upgraded-peer 18.2ms Choose up to 4. Their speeds are combined. Measure ping to   All servers restart-primary upgraded-peer    Throughput path   Automatic Resolves independently for every selected server  HTTP/1.1 Available on all 2 selected servers  HTTP/2 Unavailable on restart-primary, upgraded-peer  HTTP/3 Unavailable on restart-primary, upgraded-peer  WebTransport streams Unavailable on restart-primary, upgraded-peer   Ready 2 of 2 servers ready. Paths resolve independently.  Latency path   Automatic Chooses the available path for restart-primary  WebSocket Available on restart-primary  WebTransport Unavailable on restart-primary   Ready WebSocket \u00b7 HTTP/1.1 \u00b7 TLS  Duration & stages shortmediumlongcustom   Include concurrent download + upload Warmup 0.8sLatency 4sDownload 10sUpload 10s  Results Display units Rate Bits Bytes Prefix Decimal Binary Applies to all displayed rates. Result history   Save completed results on this device View History Wire-rate estimates   Show estimated wire rate Estimated Ethernet rate from measured protocol bytes and available\n      connection details. Gauge scale   Scale throughput automatically  The chart follows the measured peak. The gauge starts at 1 Gbit/s and\n        grows in powers of ten. Advanced Early finish   Finish stable stages early Latency timing Unloaded ping cadence Reply-drivenFast (80 ms)Medium (250 ms)Slow (600 ms) Loaded ping cadence Reply-drivenFast (80 ms)Medium (250 ms)Slow (600 ms)   Skip loaded latency when latency is off Datagram throughput    Datagram throughput (experimental) Adds the WebTransport datagram card to the connection picker. Transfer streams   Force exact stream count Maximum H1 streams per direction  Automatic caps HTTP/1.1 at 4. HTTP/2\n        and HTTP/3 choose safe multiplexed request counts automatically. Reset settings",
+    "preflights": [
+      {
+        "url": "https://localhost:18361/preflight",
+        "body": {
+          "server": {
+            "name": "restart-primary"
+          },
+          "engineVersion": "f6f32a3",
+          "generation": "90dfa333ad06f8a920901a2b7fab6bea",
+          "capabilities": {
+            "uploadCheckpoint": true,
+            "throughput": [
+              {
+                "baseUrl": "https://localhost:18361",
+                "transport": "fetch-stream",
+                "protocol": "http1"
+              }
+            ],
+            "latency": [
+              {
+                "baseUrl": "https://localhost:18361",
+                "transport": "websocket"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "url": "https://localhost:18371/preflight",
+        "body": {
+          "server": {
+            "name": "restarted-peer"
+          },
+          "engineVersion": "f6f32a3",
+          "generation": "cb246df2d6f1587ac8470d0d4373e5cf",
+          "capabilities": {
+            "uploadCheckpoint": true,
+            "throughput": [
+              {
+                "baseUrl": "https://localhost:18371",
+                "transport": "fetch-stream",
+                "protocol": "http1"
+              }
+            ],
+            "latency": [
+              {
+                "baseUrl": "https://localhost:18371",
+                "transport": "websocket"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "url": "https://localhost:18361/preflight",
+        "body": {
+          "server": {
+            "name": "restart-primary"
+          },
+          "engineVersion": "f6f32a3",
+          "generation": "90dfa333ad06f8a920901a2b7fab6bea",
+          "capabilities": {
+            "uploadCheckpoint": true,
+            "throughput": [
+              {
+                "baseUrl": "https://localhost:18361",
+                "transport": "fetch-stream",
+                "protocol": "http1"
+              }
+            ],
+            "latency": [
+              {
+                "baseUrl": "https://localhost:18361",
+                "transport": "websocket"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "url": "https://localhost:18371/preflight",
+        "body": {
+          "server": {
+            "name": "upgraded-peer"
+          },
+          "engineVersion": "f6f32a3",
+          "generation": "5b0a0118f8734f065aae5514fc0e47e2",
+          "capabilities": {
+            "uploadCheckpoint": true,
+            "throughput": [
+              {
+                "baseUrl": "https://localhost:18371",
+                "transport": "fetch-stream",
+                "protocol": "http1"
+              }
+            ],
+            "latency": [
+              {
+                "baseUrl": "https://localhost:18371",
+                "transport": "websocket"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "generationChanged": true
+  },
+  "restrictions": [
+    {
+      "name": "ipv6-other-port",
+      "text": "TEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nPath failed\nTest servers\n2 selected\nPublic-address fixture\n7.1\nms\nloopback\nprivate\nipv6-other-port\nclear\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nPublic-address fixture\nipv6-other-port\nipv6-other-port\n\nUse a DNS hostname for browser connections to this IPv6 server.\n\nRetry ipv6-other-port\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nChecking ipv6-other-port\nHTTP/2\nUnavailable on Public-address fixture\nHTTP/3\nUnavailable on Public-address fixture\nWebTransport streams\nUnavailable on Public-address fixture\nFailed\n1 of 2 servers ready. Paths resolve independently.\nRetry\nLATENCY PATH\nAutomatic\nChooses the available path for Public-address fixture\nWebSocket\nAvailable on Public-address fixture\nWebTransport\nUnavailable on Public-address fixture\nReady\nWebSocket \u00b7 HTTP/1.1 \u00b7 TLS\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP\n0.8s\nLATENCY\n4s\nDOWNLOAD\n10s\nUPLOAD\n10s\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nMAXIMUM H1 STREAMS PER DIRECTION\n\nAutomatic caps HTTP/1.1 at 4. HTTP/2 and HTTP/3 choose safe multiplexed request counts automatically.\n\nReset settings"
+    },
+    {
+      "name": "clear",
+      "text": "TEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nPath failed\nTest servers\n2 selected\nPublic-address fixture\n7.1\nms\nloopback\nprivate\nipv6-other-port\nclear\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nPublic-address fixture\nclear\nclear\n\nServer could not be reached\n\nRetry clear\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nChecking clear\nHTTP/2\nUnavailable on Public-address fixture\nHTTP/3\nUnavailable on Public-address fixture\nWebTransport streams\nUnavailable on Public-address fixture\nFailed\n1 of 2 servers ready. Paths resolve independently.\nRetry\nLATENCY PATH\nAutomatic\nChooses the available path for Public-address fixture\nWebSocket\nAvailable on Public-address fixture\nWebTransport\nUnavailable on Public-address fixture\nReady\nWebSocket \u00b7 HTTP/1.1 \u00b7 TLS\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP\n0.8s\nLATENCY\n4s\nDOWNLOAD\n10s\nUPLOAD\n10s\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nMAXIMUM H1 STREAMS PER DIRECTION\n\nAutomatic caps HTTP/1.1 at 4. HTTP/2 and HTTP/3 choose safe multiplexed request counts automatically.\n\nReset settings"
+    }
+  ],
+  "configuration": {
+    "servers": {
+      "direct": {
+        "GM_SERVER_NAME": "Direct long operator label Frankfurt edge with receiver authoritative uploads",
+        "GM_H1_ADDR": ":18310",
+        "GM_H1_TLS_ADDR": ":18311",
+        "GM_H2_ADDR": ":18312",
+        "GM_H3_ADDR": ":18313",
+        "GM_SERVER_CATALOG": "{\"servers\": [{\"id\": \"peer\", \"name\": \"TLS peer\", \"url\": \"https://localhost:18321\"}]}"
+      },
+      "peer": {
+        "GM_SERVER_NAME": "TLS-only peer",
+        "GM_H1_ADDR": ":18320",
+        "GM_H1_TLS_ADDR": ":18321",
+        "GM_ADVERTISED_NATIVE_ENDPOINTS": "http1-tls"
+      },
+      "proxy": {
+        "GM_SERVER_NAME": "NPM backend",
+        "GM_H1_ADDR": ":18330",
+        "GM_ADVERTISED_NATIVE_ENDPOINTS": "none",
+        "GM_PUBLIC_ORIGINS": "self",
+        "GM_TRUSTED_PROXIES": "172.17.0.0/16,127.0.0.1/32"
+      }
+    },
+    "networkServers": {
+      "public": {
+        "GM_SERVER_NAME": "Public-address fixture",
+        "GM_H1_ADDR": ":18340",
+        "GM_H1_TLS_ADDR": ":18341",
+        "GM_ADVERTISED_NATIVE_ENDPOINTS": "http1-tls",
+        "GM_SERVER_CATALOG": "{\"servers\": [{\"id\": \"loopback\", \"url\": \"https://localhost:18321\"}, {\"id\": \"private\", \"url\": \"https://peer.gm183.test:18351\"}, {\"id\": \"ipv6-other-port\", \"url\": \"http://[::1]:18310\"}, {\"id\": \"clear\", \"url\": \"http://203.0.113.183:18320\"}]}"
+      },
+      "private": {
+        "GM_SERVER_NAME": "Private-address fixture",
+        "GM_H1_ADDR": ":18350",
+        "GM_H1_TLS_ADDR": ":18351",
+        "GM_ADVERTISED_NATIVE_ENDPOINTS": "http1-tls",
+        "GM_SERVER_CATALOG": "{\"servers\": [{\"id\": \"loopback\", \"url\": \"https://localhost:18321\"}]}"
+      }
+    },
+    "npm": {
+      "domain_names": [
+        "meter.gm183.test"
+      ],
+      "forward_scheme": "http",
+      "forward_host": "172.17.0.1",
+      "forward_port": 18330,
+      "certificate_id": 1,
+      "ssl_forced": false,
+      "caching_enabled": false,
+      "block_exploits": false,
+      "allow_websocket_upgrade": true,
+      "http2_support": true,
+      "access_list_id": 0,
+      "advanced_config": "location / {\n proxy_pass http://172.17.0.1:18330;\n proxy_http_version 1.1;\n proxy_set_header Upgrade $http_upgrade;\n proxy_set_header Connection $http_connection;\n proxy_set_header Host $http_host;\n proxy_set_header X-Forwarded-Proto $scheme;\n proxy_set_header X-Forwarded-Host $http_host;\n proxy_set_header X-Real-IP $remote_addr;\n proxy_set_header Forwarded \"\";\n proxy_set_header X-Forwarded-For \"\";\n proxy_buffering off;\n proxy_request_buffering off;\n proxy_read_timeout 300s;\n proxy_send_timeout 300s;\n client_max_body_size 0;\n}",
+      "locations": [],
+      "meta": {
+        "letsencrypt_agree": false,
+        "dns_challenge": false,
+        "nginx_online": true,
+        "nginx_err": null
+      }
+    }
+  },
+  "headers": {
+    "public-headers": "HTTP/1.1 200 OK\nCache-Control: no-store\nContent-Length: 3352\nContent-Security-Policy: connect-src 'self' http://localhost:* https://localhost:* ws://localhost:* wss://localhost:* http://peer.gm183.test:* https://peer.gm183.test:* ws://peer.gm183.test:* wss://peer.gm183.test:* http://203.0.113.183:* https://203.0.113.183:* ws://203.0.113.183:* wss://203.0.113.183:* https://meter.gm183.test:18341 wss://meter.gm183.test:18341\nContent-Type: text/html; charset=utf-8\nDate: Tue, 08 Sep 2026 17:42:18 GMT\n\n",
+    "cors-allowed": "HTTP/1.1 200 OK\nAccess-Control-Allow-Headers: *\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-store\nContent-Type: application/json\nTiming-Allow-Origin: *\nDate: Tue, 08 Sep 2026 17:38:20 GMT\nContent-Length: 323\n\n",
+    "cors-unrelated": "HTTP/1.1 200 OK\nAccess-Control-Allow-Headers: *\nAccess-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nCache-Control: no-store\nContent-Type: application/json\nTiming-Allow-Origin: *\nDate: Tue, 08 Sep 2026 17:38:21 GMT\nContent-Length: 323\n\n"
+  },
+  "firewall": {
+    "blocked-firewall": "table inet gm183 {\n\tchain output {\n\t\ttype filter hook output priority filter; policy accept;\n\t\tudp dport 18313 counter packets 13 bytes 16834 reject\n\t}\n}\n",
+    "egress-firewall": "table inet gm183_egress {\n\tchain output {\n\t\ttype filter hook output priority filter; policy accept;\n\t\tmeta skuid 60183 ct state new counter packets 3 bytes 220 reject\n\t}\n}\n",
+    "egress-denial": "Synthetic uid 60183 direct outbound curl exit=7\n"
+  },
+  "native": "Revision f6f32a3; native command: SSL_CERT_FILE=<temporary CA> graphite-meter-client --url http://[::1]:18310 --warmup 250ms --latency-duration 1s --download-duration 1500ms --upload-duration 1500ms --streams 1\nPressed r, waited completion, pressed q.\nDownload 79.10 Gbit/s, 14.85 GB; upload 33.95 Gbit/s, 6.38 GB, server-clock.\nLatency p50 0.53 ms, p95 0.54 ms, probe timeouts 0/3.\nAutomatic selected clear HTTP/1.1 fetch and WebTransport HTTP/3 latency, over IPv6 literal.\nThese loopback rates verify carried bytes only; not a benchmark.\n",
+  "npmValidation": {
+    "nginxTest": "configuration file /etc/nginx/nginx.conf syntax is ok; test is successful",
+    "websocketUpgrade": {
+      "path": "/ws/ping",
+      "clientStatus": 101,
+      "upstreamStatus": 101,
+      "browser": "Firefox/155.0",
+      "upstream": "172.17.0.1"
+    },
+    "measurementRoutes": [
+      "/download",
+      "/upload/session",
+      "/upload/progress",
+      "/upload/checkpoint",
+      "/upload"
+    ]
+  },
+  "allStopPersistenceDiagnostic": {
+    "cold": {
+      "records": 0,
+      "failedRepositoryRequest": [
+        "FAILED https://localhost:18361/assets/repository-CrMNKrwg.js { errorText: 'net::ERR_CONNECTION_REFUSED' }"
+      ]
+    },
+    "preloaded": {
+      "records": 1,
+      "outcome": "incomplete",
+      "stages": {
+        "latency": "complete",
+        "download": "complete",
+        "upload": "not-run",
+        "bidirectional": "not-run"
+      },
+      "description": "Diagnostic only: import the existing repository module before the run, then perform identical SIGKILL timing."
+    },
+    "debugWarning": "Unable to save this result locally. Future writes will be retried.",
+    "debugSavingResults": true
+  },
+  "reducedMotion": {
+    "media": "reduce",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "selectors": [
+      {
+        "transitionDuration": "1e-06s",
+        "animationDuration": "1e-06s"
+      }
+    ]
+  },
+  "integratedRetest": {
+    "revision": "9ed8e5424680198e1a4964a56367a27ad59ca107",
+    "binarySha256": "f40216745cf18eafe4a88a9700f7ff3ceacd9a50b04459fb415a99dbb8deb1e5",
+    "browser": "Google Chrome 152.0.7977.82",
+    "productionBuild": true,
+    "diagnosticInstrumentation": false,
+    "failureCases": [
+      {
+        "case": "integrated-allstop",
+        "elapsedMs": 18302,
+        "text": "Graphite\u00a0Meter\nTested 2 servers\n0\n0.1\n1\n5\n10\n0.76\nGbit/s\n0.76 Gbit/s \u00b7 Download\nDownload 0.76 Gbit/s\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.4 ms\n1.0 ms jitter\n0.0 \u2013 17.7\n0\n20.0\n40.0 ms\nLOADED DOWN\nmean 8.3 ms\n4.2 ms jitter\n6.5 \u2013 11.1\n0\n20.0\n40.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n20.0\n40.0 ms\n0 of 2 servers\nCombined\nprimary\npeer\nprimary: upload \u2014 upload session could not be established\npeer: upload \u2014 upload session could not be established\nDownload\nLOW\n0.76\nGbit/s\n0.82\nwire +7.8%\nPing\nHIGH\n0.4\nms\n1.0 ms\njitter\npeer\n5.00\n2.50\n0.00\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\n4s\nWARM-UP\nPING\nDOWNLOAD\n0.76 Gbit/s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nIncomplete\n\u00b7\nelapsed 5.0s\n\u00b7\n286.6 MB xfer\nprod 9ed8e54\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nINCOMPLETE\nIncomplete",
+        "layout": {
+          "width": 1280,
+          "scrollWidth": 1280,
+          "reduced": false,
+          "touch": 0,
+          "phase": "complete"
+        },
+        "records": [
+          {
+            "id": "12d1f24a-6c28-44fb-b696-58da191bf322",
+            "outcome": "incomplete",
+            "completedAt": 1788890417086,
+            "participants": [],
+            "stages": {
+              "latency": {
+                "status": "complete",
+                "totalBytes": null,
+                "serverAuthoritative": null
+              },
+              "download": {
+                "status": "complete",
+                "totalBytes": 286588928,
+                "serverAuthoritative": false
+              },
+              "upload": {
+                "status": "not-run",
+                "totalBytes": null,
+                "serverAuthoritative": null
+              },
+              "bidirectional": {
+                "status": "not-run",
+                "totalBytes": null,
+                "serverAuthoritative": null
+              }
+            }
+          }
+        ]
+      },
+      {
+        "case": "integrated-survivor",
+        "elapsedMs": 9868,
+        "text": "Graphite\u00a0Meter\nTested 2 servers\n0\n1\n10\n50\n100\n13.72\nGbit/s\n13.72 Gbit/s \u00b7 Download\nDownload 13.72 Gbit/s; Upload 10.66 Gbit/s\nRUN AGAIN\n~6s\nEstimated duration 6 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nprimary\npeer\nIDLE\nmedian 0.3 ms\n0.1 ms jitter\n0.0 \u2013 6.7\n0\n5.0\n10.0 ms\nLOADED DOWN\nmean 0.9 ms\n0.1 ms jitter\n0.8 \u2013 1.0\n0\n5.0\n10.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n5.0\n10.0 ms\n1 of 2 servers\nCombined\nprimary\npeer\npeer: upload \u2014 upload session could not be established\nDownload\nMEDIUM\n13.72\nGbit/s\n14.80\nwire +7.8%\nUpload\nHIGH\n10.66\nGbit/s\n11.50\nwire +7.8%\nPing\nHIGH\n0.3\nms\n0.1 ms\njitter\npeer\n20.00\n10.00\n0.00\n20.0\n10.0\n0.0\n0s\n2s\n4s\n6s\nPING\nDOWNLOAD\nUPLOAD\n13.72 Gbit/s\n10.66 Gbit/s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nPartial\n\u00b7\nelapsed 6.9s\n\u00b7\n7.1 GB xfer\nprod 9ed8e54\nSpace\nRun again\nS\nSettings\nD\nInfo\nH\nHistory\nR\nRun again\nPARTIAL\nPartial",
+        "layout": {
+          "width": 1280,
+          "scrollWidth": 1280,
+          "reduced": false,
+          "touch": 0,
+          "phase": "complete"
+        },
+        "records": [
+          {
+            "id": "3d01e0e1-7a58-4be6-beed-09058721ad40",
+            "outcome": "partial",
+            "completedAt": 1788890437475,
+            "participants": [
+              "self"
+            ],
+            "stages": {
+              "latency": {
+                "status": "complete",
+                "totalBytes": null,
+                "serverAuthoritative": null
+              },
+              "download": {
+                "status": "complete",
+                "totalBytes": 5146869760,
+                "serverAuthoritative": false
+              },
+              "upload": {
+                "status": "complete",
+                "totalBytes": 1999765504,
+                "serverAuthoritative": true
+              },
+              "bidirectional": {
+                "status": "not-run",
+                "totalBytes": null,
+                "serverAuthoritative": null
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "feedback": [
+      {
+        "case": "pending-start",
+        "text": "Graphite\u00a0Meter\n\u2014\n\u2014\nTEST CANNOT START\nServers are still loading. Try again in a moment.\nTest cannot start \u2014 Servers are still loading. Try again in a moment.\nSTART TEST\n~26s\nEstimated duration 26 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nIDLE\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED DOWN\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nIdle\n\u00b7\nelapsed 0.0s\n\u00b7\n0 B xfer\nprod 9ed8e54\nSpace\nStart test\nS\nSettings\nD\nInfo\nSTANDBY\nReady"
+      },
+      {
+        "case": "https-clear",
+        "text": "TEST & DISPLAY\nSettings\nTEST\nCONNECTION PATHS\nPath failed\nTest servers\n2 selected\nIntegrated public fixture\n18.9\nms\nclear\n\nChoose up to 4. Their speeds are combined.\n\nMeasure ping to\nAll servers\nIntegrated public fixture\nclear\nclear\n\nUse an HTTPS origin for this server when the interface is HTTPS.\n\nRetry clear\nTHROUGHPUT PATH\nAutomatic\nResolves independently for every selected server\nHTTP/1.1\nChecking clear\nHTTP/2\nUnavailable on Integrated public fixture\nHTTP/3\nUnavailable on Integrated public fixture\nWebTransport streams\nUnavailable on Integrated public fixture\nFailed\n1 of 2 servers ready. Paths resolve independently.\nRetry\nLATENCY PATH\nAutomatic\nChooses the available path for Integrated public fixture\nWebSocket\nAvailable on Integrated public fixture\nWebTransport\nUnavailable on Integrated public fixture\nReady\nWebSocket \u00b7 HTTP/1.1 \u00b7 TLS\nDURATION & STAGES\nShort\nMedium\nLong\nCustom\nInclude concurrent download + upload\nWARMUP\n0.8s\nLATENCY\n4s\nDOWNLOAD\n10s\nUPLOAD\n10s\nRESULTS\nDISPLAY UNITS\nRATE\nBits\nBytes\nPREFIX\nDecimal\nBinary\n\nApplies to all displayed rates.\n\nRESULT HISTORY\nSave completed results on this device\nView History\nWIRE-RATE ESTIMATES\nShow estimated wire rate\n\nEstimated Ethernet rate from measured protocol bytes and available connection details.\n\nGAUGE SCALE\nScale throughput automatically\n\nThe chart follows the measured peak. The gauge starts at 1 Gbit/s and grows in powers of ten.\n\nADVANCED\nEARLY FINISH\nFinish stable stages early\nLATENCY TIMING\nUNLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nLOADED PING CADENCE\nReply-driven\nFast (80 ms)\nMedium (250 ms)\nSlow (600 ms)\nSkip loaded latency when latency is off\nDATAGRAM THROUGHPUT\nDatagram throughput (experimental)\n\nAdds the WebTransport datagram card to the connection picker.\n\nTRANSFER STREAMS\nForce exact stream count\nMAXIMUM H1 STREAMS PER DIRECTION\n\nAutomatic caps HTTP/1.1 at 4. HTTP/2 and HTTP/3 choose safe multiplexed request counts automatically.\n\nReset settings",
+        "clearPreflightRequests": 0
+      }
+    ],
+    "forcedBlocked": [
+      {
+        "target": "transport:webtransport",
+        "text": "Graphite\u00a0Meter\n\u2014\n\u2014\nCONNECTION CHECK FAILED\nThroughput path is unavailable\nConnection check failed \u2014 Throughput path is unavailable\nSTART TEST\n~26s\nEstimated duration 26 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nIDLE\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED DOWN\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nIdle\n\u00b7\nelapsed 0.0s\n\u00b7\n0 B xfer\nprod 9ed8e54\nSpace\nStart test\nS\nSettings\nD\nInfo\nSTANDBY\nReady",
+        "measurementRequests": 0
+      },
+      {
+        "target": "https://localhost:18413",
+        "text": "Graphite\u00a0Meter\n\u2014\n\u2014\nCONNECTION CHECK FAILED\nThroughput path is unavailable\nConnection check failed \u2014 Throughput path is unavailable\nSTART TEST\n~26s\nEstimated duration 26 seconds\nTEST STAGES\n\u2014 TAP TO ENABLE OR DISABLE\nLatency\nDownload\nUpload\nIDLE\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED DOWN\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\nLOADED UP\nwaiting\nrange \u2014\n0\n0.5\n1.0 ms\n20.0\n10.0\n0.0\n0s\n1s\n2s\n3s\nUse arrow keys to inspect the timeline, Home and End to jump to its edges, and Escape to dismiss details. On touch screens, tap the chart. Rates are plotted values; latency and probe timeouts describe the nearby display bucket, not whole-run statistics.\nIdle\n\u00b7\nelapsed 0.0s\n\u00b7\n0 B xfer\nprod 9ed8e54\nSpace\nStart test\nS\nSettings\nD\nInfo\nSTANDBY\nReady",
+        "measurementRequests": 0
+      }
+    ],
+    "firewall": "table inet gm183_integrated {\n\tchain output {\n\t\ttype filter hook output priority filter; policy accept;\n\t\tudp dport 18413 counter packets 4 bytes 5112 reject\n\t}\n}\n"
+  }
+}
