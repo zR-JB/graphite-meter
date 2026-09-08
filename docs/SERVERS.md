@@ -192,6 +192,8 @@ Choosing Sign in shows an Open sign-in page link. Open it in a new tab for that
 server's existing password/OIDC login followed by an approval page naming the
 requesting interface's exact HTTPS origin. Compare the eight-character code
 shown in Settings with the approval page and approve only when both match.
+An existing login on that server is reused; authorizing another interface does
+not renew the login or revoke its other clients.
 Approval uses the server's ordinary
 first-party session and CSRF protection. The requesting page polls a verifier-bound
 exchange, so opener access and cross-origin message delivery are unnecessary.
