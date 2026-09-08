@@ -168,6 +168,10 @@ An origin cannot be advertised as both deterministic native and negotiated. Use 
 origin that served that server's discovery request, including when a different
 server hosts the interface.
 
+Clear HTTP loopback access from an HTTPS interface is browser-dependent. Advertise
+HTTPS measurement paths for portable HTTPS deployments, including when the server
+is on `localhost`.
+
 ## Reverse proxies
 
 A proxy creates two protocol hops:
