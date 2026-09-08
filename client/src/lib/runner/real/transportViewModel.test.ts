@@ -64,9 +64,7 @@ test("status copy distinguishes missing, blocked, and trusted loopback targets",
   );
   expect(
     throughputOptionView(blocked, "http://meter.example:7246").detail,
-  ).toBe(
-    "Blocked by the browser: a secure page cannot open this clear endpoint · http://meter.example:7246",
-  );
+  ).toBe("Use an HTTPS origin for this server when the interface is HTTPS.");
   expect(throughputOptionView(blocked, "http2").detail).toBe(
     "Not offered in /preflight.",
   );
