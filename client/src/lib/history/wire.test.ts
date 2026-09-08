@@ -62,12 +62,13 @@ test("saved wire models survive reload without using a later connection or mutab
   expect(historyWirePresentation(record, "upload")).toBeNull();
 });
 
-test("old snapshots show their saved percentage and identify missing breakdowns", () => {
+test("current snapshots show their saved percentage and identify nullable breakdowns", () => {
   const record = buildHistoryRecord(result(), {
     paths: null,
-    clientBuild: "old",
+    clientBuild: "test",
     wireEstimates: {
-      version: 1,
+      version: 2,
+      breakdown: { download: null, upload: null, bidirectional: null },
       downloadBytesPerSec: 1_063_000,
       uploadBytesPerSec: null,
       bidirectionalBytesPerSec: null,
@@ -121,7 +122,6 @@ test("wire model import validates bounded factors, provenance, and the version b
     { ...valid, downloadBytesPerSec: Infinity },
     { ...valid, breakdown: {} },
   ];
-  if (valid.version !== 2) throw new Error("expected current snapshot");
   for (const patch of [
     { transport: ["http2"] },
     { ipVersion: "4" },
@@ -148,4 +148,21 @@ test("wire model import validates bounded factors, provenance, and the version b
       },
     });
   for (const value of invalid) expect(isWireEstimates(value)).toBe(false);
+});
+
+test("rejects version 1 estimates without converting their saved rates", () => {
+  const old = {
+    version: 1,
+    downloadBytesPerSec: 1_063_000,
+    uploadBytesPerSec: null,
+    bidirectionalBytesPerSec: null,
+  };
+  const before = structuredClone(old);
+  expect(isWireEstimates(old)).toBe(false);
+  const record = buildHistoryRecord(result(), {
+    paths: null,
+    clientBuild: "test",
+  });
+  expect(isHistoryRecord({ ...record, wireEstimates: old })).toBe(false);
+  expect(old).toEqual(before);
 });

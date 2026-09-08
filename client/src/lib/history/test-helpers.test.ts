@@ -2,7 +2,7 @@ import type { HistoryRecord } from "./types";
 
 export function historyRecord(index = 1): HistoryRecord {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id: `00000000-0000-4000-8000-${index.toString(16).padStart(12, "0")}`,
     startedAt: index,
     completedAt: index + 1,

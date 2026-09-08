@@ -59,7 +59,7 @@ function record(
     count: 100,
   };
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id,
     startedAt: completedAt - 65_432,
     completedAt,
@@ -113,7 +113,8 @@ function record(
     client: { build: "0.0.0-browser-test+long-revision" },
     failures: [],
     wireEstimates: {
-      version: 1,
+      version: 2,
+      breakdown: { download: null, upload: null, bidirectional: null },
       downloadBytesPerSec: download * 1.03,
       uploadBytesPerSec: 61_500_000 * 1.03,
       bidirectionalBytesPerSec: 130_000_000 * 1.03,
@@ -2364,7 +2365,7 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   ).toHaveAttribute("aria-checked", "true");
 });
 
-test("legacy saved server identity stays readable at the bottom of history details", async ({
+test("single-server saved server identity stays readable at the bottom of history details", async ({
   page,
 }) => {
   const saved = record(IDS.newest, Date.UTC(2026, 8, 6, 12));
