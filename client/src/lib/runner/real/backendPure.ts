@@ -325,6 +325,21 @@ function advertisedById<T extends { id: string }>(
   return found?.entry.state === "advertised" ? found.target : null;
 }
 
+function preferredGroupTarget<T extends { tls: boolean; origin: string }>(
+  discovery: TransportDiscovery,
+  targets: T[],
+): T | null {
+  const secure = discovery.pageSecure
+    ? targets.filter((target) => target.tls)
+    : [];
+  const eligible = secure.length ? secure : targets;
+  return (
+    eligible.find((target) => target.origin === discovery.pageOrigin) ??
+    eligible[0] ??
+    null
+  );
+}
+
 /* Resolve one bulk transfer path. */
 export function selectThroughputTarget(
   discovery: TransportDiscovery,
@@ -343,11 +358,14 @@ export function selectThroughputTarget(
       .filter((entry) => entry.state === "advertised")
       .flatMap((entry) => entry.targets);
     return runnable(
-      targets.find((target) =>
-        category === "protocol"
-          ? target.transport === "fetch-stream" && target.protocol === value
-          : target.transport === value,
-      ) ?? null,
+      preferredGroupTarget(
+        discovery,
+        targets.filter((target) =>
+          category === "protocol"
+            ? target.transport === "fetch-stream" && target.protocol === value
+            : target.transport === value,
+        ),
+      ),
     );
   }
   if (selection !== "current" && selection !== "auto")
@@ -435,15 +453,16 @@ export function selectLatencyTarget(
     !!target && (webTransport || target.transport !== "webtransport");
   if (selection.startsWith("transport:")) {
     const value = selection.slice("transport:".length);
-    return (
+    return preferredGroupTarget(
+      discovery,
       Object.values(discovery.latency)
         .filter((entry) => entry.state === "advertised")
         .flatMap((entry) => entry.targets)
-        .find(
+        .filter(
           (target) =>
             target.transport === value &&
             (webTransport || target.transport !== "webtransport"),
-        ) ?? null
+        ),
     );
   }
   if (selection !== "auto") {
