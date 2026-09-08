@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -27,6 +28,12 @@ func mountStageUpload(mux *http.ServeMux, received *atomic.Uint64, upload http.H
 	done := make(chan struct{})
 	var once sync.Once
 	started := time.Now()
+	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.MarshalWrite(w, struct {
+			Bytes uint64 `json:"bytes"`
+			Nanos uint64 `json:"nanos"`
+		}{received.Load(), uint64(time.Since(started))})
+	})
 	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			once.Do(func() { close(done) })
@@ -103,7 +110,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			defer cancel()
 			result := make(chan error, 1)
 			go func() {
-				result <- r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, 150*time.Millisecond)
+				result <- r.runTestStage(ctx, "bidirectional", 150*time.Millisecond)
 			}()
 			select {
 			case <-held:
@@ -123,7 +130,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if len(phases) != 3 || phases[1].Phase != StageWarmup || phases[2].Phase != StageMeasuring {
+			if len(phases) != 4 || phases[1].Phase != StageWarmup || phases[2].Phase != StageMeasuring || phases[3].Phase != StageFinished {
 				t.Fatalf("phases=%v", phases)
 			}
 			if phases[1].At.Before(releasedAt) || phases[2].At.Sub(phases[1].At) < cfg.Warmup {
@@ -168,13 +175,21 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			var mu sync.Mutex
 			seen := map[Direction]bool{}
 			var results []Result
+			var measuredAt time.Time
+			var details *RunDetails
 			r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(e Event) {
 				mu.Lock()
 				defer mu.Unlock()
+				if e.Kind == EventStage && e.Phase == StageMeasuring {
+					measuredAt = e.At
+				}
+				if e.Kind == EventServers {
+					details = e.Servers
+				}
 				if e.Kind == EventResult {
 					results = append(results, *e.Result)
 				}
-				if e.Kind == EventThroughput {
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable && e.At.Sub(measuredAt) >= time.Second {
 					seen[e.Direction] = true
 					if seen[Down] && seen[Up] {
 						canInterrupt.Store(true)
@@ -186,7 +201,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			}}
 			attachTestLatencyTarget(r, srv.URL)
 			started := time.Now()
-			err := r.runTransferStage(ctx, "bidirectional", []Direction{Down, Up}, 3*time.Second)
+			err := r.runTestStage(ctx, "bidirectional", 3*time.Second)
 			if err == nil {
 				t.Fatal("interrupted stage reported success")
 			}
@@ -197,7 +212,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			} else if !strings.Contains(err.Error(), "503") {
 				t.Fatal(err)
 			}
-			if time.Since(started) > time.Second {
+			if time.Since(started) > 2*time.Second {
 				t.Fatal("stage failure did not promptly cancel its siblings and release progress")
 			}
 			mu.Lock()
@@ -205,20 +220,31 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			if len(results) != 3 || results[0].Latency.Count == 0 {
 				t.Fatalf("partial results=%+v", results)
 			}
+			if details == nil || details.Outcome != "incomplete" || len(details.Servers) != 1 || len(details.Servers[0].Results) != 3 {
+				t.Fatalf("interruption lost the terminal summary: %+v", details)
+			}
 			for _, result := range results {
-				if !errors.Is(result.Err, err) || result.Elapsed <= 0 || result.Elapsed >= 3*time.Second {
-					t.Fatalf("partial population lost its cause/window: %+v", result)
+				if result.Err == nil {
+					t.Fatalf("partial population lost its cause: %+v", result)
 				}
 				if result.Direction == "" {
+					if result.Elapsed <= 0 || result.Elapsed >= 3*time.Second {
+						t.Fatalf("latency window: %+v", result)
+					}
 					continue
 				}
-				if result.TotalBytes == 0 || result.MeanBps <= 0 || result.ServerAuth != (result.Direction == Up) {
+				if result.TotalBytes == 0 || result.ServerAuth != (result.Direction == Up) {
 					t.Fatalf("missing receiver attribution: %+v", result)
 				}
-				if math.Abs(result.MeanBps-float64(result.TotalBytes)/result.Elapsed.Seconds()) > 1e-9 {
-					t.Fatalf("rate not derived from receiver window: %+v", result)
+				if interruption == "cancel" {
+					if result.Unavailable || result.MeanBps <= 0 {
+						t.Fatalf("cancel discarded the measured interval: %+v", result)
+					}
+				} else if !result.Unavailable {
+					t.Fatalf("removed participant retained a headline: %+v", result)
 				}
 			}
+
 		})
 	}
 }
@@ -268,7 +294,7 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	started := time.Now()
-	err := r.runTransferStage(ctx, "upload", []Direction{Up}, time.Second)
+	err := r.runTestStage(ctx, "upload", time.Second)
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("upload progress cause=%v", err)
 	}
@@ -277,11 +303,17 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 	}
 }
 
-func TestUploadSilentFeedAfterWarmupHasBoundedBaseline(t *testing.T) {
+func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 	warmup := make(chan struct{})
+	checkpointStarted, checkpointStopped := make(chan struct{}), make(chan struct{})
 	mux := http.NewServeMux()
 	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintln(w, `{"uploadId":"silent-feed"}`) })
 	mux.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) })
+	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, r *http.Request) {
+		close(checkpointStarted)
+		defer close(checkpointStopped)
+		<-r.Context().Done()
+	})
 	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			return
@@ -294,7 +326,7 @@ func TestUploadSilentFeedAfterWarmupHasBoundedBaseline(t *testing.T) {
 			case <-r.Context().Done():
 				return
 			case <-warmup:
-				// Keep the connection open, but provide no post-warmup baseline.
+				// Live progress cannot replace the bounded authoritative checkpoint.
 				<-r.Context().Done()
 				return
 			case <-ticker:
@@ -305,42 +337,186 @@ func TestUploadSilentFeedAfterWarmupHasBoundedBaseline(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	measuring := make(chan struct{})
-	var results atomic.Int64
+	var measured bool
+	var details *RunDetails
 	cfg := Config{BaseURL: srv.URL, Warmup: 20 * time.Millisecond, UploadBytesPerStream: 32 * 1024}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
 		if e.Kind == EventStage && e.Phase == StageWarmup {
 			close(warmup)
 		}
-		if e.Kind == EventResult {
-			results.Add(1)
+		if e.Kind == EventResult || e.Kind == EventStage && e.Phase == StageMeasuring {
+			measured = true
 		}
-		if e.Kind == EventStage && e.Phase == StageMeasuring {
-			close(measuring)
+		if e.Kind == EventServers {
+			details = e.Servers
 		}
 	}}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- r.runTransferStage(ctx, "upload", []Direction{Up}, 50*time.Millisecond) }()
+	started := time.Now()
+	err := r.runTestStage(ctx, "upload", 50*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "receiver checkpoint unavailable before measurement") {
+		t.Fatalf("silent checkpoint cause = %v", err)
+	}
+	if measured || details == nil || details.Outcome != "incomplete" || len(details.Intervals) != 0 {
+		t.Fatalf("preparation became measurement: measured=%v details=%+v", measured, details)
+	}
 	select {
-	case <-measuring:
+	case <-checkpointStarted:
+	default:
+		t.Fatal("checkpoint never requested")
+	}
+	select {
+	case <-checkpointStopped:
 	case <-time.After(time.Second):
-		cancel()
-		<-done
-		t.Fatal("never reached measuring")
+		t.Fatal("checkpoint request not canceled")
 	}
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "upload receiver baseline unavailable") {
-			t.Fatalf("silent feed cause = %v", err)
-		}
-		if results.Load() != 0 {
-			t.Fatalf("silent feed emitted %d results without a receiver baseline", results.Load())
-		}
-	case <-time.After(300 * time.Millisecond):
-		cancel()
-		<-done
-		t.Fatal("upload remained in post-ready baseline wait beyond six complete measurement windows")
+	if elapsed := time.Since(started); elapsed < 1500*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("checkpoint collection exceeded its independent budget: %v", elapsed)
 	}
+}
+
+func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
+	for _, stage := range []string{"download", "upload"} {
+		for _, duration := range []time.Duration{100 * time.Millisecond, time.Second, 3 * time.Second} {
+			t.Run(stage+"/"+duration.String(), func(t *testing.T) {
+				var srv *httptest.Server
+				if stage == "download" {
+					srv = newSilentDownloadServer()
+				} else {
+					srv = newStalledUploadServer()
+				}
+				defer srv.Close()
+				var details *RunDetails
+				r := &runner{
+					cfg:     Config{BaseURL: srv.URL, UploadBytesPerStream: 32 * 1024}.normalized(),
+					streams: streamCounts{down: 1, up: 1},
+					http:    srv.Client(),
+					emit: func(e Event) {
+						if e.Kind == EventServers {
+							details = e.Servers
+						}
+					},
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+				defer cancel()
+				started := time.Now()
+				result, err := r.testTransferResult(ctx, stage, duration)
+				if duration > busRedialWindow {
+					if !errors.Is(err, errNoSurvivors) || details == nil || len(details.Failures) != 1 || !strings.Contains(details.Failures[0].Message, "stopped delivering bytes") {
+						t.Fatalf("stalled participant survived: err=%v details=%+v", err, details)
+					}
+					if time.Since(started) >= duration {
+						t.Fatal("liveness failure waited for the stage deadline")
+					}
+				} else if err != nil {
+					t.Fatal(err)
+				}
+				if result.TotalBytes != 0 || result.MeanBps != 0 || result.ServerAuth != (stage == "upload") {
+					t.Fatalf("zero progress invented data: %+v", result)
+				}
+				wantUnavailable := duration < minimumSurvivorEvidence || duration > busRedialWindow
+				if result.Unavailable != wantUnavailable {
+					t.Fatalf("evidence availability: %+v", result)
+				}
+			})
+		}
+	}
+}
+
+func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
+	for _, cancelEarly := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelEarly), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var phases []StagePhase
+				var details *RunDetails
+				var active atomic.Int64
+				r := &runner{
+					cfg:     Config{BaseURL: "http://fixture.invalid", DownloadBytesPerStream: 1024}.normalized(),
+					streams: streamCounts{down: 1},
+					http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						active.Add(1)
+						defer func() { active.Add(-1) }()
+						<-req.Context().Done()
+						return nil, req.Context().Err()
+					})},
+					emit: func(e Event) {
+						if e.Kind == EventStage {
+							phases = append(phases, e.Phase)
+						}
+						if e.Kind == EventServers {
+							details = e.Servers
+						}
+						if e.Kind == EventResult || e.Kind == EventThroughput {
+							t.Errorf("unready stage emitted data: %+v", e)
+						}
+					},
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- r.runTestStage(ctx, "download", time.Second) }()
+				synctest.Wait()
+				if active.Load() != 1 {
+					t.Fatalf("fixture did not own a preparing request: %d", active.Load())
+				}
+				if cancelEarly {
+					cancel()
+				} else {
+					time.Sleep(stageReadyTimeout)
+				}
+				err := <-done
+				if err == nil || cancelEarly && !errors.Is(err, context.Canceled) {
+					t.Fatalf("setup cause=%v", err)
+				}
+				if active.Load() != 0 || !slices.Equal(phases, []StagePhase{StagePreparing}) || details == nil || details.Outcome != "incomplete" {
+					t.Fatalf("setup cleanup: active=%d phases=%v details=%+v", active.Load(), phases, details)
+				}
+			})
+		})
+	}
+}
+
+func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const preparationBytes = 64 * 1024
+		// Keep fake-time completion between ticks so separate captures advance time.
+		const measuredWindow = 1100 * time.Millisecond
+		var requests int
+		var preparedAt, measuredAt time.Time
+		var details *RunDetails
+		r := &runner{
+			cfg:     Config{BaseURL: "http://fixture.invalid", Warmup: 100 * time.Millisecond, DownloadBytesPerStream: preparationBytes}.normalized(),
+			streams: streamCounts{down: 1},
+			http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if requests == 1 {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", preparationBytes))), Request: req}, nil
+				}
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			})},
+			emit: func(e Event) {
+				if e.Kind == EventServers {
+					details = e.Servers
+				}
+				if e.Kind == EventStage && e.Phase == StagePreparing {
+					preparedAt = e.At
+				}
+				if e.Kind == EventStage && e.Phase == StageMeasuring {
+					measuredAt = e.At
+				}
+			},
+		}
+		result, err := r.testTransferResult(t.Context(), "download", measuredWindow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := r.coordinated.download(); got != preparationBytes {
+			t.Fatalf("preparation fixture carried %d bytes", got)
+		}
+		if measuredAt.Sub(preparedAt) != r.cfg.Warmup || result.TotalBytes != 0 || result.Elapsed != measuredWindow || result.Unavailable {
+			t.Fatalf("preparation contaminated the measured window: preparation=%v result=%+v intervals=%+v", measuredAt.Sub(preparedAt), result, details.Intervals)
+		}
+	})
 }

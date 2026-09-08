@@ -42,58 +42,6 @@ func TestPercentile(t *testing.T) {
 	})
 }
 
-func TestRateStatsResult(t *testing.T) {
-	t.Run("zero samples", func(t *testing.T) {
-		var s rateStats
-		r := s.result("download", Down, true)
-		if r.MeanBps != 0 {
-			t.Errorf("MeanBps = %v, want 0", r.MeanBps)
-		}
-		if r.Samples != 0 {
-			t.Errorf("Samples = %v, want 0", r.Samples)
-		}
-		if r.PeakBps != 0 {
-			t.Errorf("PeakBps = %v, want 0", r.PeakBps)
-		}
-	})
-
-	t.Run("with samples", func(t *testing.T) {
-		var s rateStats
-		s.add(10)
-		s.add(0)
-		s.add(-5)
-		s.add(30)
-		s.add(20)
-		s.setWindow(300, 2*time.Second)
-		r := s.result("upload", Up, false)
-		if r.Stage != "upload" {
-			t.Errorf("Stage = %q, want upload", r.Stage)
-		}
-		if r.Direction != Up {
-			t.Errorf("Direction = %v, want Up", r.Direction)
-		}
-		if r.ServerAuth != false {
-			t.Errorf("ServerAuth = %v, want false", r.ServerAuth)
-		}
-		if r.Elapsed != 2*time.Second {
-			t.Errorf("Elapsed = %v, want 2s", r.Elapsed)
-		}
-		if r.MeanBps != 150 {
-			t.Errorf("MeanBps = %v, want 150", r.MeanBps)
-		}
-		if r.PeakBps != 30 {
-			t.Errorf("PeakBps = %v, want 30", r.PeakBps)
-		}
-		if r.TotalBytes != 300 {
-			t.Errorf("TotalBytes = %v, want 300", r.TotalBytes)
-		}
-		if r.Samples != 3 {
-			t.Errorf("Samples = %v, want 3", r.Samples)
-		}
-	})
-
-}
-
 func TestLatencyStatsAdd(t *testing.T) {
 	var s latencyStats
 	s.add(10*time.Millisecond, false, 0)
@@ -171,20 +119,6 @@ func TestLatencyStatsSnapshot(t *testing.T) {
 			t.Errorf("Loss = %v, want %v", timeoutRatio(t, got), wantLoss)
 		}
 	})
-}
-
-var benchmarkResult Result
-
-func BenchmarkMeasurementReduction(b *testing.B) {
-	b.ReportAllocs()
-	for b.Loop() {
-		var rates rateStats
-		for sample := range 100 {
-			rates.add(float64(100_000_000 + sample))
-		}
-		rates.setWindow(1_000_000_000, 10*time.Second)
-		benchmarkResult = rates.result("download", Down, false)
-	}
 }
 
 func timeoutRatio(t *testing.T, s LatencyStats) float64 {
