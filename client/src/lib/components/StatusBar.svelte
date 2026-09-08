@@ -6,6 +6,7 @@
   import { fmtBytes } from "../format";
   import { BUILD_IDENTITY } from "../constants";
   import type { Phase } from "../runner/contract";
+  import { completionLabel } from "./phasePresentation";
 
   const PHASE_LABEL: Record<Phase, string> = {
     idle: "Idle",
@@ -55,7 +56,9 @@
 </script>
 
 <span class="label" role="status" aria-live="polite"
-  >{PHASE_LABEL[store.phase]}</span
+  >{store.phase === "complete"
+    ? completionLabel(store.result?.outcome)
+    : PHASE_LABEL[store.phase]}</span
 >
 <span class="sep">·</span>
 <span>elapsed {fmtElapsed(elapsedMs)}</span>
