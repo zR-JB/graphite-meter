@@ -612,6 +612,10 @@ test("retrying an upgraded server refreshes capability evidence without checking
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
   await expect(retry).toBeVisible();
   await expect(settings).toContainText("receiver checkpoint support");
+  await expect(settings.locator(".server-choices")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
   await page.evaluate(() => {
     const state = globalThis as typeof globalThis & {
       checkpointsAvailable: boolean;
