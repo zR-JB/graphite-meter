@@ -58,6 +58,13 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	}
 	p, authenticated := s.authenticate(r)
 	if !authenticated || p.Bearer || p.session == nil {
+		if r.Header.Get("Sec-Fetch-Site") == "cross-site" && r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document" {
+			// A document navigation makes the Strict session cookie available on
+			// reentry. An HTTP redirect would retain the cross-site cookie context.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_ = continueTemplate.Execute(w, map[string]any{"Styles": authStyles, "Challenge": challenge, "Opening": true})
+			return
+		}
 		http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
 		return
 	}

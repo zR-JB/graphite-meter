@@ -186,11 +186,13 @@
       >
       {#if !store.serverApproval.renewUrl}
         <p>
-          Complete sign-in in the other window. <a
+          <a
             href={store.serverApproval.url}
             target="_blank"
             rel="noopener noreferrer">Open sign-in page</a
           >
+          in a new tab. Return here after approval. Canceling stops this interface's
+          approval; you can close the sign-in tab yourself.
           {store.serverApproval.message ?? ""}
         </p>
       {/if}
