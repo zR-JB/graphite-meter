@@ -81,7 +81,7 @@ type LatencyTransportKind = Extract<
   "websocket" | "webtransport"
 >;
 export interface HistoryRecord {
-  schemaVersion: 3 | typeof HISTORY_SCHEMA_VERSION;
+  schemaVersion: typeof HISTORY_SCHEMA_VERSION;
   multiServer?: MultiServerResult;
   outcome?: RunResult["outcome"];
   id: string;
@@ -350,16 +350,7 @@ export function buildHistoryRecord(
 }
 
 export function isHistoryRecord(value: unknown): value is HistoryRecord {
-  if (
-    !isObject(value) ||
-    (value.schemaVersion !== HISTORY_SCHEMA_VERSION &&
-      value.schemaVersion !== 3)
-  )
-    return false;
-  if (
-    value.schemaVersion === 3 &&
-    (value.multiServer !== undefined || value.outcome !== undefined)
-  )
+  if (!isObject(value) || value.schemaVersion !== HISTORY_SCHEMA_VERSION)
     return false;
   if (
     value.multiServer !== undefined &&

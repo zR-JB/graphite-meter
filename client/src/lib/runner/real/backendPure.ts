@@ -299,7 +299,7 @@ export function blockedSelectionReason(
   >[] = Object.values(discovery[role]);
   for (const entry of entries) {
     const matches = entry.targets.some((target) => {
-      if (selection === "auto" || selection === "current") return true;
+      if (selection === "auto") return true;
       if (selection.startsWith("protocol:"))
         return (
           target.transport === "fetch-stream" &&
@@ -368,7 +368,7 @@ export function selectThroughputTarget(
       ),
     );
   }
-  if (selection !== "current" && selection !== "auto")
+  if (selection !== "auto")
     return runnable(advertisedById(discovery.throughput, selection));
   const advertised = Object.values(discovery.throughput).filter(
     (entry) => entry.state === "advertised",

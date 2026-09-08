@@ -6,14 +6,13 @@ import {
 import type { HistoryRecord } from "./types";
 
 type WireStage = "download" | "upload" | "bidirectional";
-export type WireEstimates = {
+export interface WireEstimates {
+  version: 2;
+  breakdown: Record<WireStage, CompensationBreakdown | null>;
   downloadBytesPerSec: number | null;
   uploadBytesPerSec: number | null;
   bidirectionalBytesPerSec: number | null;
-} & (
-  | { version: 1 }
-  | { version: 2; breakdown: Record<WireStage, CompensationBreakdown | null> }
-);
+}
 
 /** Save the model that produced the estimate; historical paths never use today's connection. */
 export function historyWireEstimates(
@@ -70,7 +69,7 @@ export function historyWirePresentation(
     measured && bytesPerSec >= measured ? bytesPerSec / measured : null;
   const pct =
     multiplier == null ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
-  const breakdown = wire?.version === 2 ? wire.breakdown[stage] : null;
+  const breakdown = wire?.breakdown[stage];
   return {
     bytesPerSec,
     pct,
@@ -179,7 +178,7 @@ export function isWireEstimates(value: unknown): value is WireEstimates | null {
       "downloadBytesPerSec",
       "uploadBytesPerSec",
       "bidirectionalBytesPerSec",
-      ...(value.version === 2 ? ["breakdown"] : []),
+      "breakdown",
     ])
   )
     return false;
@@ -191,7 +190,6 @@ export function isWireEstimates(value: unknown): value is WireEstimates | null {
     )
   )
     return false;
-  if (value.version === 1) return true;
   const breakdown = value.breakdown;
   return (
     value.version === 2 &&

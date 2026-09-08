@@ -74,7 +74,7 @@ async function seedRetainedResult(page: TestPage) {
     {
       db: HISTORY_DB,
       saved: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         id: "00000000-0000-4000-8000-000000000127",
         startedAt: 1,
         completedAt: 2,

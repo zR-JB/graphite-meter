@@ -35,7 +35,7 @@ export interface ConnectionValidation {
   latency: RoleValidation<VerifiedLatencyPath>;
 }
 export const emptyConnectionValidation = (): ConnectionValidation => ({
-  throughput: { selection: "current", state: "stale", path: null },
+  throughput: { selection: "auto", state: "stale", path: null },
   latency: { selection: "auto", state: "stale", path: null },
 });
 
@@ -199,7 +199,7 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  if (selection === "current" || selection === "auto")
+  if (selection === "auto")
     return selectTarget(discovery, role, selection)
       ? "advertised"
       : "not-advertised";

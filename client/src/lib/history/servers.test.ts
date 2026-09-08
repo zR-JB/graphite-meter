@@ -45,22 +45,24 @@ function details(primary = false): MultiServerResult {
     })),
   };
 }
-const legacy = { name: "Old server", location: "Berlin", engine: "old" };
+const singleServer = { name: "Old server", location: "Berlin", engine: "old" };
 
-test("legacy history retains its saved identity without inventing an address", () => {
-  expect(historyServers({ server: legacy })).toEqual([
+test("single-server history retains its saved identity without inventing an address", () => {
+  expect(historyServers({ server: singleServer })).toEqual([
     { id: "single", label: "Old server · Berlin", host: null, ping: false },
   ]);
 });
 test("history lists the saved selection, including participants lost during a partial run", () => {
-  expect(historyServers({ server: legacy, multiServer: details() })).toEqual([
+  expect(
+    historyServers({ server: singleServer, multiServer: details() }),
+  ).toEqual([
     { id: "self", label: "Home · Berlin", host: "home.test", ping: false },
     { id: "peer", label: "Frankfurt", host: "peer.test:8443", ping: false },
   ]);
 });
 test("only a unique measurement ping target is marked, independently of the viewed server", () => {
   expect(
-    historyServers({ server: legacy, multiServer: details(true) }).map(
+    historyServers({ server: singleServer, multiServer: details(true) }).map(
       (server) => server.ping,
     ),
   ).toEqual([false, true]);
@@ -71,7 +73,7 @@ test("a single server avoids redundant address and ping text", () => {
     { id: "self", name: "home.test", url: "https://home.test" },
   ];
   multiServer.servers = multiServer.servers.slice(0, 1);
-  expect(historyServers({ server: legacy, multiServer })).toEqual([
+  expect(historyServers({ server: singleServer, multiServer })).toEqual([
     { id: "self", label: "home.test", host: null, ping: false },
   ]);
 });

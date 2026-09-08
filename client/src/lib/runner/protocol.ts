@@ -1,26 +1,13 @@
 import type { CompensationTransport, ProtocolTarget } from "./contract";
 
-/* Canonicalize protocol identifiers from Resource Timing, Go net/http, and configured targets into one. */
+/* Canonicalize current Resource Timing and API/configured protocol tokens. */
 export function normalizeHttpProtocol(
   protocol?: string,
 ): ProtocolTarget | undefined {
-  const value = protocol?.toLowerCase();
-  if (value === "http1" || value === "http/1.1") return "http1";
-  if (
-    value === "http2" ||
-    value === "h2" ||
-    value === "h2c" ||
-    value === "http/2.0"
-  )
-    return "http2";
-  if (
-    value === "http3" ||
-    value === "h3" ||
-    value?.startsWith("h3-") ||
-    value === "http/3.0"
-  )
-    return "http3";
-  return value === "negotiated" ? "negotiated" : undefined;
+  if (protocol === "http1" || protocol === "http/1.1") return "http1";
+  if (protocol === "http2" || protocol === "h2") return "http2";
+  if (protocol === "http3" || protocol === "h3") return "http3";
+  return protocol === "negotiated" ? "negotiated" : undefined;
 }
 
 export function httpProtocolLabel(protocol?: string): string {

@@ -151,13 +151,12 @@ cadence and elapsed time alone.
 
 ## Saved history
 
-Graphite Meter 0.8 writes saved history schema version 4 and still reads version 3.
-Version 3 records remain original singleton results, with no invented server or
-interval metadata. Versions 1 and 2
-are unsupported: existing entries remain in browser storage but are skipped and
-reported as unsupported or malformed. They are neither migrated nor reinterpreted;
-clearing history remains an explicit user action. New results retain the usual
-2,000-entry limit.
+Saved history accepts only schema version 4 and wire estimates version 2.
+Unsupported or malformed records remain in browser storage but are skipped and
+reported. Existing databases must use the current database version; older or newer
+databases are refused without changing their data or schema. Nothing is migrated
+or reinterpreted. Clearing history remains an explicit user action. New results
+retain the usual 2,000-entry limit.
 
 Version 4 adds selected server identities, actual surviving participants, per-server
 transport evidence, stage latency populations, aggregate and component windows,
@@ -168,11 +167,11 @@ still cover the full measured run. An incomplete all-server failure is also save
 when result saving is enabled; user-aborted runs are not saved. Grants and socket
 tickets never enter history or saved preferences.
 
-Version 3 stores one selected throughput headline, `reportedBytesPerSec`, alongside
+Each result stores one selected throughput headline, `reportedBytesPerSec`, alongside
 the distinct full-window average and peak. Each saved latency lane requires exact
 known probe counts and accounting-completeness metadata. Missing measurements stay
 null; incomplete accounting remains explicit. Optional paired reflector timing is
-absent when no valid diagnostic pairs were measured, independently of format version.
+absent when no valid diagnostic pairs were measured.
 
 ## Paired server timing diagnostics
 

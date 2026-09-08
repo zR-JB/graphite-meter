@@ -137,7 +137,7 @@ function makeConfig(overrides: ConfigOverrides = {}): RunnerConfig {
     loadedPingCadence: overrides.loadedPingCadence ?? base.loadedPingCadence,
     transferStreams: { mode: "auto", count: 6 },
     transports: {
-      throughputTarget: "current",
+      throughputTarget: "auto",
       latencyTarget: "auto",
     },
     adaptive: { ...adaptiveDefaults, ...overrides.adaptive },

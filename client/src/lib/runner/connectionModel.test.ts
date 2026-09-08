@@ -119,7 +119,7 @@ function makeValidation(
 ): ConnectionValidation {
   return {
     throughput: {
-      selection: "current",
+      selection: "auto",
       state: paths ? "verified" : "stale",
       path: paths?.throughput ?? null,
     },

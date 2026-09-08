@@ -186,7 +186,8 @@ test("builds an immutable sanitized partial snapshot", () => {
       paths,
       clientBuild: "b",
       wireEstimates: {
-        version: 1,
+        version: 2,
+        breakdown: { download: null, upload: null, bidirectional: null },
         downloadBytesPerSec: 101,
         uploadBytesPerSec: null,
         bidirectionalBytesPerSec: 102,
@@ -219,15 +220,17 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(isHistoryRecord({ ...record, id: "bad" })).toBe(false);
 });
 
-test("writes v4, preserves v3 singletons and rejects obsolete fields", () => {
+test("round-trips current single-server records and rejects unsupported versions and obsolete fields", () => {
   const record = buildHistoryRecord(
     result,
     { paths: null, clientBuild: "b" },
     200,
   );
   expect(record.schemaVersion).toBe(4);
-  expect(isHistoryRecord({ ...record, schemaVersion: 3 })).toBe(true);
-  for (const schemaVersion of [undefined, 1, 2, 5])
+  const reloaded = JSON.parse(JSON.stringify(record));
+  expect(isHistoryRecord(reloaded)).toBe(true);
+  expect(reloaded).toEqual(record);
+  for (const schemaVersion of [undefined, 1, 2, 3, 5])
     expect(isHistoryRecord({ ...record, schemaVersion })).toBe(false);
   for (const obsolete of ["meanBytesPerSec", "packetLossPct"]) {
     const saved = structuredClone(record);
@@ -281,7 +284,8 @@ test("rejects malformed nested records before they reach rendering", () => {
     {
       ...valid,
       wireEstimates: {
-        version: 1,
+        version: 2,
+        breakdown: { download: null, upload: null, bidirectional: null },
         downloadBytesPerSec: Infinity,
         uploadBytesPerSec: null,
         bidirectionalBytesPerSec: null,

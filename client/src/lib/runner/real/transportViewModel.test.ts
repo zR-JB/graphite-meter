@@ -322,3 +322,23 @@ test("the automatic latency card names the browser gap, not the server", () => {
     expect(latencyOptionView(catalog, "auto").detail).toBe(INSECURE_PAGE),
   );
 });
+
+test("automatic and explicit targets remain valid while current is rejected", () => {
+  const origin = "https://meter.example";
+  const discovery = classifyTransportDiscovery(
+    [
+      testTransfer(origin, origin, "http2", true),
+      { baseUrl: origin, transport: "webtransport", protocol: "http3" },
+    ],
+    [],
+    origin,
+    true,
+  );
+  expect(selectThroughputTarget(discovery, "auto")?.id).toBe(origin);
+  expect(selectThroughputTarget(discovery, origin)?.id).toBe(origin);
+  expect(selectThroughputTarget(discovery, `${origin}::wt`)?.transport).toBe(
+    "webtransport",
+  );
+  expect(selectThroughputTarget(discovery, "current")).toBeNull();
+  expect(throughputOptionView(discovery, "current").disabled).toBe(true);
+});

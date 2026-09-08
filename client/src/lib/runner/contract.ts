@@ -26,7 +26,7 @@ export type Phase =
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
-/** Advertised transfer target id; "current" resolves from the discovery hop. */
+/** Advertised transfer target id or automatic/grouped target selection. */
 export type ThroughputTargetSelection = string;
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 

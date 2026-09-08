@@ -83,7 +83,7 @@ export function throughputOptionView(
     selection,
   );
   if (restriction) return { disabled: true, detail: restriction };
-  if (selection === "current" || selection === "auto") {
+  if (selection === "auto") {
     // Resolve exactly what the runner resolves, so the automatic card never offers the session path a.
     const runnable = typeof WebTransport !== "undefined";
     const target = selectThroughputTarget(discovery, selection, runnable);
