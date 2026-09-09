@@ -364,6 +364,23 @@ test("four real servers share one run and retain separate receiver windows and l
   const saved = await savedResult(page, startedAt);
   expect(isHistoryRecord(saved)).toBe(true);
   expect(saved.schemaVersion).toBe(4);
+  if (saved.multiServer?.failures.length) {
+    console.info("Mixed-protocol failures", saved.multiServer.failures);
+    console.info(
+      "Receiver checkpoint timing",
+      await page.evaluate(() =>
+        performance
+          .getEntriesByType("resource")
+          .filter((entry) => entry.name.includes("/upload/checkpoint"))
+          .map((entry) => ({
+            origin: new URL(entry.name).origin,
+            start: entry.startTime,
+            duration: entry.duration,
+            protocol: (entry as PerformanceResourceTiming).nextHopProtocol,
+          })),
+      ),
+    );
+  }
   expect(saved.multiServer?.participants).toHaveLength(4);
   expect(saved.multiServer?.failures).toEqual([]);
   expect(
