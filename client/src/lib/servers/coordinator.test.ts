@@ -19,6 +19,7 @@ async function run(
     initialFailure?: boolean;
     laterPreparationFailure?: boolean;
     adaptive?: boolean;
+    readinessOwnsReceiver?: boolean;
   } = {},
 ) {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
@@ -38,12 +39,14 @@ async function run(
     const id = ["a", "b"][index++];
     let host: CoreHost;
     let last = 0;
+    let measuring = false;
     return {
       attach(value) {
         host = value;
       },
       onRunStart() {},
       onStageBegin(activity) {
+        measuring = false;
         calls.push(`begin:${id}`);
         if (
           (id === "a" || options.dropAll) &&
@@ -52,7 +55,13 @@ async function run(
         )
           throw new Error("fixture preparation failure");
       },
+      waitForReadiness: options.readinessOwnsReceiver
+        ? async () => {
+            calls.push(`ready:${id}`);
+          }
+        : undefined,
       onStageMeasure() {
+        measuring = true;
         last = performance.now();
         calls.push(`measure:${id}`);
         if (options.pendingLatency)
@@ -87,6 +96,11 @@ async function run(
       onAbort() {},
       onComplete() {},
       checkpoint: async () => {
+        if (options.readinessOwnsReceiver && !measuring)
+          throw new DOMException(
+            "Redundant preparation checkpoint timed out",
+            "TimeoutError",
+          );
         const at = Math.round(performance.now());
         return {
           id,
@@ -129,7 +143,11 @@ async function run(
           stages: {
             latency: false,
             download: true,
-            upload: !!(options.adaptive || options.laterPreparationFailure),
+            upload: !!(
+              options.adaptive ||
+              options.laterPreparationFailure ||
+              options.readinessOwnsReceiver
+            ),
             bidirectional: false,
           },
           skipLoadedLatencyWhenStageOff: !options.pendingLatency,
@@ -139,7 +157,7 @@ async function run(
             downloadMs: options.adaptive ? 6000 : 1400,
             uploadMs: options.adaptive
               ? 6000
-              : options.laterPreparationFailure
+              : options.laterPreparationFailure || options.readinessOwnsReceiver
                 ? 1400
                 : 0,
             bidirectionalMs: 0,
@@ -182,6 +200,14 @@ test("one coordinated stage reports the combined path, and v4 evidence survives 
   });
   expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
 }, 6000);
+test("verified stage readiness is not overturned by a redundant receiver request", async () => {
+  const { result, calls } = await run({ readinessOwnsReceiver: true });
+  expect(result.outcome).toBe("complete");
+  expect(result.multiServer?.failures).toEqual([]);
+  expect(calls.filter((call) => call.startsWith("ready:"))).toHaveLength(4);
+  expect(result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+}, 6000);
+
 test("a late dropout leaves the headline unavailable while retaining earlier measurements", async () => {
   const { result } = await run({ dropAt: 900 });
   expect(result.download).toBeNull();

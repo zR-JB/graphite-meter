@@ -240,21 +240,20 @@ class TransportStage {
       this.#abort.signal,
       AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS),
     ]);
-    let receiverReady = !this.activity.transfer.includes("up");
     while (!signal.aborted) {
-      if (!receiverReady) {
+      if (
+        (!this.#directions.down || this.#directions.down.ready) &&
+        (!this.#latency || this.#latency.ready)
+      ) {
+        if (!this.activity.transfer.includes("up")) return;
         try {
-          receiverReady = (await this.checkpoint(signal)) !== null;
+          // Verify receiver evidence last, when the other primed channels are ready.
+          // A transient checkpoint failure retries within this same readiness budget.
+          if ((await this.checkpoint(signal)) !== null) return;
         } catch {
           signal.throwIfAborted();
         }
       }
-      if (
-        receiverReady &&
-        (!this.#directions.down || this.#directions.down.ready) &&
-        (!this.#latency || this.#latency.ready)
-      )
-        return;
       await new Promise<void>((resolve) => setTimeout(resolve, 50));
     }
     throw new Error("Primed measurement connections did not become ready", {
