@@ -20,6 +20,7 @@ import {
   openBrowserApprovalPopup,
 } from "../servers/credentials";
 import { ServerCoordinator, type PreparedServer } from "../servers/coordinator";
+import { createServerRunner } from "../servers/runner";
 import { portableTransportSelection } from "../servers/transportOptions";
 import type {
   ConnectionRole,
@@ -95,7 +96,7 @@ export function createApplicationController(
     ((servers: PreparedServer[], focus: string) =>
       dummy
         ? new RunnerCore(new DummyBackend())
-        : new ServerCoordinator(servers, focus));
+        : createServerRunner(servers, focus));
   const describe =
     dependencies.describe ??
     (dummy ? DummyBackend.describe : RealBackend.describe);

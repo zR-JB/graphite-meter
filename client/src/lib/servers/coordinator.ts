@@ -32,7 +32,11 @@ import {
   type ServerFailure,
   type TransferStage,
 } from "./measurement";
-import { planServerStreams, type ServerStreamPlan } from "./streamBudget";
+import {
+  planServerStreams,
+  validateServerStreams,
+  type ServerStreamPlan,
+} from "./streamBudget";
 
 export interface PreparedServer {
   server: ServerIdentity;
@@ -156,37 +160,12 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     config: RunnerConfig,
     servers: readonly PreparedServer[],
   ): void {
-    const activities: PhaseActivity[] = [
-      {
-        stage: "download",
-        transfer: ["down"],
-        loadedLatency:
-          !config.skipLoadedLatencyWhenStageOff || config.stages.latency,
-      },
-      {
-        stage: "upload",
-        transfer: ["up"],
-        loadedLatency:
-          !config.skipLoadedLatencyWhenStageOff || config.stages.latency,
-      },
-      {
-        stage: "bidirectional",
-        transfer: ["down", "up"],
-        loadedLatency:
-          !config.skipLoadedLatencyWhenStageOff || config.stages.latency,
-      },
-    ];
-    for (const activity of activities)
-      if (config.stages[activity.stage])
-        planServerStreams(
-          config,
-          servers.map((server) => ({
-            id: server.server.id,
-            paths: server.paths,
-          })),
-          activity,
-        );
+    validateServerStreams(
+      config,
+      servers.map(({ server, paths }) => ({ id: server.id, paths })),
+    );
   }
+
   abort(): void {
     this.#core.abort();
   }

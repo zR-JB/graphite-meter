@@ -427,6 +427,8 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await waitForCompletion(page, 30000);
   const saved = await savedResult(page, startedAt);
   expect(saved.multiServer?.selection).toHaveLength(1);
+  expect(saved.multiServer?.intervals).toEqual([]);
+  expect(saved.wireEstimates?.downloadBytesPerSec).toBeGreaterThan(0);
   await expect(page.locator(".result-server-context")).toHaveCount(0);
   await expect(page.locator(".server-indicator")).toHaveCount(0);
   const settings = await openSettings(page);
@@ -461,6 +463,7 @@ test("switching a verified fleet to self starts immediately", async ({
 for (const transport of [
   "auto",
   "protocol:http2",
+  "protocol:http3",
   "transport:webtransport",
   "transport:webtransport-datagram",
 ] as const)
@@ -497,6 +500,7 @@ for (const transport of [
     const saved = await savedResult(page, startedAt);
     expect(saved.multiServer?.selection).toHaveLength(1);
     expect(saved.multiServer?.participants).toEqual(["self"]);
+    expect(saved.multiServer?.intervals).toEqual([]);
     expect(saved.multiServer?.failures).toEqual([]);
     expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(
       0,
