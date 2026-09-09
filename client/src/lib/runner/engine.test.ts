@@ -252,7 +252,7 @@ async function withValidationRunner(
     loadCatalog,
     discover,
     createRunner: () => runner,
-    prepare: async (config, previous, _roles, _signal, credentials) => {
+    prepare: async (config, previous, roles, _signal, credentials) => {
       calls++;
       try {
         const paths = await probe(credentials?.server.id);
@@ -272,20 +272,22 @@ async function withValidationRunner(
               path: paths.latency,
             },
           },
-          idle: {
-            start() {},
-            stop() {
-              stops++;
-            },
-            get onEvent() {
-              return onEvent;
-            },
-            set onEvent(value) {
-              onEvent = value;
-              const state = adoptionState();
-              if (state) value({ type: "connectivity", state });
-            },
-          },
+          idle: roles.includes("latency")
+            ? {
+                start() {},
+                stop() {
+                  stops++;
+                },
+                get onEvent() {
+                  return onEvent;
+                },
+                set onEvent(value) {
+                  onEvent = value;
+                  const state = adoptionState();
+                  if (state) value({ type: "connectivity", state });
+                },
+              }
+            : undefined,
         };
       } catch (cause) {
         if (!(cause instanceof TransportUnavailableError) || !cause.role)
@@ -395,7 +397,7 @@ test("Start retries the selected self server even when unused peers are configur
       await yieldUntil(() => runner.starts > 0);
       expect(store.startError).toBe("");
       expect(runner.starts).toBe(1);
-      expect(checked).toEqual(["self", "self"]);
+      expect(checked).toEqual(["self", "self", "self", "self"]);
     },
     undefined,
     async () => {
@@ -420,7 +422,7 @@ test("retrying one failed server does not probe other failed selected servers", 
     async ({ engine }) => {
       checked.length = 0;
       await engine.retryServer("self");
-      expect(checked).toEqual(["self"]);
+      expect(checked).toEqual(["self", "self"]);
     },
     undefined,
     async () => {
@@ -538,18 +540,15 @@ test("superseding start validation cannot leave the application stuck preparing"
   });
   await withValidationRunner(
     async () => {
-      if (++calls === 2) await held;
+      if (++calls === 3) await held;
       return testPreparedPaths();
     },
     async ({ engine, runner }) => {
       const { store } = await import("../state/store.svelte");
-      const previous = store.serverValidation.get("self")!;
-      store.serverValidation.set("self", {
-        ...previous,
-        throughput: { ...previous.throughput, state: "stale" },
-      });
+      store.serverValidation.get("self")!.throughput.path!.verifiedAt =
+        Date.now() - CONNECTION_FRESH_MS - 1;
       engine.toggleRun();
-      await yieldUntil(() => calls === 2);
+      await yieldUntil(() => calls === 3);
       expect(store.preparing).toBe(true);
       await engine.validateConnections(true);
       release();
@@ -716,7 +715,7 @@ test("hidden boot defers preparation until visibility returns", async () => {
     expect(calls).toBe(0);
     environment.setVisibility("visible");
     await yieldUntil(() => calls > 0);
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   } finally {
     engine.dispose();
     environment.restore();
@@ -736,24 +735,26 @@ test("connectivity validation coalesces offline edges and recovers online", asyn
       }
       return PROBE_EVIDENCE;
     },
-    async ({ emit, probeCalls }) => {
+    async ({ emit, environment, probeCalls }) => {
       const { store } = await import("../state/store.svelte");
-      expect(probeCalls()).toBe(1);
+      expect(probeCalls()).toBe(2);
       expect(store.connectionValidation.throughput.state).toBe("verified");
       expect(store.connectionValidation.latency.state).toBe("verified");
       offline = true;
       emit({ type: "connectivity", state: "offline" });
-      await yieldUntil(() => probeCalls() >= 2);
+      await yieldUntil(() => probeCalls() >= 3);
       emit({ type: "connectivity", state: "offline" });
       releaseOffline?.();
       await settleValidation();
-      expect(probeCalls()).toBe(2);
-      expect(store.connectionValidation.throughput.state).toBe("failed");
+      expect(probeCalls()).toBe(3);
+      expect(store.connectionValidation.throughput.state).toBe("verified");
       expect(store.connectionValidation.latency.state).toBe("failed");
       offline = false;
       emit({ type: "connectivity", state: "connected" });
+      expect(store.connectionValidation.latency.state).toBe("failed");
+      environment.emit("online");
       await settleValidation();
-      expect(probeCalls()).toBe(3);
+      expect(probeCalls()).toBe(4);
       expect(store.connectionValidation.throughput.state).toBe("verified");
       expect(store.connectionValidation.latency.state).toBe("verified");
     },
@@ -772,12 +773,12 @@ test("window connectivity listeners share failure and recovery scheduling", asyn
       environment.emit("offline");
       environment.emit("offline");
       await settleValidation();
-      expect(probeCalls()).toBe(2);
+      expect(probeCalls()).toBe(4);
       expect(store.connectionValidation.throughput.state).toBe("failed");
       offline = false;
       environment.emit("online");
       await settleValidation();
-      expect(probeCalls()).toBe(3);
+      expect(probeCalls()).toBe(6);
       expect(store.connectionValidation.throughput.state).toBe("verified");
     },
   );
@@ -798,7 +799,7 @@ test("a path-specific validation failure leaves global keepalive state unchanged
       failThroughput = true;
       await expect(
         engine.validateConnections(true, "throughput"),
-      ).rejects.toThrow("throughput unavailable");
+      ).rejects.toThrow("Connection check failed");
       expect(store.connectionValidation.throughput.state).toBe("failed");
       expect(store.connectivity).toBe("connected");
     },
@@ -814,38 +815,38 @@ test("validation scheduler leaves healthy paths idle, backs off failures, and de
         if (offline) throw new Error("server unavailable");
         return PROBE_EVIDENCE;
       },
-      async ({ engine, emit, environment, probeCalls }) => {
-        expect(probeCalls()).toBe(1);
+      async ({ engine, runner, environment, probeCalls }) => {
+        expect(probeCalls()).toBe(2);
         expect(timers.size()).toBe(0);
         timers.advance(CONNECTION_FRESH_MS);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(1);
+        expect(probeCalls()).toBe(2);
         offline = true;
         environment.setVisibility("hidden");
-        emit({ type: "connectivity", state: "offline" });
+        environment.emit("offline");
         expect(timers.size()).toBe(0);
         environment.setVisibility("visible");
         timers.advance(0);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(2);
+        expect(probeCalls()).toBe(4);
         expect(timers.delays()).toContain(CONNECTION_FAILURE_BACKOFF_MS[0]);
         timers.advance(CONNECTION_FAILURE_BACKOFF_MS[0] - 1);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(2);
+        expect(probeCalls()).toBe(4);
         offline = false;
         timers.advance(1);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(3);
+        expect(probeCalls()).toBe(6);
         expect(timers.size()).toBe(0);
-        emit({
-          type: "phase",
-          transition: { from: "idle", to: "download", stage: "download", t: 0 },
-        });
+        engine.toggleRun();
+        await settleMicrotasks();
+        await settleMicrotasks();
+        expect(runner.starts).toBe(1);
         environment.emit("offline");
         timers.advance(CONNECTION_FRESH_MS * 2);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(3);
-        emit({
+        expect(probeCalls()).toBe(6);
+        runner.listener({
           type: "phase",
           transition: {
             from: "download",
@@ -856,7 +857,7 @@ test("validation scheduler leaves healthy paths idle, backs off failures, and de
         });
         timers.advance(0);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(4);
+        expect(probeCalls()).toBe(8);
         engine.dispose();
         expect(timers.size()).toBe(0);
       },
@@ -880,7 +881,7 @@ test("validation failures use staged backoff, cap, and reset after recovery", as
           CONNECTION_FAILURE_BACKOFF_MS[
             CONNECTION_FAILURE_BACKOFF_MS.length - 1
           ];
-        expect(probeCalls()).toBe(1);
+        expect(probeCalls()).toBe(2);
         for (const delay of CONNECTION_FAILURE_BACKOFF_MS) {
           expect(timers.delays()).toContain(delay);
           timers.advance(delay);
@@ -891,7 +892,7 @@ test("validation failures use staged backoff, cap, and reset after recovery", as
         available = true;
         timers.advance(maxRetryDelay);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(7);
+        expect(probeCalls()).toBe(14);
         expect(timers.size()).toBe(0);
       },
     );
@@ -1050,16 +1051,16 @@ test("fresh preparation is reused by start and all latency disables release the 
         await settleValidation();
         expect(idleStops()).toBeGreaterThan(before);
         expect(store.connectionValidation.latency.path).toBe(verifiedLatency);
-        expect(probeCalls()).toBe(1);
+        expect(probeCalls()).toBe(2);
         engine.toggleRun();
         await yieldUntil(() => runner.starts === 1);
         expect(runner.starts).toBe(1);
-        expect(probeCalls()).toBe(1);
+        expect(probeCalls()).toBe(2);
         expect(store.activePaths?.latency).toBeNull();
         engine.toggleRun();
         store.config.stages.latency = true;
         await settleValidation();
-        expect(probeCalls()).toBe(1);
+        expect(probeCalls()).toBe(2);
         expect(store.connectionValidation.latency.state).toBe("verified");
       } finally {
         store.config = previous;
@@ -1091,6 +1092,7 @@ test("superseded preparation never replaces newer evidence and disposes its prov
       outdated.discovery.generation = "outdated";
       release!(outdated);
       await expect(stale).rejects.toMatchObject({ name: "AbortError" });
+      await settleMicrotasks();
       expect(store.transportDiscovery?.generation).toBe("gen-a");
       expect(store.connectionValidation.throughput.path).toBe(committed);
       expect(idleStops()).toBe(stopped + 1);
@@ -1114,7 +1116,7 @@ test("an idle monitor that stalls before adoption keeps a bounded retry instead 
         state = "connected";
         timers.advance(CONNECTION_FAILURE_BACKOFF_MS[0]);
         await settleMicrotasks();
-        expect(probeCalls()).toBe(3);
+        expect(probeCalls()).toBe(5);
         expect(store.connectivity).toBe("connected");
         expect(store.connectionValidation.latency.state).toBe("verified");
         expect(timers.size()).toBe(0);
@@ -1167,5 +1169,8 @@ test("live upload changes use committed capabilities and preserve the active pla
       expect(store.activeConfig?.stages.latency).toBe(true);
       expect(store.startError).toContain("checkpoint");
     },
+    undefined,
+    testServerCatalog,
+    async () => structuredClone(paths.discovery),
   );
 });

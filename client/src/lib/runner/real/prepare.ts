@@ -29,7 +29,6 @@ import {
 } from "../../servers/catalog";
 import { BUILD } from "../../buildenv";
 import {
-  CONNECTION_ROLES,
   latencyPathNeeded,
   type ConnectionValidation,
 } from "../connectionModel";
@@ -135,14 +134,6 @@ export async function prepareConnections(
   const discovery =
     knownDiscovery ?? (await discoverServer(signal, credentials));
   signal.throwIfAborted();
-  if (
-    CONNECTION_ROLES.some(
-      (role) =>
-        previous[role].path &&
-        previous[role].path!.generation !== discovery.generation,
-    )
-  )
-    roles = CONNECTION_ROLES;
   const result: ConnectionPreparation = {
     discovery,
     validation: { ...previous },

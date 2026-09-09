@@ -40,9 +40,10 @@
   $effect(() => {
     if (
       open &&
+      store.serverCatalog &&
+      !store.catalogLoading &&
       !store.isRunning &&
-      !store.preparing &&
-      store.selectionValidation !== "checking"
+      !store.preparing
     ) {
       untrack(() => controller.loadServerMetadata());
       return () => controller.cancelServerMetadata();

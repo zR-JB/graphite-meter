@@ -34,7 +34,7 @@ interface DiscoveryActivity {
 test("settings and path checks share bounded discovery, cancel on close, and retain only the home ping worker", async ({
   page,
 }) => {
-  await page.addInitScript((peer) => {
+  await page.addInitScript((home) => {
     localStorage.setItem(
       "graphite-meter:v1",
       JSON.stringify({ latencySelection: { mode: "all", serverId: "self" } }),
@@ -68,7 +68,7 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
       state.requests.push(url.origin);
       state.peak = Math.max(state.peak, ++state.inFlight);
       try {
-        if (state.hold && url.origin === peer) {
+        if (state.hold && url.origin !== home) {
           await new Promise<void>((_resolve, reject) => {
             const abort = () => {
               state.aborted++;
@@ -100,7 +100,7 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
         return worker;
       },
     });
-  }, fleet[1].url);
+  }, fleet[0].url);
   const activity = () =>
     page.evaluate(
       () =>
@@ -122,7 +122,7 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   await expect(choices).toHaveAttribute("aria-busy", "false");
   const first = await activity();
   expect(first.requests).toEqual(fleet.map((server) => server.url));
-  expect(first.peak).toBe(1);
+  expect(first.peak).toBeLessThanOrEqual(2);
   expect(first.probes).toBe(2);
   expect(first.workers).toBe(1);
   expect(first.activeWorkers).toBe(1);
@@ -151,14 +151,18 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
     ).discoveryActivity.nowOffset = 121_000;
   });
   await openSettings(page);
-  await expect.poll(async () => (await activity()).requests.length).toBe(9);
+  await expect.poll(async () => (await activity()).requests.length).toBe(8);
   await expect(choices).toHaveAttribute("aria-busy", "false");
   const refreshed = await activity();
+  // Authentication failures stay quiet until the user signs in or explicitly retries.
+  expect(
+    refreshed.requests.filter((origin) => origin === fleet[4].url),
+  ).toHaveLength(1);
   expect(refreshed.workers).toBe(2);
   expect(refreshed.probes).toBe(4);
-  expect(refreshed.peak).toBe(1);
+  expect(refreshed.peak).toBeLessThanOrEqual(2);
 
-  // Closing Settings aborts the current fetch and prevents the rest of the queue from starting.
+  // Closing Settings aborts both active fetches and prevents queued metadata from starting.
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.evaluate(() => {
     const state = (
@@ -168,9 +172,9 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
     state.hold = true;
   });
   await openSettings(page);
-  await expect.poll(async () => (await activity()).inFlight).toBe(1);
+  await expect.poll(async () => (await activity()).inFlight).toBe(2);
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await expect.poll(async () => (await activity()).aborted).toBe(1);
+  await expect.poll(async () => (await activity()).aborted).toBe(2);
   const closed = await activity();
   expect(closed.inFlight).toBe(0);
   expect(closed.requests).toHaveLength(10);
@@ -234,9 +238,8 @@ test("metadata timeouts back off so later catalogue servers are not starved on r
         (window as typeof window & { metadataRequests: string[] })
           .metadataRequests,
     );
-  expect(await requests()).toEqual(
-    fleet.slice(0, 3).map((server) => server.url),
-  );
+  // Timed-out peers release their slots in this opening, without requiring the user to reopen Settings.
+  expect(await requests()).toEqual(fleet.map((server) => server.url));
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await openSettings(page);
   await expect(choices).toHaveAttribute("aria-busy", "false");
@@ -849,8 +852,8 @@ test("enabling all latency checks only the new peer path and retries leave healt
           }
         ).pathChecks,
     );
+  // The unchanged server generation is already discovered; only the new latency path is probed.
   expect((await checks()).fetches.map((url) => new URL(url).origin)).toEqual([
-    fleet[1].url,
     fleet[1].url,
   ]);
   expect((await checks()).workers).toBe(1);
@@ -866,7 +869,6 @@ test("enabling all latency checks only the new peer path and retries leave healt
   const verified = await checks();
   // Explicit participant retry refreshes discovery and both enabled paths.
   expect(verified.fetches.map((url) => new URL(url).origin)).toEqual([
-    fleet[1].url,
     fleet[1].url,
     fleet[1].url,
     fleet[1].url,

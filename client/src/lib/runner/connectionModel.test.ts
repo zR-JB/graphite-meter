@@ -297,6 +297,12 @@ test("the latency panel names the committed fallback bus", () => {
     ).latency;
     expect(presented.target?.transport).toBe("websocket");
     expect(presented.summary).toBe("WebSocket · TLS");
+    const explicit = config();
+    explicit.transports.latencyTarget = "transport:webtransport";
+    expect(
+      roleNeedsValidation(explicit, validation, "latency", paths.discovery),
+    ).toBe(true);
+    expect(preparedPaths(explicit, paths.discovery, validation)).toBeNull();
     expect(
       roleNeedsValidation(config(), validation, "latency", paths.discovery),
     ).toBe(false);
