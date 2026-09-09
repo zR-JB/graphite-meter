@@ -13,7 +13,7 @@ One Go server, a responsive web interface, and a native terminal client.
 
 <img src="docs/assets/hero.png" alt="Graphite Meter completed results on desktop with an overlapping phone companion" width="1080">
 
-<sub>v0.7.0 · simulated measurements · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
+<sub>v0.8.2 · simulated measurements · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
 </div>
 
@@ -84,9 +84,9 @@ See the [gallery](docs/SCREENSHOTS.md) for settings, endpoint details, history, 
 with server selection, stage and timing controls, independent connection paths, stream settings,
 and live throughput and latency results. It lets you test without browser runtime constraints.
 
-<img src="docs/assets/tui.png" alt="Graphite Meter v0.7.0 native terminal client showing completed download, upload, and latency results from a simulated deployment" width="1080">
+<img src="docs/assets/tui.png" alt="Graphite Meter v0.8.2 native terminal client showing completed download, upload, and latency results from a simulated deployment" width="1080">
 
-<p align="center"><sub>v0.7.0 · simulated measurements</sub></p>
+<p align="center"><sub>v0.8.2 · simulated measurements</sub></p>
 
 Download and extract the matching client archive from [Releases](https://github.com/zR-JB/graphite-meter/releases),
 then run:

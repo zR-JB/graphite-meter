@@ -147,16 +147,29 @@ test("live and completed instruments keep labels and readouts contained", async 
     .evaluate((readout) => {
       const number = readout.querySelector(".terminal-number")!;
       const unit = readout.querySelector(".terminal-unit")!;
+      const direction = readout.querySelector(".terminal-direction")!;
       const numberBox = number.getBoundingClientRect();
       const unitBox = unit.getBoundingClientRect();
+      const directionBox = direction.getBoundingClientRect();
       return {
         unitCenter: unitBox.left + unitBox.width / 2,
         numberCenter: numberBox.left + numberBox.width / 2,
+        directionCenter: directionBox.left + directionBox.width / 2,
+        directionBottom: directionBox.bottom,
+        numberTop: numberBox.top,
       };
     });
   expect(
     Math.abs(terminalAlignment.unitCenter - terminalAlignment.numberCenter),
   ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs(
+      terminalAlignment.directionCenter - terminalAlignment.numberCenter,
+    ),
+  ).toBeLessThanOrEqual(1);
+  expect(terminalAlignment.directionBottom).toBeLessThan(
+    terminalAlignment.numberTop,
+  );
   await expectStageFits(page);
 });
 

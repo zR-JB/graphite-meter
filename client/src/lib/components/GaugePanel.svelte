@@ -458,7 +458,7 @@
               class:partial={terminalPrimary.dashed}
               aria-hidden="true"
             >
-              <span class="terminal-marker">
+              <span class="terminal-direction">
                 {#if terminalPrimary.direction === "download"}
                   {@html ICON.download}
                 {:else if terminalPrimary.direction === "upload"}
@@ -466,6 +466,11 @@
                 {:else}
                   {@html ICON.bidirectional}
                 {/if}
+                {terminalPrimary.direction === "download"
+                  ? "Download"
+                  : terminalPrimary.direction === "upload"
+                    ? "Upload"
+                    : "Bidirectional"}
               </span>
               <span class="terminal-number">{terminalPrimary.value}</span>
               <span class="terminal-unit">{gaugeUnit}</span>
@@ -763,9 +768,10 @@
   }
   .terminal-readout {
     --result-accent: var(--text-soft);
+    position: relative;
     display: grid;
     justify-items: center;
-    gap: clamp(var(--space-2), 2.5cqmin, var(--space-3));
+    gap: var(--space-1);
     max-width: 72%;
     color: var(--result-accent);
   }
@@ -778,24 +784,30 @@
   .terminal-readout.bidirectional {
     --result-accent: var(--phase-bidirectional);
   }
-  .terminal-marker {
-    display: grid;
-    place-items: center;
-    width: clamp(32px, 12cqmin, 42px);
-    height: clamp(32px, 12cqmin, 42px);
+  .terminal-direction {
+    position: absolute;
+    bottom: calc(100% + clamp(10px, 4cqmin, 16px));
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: clamp(11px, 3.6cqmin, 13px);
+    font-weight: 600;
     line-height: 1;
+    white-space: nowrap;
   }
-  .terminal-marker :global(svg) {
-    width: 58%;
-    height: 58%;
+  .terminal-direction :global(svg) {
+    width: 1em;
+    height: 1em;
   }
   .terminal-number {
     font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    font-size: clamp(28px, 14cqmin, 52px);
+    font-variant-numeric: lining-nums proportional-nums;
+    font-feature-settings:
+      "lnum" 1,
+      "pnum" 1;
+    font-size: clamp(28px, 17cqmin, 64px);
     font-weight: 600;
-    letter-spacing: var(--track-tight);
+    letter-spacing: -0.04em;
     line-height: 1;
     white-space: nowrap;
   }
