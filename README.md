@@ -59,8 +59,8 @@ when a reverse proxy sits between them.
 WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
 UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
 estimate is separate from measured payload throughput. See [measurement definitions](docs/MEASUREMENTS.md)
-for exact timing, statistics, and interpretation, or [benchmarks](docs/BENCHMARKS.md) for historical
-performance evidence.
+for exact timing, statistics, and interpretation, or the [benchmark harness](docs/BENCHMARKS.md)
+for controlled performance testing.
 
 ## Browser client
 
@@ -112,7 +112,7 @@ Press **s** in setup for the server chooser, **l** to change the displayed laten
 - [Deployment and configuration](docs/DEPLOYMENT.md): TLS, authentication, containers, proxies, and troubleshooting.
 - [Measurement definitions](docs/MEASUREMENTS.md): what each result measures and how it is calculated.
 - [Development](docs/DEVELOPMENT.md): architecture, toolchain, testing, and releases.
-- [Benchmarks](docs/BENCHMARKS.md): historical results and reproduction commands.
+- [Benchmark harness](docs/BENCHMARKS.md): controlled throughput testing.
 - Client contracts: [discovery](api/discovery.md), [uploads](api/upload.md), and [latency / WebTransport](api/wire.md).
 - [Server catalogue and independent authorization](docs/SERVERS.md): configure available servers and interpret simultaneous results.
 

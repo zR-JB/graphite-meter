@@ -191,8 +191,9 @@
             target="_blank"
             rel="noopener noreferrer">Open sign-in page</a
           >
-          in a new tab. Return here after approval. Canceling stops this interface's
-          approval; you can close the sign-in tab yourself.
+          if the sign-in window did not open. Return here after approval. Canceling
+          stops this interface's approval; you can close any remaining sign-in window
+          yourself.
           {store.serverApproval.message ?? ""}
         </p>
       {/if}

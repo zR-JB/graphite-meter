@@ -277,8 +277,11 @@ Run the complete maintained matrix:
 GM_BENCH_SPKI='BASE64_SPKI_PIN' mise run bench-throughput
 ```
 
-The complete matrix takes hours. See [Benchmarks](BENCHMARKS.md) before comparing new values with
-the historical reference results.
+The complete matrix takes hours. See the [benchmark harness](BENCHMARKS.md) for
+its inputs and measurement method. Keep investigation reports, release-validation
+evidence and benchmark results outside the repository, for example in a sibling
+`graphite-meter-workspace` directory. Commit reusable tests, harness changes and
+maintained user or developer documentation.
 
 For the coordinated one-, two-, and four-server experiment, Linux user/network namespaces,
 `iproute2` (`ip` and `tc`), `util-linux` (`unshare` and `nsenter`), OpenSSL and curl are required.
@@ -293,7 +296,6 @@ inside disposable network namespaces, and writes raw JSONL results and process l
 the checkout. It never changes host interfaces or queue disciplines. Two repetitions cover
 separate server caps, different RTTs, and a shared cap; `GM_MULTI_BENCH_REPEATS` and
 `GM_MULTI_BENCH_PROFILES` (`server-cap,differing-rtt,shared-cap`) restrict manual runs.
-See [the coordinated experiment](MULTI_SERVER_BENCHMARKS.md) for methodology and results.
 
 ## Container build
 

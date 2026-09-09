@@ -138,6 +138,10 @@ cancels that work. Fresh discoveries are reused; failures and timeouts back off 
 reopening can reach later entries. Background readiness refreshes concern selected
 servers only. Inline Retry and Sign in actions resolve individual unavailable
 entries. Ready selections start directly.
+Start checks the selected servers again when evidence is missing or expired,
+including when only `self` is selected from a larger catalogue. Retrying an
+individual server refreshes that server's discovery and paths without probing its
+peers. Catalogue refresh and pending sign-in must finish before starting.
 
 Each successfully discovered entry shows its latest **HTTP preflight request time**
 in milliseconds, including connection setup and the complete response body. This
@@ -163,6 +167,11 @@ server; a forced latency choice must work on every server being probed. The clie
 neither silently downgrades it nor removes an incompatible server. Use Automatic is
 an explicit recovery action. Detailed origin selection remains available for a
 single selected server.
+Changing servers carries the chosen protocol or transport to the new selection,
+instead of retaining the previous server's address. If an old saved address has
+no identifiable transport preference, it returns to Automatic. Explicit paths
+remain unchanged when the server selection and latency owner do not change. Throughput and
+latency readiness are reported independently.
 
 The latency pills change the gauge, profile, chart and descriptors together without
 changing measurement targets. With All, initial display focus uses the
@@ -188,8 +197,8 @@ selection. Protected peers each use their own explicit browser approval.
 
 ## Independent sign-in
 
-Choosing Sign in shows an Open sign-in page link. Open it in a new tab for that
-server's existing password/OIDC login followed by an approval page naming the
+Choosing Sign in automatically opens an isolated popup for that server's existing
+password/OIDC login followed by an approval page naming the
 requesting interface's exact HTTPS origin. Compare the eight-character code
 shown in Settings with the approval page and approve only when both match.
 An existing login on that server is reused; authorizing another interface does
@@ -197,9 +206,11 @@ not renew the login or revoke its other clients.
 Approval uses the server's ordinary
 first-party session and CSRF protection. The requesting page polls a verifier-bound
 exchange, so opener access and cross-origin message delivery are unnecessary.
-Cancel sign-in stops this interface's pending exchange. The sign-in tab is isolated
-from the requesting interface; close it yourself after approval or cancellation. Retrying
-creates a fresh approval; deselecting that server also cancels a pending approval.
+The Open sign-in page link remains available if the browser blocks the popup.
+Cancel sign-in stops this interface's pending exchange. Graphite also attempts to
+close the popup after approval or cancellation; browser isolation may require
+closing it yourself. Retrying creates a fresh approval. Deselecting that server
+or refreshing the catalogue cancels its pending approval.
 
 The resulting measurement-only bearer grant stays in memory, belongs to its issuer
 and exact requesting origin, and expires with the parent login session. Cross-origin

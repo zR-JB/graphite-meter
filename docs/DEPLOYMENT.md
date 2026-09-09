@@ -249,8 +249,7 @@ location and omits its default one; inspect the generated host file and run
 This explicit location also preserves a nonstandard public port with `$http_host`.
 NPM's default location uses `$host`, which removes that port, and its location-level
 headers override headers placed only at server level. Keep the entire measurement
-route family on this one backend. The [recorded validation](validation-0.8.1-deployments.md)
-includes the actual generated configuration and complete browser upload evidence.
+route family on this one backend.
 
 ### Caddy
 

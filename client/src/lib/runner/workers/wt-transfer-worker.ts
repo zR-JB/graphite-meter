@@ -6,6 +6,7 @@ import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import { progressWindow, type ProgressDelta } from "./progressWindow";
 import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
+import { redirectForCredentials } from "../../request-auth";
 
 type InMsg =
   | {
@@ -147,6 +148,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     fail(true, String(err));
     return;
   }
+  if (stopped || session !== dialed) return;
   // The race resolved on `ready`, so the server accepted the CONNECT and deleted the token it carried.
   spendWtToken(token);
   post({ type: "established" });
@@ -305,6 +307,7 @@ function openProgress(
       cache: "no-store",
       headers,
       credentials,
+      redirect: redirectForCredentials(credentials),
     }).catch(() => {});
   };
   return true;

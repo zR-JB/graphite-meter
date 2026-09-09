@@ -2,7 +2,10 @@
   import { store } from "../../state/store.svelte";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import type { ConnectionRole } from "../../runner/connectionModel";
+  import {
+    summarizeRoleValidation,
+    type ConnectionRole,
+  } from "../../runner/connectionModel";
   import {
     latencyOptionView,
     throughputOptionView,
@@ -33,12 +36,25 @@
       : store.selectedServers,
   );
   const simultaneous = $derived(serverIds.length > 1);
+  const roleSummary = $derived(
+    summarizeRoleValidation(
+      store.config,
+      role,
+      serverIds,
+      store.serverDiscoveries,
+      store.serverValidation,
+    ),
+  );
   const validation = $derived(
-    simultaneous ? store.selectionValidation : connection.validation,
+    simultaneous
+      ? store.unresolvedServers.length
+        ? "failed"
+        : roleSummary.state
+      : connection.validation,
   );
   const summary = $derived(
     simultaneous
-      ? `${serverIds.filter((id) => store.serverReadiness.get(id)?.state === "ready").length} of ${serverIds.length} servers ready. Paths resolve independently.`
+      ? `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`
       : (connection.message ?? connection.summary),
   );
   const title = $derived(

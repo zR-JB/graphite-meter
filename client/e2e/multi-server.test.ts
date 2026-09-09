@@ -1,4 +1,5 @@
 import "./client-performance";
+import "./auth-popup";
 import {
   fleet,
   fixturePassword,
@@ -438,6 +439,69 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await page.artifact("single-server-fleet-history");
 });
 
+test("switching a verified fleet to self starts immediately", async ({
+  page,
+}) => {
+  await configure(page, ["self", "server-1"]);
+  await ready(page);
+  const settings = await openSettings(page);
+  await settings.getByRole("checkbox", { name: "Frankfurt" }).click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startTest(page);
+  await waitForCompletion(page, 30000);
+  const saved = await savedResult(page);
+  expect(saved.multiServer?.participants).toEqual(["self"]);
+  expect(saved.multiServer?.failures).toEqual([]);
+  expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+});
+
+for (const transport of [
+  "auto",
+  "protocol:http2",
+  "transport:webtransport",
+  "transport:webtransport-datagram",
+] as const)
+  test(`authenticated home in a catalogue completes self-only with ${transport}`, async ({
+    page,
+  }) => {
+    await page.goto(`${fleet[4].url}/login`);
+    await page.getByLabel("Operator password").fill(fixturePassword);
+    await page
+      .getByRole("button", { name: "Sign in with operator password" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Open settings" }),
+    ).toBeVisible();
+    await configure(
+      page,
+      ["self"],
+      1500,
+      {
+        experimentalDatagramThroughput:
+          transport === "transport:webtransport-datagram",
+        transports: {
+          throughputTarget: transport,
+          latencyTarget: "transport:websocket",
+        },
+      },
+      { mode: "primary", serverId: "self" },
+      fleet[4].url,
+    );
+    await ready(page);
+    const startedAt = Date.now();
+    await startTest(page);
+    await waitForCompletion(page, 30000);
+    const saved = await savedResult(page, startedAt);
+    expect(saved.multiServer?.selection).toHaveLength(1);
+    expect(saved.multiServer?.participants).toEqual(["self"]);
+    expect(saved.multiServer?.failures).toEqual([]);
+    expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(
+      0,
+    );
+    expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+    await page.raw.cdp("Network.clearBrowserCookies");
+  });
+
 test("an origin-only catalogue discovers peer identity and paths without repeated configuration", async ({
   page,
 }) => {
@@ -748,7 +812,9 @@ test("enabling all latency checks only the new peer path and retries leave healt
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible({ timeout: 15000 });
   const verified = await checks();
+  // Explicit participant retry refreshes discovery and both enabled paths.
   expect(verified.fetches.map((url) => new URL(url).origin)).toEqual([
+    fleet[1].url,
     fleet[1].url,
     fleet[1].url,
     fleet[1].url,
@@ -786,10 +852,11 @@ test("enabling all latency checks only the new peer path and retries leave healt
   ).toBeVisible({ timeout: 15000 });
   const added = await checks();
   // Grouped WebSocket selection keeps the new peer's probe on TLS.
-  expect(added.fetches.slice(4).map((url) => new URL(url).origin)).toEqual([
-    fleet[3].url,
-    fleet[3].url,
-  ]);
+  expect(
+    added.fetches
+      .slice(verified.fetches.length)
+      .map((url) => new URL(url).origin),
+  ).toEqual([fleet[3].url, fleet[3].url]);
   expect(added.workers).toBe(3);
 });
 

@@ -2,6 +2,7 @@ import { readJSONResponse } from "../api/decode";
 import { authenticatedFetch } from "../auth";
 import {
   parseCatalog,
+  allowsServerOrigin,
   reconcileSelection,
   selectedInCatalogOrder,
   validateSelection,
@@ -11,11 +12,13 @@ import {
 import {
   browserApproval,
   BrowserApprovalLimitError,
+  openBrowserApprovalPopup,
   serverCredentials,
   ServerAuthenticationRequired,
   type ServerCredentials,
 } from "../servers/credentials";
 import { ServerCoordinator, type PreparedServer } from "../servers/coordinator";
+import { portableTransportSelection } from "../servers/transportOptions";
 import type {
   ConnectionRole,
   EngineInfo,
@@ -166,10 +169,7 @@ export function createApplicationController(
   const contexts = new Map<string, ServerCredentials>();
   const serverChecks = new Map<string, AbortController>();
   const selectedPaths = new Map<string, PreparedPaths>();
-  const selectedValidation = new Map<
-    string,
-    ConnectionPreparation["validation"]
-  >();
+  const selectedValidation = store.serverValidation;
   const selectedIdle = new Map<
     string,
     NonNullable<ConnectionPreparation["idle"]>
@@ -201,11 +201,19 @@ export function createApplicationController(
     JSON.stringify([connectionDraftKey(config), selectionKey()]);
   const catalogSelected = () =>
     selectedInCatalogOrder(store.serverCatalog!, store.selectedServers);
-  const readySelected = (fresh = true) =>
+  function makeTransportPortable(role: ConnectionRole) {
+    const key = role === "throughput" ? "throughputTarget" : "latencyTarget";
+    store.config.transports[key] = portableTransportSelection(
+      role,
+      store.config.transports[key],
+      store.transportDiscovery,
+    );
+  }
+  const readySelected = (fresh = true, ids = store.selectedServers) =>
     store.serverCatalog &&
     !store.unresolvedServers.length &&
-    store.selectedServers.length > 0 &&
-    store.selectedServers.every(
+    ids.length > 0 &&
+    ids.every(
       (id) =>
         store.serverReadiness.get(id)?.state === "ready" &&
         selectedPaths.has(id) &&
@@ -377,6 +385,7 @@ export function createApplicationController(
 
   async function loadCatalog() {
     cancelServerMetadata();
+    cancelServerApproval();
     discoveryRetryAt.clear();
     catalogCheck?.abort();
     const check = new AbortController();
@@ -411,6 +420,38 @@ export function createApplicationController(
       const selection = reconcileSelection(catalog, saved);
       store.selectedServers = selection.ids;
       store.unresolvedServers = selection.unresolved;
+      // Old saved configurations may still pin a single origin while selecting
+      // several servers. A shared preference must resolve within each server.
+      for (const role of CONNECTION_ROLES) {
+        const selected = catalog.servers.filter(
+          (server) =>
+            selection.ids.includes(server.id) &&
+            (role !== "latency" ||
+              store.latencySelection.mode === "all" ||
+              server.id === store.primaryLatencyServer),
+        );
+        const value =
+          store.config.transports[
+            role === "throughput" ? "throughputTarget" : "latencyTarget"
+          ];
+        if (
+          selected.length > 1 ||
+          (value !== "auto" &&
+            !value.startsWith("protocol:") &&
+            !value.startsWith("transport:") &&
+            selected.some(
+              (server) =>
+                !allowsServerOrigin(
+                  server,
+                  value.replace(/::(?:wt|wtdg)$/, ""),
+                ),
+            ))
+        )
+          makeTransportPortable(role);
+      }
+      store.transportDiscovery = null;
+      store.connectionValidation = emptyConnectionValidation();
+      idle = null;
       for (const server of catalog.servers) {
         const previous = previousContexts.get(server.id);
         contexts.set(
@@ -464,12 +505,28 @@ export function createApplicationController(
       configKey === draftKey(store.config);
     store.serverReadiness.set(server.id, { state: "checking" });
     const config = serverConfig(server.id);
+    const previous =
+      selectedValidation.get(server.id) ?? emptyConnectionValidation();
+    const checking = { ...previous };
+    if (roles.includes("throughput"))
+      checking.throughput = {
+        ...checking.throughput,
+        state: "checking",
+        selection: config.transports.throughputTarget,
+      };
+    if (roles.includes("latency"))
+      checking.latency = {
+        ...checking.latency,
+        state: "checking",
+        selection: config.transports.latencyTarget,
+      };
+    selectedValidation.set(server.id, checking);
     let result: ConnectionPreparation | undefined;
     try {
       const discovery = await serverDiscovery(server, signal, forceDiscovery);
       result = await prepare(
         config,
-        selectedValidation.get(server.id) ?? emptyConnectionValidation(),
+        previous,
         roles,
         signal,
         contexts.get(server.id),
@@ -515,6 +572,7 @@ export function createApplicationController(
       if (!current()) throw cause;
       selectedPaths.delete(server.id);
       if (signal.aborted) {
+        selectedValidation.set(server.id, previous);
         store.serverReadiness.set(server.id, { state: "unchecked" });
         throw cause;
       }
@@ -558,14 +616,10 @@ export function createApplicationController(
     const paths = selectedPaths.get(first.id);
     const checked = selectedValidation.get(first.id);
     const discovery = store.serverDiscoveries.get(first.id);
-    if (discovery) store.transportDiscovery = discovery;
-    if (checked) store.connectionValidation = checked;
-    else
-      mark(
-        CONNECTION_ROLES,
-        "failed",
-        "Resolve the selected servers before starting.",
-      );
+    store.transportDiscovery = discovery ?? null;
+    store.connectionValidation = checked ?? emptyConnectionValidation();
+    if (!checked)
+      mark(CONNECTION_ROLES, "stale", "Check the selected server's paths.");
     const nextIdle =
       first.id === "self" && paths?.latency
         ? (selectedIdle.get(first.id) ?? null)
@@ -584,18 +638,32 @@ export function createApplicationController(
     force: boolean,
     ownerSignal?: AbortSignal,
     requestedRole?: ConnectionRole,
-    refreshDiscoveryId?: string,
+    serverId?: string,
   ): Promise<void> {
     if (!store.serverCatalog)
       throw new Error("The server catalogue is unavailable");
     if (store.unresolvedServers.length || !store.selectedServers.length)
       throw new Error("Review the saved server selection");
+    const servers = catalogSelected().filter(
+      (server) => serverId === undefined || server.id === serverId,
+    );
+    const ids = servers.map((server) => server.id);
     const requireFresh = ownerSignal !== undefined;
-    if (!force && readySelected(requireFresh)) {
+    const failureMessage = () =>
+      servers
+        .filter((server) => !readySelected(requireFresh, [server.id]))
+        .map((server) => {
+          const message =
+            store.serverReadiness.get(server.id)?.message ||
+            "Enabled measurements could not be prepared";
+          return servers.length === 1 ? message : `${server.name}: ${message}`;
+        })
+        .join("; ") || "Enabled measurements could not be prepared";
+    if (!force && readySelected(requireFresh, ids)) {
       adoptSelectedEvidence();
       return;
     }
-    const pending = catalogSelected().flatMap((server) => {
+    const pending = servers.flatMap((server) => {
       const roles = validationRoles(
         serverConfig(server.id),
         selectedValidation.get(server.id) ?? emptyConnectionValidation(),
@@ -608,8 +676,7 @@ export function createApplicationController(
     if (!pending.length) {
       updateSelectedPaths();
       adoptSelectedEvidence();
-      if (!readySelected(requireFresh))
-        throw new Error("Resolve the selected servers before starting");
+      if (!readySelected(requireFresh, ids)) throw new Error(failureMessage());
       return;
     }
     cancelServerMetadata();
@@ -635,7 +702,7 @@ export function createApplicationController(
             signal,
             roles,
             requireFresh ? CONNECTION_FRESH_MS : Infinity,
-            force || refreshDiscoveryId === server.id,
+            force,
           ).catch(() => {});
         }
       };
@@ -644,13 +711,7 @@ export function createApplicationController(
       if (validation !== task || task.draft !== draftKey(store.config))
         throw new DOMException("Aborted", "AbortError");
       adoptSelectedEvidence();
-      if (!readySelected(requireFresh))
-        throw new Error(
-          store.selectedServers.length === 1
-            ? store.serverReadiness.get(store.selectedServers[0])?.message ||
-                "Could not connect to this server"
-            : "Resolve the selected servers before starting",
-        );
+      if (!readySelected(requireFresh, ids)) throw new Error(failureMessage());
       failures = 0;
       nextValidationAt = Date.now() + CONNECTION_FRESH_MS;
     } finally {
@@ -668,16 +729,29 @@ export function createApplicationController(
     if (store.isRunning || store.preparing || !store.serverCatalog)
       return false;
     validateSelection(store.serverCatalog, ids);
+    const next = selectedInCatalogOrder(store.serverCatalog, ids).map(
+      (server) => server.id,
+    );
+    const changed =
+      JSON.stringify(next) !== JSON.stringify(store.selectedServers);
+    if (changed) {
+      makeTransportPortable("throughput");
+      if (
+        store.latencySelection.mode === "all" ||
+        !next.includes(store.primaryLatencyServer)
+      )
+        makeTransportPortable("latency");
+    }
     cancelServerMetadata();
     if (approvalServerId && !ids.includes(approvalServerId))
       cancelServerApproval();
     cancelPendingStart();
     validation?.abort.abort();
-    store.selectedServers = selectedInCatalogOrder(
-      store.serverCatalog,
-      ids,
-    ).map((server) => server.id);
+    store.selectedServers = next;
     store.unresolvedServers = [];
+    updateSelectedPaths();
+    adoptSelectedEvidence();
+    requestValidation();
     try {
       localStorage.setItem(
         savedSelectionKey,
@@ -696,15 +770,24 @@ export function createApplicationController(
     const server = store.serverCatalog?.servers.find(
       (server) => server.id === id,
     );
-    if (!server || store.isRunning || store.preparing) return;
+    if (
+      !server ||
+      !store.selectedServers.includes(id) ||
+      store.catalogLoading ||
+      store.isRunning ||
+      store.preparing
+    )
+      return;
     cancelServerApproval();
     approval = new AbortController();
     approvalServerId = id;
     const task = approval;
+    const popup = openBrowserApprovalPopup(task.signal);
     try {
       const flow = await browserApproval(server);
       task.signal.throwIfAborted();
       store.serverApproval = { id, url: flow.url, code: flow.code };
+      popup.navigate(flow.url);
       const context = await flow.poll(task.signal);
       if (approval !== task) return;
       contexts.set(id, context);
@@ -737,6 +820,7 @@ export function createApplicationController(
           };
       }
     } finally {
+      popup.close();
       if (approval === task) {
         approval = null;
         approvalServerId = null;
@@ -753,7 +837,15 @@ export function createApplicationController(
       !store.selectedServers.includes(serverId)
     )
       return false;
+    if (
+      mode !== store.latencySelection.mode ||
+      (mode === "primary" && serverId !== store.primaryLatencyServer)
+    )
+      makeTransportPortable("latency");
     store.latencySelection = { mode, serverId };
+    updateSelectedPaths();
+    adoptSelectedEvidence();
+    requestValidation();
     return true;
   }
   function focusServer(id: string) {
@@ -916,8 +1008,13 @@ export function createApplicationController(
         const selectionChanged = serverDraft !== selectionKey();
         serverDraft = selectionKey();
         if (!booted || (!changed.length && !selectionChanged)) return;
-        if (pendingStart) cancelPendingStart();
-        validation?.abort.abort();
+        // An effect can run after a click already started work for this draft.
+        // Only cancel work that actually belongs to the superseded selection.
+        const currentDraft = draftKey(store.config);
+        if (pendingStart && pendingStart.draft !== currentDraft)
+          cancelPendingStart();
+        if (validation && validation.draft !== currentDraft)
+          validation.abort.abort();
         updateSelectedPaths();
         if (store.selectedServers.length) adoptSelectedEvidence();
         if (!store.isRunning) requestValidation();
@@ -942,42 +1039,37 @@ export function createApplicationController(
       cancelPendingStart();
       return;
     }
-    if (!store.serverCatalog) {
+    if (store.catalogLoading || !store.serverCatalog) {
       store.startError = store.catalogLoading
         ? "Servers are still loading. Try again in a moment."
         : "Open Settings to retry loading the server list.";
       store.preparationStatus = "blocked";
       return;
     }
-    if (
-      store.unresolvedServers.length &&
-      store.serverCatalog.servers.length === 1
-    ) {
+    if (approval) {
       store.startError =
-        "The saved selection changed. Open Settings to use this server.";
+        "Finish signing in to the selected server before starting.";
       store.preparationStatus = "blocked";
       return;
     }
-    if (
-      store.unresolvedServers.length ||
-      (!readySelected(false) && store.serverCatalog.servers.length > 1)
-    ) {
+    if (store.unresolvedServers.length || !store.selectedServers.length) {
       store.startError =
-        "Open Settings to resolve the selected servers before starting.";
+        "The saved selection changed. Open Settings to choose the servers to test.";
       store.preparationStatus = "blocked";
       return;
     }
     const config = $state.snapshot(store.config);
     config.adaptive = canonicalAdaptiveConfig(config.adaptive);
     const abort = new AbortController();
-    pendingStart = { abort, draft: draftKey(config) };
+    const task = { abort, draft: draftKey(config) };
+    pendingStart = task;
     store.startError = "";
     store.preparationStatus = "authenticating";
     const current = () =>
       booted &&
       pendingStart?.abort === abort &&
       !abort.signal.aborted &&
-      draftKey(store.config) === draftKey(config);
+      draftKey(store.config) === task.draft;
     const start = async () => {
       const budget = await requireSessionCoverage(
         buildSegments(config).totalMs + SESSION_RUN_MARGIN_MS,
@@ -1053,13 +1145,13 @@ export function createApplicationController(
           cause instanceof Error
             ? cause.message
             : connectionFailureMessage(cause);
-        store.preparationStatus = "failed";
+        store.preparationStatus =
+          store.preparationStatus === "authenticating" ? "blocked" : "failed";
       })
       .finally(() => {
         if (pendingStart?.abort === abort) {
           pendingStart = null;
-          if (store.preparationStatus === "launching")
-            store.preparationStatus = "idle";
+          if (store.preparing) store.preparationStatus = "idle";
         }
         schedule();
       });
@@ -1202,20 +1294,8 @@ export function createApplicationController(
         store.preparing
       )
         return Promise.resolve();
-      // Capability failures can leave both role probes verified. A manual retry
-      // must rediscover that server after an upgrade, without checking its peers.
-      if (
-        store.serverReadiness.get(id)?.state === "failed" &&
-        !validationRoles(
-          serverConfig(id),
-          selectedValidation.get(id) ?? emptyConnectionValidation(),
-          undefined,
-          store.serverDiscoveries.get(id),
-          Infinity,
-        ).length
-      )
-        selectedValidation.delete(id);
-      return validateServers(false, undefined, undefined, id).catch(() => {});
+      // Explicit retries refresh only this participant, including capabilities.
+      return validateServers(true, undefined, undefined, id).catch(() => {});
     },
     toggleRun,
     cancelPendingStart,

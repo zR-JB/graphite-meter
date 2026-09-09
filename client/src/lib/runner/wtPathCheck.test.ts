@@ -43,7 +43,7 @@ type PathCheck = (
 type CheckBody = (check: PathCheck) => Promise<void>;
 async function withPathCheck(
   webTransport: unknown,
-  capabilities = preflight,
+  capabilities: unknown = preflight,
   body: CheckBody,
 ): Promise<void> {
   const restore = stubGlobals({
@@ -244,4 +244,110 @@ test("an aborted probe leaves the transport a newer probe committed alone", asyn
     );
     expect(firstOutcome).toBe("rejected");
   });
+});
+
+test("datagram preparation requests and verifies datagram bytes, not a stream", async () => {
+  const urls: string[] = [];
+  let bytes = new Uint8Array([1]);
+  class DatagramWebTransport {
+    readonly ready = Promise.resolve();
+    readonly closed = new Promise<void>(() => {});
+    readonly datagrams = {
+      readable: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      }),
+    };
+    constructor(url: string) {
+      urls.push(url);
+    }
+    close() {}
+  }
+  const capabilities = {
+    ...preflight,
+    capabilities: {
+      throughput: [
+        {
+          baseUrl: WT_ORIGIN,
+          transport: "webtransport-datagram",
+          protocol: "http3",
+        },
+      ],
+      latency: [],
+    },
+  };
+  await withPathCheck(DatagramWebTransport, capabilities, async (check) => {
+    const cfg = {
+      ...config,
+      transports: {
+        throughputTarget: `${WT_ORIGIN}::wtdg`,
+        latencyTarget: "auto",
+      },
+    };
+    expect((await check(cfg)).validation.throughput.state).toBe("verified");
+    expect(new URL(urls[0]).searchParams.get("datagrams")).toBe("1");
+    bytes = new Uint8Array();
+    await expect(check(cfg)).rejects.toThrow("carried no bytes");
+  });
+});
+
+test("automatic throughput never downgrades a nested authentication refusal", async () => {
+  const { ServerAuthenticationRequired } =
+    await import("../servers/credentials");
+  const refusal = new ServerAuthenticationRequired({
+    id: "peer",
+    name: "Peer",
+    url: WT_ORIGIN,
+  });
+  class RefusedAuthentication {
+    readonly ready = Promise.reject(refusal);
+    readonly closed = new Promise<void>(() => {});
+    close() {}
+  }
+  await withPathCheck(RefusedAuthentication, preflight, async (check) => {
+    await expect(check(autoConfig)).rejects.toThrow("did not establish");
+  });
+});
+
+test("automatic latency never retries WebSocket after authentication refusal", async () => {
+  const { ServerAuthenticationRequired } =
+    await import("../servers/credentials");
+  const { IdleKeepalive } = await import("./real/latencyChannel");
+  const original = IdleKeepalive.prototype.verifyReady;
+  let attempts = 0;
+  IdleKeepalive.prototype.verifyReady = async () => {
+    attempts++;
+    throw new ServerAuthenticationRequired({
+      id: "peer",
+      name: "Peer",
+      url: WT_ORIGIN,
+    });
+  };
+  const capabilities = {
+    ...preflight,
+    capabilities: {
+      throughput: [
+        { baseUrl: WT_ORIGIN, transport: "fetch-stream", protocol: "http3" },
+      ],
+      latency: [
+        { baseUrl: WT_ORIGIN, transport: "webtransport" },
+        { baseUrl: WT_ORIGIN, transport: "websocket" },
+      ],
+    },
+  };
+  try {
+    await withPathCheck(FakeWebTransport, capabilities, async (check) => {
+      await expect(
+        check({
+          ...autoConfig,
+          stages: { ...autoConfig.stages, latency: true },
+        }),
+      ).rejects.toThrow("Sign in to Peer");
+      expect(attempts).toBe(1);
+    });
+  } finally {
+    IdleKeepalive.prototype.verifyReady = original;
+  }
 });

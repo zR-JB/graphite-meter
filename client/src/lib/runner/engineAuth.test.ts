@@ -144,8 +144,10 @@ test("a canceled start cannot overwrite the newer run's session budget when auth
   }
 });
 
-test("cancel, deselection, and disposal stop delayed approval setup without opening a popup", async () => {
+test("cancel, deselection, and disposal close reserved popups before delayed approval setup navigates", async () => {
   let popups = 0;
+  let closes = 0;
+  let navigations = 0;
   let requests = 0;
   const origin = new URL("https://ui.example/");
   const restore = stubGlobals({
@@ -155,7 +157,17 @@ test("cancel, deselection, and disposal stop delayed approval setup without open
       location: origin,
       open() {
         popups++;
-        return null;
+        return {
+          opener: {},
+          close() {
+            closes++;
+          },
+          location: {
+            replace() {
+              navigations++;
+            },
+          },
+        };
       },
       addEventListener() {},
       removeEventListener() {},
@@ -190,16 +202,22 @@ test("cancel, deselection, and disposal stop delayed approval setup without open
   const engine = createApplicationController(store);
   try {
     const canceled = engine.signInServer("peer");
+    expect(popups).toBe(1);
     engine.cancelServerApproval();
     await canceled;
     const deselected = engine.signInServer("peer");
     engine.applyServers(["self"]);
     await deselected;
+    await engine.signInServer("peer");
+    expect(popups).toBe(2);
+    engine.applyServers(["self", "peer"]);
     const disposed = engine.signInServer("peer");
     engine.dispose();
     await disposed;
     expect(store.serverApproval).toBeNull();
-    expect(popups).toBe(0);
+    expect(popups).toBe(3);
+    expect(closes).toBe(3);
+    expect(navigations).toBe(0);
     expect(requests).toBe(0);
   } finally {
     engine.dispose();
@@ -264,6 +282,81 @@ test("canceling an approval ignores a grant returned by an already pending excha
     expect(store.serverApproval).toBeNull();
     expect(discoveries).toBe(0);
     expect(store.isRunning).toBe(false);
+  } finally {
+    engine.dispose();
+    store.serverCatalog = catalog;
+    store.selectedServers = selection;
+    store.reset();
+    restore();
+  }
+});
+
+test("pending approval excludes Start and catalogue replacement cancels its old-origin exchange", async () => {
+  const origin = new URL("https://ui.example/");
+  let response: ((value: Response) => void) | undefined;
+  let signal: AbortSignal | undefined;
+  let peerUrl = "https://peer.example";
+  const discovered: { url: string; kind: string }[] = [];
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    location: origin,
+    window: {
+      location: origin,
+      open: () => null,
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent() {},
+    },
+    document: {
+      visibilityState: "visible",
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    navigator: { onLine: true },
+    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://peer.example/auth/browser/token");
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => (response = resolve));
+    },
+  });
+  const { createApplicationController } = await import("./engine.svelte");
+  const { store } = await import("../state/store.svelte");
+  const catalog = store.serverCatalog;
+  const selection = store.selectedServers;
+  store.reset();
+  const engine = createApplicationController(store, {
+    loadCatalog: async () => ({
+      defaultSelection: ["peer"],
+      servers: [
+        { id: "self", name: "Home", url: origin.origin },
+        { id: "peer", name: "Private", url: peerUrl },
+      ],
+    }),
+    discover: async (_signal, credentials) => {
+      discovered.push({
+        url: credentials!.server.url,
+        kind: credentials!.kind,
+      });
+      throw new Error("Sign-in is required");
+    },
+  });
+  try {
+    await engine.boot();
+    const pending = engine.signInServer("peer");
+    while (!response) await Bun.sleep(1);
+    engine.toggleRun();
+    expect(store.preparationStatus).toBe("blocked");
+    expect(store.startError).toContain("Finish signing in");
+    expect(engine.hasPendingStart()).toBe(false);
+    peerUrl = "https://replacement.example";
+    await engine.retryCatalogue();
+    expect(signal?.aborted).toBe(true);
+    response(Response.json({ token: "a".repeat(43), remainingMs: 60_000 }));
+    await pending;
+    expect(store.serverApproval).toBeNull();
+    await engine.validateConnections(true).catch(() => {});
+    expect(discovered.at(-1)).toEqual({ url: peerUrl, kind: "public" });
+    expect(store.preparing).toBe(false);
   } finally {
     engine.dispose();
     store.serverCatalog = catalog;

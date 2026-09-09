@@ -15,6 +15,7 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import {
+  blockedSelectionReason,
   locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
@@ -199,10 +200,16 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  if (selection === "auto")
+  if (
+    selection === "auto" ||
+    selection.startsWith("protocol:") ||
+    selection.startsWith("transport:")
+  )
     return selectTarget(discovery, role, selection)
       ? "advertised"
-      : "not-advertised";
+      : blockedSelectionReason(discovery, role, selection)
+        ? "browser-blocked"
+        : "not-advertised";
   const byOrigin: Record<string, DiscoveredTarget<{ id: string }>> = discovery[
     role
   ];
@@ -274,4 +281,40 @@ export function panelReadiness(
   for (const state of ["failed", "checking", "stale"] as const)
     if (states.includes(state)) return state;
   return "verified";
+}
+
+/** A role card reports only its own evidence across the participating servers. */
+export function summarizeRoleValidation(
+  config: RunnerConfig,
+  role: ConnectionRole,
+  ids: readonly string[],
+  discoveries: ReadonlyMap<string, TransportDiscovery>,
+  validations: ReadonlyMap<string, ConnectionValidation>,
+): { state: ConnectionValidationState; verified: number; total: number } {
+  const states = ids.map((id): ConnectionValidationState => {
+    const validation = validations.get(id);
+    if (!validation) return "stale";
+    const check = validation[role];
+    if (check.state === "verified")
+      return roleNeedsValidation(config, validation, role, discoveries.get(id))
+        ? "stale"
+        : "verified";
+    return check.selection === connectionSelection(config, role)
+      ? check.state
+      : "stale";
+  });
+  const state = !states.length
+    ? "stale"
+    : states.includes("checking")
+      ? "checking"
+      : states.includes("failed")
+        ? "failed"
+        : states.includes("stale")
+          ? "stale"
+          : "verified";
+  return {
+    state,
+    verified: states.filter((state) => state === "verified").length,
+    total: states.length,
+  };
 }

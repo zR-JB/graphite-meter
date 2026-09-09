@@ -9,6 +9,7 @@ import type {
   TransportDiscovery,
 } from "./contract";
 import {
+  summarizeRoleValidation,
   roleNeedsValidation,
   preparedPaths,
   validationRoles,
@@ -587,4 +588,63 @@ test("a manual role retry leaves an unrelated failed role available for its own 
   expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual([
     "latency",
   ]);
+});
+
+test("grouped selections present verified paths as advertised", () => {
+  const cfg = config();
+  cfg.transports.throughputTarget = "protocol:http2";
+  cfg.transports.latencyTarget = "transport:websocket";
+  const paths = makePaths();
+  const model = presentConnections(cfg, paths.discovery, makeValidation(paths));
+  expect(model.throughput.availability).toBe("advertised");
+  expect(model.latency.availability).toBe("advertised");
+  expect(model.throughput.validation).toBe("verified");
+  expect(model.latency.validation).toBe("verified");
+});
+
+test("participant role summaries never borrow another role's failure or checking state", () => {
+  const paths = makePaths();
+  const a = makeValidation(paths);
+  const b = makeValidation(paths);
+  b.throughput = { selection: "auto", state: "failed", path: null };
+  const discoveries = new Map([
+    ["a", paths.discovery],
+    ["b", paths.discovery],
+  ]);
+  const validations = new Map([
+    ["a", a],
+    ["b", b],
+  ]);
+  const summary = (role: "throughput" | "latency") =>
+    summarizeRoleValidation(
+      config(),
+      role,
+      ["a", "b"],
+      discoveries,
+      validations,
+    );
+  expect(summary("throughput")).toEqual({
+    state: "failed",
+    verified: 1,
+    total: 2,
+  });
+  expect(summary("latency")).toEqual({
+    state: "verified",
+    verified: 2,
+    total: 2,
+  });
+  b.throughput.state = "checking";
+  expect(summary("throughput").state).toBe("checking");
+  expect(summary("latency").state).toBe("verified");
+  discoveries.set("b", { ...paths.discovery, generation: "new" });
+  expect(summary("latency")).toEqual({ state: "stale", verified: 1, total: 2 });
+  expect(
+    summarizeRoleValidation(
+      config(),
+      "latency",
+      ["a", "missing"],
+      discoveries,
+      validations,
+    ),
+  ).toEqual({ state: "stale", verified: 1, total: 2 });
 });

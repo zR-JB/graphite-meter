@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { classifyTransportDiscovery } from "../runner/real/backendPure";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { testPreparedPaths } from "../runner/test-helpers.test";
-import { serverTransportOptions } from "./transportOptions";
+import {
+  portableTransportSelection,
+  serverTransportOptions,
+} from "./transportOptions";
 import { planServerStreams } from "./streamBudget";
 import { parseCatalog } from "./catalog";
 
@@ -177,4 +180,42 @@ test("valid prototype-named server IDs retain their streams and count toward the
       activity,
     ),
   ).toThrow("128 streams");
+});
+
+test("switching servers carries a transport preference without the previous origin", () => {
+  const discovery = discoveries.get("a")!;
+  expect(
+    portableTransportSelection("throughput", servers[0].url, discovery),
+  ).toBe("protocol:http1");
+  expect(portableTransportSelection("latency", servers[0].url, discovery)).toBe(
+    "transport:websocket",
+  );
+  expect(
+    portableTransportSelection(
+      "throughput",
+      "https://removed.example",
+      discovery,
+    ),
+  ).toBe("auto");
+  expect(
+    portableTransportSelection("throughput", "protocol:http3", discovery),
+  ).toBe("protocol:http3");
+  expect(
+    portableTransportSelection("latency", "transport:webtransport", null),
+  ).toBe("transport:webtransport");
+});
+
+test("saved transport mechanisms remain portable before discovery and never infer an HTTP protocol", () => {
+  expect(
+    portableTransportSelection("throughput", "https://old.example::wt", null),
+  ).toBe("transport:webtransport");
+  expect(
+    portableTransportSelection("latency", "https://old.example::wt", undefined),
+  ).toBe("transport:webtransport");
+  expect(
+    portableTransportSelection("throughput", "https://old.example::wtdg", null),
+  ).toBe("transport:webtransport-datagram");
+  expect(
+    portableTransportSelection("throughput", "https://old.example", null),
+  ).toBe("auto");
 });

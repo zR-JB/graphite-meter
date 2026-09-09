@@ -18,6 +18,7 @@ import {
 } from "../../api/decode";
 import {
   measurementFetch,
+  ServerAuthenticationRequired,
   classifyServerAuthentication,
   socketMint,
   type ServerCredentials,
@@ -295,7 +296,7 @@ async function prepareThroughput(
       await verifyWtThroughput(requested, signal, credentials);
     } catch (cause) {
       signal.throwIfAborted();
-      if (selection !== "auto") throw cause;
+      if (selection !== "auto" || authenticationFailure(cause)) throw cause;
       target = fetchTarget;
     }
   }
@@ -339,7 +340,11 @@ async function prepareLatency(
     } catch (cause) {
       signal.throwIfAborted();
       idle.stop();
-      if (requested.transport !== "webtransport" || selection !== "auto")
+      if (
+        requested.transport !== "webtransport" ||
+        selection !== "auto" ||
+        authenticationFailure(cause)
+      )
         throw cause;
       const fallback = selectLatencyTarget(discovery, selection, false);
       if (!fallback) throw cause;
@@ -381,7 +386,8 @@ async function verifyWtThroughput(
 ): Promise<void> {
   let established = false;
   try {
-    let url = `${target.origin}${target.routes.wtDownload}?bytes=${16 * 1024}`;
+    const datagrams = target.transport === "webtransport-datagram";
+    let url = `${target.origin}${target.routes.wtDownload}?bytes=${16 * 1024}${datagrams ? "&datagrams=1" : ""}`;
     const mint = socketMint(
       credentials,
       target.origin,
@@ -407,14 +413,18 @@ async function verifyWtThroughput(
     try {
       await session.ready;
       established = true;
-      const lane = await session.incomingUnidirectionalStreams
-        .getReader()
-        .read();
-      if (lane.done) throw new Error("no lane");
-      const chunk = await (lane.value as ReadableStream<Uint8Array>)
-        .getReader()
-        .read();
-      if (chunk.done) throw new Error("empty lane");
+      let stream: ReadableStream<Uint8Array>;
+      if (datagrams) stream = session.datagrams.readable;
+      else {
+        const lane = await session.incomingUnidirectionalStreams
+          .getReader()
+          .read();
+        if (lane.done) throw new Error("no lane");
+        stream = lane.value as ReadableStream<Uint8Array>;
+      }
+      const chunk = await stream.getReader().read();
+      if (chunk.done || !chunk.value.byteLength)
+        throw new Error("empty carrier");
     } finally {
       clearTimeout(deadline);
       signal.removeEventListener("abort", close);
@@ -429,4 +439,12 @@ async function verifyWtThroughput(
       { cause, role: "throughput" },
     );
   }
+}
+
+function authenticationFailure(cause: unknown): boolean {
+  while (cause instanceof Error) {
+    if (cause instanceof ServerAuthenticationRequired) return true;
+    cause = cause.cause;
+  }
+  return false;
 }
