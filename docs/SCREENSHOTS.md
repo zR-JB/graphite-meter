@@ -2,7 +2,7 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-The **v0.7.0** browser client, from the completed test to saved results. These captures use a
+The **v0.8.2** browser client, from the completed test to saved results. These captures use a
 simulated deployment and illustrative data throughout; they are not performance benchmarks.
 
 ## The completed test
@@ -10,7 +10,7 @@ simulated deployment and illustrative data throughout; they are not performance 
 Throughput and responsiveness share the screen. The timeline retains the transfer ramp-up and
 variation, while separate latency profiles show idle, download, and upload populations.
 
-<img src="assets/desktop.png" alt="v0.7.0 completed desktop test with cyan download and gold upload curves, three latency distributions, and throughput summaries" width="1080">
+<img src="assets/desktop.png" alt="v0.8.2 completed desktop test with cyan download and gold upload curves, three latency distributions, and throughput summaries" width="1080">
 
 ## Settings, beside your results
 
@@ -24,7 +24,7 @@ visible while you adjust the test; on smaller screens, the same settings open as
 Endpoint information identifies the server and selected paths. Protocol evidence distinguishes
 what the browser observed from what reached the server, which is useful when a proxy sits between them.
 
-<img src="assets/endpoint.png" alt="Endpoint information showing the simulated Frankfurt deployment and independent throughput and latency path evidence" width="1080">
+<img src="assets/endpoint.png" alt="Endpoint information showing the simulated 40 GbE lab deployment and independent throughput and latency path evidence" width="1080">
 
 ## History on your device
 
@@ -33,8 +33,7 @@ meter. The selected result keeps throughput, latency distributions, and probe ev
 
 <img src="assets/history.png" alt="Device-local history with illustrative saved runs and a selected result's measurement details" width="1080">
 
-History is optional and limited to 2,000 summaries per browser. See [the 0.7 upgrade notes](DEPLOYMENT.md#upgrading-to-07)
-for older history formats.
+History is optional and limited to 2,000 summaries per browser.
 
 ## Light and dark, desktop and phone
 
@@ -50,25 +49,28 @@ and results form a vertical reading order; additional content remains available 
 ## Native terminal client
 
 The Go TUI provides setup controls, live telemetry, and a completed report with receiver throughput,
-latency percentiles, probe timeouts, and paired server timing.
+latency percentiles, and probe timeouts.
 
-<img src="assets/tui.png" alt="v0.7.0 native terminal client with simulated download, upload, and latency results" width="1080">
+<img src="assets/tui.png" alt="v0.8.2 native terminal client with simulated download, upload, and latency results" width="1080">
 
 This capture renders the current native view's ANSI output with illustrative results and the
-client version set to `0.7.0`. It uses the shipped layout and colors; the terminal frame is simulated.
+client version set to `0.8.2`. It uses the shipped layout and colors; the terminal frame is simulated.
 [Download and run the native client](../README.md#native-terminal-client).
 
 ## Capture details
 
-- Production UI built with `VERSION=0.7.0`, `GM_CLIENT_BUILD_PROFILE=prod`, and the explicitly
-  enabled dummy backend. The application footer reads `prod v0.7.0`.
-- Source UI revision: `ce6ad79`. Chromium engine: `152.0.7977.82`.
-- Simulated server: **Graphite Meter demo**, **Frankfurt · simulated**, using a reserved example
+- Production UI built with `VERSION=0.8.2`, `GM_CLIENT_BUILD_PROFILE=prod`, and the explicitly
+  enabled dummy backend. The application footer reads `prod v0.8.2`.
+- Source UI: v0.8.2 result-gauge refresh. Chromium engine: `152.0.7977.82`.
+- Simulated server: **Graphite Meter demo**, **40 GbE lab · simulated**, using a reserved example
   hostname and documentation IP address.
 - Three stages only: idle latency, download, and upload. Synthetic receiver observations include
-  a transfer ramp and modest variation; latency has distinct, slightly skewed stage populations.
+  roughly half of transfer ramp-up remaining after a 600 ms warmup and small correlated changes;
+  seeded randomized latency has distinct,
+  skewed idle and loaded populations with occasional longer replies.
   The normal runner computes the displayed results. History includes illustrative saved summaries.
-- Desktop captures are 1600 × 1000; the phone viewport is 430 × 932. The README hero composes
+- Desktop viewports are 1600 × 1000; the phone viewport is 430 × 932. Both are captured
+  at double pixel density. The README hero composes
   these captures with a simulated device frame. The UI itself is not rearranged or retouched.
 
 The ordinary production build excludes the dummy backend. To run your own measurements, follow
