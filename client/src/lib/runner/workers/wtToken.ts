@@ -15,8 +15,10 @@ export interface WtMint {
 /** A mint that outlives the dial it feeds only parks a token server-side. */
 const MINT_TIMEOUT_MS = 3000;
 
-/* How long an unspent token stays reusable when nothing reports spending it: one establish budget and the re-dial. */
-const REUSE_WINDOW_MS = ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS;
+/* A failed handshake may already have spent its ticket in auth middleware. Refresh after two retries. */
+const MAX_DIAL_ATTEMPTS = 3;
+/* Retain unspent tickets across slow retries without exhausting the server's bounded ticket pool. */
+const REUSE_WINDOW_MS = 2 * ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS;
 
 interface WtToken {
   /** "" when minting failed or is not configured. */
@@ -25,12 +27,13 @@ interface WtToken {
   authRequired: boolean;
 }
 
-/* INVARIANT: a token is spent by a CONNECT the server accepted, and nothing else. */
+/* Opening proves consumption; a failed dial may have failed before or after authentication. */
 interface MintedToken {
   url: string;
   token: string;
   mintedAt: number;
   reusableForMs: number;
+  attempts: number;
 }
 
 let held: MintedToken | null = null;
@@ -43,10 +46,14 @@ export function spendWtToken(token: string): void {
 /** The held token, while it is still this URL's and still reusable. */
 function reusableToken(url: string): string {
   if (!held || held.url !== url) return "";
-  if (Date.now() - held.mintedAt >= held.reusableForMs) {
+  if (
+    held.attempts >= MAX_DIAL_ATTEMPTS ||
+    Date.now() - held.mintedAt >= held.reusableForMs
+  ) {
     held = null;
     return "";
   }
+  held.attempts++;
   return held.token;
 }
 
@@ -58,6 +65,7 @@ function hold(url: string, token: string, expires: number): void {
     token,
     mintedAt: Date.now(),
     reusableForMs: Math.max(0, Math.min(REUSE_WINDOW_MS, lifetimeMs)),
+    attempts: 1,
   };
 }
 

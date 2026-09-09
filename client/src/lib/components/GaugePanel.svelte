@@ -241,8 +241,15 @@
     ),
   );
 
+  const preparationLabel = $derived(
+    store.preparation.status === "authenticating"
+      ? "Checking sign-in"
+      : store.preparation.status === "launching"
+        ? "Starting test"
+        : "Checking paths",
+  );
   const hint = $derived.by(() => {
-    if (store.preparing) return "Checking paths";
+    if (store.preparing) return preparationLabel;
     switch (store.phase) {
       case "idle":
         return "Ready to measure your connection";
@@ -488,7 +495,7 @@
                 >{note}</span
               >{/each}
             {#if store.preparing}
-              <span class="gauge-status preparation">Checking paths</span>
+              <span class="gauge-status preparation">{preparationLabel}</span>
             {:else if preparationFailure}
               <span class="gauge-status error"
                 >{preparationFailure.headline}</span

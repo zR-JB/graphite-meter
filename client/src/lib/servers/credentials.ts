@@ -70,9 +70,9 @@ export async function measurementFetch(
   input: string,
   init?: RequestInit,
 ): Promise<Response> {
+  const options = requestOptions(context, input, init?.method);
   if (!context || context.kind === "session")
     return authenticatedFetch(input, init);
-  const options = requestOptions(context, input, init?.method);
   const response = await fetch(input, {
     ...init,
     ...options,
@@ -133,6 +133,47 @@ function verificationCode(hash: Uint8Array): string {
     value &= (1 << bits) - 1;
   }
   return code;
+}
+/** Reserve a separate window during the click, before generating the approval challenge. */
+export function openBrowserApprovalPopup(signal: AbortSignal): {
+  navigate: (url: string) => void;
+  close: () => void;
+} {
+  let popup: Window | null = null;
+  const close = () => {
+    signal.removeEventListener("abort", close);
+    try {
+      popup?.close();
+    } catch {
+      // Cross-origin isolation may sever the handle; approval never depends on it.
+    }
+    popup = null;
+  };
+  if (!signal.aborted) {
+    try {
+      popup = window.open(
+        "about:blank",
+        "_blank",
+        "popup,width=520,height=720",
+      );
+      if (popup) popup.opener = null;
+    } catch {
+      close();
+    }
+    signal.addEventListener("abort", close, { once: true });
+  }
+  return {
+    navigate(url) {
+      if (signal.aborted) return;
+      try {
+        popup?.location.replace(url);
+      } catch {
+        // The visible sign-in link also works when navigation is blocked.
+        close();
+      }
+    },
+    close,
+  };
 }
 export async function browserApproval(server: ServerEntry): Promise<{
   url: string;

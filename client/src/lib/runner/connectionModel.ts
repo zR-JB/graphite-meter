@@ -15,6 +15,7 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import {
+  blockedSelectionReason,
   locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
@@ -115,7 +116,10 @@ export function connectionDraftRoleKey(
 ): string {
   const selection = connectionSelection(config, role);
   return role === "throughput"
-    ? selection
+    ? JSON.stringify({
+        selection,
+        checkpointNeeded: config.stages.upload || config.stages.bidirectional,
+      })
     : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
 export function connectionDraftKey(config: RunnerConfig): string {
@@ -170,6 +174,18 @@ export function validationRoles(
   });
 }
 
+/** Upload accounting requires receiver checkpoints even when the path probe succeeded. */
+export function uploadCapabilityFailure(
+  config: RunnerConfig,
+  discovery: Pick<TransportDiscovery, "uploadCheckpoint"> | null | undefined,
+): string | undefined {
+  return discovery &&
+    (config.stages.upload || config.stages.bidirectional) &&
+    !discovery.uploadCheckpoint
+    ? "Receiver checkpoint support is required for uploads. Upgrade this measurement server."
+    : undefined;
+}
+
 /** There is no second prepared cache: freshness belongs to each verified role. */
 export function preparedPaths(
   config: RunnerConfig,
@@ -179,6 +195,7 @@ export function preparedPaths(
 ): PreparedPaths | null {
   if (
     !discovery ||
+    uploadCapabilityFailure(config, discovery) ||
     CONNECTION_ROLES.some(
       (role) =>
         roleNeedsValidation(config, validation, role, discovery) ||
@@ -199,10 +216,16 @@ function availability(
   role: ConnectionRole,
   selection: string,
 ): ConnectionPresentation["availability"] {
-  if (selection === "auto")
+  if (
+    selection === "auto" ||
+    selection.startsWith("protocol:") ||
+    selection.startsWith("transport:")
+  )
     return selectTarget(discovery, role, selection)
       ? "advertised"
-      : "not-advertised";
+      : blockedSelectionReason(discovery, role, selection)
+        ? "browser-blocked"
+        : "not-advertised";
   const byOrigin: Record<string, DiscoveredTarget<{ id: string }>> = discovery[
     role
   ];
@@ -230,6 +253,10 @@ export function presentConnections(
     const target =
       path?.target ??
       (discovery ? selectTarget(discovery, role, selection) : null);
+    const capabilityFailure =
+      !active && role === "throughput"
+        ? uploadCapabilityFailure(config, discovery)
+        : undefined;
     const observedProtocol =
       path && "fetch" in path ? path.fetch.protocol : undefined;
     const presentation =
@@ -243,12 +270,16 @@ export function presentConnections(
       availability: discovery
         ? availability(discovery, role, selection)
         : "not-advertised",
-      validation: active ? "verified" : check.state,
+      validation: active
+        ? "verified"
+        : capabilityFailure
+          ? "failed"
+          : check.state,
       label:
         presentation?.label ??
         (role === "throughput" ? "Throughput path" : "Latency path"),
       summary: presentation?.summary ?? "Selection unresolved",
-      message: active ? undefined : check.message,
+      message: active ? undefined : (capabilityFailure ?? check.message),
       observedProtocol,
       browserProtocol:
         path && "browserProtocol" in path ? path.browserProtocol : undefined,
@@ -274,4 +305,45 @@ export function panelReadiness(
   for (const state of ["failed", "checking", "stale"] as const)
     if (states.includes(state)) return state;
   return "verified";
+}
+
+/** A role card reports only its own evidence across the participating servers. */
+export function summarizeRoleValidation(
+  config: RunnerConfig,
+  role: ConnectionRole,
+  ids: readonly string[],
+  discoveries: ReadonlyMap<string, TransportDiscovery>,
+  validations: ReadonlyMap<string, ConnectionValidation>,
+): { state: ConnectionValidationState; verified: number; total: number } {
+  const states = ids.map((id): ConnectionValidationState => {
+    if (
+      role === "throughput" &&
+      uploadCapabilityFailure(config, discoveries.get(id))
+    )
+      return "failed";
+    const validation = validations.get(id);
+    if (!validation) return "stale";
+    const check = validation[role];
+    if (check.state === "verified")
+      return roleNeedsValidation(config, validation, role, discoveries.get(id))
+        ? "stale"
+        : "verified";
+    return check.selection === connectionSelection(config, role)
+      ? check.state
+      : "stale";
+  });
+  const state = !states.length
+    ? "stale"
+    : states.includes("checking")
+      ? "checking"
+      : states.includes("failed")
+        ? "failed"
+        : states.includes("stale")
+          ? "stale"
+          : "verified";
+  return {
+    state,
+    verified: states.filter((state) => state === "verified").length,
+    total: states.length,
+  };
 }

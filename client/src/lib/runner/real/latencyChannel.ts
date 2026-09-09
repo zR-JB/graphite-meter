@@ -6,6 +6,7 @@ import { authEnabled } from "../../auth";
 import {
   socketMint,
   reportServerAuthentication,
+  ServerAuthenticationRequired,
   type ServerCredentials,
 } from "../../servers/credentials";
 import { httpToWs } from "./backendPure";
@@ -443,6 +444,10 @@ export class IdleKeepalive {
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
+      if (this.#credentials?.kind === "grant")
+        this.#probeReady?.finish(
+          new ServerAuthenticationRequired(this.#credentials.server),
+        );
       this.stop();
       reportServerAuthentication(this.#credentials);
       return;

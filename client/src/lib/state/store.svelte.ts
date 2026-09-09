@@ -157,6 +157,7 @@ class AppStore {
     }
   >();
   readonly serverDiscoveries = new SvelteMap<string, TransportDiscovery>();
+  readonly serverValidation = new SvelteMap<string, ConnectionValidation>();
   serverMetadataLoading = $state(false);
   catalogLoading = $state(false);
   selectionValidation = $derived.by(

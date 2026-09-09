@@ -9,6 +9,9 @@ import type {
   TransportDiscovery,
 } from "./contract";
 import {
+  summarizeRoleValidation,
+  uploadCapabilityFailure,
+  connectionDraftRoleKey,
   roleNeedsValidation,
   preparedPaths,
   validationRoles,
@@ -78,6 +81,7 @@ function makeDiscovery(
       true,
       options.pageProtocol ?? "h2",
     ),
+    uploadCheckpoint: true,
     generation: "generation-a",
     engineVersion: "test",
     server: { name: "meter" },
@@ -587,4 +591,117 @@ test("a manual role retry leaves an unrelated failed role available for its own 
   expect(validationRoles(cfg, validation, undefined, paths.discovery)).toEqual([
     "latency",
   ]);
+});
+
+test("grouped selections present verified paths as advertised", () => {
+  const cfg = config();
+  cfg.transports.throughputTarget = "protocol:http2";
+  cfg.transports.latencyTarget = "transport:websocket";
+  const paths = makePaths();
+  const model = presentConnections(cfg, paths.discovery, makeValidation(paths));
+  expect(model.throughput.availability).toBe("advertised");
+  expect(model.latency.availability).toBe("advertised");
+  expect(model.throughput.validation).toBe("verified");
+  expect(model.latency.validation).toBe("verified");
+});
+
+test("participant role summaries never borrow another role's failure or checking state", () => {
+  const paths = makePaths();
+  const a = makeValidation(paths);
+  const b = makeValidation(paths);
+  b.throughput = { selection: "auto", state: "failed", path: null };
+  const discoveries = new Map([
+    ["a", paths.discovery],
+    ["b", paths.discovery],
+  ]);
+  const validations = new Map([
+    ["a", a],
+    ["b", b],
+  ]);
+  const summary = (role: "throughput" | "latency") =>
+    summarizeRoleValidation(
+      config(),
+      role,
+      ["a", "b"],
+      discoveries,
+      validations,
+    );
+  expect(summary("throughput")).toEqual({
+    state: "failed",
+    verified: 1,
+    total: 2,
+  });
+  expect(summary("latency")).toEqual({
+    state: "verified",
+    verified: 2,
+    total: 2,
+  });
+  b.throughput.state = "checking";
+  expect(summary("throughput").state).toBe("checking");
+  expect(summary("latency").state).toBe("verified");
+  discoveries.set("b", { ...paths.discovery, generation: "new" });
+  expect(summary("latency")).toEqual({ state: "stale", verified: 1, total: 2 });
+  expect(
+    summarizeRoleValidation(
+      config(),
+      "latency",
+      ["a", "missing"],
+      discoveries,
+      validations,
+    ),
+  ).toEqual({ state: "stale", verified: 1, total: 2 });
+});
+
+test("upload capability blocks prepared paths and throughput presentation without erasing probe evidence", () => {
+  const cfg = config();
+  cfg.stages = {
+    latency: true,
+    download: true,
+    upload: false,
+    bidirectional: false,
+  };
+  const paths = makePaths();
+  paths.discovery.uploadCheckpoint = false;
+  const validation = makeValidation(paths);
+  const initialKey = connectionDraftRoleKey(cfg, "throughput");
+  expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
+  cfg.stages.upload = true;
+  expect(connectionDraftRoleKey(cfg, "throughput")).not.toBe(initialKey);
+  expect(uploadCapabilityFailure(cfg, paths.discovery)).toContain("checkpoint");
+  expect(preparedPaths(cfg, paths.discovery, validation)).toBeNull();
+  expect(
+    roleNeedsValidation(cfg, validation, "throughput", paths.discovery),
+  ).toBe(false);
+  const view = presentConnections(cfg, paths.discovery, validation);
+  expect(view.throughput.validation).toBe("failed");
+  expect(view.throughput.message).toBe(
+    uploadCapabilityFailure(cfg, paths.discovery),
+  );
+  expect(view.latency.validation).toBe("verified");
+  const discoveries = new Map([["self", paths.discovery]]);
+  const validations = new Map([["self", validation]]);
+  expect(
+    summarizeRoleValidation(
+      cfg,
+      "throughput",
+      ["self"],
+      discoveries,
+      validations,
+    ),
+  ).toEqual({ state: "failed", verified: 0, total: 1 });
+  expect(
+    summarizeRoleValidation(cfg, "latency", ["self"], discoveries, validations)
+      .state,
+  ).toBe("verified");
+  expect(validation.throughput.state).toBe("verified");
+  cfg.stages.upload = false;
+  expect(connectionDraftRoleKey(cfg, "throughput")).toBe(initialKey);
+  expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
+  expect(
+    presentConnections(cfg, paths.discovery, validation).throughput.validation,
+  ).toBe("verified");
+  cfg.stages.bidirectional = true;
+  expect(preparedPaths(cfg, paths.discovery, validation)).toBeNull();
+  paths.discovery.uploadCheckpoint = true;
+  expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
 });

@@ -4,6 +4,7 @@ import { IdleKeepalive, LatencyChannel } from "./latencyChannel";
 import type { CoreHost } from "../core";
 import type { LatencyTarget } from "../../api/endpoints";
 import { TestWorker } from "./test-helpers.test";
+import { ServerAuthenticationRequired } from "../../servers/credentials";
 
 const target: LatencyTarget = {
   id: "http://meter.test:7246",
@@ -24,6 +25,23 @@ afterEach(() => {
 });
 beforeEach(() => {
   globalThis.Worker = TestWorker as unknown as typeof Worker;
+});
+
+test("a peer socket authorization refusal preserves the sign-in cause during readiness validation", async () => {
+  const server = { id: "peer", name: "Private", url: "https://peer.example" };
+  const secureTarget = { ...target, origin: server.url, tls: true };
+  const keepalive = new IdleKeepalive(secureTarget, performance.timeOrigin, {
+    server,
+    kind: "grant",
+    token: "a".repeat(43),
+    expiresAt: Date.now() + 60_000,
+  });
+  const pending = keepalive.verifyReady();
+  const worker = TestWorker.last!;
+  worker.emit({ type: "auth-required" });
+  await expect(pending).rejects.toBeInstanceOf(ServerAuthenticationRequired);
+  expect(worker.terminated).toBe(1);
+  keepalive.stop();
 });
 
 // The older wait settles itself, but the slot it settles from belongs to the newer one: clearing it drops the ready.

@@ -234,9 +234,11 @@ type ValidationContext = {
   idleStops: () => number;
 };
 async function withValidationRunner(
-  probe: () => Promise<PreparedPaths>,
+  probe: (serverId?: string) => Promise<PreparedPaths>,
   run: (context: ValidationContext) => Promise<void>,
   adoptionState: () => "connected" | "offline" | undefined = () => undefined,
+  loadCatalog = testServerCatalog,
+  discover = testServerDiscovery,
 ): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
   const environment = stubEventBootEnvironment("visible", true);
@@ -247,13 +249,13 @@ async function withValidationRunner(
   let onEvent: (event: RunnerEvent) => void = () => {};
   const runner = new TestRunner();
   const engine = createApplicationController(store, {
-    loadCatalog: testServerCatalog,
-    discover: testServerDiscovery,
+    loadCatalog,
+    discover,
     createRunner: () => runner,
-    prepare: async (config, previous) => {
+    prepare: async (config, previous, _roles, _signal, credentials) => {
       calls++;
       try {
-        const paths = await probe();
+        const paths = await probe(credentials?.server.id);
         paths.throughput.verifiedAt = Date.now();
         if (paths.latency) paths.latency.verifiedAt = Date.now();
         return {
@@ -325,6 +327,243 @@ async function withValidationRunner(
   }
 }
 const PROBE_EVIDENCE = testPreparedPaths();
+
+test("enabling uploads refuses cached paths without receiver checkpoints", async () => {
+  const restoreGlobals = stubEngineGlobals();
+  const { store } = await import("../state/store.svelte");
+  const previous = JSON.parse(JSON.stringify(store.config)) as RunnerConfig;
+  const paths = testPreparedPaths();
+  paths.discovery.uploadCheckpoint = false;
+  store.config.stages = {
+    latency: true,
+    download: true,
+    upload: false,
+    bidirectional: false,
+  };
+  try {
+    await withValidationRunner(
+      async () => paths,
+      async ({ engine, runner, probeCalls }) => {
+        expect(store.serverReadiness.get("self")?.state).toBe("ready");
+        const calls = probeCalls();
+        expect(
+          engine.configureRun({
+            stages: { ...store.config.stages, upload: true },
+          }),
+        ).toBe(true);
+        engine.toggleRun();
+        await yieldUntil(() => !store.preparing);
+        expect(runner.starts).toBe(0);
+        expect(store.startError).toContain("checkpoint");
+        expect(store.serverValidation.get("self")?.latency.state).toBe(
+          "verified",
+        );
+        expect(
+          engine.configureRun({
+            stages: { ...store.config.stages, upload: false },
+          }),
+        ).toBe(true);
+        engine.toggleRun();
+        await yieldUntil(() => runner.starts === 1);
+        expect(runner.starts).toBe(1);
+        expect(probeCalls()).toBe(calls);
+      },
+      undefined,
+      testServerCatalog,
+      async () => paths.discovery,
+    );
+  } finally {
+    store.config = previous;
+    restoreGlobals();
+  }
+});
+
+test("Start retries the selected self server even when unused peers are configured", async () => {
+  let reachable = false;
+  const checked: (string | undefined)[] = [];
+  await withValidationRunner(
+    async (id) => {
+      checked.push(id);
+      if (!reachable) throw new PreflightUnavailableError("unreachable");
+      return testPreparedPaths();
+    },
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      expect(store.serverReadiness.get("self")?.state).toBe("failed");
+      reachable = true;
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts > 0);
+      expect(store.startError).toBe("");
+      expect(runner.starts).toBe(1);
+      expect(checked).toEqual(["self", "self"]);
+    },
+    undefined,
+    async () => {
+      const catalog = await testServerCatalog();
+      catalog.servers.push({
+        id: "peer",
+        name: "Unused peer",
+        url: "https://peer.test",
+      });
+      return catalog;
+    },
+  );
+});
+
+test("retrying one failed server does not probe other failed selected servers", async () => {
+  const checked: (string | undefined)[] = [];
+  await withValidationRunner(
+    async (id) => {
+      checked.push(id);
+      throw new PreflightUnavailableError("unreachable");
+    },
+    async ({ engine }) => {
+      checked.length = 0;
+      await engine.retryServer("self");
+      expect(checked).toEqual(["self"]);
+    },
+    undefined,
+    async () => {
+      const catalog = await testServerCatalog();
+      catalog.servers.push({
+        id: "peer",
+        name: "Peer",
+        url: "https://peer.test",
+      });
+      catalog.defaultSelection.push("peer");
+      return catalog;
+    },
+  );
+});
+
+test("switching servers carries transport preferences and clears the old server's paths immediately", async () => {
+  const { store } = await import("../state/store.svelte");
+  const previous = JSON.parse(JSON.stringify(store.config));
+  try {
+    await withValidationRunner(
+      async () => testPreparedPaths(),
+      async ({ engine }) => {
+        const paths = testPreparedPaths();
+        engine.selectConnection("throughput", paths.throughput.target.id);
+        engine.selectConnection("latency", paths.latency!.target.id);
+        expect(engine.applyServers(["peer"])).toBe(true);
+        expect(store.config.transports).toEqual({
+          throughputTarget: "protocol:http1",
+          latencyTarget: "transport:websocket",
+        });
+        expect(store.transportDiscovery).toBeNull();
+        expect(store.connectionValidation.throughput.path).toBeNull();
+        expect(store.connectionValidation.latency.path).toBeNull();
+      },
+      undefined,
+      async () => {
+        const catalog = await testServerCatalog();
+        catalog.servers.push({
+          id: "peer",
+          name: "Peer",
+          url: "https://peer.test",
+        });
+        return catalog;
+      },
+    );
+  } finally {
+    store.config = previous;
+  }
+});
+
+test("startup repairs a saved path belonging to another server", async () => {
+  const { store } = await import("../state/store.svelte");
+  const previous = JSON.parse(JSON.stringify(store.config));
+  try {
+    await withValidationRunner(
+      async () => testPreparedPaths(),
+      async ({ engine, runner }) => {
+        expect(store.config.transports).toEqual({
+          throughputTarget: "auto",
+          latencyTarget: "auto",
+        });
+        engine.toggleRun();
+        await yieldUntil(() => runner.starts > 0);
+        expect(runner.starts).toBe(1);
+      },
+      undefined,
+      async () => {
+        store.config.transports = {
+          throughputTarget: "https://previous-server.test",
+          latencyTarget: "https://previous-server.test",
+        };
+        return testServerCatalog();
+      },
+    );
+  } finally {
+    store.config = previous;
+  }
+});
+
+test("Start waits for an in-flight catalogue refresh even when an old catalogue exists", async () => {
+  let loads = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await withValidationRunner(
+    async () => testPreparedPaths(),
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      const refresh = engine.retryCatalogue();
+      expect(store.catalogLoading).toBe(true);
+      engine.toggleRun();
+      expect(store.preparationStatus).toBe("blocked");
+      expect(store.startError).toContain("Servers are still loading");
+      expect(runner.starts).toBe(0);
+      release();
+      await refresh;
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts > 0);
+      expect(runner.starts).toBe(1);
+    },
+    undefined,
+    async () => {
+      if (++loads === 2) await held;
+      return testServerCatalog();
+    },
+  );
+});
+
+test("superseding start validation cannot leave the application stuck preparing", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await withValidationRunner(
+    async () => {
+      if (++calls === 2) await held;
+      return testPreparedPaths();
+    },
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      const previous = store.serverValidation.get("self")!;
+      store.serverValidation.set("self", {
+        ...previous,
+        throughput: { ...previous.throughput, state: "stale" },
+      });
+      engine.toggleRun();
+      await yieldUntil(() => calls === 2);
+      expect(store.preparing).toBe(true);
+      await engine.validateConnections(true);
+      release();
+      await yieldUntil(() => !engine.hasPendingStart());
+      expect(store.preparing).toBe(false);
+      expect(store.preparationStatus).toBe("idle");
+      expect(runner.starts).toBe(0);
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts > 0);
+      expect(runner.starts).toBe(1);
+    },
+  );
+});
+
 test("teardown clears the probe evidence; a run reset keeps it", async () => {
   await withBootRunner(async ({ dispose: teardownRunner }) => {
     const { store } = await import("../state/store.svelte");
@@ -885,4 +1124,48 @@ test("an idle monitor that stalls before adoption keeps a bounded retry instead 
   } finally {
     timers.restore();
   }
+});
+
+test("live upload changes use committed capabilities and preserve the active plan on refusal", async () => {
+  const paths = testPreparedPaths();
+  paths.discovery.uploadCheckpoint = false;
+  await withValidationRunner(
+    async () => paths,
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      expect(
+        engine.configureRun({
+          stages: {
+            latency: true,
+            download: true,
+            upload: false,
+            bidirectional: false,
+          },
+        }),
+      ).toBe(true);
+      await engine.validateConnections(true);
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts === 1);
+      expect(store.isRunning).toBe(true);
+      const draft = store.config;
+      const active = store.activeConfig;
+      let attempts = 0;
+      runner.reconfigure = () => {
+        attempts++;
+      };
+      // A refreshed draft cannot grant a capability to the already prepared run.
+      paths.discovery.uploadCheckpoint = true;
+      store.serverDiscoveries.set("self", { ...paths.discovery });
+      expect(
+        engine.configureRun({
+          stages: { ...store.config.stages, upload: true },
+        }),
+      ).toBe(false);
+      expect(attempts).toBe(0);
+      expect(store.config).toBe(draft);
+      expect(store.activeConfig).toBe(active);
+      expect(store.activeConfig?.stages.latency).toBe(true);
+      expect(store.startError).toContain("checkpoint");
+    },
+  );
 });

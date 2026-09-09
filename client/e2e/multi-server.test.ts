@@ -1,4 +1,5 @@
 import "./client-performance";
+import "./auth-popup";
 import {
   fleet,
   fixturePassword,
@@ -438,6 +439,69 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await page.artifact("single-server-fleet-history");
 });
 
+test("switching a verified fleet to self starts immediately", async ({
+  page,
+}) => {
+  await configure(page, ["self", "server-1"]);
+  await ready(page);
+  const settings = await openSettings(page);
+  await settings.getByRole("checkbox", { name: "Frankfurt" }).click();
+  await settings.getByRole("button", { name: "Close Settings" }).click();
+  await startTest(page);
+  await waitForCompletion(page, 30000);
+  const saved = await savedResult(page);
+  expect(saved.multiServer?.participants).toEqual(["self"]);
+  expect(saved.multiServer?.failures).toEqual([]);
+  expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+});
+
+for (const transport of [
+  "auto",
+  "protocol:http2",
+  "transport:webtransport",
+  "transport:webtransport-datagram",
+] as const)
+  test(`authenticated home in a catalogue completes self-only with ${transport}`, async ({
+    page,
+  }) => {
+    await page.goto(`${fleet[4].url}/login`);
+    await page.getByLabel("Operator password").fill(fixturePassword);
+    await page
+      .getByRole("button", { name: "Sign in with operator password" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Open settings" }),
+    ).toBeVisible();
+    await configure(
+      page,
+      ["self"],
+      1500,
+      {
+        experimentalDatagramThroughput:
+          transport === "transport:webtransport-datagram",
+        transports: {
+          throughputTarget: transport,
+          latencyTarget: "transport:websocket",
+        },
+      },
+      { mode: "primary", serverId: "self" },
+      fleet[4].url,
+    );
+    await ready(page);
+    const startedAt = Date.now();
+    await startTest(page);
+    await waitForCompletion(page, 30000);
+    const saved = await savedResult(page, startedAt);
+    expect(saved.multiServer?.selection).toHaveLength(1);
+    expect(saved.multiServer?.participants).toEqual(["self"]);
+    expect(saved.multiServer?.failures).toEqual([]);
+    expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(
+      0,
+    );
+    expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+    await page.raw.cdp("Network.clearBrowserCookies");
+  });
+
 test("an origin-only catalogue discovers peer identity and paths without repeated configuration", async ({
   page,
 }) => {
@@ -571,6 +635,56 @@ test("server selectors support sliding, keyboard selection, cancellation and nar
   await page.artifact("sliding-server-selector-phone");
 });
 
+test("a live download refuses an upload stage without receiver checkpoint support", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const browser = window as {
+      fetch: (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    };
+    const fetch = browser.fetch.bind(window);
+    browser.fetch = async (...args) => {
+      const response = await fetch(...args);
+      if (new URL(String(args[0]), location.href).pathname !== "/preflight")
+        return response;
+      const body = await response.json();
+      body.capabilities.uploadCheckpoint = false;
+      const replaced = Response.json(body, {
+        status: response.status,
+        headers: response.headers,
+      });
+      Object.defineProperty(replaced, "url", { value: response.url });
+      return replaced;
+    };
+  });
+  await configure(page, ["self"], 3000, {
+    stages: {
+      latency: false,
+      download: true,
+      upload: false,
+      bidirectional: false,
+    },
+    skipLoadedLatencyWhenStageOff: true,
+  });
+  await ready(page);
+  const startedAt = Date.now();
+  await startTest(page);
+  await expect(page.locator('[role="status"].label')).toContainText(
+    "Downloading",
+  );
+  const upload = page.getByRole("switch", { name: "Upload stage" });
+  await expect(upload).toBeEnabled();
+  await upload.click();
+  await expect(upload).toHaveAttribute("aria-checked", "false");
+  await waitForCompletion(page, 15000);
+  const saved = await savedResult(page, startedAt);
+  expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.stages.upload.result).toBeNull();
+});
+
 test("retrying an upgraded server refreshes capability evidence without checking healthy peers", async ({
   page,
 }) => {
@@ -611,7 +725,9 @@ test("retrying an upgraded server refreshes capability evidence without checking
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
   await expect(retry).toBeVisible();
-  await expect(settings).toContainText("receiver checkpoint support");
+  await expect(settings).toContainText(
+    "Receiver checkpoint support is required for uploads.",
+  );
   await expect(settings.locator(".server-choices")).toHaveAttribute(
     "aria-busy",
     "false",
@@ -748,7 +864,9 @@ test("enabling all latency checks only the new peer path and retries leave healt
     settings.locator('.readiness-badge[data-state="verified"]'),
   ).toBeVisible({ timeout: 15000 });
   const verified = await checks();
+  // Explicit participant retry refreshes discovery and both enabled paths.
   expect(verified.fetches.map((url) => new URL(url).origin)).toEqual([
+    fleet[1].url,
     fleet[1].url,
     fleet[1].url,
     fleet[1].url,
@@ -786,10 +904,11 @@ test("enabling all latency checks only the new peer path and retries leave healt
   ).toBeVisible({ timeout: 15000 });
   const added = await checks();
   // Grouped WebSocket selection keeps the new peer's probe on TLS.
-  expect(added.fetches.slice(4).map((url) => new URL(url).origin)).toEqual([
-    fleet[3].url,
-    fleet[3].url,
-  ]);
+  expect(
+    added.fetches
+      .slice(verified.fetches.length)
+      .map((url) => new URL(url).origin),
+  ).toEqual([fleet[3].url, fleet[3].url]);
   expect(added.workers).toBe(3);
 });
 

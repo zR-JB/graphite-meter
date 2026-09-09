@@ -298,7 +298,7 @@ async function connectWebTransport(): Promise<void> {
     wt.close();
     return;
   }
-  // `ready` fulfils on the CONNECT the server accepted, which is the moment it deleted the token.
+  // Readiness proves the ticket was consumed, even though a failed handshake can also consume it.
   spendWtToken(token);
   try {
     writer = wt.datagrams.writable.getWriter();

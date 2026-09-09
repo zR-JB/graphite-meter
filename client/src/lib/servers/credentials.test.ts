@@ -124,3 +124,96 @@ test("browser approval binds a fresh verifier and rejects invalid or canceled ex
     restore();
   }
 });
+
+test("approval popup reserves an isolated window synchronously and survives browser restrictions", async () => {
+  const { openBrowserApprovalPopup } = await import("./credentials");
+  for (const mode of [
+    "open",
+    "blocked",
+    "throws",
+    "navigation-denied",
+    "close-denied",
+  ] as const) {
+    let opens = 0;
+    let navigations = 0;
+    let closes = 0;
+    const popup = {
+      opener: {} as unknown,
+      location: {
+        replace(url: string) {
+          expect(popup.opener).toBeNull();
+          expect(url).toBe(
+            "https://peer.example/auth/browser?challenge=public",
+          );
+          if (mode === "navigation-denied") throw new Error("Blocked");
+          navigations++;
+        },
+      },
+      close() {
+        closes++;
+        if (mode === "close-denied") throw new Error("Isolated");
+      },
+    };
+    const restore = stubGlobals({
+      window: {
+        open(url: string, target: string, features: string) {
+          opens++;
+          expect(url).toBe("about:blank");
+          expect(target).toBe("_blank");
+          expect(features).toContain("popup");
+          if (mode === "throws") throw new Error("Blocked");
+          return mode === "blocked" ? null : popup;
+        },
+      },
+    });
+    try {
+      const task = new AbortController();
+      const handle = openBrowserApprovalPopup(task.signal);
+      expect(opens).toBe(1);
+      handle.navigate("https://peer.example/auth/browser?challenge=public");
+      expect(navigations).toBe(
+        mode === "open" || mode === "close-denied" ? 1 : 0,
+      );
+      task.abort();
+      handle.navigate("https://peer.example/auth/browser?challenge=public");
+      handle.close();
+      expect(closes).toBe(
+        mode === "open" ||
+          mode === "navigation-denied" ||
+          mode === "close-denied"
+          ? 1
+          : 0,
+      );
+      openBrowserApprovalPopup(task.signal).close();
+      expect(opens).toBe(1);
+    } finally {
+      restore();
+    }
+  }
+});
+
+test("session fetches enforce the same selected-server boundary as grants", async () => {
+  const requests: string[] = [];
+  const restore = stubGlobals({
+    location: new URL("https://home.example/"),
+    fetch: async (input: unknown) => {
+      requests.push(String(input));
+      return new Response("{}");
+    },
+  });
+  try {
+    const { measurementFetch } = await import("./credentials");
+    const session = {
+      server: { id: "self", name: "Home", url: "https://home.example" },
+      kind: "session" as const,
+    };
+    await expect(
+      measurementFetch(session, "https://unrelated.example/probe"),
+    ).rejects.toThrow("outside the selected server");
+    expect(requests).toHaveLength(0);
+    await measurementFetch(session, "https://home.example:8443/probe");
+    expect(requests).toEqual(["https://home.example:8443/probe"]);
+  } finally {
+    restore();
+  }
+});

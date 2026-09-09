@@ -74,6 +74,7 @@ const processes = fleet.map((server, i) =>
           : {}),
       ...(i === 4
         ? {
+            GM_SERVER_CATALOG: JSON.stringify([fleet[1].url]),
             GM_AUTH_MODE: "password",
             GM_ADVERTISED_NATIVE_ENDPOINTS: "http1-tls,http2,http3",
             GM_AUTH_PUBLIC_URL: server.url,

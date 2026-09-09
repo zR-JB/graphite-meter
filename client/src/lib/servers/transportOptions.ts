@@ -1,5 +1,6 @@
 import type { TransportDiscovery } from "../runner/contract";
 import {
+  locateTarget,
   selectLatencyTarget,
   selectThroughputTarget,
   blockedSelectionReason,
@@ -81,4 +82,37 @@ export function serverTransportOptions(
         value !== "auto" && (missing.length > 0 || incompatible.length > 0),
     };
   });
+}
+
+/** Carry a transport preference between servers without carrying another server's origin. */
+export function portableTransportSelection(
+  role: "throughput" | "latency",
+  selection: string,
+  discovery: TransportDiscovery | null | undefined,
+): string {
+  if (
+    selection === "auto" ||
+    selection.startsWith("protocol:") ||
+    selection.startsWith("transport:")
+  )
+    return selection;
+  // Resolve with API support enabled: this converts a saved preference, not browser capability.
+  const target =
+    discovery &&
+    (role === "throughput"
+      ? locateTarget(discovery.throughput, selection)?.target
+      : (locateTarget(discovery.latency, selection)?.target ??
+        selectLatencyTarget(discovery, selection, true)));
+  if (!target) {
+    // Persisted mechanism IDs remain portable before discovery is available.
+    if (selection.endsWith("::wt")) return "transport:webtransport";
+    if (role === "throughput" && selection.endsWith("::wtdg"))
+      return "transport:webtransport-datagram";
+    return "auto";
+  }
+  return target.transport === "fetch-stream"
+    ? target.protocol === "negotiated"
+      ? "auto"
+      : `protocol:${target.protocol}`
+    : `transport:${target.transport}`;
 }

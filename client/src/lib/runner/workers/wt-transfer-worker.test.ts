@@ -24,6 +24,8 @@ type In =
       datagrams: boolean;
       mint?: { url: string };
       progressUrl?: string;
+      headers?: Record<string, string>;
+      credentials?: RequestCredentials;
     }
   | { type: "stop" };
 
@@ -93,6 +95,7 @@ function fakeDatagrams(timing: Timing, tick: () => void) {
 let timing: Timing = "macro";
 let mintRefuses = false;
 let dialRefuses = false;
+let dialReady: Promise<void> | undefined;
 let mints = 0;
 const dialUrls: string[] = [];
 const tokenOf = (url: string): string =>
@@ -100,9 +103,11 @@ const tokenOf = (url: string): string =>
 let clockMs = 0;
 const dialed: FakeSession[] = [];
 class FakeSession {
-  readonly ready = dialRefuses
-    ? Promise.reject(new Error("connect refused"))
-    : Promise.resolve();
+  readonly ready =
+    dialReady ??
+    (dialRefuses
+      ? Promise.reject(new Error("connect refused"))
+      : Promise.resolve());
   readonly closed = park();
   readonly datagrams = fakeDatagrams(timing, () => (clockMs += 1));
   readonly feed = new FeedStream();
@@ -165,6 +170,7 @@ function install(sinkTiming: Timing = "macro"): void {
   timing = sinkTiming;
   mintRefuses = false;
   dialRefuses = false;
+  dialReady = undefined;
   mints = 0;
   clockMs = 0;
   dialUrls.length = 0;
@@ -346,4 +352,48 @@ test("a stop after auth-required is still acknowledged", async () => {
     "auth-required",
     "stopped",
   ]);
+});
+
+test("authenticated WebTransport upload cleanup refuses redirects for session and grant requests", async () => {
+  for (const credentials of ["include", "omit"] as const) {
+    let cleanup: RequestInit | undefined;
+    const headers: Record<string, string> =
+      credentials === "include"
+        ? { "X-CSRF-Token": "session-csrf" }
+        : { Authorization: "Bearer peer-grant" };
+    const realm = await bootTransfer({ credentials, headers }, () => {
+      globalThis.fetch = (async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => {
+        if (init?.method === "DELETE") cleanup = init;
+        return fakeFetch(input, init);
+      }) as typeof fetch;
+    });
+    await Bun.sleep(5);
+    realm.send({ type: "stop" });
+    await Bun.sleep(5);
+    expect(cleanup).toBeDefined();
+    expect(cleanup!.credentials).toBe(credentials);
+    expect(cleanup!.headers).toEqual(headers);
+    expect(cleanup!.redirect).toBe("error");
+  }
+});
+
+test("stopping a pending WebTransport dial cannot publish late establishment", async () => {
+  let ready!: () => void;
+  const realm = await bootTransfer({}, () => {
+    dialReady = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+  });
+  await Bun.sleep(5);
+  const pendingSession = session();
+  realm.send({ type: "stop" });
+  expect(pendingSession.closes).toBe(1);
+  ready();
+  await Bun.sleep(5);
+  expect(realm.posted.map((message) => message.type)).toEqual(["stopped"]);
+  expect(pendingSession.lanes).toBe(0);
+  expect(pendingSession.incomingUnidirectionalStreams.locked).toBe(false);
 });

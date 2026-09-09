@@ -342,3 +342,32 @@ test("automatic and explicit targets remain valid while current is rejected", ()
   expect(selectThroughputTarget(discovery, "current")).toBeNull();
   expect(throughputOptionView(discovery, "current").disabled).toBe(true);
 });
+
+test("grouped cards use the same resolver as preparation", () => {
+  const origin = "https://meter.example";
+  const discovery = classifyTransportDiscovery(
+    [
+      testTransfer(origin, origin, "http2", true),
+      { baseUrl: origin, transport: "webtransport", protocol: "http3" },
+    ],
+    [
+      testLatency(origin, origin, true),
+      { baseUrl: origin, transport: "webtransport" },
+    ],
+    origin,
+    true,
+  );
+  for (const selection of ["protocol:http2", "transport:fetch-stream"])
+    expect(throughputOptionView(discovery, selection).disabled).toBe(false);
+  expect(latencyOptionView(discovery, "transport:websocket").disabled).toBe(
+    false,
+  );
+  expect(throughputOptionView(discovery, "transport:webtransport")).toEqual({
+    disabled: true,
+    detail: NO_API,
+  });
+  expect(latencyOptionView(discovery, "transport:webtransport")).toEqual({
+    disabled: true,
+    detail: NO_API,
+  });
+});

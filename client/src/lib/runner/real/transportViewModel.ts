@@ -102,6 +102,24 @@ export function throughputOptionView(
         : "No offered target matches this page origin and protocol.",
     };
   }
+  if (selection.startsWith("protocol:") || selection.startsWith("transport:")) {
+    const target = selectThroughputTarget(
+      discovery,
+      selection,
+      typeof WebTransport !== "undefined",
+    );
+    if (target)
+      return {
+        disabled: false,
+        detail: describeTarget(discovery, target).advertisedDetail,
+      };
+    return {
+      disabled: true,
+      detail: selectThroughputTarget(discovery, selection, true)
+        ? noBrowserWebTransport()
+        : NOT_ADVERTISED,
+    };
+  }
   const found = locateTarget(discovery.throughput, selection);
   if (found && needsMissingWebTransport(found.target.transport))
     return { disabled: true, detail: noBrowserWebTransport() };
@@ -146,6 +164,8 @@ export function latencyOptionView(
       disabled: false,
       detail: describeTarget(discovery, target).advertisedDetail,
     };
+  if (!runnable && selectLatencyTarget(discovery, selection, true))
+    return { disabled: true, detail: noBrowserWebTransport() };
   const found = locateTarget(discovery.latency, selection);
   const entry = found?.entry ?? discovery.latency[selection];
   // A bus the server offers but this browser cannot drive says so, rather than reading as something the server failed.

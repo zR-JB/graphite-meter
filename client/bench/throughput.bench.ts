@@ -1,4 +1,4 @@
-// Browser throughput benchmark (`just bench-throughput`); findings belong in docs/BENCHMARKS.md.
+// Browser throughput benchmark (`mise run bench-throughput`); keep run reports outside the repository.
 // It writes raw rows from fresh cell permutations, so session drift inflates spread rather than biasing one cell.
 import { test, expect, origins, harnessOrigin } from "./fixtures";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
