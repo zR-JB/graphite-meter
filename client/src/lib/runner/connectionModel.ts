@@ -135,15 +135,20 @@ export function roleNeedsValidation(
 ): boolean {
   if (role === "latency" && !latencyPathNeeded(config)) return false;
   const check = validation[role];
+  const selection = connectionSelection(config, role);
+  const target = discovery && selectTarget(discovery, role, selection);
   return (
     check.state !== "verified" ||
     !check.path ||
     !discovery ||
     check.path.generation !== discovery.generation ||
-    JSON.stringify(check.path.requested) !==
-      JSON.stringify(
-        selectTarget(discovery, role, connectionSelection(config, role)),
-      )
+    JSON.stringify(check.path.requested) !== JSON.stringify(target) ||
+    // Automatic may retain a verified fallback. An explicit selection must
+    // actually use that mechanism, even when it names the same initial candidate.
+    (selection !== "auto" &&
+      (check.path.target.id !== target?.id ||
+        check.path.target.origin !== target?.origin ||
+        check.path.target.transport !== target?.transport))
   );
 }
 export function validationRoles(
