@@ -463,7 +463,7 @@ class AppStore {
     stage?: "download" | "upload" | "bidirectional",
     dir?: "down" | "up",
   ): CompensationEstimate | null {
-    if (this.serverDetails && stage && dir)
+    if (this.serverDetails?.intervals.length && stage && dir)
       return serverWireEstimate(this.serverDetails, stage, dir);
     if (
       (this.serverDetails?.selection.length ?? this.selectedServers.length) > 1

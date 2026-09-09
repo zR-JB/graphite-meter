@@ -118,6 +118,31 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     "control capacity",
   );
 });
+test("a direct H1 upload reserves progress capacity without an unused aggregate checkpoint slot", () => {
+  const paths = [{ id: "self", paths: testPreparedPaths() }];
+  const config = {
+    ...structuredClone(DEFAULT_CONFIG),
+    transferStreams: { mode: "forced" as const, count: 4 },
+  };
+  const activity = {
+    stage: "upload" as const,
+    transfer: ["up" as const],
+    loadedLatency: true,
+  };
+  expect(planServerStreams(config, paths, activity, false).self.up).toBe(4);
+  expect(() => planServerStreams(config, paths, activity)).toThrow(
+    "control capacity",
+  );
+  expect(() =>
+    planServerStreams(
+      { ...config, transferStreams: { mode: "forced", count: 5 } },
+      paths,
+      activity,
+      false,
+    ),
+  ).toThrow("control capacity");
+});
+
 test("four participants share a run-wide 128 stream ceiling", () => {
   const paths = Array.from({ length: 4 }, (_, i) => {
     const paths = testPreparedPaths();
