@@ -37,7 +37,15 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   await page.addInitScript((home) => {
     localStorage.setItem(
       "graphite-meter:v1",
-      JSON.stringify({ latencySelection: { mode: "all", serverId: "self" } }),
+      JSON.stringify({
+        latencySelection: { mode: "all", serverId: "self" },
+        config: {
+          transports: {
+            throughputTarget: "protocol:http1",
+            latencyTarget: "auto",
+          },
+        },
+      }),
     );
     const state: DiscoveryActivity = ((
       window as typeof window & { discoveryActivity: DiscoveryActivity }
@@ -250,7 +258,7 @@ test("metadata timeouts back off so later catalogue servers are not starved on r
   ).toBeVisible();
 });
 
-test("an HTTP page automatically uses its clear server and a TLS-only peer while listing all preflight times", async ({
+test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only peer", async ({
   page,
 }) => {
   // An ordinary non-loopback HTTP page does not expose WebTransport. Exercise
@@ -292,9 +300,9 @@ test("an HTTP page automatically uses its clear server and a TLS-only peer while
   expect(saved.multiServer?.failures).toEqual([]);
   const [home, peer] = saved.multiServer!.servers;
   expect(home.server.url).toBe(fleet[0].http);
-  expect(home.throughput?.origin).toBe(fleet[0].http);
+  expect(home.throughput?.origin).toBe(fleet[0].h3);
   expect(peer.server.url).toBe(fleet[1].url);
-  expect(peer.throughput?.origin).toBe(fleet[1].url);
+  expect(peer.throughput?.origin).toBe(fleet[1].h3);
   expect(home.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget).toBeNull();
   for (const server of [home, peer]) {
@@ -307,6 +315,24 @@ test("four real servers share one run and retain separate receiver windows and l
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(
+    (unavailable) => {
+      const browser = window as {
+        fetch: (
+          input: RequestInfo | URL,
+          init?: RequestInit,
+        ) => Promise<Response>;
+      };
+      const original = browser.fetch.bind(window);
+      browser.fetch = (input, init) => {
+        const url = new URL(String(input), location.href);
+        if (url.pathname === "/probe" && unavailable.includes(url.origin))
+          return Promise.reject(new TypeError("Fixture path unavailable"));
+        return original(input, init);
+      };
+    },
+    [fleet[1].h3, fleet[2].h3, fleet[2].h2],
+  );
   await configure(
     page,
     fleet.slice(0, 4).map((server) => server.id),
@@ -340,6 +366,9 @@ test("four real servers share one run and retain separate receiver windows and l
   expect(saved.schemaVersion).toBe(4);
   expect(saved.multiServer?.participants).toHaveLength(4);
   expect(saved.multiServer?.failures).toEqual([]);
+  expect(
+    saved.multiServer!.servers.map((server) => server.throughput?.origin),
+  ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[3].h3]);
   for (const stage of ["download", "upload", "bidirectional"] as const) {
     const interval = saved.multiServer!.intervals.find(
       (interval) => interval.stage === stage,
@@ -767,7 +796,12 @@ test("enabling all latency checks only the new peer path and retries leave healt
     page,
     ["self", "server-1"],
     1500,
-    {},
+    {
+      transports: {
+        throughputTarget: "protocol:http1",
+        latencyTarget: "transport:websocket",
+      },
+    },
     { mode: "primary", serverId: "self" },
   );
   await ready(page);

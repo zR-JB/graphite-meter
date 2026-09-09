@@ -64,9 +64,9 @@ export function serverTransportOptions(
     const detail = restrictions.length
       ? restrictions.join(" ")
       : value === "auto"
-        ? servers.length === 1
-          ? `Chooses the available path for ${servers[0].name}`
-          : "Resolves independently for every selected server"
+        ? role === "throughput"
+          ? "Prefers HTTP/3, then HTTP/2; verifies fallbacks per server"
+          : "Prefers WebTransport datagrams; verifies WebSocket fallbacks per server"
         : incompatible.length
           ? `Unavailable on ${incompatible.map((server) => server.name).join(", ")}`
           : missing.length

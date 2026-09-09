@@ -32,7 +32,8 @@ if (hash.exitCode !== 0)
 const passwordHash = hash.stdout.toString().trim();
 process.env.BUN_CHROME_ARGS = [
   process.env.BUN_CHROME_ARGS,
-  // Bun shares its Chrome process across files, so include the standalone transport fixture before first launch.
+  // Self-signed QUIC fixtures require forcing; cold Alt-Svc startup needs separate coverage.
+  // Bun shares Chrome across files, so include the standalone transport fixture.
   `--origin-to-force-quic-on=${[`${host}:${base - 64 + 3}`, ...fleet.map((server) => new URL(server.h3).host)].join(",")}`,
   `--ignore-certificate-errors-spki-list=${process.env.GM_E2E_SPKI!}`,
   "--test-third-party-cookie-phaseout",

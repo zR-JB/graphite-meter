@@ -161,10 +161,10 @@ test("dynamic cards report exact resolution or remain unresolved", () => {
     "h2",
   );
   expect(throughputOptionView(catalog, "auto").detail).toBe(
-    "Selects https://meter because it matches this page.",
+    "Checks Fetch stream · HTTP/2 · TLS · https://meter.",
   );
   expect(latencyOptionView(catalog, "auto").detail).toBe(
-    "Selects https://meter:7247 because it is the only available latency endpoint.",
+    "Checks WebSocket · TLS · https://meter:7247.",
   );
   expect(
     throughputOptionView({ ...catalog, pageOrigin: "https://proxy" }, "auto")
@@ -256,7 +256,7 @@ test("an unresolved automatic throughput card still names its own reason", () =>
   const automatic = throughputOptionView(catalog, "auto");
   expect(automatic.disabled).toBe(true);
   expect(automatic.detail).toBe(
-    "No offered target matches this page origin and protocol.",
+    "No advertised throughput path is usable in this browser.",
   );
 });
 

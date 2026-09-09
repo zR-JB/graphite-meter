@@ -370,26 +370,64 @@ export function selectThroughputTarget(
   }
   if (selection !== "auto")
     return runnable(advertisedById(discovery.throughput, selection));
-  const advertised = Object.values(discovery.throughput).filter(
-    (entry) => entry.state === "advertised",
+  return automaticThroughputTargets(discovery, webTransport)[0] ?? null;
+}
+
+/** Deterministic preference within one server, independent of advertisement ordering. */
+function originPreference(
+  discovery: TransportDiscovery,
+  a: { id: string; origin: string; tls: boolean },
+  b: { id: string; origin: string; tls: boolean },
+): number {
+  return (
+    Number(b.origin === discovery.pageOrigin) -
+      Number(a.origin === discovery.pageOrigin) ||
+    Number(b.tls) - Number(a.tls) ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   );
-  // Automatic leads with fetch streams, which still win raw rate over TCP, so a session is the explicit choice.
-  const fetch = advertised
-    .map((entry) => targetOfKind(entry, "fetch-stream"))
-    .filter((target) => !!target);
-  const preferred =
-    fetch.find((target) => target.origin === discovery.pageOrigin) ??
-    (fetch.length === 1 ? fetch[0] : null);
-  if (preferred) return preferred;
-  // A WebTransport-only origin is the last resort, and `runnable` is what keeps it to a client that can drive the.
-  const wtOnly = advertised.filter(
-    (entry) =>
-      !targetOfKind(entry, "fetch-stream") &&
-      targetOfKind(entry, "webtransport"),
-  );
-  return wtOnly.length === 1
-    ? runnable(targetOfKind(wtOnly[0], "webtransport")!)
-    : null;
+}
+
+/** Prefer multiplexed HTTP bulk transfer; unreliable datagram throughput is always explicit. */
+export function automaticThroughputTargets(
+  discovery: TransportDiscovery,
+  webTransport = true,
+): (FetchThroughputTarget | WebTransportThroughputTarget)[] {
+  const rank = (
+    target: FetchThroughputTarget | WebTransportThroughputTarget,
+  ): number => {
+    if (target.transport !== "fetch-stream") return 4;
+    const protocol =
+      target.protocol === "negotiated" && target.origin === discovery.pageOrigin
+        ? (protocolFromNextHop(discovery.pageProtocol) ?? "negotiated")
+        : target.protocol;
+    return { http3: 0, http2: 1, negotiated: 2, http1: 3 }[protocol];
+  };
+  return Object.values(discovery.throughput)
+    .filter((entry) => entry.state === "advertised")
+    .flatMap((entry) => entry.targets)
+    .filter(
+      (target) =>
+        target.transport === "fetch-stream" ||
+        (webTransport && target.transport === "webtransport"),
+    )
+    .sort((a, b) => rank(a) - rank(b) || originPreference(discovery, a, b));
+}
+
+/** Prefer datagram latency, with verified WebSocket alternatives for restricted deployments. */
+export function automaticLatencyTargets(
+  discovery: TransportDiscovery,
+  webTransport = false,
+): LatencyTarget[] {
+  return Object.values(discovery.latency)
+    .filter((entry) => entry.state === "advertised")
+    .flatMap((entry) => entry.targets)
+    .filter((target) => webTransport || target.transport !== "webtransport")
+    .sort(
+      (a, b) =>
+        Number(b.transport === "webtransport") -
+          Number(a.transport === "webtransport") ||
+        originPreference(discovery, a, b),
+    );
 }
 
 /* Probe evidence and the upload id are HTTP whichever mechanism moves the bytes. */
@@ -474,21 +512,7 @@ export function selectLatencyTarget(
     const usable = entry.targets.filter(runnable);
     return usable.length === 1 ? usable[0] : null;
   }
-  const advertised = Object.values(discovery.latency).filter(
-    (entry) => entry.state === "advertised",
-  );
-  // Each bus resolves by the same rule: the page's own origin, else the only candidate.
-  const only = (kind: TransportKind): LatencyTarget | null => {
-    const usable = advertised
-      .map((entry) => targetOfKind(entry, kind))
-      .filter(runnable) as LatencyTarget[];
-    return (
-      usable.find((target) => target.origin === discovery.pageOrigin) ??
-      (usable.length === 1 ? usable[0] : null)
-    );
-  };
-  // Automatic prefers the datagram bus for probe timeout evidence without stream retransmission.
-  return only("webtransport") ?? only("websocket");
+  return automaticLatencyTargets(discovery, webTransport)[0] ?? null;
 }
 
 /* Map an http(s) origin to its ws(s) equivalent for the latency bus. */

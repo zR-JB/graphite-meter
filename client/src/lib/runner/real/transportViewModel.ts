@@ -6,6 +6,8 @@ import type {
 } from "../../api/endpoints";
 import { isLoopbackHostname } from "../../servers/catalog";
 import {
+  automaticThroughputTargets,
+  automaticLatencyTargets,
   blockedSelectionReason,
   locateTarget,
   selectLatencyTarget,
@@ -34,11 +36,17 @@ function automaticDetail(
   discovery: TransportDiscovery,
   role: "throughput" | "latency",
 ): string {
-  const reason =
-    target.origin === discovery.pageOrigin
-      ? "matches this page"
-      : `is the only available ${role} endpoint`;
-  return `Selects ${target.origin} because it ${reason}.`;
+  const alternatives =
+    role === "throughput"
+      ? automaticThroughputTargets(
+          discovery,
+          typeof WebTransport !== "undefined",
+        )
+      : automaticLatencyTargets(discovery, typeof WebTransport !== "undefined");
+  const first = `${describeTarget(discovery, target).summary} · ${target.origin}`;
+  return alternatives.length > 1
+    ? `Tries ${first} first, then verifies advertised alternatives.`
+    : `Checks ${first}.`;
 }
 
 /* Describes an origin through whichever mechanism the selection named, or its first when the state rules the. */
@@ -99,7 +107,7 @@ export function throughputOptionView(
       disabled: true,
       detail: refused
         ? noBrowserWebTransport()
-        : "No offered target matches this page origin and protocol.",
+        : "No advertised throughput path is usable in this browser.",
     };
   }
   if (selection.startsWith("protocol:") || selection.startsWith("transport:")) {

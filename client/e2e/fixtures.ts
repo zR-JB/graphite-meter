@@ -21,6 +21,8 @@ if (!binary || !spki)
 process.env.BUN_CHROME_ARGS = [
   process.env.BUN_CHROME_ARGS,
   `--ignore-certificate-errors-spki-list=${spki}`,
+  // Chrome rejects the self-signed QUIC certificate during ordinary Alt-Svc startup.
+  // This fixture verifies HTTP/3 transfer; it does not prove cold negotiation.
   `--origin-to-force-quic-on=${host}:${ports.h3}`,
 ]
   .filter(Boolean)

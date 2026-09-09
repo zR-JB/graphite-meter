@@ -1,3 +1,4 @@
+import { abortable, withinBudget } from "../runner/abortable";
 import type {
   ConnectionRole,
   PreparedPaths,
@@ -114,18 +115,6 @@ export function connectionFailureMessage(cause: unknown): string {
   return cause instanceof DOMException && cause.name === "TimeoutError"
     ? "Connection check timed out"
     : "Connection check failed";
-}
-
-/** Cancelling a waiter never lets a late operation commit, even if an adapter ignores abort. */
-function untilAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    promise
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener("abort", abort));
-  });
 }
 
 /** One owner for discovery, intent, checks, retries and idle resources, for one or many selected servers. */
@@ -371,7 +360,7 @@ export class ServerConnections {
       states.map((state) => this.#checkServer(state, options)),
     );
     const results = options.signal
-      ? await untilAbort(work, options.signal)
+      ? await abortable(work, options.signal)
       : await work;
     for (const result of results)
       if (result.status === "rejected" && result.reason?.name === "AbortError")
@@ -586,7 +575,7 @@ export class ServerConnections {
     task.promise = this.#network(
       () => 0,
       task.abort.signal,
-      8000,
+      12000,
       async (signal) => {
         const result = await this.#deps.prepare(
           config,
@@ -852,23 +841,13 @@ export class ServerConnections {
     run: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     const release = await this.#acquire(priority, owner);
-    const timeout = new AbortController();
-    const timer = setTimeout(
-      () =>
-        timeout.abort(
-          new DOMException("Connection check timed out", "TimeoutError"),
-        ),
-      timeoutMs,
-    );
-    const signal = AbortSignal.any([owner, timeout.signal]);
     try {
-      signal.throwIfAborted();
-      return await untilAbort(run(signal), signal);
+      return await withinBudget(owner, timeoutMs, run);
     } finally {
-      clearTimeout(timer);
       release();
     }
   }
+
   #acquire(priority: () => number, signal: AbortSignal): Promise<() => void> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
