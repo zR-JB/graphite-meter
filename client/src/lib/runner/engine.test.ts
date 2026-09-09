@@ -238,6 +238,7 @@ async function withValidationRunner(
   run: (context: ValidationContext) => Promise<void>,
   adoptionState: () => "connected" | "offline" | undefined = () => undefined,
   loadCatalog = testServerCatalog,
+  discover = testServerDiscovery,
 ): Promise<void> {
   const restoreGlobals = stubEngineGlobals();
   const environment = stubEventBootEnvironment("visible", true);
@@ -249,7 +250,7 @@ async function withValidationRunner(
   const runner = new TestRunner();
   const engine = createApplicationController(store, {
     loadCatalog,
-    discover: testServerDiscovery,
+    discover,
     createRunner: () => runner,
     prepare: async (config, previous, _roles, _signal, credentials) => {
       calls++;
@@ -326,6 +327,56 @@ async function withValidationRunner(
   }
 }
 const PROBE_EVIDENCE = testPreparedPaths();
+
+test("enabling uploads refuses cached paths without receiver checkpoints", async () => {
+  const restoreGlobals = stubEngineGlobals();
+  const { store } = await import("../state/store.svelte");
+  const previous = JSON.parse(JSON.stringify(store.config)) as RunnerConfig;
+  const paths = testPreparedPaths();
+  paths.discovery.uploadCheckpoint = false;
+  store.config.stages = {
+    latency: true,
+    download: true,
+    upload: false,
+    bidirectional: false,
+  };
+  try {
+    await withValidationRunner(
+      async () => paths,
+      async ({ engine, runner, probeCalls }) => {
+        expect(store.serverReadiness.get("self")?.state).toBe("ready");
+        const calls = probeCalls();
+        expect(
+          engine.configureRun({
+            stages: { ...store.config.stages, upload: true },
+          }),
+        ).toBe(true);
+        engine.toggleRun();
+        await yieldUntil(() => !store.preparing);
+        expect(runner.starts).toBe(0);
+        expect(store.startError).toContain("checkpoint");
+        expect(store.serverValidation.get("self")?.latency.state).toBe(
+          "verified",
+        );
+        expect(
+          engine.configureRun({
+            stages: { ...store.config.stages, upload: false },
+          }),
+        ).toBe(true);
+        engine.toggleRun();
+        await yieldUntil(() => runner.starts === 1);
+        expect(runner.starts).toBe(1);
+        expect(probeCalls()).toBe(calls);
+      },
+      undefined,
+      testServerCatalog,
+      async () => paths.discovery,
+    );
+  } finally {
+    store.config = previous;
+    restoreGlobals();
+  }
+});
 
 test("Start retries the selected self server even when unused peers are configured", async () => {
   let reachable = false;
@@ -1073,4 +1124,48 @@ test("an idle monitor that stalls before adoption keeps a bounded retry instead 
   } finally {
     timers.restore();
   }
+});
+
+test("live upload changes use committed capabilities and preserve the active plan on refusal", async () => {
+  const paths = testPreparedPaths();
+  paths.discovery.uploadCheckpoint = false;
+  await withValidationRunner(
+    async () => paths,
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      expect(
+        engine.configureRun({
+          stages: {
+            latency: true,
+            download: true,
+            upload: false,
+            bidirectional: false,
+          },
+        }),
+      ).toBe(true);
+      await engine.validateConnections(true);
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts === 1);
+      expect(store.isRunning).toBe(true);
+      const draft = store.config;
+      const active = store.activeConfig;
+      let attempts = 0;
+      runner.reconfigure = () => {
+        attempts++;
+      };
+      // A refreshed draft cannot grant a capability to the already prepared run.
+      paths.discovery.uploadCheckpoint = true;
+      store.serverDiscoveries.set("self", { ...paths.discovery });
+      expect(
+        engine.configureRun({
+          stages: { ...store.config.stages, upload: true },
+        }),
+      ).toBe(false);
+      expect(attempts).toBe(0);
+      expect(store.config).toBe(draft);
+      expect(store.activeConfig).toBe(active);
+      expect(store.activeConfig?.stages.latency).toBe(true);
+      expect(store.startError).toContain("checkpoint");
+    },
+  );
 });

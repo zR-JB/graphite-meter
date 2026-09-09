@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
 import { stubFetch } from "./test-helpers.test";
+import { nextBackoff } from "./backoff";
 
 const MINT = { url: "https://meter.test/wt/session" };
 
@@ -147,27 +148,33 @@ test("a re-dial reuses the token the failed dial never spent", async () => {
   try {
     const first = await mintWtToken({ url });
     expect(first.token).toBe("gmw_live");
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 2; i++) {
       expect((await mintWtToken({ url })).token).toBe("gmw_live");
     }
     expect(mint.calls()).toBe(1);
+    await mintWtToken({ url });
+    expect(mint.calls()).toBe(2);
   } finally {
     mint.restore();
   }
 });
 
-test("the reuse window expires by the retry that follows a failed dial", async () => {
+test("the reuse window expires after two establish budgets and a retry", async () => {
   const url = "https://meter.test/window";
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
   const mint = countingMint();
   try {
     expect((await mintWtToken({ url })).token).toBe("gmw_live");
-    await Bun.sleep(ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS + 10);
+    now += 2 * ESTABLISH_BUDGET_MS + LANE_RESTART_BACKOFF_MS + 10;
     expect((await mintWtToken({ url })).token).toBe("gmw_live");
     expect(mint.calls()).toBe(2);
   } finally {
+    Date.now = realNow;
     mint.restore();
   }
-}, 10_000);
+});
 
 test("a spent token is never handed out again", async () => {
   const url = "https://meter.test/spent";
@@ -179,6 +186,49 @@ test("a spent token is never handed out again", async () => {
     expect(mint.calls()).toBe(2);
   } finally {
     mint.restore();
+  }
+});
+
+test("repeated unavailable dials stay within the eight-ticket pool and honor server expiry", async () => {
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  const parked: number[] = [];
+  let mints = 0;
+  let peak = 0;
+  let lifetimeMs = 30_000;
+  const restore = stubFetch((async () => {
+    for (let i = parked.length - 1; i >= 0; i--)
+      if (parked[i] <= now) parked.splice(i, 1);
+    if (parked.length >= 8) return new Response(null, { status: 429 });
+    parked.push(now + lifetimeMs);
+    peak = Math.max(peak, parked.length);
+    return Response.json({
+      token: `gmw_${++mints}`,
+      expires: now + lifetimeMs,
+    });
+  }) as unknown as typeof fetch);
+  try {
+    const mint = { url: "https://meter.test/unavailable" };
+    let backoff = 0;
+    for (let elapsed = 0; elapsed < 90_000;) {
+      expect((await mintWtToken(mint)).token).not.toBe("");
+      backoff = nextBackoff(backoff, 100, 2000);
+      elapsed += backoff;
+      now += backoff;
+    }
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(mints).toBeGreaterThan(8);
+
+    parked.length = 0;
+    lifetimeMs = 1000;
+    const short = { url: "https://meter.test/short-lifetime" };
+    const first = await mintWtToken(short);
+    now += lifetimeMs;
+    expect((await mintWtToken(short)).token).not.toBe(first.token);
+  } finally {
+    Date.now = realNow;
+    restore();
   }
 });
 

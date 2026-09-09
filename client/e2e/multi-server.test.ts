@@ -635,6 +635,56 @@ test("server selectors support sliding, keyboard selection, cancellation and nar
   await page.artifact("sliding-server-selector-phone");
 });
 
+test("a live download refuses an upload stage without receiver checkpoint support", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const browser = window as {
+      fetch: (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ) => Promise<Response>;
+    };
+    const fetch = browser.fetch.bind(window);
+    browser.fetch = async (...args) => {
+      const response = await fetch(...args);
+      if (new URL(String(args[0]), location.href).pathname !== "/preflight")
+        return response;
+      const body = await response.json();
+      body.capabilities.uploadCheckpoint = false;
+      const replaced = Response.json(body, {
+        status: response.status,
+        headers: response.headers,
+      });
+      Object.defineProperty(replaced, "url", { value: response.url });
+      return replaced;
+    };
+  });
+  await configure(page, ["self"], 3000, {
+    stages: {
+      latency: false,
+      download: true,
+      upload: false,
+      bidirectional: false,
+    },
+    skipLoadedLatencyWhenStageOff: true,
+  });
+  await ready(page);
+  const startedAt = Date.now();
+  await startTest(page);
+  await expect(page.locator('[role="status"].label')).toContainText(
+    "Downloading",
+  );
+  const upload = page.getByRole("switch", { name: "Upload stage" });
+  await expect(upload).toBeEnabled();
+  await upload.click();
+  await expect(upload).toHaveAttribute("aria-checked", "false");
+  await waitForCompletion(page, 15000);
+  const saved = await savedResult(page, startedAt);
+  expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.stages.upload.result).toBeNull();
+});
+
 test("retrying an upgraded server refreshes capability evidence without checking healthy peers", async ({
   page,
 }) => {
@@ -675,7 +725,9 @@ test("retrying an upgraded server refreshes capability evidence without checking
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
   await expect(retry).toBeVisible();
-  await expect(settings).toContainText("receiver checkpoint support");
+  await expect(settings).toContainText(
+    "Receiver checkpoint support is required for uploads.",
+  );
   await expect(settings.locator(".server-choices")).toHaveAttribute(
     "aria-busy",
     "false",

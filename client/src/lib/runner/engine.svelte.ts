@@ -65,6 +65,7 @@ import {
   preparedPaths,
   emptyConnectionValidation,
   latencyPathNeeded,
+  uploadCapabilityFailure,
 } from "./connectionModel";
 
 function isNetworkUnavailable(cause: unknown): boolean {
@@ -145,6 +146,7 @@ export function createApplicationController(
     dependencies.describe ??
     (dummy ? DummyBackend.describe : RealBackend.describe);
   let runner: NetworkRunner | null = null;
+  let activeCapabilities: { name: string; uploadCheckpoint?: boolean }[] = [];
   let unsubscribe: (() => void) | undefined;
   let disposeDraft: (() => void) | undefined;
   let idle: NonNullable<ConnectionPreparation["idle"]> | null = null;
@@ -230,25 +232,22 @@ export function createApplicationController(
       if (!latencyPathNeeded(config)) {
         selectedIdle.get(id)?.stop();
       }
-      const paths = preparedPaths(
-        config,
-        store.serverDiscoveries.get(id) ?? null,
-        selectedValidation.get(id) ?? emptyConnectionValidation(),
-        Infinity,
-      );
-      if (
-        paths &&
-        (config.stages.upload || config.stages.bidirectional) &&
-        !paths.discovery.uploadCheckpoint
-      ) {
+      const discovery = store.serverDiscoveries.get(id) ?? null;
+      const capabilityFailure = uploadCapabilityFailure(config, discovery);
+      if (capabilityFailure) {
         selectedPaths.delete(id);
         store.serverReadiness.set(id, {
           state: "failed",
-          message:
-            "Receiver checkpoint support is required for uploads. Upgrade this measurement server.",
+          message: capabilityFailure,
         });
         continue;
       }
+      const paths = preparedPaths(
+        config,
+        discovery,
+        selectedValidation.get(id) ?? emptyConnectionValidation(),
+        Infinity,
+      );
       if (paths) {
         paths.credentials = contexts.get(id);
         selectedPaths.set(id, paths);
@@ -536,14 +535,14 @@ export function createApplicationController(
       if (!current()) throw new DOMException("Aborted", "AbortError");
       selectedValidation.set(server.id, result.validation);
       if (result.failure) throw result.failure;
-      if (
-        (config.stages.upload || config.stages.bidirectional) &&
-        !result.discovery.uploadCheckpoint
-      )
-        throw new TransportUnavailableError(
-          `${server.name} needs receiver checkpoint support for coordinated uploads. Upgrade this measurement server.`,
-          { role: "throughput" },
-        );
+      const capabilityFailure = uploadCapabilityFailure(
+        config,
+        result.discovery,
+      );
+      if (capabilityFailure)
+        throw new TransportUnavailableError(capabilityFailure, {
+          role: "throughput",
+        });
       const paths = preparedPaths(
         config,
         result.discovery,
@@ -1127,6 +1126,10 @@ export function createApplicationController(
       unsubscribe?.();
       runner?.dispose();
       for (const monitor of selectedIdle.values()) monitor.stop();
+      activeCapabilities = prepared.map(({ server, paths }) => ({
+        name: server.name,
+        uploadCheckpoint: paths.discovery.uploadCheckpoint,
+      }));
       runner = createRunner(prepared, focus.server.id);
       unsubscribe = runner.on(ingest);
       store.activeConfig = structuredClone(config);
@@ -1204,6 +1207,13 @@ export function createApplicationController(
       return false;
     }
     if (store.isRunning) {
+      const unsupported = activeCapabilities.find((capability) =>
+        uploadCapabilityFailure(config, capability),
+      );
+      if (unsupported) {
+        store.startError = `${unsupported.name}: ${uploadCapabilityFailure(config, unsupported)}`;
+        return false;
+      }
       try {
         runner?.reconfigure(live);
       } catch (cause) {
@@ -1249,6 +1259,7 @@ export function createApplicationController(
     unsubscribe?.();
     runner?.dispose();
     runner = null;
+    activeCapabilities = [];
     idle?.stop();
     idle = null;
     clearTimeout(timer);

@@ -116,7 +116,10 @@ export function connectionDraftRoleKey(
 ): string {
   const selection = connectionSelection(config, role);
   return role === "throughput"
-    ? selection
+    ? JSON.stringify({
+        selection,
+        checkpointNeeded: config.stages.upload || config.stages.bidirectional,
+      })
     : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
 export function connectionDraftKey(config: RunnerConfig): string {
@@ -171,6 +174,18 @@ export function validationRoles(
   });
 }
 
+/** Upload accounting requires receiver checkpoints even when the path probe succeeded. */
+export function uploadCapabilityFailure(
+  config: RunnerConfig,
+  discovery: Pick<TransportDiscovery, "uploadCheckpoint"> | null | undefined,
+): string | undefined {
+  return discovery &&
+    (config.stages.upload || config.stages.bidirectional) &&
+    !discovery.uploadCheckpoint
+    ? "Receiver checkpoint support is required for uploads. Upgrade this measurement server."
+    : undefined;
+}
+
 /** There is no second prepared cache: freshness belongs to each verified role. */
 export function preparedPaths(
   config: RunnerConfig,
@@ -180,6 +195,7 @@ export function preparedPaths(
 ): PreparedPaths | null {
   if (
     !discovery ||
+    uploadCapabilityFailure(config, discovery) ||
     CONNECTION_ROLES.some(
       (role) =>
         roleNeedsValidation(config, validation, role, discovery) ||
@@ -237,6 +253,10 @@ export function presentConnections(
     const target =
       path?.target ??
       (discovery ? selectTarget(discovery, role, selection) : null);
+    const capabilityFailure =
+      !active && role === "throughput"
+        ? uploadCapabilityFailure(config, discovery)
+        : undefined;
     const observedProtocol =
       path && "fetch" in path ? path.fetch.protocol : undefined;
     const presentation =
@@ -250,12 +270,16 @@ export function presentConnections(
       availability: discovery
         ? availability(discovery, role, selection)
         : "not-advertised",
-      validation: active ? "verified" : check.state,
+      validation: active
+        ? "verified"
+        : capabilityFailure
+          ? "failed"
+          : check.state,
       label:
         presentation?.label ??
         (role === "throughput" ? "Throughput path" : "Latency path"),
       summary: presentation?.summary ?? "Selection unresolved",
-      message: active ? undefined : check.message,
+      message: active ? undefined : (capabilityFailure ?? check.message),
       observedProtocol,
       browserProtocol:
         path && "browserProtocol" in path ? path.browserProtocol : undefined,
@@ -292,6 +316,11 @@ export function summarizeRoleValidation(
   validations: ReadonlyMap<string, ConnectionValidation>,
 ): { state: ConnectionValidationState; verified: number; total: number } {
   const states = ids.map((id): ConnectionValidationState => {
+    if (
+      role === "throughput" &&
+      uploadCapabilityFailure(config, discoveries.get(id))
+    )
+      return "failed";
     const validation = validations.get(id);
     if (!validation) return "stale";
     const check = validation[role];

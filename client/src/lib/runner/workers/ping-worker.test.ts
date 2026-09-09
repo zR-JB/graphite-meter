@@ -11,6 +11,7 @@ class Scenario {
   readonly dials: string[] = [];
   readonly sessions: FakeSession[] = [];
   outcomes: Outcome[] = ["accept"];
+  refuseFirstTicket = false;
   halted = false;
 
   constructor(readonly id: string) {
@@ -66,7 +67,11 @@ class FakeSession {
 
   constructor(url: string) {
     const scenario = scenarioOf(url);
-    const outcome = scenario.outcomeFor(scenario.dials.length);
+    const outcome =
+      scenario.refuseFirstTicket &&
+      new URL(url).searchParams.get("token") === `tok-${scenario.id}-1`
+        ? "refuse"
+        : scenario.outcomeFor(scenario.dials.length);
     scenario.dials.push(url);
     scenario.sessions.push(this);
     if (outcome === "refuse") {
@@ -167,7 +172,7 @@ afterEach(() => {
   else globals.WebTransport = realWebTransport;
 });
 
-// Only a CONNECT the server accepted spends a token; a dial that dies before that leaves it valid, and re-minting for.
+// A dial that never reaches authentication leaves its ticket reusable for a bounded retry.
 test("a dial refused before acceptance re-dials on the same token", async () => {
   const scenario = new Scenario("refused");
   scenario.outcomes = ["refuse"];
@@ -304,3 +309,16 @@ test("a closed WebTransport dial becoming ready cannot restart the replacement b
     });
   }
 });
+
+test("a ticket spent by a temporary downstream refusal can recover within readiness budget", async () => {
+  const scenario = new Scenario("spent-before-upgrade");
+  scenario.refuseFirstTicket = true;
+  const realm = await start(scenario);
+  try {
+    await Bun.sleep(3_400);
+    expect(realm.posted.some((message) => message.type === "open")).toBe(true);
+    expect(scenario.mints).toBeGreaterThanOrEqual(2);
+  } finally {
+    realm.send({ type: "stop" });
+  }
+}, 5_000);
