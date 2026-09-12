@@ -387,7 +387,7 @@ function originPreference(
   );
 }
 
-/** Prefer multiplexed HTTP bulk transfer; unreliable datagram throughput is always explicit. */
+/** Prefer dedicated HTTP/1.1 bulk streams; unreliable datagram throughput is always explicit. */
 export function automaticThroughputTargets(
   discovery: TransportDiscovery,
   webTransport = true,
@@ -400,7 +400,7 @@ export function automaticThroughputTargets(
       target.protocol === "negotiated" && target.origin === discovery.pageOrigin
         ? (protocolFromNextHop(discovery.pageProtocol) ?? "negotiated")
         : target.protocol;
-    return { http3: 0, http2: 1, negotiated: 2, http1: 3 }[protocol];
+    return { http1: 0, http2: 1, http3: 2, negotiated: 3 }[protocol];
   };
   return Object.values(discovery.throughput)
     .filter((entry) => entry.state === "advertised")

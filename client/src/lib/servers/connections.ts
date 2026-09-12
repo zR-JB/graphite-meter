@@ -77,21 +77,23 @@ const roleState = (): RoleState => ({ key: "", retry: retryState() });
 const aborted = () =>
   new DOMException("Connection selection changed", "AbortError");
 
-function authenticationFailure(cause: unknown): boolean {
+function authenticationFailure(
+  cause: unknown,
+): ServerAuthenticationRequired | undefined {
   const seen = new Set<unknown>();
   while (cause instanceof Error && !seen.has(cause)) {
-    if (cause instanceof ServerAuthenticationRequired) return true;
+    if (cause instanceof ServerAuthenticationRequired) return cause;
     seen.add(cause);
     cause = cause.cause;
   }
-  return false;
 }
-export function connectionFailureMessage(cause: unknown): string {
-  if (
-    cause instanceof BrowserOriginBlockedError ||
-    cause instanceof ServerAuthenticationRequired
-  )
-    return cause.message;
+export function connectionFailureMessage(
+  cause: unknown,
+  server?: ServerEntry,
+): string {
+  const authentication = authenticationFailure(cause);
+  if (authentication) return authentication.message;
+  if (cause instanceof BrowserOriginBlockedError) return cause.message;
   if (cause instanceof PreflightUnavailableError) {
     const seen = new Set<unknown>();
     let error: unknown = cause.cause;
@@ -107,7 +109,10 @@ export function connectionFailureMessage(cause: unknown): string {
           detail.message ?? "",
         )
       )
-        return "Server could not be reached";
+        return server?.url.startsWith("https://") &&
+          location.protocol === "http:"
+          ? "Server could not be reached. If it requires sign-in, open this interface over HTTPS."
+          : "Server could not be reached";
       seen.add(error);
       error = detail.cause;
     }
@@ -192,12 +197,26 @@ export class ServerConnections {
         continue;
       }
       state.config = config;
+      // A restored selection must not promote expired evidence back to Ready.
+      if (
+        state.discovery &&
+        Date.now() - state.discovery.fetchedAt > CONNECTION_FRESH_MS
+      ) {
+        for (const role of CONNECTION_ROLES)
+          this.#cancelRole(state, role, false);
+        state.discovery = undefined;
+      }
       for (const role of CONNECTION_ROLES) {
         const slot = state.roles[role];
         const key = connectionDraftRoleKey(config, role);
-        if (slot.key === key) continue;
+        const expired =
+          state.validation[role].path &&
+          Date.now() - state.validation[role].path!.verifiedAt >
+            CONNECTION_FRESH_MS;
+        if (slot.key === key && !expired) continue;
         slot.key = key;
         const reusable =
+          !expired &&
           !roleNeedsValidation(
             config,
             state.validation,
@@ -217,6 +236,7 @@ export class ServerConnections {
             },
           };
         } else if (
+          expired ||
           roleNeedsValidation(config, state.validation, role, state.discovery)
         ) {
           state.validation = {
@@ -279,7 +299,7 @@ export class ServerConnections {
     this.#publish(state);
     this.#schedule();
   }
-  paths(id: string, maxAgeMs = Infinity): PreparedPaths | null {
+  paths(id: string, maxAgeMs = CONNECTION_FRESH_MS): PreparedPaths | null {
     const state = this.#servers.get(id);
     const paths =
       state?.config &&
@@ -292,7 +312,7 @@ export class ServerConnections {
       );
     return paths ? { ...paths, credentials: state!.credentials } : null;
   }
-  ready(ids = this.#selected, maxAgeMs = Infinity): boolean {
+  ready(ids = this.#selected, maxAgeMs = CONNECTION_FRESH_MS): boolean {
     return (
       ids.length > 0 && ids.every((id) => this.paths(id, maxAgeMs) !== null)
     );
@@ -533,6 +553,7 @@ export class ServerConnections {
         if (state.discoveryTask === task) {
           state.discoveryTask = undefined;
           this.#publish(state);
+          this.#refreshIdle();
           this.#schedule();
         }
       });
@@ -625,7 +646,7 @@ export class ServerConnections {
               selection: connectionSelection(config, role),
               state: "failed",
               path: null,
-              message: connectionFailureMessage(error),
+              message: connectionFailureMessage(error, state.server),
             },
           };
         }
@@ -652,7 +673,7 @@ export class ServerConnections {
     return task.promise;
   }
   #failed(retry: Retry, error: unknown): void {
-    retry.authentication = authenticationFailure(error);
+    retry.authentication = !!authenticationFailure(error);
     retry.at = retry.authentication
       ? Infinity
       : Date.now() + connectionFailureBackoff(++retry.attempts);
@@ -668,7 +689,7 @@ export class ServerConnections {
       (!!state.discoveryError && state.discoveryRetry.authentication) ||
       roles.some((role) => state.roles[role].retry.authentication);
     const message = state.discoveryError
-      ? connectionFailureMessage(state.discoveryError)
+      ? connectionFailureMessage(state.discoveryError, state.server)
       : capability || (failed && state.validation[failed].message);
     const paths = this.paths(state.server.id);
     const checking =

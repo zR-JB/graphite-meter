@@ -264,7 +264,7 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
   await page.artifact("origin-only-peer-discovery");
 });
 
-test("server selectors support native keyboard selection and compact narrow layouts", async ({
+test("server selectors support keyboard selection and compact narrow layouts", async ({
   page,
 }) => {
   await configure(page, ["self", "server-1"]);
@@ -273,16 +273,20 @@ test("server selectors support native keyboard selection and compact narrow layo
   const selector = settings.getByRole("combobox", {
     name: "Latency measurement servers",
   });
-  await expect(selector.locator("option")).toHaveCount(3);
-  await expect(selector.locator('option[value="server-1"]')).toContainText(
-    "Frankfurt",
-  );
+  await selector.click();
+  await expect(page.getByRole("option")).toHaveCount(3);
+  await expect(page.getByRole("option", { name: "Frankfurt" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await selector.focus();
   await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("");
+  await selector.press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("self");
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("server-1");
   await expect(selector).toBeFocused();
   for (const width of [1440, 768, 390, 320]) {
@@ -306,6 +310,7 @@ test("server selectors support native keyboard selection and compact narrow layo
     ),
   ).toBeLessThan(0.0001);
   await selector.press("Home");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("");
   expect(
     await selector.evaluate(
@@ -474,6 +479,7 @@ test("enabling all latency checks only the new peer path and retries leave healt
   });
   await expect(selector).toHaveValue("self");
   await selector.press("Home");
+  await page.keyboard.press("Enter");
   await expect(
     settings.getByRole("button", { name: "Retry Frankfurt" }),
   ).toBeVisible({ timeout: 15000 });
@@ -604,9 +610,12 @@ for (const theme of ["light", "dark"] as const)
     });
     await primary.press("Home");
     await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
     await expect(primary).toHaveValue("self");
+    await primary.click();
     await page.keyboard.press("ArrowDown");
     await expect(primary).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(primary).toHaveValue("server-1");
     await page.keyboard.press("Escape");
     await openSettings(page);

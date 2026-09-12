@@ -639,11 +639,17 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #emitThroughputPresentation(dir: FlowDirection, bytesPerSec: number): void {
     const phase = this.#phase;
     if (!isTransferPhase(phase)) return;
+    // Progress can arrive between timeline ticks; finalization keeps that clock frozen.
+    const elapsed =
+      this.#measuredElapsed +
+      (this.#stagePreparing
+        ? 0
+        : Math.max(0, performance.now() - this.#lastRealNow));
     this.#presentedRate[dir] = bytesPerSec;
     this.emit({
       type: "throughput",
       sample: {
-        t: this.#measuredElapsed,
+        t: Math.min(elapsed, this.#activeSeg?.end ?? elapsed),
         bytesPerSec,
         bytesCumulative: this.#bytesCumulative,
         dir,

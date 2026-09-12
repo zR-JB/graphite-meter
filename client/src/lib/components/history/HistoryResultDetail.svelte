@@ -7,6 +7,8 @@
 
 <script lang="ts">
   import { historyWirePresentation } from "../../history/wire";
+  import { httpProtocolLabel } from "../../runner/protocol";
+  import { serverLabel } from "../../presentation/serverAppearance";
   import { historyServers } from "../../history/servers";
   import { tooltip } from "../../actions/tooltip";
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
@@ -240,25 +242,60 @@
       : [],
   );
 
-  function transport(value: string | null): string | null {
-    return value?.replaceAll("-", " ") ?? null;
+  function path(
+    kind: string | null | undefined,
+    protocol?: string | null,
+    browserProtocol?: string,
+  ): string {
+    const mechanism =
+      kind === "fetch-stream"
+        ? "Fetch stream"
+        : kind === "webtransport"
+          ? "WebTransport"
+          : kind === "webtransport-datagram"
+            ? "WebTransport datagrams"
+            : kind === "websocket"
+              ? "WebSocket"
+              : "Not recorded";
+    const observed = browserProtocol
+      ? httpProtocolLabel(browserProtocol)
+      : null;
+    const endpoint = protocol ? httpProtocolLabel(protocol) : null;
+    return [
+      mechanism,
+      observed ?? endpoint,
+      observed && endpoint && observed !== endpoint && protocol !== "negotiated"
+        ? `endpoint ${endpoint}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
   }
+  const latencyKind = $derived(
+    focused ? focused.latencyTarget?.transport : record.transport.latency.kind,
+  );
+  const latencySource = $derived(
+    focused ? serverLabel(focused.server) : record.server.name,
+  );
+  const latencyPath = $derived(
+    path(latencyKind, focused ? null : record.transport.latency.protocol),
+  );
+  const multiple = $derived((record.multiServer?.selection.length ?? 0) > 1);
 
   const contextRows = $derived(
     [
-      {
-        label: "Throughput transport",
-        value: transport(record.transport.throughput.kind),
-      },
-      {
-        label: "Throughput protocol",
-        value: record.transport.throughput.protocol,
-      },
-      {
-        label: "Latency transport",
-        value: transport(record.transport.latency.kind),
-      },
-      { label: "Latency protocol", value: record.transport.latency.protocol },
+      ...(!multiple
+        ? [
+            {
+              label: "Throughput path",
+              value: path(
+                record.transport.throughput.kind,
+                record.transport.throughput.protocol,
+              ),
+            },
+            { label: "Latency path", value: latencyPath },
+          ]
+        : []),
       {
         label: "IP family",
         value: record.ipVersion ? `IPv${record.ipVersion}` : null,
@@ -333,6 +370,13 @@
         value={resultId}
         onchange={selectResult}
       />
+      {#if scoped}<p class="selected-path">
+          {path(
+            scoped.throughput.transport,
+            scoped.throughput.protocol,
+            scoped.throughput.browserProtocol,
+          )} <span>{scoped.throughput.origin}</span>
+        </p>{/if}
     </div>{/if}
   {#if throughputCards.length}
     <section
@@ -372,7 +416,7 @@
       No throughput measurements available for this server.
     </p>{/if}
 
-  {#if latencyProfiles.length || hasServerLatency}
+  {#if latencyProfiles.length || hasServerLatency || probeTimeoutLanes.length}
     <section
       class="detail-section"
       aria-labelledby={`result-${record.id}-latency`}
@@ -391,6 +435,11 @@
             />
           </div>
         {/if}
+        {#if multiple}<p class="latency-path">
+            {latencyPath}{#if focused?.latencyTarget}<span
+                >{focused.latencyTarget.origin}</span
+              >{/if}
+          </p>{/if}
         {#if focusedLatency}
           <dl class="idle-summary" aria-label="Idle latency result">
             <div>
@@ -424,51 +473,59 @@
             No latency measurements available for this server.
           </p>
         {/if}
+        {#if probeTimeoutLanes.length}<DiagnosticDetails label="Probe details"
+            ><div class="probe-timeouts-section">
+              <div class="probe-intro">
+                <strong>{latencySource}</strong>
+                <span
+                  >{latencyKind === "webtransport"
+                    ? "Datagram probe outcomes"
+                    : latencyKind === "websocket"
+                      ? "WebSocket probe outcomes"
+                      : "Probe outcomes"}</span
+                >
+                <small
+                  >Timeouts: no reply before the deadline. Unfinished probes and
+                  failed sends are counted separately.</small
+                >
+              </div>
+              <ul class="probe-timeouts-lanes">
+                {#each probeTimeoutLanes as lane (lane.key)}
+                  <li
+                    data-tone={lane.tone}
+                    aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
+                  >
+                    <span class="phase-icon" aria-hidden="true"
+                      >{@html lane.icon}</span
+                    >
+                    <span>
+                      <strong>{lane.label}</strong>
+                      <small class="reply-count">{lane.counts.replies}</small>
+                      {#if lane.accountingComplete === false}
+                        <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
+                          >Partial accounting</small
+                        >
+                      {/if}
+                    </span>
+                    <em>{lane.value}</em>
+                    {#if lane.counts.exceptions.length}
+                      <div class="probe-exceptions">
+                        {#each lane.counts.exceptions as detail}
+                          <span>{detail}</span>
+                        {/each}
+                      </div>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </div></DiagnosticDetails
+          >{/if}
       </div>
     </section>
   {/if}
 
-  {#if probeTimeoutLanes.length || record.failures.length}
+  {#if record.failures.length}
     <div class="detail-section diagnostic-actions">
-      {#if probeTimeoutLanes.length}<DiagnosticDetails label="Probe details"
-          ><div class="probe-timeouts-section">
-            <p>
-              {record.transport.latency.kind === "webtransport"
-                ? "Datagram"
-                : "WebSocket"} probe outcomes. Timeouts mean no reply before the deadline;
-              unfinished probes and failed sends are separate.
-            </p>
-            <ul class="probe-timeouts-lanes">
-              {#each probeTimeoutLanes as lane (lane.key)}
-                <li
-                  data-tone={lane.tone}
-                  aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
-                >
-                  <span class="phase-icon" aria-hidden="true"
-                    >{@html lane.icon}</span
-                  >
-                  <span>
-                    <strong>{lane.label}</strong>
-                    <small class="reply-count">{lane.counts.replies}</small>
-                    {#if lane.accountingComplete === false}
-                      <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
-                        >Partial accounting</small
-                      >
-                    {/if}
-                  </span>
-                  <em>{lane.value}</em>
-                  {#if lane.counts.exceptions.length}
-                    <div class="probe-exceptions">
-                      {#each lane.counts.exceptions as detail}
-                        <span>{detail}</span>
-                      {/each}
-                    </div>
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          </div></DiagnosticDetails
-        >{/if}
       {#if record.failures.length}<DiagnosticDetails label="Stage issues">
           <ul class="issue-list">
             {#each record.failures as failure}
@@ -516,12 +573,60 @@
     </header>
     <ul class="section-body saved-servers">
       {#each servers as server (server.id)}
+        {@const measurement = record.multiServer?.servers.find(
+          (entry) => entry.server.id === server.id,
+        )}
         <li>
           <div>
             <strong>{server.label}</strong>
             {#if server.host}<small>{server.host}</small>{/if}
           </div>
-          {#if server.ping}<span class="saved-server-ping">Ping</span>{/if}
+          {#if server.ping}<span class="saved-server-ping">Latency source</span
+            >{/if}
+          {#if multiple}
+            <dl class="server-results" aria-label={`${server.label} results`}>
+              <div>
+                <dt>Down</dt>
+                <dd>{rate(measurement?.download?.reportedBytesPerSec)}</dd>
+              </div>
+              <div>
+                <dt>Up</dt>
+                <dd>{rate(measurement?.upload?.reportedBytesPerSec)}</dd>
+              </div>
+              <div>
+                <dt>Idle</dt>
+                <dd>
+                  {formatLatency(measurement?.latency?.reportedMs ?? null)}
+                </dd>
+              </div>
+            </dl>
+            <dl class="server-paths">
+              <div>
+                <dt>Throughput</dt>
+                <dd>
+                  {measurement
+                    ? path(
+                        measurement.throughput.transport,
+                        measurement.throughput.protocol,
+                        measurement.throughput.browserProtocol,
+                      )
+                    : "Not measured"}{#if measurement}<small
+                      >{measurement.throughput.origin}</small
+                    >{/if}
+                </dd>
+              </div>
+              <div>
+                <dt>Latency</dt>
+                <dd>
+                  {measurement?.latencyTarget
+                    ? path(measurement.latencyTarget.transport)
+                    : "Not measured"}{#if measurement?.latencyTarget}<small
+                      >{measurement.latencyTarget.origin}</small
+                    >{/if}
+                </dd>
+              </div>
+            </dl>
+          {/if}
         </li>
       {/each}
     </ul>
@@ -533,6 +638,56 @@
 </article>
 
 <style>
+  .selected-path {
+    padding-top: var(--space-2);
+  }
+  .selected-path,
+  .latency-path {
+    color: var(--text-muted);
+    font: var(--type-xs)/1.5 var(--font-sans);
+    overflow-wrap: anywhere;
+  }
+  .selected-path span,
+  .latency-path span {
+    display: block;
+    color: var(--text-soft);
+  }
+  .server-results,
+  .server-paths {
+    grid-column: 1 / -1;
+    margin: 0;
+    display: grid;
+    gap: var(--space-2);
+  }
+  .server-results {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .server-paths > div {
+    display: grid;
+    grid-template-columns: 70px minmax(0, 1fr);
+    gap: 8px;
+    align-items: baseline;
+  }
+  .server-paths dd {
+    margin: 0;
+    font: var(--type-xs)/1.5 var(--font-sans);
+  }
+  .probe-intro {
+    display: grid;
+    gap: 3px;
+    margin-bottom: var(--space-3);
+  }
+  .probe-intro strong {
+    font-size: var(--type-sm);
+  }
+  .probe-intro span,
+  .probe-intro small {
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  .probe-intro small {
+    margin-top: 5px;
+  }
   .saved-servers {
     margin: 0;
     list-style: none;
@@ -790,6 +945,9 @@
     display: grid;
     gap: var(--space-3);
   }
+  .responsiveness-body :global(.details-trigger) {
+    justify-self: start;
+  }
   .diagnostic-actions {
     display: flex;
     flex-wrap: wrap;
@@ -800,7 +958,7 @@
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+    grid-template-columns: 1fr;
     gap: var(--space-2);
     list-style: none;
   }
@@ -811,11 +969,8 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-    padding: var(--space-3);
-    border: 1px solid var(--border-subtle);
-    border-top-color: color-mix(in srgb, var(--tone) 40%, var(--border));
-    border-radius: var(--r-well);
-    background: var(--surface-1);
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--border-subtle);
   }
   .probe-timeouts-lanes li > span:not(.phase-icon) {
     display: grid;

@@ -141,15 +141,56 @@
     consoleWidth >= MIN_STAGE_WIDTH + 2 * MIN_DOCK_WIDTH,
   );
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const secondaryActionsQuery = mediaQuery(
-    `(min-width: 340px) and (not (pointer: coarse)), (min-width: 430px)`,
-  );
-  const themeDirectQuery = mediaQuery(
-    `(min-width: 320px) and (not (pointer: coarse)), (min-width: 360px)`,
-  );
-  const liveDirectComfortQuery = mediaQuery(
-    `(min-width: 380px) and (not (pointer: coarse)), (min-width: 560px)`,
-  );
+  let topbar: HTMLElement;
+  let directActions = $state(3);
+  $effect(() => {
+    const resize = new ResizeObserver(measure);
+    const mutations = new MutationObserver(measure);
+    function measure() {
+      const style = getComputedStyle(topbar);
+      const gap = parseFloat(style.columnGap) || 0;
+      const fixed = Array.from(topbar.children).filter(
+        (child) =>
+          !child.matches("[data-topbar-action], .more-control, .topbar-spacer"),
+      );
+      for (const child of fixed) resize.observe(child);
+      const fixedWidth = fixed.reduce((sum, child) => {
+        const itemStyle = getComputedStyle(child);
+        return (
+          sum +
+          child.getBoundingClientRect().width +
+          parseFloat(itemStyle.marginLeft) +
+          parseFloat(itemStyle.marginRight)
+        );
+      }, 0);
+      const button = topbar
+        .querySelector(".icon-btn")!
+        .getBoundingClientRect().width;
+      const available =
+        topbar.clientWidth -
+        parseFloat(style.paddingLeft) -
+        parseFloat(style.paddingRight);
+      const total = store.savingResults ? 3 : 2;
+      let count = total;
+      while (count > 0) {
+        const slots = count + (count < total ? 1 : 0);
+        if (
+          fixedWidth + slots * button + (fixed.length + slots) * gap <=
+          available
+        )
+          break;
+        count--;
+      }
+      directActions = count;
+    }
+    resize.observe(topbar);
+    mutations.observe(topbar, { childList: true });
+    measure();
+    return () => {
+      resize.disconnect();
+      mutations.disconnect();
+    };
+  });
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
@@ -186,15 +227,9 @@
       routeTo(reconciled, true);
   });
 
-  const showHistoryDirect = $derived(
-    secondaryActionsQuery.matches &&
-      (awayRunIndicator === null || liveDirectComfortQuery.matches),
-  );
-  const showEndpointDirect = $derived(
-    secondaryActionsQuery.matches &&
-      (awayRunIndicator === null || liveDirectComfortQuery.matches),
-  );
-  const showThemeDirect = $derived(themeDirectQuery.matches);
+  const showHistoryDirect = $derived(directActions >= 3);
+  const showEndpointDirect = $derived(directActions >= 2);
+  const showThemeDirect = $derived(directActions >= 1);
   const historyInMore = $derived(store.savingResults && !showHistoryDirect);
   const endpointInMore = $derived(!showEndpointDirect);
   const themeInMore = $derived(!showThemeDirect);
@@ -588,6 +623,7 @@
 >
   <!-- TOPBAR -->
   <header
+    bind:this={topbar}
     class="zone topbar flex items-center gap-3 border-b border-border px-4"
     class:authenticated={authEnabled}
   >
@@ -627,7 +663,7 @@
     >
     <span class="chrome-divider" aria-hidden="true"></span>
     <div class="connectivity"><ConnectivityIndicator /></div>
-    <div class="flex-1"></div>
+    <div class="topbar-spacer flex-1"></div>
     {#if awayRunIndicator}<button
         class="return-live"
         data-tone={awayRunIndicator.tone}
@@ -648,6 +684,7 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults && showHistoryDirect}<button
+        data-topbar-action
         class="ghost-btn icon-btn"
         type="button"
         aria-label={historyOpen ? "Close History" : "Open History"}
@@ -660,6 +697,7 @@
       >{/if}
     {#if showThemeDirect}
       <button
+        data-topbar-action
         class="ghost-btn icon-btn"
         aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
         use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
@@ -668,6 +706,7 @@
     {/if}
     {#if showEndpointDirect}
       <button
+        data-topbar-action
         class="ghost-btn icon-btn"
         aria-label="Toggle endpoint info"
         aria-expanded={telemetryOpen}
@@ -817,6 +856,12 @@
 
   .topbar {
     grid-area: topbar;
+  }
+  .topbar > :global(*) {
+    flex-shrink: 0;
+  }
+  .topbar-spacer {
+    min-width: 0;
   }
   .stage {
     grid-area: stage;
@@ -1099,6 +1144,29 @@
     }
   }
   @media (pointer: coarse) {
+    .topbar .icon-btn,
+    .topbar :global(.more-trigger) {
+      position: relative;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+      isolation: isolate;
+    }
+    .topbar .icon-btn::before,
+    .topbar :global(.more-trigger)::before {
+      content: "";
+      position: absolute;
+      width: 32px;
+      height: 32px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: -1;
+      border: 1px solid var(--border);
+      border-radius: var(--r-chrome);
+      background: var(--surface-2);
+      box-shadow: inset 0 1px 0 var(--edge-light);
+    }
     .topbar :global(.account) {
       min-width: 44px;
     }

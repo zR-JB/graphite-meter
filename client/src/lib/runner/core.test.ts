@@ -855,6 +855,50 @@ test("a failed terminal worker keeps unknown accounting visible in the final sta
   });
 });
 
+test("throughput presentation timestamps progress between timeline ticks", async () => {
+  const { core, events } = await startCore();
+  for (const [at, bytes] of [
+    [25, 100],
+    [125, 200],
+    [225, 300],
+  ]) {
+    fakeNow = at;
+    core.ingestThroughput("down", bytes, 0.1);
+  }
+  expect(core.elapsed).toBe(0);
+  expect(
+    typedEvents(events, "throughput").map(({ sample }) => sample.t),
+  ).toEqual([25, 125, 225]);
+  expect(
+    typedEvents(events, "throughput").map(({ sample }) => sample.bytesPerSec),
+  ).toEqual([1000, 1500, 2000]);
+  advance(775);
+  expectComplete(events, (result) =>
+    expect(result.download?.totalBytes).toBe(600),
+  );
+});
+
+test("throughput presentation stays within its phase during delayed ticks and finalization", async () => {
+  const backend = new FakeBackend({ flush: "async" });
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    backend,
+  );
+  fakeNow = 125;
+  core.ingestThroughput("down", 100, 0.1);
+  expect(typedEvents(events, "throughput").at(-1)?.sample.t).toBe(100);
+  advance(0);
+  fakeNow += 500;
+  backend.flush!();
+  await Promise.resolve();
+  expect(
+    typedEvents(events, "throughput").map(({ sample }) => sample.t),
+  ).toEqual([100, 100]);
+  expectComplete(events, (result) =>
+    expect(result.download?.totalBytes).toBe(200),
+  );
+});
+
 test("a real sample arriving mid-stall auto-resumes", async () => {
   const { core, events } = await startCore({ duration: { downloadMs: 10000 } });
   core.stall({ reason: "connection-lost" });

@@ -157,14 +157,15 @@ test("four real servers share one run and retain separate receiver windows and l
   });
   await resultSelector.press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toBeFocused();
   await expect(resultSelector).toHaveValue("self");
-  await expect(resultSelector.locator('option[value="self"]')).toContainText(
-    "Home",
-  );
+  await expect(resultSelector).toContainText("Home");
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toHaveValue("server-3");
   await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toHaveValue("");
   const audit = await new AxeBuilder({ page })
     .include(".results-slot")
@@ -405,6 +406,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .getByRole("combobox", { name: "Latency measurement servers" })
     .press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect
     .poll(() =>
       page.evaluate(
@@ -417,6 +419,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await settings
     .getByRole("combobox", { name: "Latency measurement servers" })
     .press("End");
+  await page.keyboard.press("Enter");
   await expect
     .poll(() =>
       page.evaluate(
@@ -465,6 +468,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .getByRole("combobox", { name: "Result measurements" })
     .press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(page.locator(".result-cards")).toContainText("Not measured");
   await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
     "aria-label",
@@ -480,15 +484,19 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .locator(".saved-server-context")
     .getByRole("combobox", { name: "Result measurements" });
   await savedScope.press("Home");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(
     page.getByRole("combobox", { name: "Saved latency server" }),
   ).toHaveCount(0);
+  await savedScope.click();
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("self");
   await expect(page.locator(".latency-empty")).toBeVisible();
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("server-1");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(

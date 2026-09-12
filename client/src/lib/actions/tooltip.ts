@@ -20,6 +20,8 @@ function ensureStyles() {
   style.textContent = `
     .gm-tooltip {
       position: fixed;
+      inset: auto;
+      margin: 0;
       z-index: 200;
       max-width: min(300px, calc(100vw - 16px));
       padding: var(--space-2) var(--space-3);
@@ -62,6 +64,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let opts = normalize(param);
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
+  let popoverHost: HTMLElement | null = null;
   let prevDescribedBy: string | null = null;
   let touchOpen = false;
   let autoDismissTimer = 0;
@@ -100,7 +103,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     bubble.id = id;
     bubble.setAttribute("role", "tooltip");
     bubble.textContent = opts.text;
-    document.body.appendChild(bubble);
+    popoverHost = node.closest<HTMLElement>("[popover]:popover-open");
+    if (popoverHost) {
+      // A normal z-index cannot paint above the host's native top layer.
+      bubble.popover = "manual";
+      popoverHost.appendChild(bubble);
+      bubble.showPopover();
+      popoverHost.addEventListener("beforetoggle", onHostToggle);
+    } else document.body.appendChild(bubble);
     prevDescribedBy = node.getAttribute("aria-describedby");
     node.setAttribute(
       "aria-describedby",
@@ -110,6 +120,13 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
     for (const [target, type, listener, capture] of dismissListeners)
       target.addEventListener(type, listener as EventListener, capture);
+  }
+  function onHostToggle(event: Event) {
+    if (
+      event.target === popoverHost &&
+      (event as ToggleEvent).newState === "closed"
+    )
+      hide();
   }
   function clearHoverTimer() {
     if (hoverTimer) {
@@ -136,6 +153,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       autoDismissTimer = 0;
     }
     if (!bubble) return;
+    popoverHost?.removeEventListener("beforetoggle", onHostToggle);
+    popoverHost = null;
     const leaving = bubble;
     leaving.removeAttribute("role");
     leaving.setAttribute("aria-hidden", "true");

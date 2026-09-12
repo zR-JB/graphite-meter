@@ -1475,9 +1475,10 @@ test("phone topbar keeps History, Theme, and Endpoint direct without a special a
 
   await page.setViewportSize({ width: 340, height: 640 });
   await expect(theme).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "More controls" }),
-  ).toBeVisible();
+  await expect(endpoint).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
   await expectNoHorizontalOverflow(page.locator(".topbar"));
 
   await page.setViewportSize({ width: 319, height: 640 });
@@ -1487,10 +1488,35 @@ test("phone topbar keeps History, Theme, and Endpoint direct without a special a
   await expectNoHorizontalOverflow(page.locator(".topbar"));
   const cdp = await page.context.newCDPSession(page);
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
-  for (const width of [319, 360, 390, 430, 520, 521, 640, 700]) {
+  for (const width of [320, 360, 390, 430, 520, 521, 560, 640, 700]) {
     await page.setViewportSize({ width, height: 640 });
     await expect(page.locator(".return-live")).toBeVisible();
     await expectNoHorizontalOverflow(page.locator(".topbar"));
+    await expect
+      .poll(() =>
+        page.locator(".topbar .icon-btn").evaluateAll((buttons) =>
+          buttons.every((button) => {
+            const box = button.getBoundingClientRect();
+            const icon = button.querySelector("svg")!.getBoundingClientRect();
+            const surface = getComputedStyle(button, "::before");
+            return (
+              box.width >= 44 &&
+              box.height >= 44 &&
+              icon.width === 16 &&
+              icon.height === 16 &&
+              surface.width === "32px" &&
+              surface.height === "32px"
+            );
+          }),
+        ),
+      )
+      .toBe(true);
+    if (width === 430 || width === 560) {
+      await expect(endpoint).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "More controls" }),
+      ).toHaveCount(0);
+    }
   }
 });
 
@@ -1550,7 +1576,7 @@ test("authenticated phone chrome compacts account identity before core controls"
   await expectNoHorizontalOverflow(page.locator(".topbar"));
   const cdp = await page.context.newCDPSession(page);
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
-  for (const width of [319, 360, 390, 430, 431, 520, 521, 640, 700, 759]) {
+  for (const width of [320, 360, 390, 430, 431, 520, 521, 560, 640, 700, 759]) {
     await page.setViewportSize({ width, height: 844 });
     await expectNoHorizontalOverflow(page.locator(".topbar"));
     await expect
@@ -2025,6 +2051,21 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
     .click();
   await expect(timeouts).toBeVisible();
   await expect(timeouts.locator("li em")).toHaveText("Partial");
+  await timeouts.getByRole("note").hover();
+  const accountingHelp = page.getByRole("tooltip");
+  await expect(accountingHelp).toContainText("Some probe outcomes are unknown");
+  expect(
+    await accountingHelp.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      element.style.pointerEvents = "auto";
+      const painted = document.elementFromPoint(
+        rect.x + rect.width / 2,
+        rect.y + rect.height / 2,
+      );
+      element.style.pointerEvents = "none";
+      return painted === element;
+    }),
+  ).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(profile.getByRole("note")).toHaveAttribute(
     "aria-label",
@@ -2039,6 +2080,11 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
       ),
   );
   await expect(page.locator(".inline-inspector")).toBeVisible();
+  await page.evaluate(() =>
+    document
+      .querySelector<HTMLElement>(".diagnostic-details:popover-open")
+      ?.hidePopover(),
+  );
   for (const width of [320, 390, 768, 1600]) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(profile);
@@ -2063,10 +2109,10 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
     expect(box.x + box.width).toBeLessThanOrEqual(width);
     expect(box.y + box.height).toBeLessThanOrEqual(900);
     await expectNoHorizontalOverflow(dialog);
+    await page.artifact(`compact-probe-details-${width}`);
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
     await expect(page.locator(".result-detail")).toBeVisible();
-    await page.artifact(`compact-probe-details-${width}`);
   }
 });
 
@@ -2310,8 +2356,12 @@ test("missing per-server latency remains selectable and focus belongs to each sa
           origin: server.url,
           transport: "fetch-stream",
           protocol: "http1",
+          browserProtocol: i === 1 ? "h2" : "http/1.1",
         },
-        latencyTarget: { origin: server.url, transport: "websocket" },
+        latencyTarget: {
+          origin: server.url,
+          transport: i === 1 ? "webtransport" : "websocket",
+        },
         latency:
           i === 0
             ? null
@@ -2370,8 +2420,38 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   await expect(detail.getByRole("combobox")).toHaveCount(1);
   await picker.focus();
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(detail.locator(".latency-empty")).toHaveCount(0);
   await expect(detail.locator(".idle-summary")).toContainText("25");
+  await expect(detail.locator(".selected-path")).toContainText(
+    "Fetch stream · HTTP/2 · endpoint HTTP/1.1",
+  );
+  await expect(detail.locator(".latency-path")).toContainText("WebTransport");
+  await expect(detail.locator(".server-paths").nth(0)).toContainText(
+    "WebSocket",
+  );
+  await expect(detail.locator(".server-paths").nth(1)).toContainText(
+    "HTTP/2 · endpoint HTTP/1.1",
+  );
+  await expect(detail.locator(".context-grid")).not.toContainText("transport");
+  const probeTrigger = detail.getByRole("button", {
+    name: "Probe details",
+    exact: true,
+  });
+  await probeTrigger.click();
+  const probeDialog = page.getByRole("dialog", {
+    name: "Probe details",
+    exact: true,
+  });
+  await expect(probeDialog).toContainText("Healthy latency");
+  await expect(probeDialog).toContainText("Datagram probe outcomes");
+  await expect(probeDialog).not.toContainText("WebSocket");
+  await expect(
+    probeDialog.getByRole("button", { name: "Close details" }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(probeDialog).not.toBeVisible();
+  await expect(probeTrigger).toBeFocused();
   for (const width of [390, 900, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(picker).toHaveValue("peer");

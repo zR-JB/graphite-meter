@@ -3,6 +3,9 @@ import { DEFAULT_CONFIG } from "../state/defaults";
 import { testPreparedPaths } from "../runner/test-helpers.test";
 import type { ConnectionPreparation } from "../runner/real/prepare";
 import { ServerConnections, type ServerConnectionView } from "./connections";
+import { CONNECTION_FRESH_MS } from "../runner/connectionModel";
+import { PreflightUnavailableError } from "../runner/real/transportError";
+import { ServerAuthenticationRequired } from "./credentials";
 
 import { stubGlobals } from "../test-helpers.test";
 let restore: () => void;
@@ -76,6 +79,146 @@ test("a failed role preserves the independently verified role", async () => {
   }
 });
 
+test("wrapped remote authentication retains actionable sign-in details", async () => {
+  const { manager, views } = fixture(
+    async () => preparation(),
+    async (_signal, context) => {
+      throw new PreflightUnavailableError("preflight unavailable", {
+        cause: new ServerAuthenticationRequired(context!.server),
+      });
+    },
+  );
+  try {
+    await expect(manager.check({ ids: ["peer"] })).rejects.toThrow(
+      "Sign in to peer",
+    );
+    expect(views.get("peer")!.readiness).toMatchObject({
+      state: "sign-in",
+      message: "Sign in to peer",
+    });
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("opaque HTTPS failure from an HTTP interface offers conditional guidance without inventing authentication", async () => {
+  const { manager, views, config } = fixture(
+    async () => preparation(),
+    async () => {
+      throw new PreflightUnavailableError("preflight unavailable", {
+        cause: new TypeError("Failed to fetch"),
+      });
+    },
+  );
+  try {
+    manager.reset([{ id: "peer", name: "Peer", url: "https://peer.example" }]);
+    manager.select([{ id: "peer", config }]);
+    await expect(manager.check()).rejects.toThrow(
+      "If it requires sign-in, open this interface over HTTPS",
+    );
+    expect(views.get("peer")!.readiness.state).toBe("failed");
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("fresh equivalent selections reuse evidence, but expired reselections refresh discovery and both roles", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  const checked: string[] = [];
+  const refreshed = deferred<void>();
+  let discoveries = 0;
+  const { manager, views, config } = fixture(
+    async (_config, _previous, roles) => {
+      checked.push(...roles);
+      if (checked.length === 4) refreshed.resolve();
+      return preparation();
+    },
+    async () => {
+      discoveries++;
+      return testPreparedPaths().discovery;
+    },
+  );
+  try {
+    manager.select([{ id: "self", config }]);
+    await manager.check();
+    const equivalent = structuredClone(config);
+    equivalent.transports.throughputTarget =
+      preparation().validation.throughput.path!.target.origin;
+    equivalent.transports.latencyTarget =
+      preparation().validation.latency.path!.target.origin;
+    manager.select([{ id: "self", config: equivalent }]);
+    await manager.check();
+    expect(checked).toEqual(["throughput", "latency"]);
+    expect(manager.ready()).toBe(true);
+    manager.select([]);
+    clock.mockReturnValue(1000 + CONNECTION_FRESH_MS + 1);
+    manager.select([{ id: "self", config: equivalent }]);
+    expect(manager.ready()).toBe(false);
+    expect(views.get("self")!.readiness.state).toBe("unchecked");
+    manager.activity(true, null);
+    await refreshed.promise;
+    await settle();
+    expect(discoveries).toBe(2);
+    expect(checked).toEqual(["throughput", "latency", "throughput", "latency"]);
+    expect(manager.ready()).toBe(true);
+  } finally {
+    manager.dispose();
+    clock.mockRestore();
+  }
+});
+
+test("refreshing expired discovery retains a newer verified latency monitor for the same generation", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  const monitors: { active: boolean }[] = [];
+  let discoveries = 0;
+  let probes = 0;
+  const { manager, config } = fixture(
+    async (_config, _previous, roles) => {
+      probes++;
+      const result = preparation();
+      if (roles.includes("latency")) {
+        const monitor = { active: false };
+        monitors.push(monitor);
+        result.idle = {
+          start() {
+            monitor.active = true;
+          },
+          stop() {
+            monitor.active = false;
+          },
+          onEvent() {},
+        };
+      }
+      return result;
+    },
+    async () => {
+      discoveries++;
+      return testPreparedPaths().discovery;
+    },
+  );
+  try {
+    manager.select([{ id: "self", config }]);
+    await manager.check();
+    manager.activity(true, "self");
+    clock.mockReturnValue(91000);
+    manager.invalidate();
+    await manager.check();
+    const monitor = monitors.at(-1)!;
+    expect(monitor.active).toBe(true);
+    expect(discoveries).toBe(1);
+    clock.mockReturnValue(122000);
+    manager.select([{ id: "self", config }]);
+    await manager.check();
+    expect(discoveries).toBe(2);
+    expect(probes).toBe(4);
+    expect(manager.ready()).toBe(true);
+    expect(monitor.active).toBe(true);
+  } finally {
+    manager.dispose();
+    clock.mockRestore();
+  }
+});
+
 test("a generation change cancels an in-flight role before accepting replacement evidence", async () => {
   const held = deferred<ConnectionPreparation>();
   let generation = "gen-a";
@@ -113,6 +256,52 @@ test("a generation change cancels an in-flight role before accepting replacement
     expect(views.get("self")!.validation.latency.path!.generation).toBe(
       "gen-b",
     );
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("changing the latency participant cancels its probe and cannot adopt late evidence when re-enabled", async () => {
+  const held = deferred<ConnectionPreparation>();
+  let latencyChecks = 0;
+  let stopped = 0;
+  const { manager, views, config } = fixture(
+    async (_config, _previous, roles) => {
+      if (roles.includes("latency") && ++latencyChecks === 1)
+        return held.promise;
+      return preparation();
+    },
+  );
+  try {
+    manager.select([{ id: "self", config }]);
+    const old = manager.check().catch((error) => error);
+    await settle();
+    expect(views.get("self")!.validation.throughput.state).toBe("verified");
+    const noLatency = structuredClone(config);
+    noLatency.stages.latency = false;
+    noLatency.skipLoadedLatencyWhenStageOff = true;
+    manager.select([{ id: "self", config: noLatency }]);
+    expect((await old).name).toBe("AbortError");
+    expect(manager.ready()).toBe(true);
+    manager.select([{ id: "self", config }]);
+    expect(manager.ready()).toBe(false);
+    await manager.check();
+    const current = views.get("self")!.validation.latency.path;
+    held.resolve({
+      ...preparation(),
+      idle: {
+        start() {},
+        stop() {
+          stopped++;
+        },
+        onEvent() {},
+      },
+    });
+    await settle();
+    expect(latencyChecks).toBe(2);
+    expect(stopped).toBe(1);
+    expect(views.get("self")!.validation.latency.path).toBe(current);
+    expect(manager.ready()).toBe(true);
   } finally {
     manager.dispose();
   }

@@ -124,3 +124,54 @@ test("tooltip dismissal clears accessible state immediately and finishes its CSS
   });
   await expect(page.locator(".gm-tooltip")).toHaveCount(0);
 });
+
+test("tooltip inside a native diagnostic popover paints above it and leaves with its host", async ({
+  page,
+}) => {
+  const { createServer } = await import("vite");
+  const server = await createServer({
+    server: { host: "127.0.0.1", port: 0 },
+    logLevel: "error",
+  });
+  try {
+    await server.listen();
+    await page.goto(server.resolvedUrls!.local[0]);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.evaluate(async () => {
+      const path = "/src/lib/actions/tooltip.ts";
+      const { tooltip } = await import(path);
+      const host = document.createElement("div");
+      host.id = "diagnostic-host";
+      host.popover = "auto";
+      host.style.cssText =
+        "position:fixed;inset:100px auto auto 30px;margin:0;width:300px;height:200px;background:white;padding:80px 20px;box-sizing:border-box";
+      const term = document.createElement("span");
+      term.textContent = "Partial accounting";
+      host.append(term);
+      document.body.append(host);
+      tooltip(term, { text: "Some probe outcomes are unknown", instant: true });
+      host.showPopover();
+    });
+    await page.locator("#diagnostic-host span").hover();
+    const tip = page.getByRole("tooltip");
+    await expect(tip).toContainText("Some probe outcomes are unknown");
+    expect(
+      await tip.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        element.style.pointerEvents = "auto";
+        const top = document.elementFromPoint(
+          rect.x + rect.width / 2,
+          rect.y + rect.height / 2,
+        );
+        element.style.pointerEvents = "none";
+        return top === element;
+      }),
+    ).toBe(true);
+    await page.evaluate(() =>
+      document.getElementById("diagnostic-host")!.hidePopover(),
+    );
+    await expect(tip).toBeHidden();
+  } finally {
+    await server.close();
+  }
+});

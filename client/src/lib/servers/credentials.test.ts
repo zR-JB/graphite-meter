@@ -2,6 +2,47 @@ import { expect, test } from "bun:test";
 import { stubGlobals } from "../test-helpers.test";
 import { TEST_BUILD_TOKENS } from "../runner/test-helpers.test";
 
+test("remote preflight requires an explicit auth marker and preserves public HTTPS access from HTTP", async () => {
+  let marked = true;
+  const server = { id: "peer", name: "Peer", url: "https://peer.example" };
+  const restore = stubGlobals({
+    ...TEST_BUILD_TOKENS,
+    location: new URL("http://ui.example/"),
+    fetch: async () =>
+      new Response(null, {
+        status: 403,
+        headers: marked ? { "Graphite-Meter-Auth": "required" } : {},
+      }),
+  });
+  try {
+    const { measurementFetch, ServerAuthenticationRequired, browserApproval } =
+      await import("./credentials");
+    const context = { server, kind: "public" as const };
+    await expect(
+      measurementFetch(context, server.url + "/preflight"),
+    ).rejects.toBeInstanceOf(ServerAuthenticationRequired);
+    marked = false;
+    expect(
+      (await measurementFetch(context, server.url + "/preflight")).status,
+    ).toBe(403);
+    const publicFetch = stubGlobals({
+      fetch: async () => Response.json({ public: true }),
+    });
+    try {
+      expect(
+        (await measurementFetch(context, server.url + "/preflight")).ok,
+      ).toBe(true);
+    } finally {
+      publicFetch();
+    }
+    await expect(browserApproval(server)).rejects.toThrow(
+      "Open this interface over HTTPS",
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("remote requests omit cookies, reject redirects, and bind the bearer to approved HTTPS destinations", async () => {
   const requests: RequestInit[] = [];
   const restore = stubGlobals({
