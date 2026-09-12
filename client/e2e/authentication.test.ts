@@ -159,6 +159,11 @@ for (const transport of ["websocket", "webtransport"] as const)
       await waitForCompletion(page, 30000);
       const saved = await savedResult(page, startedAt);
       expect(isHistoryRecord(saved)).toBe(true);
+      if (saved.multiServer?.failures.length)
+        console.info(
+          "Protected mixed-protocol failures",
+          saved.multiServer.failures,
+        );
       expect(saved.multiServer?.participants).toEqual(ids);
       expect(saved.multiServer?.failures).toEqual([]);
       for (const server of saved.multiServer!.servers) {

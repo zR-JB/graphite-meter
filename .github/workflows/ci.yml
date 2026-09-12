@@ -210,7 +210,7 @@ jobs:
         env:
           GM_E2E_SUITE: ${{ matrix.suite }}
           # See the browser job: the archive has no usable setuid sandbox.
-          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_ARGS: --no-sandbox ${{ matrix.suite == 'authentication' && '--log-net-log=/tmp/gm-auth-netlog.json' || '' }}
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
         run: mise run client-e2e
       - name: Upload WebView failure diagnostics
@@ -218,7 +218,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: webview-e2e-failures-${{ matrix.suite }}
-          path: client/test-results/webview
+          path: |
+            client/test-results/webview
+            /tmp/gm-auth-netlog.json
           if-no-files-found: ignore
 
   smoke:
