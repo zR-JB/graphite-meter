@@ -248,8 +248,17 @@ func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 		// Bound upload DATA frames so control requests can share a saturated connection.
 		MaxReadFrameSize: 16 << 10,
 	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+		if encrypted, ok := c.(*tls.Conn); ok {
+			c = encrypted.NetConn()
+		}
+		if admitted, ok := c.(*admittedConn); ok {
+			c = admitted.Conn
+		}
 		if tc, ok := c.(*net.TCPConn); ok {
 			_ = tc.SetNoDelay(true)
+			if protocols != nil && protocols.HTTP2() {
+				configureHTTP2TCP(tc)
+			}
 		}
 		return ctx
 	}}
