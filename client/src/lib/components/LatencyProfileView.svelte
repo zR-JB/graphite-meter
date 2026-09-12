@@ -189,6 +189,7 @@
   aria-label={label}
 >
   {#each lanes as lane (lane.key)}
+    {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="lane-icon" aria-hidden="true"
@@ -228,9 +229,8 @@
             <span
               class="timing-info accounting-warning"
               role="note"
-              aria-label={`${lane.label}: ${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
-              use:tooltip={`${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
-              >{@html ICON.info}</span
+              aria-label={`${lane.label}: ${accounting}`}
+              use:tooltip={accounting}>{@html ICON.info}</span
             >
           {/if}
         </span>

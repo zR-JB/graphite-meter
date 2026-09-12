@@ -25,7 +25,6 @@
   } from "../canvas/presentation";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { preparationFailurePresentation } from "./preparationFailure";
-  import { failureDetail } from "./failurePresentation";
   import { ICON } from "../constants";
 
   const indicatedServers = $derived(
@@ -228,18 +227,6 @@
         }
       : null;
   });
-
-  const STAGE_NAME: Record<string, string> = {
-    latency: "Latency",
-    download: "Download",
-    upload: "Upload",
-    bidirectional: "Bidirectional",
-  };
-  const failNotes = $derived(
-    store.transferFailures.map(
-      (f) => `${STAGE_NAME[f.stage]} skipped — ${failureDetail(f.message)}`,
-    ),
-  );
 
   const preparationLabel = $derived(
     store.preparation.status === "authenticating"
@@ -494,11 +481,8 @@
         </div>
       </div>
       <div class="gauge-footer">
-        {#if hint || status || preparationFailure || failNotes.length}
+        {#if hint || status || preparationFailure}
           <div class="gauge-notes">
-            {#each failNotes as note (note)}<span class="gauge-fail"
-                >{note}</span
-              >{/each}
             {#if store.preparing}
               <span class="gauge-status preparation">{preparationLabel}</span>
             {:else if preparationFailure}
@@ -868,12 +852,6 @@
   }
   .gauge-status.preparation {
     color: var(--brand-strong);
-  }
-  .gauge-fail {
-    font-size: var(--type-sm);
-    font-weight: 600;
-    line-height: 1.3;
-    color: var(--err);
   }
 
   /* Narrow layouts stack the action and stages in their natural reading order. */

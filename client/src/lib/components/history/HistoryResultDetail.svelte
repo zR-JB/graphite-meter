@@ -2,7 +2,6 @@
   export interface ServerView {
     recordId: string;
     resultId: string;
-    latencyId: string | null;
   }
 </script>
 
@@ -34,7 +33,7 @@
   } from "../latencyProfile";
   import ResultServerContext from "../ResultServerContext.svelte";
   import ServerTag from "../ServerTag.svelte";
-  import ServerSelector from "../ServerSelector.svelte";
+  import DiagnosticDetails from "../DiagnosticDetails.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -82,21 +81,9 @@
         },
   );
   function selectResult(id: string) {
-    const measured = record.multiServer?.servers.some(
-      (server) => server.server.id === id && server.latencyTarget,
-    );
-    serverView = {
-      recordId: record.id,
-      resultId: id,
-      latencyId: measured ? id : (view?.latencyId ?? null),
-    };
+    serverView = { recordId: record.id, resultId: id };
   }
-  function selectLatency(id: string) {
-    serverView = { recordId: record.id, resultId, latencyId: id };
-  }
-  const focusedId = $derived(
-    view?.latencyId ?? record.multiServer?.latencyFocus,
-  );
+  const focusedId = $derived(resultId || record.multiServer?.latencyFocus);
   const hasServerLatency = $derived(
     (record.multiServer?.selection.length ?? 0) > 1 &&
       record.multiServer?.servers.some(
@@ -395,24 +382,13 @@
         <h3 id={`result-${record.id}-latency`}>Responsiveness</h3>
       </header>
       <div class="section-body responsiveness-body">
-        {#if record.multiServer && record.multiServer.selection.length > 1}
+        {#if !resultId && record.multiServer && record.multiServer.selection.length > 1}
           <div class="server-focus">
-            {#if record.multiServer.servers.filter((server) => server.latencyTarget).length > 1}
-              <ServerSelector
-                servers={record.multiServer.selection}
-                value={focusedId ?? ""}
-                label="Saved latency server"
-                disabledIds={record.multiServer.servers
-                  .filter((server) => !server.latencyTarget)
-                  .map((server) => server.server.id)}
-                onchange={selectLatency}
-              />
-            {:else}<ServerTag
-                servers={record.multiServer.selection}
-                id={focusedId}
-                label="Saved idle and loaded latency source"
-              />
-            {/if}
+            <span>Latency source</span><ServerTag
+              servers={record.multiServer.selection}
+              id={focusedId}
+              label="Saved idle and loaded latency source"
+            />
           </div>
         {/if}
         {#if focusedLatency}
@@ -452,54 +428,62 @@
     </section>
   {/if}
 
-  {#if probeTimeoutLanes.length}
-    <section
-      class="detail-section probe-timeouts-section"
-      aria-labelledby={`result-${record.id}-probe-timeouts`}
-    >
-      <header class="section-head">
-        <span aria-hidden="true">{@html ICON.ping}</span>
-        <h3 id={`result-${record.id}-probe-timeouts`}>
-          Probe timeouts ({record.transport.latency.kind === "webtransport"
-            ? "datagram"
-            : "WebSocket"})
-        </h3>
-        <span
-          class="section-help"
-          role="note"
-          aria-label="About probe timeouts"
-          use:tooltip={"No reply before the deadline. Application timeouts, not IP packet loss; unresolved probes and failed sends are separate."}
-          >{@html ICON.info}</span
-        >
-      </header>
-      <ul class="section-body probe-timeouts-lanes">
-        {#each probeTimeoutLanes as lane (lane.key)}
-          <li
-            data-tone={lane.tone}
-            aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
-          >
-            <span class="phase-icon" aria-hidden="true">{@html lane.icon}</span>
-            <span>
-              <strong>{lane.label}</strong>
-              <small class="reply-count">{lane.counts.replies}</small>
-              {#if lane.accountingComplete === false}
-                <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
-                  >Partial accounting</small
+  {#if probeTimeoutLanes.length || record.failures.length}
+    <div class="detail-section diagnostic-actions">
+      {#if probeTimeoutLanes.length}<DiagnosticDetails label="Probe details"
+          ><div class="probe-timeouts-section">
+            <p>
+              {record.transport.latency.kind === "webtransport"
+                ? "Datagram"
+                : "WebSocket"} probe outcomes. Timeouts mean no reply before the deadline;
+              unfinished probes and failed sends are separate.
+            </p>
+            <ul class="probe-timeouts-lanes">
+              {#each probeTimeoutLanes as lane (lane.key)}
+                <li
+                  data-tone={lane.tone}
+                  aria-label={`${lane.label} probe timeouts ${lane.value}, ${lane.details}`}
                 >
-              {/if}
-            </span>
-            <em>{lane.value}</em>
-            {#if lane.counts.exceptions.length}
-              <div class="probe-exceptions">
-                {#each lane.counts.exceptions as detail}
-                  <span>{detail}</span>
-                {/each}
-              </div>
-            {/if}
-          </li>
-        {/each}
-      </ul>
-    </section>
+                  <span class="phase-icon" aria-hidden="true"
+                    >{@html lane.icon}</span
+                  >
+                  <span>
+                    <strong>{lane.label}</strong>
+                    <small class="reply-count">{lane.counts.replies}</small>
+                    {#if lane.accountingComplete === false}
+                      <small role="note" use:tooltip={PARTIAL_ACCOUNTING_HELP}
+                        >Partial accounting</small
+                      >
+                    {/if}
+                  </span>
+                  <em>{lane.value}</em>
+                  {#if lane.counts.exceptions.length}
+                    <div class="probe-exceptions">
+                      {#each lane.counts.exceptions as detail}
+                        <span>{detail}</span>
+                      {/each}
+                    </div>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          </div></DiagnosticDetails
+        >{/if}
+      {#if record.failures.length}<DiagnosticDetails label="Stage issues">
+          <ul class="issue-list">
+            {#each record.failures as failure}
+              <li>
+                <strong
+                  >{failure.stage}{failure.direction
+                    ? ` ${failure.direction}`
+                    : ""}</strong
+                >
+                <span>{failure.reason.replaceAll("-", " ")}</span>
+              </li>
+            {/each}
+          </ul></DiagnosticDetails
+        >{/if}
+    </div>
   {/if}
 
   {#if contextRows.length}
@@ -519,30 +503,6 @@
           </div>
         {/each}
       </dl>
-    </section>
-  {/if}
-
-  {#if record.failures.length}
-    <section
-      class="detail-section"
-      aria-labelledby={`result-${record.id}-issues`}
-    >
-      <header class="section-head">
-        <span class="issue-icon" aria-hidden="true">!</span>
-        <h3 id={`result-${record.id}-issues`}>Stage issues</h3>
-      </header>
-      <ul class="section-body issue-list">
-        {#each record.failures as failure}
-          <li>
-            <strong
-              >{failure.stage}{failure.direction
-                ? ` ${failure.direction}`
-                : ""}</strong
-            >
-            <span>{failure.reason.replaceAll("-", " ")}</span>
-          </li>
-        {/each}
-      </ul>
     </section>
   {/if}
 
@@ -757,28 +717,6 @@
     font-weight: 760;
     letter-spacing: -0.01em;
   }
-  .section-head > .section-help {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    margin-left: -4px;
-    border-radius: 50%;
-    color: var(--text-muted);
-    cursor: help;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .section-help:hover,
-  .section-help:focus-visible {
-    background: var(--surface-inset);
-    color: var(--text);
-  }
-  .section-help :global(svg) {
-    width: 13px;
-    height: 13px;
-  }
   .section-body {
     margin: 0;
     padding: 0 var(--space-4) var(--space-4);
@@ -852,7 +790,15 @@
     display: grid;
     gap: var(--space-3);
   }
+  .diagnostic-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+  }
   .probe-timeouts-lanes {
+    margin: 0;
+    padding: 0;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
     gap: var(--space-2);
@@ -895,7 +841,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-1) var(--space-2);
-    color: var(--warn);
+    color: var(--text-muted);
     font: 500 var(--type-xs)/1.4 var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
@@ -937,10 +883,7 @@
     font-size: var(--type-sm);
     line-height: 1.4;
   }
-  .issue-icon {
-    color: var(--warn) !important;
-    font: 800 var(--type-sm) var(--font-mono);
-  }
+
   .issue-list {
     display: grid;
     gap: 6px;

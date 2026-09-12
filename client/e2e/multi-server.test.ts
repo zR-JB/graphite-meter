@@ -492,7 +492,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await expect(savedScope).toHaveValue("server-1");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(
-    page.locator('[data-latency-profile][data-variant="detailed"]'),
+    page.locator('[data-latency-profile][data-variant="compact"]'),
   ).toBeVisible();
   await page.artifact("primary-latency-history");
 });

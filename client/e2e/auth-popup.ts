@@ -25,6 +25,13 @@ test("peer sign-in automatically opens an isolated popup during the user click",
   await expect(
     row.getByRole("button", { name: "Sign in to Private" }),
   ).toBeVisible({ timeout: 15000 });
+  await expect(page.locator(".server-choices")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await row
+    .getByRole("button", { name: "Sign in to Private" })
+    .scrollIntoViewIfNeeded();
   const point = await row
     .getByRole("button", { name: "Sign in to Private" })
     .evaluate((button) => {
