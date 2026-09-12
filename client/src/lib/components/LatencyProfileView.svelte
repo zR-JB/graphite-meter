@@ -205,15 +205,6 @@
               ? `mean ${fmtMs(lane.center)} ms`
               : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        {#if lane.reflectorTiming}
-          <span
-            class="timing-info"
-            role="img"
-            aria-label={`${lane.label}: server timing`}
-            use:tooltip={reflectorTimingDescription(lane.reflectorTiming)}
-            >{@html ICON.info}</span
-          >
-        {/if}
         {#if lane.jitter != null}
           <em class="jit" use:tooltip={JARGON.jitter}
             >{fmtMs(lane.jitter)} ms jitter</em
@@ -225,12 +216,20 @@
             : `${fmtMs(lane.min)} – ${fmtMs(lane.max)}`}
         </em>
         <span class="accounting-slot">
-          {#if hasProbeAccountingNotice(lane)}
+          {#if lane.reflectorTiming || hasProbeAccountingNotice(lane)}
             <span
-              class="timing-info accounting-warning"
+              class="timing-info"
+              class:accounting-warning={hasProbeAccountingNotice(lane)}
               role="note"
-              aria-label={`${lane.label}: ${accounting}`}
-              use:tooltip={accounting}>{@html ICON.info}</span
+              aria-label={`${lane.label}: measurement details${hasProbeAccountingNotice(lane) ? `. ${accounting}` : ""}`}
+              use:tooltip={[
+                lane.reflectorTiming
+                  ? reflectorTimingDescription(lane.reflectorTiming)
+                  : "",
+                hasProbeAccountingNotice(lane) ? accounting : "",
+              ]
+                .filter(Boolean)
+                .join("\n\n")}>{@html ICON.info}</span
             >
           {/if}
         </span>
@@ -339,6 +338,10 @@
   .timing-info {
     display: inline-flex;
     flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
     color: var(--text-muted);
     cursor: help;
   }
@@ -352,7 +355,7 @@
   }
   .accounting-slot {
     display: inline-flex;
-    flex: 0 0 12px;
+    flex: 0 0 20px;
     align-self: center;
   }
   .accounting-warning {

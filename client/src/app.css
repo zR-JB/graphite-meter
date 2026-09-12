@@ -268,24 +268,8 @@
 html,
 body {
   height: 100%;
-  /* Off-canvas drawers (rail/inspector) live just past the viewport edges;
-     clip horizontally so they never add a left/right scrollbar. Must be
-     `clip`, NOT `hidden`: `overflow-x: hidden` computes overflow-y to `auto`,
-     which turns html/body into scroll containers the browser may silently
-     scroll (e.g. focus-reveal on a settings toggle shifted the whole shell up
-     with no way back). `clip` forbids scrolling on the axis entirely and
-     leaves overflow-y: visible, so document scrolling stays on the viewport. */
-  overflow-x: clip;
-}
-
-/* Preserve main's fixed shell from the tablet breakpoint upward. A landscape
-   phone uses that same anchored shell so its side panels remain flyouts; only
-   portrait phones retain main's document-scroll mode. */
-@media (min-width: 760px), (max-width: 759px) and (orientation: landscape) {
-  html,
-  body {
-    overflow-y: clip;
-  }
+  /* The center workspace scrolls; browser chrome changes resize the shell. */
+  overflow: clip;
 }
 
 body {

@@ -72,6 +72,22 @@ test("native popovers stay reachable after their scroll anchor leaves a short vi
         exact: true,
       });
       await expect(popup).toBeVisible();
+      if (role === "button") {
+        const before = await popup.boundingBox();
+        await popup.evaluate((node) => {
+          node.scrollTop = 150;
+        });
+        await expect
+          .poll(() => popup.evaluate((node) => node.scrollTop))
+          .toBeGreaterThan(0);
+        await expect(popup).toBeVisible();
+        expect(await popup.boundingBox()).toEqual(before);
+        await page.locator("#popover-scroll").evaluate((node) => {
+          node.scrollTop += 12;
+        });
+        await expect(popup).toBeVisible();
+        expect(await popup.boundingBox()).toEqual(before);
+      }
       await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
       await expect
         .poll(() =>
@@ -100,6 +116,7 @@ test("native popovers stay reachable after their scroll anchor leaves a short vi
           }),
         )
         .toBe(true);
+      if (role === "button") await expect(popup).not.toBeVisible();
       await page.evaluate(() =>
         document
           .querySelectorAll<HTMLElement>("[popover]:popover-open")

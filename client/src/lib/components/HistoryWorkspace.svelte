@@ -1147,19 +1147,14 @@
     min-height: 56px;
     color: inherit;
     text-decoration: none;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
+    transition: box-shadow var(--dur-hover) var(--ease-out);
   }
   .result-row:hover {
     background: var(--surface-2);
   }
   .result-row[aria-current="true"] {
-    background: color-mix(in srgb, var(--brand-soft) 62%, var(--surface-1));
-    box-shadow:
-      inset 3px 0 0 var(--brand),
-      inset 0 1px 0 color-mix(in srgb, var(--brand) 22%, transparent),
-      inset 0 -1px 0 color-mix(in srgb, var(--brand) 22%, transparent);
+    background: var(--surface-2);
+    box-shadow: inset 2px 0 0 var(--brand);
   }
   .date-cell,
   .metric-cell {
@@ -1305,10 +1300,8 @@
       contain-intrinsic-size: 76px;
     }
     li.selected {
-      border-color: color-mix(in srgb, var(--brand) 64%, var(--border));
-      box-shadow:
-        0 0 0 2px color-mix(in srgb, var(--brand) 16%, transparent),
-        var(--elev-tile);
+      border-color: var(--border-strong);
+      box-shadow: var(--elev-tile);
     }
     .result-row {
       grid-template-columns: minmax(0, 1fr);
@@ -1460,19 +1453,6 @@
     }
     .column-head i::after {
       transition: none;
-    }
-  }
-  @media (max-width: 759px) and (orientation: portrait) {
-    .history-workspace {
-      flex: none;
-      height: auto;
-      min-height: calc(100svh - var(--topbar-h) - var(--statusbar-h) - 24px);
-      overflow: visible;
-    }
-    .workspace-body {
-      flex: none;
-      overflow: visible;
-      overscroll-behavior: auto;
     }
   }
 </style>

@@ -28,7 +28,11 @@
     MAX_DOCK_WIDTH,
     MIN_STAGE_WIDTH,
   } from "./dockWidths";
-  import { DEFAULT_DOCK_WIDTH } from "../state/persistence";
+  import {
+    DEFAULT_DOCK_WIDTH,
+    loadPersisted,
+    savePersisted,
+  } from "../state/persistence";
   import { authEnabled } from "../auth";
   import { returnToLiveIndicator } from "../history/returnToLive";
   import {
@@ -38,7 +42,6 @@
     closePanel,
     openDialog,
     parseRoute,
-    reconcilePanels,
     serializeRoute,
     withWorkspace,
     type Route,
@@ -201,6 +204,7 @@
     return returnToLiveIndicator(store.preparing, store.phase, recovering);
   });
 
+  // Routes retain panel intent; narrow layouts display the most recent one.
   const currentPanels = $derived(
     currentRoute.kind === "app" ? currentRoute.panels : [],
   );
@@ -219,14 +223,6 @@
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
   );
   const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
-
-  // Keep one authoritative panel when two docks would crowd the instruments;
-  // its canonical route also stays valid when the panel becomes a flyout.
-  $effect(() => {
-    const reconciled = reconcilePanels(currentRoute, allowMultiplePanels);
-    if (serializeRoute(reconciled) !== serializeRoute(currentRoute))
-      routeTo(reconciled, true);
-  });
 
   const showHistoryDirect = $derived(directActions >= 3);
   const showEndpointDirect = $derived(directActions >= 2);
@@ -272,7 +268,9 @@
     Math.min(MAX_DOCK_WIDTH, consoleWidth - MIN_STAGE_WIDTH - docks.left),
   );
 
+  let resizedDock = false;
   function setDockWidth(side: "left" | "right", px: number) {
+    resizedDock = true;
     const other = side === "left" ? "right" : "left";
     // Freeze the visible sibling during an intentional resize so the handle
     // follows the pointer even when saved preferences were constrained.
@@ -283,6 +281,7 @@
     };
   }
   function resetDockWidth(side: "left" | "right") {
+    resizedDock = true;
     store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
   }
 
@@ -388,10 +387,7 @@
     if (invoker) panelInvokers[panel] = invoker;
     else delete panelInvokers[panel];
     if (replacingCompetingPanel && lastPanel) delete panelInvokers[lastPanel];
-    routeTo(
-      activatePanel(currentRoute, panel, allowMultiplePanels),
-      replacingCompetingPanel,
-    );
+    routeTo(activatePanel(currentRoute, panel), replacingCompetingPanel);
   }
   function dismissPanel(panel: PanelSurface, invoker?: HTMLElement) {
     if (invoker) panelInvokers[panel] = invoker;
@@ -590,6 +586,16 @@
   }
 
   onMount(() => {
+    // Preserve an intentional dock resize even if reload beats the normal
+    // debounced preference save. Leave other persisted preferences untouched.
+    const saveDockWidths = () => {
+      if (resizedDock)
+        savePersisted({
+          ...loadPersisted(),
+          dockWidth: $state.snapshot(store.dockWidth),
+        });
+    };
+    window.addEventListener("pagehide", saveDockWidths);
     const onHashChange = () =>
       commitRoute(parseRoute(window.location.hash), true);
     window.addEventListener("hashchange", onHashChange);
@@ -607,6 +613,7 @@
         });
 
     return () => {
+      window.removeEventListener("pagehide", saveDockWidths);
       window.removeEventListener("keydown", onKeydown);
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("popstate", onHashChange);
@@ -846,7 +853,7 @@
       var(--dock-right, 0px);
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
-      var(--statusbar-h);
+      calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
     grid-template-areas:
       "topbar   topbar  topbar"
       "leftdock stage   rightdock"
@@ -857,6 +864,7 @@
 
   .topbar {
     grid-area: topbar;
+    gap: var(--space-2);
   }
   .topbar > :global(*) {
     flex-shrink: 0;
@@ -907,8 +915,9 @@
   .status {
     grid-area: status;
     font-size: 11px;
-    /* A 28px chrome strip. Clip whatever cannot fit: at awkward widths the
-       text spills out or wraps past the row. */
+    container: status / inline-size;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    gap: var(--space-3);
     min-width: 0;
     overflow: hidden;
   }
@@ -1092,89 +1101,99 @@
     font-size: var(--type-xl);
   }
 
-  /* Portrait phones are the single document-flow mode. Landscape phones use
-     the same anchored shell and scrollable center stage as tablets, so
-     rotation cannot silently swap in a bottom sheet or clip the status bar. */
-  @media (max-width: 759px) and (orientation: portrait) {
-    #console {
-      height: auto;
-      min-height: 100svh;
-    }
-    .stage {
-      overflow-y: visible;
-      overscroll-behavior: auto;
-    }
-  }
-  @media (max-width: 520px) {
-    .topbar {
-      gap: var(--space-2);
-      padding-inline: var(--space-2);
-    }
+  @media (max-width: 759px) {
     .brand-label {
       display: none;
     }
     .brand-btn {
-      margin-left: -2px;
-    }
-    .return-live {
-      padding-inline: 7px;
-    }
-    .live-separator,
-    .live-phase {
-      display: none;
-    }
-    .live-copy {
-      max-width: 48px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      width: 44px;
+      padding: 0;
+      margin: 0;
+      justify-content: center;
     }
   }
-  @media (max-width: 430px) {
-    .connectivity :global(.spark) {
-      display: none;
+  @media (max-width: 759px), (pointer: coarse) {
+    .brand-btn {
+      min-width: 44px;
+      min-height: 44px;
     }
-    .return-live {
-      gap: 5px;
+    .topbar {
+      gap: 2px;
       padding-inline: 6px;
     }
-  }
-  @media (pointer: coarse) and (max-width: 640px) {
-    .brand-label {
+    .chrome-divider {
       display: none;
     }
-  }
-  @media (pointer: coarse) {
     .topbar .icon-btn,
-    .topbar :global(.more-trigger) {
+    .topbar :global(.more-trigger),
+    .topbar :global(.signout),
+    .return-live {
+      width: 44px;
+      min-width: 44px;
+      height: 44px;
+      min-height: 44px;
+      padding: 0;
+      justify-content: center;
       position: relative;
+      isolation: isolate;
       border-color: transparent;
       background: transparent;
       box-shadow: none;
-      isolation: isolate;
     }
     .topbar .icon-btn::before,
-    .topbar :global(.more-trigger)::before {
+    .topbar :global(.more-trigger)::before,
+    .topbar :global(.signout)::before,
+    .return-live::before {
       content: "";
       position: absolute;
-      width: 32px;
-      height: 32px;
-      left: 50%;
-      top: 50%;
-      transform: translate(-50%, -50%);
+      inset: 5px;
       z-index: -1;
       border: 1px solid var(--border);
       border-radius: var(--r-chrome);
       background: var(--surface-2);
       box-shadow: inset 0 1px 0 var(--edge-light);
     }
-    .topbar :global(.account) {
-      min-width: 44px;
+    .topbar .icon-btn:hover::before,
+    .topbar :global(.more-trigger:hover)::before,
+    .topbar :global(.signout:hover)::before {
+      border-color: var(--border-strong);
     }
-    .topbar :global(button) {
+    .topbar .icon-btn :global(svg),
+    .topbar :global(.more-trigger svg),
+    .topbar :global(.signout svg),
+    .run-icon :global(svg) {
+      width: 16px;
+      height: 16px;
+    }
+    .topbar :global(.account) {
+      width: 44px;
       min-width: 44px;
-      min-height: 44px;
-      flex-shrink: 0;
+      height: 44px;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .topbar :global(.account .identity),
+    .topbar :global(.account .everywhere),
+    .live-copy {
+      display: none;
+    }
+    .return-live {
+      color: var(--run-tone);
+    }
+    .return-live::before {
+      border-color: color-mix(in srgb, var(--run-tone) 52%, var(--border));
+      background: color-mix(in srgb, var(--run-tone) 9%, var(--surface-2));
+    }
+    .connectivity {
+      width: 24px;
+      height: 44px;
+    }
+    .connectivity :global(.spark) {
+      display: none;
+    }
+    .topbar-spacer {
+      flex-shrink: 1;
     }
   }
 </style>

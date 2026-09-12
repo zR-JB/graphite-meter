@@ -106,6 +106,19 @@ for (const viewport of [
       ).toBeVisible();
       await expectNoHorizontalOverflow(page.locator("#console"));
       await page.artifact("docks-tablet-landscape");
+      expect(await page.evaluate(() => location.hash)).toContain(
+        "panels=settings,endpoint",
+      );
+      await viewportSize(page, { width: 1600, height: 900 });
+      await expect
+        .poll(async () => (await geometry(page)).widths.length)
+        .toBe(2);
+      expect((await geometry(page)).widths[0]).toBe(initial - 16);
+      await page.reload();
+      await expect
+        .poll(async () => (await geometry(page)).widths.length)
+        .toBe(2);
+      expect((await geometry(page)).widths[0]).toBe(initial - 16);
     }
   });
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   // Bottom status strip: phase label, elapsed/remaining time, transferred bytes,
   // build identity, and compact connection hints.
+  import { tooltip } from "../actions/tooltip";
   import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";
@@ -60,18 +61,27 @@
     ? completionLabel(store.result?.outcome)
     : PHASE_LABEL[store.phase]}</span
 >
-<span class="sep">·</span>
-<span>elapsed {fmtElapsed(elapsedMs)}</span>
+<span
+  class="elapsed"
+  class:secondary={showRemaining}
+  use:tooltip={`Elapsed ${fmtElapsed(elapsedMs)}`}
+  ><span class="caption">elapsed&nbsp;</span>{fmtElapsed(elapsedMs)}</span
+>
 {#if showRemaining}
-  <span class="sep">·</span>
-  <span class:paused={!store.measuring}>
-    {fmtElapsed(store.phaseRemainingMs)} left{#if !store.measuring}&nbsp;(paused){/if}
+  <span class="remaining" class:paused={!store.measuring}>
+    {#if store.measuring}{fmtElapsed(store.phaseRemainingMs)} left{:else}Paused<span
+        class="caption"
+      >
+        · {fmtElapsed(store.phaseRemainingMs)} left</span
+      >{/if}
   </span>
 {/if}
-<span class="sep">·</span>
-<span>{fmtBytes(store.bytesTransferred, store.unitBase)} xfer</span>
-<span class="flex-1"></span>
-<span class="soft">{BUILD_IDENTITY}</span>
+<span class="transferred"
+  >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption">
+    xfer</span
+  ></span
+>
+<span class="build">{BUILD_IDENTITY}</span>
 
 <style>
   span {
@@ -80,18 +90,32 @@
   .label {
     color: var(--text);
     font-weight: 600;
+    margin-right: auto;
   }
-  .sep {
-    color: var(--text-soft);
-  }
-  .flex-1 {
-    flex: 1;
-  }
-  .soft {
+  .build {
+    margin-left: auto;
     color: var(--text-soft);
   }
   .paused {
     color: var(--err);
     font-weight: 600;
+  }
+  @container status (max-width: 800px) {
+    .build {
+      display: none;
+    }
+  }
+  @container status (max-width: 520px) {
+    .caption {
+      display: none;
+    }
+    .elapsed.secondary {
+      display: none;
+    }
+  }
+  @container status (max-width: 350px) {
+    .transferred {
+      display: none;
+    }
   }
 </style>

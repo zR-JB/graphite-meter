@@ -60,7 +60,7 @@ test("blur cancels a keyboard tooltip waiting for the focus reveal frame", async
   await expect(page.getByRole("tooltip")).toBeHidden();
 });
 
-test("mouse and touch tooltips still dismiss when the page scrolls", async ({
+test("mouse and touch tooltips dismiss when the phone workspace scrolls", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -79,14 +79,17 @@ test("mouse and touch tooltips still dismiss when the page scrolls", async ({
   await startAndWait(page);
   const term = page.locator(".result-card .jitter-term");
   await term.scrollIntoViewIfNeeded();
-  expect(await page.evaluate(() => scrollY)).toBeGreaterThan(80);
+  const workspace = page.locator(".measurement-stage");
+  expect(await workspace.evaluate((node) => node.scrollTop)).toBeGreaterThan(
+    80,
+  );
   await term.dispatchEvent("pointerenter", { pointerType: "mouse" });
   await expect(page.getByRole("tooltip")).toContainText("RTT variation");
-  await page.evaluate(() => window.scrollBy(0, -40));
+  await workspace.evaluate((node) => node.scrollBy(0, -40));
   await expect(page.getByRole("tooltip")).toBeHidden();
   await term.dispatchEvent("pointerup", { pointerType: "touch" });
   await expect(page.getByRole("tooltip")).toContainText("RTT variation");
-  await page.evaluate(() => window.scrollBy(0, -40));
+  await workspace.evaluate((node) => node.scrollBy(0, -40));
   await expect(page.getByRole("tooltip")).toBeHidden();
 });
 

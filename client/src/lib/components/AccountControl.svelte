@@ -77,9 +77,9 @@
       use:tooltip={"Sign out"}
       aria-label={`Sign out ${label}`}
     >
-      <svg viewBox="0 0 20 20" aria-hidden="true">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
         <path
-          d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8M12.5 6.5 16 10l-3.5 3.5M8 10h8"
+          d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M16 7l5 5-5 5M9 12h12"
         />
       </svg>
     </button>
