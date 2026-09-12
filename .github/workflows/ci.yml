@@ -177,7 +177,11 @@ jobs:
         run: mise run tui-cross-build
 
   integration:
-    name: Browser/server E2E
+    name: Browser/server E2E (${{ matrix.suite }})
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [connections, measurement, authentication, performance]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
@@ -204,6 +208,7 @@ jobs:
         run: cd client && bun run check:webview
       - name: Run browser/server transport E2E
         env:
+          GM_E2E_SUITE: ${{ matrix.suite }}
           # See the browser job: the archive has no usable setuid sandbox.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
@@ -212,7 +217,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: webview-e2e-failures
+          name: webview-e2e-failures-${{ matrix.suite }}
           path: client/test-results/webview
           if-no-files-found: ignore
 

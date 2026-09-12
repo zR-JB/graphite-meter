@@ -18,7 +18,7 @@
     "test:browser": "bun run build:browser && bun test browser --parallel=3 --path-ignore-patterns=**/presentation-performance.test.ts --no-orphans --timeout 30000 && bun test ./browser/presentation-performance.test.ts --no-orphans --timeout 30000",
     "build:e2e-harness": "vite build -c vite.e2e.config.ts",
     "test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000",
-    "test:e2e": "bun run build:e2e-harness && bun test e2e --no-orphans --timeout 60000",
+    "test:e2e": "bun run build:e2e-harness && sh scripts/e2e.sh --no-orphans --timeout 60000",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

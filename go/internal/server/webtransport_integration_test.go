@@ -928,8 +928,8 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 }
 
 // The published lane range is 1..16 over WebTransport, and nothing ran the top of it end to end.
+// Run the lane-rate comparison before parallel transport stress tests consume the same CPU.
 func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
-	t.Parallel()
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
 		down.HTTPHandler, down.download = e.download, e.download
