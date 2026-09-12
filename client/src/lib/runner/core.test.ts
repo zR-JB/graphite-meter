@@ -908,6 +908,27 @@ test("a real sample arriving mid-stall auto-resumes", async () => {
   core.ingestThroughput("down", 100, 0.1);
   expect(hasEvent(events, "resume")).toBe(true);
 });
+test("same-clock terminal bytes update the result without another presentation sample", async () => {
+  class TerminalBackend extends FakeBackend {
+    override onStageEnd(): void {
+      this.host.ingestThroughput("down", 17, 0, false, false);
+    }
+  }
+  const { core, events } = await startCore(
+    { duration: { downloadMs: 100 } },
+    new TerminalBackend(),
+  );
+  core.ingestThroughput("down", 100, 0.1);
+  const presented = typedEvents(events, "throughput").length;
+  advance(100);
+  expect(typedEvents(events, "throughput")).toHaveLength(presented);
+  expectComplete(events, (result) => {
+    expect(result.download?.totalBytes).toBe(117);
+    expect(result.download?.reportedBytesPerSec).toBe(1170);
+    expect(result.download?.fullAverageBytesPerSec).toBe(1170);
+    expect(result.download?.serverAuthoritative).toBeUndefined();
+  });
+});
 
 test("a healthy sibling's bytes do not resume a stalled bidirectional stage", async () => {
   const { core, events } = await startCore({

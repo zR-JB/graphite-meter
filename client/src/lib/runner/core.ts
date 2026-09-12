@@ -67,7 +67,7 @@ const isMeasuredPhase = (phase: Phase): phase is TransportRole =>
   phase === "latency" || isTransferPhase(phase);
 
 export interface CoreHost {
-  // Receiver bytes and elapsed time drive both result accounting and presentation.
+  // Receiver bytes and elapsed time drive accounting and presentation; zero duration credits terminal bytes only.
   ingestThroughput(
     dir: FlowDirection,
     bytesDelta: number,
@@ -596,7 +596,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         Math.max(0, performance.now() - this.#lastRealNow),
     );
     // Retain stalled accounting exactly; only all-direction liveness may resume presentation rates.
-    if (!this.#measuring) return;
+    if (!this.#measuring || durationSec === 0) return;
     const estimate = this.#rateEstimator[dir].observe({
       bytes: bytesDelta,
       durationMs: durationSec * 1_000,

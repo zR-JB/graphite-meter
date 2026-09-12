@@ -6,10 +6,12 @@ import {
   type ChartPresentation,
 } from "./ChartEngine";
 import type { LatencyBucket, ThroughputSample } from "../runner/contract";
+import { appendThroughputSample } from "../runner/presentationHistory";
 
 function data(overrides: Partial<ChartData> = {}): ChartData {
   return {
     throughput: [],
+    throughputRevision: 0,
     latency: [],
     latencyRevision: 0,
     latencyEnabled: false,
@@ -79,7 +81,7 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
 });
 
 function canvasEnvironment(reducedMotion: boolean) {
-  const counts = { paths: 0 };
+  const counts = { paths: 0, curves: [] as number[][] };
   const context = new Proxy({} as CanvasRenderingContext2D, {
     get: (_target, property) => {
       if (property === "createLinearGradient")
@@ -88,6 +90,8 @@ function canvasEnvironment(reducedMotion: boolean) {
         return () => {
           counts.paths++;
         };
+      if (property === "bezierCurveTo")
+        return (...points: number[]) => counts.curves.push(points);
       return () => {};
     },
   });
@@ -116,6 +120,100 @@ function canvasEnvironment(reducedMotion: boolean) {
   });
   return { canvas, counts, restore };
 }
+
+test("saved duplicate terminal points render and hover at the last value without a vertical segment", () => {
+  const { canvas, counts, restore } = canvasEnvironment(true);
+  const throughput: ThroughputSample[] = [
+    [0, 1000],
+    [500, 2000],
+    [500, 500],
+  ].map(([t, bytesPerSec]) => ({
+    t,
+    bytesPerSec,
+    bytesCumulative: t,
+    dir: "down",
+    phase: "download",
+    continuityId: 1,
+  }));
+  let published!: ChartPresentation;
+  const engine = new ChartEngine(
+    () => data({ throughput, phase: "complete", timelineT: 500 }),
+    (next) => (published = next),
+  );
+  try {
+    engine.attach(canvas);
+    engine.render(0);
+    expect(engine.inspect(published.layout.x(500))?.bytesPerSec).toBeCloseTo(
+      500,
+      8,
+    );
+    expect(counts.curves).toHaveLength(2); // Filled area and line each have one interval.
+    for (const [x1, _y1, _x2, _y2, x, y] of counts.curves) {
+      expect(x1).toBeLessThan(x);
+      expect(x).toBeCloseTo(published.layout.x(500), 8);
+      expect(y).toBeCloseTo(published.layout.throughputY(500), 8);
+    }
+    expect(throughput).toHaveLength(3); // Loading a saved record does not rewrite its evidence.
+  } finally {
+    engine.destroy();
+    restore();
+  }
+});
+
+test("interleaved equal-time replacement invalidates the lane cache even when another lane subsequently appends", () => {
+  const { canvas, restore } = canvasEnvironment(true);
+  const sample = (
+    t: number,
+    dir: "down" | "up",
+    bytesPerSec: number,
+  ): ThroughputSample => ({
+    t,
+    dir,
+    bytesPerSec,
+    bytesCumulative: t,
+    phase: "bidirectional",
+    continuityId: 1,
+  });
+  const current = data({
+    phase: "bidirectional",
+    throughput: [
+      sample(0, "down", 1000),
+      sample(0, "up", 2000),
+      sample(1000, "down", 1000),
+      sample(1000, "up", 2000),
+    ],
+  });
+  let published!: ChartPresentation;
+  const engine = new ChartEngine(
+    () => current,
+    (next) => (published = next),
+  );
+  try {
+    engine.attach(canvas);
+    engine.render(0);
+    expect(
+      engine.inspect(published.layout.x(1000))?.downBytesPerSec,
+    ).toBeCloseTo(1000, 8);
+    expect(
+      appendThroughputSample(current.throughput, sample(1000, "down", 500)),
+    ).toBe(true);
+    current.throughputRevision++;
+    appendThroughputSample(current.throughput, sample(2000, "up", 700));
+    engine.wake();
+    engine.render(16);
+    expect(engine.inspect(published.layout.x(1000))).toMatchObject({
+      downBytesPerSec: 500,
+      upBytesPerSec: 2000,
+    });
+    expect(engine.inspect(published.layout.x(2000))?.upBytesPerSec).toBeCloseTo(
+      700,
+      8,
+    );
+  } finally {
+    engine.destroy();
+    restore();
+  }
+});
 
 test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
   const { canvas, restore } = canvasEnvironment(true);

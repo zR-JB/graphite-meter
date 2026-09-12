@@ -341,6 +341,31 @@ test("replacement checkpoint bytes enter only the exact final reduction", () => 
   expect(result?.fullAverageBytesPerSec).toBe(1_000);
   expect(result?.serverAuthoritative).toBe(true);
 });
+test("terminal same-clock bytes correct final throughput without adding duration, rate confidence, or server authority", () => {
+  const accum = fresh();
+  accum.pushThroughput("download", "down", 1000, 1);
+  const before = accum.confidence("download");
+  accum.pushThroughput("download", "down", 200, 0);
+  const result = accum.throughputResult("download", false);
+  expect(result.totalBytes).toBe(1200);
+  expect(result.fullAverageBytesPerSec).toBe(1200);
+  expect(result.reportedBytesPerSec).toBe(1200);
+  expect(result.serverAuthoritative).toBeUndefined();
+  expect(accum.confidence("download")).toEqual(before);
+});
+test("terminal bytes stay in the final stable window without borrowing an earlier interval", () => {
+  const accum = fresh();
+  accum.pushThroughput("download", "down", 100, 0.1);
+  accum.trackStableRun("download", 0, adaptive);
+  accum.pushThroughput("download", "down", 100, 1);
+  accum.trackStableRun("download", 1, adaptive);
+  accum.pushThroughput("download", "down", 20, 0);
+  const result = accum.throughputResult("download", true);
+  expect(result.method).toBe("stable-window");
+  expect(result.totalBytes).toBe(220);
+  expect(result.reportedBytesPerSec).toBe(120);
+  expect(result.fullAverageBytesPerSec).toBeCloseTo(200, 8);
+});
 test("partial latency needs named outcome and success evidence floors", () => {
   const accum = fresh();
   for (let i = 0; i < MIN_PARTIAL_LATENCY_OUTCOMES - 1; i++)

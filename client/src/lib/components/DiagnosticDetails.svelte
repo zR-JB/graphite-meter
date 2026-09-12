@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { positionPopover } from "../actions/floating";
   import type { Snippet } from "svelte";
   import { ICON } from "../constants";
   let { label, children }: { label: string; children: Snippet } = $props();
@@ -9,18 +10,18 @@
   let open = $state(false);
   function position() {
     const rect = trigger.getBoundingClientRect();
-    const below = innerHeight - rect.bottom - 14;
-    const above = rect.top - 14;
-    panel.style.maxHeight = `${Math.max(80, Math.min(420, Math.max(below, above)))}px`;
-    panel.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - panel.offsetWidth - 8))}px`;
-    panel.style.top = `${Math.max(8, below >= panel.offsetHeight || below >= above ? rect.bottom + 6 : rect.top - panel.offsetHeight - 6)}px`;
+    positionPopover(panel, rect, { width: 360, minHeight: 80, maxHeight: 420 });
   }
   $effect(() => {
     if (!open) return;
     window.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
     document.addEventListener("scroll", position, true);
     return () => {
       window.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("scroll", position);
       document.removeEventListener("scroll", position, true);
     };
   });

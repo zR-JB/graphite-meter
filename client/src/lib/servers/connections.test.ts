@@ -341,6 +341,115 @@ test("removing a blocked server releases capacity and rejects its late evidence"
   }
 });
 
+test("immediate reselection does not join discovery aborted by deselection", async () => {
+  const held = deferred<ReturnType<typeof testPreparedPaths>["discovery"]>();
+  let discoveries = 0;
+  const { manager, config } = fixture(
+    async () => preparation(),
+    async () => {
+      return ++discoveries === 1 ? held.promise : testPreparedPaths().discovery;
+    },
+  );
+  try {
+    manager.select([{ id: "self", config }]);
+    const old = manager.check().catch((error) => error);
+    await settle();
+    manager.select([]);
+    manager.select([{ id: "self", config }]);
+    await manager.check();
+    expect((await old).name).toBe("AbortError");
+    expect(discoveries).toBe(2);
+    expect(manager.ready()).toBe(true);
+    held.resolve({ ...testPreparedPaths().discovery, generation: "obsolete" });
+    await settle();
+    expect(manager.paths("self")!.discovery.generation).toBe("gen-a");
+  } finally {
+    manager.dispose();
+  }
+});
+
+test("expired grants cannot reuse fresh prepared paths on immediate reselection", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  const { manager, config, views } = fixture(async () => preparation());
+  try {
+    manager.select([{ id: "peer", config }]);
+    manager.authorize({
+      ...manager.credentials("peer")!,
+      kind: "grant",
+      token: "test-only",
+      expiresAt: 2000,
+    });
+    await manager.check();
+    expect(manager.ready()).toBe(true);
+    manager.select([]);
+    clock.mockReturnValue(2001);
+    manager.select([{ id: "peer", config }]);
+    expect(manager.ready()).toBe(false);
+    expect(views.get("peer")!.readiness).toMatchObject({
+      state: "sign-in",
+      message: "Sign in to node-a",
+    });
+  } finally {
+    manager.dispose();
+    clock.mockRestore();
+  }
+});
+
+for (const selected of [true, false])
+  test(`grant expiry becomes sign-in without network polling (${selected ? "selected and visible" : "unselected after visibility resumes"})`, async () => {
+    const clock = spyOn(Date, "now").mockReturnValue(1000);
+    const originalTimeout = globalThis.setTimeout;
+    let deadline: (() => void) | undefined;
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
+      ...[run, delay, ...args]: Parameters<typeof setTimeout>
+    ) => {
+      if (delay === 1000 || delay === 0) deadline = () => run(...args);
+      return originalTimeout(run, delay, ...args);
+    }) as typeof setTimeout);
+    let requests = 0;
+    const { manager, config, views } = fixture(
+      async () => {
+        requests++;
+        return preparation();
+      },
+      async () => {
+        requests++;
+        return testPreparedPaths().discovery;
+      },
+    );
+    try {
+      manager.select([{ id: "peer", config }]);
+      manager.authorize({
+        ...manager.credentials("peer")!,
+        kind: "grant",
+        token: "test-only",
+        expiresAt: 2000,
+      });
+      await manager.check();
+      manager.activity(true, null);
+      if (!selected) manager.select([]);
+      expect(deadline).toBeDefined();
+      if (!selected) manager.activity(false, null);
+      clock.mockReturnValue(2001);
+      const before = requests;
+      if (!selected) manager.activity(true, null);
+      deadline!();
+      await settle();
+      expect(views.get("peer")!.readiness.state).toBe("sign-in");
+      expect(manager.paths("peer")).toBeNull();
+      expect(requests).toBe(before);
+      const renewal = manager.credentials("peer")!;
+      manager.authorize({ ...renewal, expiresAt: 6000 });
+      manager.select([{ id: "peer", config }]);
+      await manager.check();
+      expect(manager.ready()).toBe(true);
+    } finally {
+      manager.dispose();
+      timer.mockRestore();
+      clock.mockRestore();
+    }
+  });
+
 test("cancelling Start aborts its probes without blocking a later check", async () => {
   const held = deferred<ConnectionPreparation>();
   const signals: AbortSignal[] = [];

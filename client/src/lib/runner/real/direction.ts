@@ -257,8 +257,8 @@ export class TransferDirection {
     now = performance.now(),
   ): void {
     const durationSec = (now - aggregation.lastAggregateAt) / 1000;
-    // A window with no duration has nothing to ingest against: leave its lane bytes pending for the next one.
-    if (durationSec <= 0) return;
+    // Keep an open window pending; terminal bytes can correct its ledger without adding time.
+    if (durationSec < 0 || (durationSec === 0 && !this.#stopping)) return;
     aggregation.lastAggregateAt = now;
     let delta = 0;
     for (let i = 0; i < aggregation.pendingLaneBytes.length; i++) {
@@ -269,12 +269,13 @@ export class TransferDirection {
       if (laneBytes <= 0 || laneSec <= 0) continue;
       delta += laneBytes;
     }
+    if (durationSec === 0 && delta === 0) return;
     this.#deps.host.ingestThroughput(
       this.dir,
       delta,
       durationSec,
       false,
-      this.#deps.sampleProvesStageLiveness?.() ?? true,
+      !this.#stopping && (this.#deps.sampleProvesStageLiveness?.() ?? true),
     );
   }
 

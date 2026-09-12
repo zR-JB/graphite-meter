@@ -310,6 +310,58 @@ test("graceful stop aggregates a lane's final progress report", async () => {
   await direction.stop();
   expect(bytes.reduce((sum, delta) => sum + delta, 0)).toBe(17);
 });
+for (const asynchronous of [false, true])
+  for (const alreadyFlushed of [false, true])
+    test(`terminal download bytes retain their time window (async=${asynchronous}, flushed=${alreadyFlushed})`, async () => {
+      const clock = testClock();
+      const previousNow = performance.now;
+      performance.now = clock.now;
+      const samples: { bytes: number; seconds: number; liveness: boolean }[] =
+        [];
+      const direction = newDirection(clock, undefined, {
+        dir: "down",
+        stage: "download",
+        host: fakeHost(recording(), clock, {
+          ingestThroughput(
+            _dir: string,
+            bytes: number,
+            seconds: number,
+            _authoritative: boolean,
+            liveness: boolean,
+          ) {
+            samples.push({ bytes, seconds, liveness });
+          },
+        }),
+        makeLane: (events) =>
+          lane(
+            () => {},
+            async () => {
+              if (asynchronous) await Promise.resolve();
+              events.onProgress(17, 25, 1);
+            },
+          ),
+      });
+      try {
+        direction.spawn();
+        direction.measure();
+        clock.advance(25);
+        if (alreadyFlushed) direction.flush();
+        await direction.stop();
+        expect(samples.reduce((sum, sample) => sum + sample.bytes, 0)).toBe(17);
+        expect(samples.reduce((sum, sample) => sum + sample.seconds, 0)).toBe(
+          0.025,
+        );
+        expect(samples.at(-1)).toEqual({
+          bytes: 17,
+          seconds: 0,
+          liveness: false,
+        });
+      } finally {
+        direction.discard();
+        performance.now = previousNow;
+      }
+    });
+
 test("a healthy download cannot mask a stalled upload", () => {
   expect(transferStageStalled([{ stalled: false }, { stalled: true }])).toBe(
     true,

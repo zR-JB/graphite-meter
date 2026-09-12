@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { positionPopover } from "../actions/floating";
   import type { ServerIdentity } from "../servers/catalog";
   import { serverLabel } from "../presentation/serverAppearance";
 
@@ -42,12 +43,11 @@
 
   function position() {
     const rect = trigger.getBoundingClientRect();
-    const below = innerHeight - rect.bottom - 14;
-    const above = rect.top - 14;
-    menu.style.width = `${Math.min(Math.max(rect.width, 220), innerWidth - 16)}px`;
-    menu.style.maxHeight = `${Math.max(44, Math.min(320, Math.max(below, above)))}px`;
-    menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8))}px`;
-    menu.style.top = `${Math.max(8, below >= menu.offsetHeight || below >= above ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6)}px`;
+    positionPopover(menu, rect, {
+      width: Math.max(rect.width, 220),
+      minHeight: 44,
+      maxHeight: 320,
+    });
   }
   function highlight(index: number) {
     active = index;
@@ -137,9 +137,13 @@
         enabled.find((index) => options[index].id === value) ?? enabled[0],
       );
     window.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("resize", position);
+    window.visualViewport?.addEventListener("scroll", position);
     document.addEventListener("scroll", position, true);
     return () => {
       window.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("resize", position);
+      window.visualViewport?.removeEventListener("scroll", position);
       document.removeEventListener("scroll", position, true);
     };
   });

@@ -506,8 +506,8 @@ export function createApplicationController(
     requestValidation();
   }
   function visibilityChanged() {
-    refreshIdle();
-    schedule();
+    if (hidden()) schedule();
+    else requestValidation();
   }
 
   async function validateConnections(

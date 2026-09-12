@@ -5,18 +5,36 @@ export const PRESENTATION_POINT_LIMIT = 1_200;
 const throughputKey = (sample: ThroughputSample): string =>
   `${sample.phase}:${sample.dir}:${sample.continuityId}`;
 
+/** Replace an equal-time point in its own series; only the timestamp tail can match. */
+export function upsertThroughputSample(
+  history: ThroughputSample[],
+  sample: ThroughputSample,
+): boolean {
+  const key = throughputKey(sample);
+  for (let i = history.length - 1; i >= 0 && history[i].t === sample.t; i--) {
+    if (throughputKey(history[i]) !== key) continue;
+    history[i] = sample;
+    return true;
+  }
+  history.push(sample);
+  return false;
+}
+
+/** True means existing history changed and incremental indexes must be rebuilt. */
 export function appendThroughputSample(
   history: ThroughputSample[],
   sample: ThroughputSample,
   limit = PRESENTATION_POINT_LIMIT,
   targetSpanMs = 0,
 ): boolean {
-  history.push(sample);
-  if (history.length <= limit) return false;
-  return compactThroughputHistory(
-    history,
-    Math.max(targetSpanMs, history.at(-1)!.t - history[0].t),
-    limit,
+  const replaced = upsertThroughputSample(history, sample);
+  if (history.length <= limit) return replaced;
+  return (
+    compactThroughputHistory(
+      history,
+      Math.max(targetSpanMs, history.at(-1)!.t - history[0].t),
+      limit,
+    ) || replaced
   );
 }
 
@@ -30,13 +48,16 @@ export function compactThroughputHistory(
     if (changed) history.splice(0, history.length);
     return changed;
   }
-  const series = new Set(history.map(throughputKey)).size;
+  // Saved histories can predate equal-time replacement. Canonicalize before selecting extrema.
+  const canonical: ThroughputSample[] = [];
+  for (const sample of history) upsertThroughputSample(canonical, sample);
+  const series = new Set(canonical.map(throughputKey)).size;
   const span = Math.max(1, targetSpanMs, history.at(-1)!.t - history[0].t);
   let width = Math.max(1, span / Math.max(1, Math.floor(limit / (series * 2))));
-  let reduced = reduceThroughput(history, width);
+  let reduced = reduceThroughput(canonical, width);
   while (reduced.length > limit && width < span) {
     width *= 2;
-    reduced = reduceThroughput(history, width);
+    reduced = reduceThroughput(canonical, width);
   }
   if (reduced.length > limit) reduced = evenlySpaced(reduced, limit);
   if (

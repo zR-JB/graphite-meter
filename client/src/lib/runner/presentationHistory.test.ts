@@ -5,6 +5,49 @@ import {
   compactLatencyHistory,
   compactThroughputHistory,
 } from "./presentationHistory";
+const throughput = (
+  t: number,
+  bytesPerSec: number,
+  dir: "down" | "up" = "down",
+  continuityId = 1,
+): ThroughputSample => ({
+  t,
+  bytesPerSec,
+  bytesCumulative: bytesPerSec,
+  dir,
+  phase: "bidirectional",
+  continuityId,
+});
+
+test("equal-time updates replace only their series and invalidate incremental history", () => {
+  const history: ThroughputSample[] = [];
+  const down = throughput(100, 1000),
+    up = throughput(100, 2000, "up"),
+    latest = throughput(100, 500);
+  expect(appendThroughputSample(history, down)).toBe(false);
+  expect(appendThroughputSample(history, up)).toBe(false);
+  expect(appendThroughputSample(history, latest)).toBe(true);
+  expect(history).toEqual([latest, throughput(100, 2000, "up")]);
+  expect(history[0].bytesCumulative).toBe(500);
+  const resumed = throughput(100, 700, "down", 2);
+  expect(appendThroughputSample(history, resumed)).toBe(false);
+  const nextPhase = { ...latest, phase: "download" as const };
+  expect(appendThroughputSample(history, nextPhase)).toBe(false);
+  expect(history.slice(2)).toEqual([resumed, nextPhase]);
+});
+
+test("compaction canonicalizes saved equal-time updates before preserving extrema", () => {
+  const latest = throughput(100, 200);
+  const history = [
+    throughput(0, 0),
+    throughput(100, 900),
+    latest,
+    throughput(200, 500),
+  ];
+  expect(compactThroughputHistory(history, 200)).toBe(true);
+  expect(history).toEqual([throughput(0, 0), latest, throughput(200, 500)]);
+});
+
 test("long throughput history stays bounded across the complete timeline", () => {
   const history: ThroughputSample[] = [];
   for (let i = 0; i < 20_000; i++) {

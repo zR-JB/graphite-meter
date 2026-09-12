@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { observeWidth } from "../actions/observeWidth";
   // Main console shell: owns top-level panels, shortcuts,
   // theme toggle, and docked/flyout layout state.
   import { onMount, tick, type Component } from "svelte";
@@ -616,7 +617,7 @@
 
 <main
   id="console"
-  bind:clientWidth={consoleWidth}
+  use:observeWidth={(width) => (consoleWidth = width)}
   data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
   class="bg-bg text-text"

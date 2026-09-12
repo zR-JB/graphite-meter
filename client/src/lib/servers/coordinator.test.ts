@@ -20,6 +20,7 @@ async function run(
     laterPreparationFailure?: boolean;
     adaptive?: boolean;
     readinessOwnsReceiver?: boolean;
+    terminalDownloadBytes?: number;
   } = {},
 ) {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
@@ -90,6 +91,14 @@ async function run(
       },
       onStageEnd(_activity, flush = true) {
         calls.push(`end:${id}`);
+        if (flush && options.terminalDownloadBytes)
+          host.ingestThroughput(
+            "down",
+            options.terminalDownloadBytes,
+            0,
+            false,
+            false,
+          );
         if (!flush && options.pendingLatency)
           host.ingestLatencyAccountingIncomplete();
       },
@@ -206,6 +215,16 @@ test("verified stage readiness is not overturned by a redundant receiver request
   expect(result.multiServer?.failures).toEqual([]);
   expect(calls.filter((call) => call.startsWith("ready:"))).toHaveLength(4);
   expect(result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
+}, 6000);
+
+test("terminal bytes after the coordinated boundary cannot change measured totals or rates", async () => {
+  const { result } = await run({ terminalDownloadBytes: 1_000_000 });
+  expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
+  expect(result.download?.totalBytes).toBeLessThan(10_000);
+  for (const server of result.multiServer!.servers) {
+    expect(server.totalBytes.down).toBeLessThan(10_000);
+    expect(server.download?.totalBytes).toBeLessThan(10_000);
+  }
 }, 6000);
 
 test("a late dropout leaves the headline unavailable while retaining earlier measurements", async () => {

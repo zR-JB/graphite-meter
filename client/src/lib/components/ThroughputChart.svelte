@@ -246,6 +246,7 @@
     engine = new ChartEngine(
       () => ({
         throughput: store.throughput,
+        throughputRevision: store.throughputRevision,
         latency: store.latency, // raw event-time buckets drive glyphs, axes, and hover
         latencyRevision: store.latencyRevision,
         latencyEnabled: store.latencyEnabled,

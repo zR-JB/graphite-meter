@@ -806,6 +806,62 @@ test("a path-specific validation failure leaves global keepalive state unchanged
   );
 });
 
+test("visibility resume reuses fresh checks and refreshes expired discovery after a server restart", async () => {
+  const timers = stubValidationTimers();
+  let generation = "gen-a";
+  let discoveries = 0;
+  const evidence = () => {
+    const paths = testPreparedPaths();
+    paths.discovery.generation = generation;
+    paths.throughput.generation = generation;
+    paths.latency!.generation = generation;
+    return paths;
+  };
+  try {
+    await withValidationRunner(
+      async () => evidence(),
+      async ({ environment, probeCalls }) => {
+        const { store } = await import("../state/store.svelte");
+        expect(store.serverReadiness.get("self")!.state).toBe("ready");
+        environment.setVisibility("hidden");
+        timers.advance(90000);
+        environment.setVisibility("visible");
+        timers.advance(0);
+        await settleMicrotasks();
+        expect(probeCalls()).toBe(2);
+        expect(discoveries).toBe(1);
+        expect(timers.size()).toBe(0);
+        environment.setVisibility("hidden");
+        timers.advance(CONNECTION_FRESH_MS + 1);
+        generation = "gen-b";
+        expect(probeCalls()).toBe(2);
+        environment.setVisibility("visible");
+        expect(store.serverReadiness.get("self")!.state).not.toBe("ready");
+        for (let turn = 0; turn < 5; turn++) {
+          timers.advance(0);
+          await settleMicrotasks();
+        }
+        expect(discoveries).toBe(2);
+        expect(probeCalls()).toBe(4);
+        expect(store.serverReadiness.get("self")!.state).toBe("ready");
+        expect(store.serverDiscoveries.get("self")!.generation).toBe("gen-b");
+        expect(
+          store.serverValidation.get("self")!.latency.path!.generation,
+        ).toBe("gen-b");
+        expect(timers.size()).toBe(0);
+      },
+      undefined,
+      testServerCatalog,
+      async () => {
+        discoveries++;
+        return evidence().discovery;
+      },
+    );
+  } finally {
+    timers.restore();
+  }
+});
+
 test("validation scheduler leaves healthy paths idle, backs off failures, and defers hidden or active work", async () => {
   let offline = false;
   const timers = stubValidationTimers();
