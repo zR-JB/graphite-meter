@@ -303,6 +303,7 @@ export class ServerConnections {
     const state = this.#servers.get(id);
     const paths =
       state?.config &&
+      !this.#expiredGrant(state) &&
       !state.discoveryError &&
       preparedPaths(
         state.config,
@@ -421,6 +422,12 @@ export class ServerConnections {
   #current(state: ServerState): boolean {
     return !this.#disposed && this.#servers.get(state.server.id) === state;
   }
+  #expiredGrant(state: ServerState): boolean {
+    return (
+      state.credentials.kind === "grant" &&
+      (state.credentials.expiresAt ?? 0) <= Date.now()
+    );
+  }
   #required(state: ServerState): ConnectionRole[] {
     return state.config
       ? CONNECTION_ROLES.filter(
@@ -483,7 +490,8 @@ export class ServerConnections {
     force = false,
     owner?: AbortSignal,
   ): Promise<TransportDiscovery> {
-    if (state.discoveryTask) return state.discoveryTask.promise;
+    if (state.discoveryTask && !state.discoveryTask.abort.signal.aborted)
+      return state.discoveryTask.promise;
     if (
       state.discovery &&
       !state.discoveryError &&
@@ -679,6 +687,7 @@ export class ServerConnections {
       : Date.now() + connectionFailureBackoff(++retry.attempts);
   }
   #view(state: ServerState): ServerConnectionView {
+    const expired = this.#expiredGrant(state);
     const roles = this.#required(state);
     const capability =
       state.config && uploadCapabilityFailure(state.config, state.discovery);
@@ -686,11 +695,14 @@ export class ServerConnections {
       (role) => state.validation[role].state === "failed",
     );
     const auth =
+      expired ||
       (!!state.discoveryError && state.discoveryRetry.authentication) ||
       roles.some((role) => state.roles[role].retry.authentication);
-    const message = state.discoveryError
-      ? connectionFailureMessage(state.discoveryError, state.server)
-      : capability || (failed && state.validation[failed].message);
+    const message = expired
+      ? new ServerAuthenticationRequired(state.server).message
+      : state.discoveryError
+        ? connectionFailureMessage(state.discoveryError, state.server)
+        : capability || (failed && state.validation[failed].message);
     const paths = this.paths(state.server.id);
     const checking =
       !!state.discoveryTask || roles.some((role) => !!state.roles[role].task);
@@ -771,6 +783,7 @@ export class ServerConnections {
       if (!idle) continue;
       if (
         this.#enabled &&
+        !this.#expiredGrant(state) &&
         !state.discoveryError &&
         state.config &&
         state.server.id === this.#idleServer &&
@@ -791,6 +804,11 @@ export class ServerConnections {
     if (!this.#enabled || this.#disposed) return;
     let at = Infinity;
     for (const state of this.#servers.values()) {
+      if (
+        state.credentials.kind === "grant" &&
+        !state.discoveryRetry.authentication
+      )
+        at = Math.min(at, state.credentials.expiresAt ?? 0);
       if (state.discoveryTask) continue;
       if (!state.config) {
         if (
@@ -827,6 +845,13 @@ export class ServerConnections {
   #pump(): void {
     if (!this.#enabled || this.#disposed) return;
     for (const state of this.#servers.values()) {
+      if (this.#expiredGrant(state) && !state.discoveryRetry.authentication) {
+        this.requireAuthentication(
+          state.server.id,
+          new ServerAuthenticationRequired(state.server).message,
+        );
+        continue;
+      }
       if (state.discoveryTask) continue;
       if (!state.config) {
         if (

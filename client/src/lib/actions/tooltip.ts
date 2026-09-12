@@ -1,3 +1,4 @@
+import { floatingViewport, clampFloatingPosition } from "./floating";
 // Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
@@ -78,23 +79,23 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function place() {
     if (!bubble) return;
     const anchor = node.getBoundingClientRect();
+    const viewport = floatingViewport();
+    bubble.style.maxWidth = `${Math.max(0, Math.min(300, viewport.width - 16))}px`;
     const bubbleBox = bubble.getBoundingClientRect();
     const margin = 8;
-    const anchorCenterX = anchor.left + anchor.width / 2;
     let top =
       opts.placement === "bottom"
         ? anchor.bottom + margin
         : anchor.top - bubbleBox.height - margin;
-    if (top < margin) top = anchor.bottom + margin;
-    if (top + bubbleBox.height > window.innerHeight - margin)
+    if (top < viewport.top + margin) top = anchor.bottom + margin;
+    if (top + bubbleBox.height > viewport.bottom - margin)
       top = anchor.top - bubbleBox.height - margin;
-    let left = anchorCenterX - bubbleBox.width / 2;
-    left = Math.max(
-      margin,
-      Math.min(left, window.innerWidth - bubbleBox.width - margin),
+    clampFloatingPosition(
+      bubble,
+      anchor.left + (anchor.width - bubbleBox.width) / 2,
+      top,
+      viewport,
     );
-    bubble.style.top = `${Math.max(margin, top)}px`;
-    bubble.style.left = `${left}px`;
   }
   function show() {
     if (opts.disabled || bubble || !opts.text) return;
@@ -234,6 +235,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   }
   const dismissListeners = [
     [window, "blur", hide, false],
+    ...(window.visualViewport
+      ? ([
+          [window.visualViewport, "resize", hide, false],
+          [window.visualViewport, "scroll", hide, false],
+        ] as const)
+      : []),
     [document, "visibilitychange", onVisibilityDismiss, false],
     [document, "scroll", hide, true],
     [document, "pointerdown", onDocumentPointerDown, true],

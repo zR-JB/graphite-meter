@@ -130,10 +130,16 @@ export class RunAccumulator {
     serverAuthoritative = false,
     observedAtMs?: number,
   ): void {
-    if (durationSec <= 0) return;
+    if (durationSec < 0) return;
     const accum = this.#lane(phase, dir);
     const durationMs = durationSec * 1_000;
     const bytes = Math.max(0, bytesDelta);
+    // A terminal delivery can share the preceding flush's clock tick. It adds bytes, not another rate window.
+    if (durationSec === 0) {
+      accum.bytes += bytes;
+      accum.serverAuthoritative ||= serverAuthoritative;
+      return;
+    }
     const rate = bytes / durationSec;
     accum.bytesBeforeLatest = accum.bytes;
     accum.evidenceBeforeLatestMs = accum.evidenceMs;

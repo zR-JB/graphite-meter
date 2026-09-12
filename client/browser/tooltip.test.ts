@@ -135,6 +135,7 @@ test("tooltip inside a native diagnostic popover paints above it and leaves with
   });
   try {
     await server.listen();
+    await page.setViewportSize({ width: 568, height: 480 });
     await page.goto(server.resolvedUrls!.local[0]);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate(async () => {
@@ -149,7 +150,10 @@ test("tooltip inside a native diagnostic popover paints above it and leaves with
       term.textContent = "Partial accounting";
       host.append(term);
       document.body.append(host);
-      tooltip(term, { text: "Some probe outcomes are unknown", instant: true });
+      tooltip(term, {
+        text: "Some probe outcomes are unknown and remain separate from timed-out replies.",
+        instant: true,
+      });
       host.showPopover();
     });
     await page.locator("#diagnostic-host span").hover();
@@ -165,6 +169,29 @@ test("tooltip inside a native diagnostic popover paints above it and leaves with
         );
         element.style.pointerEvents = "none";
         return top === element;
+      }),
+    ).toBe(true);
+    const cdp = await page.context.newCDPSession(page);
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+    await expect(tip).toBeHidden();
+    await page
+      .locator("#diagnostic-host span")
+      .evaluate((node) =>
+        node.dispatchEvent(
+          new PointerEvent("pointerenter", { pointerType: "mouse" }),
+        ),
+      );
+    await expect(tip).toBeVisible();
+    expect(
+      await tip.evaluate((node) => {
+        const box = node.getBoundingClientRect();
+        const viewport = visualViewport!;
+        return (
+          box.left >= viewport.offsetLeft &&
+          box.top >= viewport.offsetTop &&
+          box.right <= viewport.offsetLeft + viewport.width &&
+          box.bottom <= viewport.offsetTop + viewport.height
+        );
       }),
     ).toBe(true);
     await page.evaluate(() =>

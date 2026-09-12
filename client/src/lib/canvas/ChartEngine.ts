@@ -4,6 +4,7 @@ import type {
   LatencyBucket,
 } from "../runner/contract";
 import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
+import { upsertThroughputSample } from "../runner/presentationHistory";
 import {
   latencyBucketExceedsScale,
   latencyScaleForHistory,
@@ -26,6 +27,8 @@ const LATENCY_GLYPH_ENTER_MS = 90;
 const LATENCY_ANIMATION_WINDOW = 32;
 export interface ChartData {
   throughput: ThroughputSample[];
+  /** Increments when existing throughput points change, including equal-time replacement. */
+  throughputRevision: number;
   latency: LatencyBucket[];
   /** Increments when non-tail latency history changes, invalidating incremental indexes. */
   latencyRevision: number;
@@ -189,6 +192,7 @@ export class ChartEngine {
   #runSeq = -1; // last-seen store.runSeq; a change triggers a full reset
   #hasThroughputScale = false;
   #indexedThroughput = 0;
+  #throughputRevision = -1;
   #lastIndexedThroughput: ThroughputSample | undefined;
   #throughputByLane: Record<ThroughputLane, ThroughputSample[]> = {
     download: [],
@@ -690,6 +694,7 @@ export class ChartEngine {
   #indexData(data: ChartData): void {
     const all = data.throughput;
     if (
+      data.throughputRevision !== this.#throughputRevision ||
       all.length < this.#indexedThroughput ||
       (all.length === this.#indexedThroughput &&
         all.at(-1) !== this.#lastIndexedThroughput)
@@ -705,9 +710,10 @@ export class ChartEngine {
             ? "bidiDown"
             : "bidiUp"
           : sample.phase;
-      this.#throughputByLane[lane].push(sample);
+      upsertThroughputSample(this.#throughputByLane[lane], sample);
     }
     this.#indexedThroughput = all.length;
+    this.#throughputRevision = data.throughputRevision;
     this.#lastIndexedThroughput = all.at(-1);
     this.#latencyIndex.update(data.latency, data.latencyRevision);
   }
