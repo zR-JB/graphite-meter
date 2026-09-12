@@ -71,6 +71,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let autoDismissTimer = 0;
   let hoverTimer = 0;
   let focusFrame = 0;
+  let focusGeneration = 0;
+  let placement: {
+    anchor: DOMRect;
+    viewport: ReturnType<typeof floatingViewport>;
+  } | null = null;
   // Non-interactive jargon terms still need keyboard focus for aria-describedby.
   if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
     node.tabIndex = 0;
@@ -80,6 +85,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     if (!bubble) return;
     const anchor = node.getBoundingClientRect();
     const viewport = floatingViewport();
+    placement = { anchor, viewport };
     bubble.style.maxWidth = `${Math.max(0, Math.min(300, viewport.width - 16))}px`;
     const bubbleBox = bubble.getBoundingClientRect();
     const margin = 8;
@@ -143,7 +149,32 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function onVisibilityDismiss() {
     if (document.visibilityState !== "visible") hide();
   }
+  function onLayoutChange(event: Event) {
+    const previous = placement;
+    if (!previous) return;
+    if (
+      event.type === "scroll" &&
+      event.target instanceof Node &&
+      !event.target.contains(node)
+    ) {
+      hide();
+      return;
+    }
+    const anchor = node.getBoundingClientRect();
+    const viewport = floatingViewport();
+    // Focus reveal and viewport updates can deliver a queued notification
+    // after placement. Only actual movement invalidates the visible tooltip.
+    if (
+      (["left", "top", "width", "height"] as const).some(
+        (key) =>
+          anchor[key] !== previous.anchor[key] ||
+          viewport[key] !== previous.viewport[key],
+      )
+    )
+      hide();
+  }
   function hide() {
+    focusGeneration++;
     clearHoverTimer();
     if (focusFrame) {
       cancelAnimationFrame(focusFrame);
@@ -164,6 +195,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       leaving.getAnimations().map((animation) => animation.finished),
     ).then(() => leaving.remove());
     bubble = null;
+    placement = null;
     if (prevDescribedBy === null) node.removeAttribute("aria-describedby");
     else node.setAttribute("aria-describedby", prevDescribedBy);
     prevDescribedBy = null;
@@ -197,9 +229,29 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function onFocus(event: FocusEvent) {
     const target = event.target as HTMLElement;
     if (!target.matches(":focus-visible")) return;
-    // Let focus reveal and its queued scroll event settle across rendering
-    // before subscribing to dismissal, including resized history details.
-    focusFrame = requestAnimationFrame(() => {
+    const generation = ++focusGeneration;
+    // A newly opened workspace can still be entering when keyboard focus lands.
+    // Wait for its finite motion and focus reveal before placing the tooltip.
+    focusFrame = requestAnimationFrame(async () => {
+      const animations: Animation[] = [];
+      for (
+        let anchor: HTMLElement | null = target;
+        anchor;
+        anchor = anchor.parentElement
+      )
+        animations.push(
+          ...anchor
+            .getAnimations()
+            .filter(
+              (animation) =>
+                animation.playState === "running" &&
+                animation.effect?.getComputedTiming().iterations !== Infinity,
+            ),
+        );
+      await Promise.allSettled(
+        animations.map((animation) => animation.finished),
+      );
+      if (generation !== focusGeneration) return;
       focusFrame = requestAnimationFrame(() => {
         focusFrame = 0;
         if (
@@ -237,12 +289,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     [window, "blur", hide, false],
     ...(window.visualViewport
       ? ([
-          [window.visualViewport, "resize", hide, false],
-          [window.visualViewport, "scroll", hide, false],
+          [window.visualViewport, "resize", onLayoutChange, false],
+          [window.visualViewport, "scroll", onLayoutChange, false],
         ] as const)
       : []),
     [document, "visibilitychange", onVisibilityDismiss, false],
-    [document, "scroll", hide, true],
+    [document, "scroll", onLayoutChange, true],
     [document, "pointerdown", onDocumentPointerDown, true],
   ] as const;
   const nodeListeners = [

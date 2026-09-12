@@ -31,6 +31,15 @@ test("keyboard tooltip survives focus reveal but dismisses on later scroll", asy
   await expect(bits).toBeFocused();
   await expect(page.getByRole("tooltip")).toContainText("Bits per second");
 
+  // A queued focus-reveal scroll can arrive after the tooltip has appeared.
+  // Its geometry already includes that scroll; the notification is not a move.
+  await scrollport.dispatchEvent("scroll");
+  await page.evaluate(() => {
+    visualViewport?.dispatchEvent(new Event("resize"));
+    visualViewport?.dispatchEvent(new Event("scroll"));
+  });
+  await expect(page.getByRole("tooltip")).toContainText("Bits per second");
+
   await scrollport.evaluate((node) => {
     node.scrollTop += 40;
   });
@@ -57,6 +66,51 @@ test("blur cancels a keyboard tooltip waiting for the focus reveal frame", async
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
+  await expect(page.getByRole("tooltip")).toBeHidden();
+});
+
+test("keyboard tooltip waits for ancestor motion and cancels when focus leaves", async ({
+  page,
+}) => {
+  await openApp(page);
+  const settings = await openSettings(page);
+  await page.keyboard.press("Tab");
+  const bits = settings.getByRole("button", { name: "Bits", exact: true });
+  const animate = () =>
+    bits.evaluate((node) => {
+      node.parentElement!.animate(
+        [{ transform: "translateY(12px) scale(.98)" }, { transform: "none" }],
+        { duration: 600 },
+      );
+      node.focus();
+    });
+  await animate();
+  await expect(bits).toBeFocused();
+  await expect(page.getByRole("tooltip")).toBeHidden();
+  await expect(page.getByRole("tooltip")).toContainText("Bits per second");
+  expect(
+    await bits.evaluate((node) => node.parentElement!.getAnimations().length),
+  ).toBe(0);
+
+  await bits.evaluate((node) => node.blur());
+  await animate();
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await bits.evaluate((node) => node.blur());
+  await bits.evaluate(async (node: HTMLElement) => {
+    await Promise.allSettled(
+      node
+        .parentElement!.getAnimations()
+        .map((animation) => animation.finished),
+    );
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
   await expect(page.getByRole("tooltip")).toBeHidden();
 });
 
