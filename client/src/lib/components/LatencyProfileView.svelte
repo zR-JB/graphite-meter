@@ -360,6 +360,7 @@
     font-weight: 600;
   }
   .lanes {
+    container: latency-lanes / inline-size;
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
@@ -425,13 +426,10 @@
     height: 11px;
   }
   .lane-label {
-    min-width: 0;
-    flex: 1 1 auto;
-    overflow: hidden;
+    flex: 1 0 auto;
     color: var(--text-muted);
     font: 800 10px var(--font-mono);
     letter-spacing: 0.06em;
-    text-overflow: ellipsis;
     text-transform: uppercase;
     white-space: nowrap;
   }
@@ -681,9 +679,15 @@
     top: 3px;
     bottom: 3px;
   }
-  @media (max-width: 759px) {
+  @container latency-lanes (max-width: 420px) {
+    .jit,
     .range-label {
       display: none;
+    }
+  }
+  @container latency-lanes (max-width: 300px) {
+    .lanes[data-variant] .lane-meta strong {
+      font-size: 11px;
     }
   }
 </style>
