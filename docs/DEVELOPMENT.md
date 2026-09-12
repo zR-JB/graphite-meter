@@ -196,7 +196,8 @@ check which protocol the listener actually observed. CI runs connections, measur
 authentication, and performance suites on separate runners. Locally, `GM_E2E_SUITE`
 selects one of those suites; the default runs all four in separate processes. The
 authentication suite also separates home login from peer approval so real login
-limits are independent of test order. The stubbed browser suite remains the fast
+limits are independent of test order. Measurement runs the mutual-catalogue partial-access
+cases in their own process and fleet. The stubbed browser suite remains the fast
 way to reproduce layout, keyboard, history, and failure states deterministically.
 
 ### Worktree verification
@@ -214,8 +215,8 @@ GM_E2E_PORT_BASE=17256 mise run client-e2e
 ```
 
 The base defaults to 7256. The standalone transport server uses offsets 0–3; the
-five-server catalogue uses offsets 64–83, and clear-HTTP performance fixtures use
-128–129. Use non-overlapping ranges for concurrent runs. Readiness requires the
+five-server catalogue uses offsets 64–83, mutual-catalogue partial-access fixtures use
+96–111, and clear-HTTP performance fixtures use 128–129. Use non-overlapping ranges for concurrent runs. Readiness requires the
 identity of the server started by that fixture; an unrelated
 server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
 

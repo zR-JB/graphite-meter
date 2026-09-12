@@ -5,7 +5,10 @@ set -eu
 # test stops a server, and performance measurements need an otherwise idle runner.
 case "${GM_E2E_SUITE:-all}" in
   connections) set -- e2e/transports.test.ts e2e/connections.test.ts "$@" ;;
-  measurement) set -- e2e/multi-server.test.ts "$@" ;;
+  measurement)
+    bun test e2e/partial-access.test.ts "$@"
+    set -- e2e/multi-server.test.ts "$@"
+    ;;
   authentication)
     # Five password logins consume the per-address minute budget. Peer approval
     # owns a fresh fleet rather than depending on delays in unrelated tests.
