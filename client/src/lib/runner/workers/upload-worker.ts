@@ -120,7 +120,7 @@ function buildPool(): void {
     parts.push(take === block.size ? block : block.slice(0, take));
     remaining -= take;
   }
-  pool = new Blob(parts, { type: "application/octet-stream" });
+  pool = new Blob(parts);
 }
 
 /* Release the tiny JSON echo so the keep-alive connection serves the next POST: an unread body pins it and stalls. */
@@ -162,7 +162,7 @@ async function run(url: string): Promise<void> {
         method: "POST",
         body: pool.slice(0, sentBytes),
         cache: "no-store",
-        headers: { ...headers, "Content-Type": "application/octet-stream" },
+        headers,
         credentials,
         redirect: redirectForCredentials(credentials),
       });
