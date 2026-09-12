@@ -482,7 +482,10 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await expect(page.locator(".saved-server-context")).toBeVisible();
+  // Closing the dock remounts inline details in the desktop inspector.
+  await expect(
+    page.locator(".detail-inspector .saved-server-context"),
+  ).toBeVisible();
   const savedScope = page
     .locator(".saved-server-context")
     .getByRole("combobox", { name: "Result measurements" });
