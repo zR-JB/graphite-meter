@@ -2419,6 +2419,14 @@ test("missing per-server latency remains selectable and focus belongs to each sa
     };
     return value;
   };
+  await page.addInitScript(() => {
+    const scope = globalThis as typeof globalThis & { resizeErrors: string[] };
+    scope.resizeErrors = [];
+    window.addEventListener("error", (event) => {
+      if (event.message.includes("ResizeObserver"))
+        scope.resizeErrors.push(event.message);
+    });
+  });
   await openApp(page, "dummy", { width: 1600, height: 1000 });
   await seedHistory(page, [
     make(IDS.newest, Date.UTC(2026, 8, 6, 12)),
@@ -2467,7 +2475,7 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   await page.keyboard.press("Escape");
   await expect(probeDialog).not.toBeVisible();
   await expect(probeTrigger).toBeFocused();
-  for (const width of [390, 900, 1600]) {
+  for (const width of [320, 390, 900, 1600, 320, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(picker).toHaveValue("peer");
     await expect(detail.getByRole("combobox")).toHaveCount(1);
@@ -2479,6 +2487,13 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   }, IDS.middle);
   await expect(detail.locator(".latency-empty")).toBeVisible();
   await expect(picker).toHaveValue("");
+  expect(
+    await page.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { resizeErrors: string[] })
+          .resizeErrors,
+    ),
+  ).toEqual([]);
 });
 
 test("single-server saved server identity stays readable at the bottom of history details", async ({

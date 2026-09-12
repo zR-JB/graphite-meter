@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { observeWidth } from "../actions/observeWidth";
   import { onMount, tick } from "svelte";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
@@ -450,7 +451,7 @@
 <section
   class="history-workspace"
   bind:this={workspace}
-  bind:clientWidth={workspaceWidth}
+  use:observeWidth={(width) => (workspaceWidth = width)}
   aria-labelledby="history-title"
   tabindex="-1"
 >
