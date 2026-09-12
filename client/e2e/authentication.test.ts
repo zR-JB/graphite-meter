@@ -48,10 +48,27 @@ for (const transport of ["websocket", "webtransport"] as const)
     page,
   }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    await page.addInitScript(() => {
-      window.open = () => null;
-    });
-    await configure(page, ["self", fleet[4].id], 1800, {
+    const ids =
+      transport === "websocket"
+        ? ["self", "server-1", "server-2", fleet[4].id]
+        : ["self", fleet[4].id];
+    await page.addInitScript(
+      (unavailable) => {
+        window.open = () => null;
+        const original = window.fetch.bind(window);
+        window.fetch = ((input, init) => {
+          const url = new URL(
+            input instanceof Request ? input.url : String(input),
+            location.href,
+          );
+          if (url.pathname === "/probe" && unavailable.includes(url.origin))
+            return Promise.reject(new TypeError("Fixture path unavailable"));
+          return original(input, init);
+        }) as typeof window.fetch;
+      },
+      transport === "websocket" ? [fleet[1].h3, fleet[2].h3, fleet[2].h2] : [],
+    );
+    await configure(page, ids, 1800, {
       transports: {
         throughputTarget:
           transport === "webtransport" ? "transport:webtransport" : "auto",
@@ -142,9 +159,16 @@ for (const transport of ["websocket", "webtransport"] as const)
       await waitForCompletion(page, 30000);
       const saved = await savedResult(page, startedAt);
       expect(isHistoryRecord(saved)).toBe(true);
-      expect(saved.multiServer?.participants).toEqual(["self", fleet[4].id]);
+      expect(saved.multiServer?.participants).toEqual(ids);
       expect(saved.multiServer?.failures).toEqual([]);
-      expect(saved.multiServer?.servers[1].totalBytes.up).toBeGreaterThan(0);
+      for (const server of saved.multiServer!.servers) {
+        expect(server.totalBytes.down).toBeGreaterThan(0);
+        expect(server.totalBytes.up).toBeGreaterThan(0);
+      }
+      if (transport === "websocket")
+        expect(
+          saved.multiServer!.servers.map((server) => server.throughput?.origin),
+        ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[4].h3]);
       expect(JSON.stringify(saved)).not.toContain("Bearer");
     } finally {
       approval.close();
