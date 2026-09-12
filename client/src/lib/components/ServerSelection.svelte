@@ -6,6 +6,28 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
+  const descriptionId = $props.id();
+  let retrying = $state<string[]>([]);
+  const choices = new Map<string, HTMLLabelElement>();
+  async function retry(serverId: string, button: HTMLButtonElement) {
+    if (locked || retrying.includes(serverId)) return;
+    retrying = [...retrying, serverId];
+    try {
+      await controller.retryServer(serverId);
+    } finally {
+      if (
+        store.serverReadiness.get(serverId)?.state === "ready" &&
+        document.activeElement === button
+      ) {
+        const choice = choices.get(serverId);
+        (
+          choice?.querySelector<HTMLInputElement>("input:not(:disabled)") ??
+          choice
+        )?.focus({ preventScroll: true });
+      }
+      retrying = retrying.filter((id) => id !== serverId);
+    }
+  }
   const selected = $derived(
     store.serverCatalog?.servers.filter((server) =>
       store.selectedServers.includes(server.id),
@@ -18,9 +40,10 @@
         store.selectedServers.includes(server.id) &&
         ((store.serverCatalog?.servers.length ?? 0) > 1 ||
           store.serverReadiness.get(server.id)?.state === "sign-in") &&
-        ["failed", "sign-in"].includes(
-          store.serverReadiness.get(server.id)?.state ?? "unchecked",
-        ),
+        (retrying.includes(server.id) ||
+          ["failed", "sign-in"].includes(
+            store.serverReadiness.get(server.id)?.state ?? "unchecked",
+          )),
     ),
   );
 </script>
@@ -39,6 +62,17 @@
     >
       {#each store.serverCatalog!.servers as server (server.id)}
         {@const checked = store.selectedServers.includes(server.id)}
+        {@const readiness = store.serverReadiness.get(server.id)?.state}
+        {@const status =
+          readiness === "checking"
+            ? "Checking…"
+            : readiness === "failed"
+              ? "Unavailable"
+              : readiness === "sign-in"
+                ? "Sign in"
+                : readiness === "ready" && checked
+                  ? "Ready"
+                  : ""}
         {@const preflightMs = store.serverDiscoveries.get(
           server.id,
         )?.preflightMs}
@@ -46,6 +80,12 @@
           locked || (checked ? selected.length === 1 : selected.length >= 4)}
         <label
           tabindex="-1"
+          {@attach (element) => {
+            choices.set(server.id, element);
+            return () => {
+              choices.delete(server.id);
+            };
+          }}
           use:tooltip={[server.name, server.location, new URL(server.url).host]
             .concat(
               preflightMs == null
@@ -69,6 +109,7 @@
             aria-label={[server.name, server.location, new URL(server.url).host]
               .filter(Boolean)
               .join(", ")}
+            aria-describedby={preflightMs == null ? undefined : descriptionId}
             onchange={() =>
               controller.applyServers(
                 checked
@@ -76,8 +117,13 @@
                   : [...store.selectedServers, server.id],
               )}
           />
-          <span class="server-name">{serverLabel(server)}</span>
-          {#if preflightMs != null}<small
+          <span class="server-identity">
+            <span class="server-name">{serverLabel(server)}</span>
+            {#if status}<small class="server-status" data-state={readiness}
+                >{status}</small
+              >{/if}
+          </span>
+          {#if preflightMs != null && !["failed", "sign-in", "checking"].includes(readiness ?? "")}<small
               class="server-preflight"
               aria-label={`Preflight request ${fmtMs(preflightMs)} milliseconds`}
               >{fmtMs(preflightMs)}<span>ms</span></small
@@ -86,6 +132,10 @@
       {/each}
     </div>
     <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
+    <span class="sr-only" id={descriptionId}
+      >Preflight request times include connection setup and the response. They
+      are not steady-state ping.</span
+    >
     {#if selected.length > 1 && store.latencyEnabled}
       <div class="latency-policy">
         <strong>Measure ping to</strong>
@@ -134,13 +184,20 @@
   </div>
 {/if}
 {#each problems as server (server.id)}
+  {@const pending = retrying.includes(server.id)}
   <div class="server-feedback" role="status">
     <div>
       <strong>{server.name}</strong>{#if server.location}<small
           >{server.location}</small
         >{/if}
     </div>
-    <p>{store.serverReadiness.get(server.id)?.message}</p>
+    <p class="feedback-message">
+      {#key pending}<span
+          >{pending
+            ? `Checking ${server.name}…`
+            : store.serverReadiness.get(server.id)?.message}</span
+        >{/key}
+    </p>
     {#if store.serverReadiness.get(server.id)?.state === "sign-in"}
       <button
         type="button"
@@ -158,8 +215,10 @@
       <button
         type="button"
         disabled={locked}
-        onclick={() => void controller.retryServer(server.id)}
-        >Retry {server.name}</button
+        aria-disabled={pending}
+        aria-busy={pending}
+        onclick={(event) => void retry(server.id, event.currentTarget)}
+        >{pending ? "Checking…" : `Retry ${server.name}`}</button
       >
     {/if}
     {#if store.serverApproval?.id === server.id}
@@ -321,6 +380,23 @@
     font-size: var(--type-xs);
     font-weight: 600;
   }
+  .server-identity {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+    text-align: left;
+  }
+  .server-status {
+    font-size: 10px;
+    line-height: 1.3;
+  }
+  .server-status[data-state="failed"],
+  .server-status[data-state="sign-in"] {
+    color: var(--warn);
+  }
+  .server-status[data-state="ready"] {
+    color: var(--brand-strong);
+  }
   .server-preflight {
     display: flex;
     align-items: baseline;
@@ -338,6 +414,40 @@
   .selection-help {
     margin: 0;
     font-size: var(--type-xs);
+  }
+  .feedback-message {
+    min-height: 1.5em;
+  }
+  .feedback-message span {
+    display: inline-block;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .feedback-message span {
+      animation: feedback-enter var(--dur-hover) var(--ease-out) both;
+    }
+    .server-choices input:checked::after {
+      animation: check-enter var(--dur-hover) var(--ease-out) both;
+    }
+  }
+  @keyframes feedback-enter {
+    from {
+      opacity: 0.6;
+      transform: translateY(1px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes check-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-1px) rotate(-45deg) scale(0.8);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(-1px) rotate(-45deg) scale(1);
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .server-choices label {
@@ -375,7 +485,8 @@
     font: 600 var(--type-xs)/1.3 var(--font-sans);
     cursor: pointer;
   }
-  button:disabled {
+  button:disabled,
+  button[aria-disabled="true"] {
     opacity: 0.5;
     cursor: default;
   }

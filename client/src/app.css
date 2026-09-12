@@ -317,10 +317,15 @@ body {
   text-align: left;
   cursor: pointer;
 }
-.gm-menu-list > button:hover,
-.gm-menu-list > button:focus-visible {
+.gm-menu-list > button:focus-visible:not(:disabled) {
   background: var(--brand-soft);
   color: var(--text);
+}
+@media (hover: hover) {
+  .gm-menu-list > button:hover:not(:disabled) {
+    background: var(--brand-soft);
+    color: var(--text);
+  }
 }
 @media (prefers-reduced-motion: no-preference) {
   .gm-reveal {

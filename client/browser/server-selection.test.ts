@@ -109,8 +109,8 @@ for (const theme of ["dark", "light"] as const) {
     );
     expect(appearance[0].accent).not.toBe(appearance[1].accent);
     expect(appearance[1].left - appearance[0].right).toBeGreaterThan(0);
+    await page.keyboard.press("Tab");
     await band.getByRole("checkbox").first().focus();
-    await band.locator("label").first().hover();
     await expect(page.getByRole("tooltip")).toContainText("Berlin");
     await page.keyboard.press("Escape");
     await openSettings(page);
@@ -141,3 +141,117 @@ for (const theme of ["dark", "light"] as const) {
     await page.artifact(`server-settings-phone-${theme}`);
   });
 }
+
+test("server retry keeps keyboard focus through checking and returns it on recovery", async ({
+  page,
+}) => {
+  let available = false;
+  let release = () => {};
+  let gate: Promise<void> | null = null;
+  const peer = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === "/preflight" && gate) await gate;
+      const headers = { "Access-Control-Allow-Origin": "*" };
+      if (!available)
+        return new Response("Unavailable", { status: 503, headers });
+      return Response.json(
+        path === "/probe"
+          ? {
+              clientIp: "127.0.0.1",
+              clientIpVersion: 4,
+              clientIpSource: "socket",
+              protocolNegotiated: "http/1.1",
+            }
+          : {
+              server: { name: "Office", location: "LAN" },
+              engineVersion: "test",
+              generation: "retry-focus",
+              capabilities: {
+                uploadCheckpoint: true,
+                throughput: [
+                  {
+                    baseUrl: ".",
+                    transport: "fetch-stream",
+                    protocol: "negotiated",
+                  },
+                ],
+                latency: [],
+              },
+            },
+        { headers },
+      );
+    },
+  });
+  try {
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        "graphite-meter:v1",
+        JSON.stringify({
+          config: {
+            stages: {
+              latency: false,
+              download: true,
+              upload: false,
+              bidirectional: false,
+            },
+            skipLoadedLatencyWhenStageOff: true,
+          },
+        }),
+      ),
+    );
+    await page.route("**/servers", (route) =>
+      route.fulfill({
+        json: {
+          defaultSelection: ["peer"],
+          servers: [
+            { id: "self", url: ".", name: "Home" },
+            {
+              id: "peer",
+              url: peer.url.origin,
+              name: "Office",
+              location: "LAN",
+            },
+          ],
+        },
+      }),
+    );
+    await openApp(page, "real");
+    const settings = await openSettings(page);
+    const feedback = settings
+      .locator(".server-feedback")
+      .filter({ hasText: "Office" });
+    const button = feedback.getByRole("button");
+    const choice = settings.locator(".server-choices label").nth(1);
+    await expect(button).toHaveText("Retry Office");
+    await expect(choice.locator(".server-status")).toHaveText("Unavailable");
+    for (const recover of [false, true]) {
+      gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await button.focus();
+      await page.keyboard.press("Enter");
+      await expect(button).toHaveText("Checking…");
+      await expect(button).toBeFocused();
+      await expect(button).toHaveAttribute("aria-disabled", "true");
+      await expect(feedback).toContainText("Checking Office…");
+      await page.keyboard.press("Enter");
+      await expect(button).toBeFocused();
+      available = recover;
+      release();
+      if (recover) {
+        await expect(choice.locator(".server-status")).toHaveText("Ready");
+        await expect(feedback).toHaveCount(0);
+        await expect(choice).toBeFocused();
+      } else {
+        await expect(button).toHaveText("Retry Office");
+        await expect(button).toBeFocused();
+      }
+    }
+  } finally {
+    release();
+    peer.stop(true);
+  }
+});

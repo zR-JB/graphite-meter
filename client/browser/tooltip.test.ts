@@ -89,3 +89,38 @@ test("mouse and touch tooltips still dismiss when the page scrolls", async ({
   await page.evaluate(() => window.scrollBy(0, -40));
   await expect(page.getByRole("tooltip")).toBeHidden();
 });
+
+test("tooltip dismissal clears accessible state immediately and finishes its CSS fade", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await openApp(page);
+  const settings = await openSettings(page);
+  const bits = settings.getByRole("button", { name: "Bits", exact: true });
+  await bits.hover();
+  await expect(page.getByRole("tooltip")).toContainText("Bits per second");
+  await page.locator(".gm-tooltip").evaluate(async (node: HTMLElement) => {
+    await Promise.allSettled(
+      node.getAnimations().map((animation) => animation.finished),
+    );
+  });
+  const state = await bits.evaluate((node) => {
+    node.dispatchEvent(
+      new PointerEvent("pointerleave", { pointerType: "mouse" }),
+    );
+    const leaving = document.querySelector<HTMLElement>(".gm-tooltip");
+    return {
+      described: node.hasAttribute("aria-describedby"),
+      role: leaving?.getAttribute("role"),
+      hidden: leaving?.getAttribute("aria-hidden"),
+      animating: !!leaving?.getAnimations().length,
+    };
+  });
+  expect(state).toEqual({
+    described: false,
+    role: null,
+    hidden: "true",
+    animating: true,
+  });
+  await expect(page.locator(".gm-tooltip")).toHaveCount(0);
+});
