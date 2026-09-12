@@ -13,6 +13,10 @@ updates:
         patterns: ["*"]
   - package-ecosystem: bun
     directory: /client
+    # Svelte requires this alias for the stable native compiler alongside TypeScript 6.
+    # Bun Dependabot looks up the alias as a package and fails with registry_error.
+    ignore:
+      - dependency-name: "@typescript/native"
     schedule:
       interval: weekly
     groups:
