@@ -148,12 +148,20 @@ for (const transport of ["websocket", "webtransport"] as const)
             input instanceof Request ? input.url : String(input),
             location.href,
           );
-          if (url.pathname === "/probe" && unavailable.includes(url.origin))
+          // Throughput probe nonces include their attempt suffix. Keep the
+          // WebSocket latency control probe on this same origin available.
+          if (
+            url.pathname === "/probe" &&
+            url.searchParams.get("cb")?.includes("-") &&
+            unavailable.includes(url.origin)
+          )
             return Promise.reject(new TypeError("Fixture path unavailable"));
           return original(input, init);
         }) as typeof window.fetch;
       },
-      transport === "websocket" ? [fleet[1].h3, fleet[2].h3, fleet[2].h2] : [],
+      transport === "websocket"
+        ? [fleet[1].url, fleet[2].url, fleet[2].http, fleet[2].h2]
+        : [],
     );
     await configure(page, ids, 1800, {
       transports: {
@@ -260,7 +268,7 @@ for (const transport of ["websocket", "webtransport"] as const)
       if (transport === "websocket")
         expect(
           saved.multiServer!.servers.map((server) => server.throughput?.origin),
-        ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[4].h3]);
+        ).toEqual([fleet[0].url, fleet[1].h2, fleet[2].h3, fleet[4].url]);
       expect(JSON.stringify(saved)).not.toContain("Bearer");
     } finally {
       approval.close();

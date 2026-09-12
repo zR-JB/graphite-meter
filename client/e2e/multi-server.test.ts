@@ -76,7 +76,11 @@ test("four real servers share one run and retain separate receiver windows and l
       const original = browser.fetch.bind(window);
       browser.fetch = (input, init) => {
         const url = new URL(String(input), location.href);
-        if (url.pathname === "/probe" && unavailable.includes(url.origin))
+        if (
+          url.pathname === "/probe" &&
+          /-\d+$/.test(url.searchParams.get("cb") ?? "") &&
+          unavailable.includes(url.origin)
+        )
           return Promise.reject(new TypeError("Fixture path unavailable"));
         return original(input, init);
       };
@@ -176,7 +180,9 @@ test("four real servers share one run and retain separate receiver windows and l
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".result-server-context")).toBeVisible();
-  await expect(page.locator(".result-server-context option")).toHaveCount(5);
+  await expect(
+    page.locator(".result-server-context").getByRole("option"),
+  ).toHaveCount(5);
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await page.artifact("multi-server-history-desktop");
