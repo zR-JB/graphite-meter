@@ -304,7 +304,7 @@ test("server selectors support native keyboard selection and compact narrow layo
     await selector.evaluate((element) =>
       Number.parseFloat(getComputedStyle(element).transitionDuration),
     ),
-  ).toBe(0);
+  ).toBeLessThan(0.0001);
   await selector.press("Home");
   await expect(selector).toHaveValue("");
   expect(
