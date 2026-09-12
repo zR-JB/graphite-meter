@@ -983,7 +983,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/oauth2
-Version: v0.36.0
+Version: v0.37.0
 Source: https://go.googlesource.com/oauth2
 License: BSD-3-Clause
 Modified by Graphite Meter: no
