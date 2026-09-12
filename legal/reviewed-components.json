@@ -588,7 +588,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/crypto",
-    "reviewedVersion": "v0.56.0",
+    "reviewedVersion": "v0.57.0",
     "upstream": "https://go.googlesource.com/crypto",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -662,7 +662,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/sys",
-    "reviewedVersion": "v0.47.0",
+    "reviewedVersion": "v0.48.0",
     "upstream": "https://go.googlesource.com/sys",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -688,7 +688,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/term",
-    "reviewedVersion": "v0.45.0",
+    "reviewedVersion": "v0.46.0",
     "upstream": "https://go.googlesource.com/term",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",
@@ -714,7 +714,7 @@
   {
     "ecosystem": "go",
     "name": "golang.org/x/text",
-    "reviewedVersion": "v0.41.0",
+    "reviewedVersion": "v0.42.0",
     "upstream": "https://go.googlesource.com/text",
     "declaredLicenseExpression": "BSD-3-Clause",
     "selectedLicenseExpression": "BSD-3-Clause",

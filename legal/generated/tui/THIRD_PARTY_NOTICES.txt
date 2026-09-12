@@ -817,7 +817,7 @@ SOFTWARE.
 ============================================================
 
 Component: golang.org/x/crypto
-Version: v0.56.0
+Version: v0.57.0
 Source: https://go.googlesource.com/crypto
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -943,7 +943,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/sys
-Version: v0.47.0
+Version: v0.48.0
 Source: https://go.googlesource.com/sys
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1006,7 +1006,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/text
-Version: v0.41.0
+Version: v0.42.0
 Source: https://go.googlesource.com/text
 License: BSD-3-Clause
 Modified by Graphite Meter: no
