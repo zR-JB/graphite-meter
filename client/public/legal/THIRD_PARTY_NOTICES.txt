@@ -835,7 +835,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ============================================================
 
 Component: golang.org/x/crypto
-Version: v0.56.0
+Version: v0.57.0
 Source: https://go.googlesource.com/crypto
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -999,7 +999,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ============================================================
 
 Component: golang.org/x/sys
-Version: v0.47.0
+Version: v0.48.0
 Source: https://go.googlesource.com/sys
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1062,7 +1062,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/term
-Version: v0.45.0
+Version: v0.46.0
 Source: https://go.googlesource.com/term
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -1125,7 +1125,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/text
-Version: v0.41.0
+Version: v0.42.0
 Source: https://go.googlesource.com/text
 License: BSD-3-Clause
 Modified by Graphite Meter: no
