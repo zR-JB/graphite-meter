@@ -1,3 +1,4 @@
+import { withinBudget, abortableDelay } from "../abortable";
 import type {
   ConnectionRole,
   RunnerConfig,
@@ -7,6 +8,7 @@ import type {
 } from "../contract";
 import type {
   FetchThroughputTarget,
+  LatencyTarget,
   WebTransportThroughputTarget,
 } from "../../api/endpoints";
 import type { Probe } from "../../api/probe";
@@ -34,6 +36,8 @@ import {
 } from "../connectionModel";
 import { median } from "../stats";
 import {
+  automaticThroughputTargets,
+  automaticLatencyTargets,
   browserProtocolMatchesTarget,
   blockedSelectionReason,
   classifyTransportDiscovery,
@@ -44,6 +48,7 @@ import {
 } from "./backendPure";
 import {
   ESTABLISH_BUDGET_MS,
+  ESTABLISH_MARGIN_MS,
   H3_PROBE_ATTEMPTS,
   H3_PROBE_DEADLINE_MS,
 } from "./budgets";
@@ -231,6 +236,42 @@ async function prepareThroughput(
       `${requested.transport} is not supported by this client`,
       { role: "throughput" },
     );
+  const candidates =
+    selection === "auto"
+      ? automaticThroughputTargets(discovery, transportRunnable("webtransport"))
+      : [requested];
+  let failure: unknown;
+  for (const target of candidates) {
+    try {
+      const path = await withinBudget(
+        signal,
+        target.transport === "fetch-stream"
+          ? H3_PROBE_DEADLINE_MS
+          : H3_PROBE_DEADLINE_MS + ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
+        (attemptSignal) =>
+          prepareThroughputTarget(
+            discovery,
+            target,
+            attemptSignal,
+            credentials,
+          ),
+      );
+      return { ...path, requested };
+    } catch (cause) {
+      signal.throwIfAborted();
+      if (authenticationFailure(cause)) throw cause;
+      failure = cause;
+    }
+  }
+  throw failure;
+}
+
+async function prepareThroughputTarget(
+  discovery: TransportDiscovery,
+  requested: FetchThroughputTarget | WebTransportThroughputTarget,
+  signal: AbortSignal,
+  credentials?: ServerCredentials,
+): Promise<VerifiedThroughputPath> {
   const fetchTarget: FetchThroughputTarget = {
     ...(requested.transport === "fetch-stream"
       ? requested
@@ -245,7 +286,10 @@ async function prepareThroughput(
   let probe: Probe | undefined;
   let browserProtocol: string | undefined;
   try {
-    const attempts = fetchTarget.protocol === "http3" ? H3_PROBE_ATTEMPTS : 1;
+    const attempts =
+      requested.transport === "fetch-stream" && fetchTarget.protocol === "http3"
+        ? H3_PROBE_ATTEMPTS
+        : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const response = await pathProbe(
         `${fetchTarget.origin}${fetchTarget.routes.probe}?cb=${performance.now()}-${attempt}`,
@@ -262,12 +306,15 @@ async function prepareThroughput(
         browserProtocolMatchesTarget(fetchTarget, browserProtocol)
       )
         break;
+      if (attempt + 1 < attempts)
+        await abortableDelay(Math.min(250, 50 * 2 ** attempt), probeSignal);
     }
     const protocolProven = browserProtocolMatchesTarget(
       fetchTarget,
       browserProtocol,
     );
-    if (!probe || (!protocolProven && requested.transport === "fetch-stream"))
+    // WebTransport proves its own data path below; its HTTP probe is control traffic.
+    if (!probe || (requested.transport === "fetch-stream" && !protocolProven))
       throw new Error(`${fetchTarget.protocol} transport unavailable`);
     if (fetchTarget.protocol === "negotiated" || !protocolProven)
       fetchTarget.protocol =
@@ -281,16 +328,11 @@ async function prepareThroughput(
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
-  let target = requested.transport === "fetch-stream" ? fetchTarget : requested;
-  if (requested.transport !== "fetch-stream") {
-    try {
-      await verifyWtThroughput(requested, signal, credentials);
-    } catch (cause) {
-      signal.throwIfAborted();
-      if (selection !== "auto" || authenticationFailure(cause)) throw cause;
-      target = fetchTarget;
-    }
-  }
+  const target =
+    requested.transport === "fetch-stream" ? fetchTarget : requested;
+  if (requested.transport !== "fetch-stream")
+    await verifyWtThroughput(requested, signal, credentials);
+  signal.throwIfAborted();
   return {
     requested,
     target,
@@ -321,28 +363,40 @@ async function prepareLatency(
       `${selection} latency target unavailable`,
       { role: "latency" },
     );
-  let target = requested;
-  let idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
+  const candidates =
+    selection === "auto"
+      ? automaticLatencyTargets(discovery, transportRunnable("webtransport"))
+      : [requested];
+  let failure: unknown;
+  for (const target of candidates) {
+    try {
+      const result = await withinBudget(
+        signal,
+        ESTABLISH_BUDGET_MS + H3_PROBE_DEADLINE_MS + ESTABLISH_MARGIN_MS,
+        (attemptSignal) =>
+          prepareLatencyTarget(discovery, target, attemptSignal, credentials),
+      );
+      return { ...result, path: { ...result.path, requested } };
+    } catch (cause) {
+      signal.throwIfAborted();
+      if (authenticationFailure(cause)) throw cause;
+      failure = cause;
+    }
+  }
+  throw failure;
+}
+
+async function prepareLatencyTarget(
+  discovery: TransportDiscovery,
+  target: LatencyTarget,
+  signal: AbortSignal,
+  credentials?: ServerCredentials,
+): Promise<{ path: VerifiedLatencyPath; idle: IdleKeepalive }> {
+  const idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
   const abort = () => idle.stop();
   signal.addEventListener("abort", abort, { once: true });
   try {
-    try {
-      await idle.verifyReady(signal);
-    } catch (cause) {
-      signal.throwIfAborted();
-      idle.stop();
-      if (
-        requested.transport !== "webtransport" ||
-        selection !== "auto" ||
-        authenticationFailure(cause)
-      )
-        throw cause;
-      const fallback = selectLatencyTarget(discovery, selection, false);
-      if (!fallback) throw cause;
-      target = fallback;
-      idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
-      await idle.verifyReady(signal);
-    }
+    await idle.verifyReady(signal);
     const { probe } = await pathProbe(
       `${target.origin}${target.routes.probe}?cb=${performance.now()}`,
       signal,
@@ -353,7 +407,7 @@ async function prepareLatency(
     return {
       idle,
       path: {
-        requested,
+        requested: target,
         target,
         probe,
         rttMs: rtts.length ? median(rtts) : null,
@@ -433,7 +487,9 @@ async function verifyWtThroughput(
 }
 
 function authenticationFailure(cause: unknown): boolean {
-  while (cause instanceof Error) {
+  const seen = new Set<Error>();
+  while (cause instanceof Error && !seen.has(cause)) {
+    seen.add(cause);
     if (cause instanceof ServerAuthenticationRequired) return true;
     cause = cause.cause;
   }

@@ -79,6 +79,7 @@ export function startUploadFeed(options: {
       let detail = "progress stream closed";
       try {
         const response = await fetch(url, {
+          priority: "high",
           cache: "no-store",
           headers: {
             ...(csrf.Authorization
@@ -140,6 +141,7 @@ export function startUploadFeed(options: {
     wakeReconnect?.();
     try {
       const response = await fetch(url, {
+        priority: "high",
         method: "DELETE",
         cache: "no-store",
         headers: csrf,

@@ -188,7 +188,7 @@ test("a probe deadline releases capacity even when the network adapter ignores c
   ) =>
     originalTimeout(
       run,
-      delay === 8000 ? 0 : delay,
+      delay === 12000 ? 0 : delay,
       ...args,
     )) as typeof setTimeout);
   const { manager, views } = fixture(

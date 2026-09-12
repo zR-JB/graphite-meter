@@ -28,7 +28,8 @@ distinct results; chart smoothing does not determine either.
 
 ### Coordinated server windows
 
-A selection contains one to four explicitly chosen servers. One coordinator owns
+A selection contains one to four explicitly chosen servers. A single selected
+server uses the ordinary direct runner. For multiple servers, one coordinator owns
 the stage schedule, readiness, warmup, measurement boundaries, cancellation, and
 membership changes. Server resources and credentials remain separate. Per-server
 contributions describe those paths while sharing the client connection; they are

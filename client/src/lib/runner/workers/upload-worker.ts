@@ -108,15 +108,16 @@ ctx.onmessage = (e: MessageEvent<InMsg>) => {
   }
 };
 
-/* Build the reused pool by repeating one filled block up to poolTargetBytes. */
+/* Repeat immutable Blob references so a large reservoir shares one copied source block. */
 function buildPool(): void {
   if (pool?.size === poolTargetBytes) return;
-  const block = incompressibleBlock();
+  const source = incompressibleBlock();
+  const block = new Blob([source.subarray(0, poolTargetBytes)]);
   const parts: BlobPart[] = [];
   let remaining = poolTargetBytes;
   while (remaining > 0) {
-    const take = Math.min(remaining, block.byteLength);
-    parts.push(take === block.byteLength ? block : block.subarray(0, take));
+    const take = Math.min(remaining, block.size);
+    parts.push(take === block.size ? block : block.slice(0, take));
     remaining -= take;
   }
   pool = new Blob(parts, { type: "application/octet-stream" });

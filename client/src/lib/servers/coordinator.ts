@@ -43,6 +43,7 @@ export interface PreparedServer {
   paths: PreparedPaths;
 }
 export interface ParticipantTransport extends RunnerBackend {
+  /** Proves every primed channel, including fresh upload receiver evidence. */
   waitForReadiness?(signal: AbortSignal): Promise<void>;
   flushDownload(now: number): void;
   checkpoint(signal: AbortSignal): Promise<ReceiverCheckpoint | null>;
@@ -254,8 +255,9 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     const results = await Promise.allSettled(
       participants.map(async (server) => {
         await server.backend.onStageBegin(activity);
-        await server.backend.waitForReadiness?.(this.#boundaryAbort.signal);
-        if (
+        if (server.backend.waitForReadiness)
+          await server.backend.waitForReadiness(this.#boundaryAbort.signal);
+        else if (
           activity.transfer.includes("up") &&
           !(await server.backend.checkpoint(this.#boundaryAbort.signal))
         )

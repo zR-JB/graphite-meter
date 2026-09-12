@@ -1,5 +1,5 @@
 import { stubGlobals } from "../test-helpers.test";
-import { test, expect } from "bun:test";
+import { test, expect, spyOn } from "bun:test";
 import {
   httpToWs,
   needsPings,
@@ -13,6 +13,8 @@ import {
   fetchViewOfWebTransport,
   targetOfKind,
   ROUTES,
+  automaticThroughputTargets,
+  automaticLatencyTargets,
 } from "./real/backendPure";
 import { isLoopbackHostname } from "../servers/catalog";
 import { kindsForRole, ridesSession } from "./real/transports";
@@ -97,6 +99,57 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
   expect(selectLatencyTarget(catalog, "auto")?.origin).toBe(
     "https://meter.example",
   );
+});
+
+test("Automatic ranks usable multiplexed paths deterministically and never selects unreliable throughput", () => {
+  const offered = [
+    fetchAd("https://meter", "http1"),
+    fetchAd("https://meter:2", "http2"),
+    fetchAd("https://meter:3", "http3"),
+    wtAd("https://meter:3"),
+    dgAd("https://meter:3"),
+  ];
+  const catalog = discovery(
+    offered,
+    [wsAd("https://meter"), wtLatencyAd("https://meter:3")],
+    "https://meter",
+    true,
+  );
+  const ids = automaticThroughputTargets(catalog).map((target) => target.id);
+  expect(ids).toEqual([
+    "https://meter:3",
+    "https://meter:2",
+    "https://meter",
+    "https://meter:3::wt",
+  ]);
+  expect(
+    automaticThroughputTargets(
+      discovery(offered.toReversed(), [], "https://meter", true),
+    ).map((target) => target.id),
+  ).toEqual(ids);
+  expect(
+    automaticLatencyTargets(catalog, true).map((target) => target.transport),
+  ).toEqual(["webtransport", "websocket"]);
+  expect(
+    automaticLatencyTargets(catalog, false).map((target) => target.transport),
+  ).toEqual(["websocket"]);
+});
+
+test("multiple off-origin alternatives remain usable and a proven proxy hop participates in ranking", () => {
+  const catalog = discovery(
+    [
+      fetchAd("https://b:3", "http3"),
+      fetchAd("https://a:3", "http3"),
+      fetchAd(".", "negotiated"),
+    ],
+    [],
+    "https://proxy",
+    true,
+    "h2",
+  );
+  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://a:3");
+  catalog.pageProtocol = "h3";
+  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://proxy");
 });
 
 test("deterministic native target wins when self resolves to the same origin", () => {
@@ -845,6 +898,264 @@ function stubProbeEnvironment(
     restore();
   };
 }
+
+test("Automatic falls back to a verified advertised path, while explicit HTTP3 remains strict", async () => {
+  const requests: string[] = [];
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [
+        fetchAd("http://meter.test:7246", "http1"),
+        fetchAd("https://meter.test:7249", "http3"),
+      ],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment((async (input) => {
+    const url = String(input);
+    if (url.includes("/probe")) {
+      requests.push(new URL(url).origin);
+      if (url.includes(":7249")) throw new TypeError("Failed to fetch");
+    }
+    return probeFetch(document)(input);
+  }) as typeof fetch);
+  try {
+    const harness = await preparationHarness();
+    const config = {
+      ...probeConfig(false),
+      transports: { throughputTarget: "auto", latencyTarget: "auto" },
+    };
+    const paths = await harness.check(config, ["throughput"]);
+    expect(requests).toEqual([
+      "https://meter.test:7249",
+      "http://meter.test:7246",
+    ]);
+    expect(paths.throughput.requested.protocol).toBe("http3");
+    expect(paths.throughput.target.origin).toBe("http://meter.test:7246");
+    requests.length = 0;
+    config.transports.throughputTarget = "protocol:http3";
+    await expect(harness.check(config, ["throughput"])).rejects.toThrow();
+    expect(requests).toEqual(["https://meter.test:7249"]);
+  } finally {
+    restore();
+  }
+});
+
+test("an unresponsive preferred candidate cannot prevent Automatic from trying the server origin", async () => {
+  const originalTimeout = globalThis.setTimeout;
+  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
+    ...[run, delay, ...args]: Parameters<typeof setTimeout>
+  ) =>
+    originalTimeout(
+      run,
+      delay === 2000 ? 1 : delay,
+      ...args,
+    )) as typeof setTimeout);
+  let candidateSignal: AbortSignal | undefined;
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [
+        fetchAd("http://meter.test:7246", "http1"),
+        fetchAd("https://meter.test:7248", "http2"),
+      ],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment((async (input, init) => {
+    if (String(input).includes(":7248")) {
+      candidateSignal = init?.signal ?? undefined;
+      return new Promise<Response>(() => {});
+    }
+    return probeFetch(document)(input);
+  }) as typeof fetch);
+  try {
+    const harness = await preparationHarness();
+    const paths = await harness.check(
+      {
+        ...probeConfig(false),
+        transports: { throughputTarget: "auto", latencyTarget: "auto" },
+      },
+      ["throughput"],
+    );
+    expect(candidateSignal?.aborted).toBe(true);
+    expect(paths.throughput.target.origin).toBe("http://meter.test:7246");
+  } finally {
+    restore();
+    timer.mockRestore();
+  }
+});
+
+test("HTTP3 bootstrap allows time for the browser upgrade instead of exhausting rapid probes", async () => {
+  let attempts = 0;
+  let first = 0;
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [fetchAd("https://meter.test:7249", "http3")],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment(
+    (async (input) => {
+      if (String(input).includes("/probe")) {
+        attempts++;
+        first ||= performance.now();
+      }
+      return probeFetch(document)(input);
+    }) as typeof fetch,
+    {
+      protocol: () =>
+        first && performance.now() - first >= 200 ? "h3" : "http/1.1",
+    },
+  );
+  try {
+    const harness = await preparationHarness();
+    const paths = await harness.check(
+      {
+        ...probeConfig(false),
+        transports: {
+          throughputTarget: "protocol:http3",
+          latencyTarget: "auto",
+        },
+      },
+      ["throughput"],
+    );
+    expect(attempts).toBeGreaterThan(3);
+    expect(paths.throughput.browserProtocol).toBe("h3");
+    expect(paths.throughput.fetch.protocol).toBe("http3");
+  } finally {
+    restore();
+  }
+});
+
+test("WebTransport verifies bytes independently of its HTTP control probe protocol", async () => {
+  const restoreTransport = stubGlobals({
+    WebTransport: class {
+      ready = Promise.resolve();
+      closed = Promise.resolve({});
+      incomingUnidirectionalStreams = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new ReadableStream({
+              start(bytes) {
+                bytes.enqueue(new Uint8Array([1]));
+                bytes.close();
+              },
+            }),
+          );
+          controller.close();
+        },
+      });
+      close() {}
+    },
+  });
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [
+        fetchAd("https://meter.test:7249", "http3"),
+        wtAd("https://meter.test:7249"),
+      ],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment(probeFetch(document));
+  try {
+    const harness = await preparationHarness();
+    const paths = await harness.check(
+      {
+        ...probeConfig(false),
+        transports: {
+          throughputTarget: "transport:webtransport",
+          latencyTarget: "auto",
+        },
+      },
+      ["throughput"],
+    );
+    expect(paths.throughput.target.transport).toBe("webtransport");
+    expect(paths.throughput.fetch.protocol).toBe("http1");
+  } finally {
+    restore();
+    restoreTransport();
+  }
+});
+
+test("a failed WebTransport-only path cannot turn its HTTP control probe into a fetch transfer", async () => {
+  const restoreTransport = stubGlobals({
+    WebTransport: class {
+      ready = Promise.reject(new Error("QUIC unavailable"));
+      closed = Promise.resolve({});
+      close() {}
+    },
+  });
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [wtAd("https://meter.test:7249")],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment(probeFetch(document));
+  try {
+    const harness = await preparationHarness();
+    await expect(
+      harness.check(
+        {
+          ...probeConfig(false),
+          transports: { throughputTarget: "auto", latencyTarget: "auto" },
+        },
+        ["throughput"],
+      ),
+    ).rejects.toThrow("webtransport session did not establish");
+  } finally {
+    restore();
+    restoreTransport();
+  }
+});
+
+test("Automatic stops at an authentication failure instead of probing another endpoint", async () => {
+  const { ServerAuthenticationRequired } =
+    await import("../servers/credentials");
+  const requests: string[] = [];
+  const document = {
+    ...preflightDocument,
+    capabilities: {
+      throughput: [
+        fetchAd("http://meter.test:7246", "http1"),
+        fetchAd("https://meter.test:7249", "http3"),
+      ],
+      latency: [],
+    },
+  };
+  const restore = stubProbeEnvironment((async (input) => {
+    if (String(input).includes("/probe")) {
+      requests.push(String(input));
+      throw new ServerAuthenticationRequired({
+        id: "peer",
+        name: "Peer",
+        url: "https://meter.test:7249",
+      });
+    }
+    return probeFetch(document)(input);
+  }) as typeof fetch);
+  try {
+    const harness = await preparationHarness();
+    await expect(
+      harness.check(
+        {
+          ...probeConfig(false),
+          transports: { throughputTarget: "auto", latencyTarget: "auto" },
+        },
+        ["throughput"],
+      ),
+    ).rejects.toThrow();
+    expect(requests).toHaveLength(1);
+  } finally {
+    restore();
+  }
+});
+
 test("cross-origin IPv6 discovery and path preparation fail with DNS guidance before any request", async () => {
   let requests = 0;
   const restore = stubProbeEnvironment((async (

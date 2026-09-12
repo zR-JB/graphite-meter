@@ -77,3 +77,49 @@ test("nextUploadBytes protects size and EWMA on non-positive elapsed time", () =
     ewma: 50000,
   });
 });
+
+for (const streams of [1, 128])
+  test(`the first upload with ${streams} lanes copies only one source block, not the full reservoir`, async () => {
+    const { stubGlobals } = await import("../../test-helpers.test");
+    const { incompressibleBlock } = await import("./payload");
+    const NativeBlob = Blob;
+    let copiedBytes = 0;
+    let reservoirBytes = 0;
+    let firstBody: ArrayBuffer | undefined;
+    const ended = Promise.withResolvers<void>();
+    const restore = stubGlobals({
+      self: globalThis,
+      navigator: { deviceMemory: 8 },
+      onmessage: null,
+      postMessage: () => ended.resolve(),
+      Blob: class extends NativeBlob {
+        constructor(parts: BlobPart[] = [], options?: BlobPropertyBag) {
+          super(parts, options);
+          for (const part of parts)
+            if (ArrayBuffer.isView(part) || part instanceof ArrayBuffer)
+              copiedBytes += part.byteLength;
+          reservoirBytes = Math.max(reservoirBytes, this.size);
+        }
+      },
+      fetch: async (_url: unknown, init: RequestInit) => {
+        firstBody = await (init.body as Blob).arrayBuffer();
+        // End this lane after observing its first real payload.
+        return new Response(null, { status: 400 });
+      },
+    });
+    try {
+      await import(`./upload-worker.ts?pool-copies=${streams}`);
+      const start = globalThis.onmessage as (event: MessageEvent) => void;
+      start({
+        data: { type: "start", url: "/upload?id=test", streams },
+      } as MessageEvent);
+      await ended.promise;
+      expect(reservoirBytes).toBe(uploadPoolBytes(streams, 8));
+      expect(copiedBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+      expect(new Uint8Array(firstBody!)).toEqual(
+        incompressibleBlock().subarray(0, MIN_POST_BYTES),
+      );
+    } finally {
+      restore();
+    }
+  });

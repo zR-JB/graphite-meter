@@ -132,10 +132,11 @@ when more than one server is configured. A quiet gauge indicator shows
 the selected or measured server count. Single-server runs retain the ordinary
 instrument and result view.
 
-Changes apply immediately. Opening Settings discovers unselected entries serially,
-with five seconds per request and a shared ten-second budget. Closing Settings
-cancels that work. Fresh discoveries are reused; failures and timeouts back off so
-reopening can reach later entries. Background readiness refreshes concern selected
+Changes apply immediately. Opening Settings discovers unselected entries with
+bounded concurrency and five seconds per request. Selected servers take priority.
+Closing Settings cancels unselected discovery. Fresh discoveries are reused;
+failures and timeouts back off so reopening can reach later entries. Sign-in
+failures wait for sign-in or an explicit retry. Background readiness refreshes concern selected
 servers only. Inline Retry and Sign in actions resolve individual unavailable
 entries. Ready selections start directly.
 Start checks the selected servers again when evidence is missing or expired,
@@ -160,9 +161,11 @@ measurement. An unprobed server has no latency result, rather than a zero RTT.
 If the primary fails, the client does not silently change latency endpoints.
 
 There is one throughput preference and one latency transport preference. Automatic
-resolves each independently, preferring fetch throughput and WebTransport latency
-where available. Reliable transport mechanisms may differ; experimental datagram
-throughput is always explicit. A forced throughput choice must work on every selected
+verifies each independently. Browser throughput tries advertised HTTP/3, HTTP/2,
+proxy-negotiated HTTP, HTTP/1.1, then WebTransport streams. Latency tries
+WebTransport, then WebSocket. Automatic tries the next available path when a
+connection check fails; authentication failures require sign-in. Experimental
+datagram throughput is always explicit. A forced throughput choice must work on every selected
 server; a forced latency choice must work on every server being probed. The client
 neither silently downgrades it nor removes an incompatible server. Use Automatic is
 an explicit recovery action. Detailed origin selection remains available for a

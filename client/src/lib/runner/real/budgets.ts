@@ -16,7 +16,7 @@ export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
 export const STOP_GRACE_MS = 2500;
 
 /* Bounded by attempts and by wall time together, so a path that never answers cannot hold the run open. */
-export const H3_PROBE_ATTEMPTS = 3;
+export const H3_PROBE_ATTEMPTS = 8;
 export const H3_PROBE_DEADLINE_MS = 2000;
 
 /* Grace for the server's terminal progress record once an upload is finalized, by the session worker's DELETE or. */
