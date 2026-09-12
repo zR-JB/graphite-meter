@@ -190,16 +190,12 @@ test("four real servers share one run and retain separate receiver windows and l
   await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await expectNoHorizontalOverflow(page.locator(".result-server-context"));
   await page.artifact("multi-server-history-phone");
+  await page.getByText("Servers & run context", { exact: true }).click();
   const servers = page.locator(".saved-servers-section");
   await servers.scrollIntoViewIfNeeded();
   await expect(servers.locator("li")).toHaveCount(4);
   await expect(servers).toContainText("Loopback fixture");
   await expect(servers).toContainText(new URL(fleet[1].url).host);
-  expect(
-    await servers.evaluate((section) =>
-      section.nextElementSibling?.classList.contains("detail-actions"),
-    ),
-  ).toBe(true);
   await expectNoHorizontalOverflow(servers);
   await page.artifact("saved-servers-phone");
   await page.reload();
@@ -230,6 +226,7 @@ test("a single-server result keeps the ordinary live and history views in a flee
   await expect(page.locator(".result-detail")).toBeVisible();
   await expect(page.locator(".result-server-context")).toHaveCount(0);
   await expect(page.locator(".server-focus")).toHaveCount(0);
+  await page.getByText("Servers & run context", { exact: true }).click();
   await expect(page.locator(".saved-servers-section li")).toHaveCount(1);
   await expect(page.locator(".saved-servers-section")).toContainText(
     "Home · Loopback fixture",
@@ -493,17 +490,28 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
-  await expect(
-    page.getByRole("combobox", { name: "Saved latency server" }),
-  ).toHaveCount(0);
+  const savedLatency = page.getByRole("combobox", {
+    name: "Saved latency source",
+  });
+  await expect(savedLatency).toHaveValue("server-1");
   await savedScope.click();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("self");
+  await expect(savedLatency).toHaveValue("server-1");
+  await expect(page.locator(".latency-empty")).toHaveCount(0);
+  await savedLatency.press("Home");
+  await page.keyboard.press("Enter");
+  await expect(savedLatency).toHaveValue("self");
   await expect(page.locator(".latency-empty")).toBeVisible();
-  await page.keyboard.press("End");
+  await savedScope.press("End");
   await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("server-1");
+  await expect(savedLatency).toHaveValue("self");
+  await expect(page.locator(".latency-empty")).toBeVisible();
+  await savedLatency.press("End");
+  await page.keyboard.press("Enter");
+  await expect(savedLatency).toHaveValue("server-1");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(
     page.locator('[data-latency-profile][data-variant="compact"]'),

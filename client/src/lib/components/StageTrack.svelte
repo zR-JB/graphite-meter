@@ -387,12 +387,32 @@
     border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
     color: var(--err);
   }
-  @container viz (max-width: 480px) {
-    .seg-row {
-      flex-wrap: wrap;
+  @container viz (max-width: 680px) {
+    .seg {
+      padding: 6px;
     }
-    .seg-main {
-      flex-shrink: 0;
+    .seg-bar {
+      flex: 0 0 4px;
+      margin-block: 3px;
+    }
+    .seg:has(.seg-tag) .seg-bar {
+      width: calc(100% - 56px);
+    }
+    .seg-label {
+      overflow: visible;
+      font-size: 11px;
+    }
+    .seg-tag {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      margin: 0;
+      height: 10px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      font-size: 8px;
+      letter-spacing: 0.03em;
     }
     .seg-check {
       display: none;

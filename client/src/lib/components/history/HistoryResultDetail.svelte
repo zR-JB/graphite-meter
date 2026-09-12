@@ -2,6 +2,7 @@
   export interface ServerView {
     recordId: string;
     resultId: string;
+    latencyId?: string;
   }
 </script>
 
@@ -34,7 +35,7 @@
     type LatencyProfileTone,
   } from "../latencyProfile";
   import ResultServerContext from "../ResultServerContext.svelte";
-  import ServerTag from "../ServerTag.svelte";
+  import ServerSelector from "../ServerSelector.svelte";
   import DiagnosticDetails from "../DiagnosticDetails.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
@@ -83,9 +84,15 @@
         },
   );
   function selectResult(id: string) {
-    serverView = { recordId: record.id, resultId: id };
+    serverView = {
+      recordId: record.id,
+      resultId: id,
+      latencyId: view?.latencyId,
+    };
   }
-  const focusedId = $derived(resultId || record.multiServer?.latencyFocus);
+  const focusedId = $derived(
+    view?.latencyId ?? record.multiServer?.latencyFocus,
+  );
   const hasServerLatency = $derived(
     (record.multiServer?.selection.length ?? 0) > 1 &&
       record.multiServer?.servers.some(
@@ -365,6 +372,7 @@
   {#if record.multiServer && record.multiServer.selection.length > 1}<div
       class="saved-server-context"
     >
+      <span class="scope-label">Throughput results</span>
       <ResultServerContext
         details={record.multiServer}
         value={resultId}
@@ -426,12 +434,16 @@
         <h3 id={`result-${record.id}-latency`}>Responsiveness</h3>
       </header>
       <div class="section-body responsiveness-body">
-        {#if !resultId && record.multiServer && record.multiServer.selection.length > 1}
+        {#if record.multiServer && multiple}
           <div class="server-focus">
-            <span>Latency source</span><ServerTag
+            <span>Latency source</span>
+            <ServerSelector
               servers={record.multiServer.selection}
-              id={focusedId}
-              label="Saved idle and loaded latency source"
+              value={focusedId ?? ""}
+              label="Saved latency source"
+              onchange={(id) => {
+                serverView = { recordId: record.id, resultId, latencyId: id };
+              }}
             />
           </div>
         {/if}
@@ -543,94 +555,98 @@
     </div>
   {/if}
 
-  {#if contextRows.length}
+  <details class="run-metadata">
+    <summary>Servers &amp; run context</summary>
+    {#if contextRows.length}
+      <section
+        class="detail-section"
+        aria-labelledby={`result-${record.id}-context`}
+      >
+        <header class="section-head">
+          <span aria-hidden="true">{@html ICON.info}</span>
+          <h3 id={`result-${record.id}-context`}>Run context</h3>
+        </header>
+        <dl class="section-body context-grid">
+          {#each contextRows as row (row.label)}
+            <div>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          {/each}
+        </dl>
+      </section>
+    {/if}
+
     <section
-      class="detail-section"
-      aria-labelledby={`result-${record.id}-context`}
+      class="detail-section saved-servers-section"
+      aria-labelledby={`result-${record.id}-servers`}
     >
       <header class="section-head">
-        <span aria-hidden="true">{@html ICON.info}</span>
-        <h3 id={`result-${record.id}-context`}>Run context</h3>
+        <span aria-hidden="true">{@html ICON.server}</span>
+        <h3 id={`result-${record.id}-servers`}>Servers</h3>
       </header>
-      <dl class="section-body context-grid">
-        {#each contextRows as row (row.label)}
-          <div>
-            <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
-          </div>
+      <ul class="section-body saved-servers">
+        {#each servers as server (server.id)}
+          {@const measurement = record.multiServer?.servers.find(
+            (entry) => entry.server.id === server.id,
+          )}
+          <li>
+            <div>
+              <strong>{server.label}</strong>
+              {#if server.host}<small>{server.host}</small>{/if}
+            </div>
+            {#if server.ping}<span class="saved-server-ping"
+                >Latency source</span
+              >{/if}
+            {#if multiple}
+              <dl class="server-results" aria-label={`${server.label} results`}>
+                <div>
+                  <dt>Down</dt>
+                  <dd>{rate(measurement?.download?.reportedBytesPerSec)}</dd>
+                </div>
+                <div>
+                  <dt>Up</dt>
+                  <dd>{rate(measurement?.upload?.reportedBytesPerSec)}</dd>
+                </div>
+                <div>
+                  <dt>Idle</dt>
+                  <dd>
+                    {formatLatency(measurement?.latency?.reportedMs ?? null)}
+                  </dd>
+                </div>
+              </dl>
+              <dl class="server-paths">
+                <div>
+                  <dt>Throughput</dt>
+                  <dd>
+                    {measurement
+                      ? path(
+                          measurement.throughput.transport,
+                          measurement.throughput.protocol,
+                          measurement.throughput.browserProtocol,
+                        )
+                      : "Not measured"}{#if measurement}<small
+                        >{measurement.throughput.origin}</small
+                      >{/if}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Latency</dt>
+                  <dd>
+                    {measurement?.latencyTarget
+                      ? path(measurement.latencyTarget.transport)
+                      : "Not measured"}{#if measurement?.latencyTarget}<small
+                        >{measurement.latencyTarget.origin}</small
+                      >{/if}
+                  </dd>
+                </div>
+              </dl>
+            {/if}
+          </li>
         {/each}
-      </dl>
+      </ul>
     </section>
-  {/if}
-
-  <section
-    class="detail-section saved-servers-section"
-    aria-labelledby={`result-${record.id}-servers`}
-  >
-    <header class="section-head">
-      <span aria-hidden="true">{@html ICON.server}</span>
-      <h3 id={`result-${record.id}-servers`}>Servers</h3>
-    </header>
-    <ul class="section-body saved-servers">
-      {#each servers as server (server.id)}
-        {@const measurement = record.multiServer?.servers.find(
-          (entry) => entry.server.id === server.id,
-        )}
-        <li>
-          <div>
-            <strong>{server.label}</strong>
-            {#if server.host}<small>{server.host}</small>{/if}
-          </div>
-          {#if server.ping}<span class="saved-server-ping">Latency source</span
-            >{/if}
-          {#if multiple}
-            <dl class="server-results" aria-label={`${server.label} results`}>
-              <div>
-                <dt>Down</dt>
-                <dd>{rate(measurement?.download?.reportedBytesPerSec)}</dd>
-              </div>
-              <div>
-                <dt>Up</dt>
-                <dd>{rate(measurement?.upload?.reportedBytesPerSec)}</dd>
-              </div>
-              <div>
-                <dt>Idle</dt>
-                <dd>
-                  {formatLatency(measurement?.latency?.reportedMs ?? null)}
-                </dd>
-              </div>
-            </dl>
-            <dl class="server-paths">
-              <div>
-                <dt>Throughput</dt>
-                <dd>
-                  {measurement
-                    ? path(
-                        measurement.throughput.transport,
-                        measurement.throughput.protocol,
-                        measurement.throughput.browserProtocol,
-                      )
-                    : "Not measured"}{#if measurement}<small
-                      >{measurement.throughput.origin}</small
-                    >{/if}
-                </dd>
-              </div>
-              <div>
-                <dt>Latency</dt>
-                <dd>
-                  {measurement?.latencyTarget
-                    ? path(measurement.latencyTarget.transport)
-                    : "Not measured"}{#if measurement?.latencyTarget}<small
-                      >{measurement.latencyTarget.origin}</small
-                    >{/if}
-                </dd>
-              </div>
-            </dl>
-          {/if}
-        </li>
-      {/each}
-    </ul>
-  </section>
+  </details>
 
   <footer class="detail-actions">
     <button type="button" onclick={onDelete}>Delete this result</button>
@@ -638,6 +654,13 @@
 </article>
 
 <style>
+  .run-metadata > summary {
+    padding: var(--space-3) var(--space-4);
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    border-bottom: 1px solid var(--border);
+  }
   .selected-path {
     padding-top: var(--space-2);
   }
@@ -719,6 +742,15 @@
     color: var(--text-muted);
     font-size: var(--type-xs);
   }
+  .scope-label {
+    display: block;
+    margin-bottom: var(--space-2);
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  .saved-server-context :global(.scope-heading) {
+    justify-content: flex-start;
+  }
   .saved-server-context {
     padding: var(--space-3) var(--space-4);
     border-bottom: 1px solid var(--border);
@@ -736,7 +768,7 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: space-between;
     gap: 8px;
     color: var(--text-soft);
     font-size: 12px;
@@ -878,8 +910,11 @@
   }
   .throughput-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-2);
+  }
+  .throughput-card[data-tone="bidirectional"] {
+    grid-column: 1 / -1;
   }
   .throughput-card {
     --tone: var(--phase-complete);
@@ -1129,7 +1164,6 @@
       padding: 0;
       margin-inline: var(--space-3);
     }
-    .throughput-grid,
     .context-grid {
       grid-template-columns: 1fr;
     }
@@ -1140,6 +1174,11 @@
     .idle-summary div:nth-child(3) {
       padding-left: 0;
       border-left: 0;
+    }
+  }
+  @media (max-width: 360px) {
+    .throughput-grid {
+      grid-template-columns: 1fr;
     }
   }
 </style>

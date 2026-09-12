@@ -5,7 +5,6 @@ import {
   closePanel,
   openDialog,
   parseRoute,
-  reconcilePanels,
   serializeRoute,
   withWorkspace,
 } from "./router";
@@ -63,22 +62,19 @@ describe("hash router", () => {
     expect(closeDialog(openDialog(endpoint, "legal"))).toEqual(endpoint);
   });
 
-  test("retains ordered panels on wide layouts but only the visible panel on narrow layouts", () => {
+  test("retains panel order without duplicating a reactivated panel", () => {
     const route = parseRoute("#/?panels=endpoint,settings");
     expect(activatePanel(route, "endpoint").panels).toEqual([
       "settings",
       "endpoint",
     ]);
-    expect(activatePanel(route, "settings", false).panels).toEqual([
+    expect(activatePanel(route, "settings").panels).toEqual([
+      "endpoint",
       "settings",
     ]);
-    expect(reconcilePanels(route, false)).toEqual({
-      kind: "app",
-      workspace: { kind: "measurement" },
-      panels: ["settings"],
-      dialog: null,
-    });
-    expect(reconcilePanels(route, true)).toEqual(route);
+    expect(
+      closePanel(activatePanel(route, "endpoint"), "endpoint").panels,
+    ).toEqual(["settings"]);
   });
 
   test("switches workspaces without changing requested auxiliary surfaces", () => {

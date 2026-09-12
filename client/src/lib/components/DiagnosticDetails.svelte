@@ -14,15 +14,21 @@
   }
   $effect(() => {
     if (!open) return;
+    // Keep the reading surface still while scrolling. Dismiss when its trigger
+    // leaves the visible workspace, including clipping by nested scroll areas.
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting && panel.matches(":popover-open"))
+        panel.hidePopover();
+    });
+    observer.observe(trigger);
     window.addEventListener("resize", position);
     window.visualViewport?.addEventListener("resize", position);
     window.visualViewport?.addEventListener("scroll", position);
-    document.addEventListener("scroll", position, true);
     return () => {
+      observer.disconnect();
       window.removeEventListener("resize", position);
       window.visualViewport?.removeEventListener("resize", position);
       window.visualViewport?.removeEventListener("scroll", position);
-      document.removeEventListener("scroll", position, true);
     };
   });
 </script>

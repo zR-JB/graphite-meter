@@ -399,7 +399,7 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
   );
   const cdp = await page.context.newCDPSession(page);
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
-  await page.setViewportSize({ width: 240, height: 844 });
+  await page.setViewportSize({ width: 200, height: 844 });
   await page.getByRole("button", { name: "More controls" }).click();
   await expect(
     page.getByRole("menuitem", { name: /Open History/ }),
@@ -439,7 +439,7 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
 test("overflow menu supports keyboard navigation and returns focus", async ({
   page,
 }) => {
-  await openApp(page, "dummy", { width: 240, height: 844 });
+  await openApp(page, "dummy", { width: 200, height: 844 });
   const cdp = await page.context.newCDPSession(page);
   await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
   await setHistoryPreference(page, "enabled");
@@ -857,7 +857,7 @@ test("wordmark semantics preserve a live run away from the meter", async ({
   await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
 });
 
-test("wide panels compose over History while narrow routes keep only the visible panel", async ({
+test("wide panels compose over History and survive a narrow viewport", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1440, height: 900 });
@@ -900,27 +900,35 @@ test("wide panels compose over History while narrow routes keep only the visible
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(settingsPanel(page)).toHaveAttribute("inert", "");
   await expect(endpointPanel(page)).toBeVisible();
+  expect(await page.evaluate(() => window.location.hash)).toBe(
+    "#/history?panels=settings,endpoint",
+  );
+
+  await page.setViewportSize({ width: 1440, height: 900 });
   await expect
-    .poll(() => page.evaluate(() => window.location.hash))
-    .toBe("#/history?panels=endpoint");
-
+    .poll(() =>
+      settingsPanel(page).evaluate((node) => node.hasAttribute("inert")),
+    )
+    .toBe(false);
+  await expect
+    .poll(() =>
+      endpointPanel(page).evaluate((node) => node.hasAttribute("inert")),
+    )
+    .toBe(false);
+  await page.setViewportSize({ width: 390, height: 844 });
   await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
-  expect(await page.evaluate(() => window.location.hash)).toBe("#/history");
-  await expect(settingsPanel(page)).toHaveAttribute("inert", "");
-
-  await openSettings(page);
+  await expect
+    .poll(() =>
+      settingsPanel(page).evaluate((node) => node.hasAttribute("inert")),
+    )
+    .toBe(false);
   expect(await page.evaluate(() => window.location.hash)).toBe(
     "#/history?panels=settings",
   );
-  const switchedEndpoint = await openEndpointInfo(page);
-  expect(await page.evaluate(() => window.location.hash)).toBe(
-    "#/history?panels=endpoint",
-  );
-  await switchedEndpoint
-    .getByRole("button", { name: "Close Endpoint" })
+  await settingsPanel(page)
+    .getByRole("button", { name: "Close Settings" })
     .click();
   expect(await page.evaluate(() => window.location.hash)).toBe("#/history");
-  await expect(settingsPanel(page)).toHaveAttribute("inert", "");
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await expect(settingsPanel(page)).toHaveAttribute("inert", "");
@@ -951,7 +959,11 @@ test("deep-linked detail uses contextual focus without outlining its heading", a
   await expect(detail.getByText("Median (p50)", { exact: true })).toBeVisible();
   await expect(detail.getByText("p95", { exact: true })).toBeVisible();
   await expect(detail.getByText("Stability", { exact: true })).toBeVisible();
-  await expect(detail.locator("details")).toHaveCount(0);
+  expect(
+    await detail
+      .locator(".run-metadata")
+      .evaluate((node) => node.hasAttribute("open")),
+  ).toBe(false);
   await expect(detail.locator(".throughput-card")).toHaveCount(3);
   await expect(detail.locator(".saved-wire").first()).toContainText("+3.0%");
   await detail.locator(".saved-wire .wire-label").first().hover();
@@ -961,6 +973,7 @@ test("deep-linked detail uses contextual focus without outlining its heading", a
   await page.mouse.move(20, 65);
   await expect(detail.locator(".throughput-card em")).toHaveCount(0);
   await expect(detail.locator(".throughput-card")).not.toContainText(/loss/i);
+  await detail.locator(".run-metadata > summary").click();
   await expect(
     detail.getByRole("heading", { name: "Run context" }),
   ).toBeVisible();
@@ -1332,7 +1345,7 @@ test("History shortcut uses neutral workspace focus and preserves its invocation
   const hint = page
     .locator(".command-hints span")
     .filter({ hasText: "History" });
-  await expect(hint).toBeVisible();
+  await expect(hint).toBeHidden();
   const settingsTrigger = page.getByRole("button", { name: "Open settings" });
   await settingsTrigger.focus();
   await page.keyboard.press("h");
@@ -1513,14 +1526,11 @@ test("phone topbar keeps History, Theme, and Endpoint direct without a special a
           buttons.every((button) => {
             const box = button.getBoundingClientRect();
             const icon = button.querySelector("svg")!.getBoundingClientRect();
-            const surface = getComputedStyle(button, "::before");
             return (
               box.width >= 44 &&
               box.height >= 44 &&
               icon.width === 16 &&
-              icon.height === 16 &&
-              surface.width === "32px" &&
-              surface.height === "32px"
+              icon.height === 16
             );
           }),
         ),
@@ -1614,6 +1624,14 @@ test("authenticated phone chrome compacts account identity before core controls"
       )
       .toBe(true);
   }
+  await startTest(page);
+  await page.keyboard.press("h");
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(page.locator(".return-live")).toBeVisible();
+    await expectNoHorizontalOverflow(page.locator(".topbar"));
+    await page.artifact(`mobile-authenticated-history-${width}`);
+  }
 });
 
 test("sortable headers expose natural reversible order with missing values last", async ({
@@ -1666,7 +1684,7 @@ test("sortable headers expose natural reversible order with missing values last"
     page.getByRole("heading", { name: "Stage issues" }),
   ).toBeVisible();
   await expect(page.locator(".issue-list li")).toHaveCount(1);
-  await expect(page.locator(".result-detail details")).toHaveCount(0);
+  await expect(page.locator(".result-detail details")).toHaveCount(1);
 
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 390, height: 844 });
@@ -2102,6 +2120,12 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   );
   for (const width of [320, 390, 768, 1600]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
     await expectNoHorizontalOverflow(profile);
     const heights = await profile
       .locator(".lane-meta")
@@ -2312,9 +2336,10 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
     );
     const lane = profile.locator('.lane[data-tone="download"]');
     await page.mouse.move(0, 0);
-    const control = lane.getByRole("img", {
-      name: "Loaded Down: server timing",
+    const control = lane.getByRole("note", {
+      name: /^Loaded Down: measurement details/,
     });
+    await control.scrollIntoViewIfNeeded();
     await control.focus();
     const diagnostic = page.getByRole("tooltip");
     await expect(diagnostic).toBeVisible();
@@ -2326,6 +2351,7 @@ test("saved server timing stays a paired diagnostic in readable keyboard tooltip
     await expect(diagnostic).toContainText("3.0 ms server handling");
     await expect(diagnostic).toContainText("15.0 ms adjusted");
     await expect(lane.locator(".lane-icon svg")).toHaveCount(1);
+    await expect(lane.locator(".timing-info")).toHaveCount(1);
     await expect(control).toHaveAttribute("aria-describedby", /gm-tt-/);
     const box = await diagnostic.boundingBox();
     expect(box!.y).toBeGreaterThanOrEqual(0);
@@ -2440,8 +2466,16 @@ test("missing per-server latency remains selectable and focus belongs to each sa
     name: "Result measurements",
     exact: true,
   });
-  await expect(detail.getByRole("combobox")).toHaveCount(1);
+  await expect(detail.getByRole("combobox")).toHaveCount(2);
   await picker.focus();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(detail.locator(".latency-empty")).toBeVisible();
+  const latencyPicker = detail.getByRole("combobox", {
+    name: "Saved latency source",
+    exact: true,
+  });
+  await latencyPicker.focus();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   await expect(detail.locator(".latency-empty")).toHaveCount(0);
@@ -2478,9 +2512,13 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   for (const width of [320, 390, 900, 1600, 320, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(picker).toHaveValue("peer");
-    await expect(detail.getByRole("combobox")).toHaveCount(1);
+    await expect(detail.getByRole("combobox")).toHaveCount(2);
     await expect(detail.locator(".idle-summary")).toContainText("25");
     await expectNoHorizontalOverflow(detail);
+    if (width === 390) {
+      await detail.locator(".saved-server-context").scrollIntoViewIfNeeded();
+      await page.artifact("mobile-history-server-controls");
+    }
   }
   await page.evaluate((id) => {
     location.hash = `/history/${id}`;
@@ -2505,13 +2543,16 @@ test("single-server saved server identity stays readable at the bottom of histor
   await openApp(page, "dummy");
   await seedHistory(page, [saved]);
   await openHistory(page, IDS.newest);
+  await page.locator(".run-metadata > summary").click();
   const servers = page.locator(".saved-servers-section");
   await expect(servers.locator("li")).toHaveCount(1);
   await expect(servers).toContainText(saved.server.name);
   await expect(servers).toContainText(saved.server.location);
   await expect(servers.locator("small")).toHaveCount(0);
   expect(
-    await servers.evaluate((section) => section.nextElementSibling?.tagName),
+    await servers.evaluate(
+      (section) => section.parentElement?.nextElementSibling?.tagName,
+    ),
   ).toBe("FOOTER");
   for (const theme of ["dark", "light"]) {
     await page.evaluate(
@@ -2525,5 +2566,58 @@ test("single-server saved server identity stays readable at the bottom of histor
       if (process.env.GM_WEBVIEW_ARTIFACTS)
         await page.artifact(`history-saved-server-${theme}-${width}`);
     }
+  }
+});
+
+test("phone history keeps the footer at the viewport edge while rows and details scroll", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 390, height: 844 });
+  await seedHistory(page, [
+    record(IDS.newest, Date.UTC(2026, 8, 12, 12)),
+    record(IDS.middle, Date.UTC(2026, 8, 11, 12)),
+  ]);
+  await openHistory(page, IDS.newest);
+  await expect(page.locator(".result-detail")).toBeVisible();
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 390, height: 640 },
+    { width: 320, height: 740 },
+  ]) {
+    await page.setViewportSize(viewport);
+    for (const end of [false, true]) {
+      await page.locator(".workspace-body").evaluate((node, end) => {
+        node.scrollTop = end ? node.scrollHeight : 0;
+      }, end);
+      const box = await page.evaluate(() => {
+        const footer = document
+          .querySelector("footer.status")!
+          .getBoundingClientRect();
+        const body = document
+          .querySelector(".workspace-body")!
+          .getBoundingClientRect();
+        return {
+          bottom: footer.bottom,
+          top: footer.top,
+          contentBottom: body.bottom,
+          rootScroll: document.documentElement.scrollHeight - innerHeight,
+        };
+      });
+      expect(Math.abs(box.bottom - viewport.height)).toBeLessThanOrEqual(1);
+      expect(box.contentBottom).toBeLessThanOrEqual(box.top);
+      expect(box.rootScroll).toBeLessThanOrEqual(1);
+      await expectNoHorizontalOverflow(page.locator(".history-workspace"));
+    }
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".workspace-body").evaluate((node) => {
+    node.scrollTop = 0;
+  });
+  for (const theme of ["light", "dark"]) {
+    await page.evaluate(
+      (theme) => document.documentElement.setAttribute("data-theme", theme),
+      theme,
+    );
+    await page.artifact(`mobile-history-detail-${theme}`);
   }
 });

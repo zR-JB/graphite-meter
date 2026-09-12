@@ -125,25 +125,13 @@ export function withWorkspace(route: Route, workspace: Workspace): AppRoute {
     : appRoute(workspace);
 }
 
-export function activatePanel(
-  route: Route,
-  panel: PanelSurface,
-  allowMultiple = true,
-): AppRoute {
+export function activatePanel(route: Route, panel: PanelSurface): AppRoute {
   const base = route.kind === "app" ? route : appRoute();
   return appRoute(
     base.workspace,
-    allowMultiple
-      ? [...base.panels.filter((candidate) => candidate !== panel), panel]
-      : [panel],
+    [...base.panels.filter((candidate) => candidate !== panel), panel],
     base.dialog,
   );
-}
-
-export function reconcilePanels(route: Route, allowMultiple: boolean): Route {
-  if (route.kind !== "app" || allowMultiple || route.panels.length <= 1)
-    return route;
-  return appRoute(route.workspace, [route.panels.at(-1)!], route.dialog);
 }
 
 export function closePanel(route: Route, panel: PanelSurface): AppRoute {
