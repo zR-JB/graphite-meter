@@ -13,10 +13,10 @@ require (
 	github.com/quic-go/quic-go v0.62.0
 	github.com/quic-go/webtransport-go v0.13.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
-	golang.org/x/crypto v0.56.0
+	golang.org/x/crypto v0.57.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sys v0.47.0
-	golang.org/x/term v0.45.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0
 )
 
 require (
@@ -40,5 +40,5 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
