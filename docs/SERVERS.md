@@ -99,6 +99,13 @@ your normal [TLS or proxy deployment](DEPLOYMENT.md). Publishing a catalogue doe
 not expose an otherwise private peer to the internet; clients must be able to
 reach every selected discovery and transport origin.
 
+Catalogue membership does not imply that every user can reach every entry. A
+four-server deployment may list public, intranet and LAN servers together; each
+client can select the one or two it can reach. Unavailable unselected entries do
+not block measurement. An unavailable saved selection produces a named failure
+until access is restored or the user deselects it; the client does not silently
+remove it before starting.
+
 ### Local-network browser permission
 
 The browser may ask to access devices on the local network when a hosted interface

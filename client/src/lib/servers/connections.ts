@@ -322,8 +322,9 @@ export class ServerConnections {
     this.#schedule();
   }
 
-  recover(): void {
+  recover(serverId?: string): void {
     for (const state of this.#servers.values()) {
+      if (serverId !== undefined && state.server.id !== serverId) continue;
       if (!state.discoveryRetry.authentication) state.discoveryRetry.at = 0;
       for (const role of CONNECTION_ROLES)
         if (!state.roles[role].retry.authentication)

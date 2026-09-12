@@ -245,3 +245,65 @@ test("renewed authorization discards old work and resumes only the affected serv
     manager.dispose();
   }
 });
+
+for (const failure of ["discovery", "latency"] as const)
+  test(`home recovery preserves peer ${failure} backoff and manual retry while global recovery retries it`, async () => {
+    const clock = spyOn(Date, "now").mockReturnValue(1000);
+    const originalTimeout = globalThis.setTimeout;
+    const delays: number[] = [];
+    const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
+      ...[run, delay, ...args]: Parameters<typeof setTimeout>
+    ) => {
+      delays.push(Number(delay ?? 0));
+      return originalTimeout(run, delay, ...args);
+    }) as typeof setTimeout);
+    let attempts = 0;
+    const { manager, views } = fixture(
+      async (_config, _previous, roles, _signal, credentials) => {
+        if (
+          failure === "latency" &&
+          credentials?.server.id === "peer" &&
+          roles.includes("latency")
+        ) {
+          attempts++;
+          throw new Error("Peer unavailable");
+        }
+        return preparation();
+      },
+      async (_signal, credentials) => {
+        if (failure === "discovery" && credentials?.server.id === "peer") {
+          attempts++;
+          throw new Error("Peer unavailable");
+        }
+        return testPreparedPaths().discovery;
+      },
+    );
+    try {
+      await manager.check({ ids: ["self"] });
+      await expect(manager.check({ ids: ["peer"] })).rejects.toThrow();
+      manager.activity(true, null);
+      manager.recover("self");
+      expect(delays.at(-1)).toBe(30000);
+      await new Promise((resolve) => originalTimeout(resolve, 0));
+      await settle();
+      expect(attempts).toBe(1);
+      expect(views.get("peer")!.readiness.state).toBe("failed");
+
+      await expect(
+        manager.check({ ids: ["peer"], force: true }),
+      ).rejects.toThrow();
+      expect(attempts).toBe(2);
+      manager.recover("self");
+      expect(delays.at(-1)).toBe(60000);
+      expect(views.get("peer")!.readiness.state).toBe("failed");
+
+      manager.recover();
+      await new Promise((resolve) => originalTimeout(resolve, 0));
+      await settle();
+      expect(attempts).toBe(3);
+    } finally {
+      manager.dispose();
+      timer.mockRestore();
+      clock.mockRestore();
+    }
+  });
