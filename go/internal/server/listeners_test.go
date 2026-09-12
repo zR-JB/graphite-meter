@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,107 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
+
+// Pace encrypted upload writes so a large HTTP/2 DATA frame occupies the wire
+// long enough to expose control requests queued behind that indivisible frame.
+type pacedUploadConn struct {
+	net.Conn
+	started chan struct{}
+	once    sync.Once
+}
+
+func (c *pacedUploadConn) Write(p []byte) (int, error) {
+	if len(p) < 8192 {
+		return c.Conn.Write(p)
+	}
+	c.once.Do(func() { close(c.started) })
+	total := 0
+	for len(p) > 0 {
+		time.Sleep(2 * time.Millisecond)
+		n, err := c.Conn.Write(p[:min(len(p), 1024)])
+		total += n
+		p = p[n:]
+		if err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_, _ = io.Copy(io.Discard, r.Body)
+		}
+		_, _ = w.Write([]byte("ok"))
+	})
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Config = baseServer(handler, nil)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	started := make(chan struct{})
+	var conn *pacedUploadConn
+	tr := &http.Transport{
+		ForceAttemptHTTP2: true,
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		MaxConnsPerHost:   1,
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			c, err := (&net.Dialer{}).DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			conn = &pacedUploadConn{Conn: c, started: started}
+			return conn, nil
+		},
+	}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+	res, err := client.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.ProtoMajor != 2 {
+		t.Fatal("fixture did not negotiate HTTP/2")
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	uploadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, bytes.NewReader(make([]byte, 8<<20)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		res, err := client.Do(uploadReq)
+		if err == nil {
+			res.Body.Close()
+		}
+	}()
+	defer func() { cancel(); conn.Close(); <-done }()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("upload did not start")
+	}
+	control, stop := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer stop()
+	req, err := http.NewRequestWithContext(control, http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("control request was blocked by upload framing: %v", err)
+	}
+	defer res.Body.Close()
+	if _, err := io.Copy(io.Discard, res.Body); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type observedBody struct {
 	reader *bytes.Reader

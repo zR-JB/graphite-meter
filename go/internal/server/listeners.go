@@ -244,7 +244,10 @@ func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
 }
 
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
+		// Bound upload DATA frames so control requests can share a saturated connection.
+		MaxReadFrameSize: 16 << 10,
+	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 		if tc, ok := c.(*net.TCPConn); ok {
 			_ = tc.SetNoDelay(true)
 		}
