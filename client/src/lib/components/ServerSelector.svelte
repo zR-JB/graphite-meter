@@ -236,7 +236,7 @@
     position: relative;
     isolation: isolate;
     display: inline-flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     align-items: stretch;
     justify-content: center;
     gap: 2px;
@@ -269,10 +269,10 @@
   button {
     position: relative;
     display: inline-flex;
-    flex: 1 1 0;
+    flex: 1 1 116px;
     align-items: center;
     justify-content: center;
-    min-width: 0;
+    min-width: min(116px, 100%);
     min-height: 32px;
     gap: 6px;
     padding: 6px 8px;
@@ -309,11 +309,14 @@
     opacity: 0.55;
   }
   .server-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     min-width: 0;
     max-width: 18ch;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
     transition: transform 120ms ease;
   }
   .server-dot {
@@ -322,6 +325,11 @@
     flex-shrink: 0;
     border-radius: 50%;
     background: var(--server-accent);
+  }
+  @media (pointer: coarse) {
+    button {
+      min-height: 44px;
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     button,
