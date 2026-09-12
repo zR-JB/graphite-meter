@@ -2,7 +2,7 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-The **v0.8.2** browser client, from the completed test to saved results. These captures use a
+The **v0.8.5** browser client, from the completed test to saved results. These captures use a
 simulated deployment and illustrative data throughout; they are not performance benchmarks.
 
 ## The completed test
@@ -10,14 +10,22 @@ simulated deployment and illustrative data throughout; they are not performance 
 Throughput and responsiveness share the screen. The timeline retains the transfer ramp-up and
 variation, while separate latency profiles show idle, download, and upload populations.
 
-<img src="assets/desktop.png" alt="v0.8.2 completed desktop test with cyan download and gold upload curves, three latency distributions, and throughput summaries" width="1080">
+<img src="assets/desktop.png" alt="v0.8.5 completed desktop test with cyan download and gold upload curves, three latency distributions, and throughput summaries" width="1080">
 
 ## Settings, beside your results
 
 Choose connection paths, stage timings, units, and display options. The dock keeps the instrument
-visible while you adjust the test; on smaller screens, the same settings open as a panel.
+visible while you adjust the test; on smaller screens, the same settings open as a flyout.
 
 <img src="assets/settings.png" alt="Settings dock with connection and timing choices beside the completed test" width="1080">
+
+## Make room for both panels
+
+On a wide desktop, keep Settings and Endpoint info open together. Resize each panel to leave the
+space you want for the meter. A narrower window shows the most recent panel; widening it restores
+both panels and their saved widths.
+
+<img src="assets/workspace.png" alt="v0.8.5 wide desktop with resizable Settings and Endpoint info docks open together" width="1080">
 
 ## Know which path you measured
 
@@ -30,15 +38,24 @@ what the browser observed from what reached the server, which is useful when a p
 
 Opt into saving completed summaries, then browse and sort results without replacing the live
 meter. The selected result keeps throughput, latency distributions, and probe evidence together.
+Multi-server runs have separate throughput and latency selectors, while secondary server metadata
+stays under **Servers & run context**.
 
 <img src="assets/history.png" alt="Device-local history with illustrative saved runs and a selected result's measurement details" width="1080">
 
-History is optional and limited to 2,000 summaries per browser.
+History is optional and limited to 2,000 summaries per browser. On a phone, the selected result
+opens within the list with a restrained selection marker; the bottom status bar stays at the
+viewport edge as the workspace scrolls.
+
+<p align="center">
+<img src="assets/mobile-history.png" alt="v0.8.5 phone history with the selected result expanded and a fixed bottom status bar" width="320">
+</p>
 
 ## Light and dark, desktop and phone
 
 The interface adapts to the available width. On a phone, the gauge, run controls, latency profiles,
-and results form a vertical reading order; additional content remains available by scrolling.
+and results form a vertical reading order. Compact stage cards keep their labels readable, while
+the workspace scrolls between the anchored toolbar and status bar.
 
 <img src="assets/light.png" alt="The same completed test in Graphite Meter's light theme" width="1080">
 
@@ -53,15 +70,15 @@ latency percentiles, and probe timeouts.
 
 <img src="assets/tui.png" alt="v0.8.2 native terminal client with simulated download, upload, and latency results" width="1080">
 
-This capture renders the current native view's ANSI output with illustrative results and the
+The retained v0.8.2 capture renders the native view's ANSI output with illustrative results and the
 client version set to `0.8.2`. It uses the shipped layout and colors; the terminal frame is simulated.
 [Download and run the native client](../README.md#native-terminal-client).
 
 ## Capture details
 
-- Production UI built with `VERSION=0.8.2`, `GM_CLIENT_BUILD_PROFILE=prod`, and the explicitly
-  enabled dummy backend. The application footer reads `prod v0.8.2`.
-- Source UI: v0.8.2 result-gauge refresh. Chromium engine: `152.0.7977.82`.
+- Production UI built with `VERSION=0.8.5`, `GM_CLIENT_BUILD_PROFILE=prod`, and the explicitly
+  enabled dummy backend. The application footer reads `prod v0.8.5`.
+- Source UI: v0.8.5 responsive workspace and history refinement. Chromium engine: `152.0.7977.82`.
 - Simulated server: **Graphite Meter demo**, **40 GbE lab · simulated**, using a reserved example
   hostname and documentation IP address.
 - Three stages only: idle latency, download, and upload. Synthetic receiver observations include
