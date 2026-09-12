@@ -89,15 +89,6 @@
     }
     prevFailCount = failures.length;
   });
-
-  // Dropping the auto-dismiss timer holds the stall notice for the whole
-  // dead-air window, past any phase toast underneath it.
-  $effect(() => {
-    if (stalled && timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-  });
 </script>
 
 <div
