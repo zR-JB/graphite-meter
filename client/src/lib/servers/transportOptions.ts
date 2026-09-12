@@ -65,7 +65,7 @@ export function serverTransportOptions(
       ? restrictions.join(" ")
       : value === "auto"
         ? role === "throughput"
-          ? "Prefers HTTP/3, then HTTP/2; verifies fallbacks per server"
+          ? "Prefers HTTP/1.1 streams, then HTTP/2 and HTTP/3; verifies fallbacks per server"
           : "Prefers WebTransport datagrams; verifies WebSocket fallbacks per server"
         : incompatible.length
           ? `Unavailable on ${incompatible.map((server) => server.name).join(", ")}`

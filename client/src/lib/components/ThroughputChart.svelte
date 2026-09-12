@@ -72,6 +72,10 @@
   });
   let pointerFrame = 0;
   let pointerClientX = 0;
+  let pointerClientY = 0;
+  let pointerY = $state<number | null>(null);
+  let chipWidth = $state(220);
+  let chipHeight = $state(100);
   const inspectorDots = $derived.by(() => {
     if (!hover || !chartPresentation) return [];
     const { layout } = chartPresentation;
@@ -94,6 +98,36 @@
         color: "var(--warn)",
       });
     return dots;
+  });
+  const chipPosition = $derived.by(() => {
+    if (!hover || !chartPresentation) return { x: 8, y: 8 };
+    const { layout } = chartPresentation;
+    const anchor =
+      pointerY == null
+        ? inspectorDots[0]
+        : inspectorDots.reduce<(typeof inspectorDots)[number] | undefined>(
+            (nearest, dot) =>
+              !nearest ||
+              Math.abs(dot.y - pointerY!) < Math.abs(nearest.y - pointerY!)
+                ? dot
+                : nearest,
+            undefined,
+          );
+    const x = anchor?.x ?? hover.x;
+    const y = anchor?.y ?? pointerY ?? layout.plot.top;
+    return {
+      x: Math.max(
+        8,
+        Math.min(
+          x + 12 + chipWidth <= layout.width - 8 ? x + 12 : x - chipWidth - 12,
+          layout.width - chipWidth - 8,
+        ),
+      ),
+      y: Math.max(
+        8,
+        Math.min(y - chipHeight / 2, layout.height - chipHeight - 8),
+      ),
+    };
   });
   // Invalidate only for state read by ChartEngine.
   $effect(() => {
@@ -121,12 +155,15 @@
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
     pointerClientX = e.clientX;
+    pointerClientY = e.clientY;
     if (pointerFrame) return;
     // Coalesce pointer events into one small DOM update. The cached chart stays parked.
     pointerFrame = requestAnimationFrame(() => {
       pointerFrame = 0;
-      if (!document.hidden && plotEl)
+      if (!document.hidden && plotEl) {
+        pointerY = pointerClientY - plotEl.getBoundingClientRect().top;
         selectX(pointerClientX - plotEl.getBoundingClientRect().left);
+      }
     });
   }
   function selectX(x: number) {
@@ -142,6 +179,7 @@
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!viewport || !hasData) return;
+    pointerY = null;
     const step = (viewport.tMax - viewport.tMin) / 100;
     switch (e.key) {
       case "ArrowRight":
@@ -168,6 +206,7 @@
     e.stopPropagation();
   }
   function onFocus() {
+    pointerY = null;
     retainSelection = true;
     selectTime(position == null ? (viewport?.tMin ?? 0) : selectedTime);
   }
@@ -175,6 +214,9 @@
     if (e.pointerType === "mouse") return;
     plotEl?.focus({ preventScroll: true });
     retainSelection = true;
+    pointerY =
+      e.clientY -
+      (e.currentTarget as HTMLDivElement).getBoundingClientRect().top;
     selectX(
       e.clientX -
         (e.currentTarget as HTMLDivElement).getBoundingClientRect().left,
@@ -358,7 +400,9 @@
       {/each}
       <div
         class="chip"
-        style:transform={`translateX(${Math.max(8, Math.min(hover.x + 12, chartPresentation.layout.width - 232))}px)`}
+        bind:offsetWidth={chipWidth}
+        bind:offsetHeight={chipHeight}
+        style:transform={`translate(${chipPosition.x}px, ${chipPosition.y}px)`}
       >
         <div class="chip-row">
           <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
@@ -514,7 +558,7 @@
     left: 0;
     will-change: transform;
     position: absolute;
-    top: var(--space-2);
+    top: 0;
     width: 224px;
     max-width: calc(100% - 2 * var(--space-2));
     box-sizing: border-box;

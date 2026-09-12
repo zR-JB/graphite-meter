@@ -9,6 +9,93 @@ import {
 } from "../browser/webview";
 import { configure, savedResult, ready } from "./multi-server-actions";
 
+test("an HTTP interface explains an opaque protected HTTPS refusal while public HTTPS stays usable", async ({
+  page,
+}) => {
+  const protectedServer = fleet[4];
+  const refusal = await fetch(`${protectedServer.url}/preflight`, {
+    headers: { Origin: fleet[0].http },
+    tls: { rejectUnauthorized: false },
+  });
+  expect(refusal.status).toBe(403);
+  expect(refusal.headers.get("Graphite-Meter-Auth")).toBe("required");
+  expect(refusal.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  await refusal.body?.cancel();
+  await page.addInitScript(
+    ({ protectedOrigin, unmarkedOrigin }) => {
+      const original = window.fetch.bind(window);
+      const evidence = { protectedFailure: "" };
+      Object.assign(window, { httpAuthEvidence: evidence });
+      window.fetch = (async (input, init) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+          location.href,
+        );
+        if (url.pathname === "/preflight" && url.origin === unmarkedOrigin)
+          return new Response(null, { status: 403 });
+        try {
+          return await original(input, init);
+        } catch (error) {
+          if (url.pathname === "/preflight" && url.origin === protectedOrigin)
+            evidence.protectedFailure =
+              error instanceof Error ? error.name : String(error);
+          throw error;
+        }
+      }) as typeof window.fetch;
+    },
+    { protectedOrigin: protectedServer.url, unmarkedOrigin: fleet[2].url },
+  );
+  await configure(
+    page,
+    ["self", fleet[1].id, fleet[2].id, protectedServer.id],
+    1500,
+    {},
+    { mode: "primary", serverId: "self" },
+    fleet[0].http,
+  );
+  const settings = await openSettings(page);
+  const protectedFeedback = settings.locator(".server-feedback", {
+    hasText: "Private",
+  });
+  await expect(protectedFeedback).toContainText(
+    "If it requires sign-in, open this interface over HTTPS",
+  );
+  await expect(
+    protectedFeedback.getByRole("button", { name: "Retry Private" }),
+  ).toBeVisible();
+  await expect(
+    settings.getByRole("button", { name: "Sign in to Private" }),
+  ).toHaveCount(0);
+  await expect(
+    settings.locator(".server-choices label", { hasText: "Private" }),
+  ).toContainText("Unavailable");
+  await expect(
+    settings
+      .locator(".server-choices label", { hasText: "Frankfurt" })
+      .locator('.server-status[data-state="ready"]'),
+  ).toBeVisible({ timeout: 15000 });
+  const unmarkedFeedback = settings.locator(".server-feedback", {
+    hasText: "Amsterdam",
+  });
+  await expect(unmarkedFeedback).toContainText("Connection check failed");
+  await expect(
+    unmarkedFeedback.getByRole("button", { name: "Retry Amsterdam" }),
+  ).toBeVisible();
+  await expect(
+    settings.getByRole("button", { name: "Sign in to Amsterdam" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            httpAuthEvidence: { protectedFailure: string };
+          }
+        ).httpAuthEvidence.protectedFailure,
+    ),
+  ).toBe("TypeError");
+});
+
 test("a full remote login offers explicit renewal and discards the old approval link", async ({
   page,
 }) => {
@@ -61,12 +148,20 @@ for (const transport of ["websocket", "webtransport"] as const)
             input instanceof Request ? input.url : String(input),
             location.href,
           );
-          if (url.pathname === "/probe" && unavailable.includes(url.origin))
+          // Throughput probe nonces include their attempt suffix. Keep the
+          // WebSocket latency control probe on this same origin available.
+          if (
+            url.pathname === "/probe" &&
+            url.searchParams.get("cb")?.includes("-") &&
+            unavailable.includes(url.origin)
+          )
             return Promise.reject(new TypeError("Fixture path unavailable"));
           return original(input, init);
         }) as typeof window.fetch;
       },
-      transport === "websocket" ? [fleet[1].h3, fleet[2].h3, fleet[2].h2] : [],
+      transport === "websocket"
+        ? [fleet[1].url, fleet[2].url, fleet[2].http, fleet[2].h2]
+        : [],
     );
     await configure(page, ids, 1800, {
       transports: {
@@ -173,7 +268,7 @@ for (const transport of ["websocket", "webtransport"] as const)
       if (transport === "websocket")
         expect(
           saved.multiServer!.servers.map((server) => server.throughput?.origin),
-        ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[4].h3]);
+        ).toEqual([fleet[0].url, fleet[1].h2, fleet[2].h3, fleet[4].url]);
       expect(JSON.stringify(saved)).not.toContain("Bearer");
     } finally {
       approval.close();

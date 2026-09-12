@@ -3,6 +3,7 @@
      `store.phase` change, then auto-dismiss. role="status" with
      aria-live="polite" gives screen readers one calm announcement per
      transition. GaugePanel's mirror carries the per-value detail. */
+  import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { reasonLabel } from "../format";
@@ -115,6 +116,9 @@
   role="status"
   aria-live="polite"
 >
+  <span class="notice-icon" aria-hidden="true"
+    >{#if stalled || skipMessage || store.phase === "error"}{@html ICON.info}{:else if store.phase === "complete"}{@html ICON.check}{:else}{@html ICON.ping}{/if}</span
+  >
   <span class="kicker"
     >{stalled
       ? "Link"
@@ -134,46 +138,59 @@
     bottom: 40px;
     z-index: 50;
     display: grid;
+    grid-template-columns: 24px minmax(0, 1fr);
+    column-gap: 9px;
+    align-items: center;
     min-width: 220px;
+    max-width: min(360px, calc(100vw - 24px));
     pointer-events: none;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1));
+    background: var(--surface-2);
     box-shadow: var(--shadow-float);
     padding: var(--space-2) var(--space-3);
     opacity: 0;
-    transform: translateY(10px) scale(0.985);
+    transform: translateY(4px);
     transition:
       opacity var(--dur-slide) var(--ease-out),
       transform var(--dur-slide) var(--ease-out);
   }
   .phase-toast.visible {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateY(0);
   }
-  /* Stalled (link dropped): error-tinted so the transient notice reads as an
-     alert, not a routine phase change. */
+  /* Keep issue emphasis on the icon, with the same calm surface. */
   .phase-toast.alert {
-    border-color: color-mix(in srgb, var(--err) 45%, var(--border));
-    background: linear-gradient(180deg, var(--err-soft), var(--surface-1));
+    border-color: var(--border-strong);
   }
-  .phase-toast.alert .kicker {
+  .phase-toast.alert .notice-icon {
     color: var(--err);
   }
 
+  .notice-icon {
+    grid-row: 1 / 3;
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+  }
+  .notice-icon :global(svg) {
+    width: 18px;
+    height: 18px;
+  }
   .kicker {
-    color: var(--brand-strong);
-    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
     font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    letter-spacing: 0;
   }
   strong {
     margin-top: 2px;
     color: var(--text);
     font-size: 12px;
-    font-weight: 700;
+    font-weight: 500;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
   }
 
   /* Reduced motion: the resting transform is pinned, so the toast fades in

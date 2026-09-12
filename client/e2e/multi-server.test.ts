@@ -9,7 +9,7 @@ import {
 import { isHistoryRecord } from "../src/lib/history/types";
 import { configure, savedResult, ready } from "./multi-server-actions";
 
-test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only peer", async ({
+test("an HTTP page automatically verifies clear and TLS HTTP/1.1 streams", async ({
   page,
 }) => {
   // An ordinary non-loopback HTTP page does not expose WebTransport. Exercise
@@ -50,9 +50,9 @@ test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only p
   expect(saved.multiServer?.failures).toEqual([]);
   const [home, peer] = saved.multiServer!.servers;
   expect(home.server.url).toBe(fleet[0].http);
-  expect(home.throughput?.origin).toBe(fleet[0].h3);
+  expect(home.throughput?.origin).toBe(fleet[0].http);
   expect(peer.server.url).toBe(fleet[1].url);
-  expect(peer.throughput?.origin).toBe(fleet[1].h3);
+  expect(peer.throughput?.origin).toBe(fleet[1].url);
   expect(home.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget).toBeNull();
   for (const server of [home, peer]) {
@@ -76,12 +76,16 @@ test("four real servers share one run and retain separate receiver windows and l
       const original = browser.fetch.bind(window);
       browser.fetch = (input, init) => {
         const url = new URL(String(input), location.href);
-        if (url.pathname === "/probe" && unavailable.includes(url.origin))
+        if (
+          url.pathname === "/probe" &&
+          /-\d+$/.test(url.searchParams.get("cb") ?? "") &&
+          unavailable.includes(url.origin)
+        )
           return Promise.reject(new TypeError("Fixture path unavailable"));
         return original(input, init);
       };
     },
-    [fleet[1].h3, fleet[2].h3, fleet[2].h2],
+    [fleet[1].url, fleet[2].url, fleet[2].http, fleet[2].h2],
   );
   await configure(
     page,
@@ -135,7 +139,7 @@ test("four real servers share one run and retain separate receiver windows and l
   expect(saved.multiServer?.failures).toEqual([]);
   expect(
     saved.multiServer!.servers.map((server) => server.throughput?.origin),
-  ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[3].h3]);
+  ).toEqual([fleet[0].url, fleet[1].h2, fleet[2].h3, fleet[3].url]);
   for (const stage of ["download", "upload", "bidirectional"] as const) {
     const interval = saved.multiServer!.intervals.find(
       (interval) => interval.stage === stage,
@@ -157,14 +161,15 @@ test("four real servers share one run and retain separate receiver windows and l
   });
   await resultSelector.press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toBeFocused();
   await expect(resultSelector).toHaveValue("self");
-  await expect(resultSelector.locator('option[value="self"]')).toContainText(
-    "Home",
-  );
+  await expect(resultSelector).toContainText("Home");
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toHaveValue("server-3");
   await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
   await expect(resultSelector).toHaveValue("");
   const audit = await new AxeBuilder({ page })
     .include(".results-slot")
@@ -175,7 +180,9 @@ test("four real servers share one run and retain separate receiver windows and l
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".result-server-context")).toBeVisible();
-  await expect(page.locator(".result-server-context option")).toHaveCount(5);
+  await expect(
+    page.locator(".result-server-context").getByRole("option"),
+  ).toHaveCount(5);
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await page.artifact("multi-server-history-desktop");
@@ -405,6 +412,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .getByRole("combobox", { name: "Latency measurement servers" })
     .press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect
     .poll(() =>
       page.evaluate(
@@ -417,6 +425,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await settings
     .getByRole("combobox", { name: "Latency measurement servers" })
     .press("End");
+  await page.keyboard.press("Enter");
   await expect
     .poll(() =>
       page.evaluate(
@@ -465,6 +474,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .getByRole("combobox", { name: "Result measurements" })
     .press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(page.locator(".result-cards")).toContainText("Not measured");
   await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
     "aria-label",
@@ -480,15 +490,19 @@ test("primary latency selection is fixed for the run and saved alongside every t
     .locator(".saved-server-context")
     .getByRole("combobox", { name: "Result measurements" });
   await savedScope.press("Home");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(
     page.getByRole("combobox", { name: "Saved latency server" }),
   ).toHaveCount(0);
+  await savedScope.click();
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("self");
   await expect(page.locator(".latency-empty")).toBeVisible();
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("server-1");
   await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(

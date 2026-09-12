@@ -238,7 +238,14 @@
   <section class="panel wide primary">
     <div class="section-heading">
       <h3>Connection paths</h3>
-      <span class="readiness-badge" data-state={readiness} aria-live="polite">
+      <span
+        class="readiness-badge"
+        data-state={readiness}
+        aria-live="polite"
+        use:tooltip={readiness === "verified"
+          ? "Recent successful checks are reused while the required server and path are unchanged. Expired checks are refreshed before a test starts."
+          : READINESS_LABEL[readiness]}
+      >
         {READINESS_LABEL[readiness]}
       </span>
     </div>

@@ -208,6 +208,7 @@ test("pointer inspection stays visible through sample gaps without repainting th
   const bounds = await plot.boundingBox();
   if (!bounds) throw new Error("missing chart");
   const before = await paints();
+  const chipPositions: number[] = [];
   for (let index = 0; index < 20; index++) {
     await page.mouse.move(
       bounds.x + 48 + (index * (bounds.width - 96)) / 20,
@@ -216,7 +217,42 @@ test("pointer inspection stays visible through sample gaps without repainting th
     await expect(plot.locator(".chip")).toBeVisible();
     await expect(plot.locator(".inspection-guide")).toBeVisible();
     await expect(plot.locator(".chip")).not.toContainText("probe timeouts");
+    const geometry = await plot.evaluate((element: HTMLElement) => {
+      const box = element.getBoundingClientRect();
+      const chip = element.querySelector(".chip")!.getBoundingClientRect();
+      const dots = Array.from(
+        element.querySelectorAll<HTMLElement>(".inspection-dot"),
+      );
+      const ys = dots.map(
+        (dot) => new DOMMatrixReadOnly(getComputedStyle(dot).transform).m42,
+      );
+      const nearest = ys.sort((a, b) => Math.abs(a - 60) - Math.abs(b - 60))[0];
+      return {
+        y: chip.top - box.top,
+        expected:
+          nearest == null
+            ? null
+            : Math.max(
+                8,
+                Math.min(
+                  nearest - chip.height / 2,
+                  element.clientHeight - chip.height - 8,
+                ),
+              ),
+        bottom: chip.bottom,
+        boundary: box.bottom,
+      };
+    });
+    if (geometry.expected != null) {
+      // The inspector tracks a plotted point and stays inside the chart at its edges.
+      expect(Math.abs(geometry.y - geometry.expected)).toBeLessThan(2);
+      chipPositions.push(geometry.y);
+    }
+    expect(geometry.bottom).toBeLessThanOrEqual(geometry.boundary);
   }
+  expect(
+    Math.max(...chipPositions) - Math.min(...chipPositions),
+  ).toBeGreaterThan(10);
   expect(await paints()).toBe(before);
   await page.mouse.move(bounds.x, bounds.y - 20);
   await expect(plot.locator(".chip")).toHaveCount(0);

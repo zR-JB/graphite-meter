@@ -101,7 +101,7 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
   );
 });
 
-test("Automatic ranks usable multiplexed paths deterministically and never selects unreliable throughput", () => {
+test("Automatic prefers HTTP1 bulk streams deterministically and never selects unreliable throughput", () => {
   const offered = [
     fetchAd("https://meter", "http1"),
     fetchAd("https://meter:2", "http2"),
@@ -117,9 +117,9 @@ test("Automatic ranks usable multiplexed paths deterministically and never selec
   );
   const ids = automaticThroughputTargets(catalog).map((target) => target.id);
   expect(ids).toEqual([
-    "https://meter:3",
-    "https://meter:2",
     "https://meter",
+    "https://meter:2",
+    "https://meter:3",
     "https://meter:3::wt",
   ]);
   expect(
@@ -147,7 +147,7 @@ test("multiple off-origin alternatives remain usable and a proven proxy hop part
     true,
     "h2",
   );
-  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://a:3");
+  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://proxy");
   catalog.pageProtocol = "h3";
   expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://proxy");
 });
@@ -899,26 +899,29 @@ function stubProbeEnvironment(
   };
 }
 
-test("Automatic falls back to a verified advertised path, while explicit HTTP3 remains strict", async () => {
+test("Automatic falls back to a verified advertised path, while explicit HTTP1 remains strict", async () => {
   const requests: string[] = [];
   const document = {
     ...preflightDocument,
     capabilities: {
       throughput: [
         fetchAd("http://meter.test:7246", "http1"),
-        fetchAd("https://meter.test:7249", "http3"),
+        fetchAd("https://meter.test:7248", "http2"),
       ],
       latency: [],
     },
   };
-  const restore = stubProbeEnvironment((async (input) => {
-    const url = String(input);
-    if (url.includes("/probe")) {
-      requests.push(new URL(url).origin);
-      if (url.includes(":7249")) throw new TypeError("Failed to fetch");
-    }
-    return probeFetch(document)(input);
-  }) as typeof fetch);
+  const restore = stubProbeEnvironment(
+    (async (input) => {
+      const url = String(input);
+      if (url.includes("/probe")) {
+        requests.push(new URL(url).origin);
+        if (url.includes(":7246")) throw new TypeError("Failed to fetch");
+      }
+      return probeFetch(document)(input);
+    }) as typeof fetch,
+    { protocol: "h2" },
+  );
   try {
     const harness = await preparationHarness();
     const config = {
@@ -927,21 +930,21 @@ test("Automatic falls back to a verified advertised path, while explicit HTTP3 r
     };
     const paths = await harness.check(config, ["throughput"]);
     expect(requests).toEqual([
-      "https://meter.test:7249",
       "http://meter.test:7246",
+      "https://meter.test:7248",
     ]);
-    expect(paths.throughput.requested.protocol).toBe("http3");
-    expect(paths.throughput.target.origin).toBe("http://meter.test:7246");
+    expect(paths.throughput.requested.protocol).toBe("http1");
+    expect(paths.throughput.target.origin).toBe("https://meter.test:7248");
     requests.length = 0;
-    config.transports.throughputTarget = "protocol:http3";
+    config.transports.throughputTarget = "protocol:http1";
     await expect(harness.check(config, ["throughput"])).rejects.toThrow();
-    expect(requests).toEqual(["https://meter.test:7249"]);
+    expect(requests).toEqual(["http://meter.test:7246"]);
   } finally {
     restore();
   }
 });
 
-test("an unresponsive preferred candidate cannot prevent Automatic from trying the server origin", async () => {
+test("an unresponsive HTTP1 candidate cannot prevent Automatic from trying HTTP2", async () => {
   const originalTimeout = globalThis.setTimeout;
   const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
     ...[run, delay, ...args]: Parameters<typeof setTimeout>
@@ -962,13 +965,16 @@ test("an unresponsive preferred candidate cannot prevent Automatic from trying t
       latency: [],
     },
   };
-  const restore = stubProbeEnvironment((async (input, init) => {
-    if (String(input).includes(":7248")) {
-      candidateSignal = init?.signal ?? undefined;
-      return new Promise<Response>(() => {});
-    }
-    return probeFetch(document)(input);
-  }) as typeof fetch);
+  const restore = stubProbeEnvironment(
+    (async (input, init) => {
+      if (String(input).includes(":7246") && String(input).includes("/probe")) {
+        candidateSignal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }
+      return probeFetch(document)(input);
+    }) as typeof fetch,
+    { protocol: "h2" },
+  );
   try {
     const harness = await preparationHarness();
     const paths = await harness.check(
@@ -979,7 +985,7 @@ test("an unresponsive preferred candidate cannot prevent Automatic from trying t
       ["throughput"],
     );
     expect(candidateSignal?.aborted).toBe(true);
-    expect(paths.throughput.target.origin).toBe("http://meter.test:7246");
+    expect(paths.throughput.target.origin).toBe("https://meter.test:7248");
   } finally {
     restore();
     timer.mockRestore();

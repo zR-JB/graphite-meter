@@ -264,7 +264,7 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
   await page.artifact("origin-only-peer-discovery");
 });
 
-test("server selectors support native keyboard selection and compact narrow layouts", async ({
+test("server selectors support keyboard selection and compact narrow layouts", async ({
   page,
 }) => {
   await configure(page, ["self", "server-1"]);
@@ -273,16 +273,25 @@ test("server selectors support native keyboard selection and compact narrow layo
   const selector = settings.getByRole("combobox", {
     name: "Latency measurement servers",
   });
-  await expect(selector.locator("option")).toHaveCount(3);
-  await expect(selector.locator('option[value="server-1"]')).toContainText(
-    "Frankfurt",
-  );
+  await selector.click();
+  const options = page.getByRole("listbox", {
+    name: "Latency measurement servers",
+  });
+  await expect(options.getByRole("option")).toHaveCount(3);
+  await expect(
+    options.getByRole("option", { name: "Frankfurt" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await selector.focus();
   await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("");
+  await selector.press("Home");
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("self");
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("server-1");
   await expect(selector).toBeFocused();
   for (const width of [1440, 768, 390, 320]) {
@@ -306,6 +315,7 @@ test("server selectors support native keyboard selection and compact narrow layo
     ),
   ).toBeLessThan(0.0001);
   await selector.press("Home");
+  await page.keyboard.press("Enter");
   await expect(selector).toHaveValue("");
   expect(
     await selector.evaluate(
@@ -429,9 +439,9 @@ test("enabling all latency checks only the new peer path and retries leave healt
         failPeer: true,
         watched: [...healthy, peer, peerPage],
       };
-      // Idle expiry alone must not turn a new ping choice into a full recheck.
+      // Still-fresh evidence must not turn a new ping choice into a full recheck.
       const now = Date.now.bind(Date);
-      Date.now = () => now() + 180_000;
+      Date.now = () => now() + 90_000;
       const browser = window as {
         fetch: (
           input: RequestInfo | URL,
@@ -474,6 +484,7 @@ test("enabling all latency checks only the new peer path and retries leave healt
   });
   await expect(selector).toHaveValue("self");
   await selector.press("Home");
+  await page.keyboard.press("Enter");
   await expect(
     settings.getByRole("button", { name: "Retry Frankfurt" }),
   ).toBeVisible({ timeout: 15000 });
@@ -514,9 +525,12 @@ test("enabling all latency checks only the new peer path and retries leave healt
   ]);
   expect(verified.workers).toBe(2);
   for (let cycle = 0; cycle < 3; cycle++) {
+    await selector.press("Home");
     await selector.press("ArrowDown");
+    await selector.press("Enter");
     await expect(selector).toHaveValue("self");
     await selector.press("Home");
+    await selector.press("Enter");
     await expect(selector).toHaveValue("");
   }
   const choices = settings.getByRole("group", {
@@ -552,6 +566,27 @@ test("enabling all latency checks only the new peer path and retries leave healt
       .map((url) => new URL(url).origin),
   ).toEqual([fleet[3].url, fleet[3].url]);
   expect(added.workers).toBe(3);
+
+  // Once cached evidence expires, the same interaction must check Home again.
+  // Its fixture endpoint now refuses checks, so an old Ready badge is invalid.
+  await page.evaluate(() => {
+    const now = Date.now.bind(Date);
+    Date.now = () => now() + 120_001;
+  });
+  await selector.press("Home");
+  await selector.press("ArrowDown");
+  await selector.press("Enter");
+  await expect(
+    settings.getByRole("button", { name: "Retry Home" }),
+  ).toBeVisible({ timeout: 15000 });
+  expect(
+    (await checks()).fetches
+      .slice(added.fetches.length)
+      .some((url) => new URL(url).origin === fleet[0].url),
+  ).toBe(true);
+  await expect(
+    settings.locator('.readiness-badge[data-state="verified"]'),
+  ).toHaveCount(0);
 });
 
 for (const theme of ["dark", "light"] as const)
@@ -604,9 +639,12 @@ for (const theme of ["light", "dark"] as const)
     });
     await primary.press("Home");
     await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
     await expect(primary).toHaveValue("self");
+    await primary.click();
     await page.keyboard.press("ArrowDown");
     await expect(primary).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(primary).toHaveValue("server-1");
     await page.keyboard.press("Escape");
     await openSettings(page);

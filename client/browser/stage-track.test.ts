@@ -38,6 +38,22 @@ test("phase notices expire underneath a stall and skipped notices keep their own
       store.measuring = false;
     });
     await expect(toast).toContainText("Connection lost");
+    await expect(toast).toHaveAttribute("role", "status");
+    await expect(toast).toHaveAttribute("aria-live", "polite");
+    await page.setViewportSize({ width: 320, height: 740 });
+    await expect
+      .poll(() =>
+        toast.evaluate((element) => {
+          const box = element.getBoundingClientRect();
+          return (
+            box.left >= 0 &&
+            box.right <= innerWidth &&
+            element.scrollWidth <= element.clientWidth
+          );
+        }),
+      )
+      .toBe(true);
+    await page.artifact("compact-connection-notice");
     await page.waitForTimeout(1500);
     await expect(toast).toHaveClass(/visible/);
     await page.evaluate(async () => {

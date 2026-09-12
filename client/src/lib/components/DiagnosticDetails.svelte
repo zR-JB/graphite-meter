@@ -3,13 +3,52 @@
   import { ICON } from "../constants";
   let { label, children }: { label: string; children: Snippet } = $props();
   const id = $props.id();
+  let trigger: HTMLButtonElement;
+  let panel: HTMLDivElement;
+  let close: HTMLButtonElement;
+  let open = $state(false);
+  function position() {
+    const rect = trigger.getBoundingClientRect();
+    const below = innerHeight - rect.bottom - 14;
+    const above = rect.top - 14;
+    panel.style.maxHeight = `${Math.max(80, Math.min(420, Math.max(below, above)))}px`;
+    panel.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - panel.offsetWidth - 8))}px`;
+    panel.style.top = `${Math.max(8, below >= panel.offsetHeight || below >= above ? rect.bottom + 6 : rect.top - panel.offsetHeight - 6)}px`;
+  }
+  $effect(() => {
+    if (!open) return;
+    window.addEventListener("resize", position);
+    document.addEventListener("scroll", position, true);
+    return () => {
+      window.removeEventListener("resize", position);
+      document.removeEventListener("scroll", position, true);
+    };
+  });
 </script>
 
-<button class="details-trigger" popovertarget={id}>
+<button
+  bind:this={trigger}
+  class="details-trigger"
+  popovertarget={id}
+  onclick={(event) => {
+    event.preventDefault();
+    if (panel.matches(":popover-open")) panel.hidePopover();
+    else {
+      trigger.focus({ preventScroll: true });
+      panel.showPopover();
+      position();
+      close.focus({ preventScroll: true });
+    }
+  }}
+>
   <span aria-hidden="true">{@html ICON.info}</span>{label}
 </button>
 <div
+  bind:this={panel}
   class="diagnostic-details"
+  ontoggle={(event) => {
+    open = event.currentTarget.matches(":popover-open");
+  }}
   {id}
   popover="auto"
   role="dialog"
@@ -18,6 +57,7 @@
   <header>
     <h3 id={`${id}-title`}>{label}</h3>
     <button
+      bind:this={close}
       popovertarget={id}
       popovertargetaction="hide"
       aria-label="Close details">{@html ICON.close}</button
@@ -57,9 +97,10 @@
   }
   .diagnostic-details {
     position: fixed;
-    inset: auto 12px 48px auto;
-    width: min(400px, calc(100vw - 24px));
-    max-height: min(480px, 60svh);
+    inset: auto;
+    width: min(360px, calc(100vw - 16px));
+    max-height: min(420px, 70svh);
+    overscroll-behavior: contain;
     margin: 0;
     padding: 0;
     overflow: auto;
@@ -71,6 +112,9 @@
     font: var(--type-sm)/1.5 var(--font-sans);
   }
   header {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
     display: flex;
     align-items: center;
     justify-content: space-between;

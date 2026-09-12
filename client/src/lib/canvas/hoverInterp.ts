@@ -1,5 +1,7 @@
+import { monotoneCurve } from "./smoothPath";
+
 // Hover lookup assumes the runner supplies samples sorted by ascending `t`.
-/** Linear lookup that refuses to cross an intentional series break. */
+/** Follow the plotted curve without crossing an intentional series break. */
 export function interpolateConnectedAt<T extends { t: number }>(
   samples: T[],
   t: number,
@@ -13,8 +15,26 @@ export function interpolateConnectedAt<T extends { t: number }>(
   const left = samples[insertion - 1];
   const right = samples[insertion];
   if (!left || !right || !connected(left, right)) return null;
-  const weight = (t - left.t) / (right.t - left.t || 1);
-  return pick(left) * (1 - weight) + pick(right) * weight;
+  const before = samples[insertion - 2];
+  const after = samples[insertion + 1];
+  const hasBefore = before && connected(before, left);
+  const neighbors = [
+    ...(hasBefore ? [before] : []),
+    left,
+    right,
+    ...(after && connected(right, after) ? [after] : []),
+  ];
+  const curve = monotoneCurve(
+    neighbors.map((sample) => ({ x: sample.t, y: pick(sample) })),
+  )[hasBefore ? 1 : 0];
+  const u = (t - left.t) / (right.t - left.t);
+  const v = 1 - u;
+  return (
+    v ** 3 * pick(left) +
+    3 * v ** 2 * u * curve.control1.y +
+    3 * v * u ** 2 * curve.control2.y +
+    u ** 3 * pick(right)
+  );
 }
 /** Index of the first sample at or after `t` (binary search). */
 export function lowerBoundAt<T extends { t: number }>(

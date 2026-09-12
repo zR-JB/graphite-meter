@@ -725,8 +725,9 @@ export class ChartEngine {
       let pts: { x: number; y: number }[] = [];
       let previous: ThroughputSample | null = null;
       const samples = this.#throughputByLane[lane.samples];
-      const lo = Math.max(0, lowerBoundAt(samples, tMin) - 1);
-      const hi = Math.min(samples.length, lowerBoundAt(samples, tMax) + 1);
+      // Keep both tangent neighbors so clipping cannot change the visible curve.
+      const lo = Math.max(0, lowerBoundAt(samples, tMin) - 2);
+      const hi = Math.min(samples.length, lowerBoundAt(samples, tMax) + 2);
       for (let i = lo; i < hi; i++) {
         const s = samples[i];
         if (previous && !throughputSamplesContinuous(previous, s)) {

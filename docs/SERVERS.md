@@ -168,8 +168,10 @@ measurement. An unprobed server has no latency result, rather than a zero RTT.
 If the primary fails, the client does not silently change latency endpoints.
 
 There is one throughput preference and one latency transport preference. Automatic
-verifies each independently. Browser throughput tries advertised HTTP/3, HTTP/2,
-proxy-negotiated HTTP, HTTP/1.1, then WebTransport streams. Latency tries
+verifies each independently. Browser throughput tries advertised HTTP/1.1 bulk streams, HTTP/2, HTTP/3,
+proxy-negotiated HTTP, then WebTransport streams. A known browser-negotiated
+protocol participates at its actual rank. Protocol versions do not imply higher
+throughput; explicit choices remain available for comparison. Latency tries
 WebTransport, then WebSocket. Automatic tries the next available path when a
 connection check fails; authentication failures require sign-in. Experimental
 datagram throughput is always explicit. A forced throughput choice must work on every selected
