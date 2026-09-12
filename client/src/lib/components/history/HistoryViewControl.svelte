@@ -118,7 +118,7 @@
   {#if open}
     <div
       bind:this={popover}
-      class="view-popover"
+      class="view-popover gm-reveal"
       role="dialog"
       tabindex="-1"
       aria-label="History view options"
@@ -132,7 +132,7 @@
       <div class="group-head">
         <span>Visible columns</span><small>Date is always shown</small>
       </div>
-      <div class="options">
+      <div class="options gm-menu-list">
         {#each HISTORY_COLUMNS as column}
           <button
             type="button"
@@ -152,7 +152,7 @@
         <div class="group-head sort-head">
           <span>Sort cards</span><small>Missing values stay last</small>
         </div>
-        <div class="options">
+        <div class="options gm-menu-list">
           {#each HISTORY_SORTS as option}
             <button
               type="button"
@@ -168,7 +168,7 @@
           {/each}
         </div>
         <div
-          class="direction-options"
+          class="direction-options gm-menu-list"
           role="group"
           aria-label={`Order for ${HISTORY_SORT_LABEL[sort]}`}
         >
@@ -270,34 +270,20 @@
     padding-top: 10px;
   }
   .options {
-    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px;
   }
   .view-control.compact .options {
     grid-template-columns: minmax(0, 1fr);
   }
   .options button,
   .direction-options button {
-    display: grid;
     grid-template-columns: 17px minmax(0, 1fr);
-    align-items: center;
     gap: 7px;
     min-height: 33px;
     padding: 0 7px;
-    border: 0;
-    border-radius: var(--r-well);
-    background: transparent;
-    color: var(--text-muted);
     font-size: var(--type-xs);
-    text-align: left;
-    cursor: pointer;
   }
-  .options button:hover,
-  .options button:focus-visible,
   .options button[aria-checked="true"],
-  .direction-options button:hover,
-  .direction-options button:focus-visible,
   .direction-options button[aria-pressed="true"] {
     background: var(--brand-soft);
     color: var(--text);
@@ -307,31 +293,15 @@
     cursor: not-allowed;
   }
   .direction-options {
-    display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px;
     margin-top: 3px;
     padding-top: 3px;
     border-top: 1px solid var(--border-subtle);
-  }
-  .direction-options button {
-    width: 100%;
   }
   .direction-options button > span {
     color: var(--brand-strong);
     font: 750 15px var(--font-mono);
     text-align: center;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .view-popover {
-      animation: reveal-view-menu var(--dur-hover) var(--ease-out) both;
-    }
-    @keyframes reveal-view-menu {
-      from {
-        opacity: 0;
-        transform: translateY(-3px) scale(0.985);
-      }
-    }
   }
   @media (prefers-reduced-motion: reduce) {
     .view-trigger,

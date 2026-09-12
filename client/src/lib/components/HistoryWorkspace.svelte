@@ -1434,11 +1434,11 @@
   }
   @media (prefers-reduced-motion: no-preference) {
     .history-workspace {
-      animation: reveal-history var(--dur-enter) var(--ease-out) both;
+      animation: reveal-history var(--dur-slide) var(--ease-out) both;
     }
     .inline-inspector,
     .detail-inspector {
-      animation: reveal-detail var(--dur-enter) var(--ease-out) both;
+      animation: reveal-detail var(--dur-slide) var(--ease-out) both;
     }
     @keyframes reveal-history {
       from {
