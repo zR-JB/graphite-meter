@@ -387,6 +387,19 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
   await expectNoHorizontalOverflow(page.locator(".topbar"));
 
   await page.setViewportSize({ width: 319, height: 844 });
+  await expect(page.getByRole("button", { name: /^Theme:/ })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Open History" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Toggle endpoint info" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "More controls" })).toHaveCount(
+    0,
+  );
+  const cdp = await page.context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
+  await page.setViewportSize({ width: 240, height: 844 });
   await page.getByRole("button", { name: "More controls" }).click();
   await expect(
     page.getByRole("menuitem", { name: /Open History/ }),
@@ -426,7 +439,9 @@ test("topbar controls compact progressively instead of hiding Theme on phones", 
 test("overflow menu supports keyboard navigation and returns focus", async ({
   page,
 }) => {
-  await openApp(page, "dummy", { width: 319, height: 844 });
+  await openApp(page, "dummy", { width: 240, height: 844 });
+  const cdp = await page.context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
   await setHistoryPreference(page, "enabled");
   const trigger = page.getByRole("button", { name: "More controls" });
   await trigger.focus();

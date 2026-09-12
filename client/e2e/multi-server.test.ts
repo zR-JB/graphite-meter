@@ -9,7 +9,7 @@ import {
 import { isHistoryRecord } from "../src/lib/history/types";
 import { configure, savedResult, ready } from "./multi-server-actions";
 
-test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only peer", async ({
+test("an HTTP page automatically verifies clear and TLS HTTP/1.1 streams", async ({
   page,
 }) => {
   // An ordinary non-loopback HTTP page does not expose WebTransport. Exercise
@@ -50,9 +50,9 @@ test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only p
   expect(saved.multiServer?.failures).toEqual([]);
   const [home, peer] = saved.multiServer!.servers;
   expect(home.server.url).toBe(fleet[0].http);
-  expect(home.throughput?.origin).toBe(fleet[0].h3);
+  expect(home.throughput?.origin).toBe(fleet[0].http);
   expect(peer.server.url).toBe(fleet[1].url);
-  expect(peer.throughput?.origin).toBe(fleet[1].h3);
+  expect(peer.throughput?.origin).toBe(fleet[1].url);
   expect(home.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget).toBeNull();
   for (const server of [home, peer]) {
@@ -81,7 +81,7 @@ test("four real servers share one run and retain separate receiver windows and l
         return original(input, init);
       };
     },
-    [fleet[1].h3, fleet[2].h3, fleet[2].h2],
+    [fleet[1].url, fleet[2].url, fleet[2].http, fleet[2].h2],
   );
   await configure(
     page,
@@ -135,7 +135,7 @@ test("four real servers share one run and retain separate receiver windows and l
   expect(saved.multiServer?.failures).toEqual([]);
   expect(
     saved.multiServer!.servers.map((server) => server.throughput?.origin),
-  ).toEqual([fleet[0].h3, fleet[1].h2, fleet[2].url, fleet[3].h3]);
+  ).toEqual([fleet[0].url, fleet[1].h2, fleet[2].h3, fleet[3].url]);
   for (const stage of ["download", "upload", "bidirectional"] as const) {
     const interval = saved.multiServer!.intervals.find(
       (interval) => interval.stage === stage,
