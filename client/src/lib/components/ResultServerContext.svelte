@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { MultiServerResult } from "../servers/measurement";
   import ServerSelector from "./ServerSelector.svelte";
+  import DiagnosticDetails from "./DiagnosticDetails.svelte";
   let {
     details,
     value,
@@ -34,15 +35,23 @@
       aggregateLabel="Combined"
       label="Result measurements"
     />
+    {#if failures.length}<DiagnosticDetails
+        label={`${failures.length} ${failures.length === 1 ? "issue" : "issues"}`}
+      >
+        <ul class="issues">
+          {#each failures as failure}<li>
+              <strong
+                >{details.selection.find(
+                  (server) => server.id === failure.serverId,
+                )?.name} · {failure.stage}{failure.scope === "latency"
+                  ? " latency"
+                  : ""}</strong
+              >
+              <p>{failure.message}</p>
+            </li>{/each}
+        </ul>
+      </DiagnosticDetails>{/if}
   </div>
-  {#if failures.length}<ul class="issues">
-      {#each failures as failure}<li>
-          {details.selection.find((server) => server.id === failure.serverId)
-            ?.name}: {failure.stage}{failure.scope === "latency"
-            ? " latency"
-            : ""} — {failure.message}
-        </li>{/each}
-    </ul>{/if}
 </div>
 
 <style>
@@ -68,8 +77,17 @@
   }
   .issues {
     margin: 0;
-    padding-left: 16px;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-3);
     font-size: var(--type-xs);
-    color: var(--warn);
+    color: var(--text-muted);
+  }
+  .issues strong {
+    color: var(--text);
+  }
+  .issues p {
+    margin: 4px 0 0;
   }
 </style>

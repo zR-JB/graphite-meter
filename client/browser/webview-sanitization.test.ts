@@ -59,3 +59,30 @@ test("locator data remains data when embedded in WebView evaluation", async ({
     ),
   ).toBeUndefined();
 });
+
+test("hover waits for an entering target to stop moving", async ({ page }) => {
+  await openApp(page);
+  await page.evaluate(() => {
+    const target = document.createElement("button");
+    target.id = "moving-hover-target";
+    target.textContent = "Moving hover target";
+    target.style.cssText =
+      "position:fixed;left:200px;top:200px;width:160px;height:24px;z-index:9999";
+    document.body.append(target);
+    target.addEventListener("pointerenter", () => {
+      target.dataset.enteredWhileMoving = String(
+        target
+          .getAnimations()
+          .some((animation) => animation.playState === "running"),
+      );
+    });
+    target.animate(
+      [{ transform: "translateY(100px)" }, { transform: "translateY(0)" }],
+      { duration: 600, fill: "both" },
+    );
+  });
+  const target = page.locator("#moving-hover-target");
+  await target.hover();
+  expect(await target.getAttribute("data-entered-while-moving")).toBe("false");
+  expect(await target.evaluate((node) => node.matches(":hover"))).toBe(true);
+});

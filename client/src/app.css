@@ -302,6 +302,48 @@ body {
   outline-offset: 2px;
 }
 
+.gm-menu-list {
+  display: grid;
+  gap: calc(var(--space-1) / 2);
+}
+.gm-menu-list > button {
+  display: grid;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  border-radius: var(--r-well);
+  background: transparent;
+  color: var(--text-muted);
+  text-align: left;
+  cursor: pointer;
+}
+.gm-menu-list > button:focus-visible:not(:disabled) {
+  background: var(--brand-soft);
+  color: var(--text);
+}
+@media (hover: hover) {
+  .gm-menu-list > button:hover:not(:disabled) {
+    background: var(--brand-soft);
+    color: var(--text);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .gm-reveal {
+    animation: gm-reveal var(--dur-hover) var(--ease-out) both;
+  }
+  .gm-menu-list > button {
+    transition:
+      background-color var(--dur-hover) var(--ease-out),
+      color var(--dur-hover) var(--ease-out);
+  }
+  @keyframes gm-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(-3px) scale(0.985);
+    }
+  }
+}
+
 #console {
   position: relative;
 }

@@ -64,7 +64,7 @@
     <div
       bind:this={menu}
       id={menuId}
-      class="more-menu"
+      class="more-menu gm-menu-list gm-reveal"
       role="menu"
       tabindex="-1"
       aria-label={label}
@@ -108,29 +108,19 @@
     right: 0;
     z-index: 50;
     width: 230px;
-    padding: 5px;
+    padding: var(--space-1);
+    transform-origin: top right;
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--shadow-float);
   }
   .more-menu :global(button) {
-    display: grid;
     grid-template-columns: 24px minmax(0, 1fr);
-    align-items: center;
-    gap: 8px;
-    width: 100%;
+    gap: var(--space-2);
     min-height: 48px;
-    padding: 6px 8px;
-    border: 0;
-    border-radius: var(--r-well);
-    background: transparent;
-    color: var(--text-muted);
-    text-align: left;
-    cursor: pointer;
+    padding: 6px var(--space-2);
   }
-  .more-menu :global(button:hover),
-  .more-menu :global(button:focus-visible),
   .more-menu :global(button[aria-current]) {
     background: var(--brand-soft);
     color: var(--text);
@@ -164,7 +154,6 @@
     top: calc(100% + 6px);
     z-index: 31;
     width: min(238px, calc(100vw - 32px));
-    transform-origin: top right;
   }
   .archive .more-menu :global(button) {
     grid-template-columns: 22px minmax(0, 1fr);
@@ -180,17 +169,6 @@
   }
   .archive .more-menu :global(strong) {
     color: var(--text);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .archive .more-menu {
-      animation: reveal-menu var(--dur-hover) var(--ease-out) both;
-    }
-    @keyframes reveal-menu {
-      from {
-        opacity: 0;
-        transform: translateY(-3px) scale(0.985);
-      }
-    }
   }
   @media (pointer: coarse) {
     .more-trigger,

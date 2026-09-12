@@ -1160,20 +1160,12 @@ test("saved probe timeouts identify their transport and preserve exact outcome c
   await expect(profile.locator(".hover-card")).toBeVisible();
   await expect(profile.locator(".hover-card")).not.toContainText(/loss/i);
   const probeTimeouts = page.locator(".probe-timeouts-section");
+  await expect(probeTimeouts).toBeHidden();
+  await page
+    .getByRole("button", { name: "Probe details", exact: true })
+    .click();
   await expect(probeTimeouts).toBeVisible();
-  await expect(
-    probeTimeouts.getByRole("heading", { name: "Probe timeouts (datagram)" }),
-  ).toBeVisible();
-  const lossHelp = probeTimeouts.getByRole("note", {
-    name: "About probe timeouts",
-  });
-  await expect(lossHelp).toHaveAttribute("tabindex", "0");
-  await lossHelp.hover();
-  await expect(page.getByRole("tooltip")).toHaveText(
-    "No reply before the deadline. Application timeouts, not IP packet loss; unresolved probes and failed sends are separate.",
-  );
-  await page.mouse.move(0, 0);
-  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await expect(probeTimeouts).toContainText("Datagram probe outcomes");
   await expect(probeTimeouts.locator(".probe-timeouts-lanes li")).toHaveCount(
     2,
   );
@@ -1199,9 +1191,7 @@ test("saved probe timeouts identify their transport and preserve exact outcome c
     (id) => (window.location.hash = `/history/${id}`),
     websocket.id,
   );
-  await expect(
-    probeTimeouts.getByRole("heading", { name: "Probe timeouts (WebSocket)" }),
-  ).toBeVisible();
+  await expect(probeTimeouts).toContainText("WebSocket probe outcomes");
   await expect(profile.locator(".loss-marker")).toHaveCount(0);
   await expect(profile.locator(".track").first()).not.toHaveAttribute(
     "aria-label",
@@ -1630,6 +1620,7 @@ test("sortable headers expose natural reversible order with missing values last"
   expect(await ids()).toEqual([IDS.oldest, IDS.newest, IDS.middle]);
 
   await partialRow.click();
+  await page.getByRole("button", { name: "Stage issues", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Stage issues" }),
   ).toBeVisible();
@@ -2017,10 +2008,10 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
   const profile = page.locator(
     '[data-latency-profile][data-variant="compact"]',
   );
-  await expect(profile.getByText("Partial accounting")).toBeVisible();
-  await expect(profile).toContainText("Additional outcomes unknown.");
-  await expect(profile).toContainText(
-    "0 resolved · 0 timeouts · 0 unresolved · 0 send failures",
+  await expect(profile.locator(".probe-accounting")).toHaveCount(0);
+  await expect(profile.getByRole("note")).toHaveAttribute(
+    "aria-label",
+    /Partial accounting.*0 resolved/,
   );
   const note = profile.getByRole("note");
   await note.press("Tab");
@@ -2029,10 +2020,16 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
     "Some probe outcomes are unknown",
   );
   const timeouts = page.locator(".probe-timeouts-section");
+  await page
+    .getByRole("button", { name: "Probe details", exact: true })
+    .click();
   await expect(timeouts).toBeVisible();
   await expect(timeouts.locator("li em")).toHaveText("Partial");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(profile.getByText("Partial accounting")).toBeVisible();
+  await expect(profile.getByRole("note")).toHaveAttribute(
+    "aria-label",
+    /Partial accounting/,
+  );
   await expectNoHorizontalOverflow(profile);
   // ResizeObserver commits the phone inspector after the viewport changes.
   await page.evaluate(
@@ -2042,6 +2039,35 @@ test("saved incomplete probe accounting remains visible with no known outcomes",
       ),
   );
   await expect(page.locator(".inline-inspector")).toBeVisible();
+  for (const width of [320, 390, 768, 1600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expectNoHorizontalOverflow(profile);
+    const heights = await profile
+      .locator(".lane-meta")
+      .evaluateAll((rows) =>
+        rows.map((row) => row.getBoundingClientRect().height),
+      );
+    expect(Math.max(...heights)).toBeLessThan(30);
+    const trigger = page.getByRole("button", {
+      name: "Probe details",
+      exact: true,
+    });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", {
+      name: "Probe details",
+      exact: true,
+    });
+    await expect(dialog).toBeVisible();
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y + box.height).toBeLessThanOrEqual(900);
+    await expectNoHorizontalOverflow(dialog);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".result-detail")).toBeVisible();
+    await page.artifact(`compact-probe-details-${width}`);
+  }
 });
 
 for (const direction of ["down", "up"] as const) {
@@ -2337,32 +2363,27 @@ test("missing per-server latency remains selectable and focus belongs to each sa
   const detail = page.locator(".result-detail");
   await expect(detail).toBeVisible();
   await expect(detail.locator(".latency-empty")).toBeVisible();
-  await detail.locator('.server-focus [role="radio"]').nth(1).click();
+  const picker = detail.getByRole("combobox", {
+    name: "Result measurements",
+    exact: true,
+  });
+  await expect(detail.getByRole("combobox")).toHaveCount(1);
+  await picker.focus();
+  await page.keyboard.press("End");
   await expect(detail.locator(".latency-empty")).toHaveCount(0);
   await expect(detail.locator(".idle-summary")).toContainText("25");
-  const resultServer = () =>
-    detail
-      .getByRole("radiogroup", { name: "Result measurements" })
-      .getByRole("radio", { name: "Healthy latency" });
-  await resultServer().click();
-  for (const width of [900, 1600]) {
+  for (const width of [390, 900, 1600]) {
     await page.setViewportSize({ width, height: 1000 });
-    await expect(
-      page.locator(width === 900 ? ".inline-inspector" : ".detail-inspector"),
-    ).toBeVisible();
-    await expect(resultServer()).toHaveAttribute("aria-checked", "true");
-    await expect(
-      detail.locator('.server-focus [role="radio"]').nth(1),
-    ).toHaveAttribute("aria-checked", "true");
+    await expect(picker).toHaveValue("peer");
+    await expect(detail.getByRole("combobox")).toHaveCount(1);
     await expect(detail.locator(".idle-summary")).toContainText("25");
+    await expectNoHorizontalOverflow(detail);
   }
   await page.evaluate((id) => {
     location.hash = `/history/${id}`;
   }, IDS.middle);
   await expect(detail.locator(".latency-empty")).toBeVisible();
-  await expect(
-    detail.locator('.server-focus [role="radio"]').first(),
-  ).toHaveAttribute("aria-checked", "true");
+  await expect(picker).toHaveValue("");
 });
 
 test("single-server saved server identity stays readable at the bottom of history details", async ({

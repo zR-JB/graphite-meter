@@ -10,6 +10,58 @@ import {
   startTest,
   test,
 } from "./webview";
+
+test("phase notices expire underneath a stall and skipped notices keep their own duration", async ({
+  page,
+}) => {
+  // The built dummy backend never stalls. Use the real component and store
+  // through Vite so this regression needs no production fixture hooks.
+  const { createServer } = await import("vite");
+  const server = await createServer({
+    server: { host: "127.0.0.1", port: 0 },
+    logLevel: "error",
+  });
+  try {
+    await server.listen();
+    await page.goto(server.resolvedUrls!.local[0]);
+    const toast = page.locator(".phase-toast");
+    await expect(toast).toHaveCount(1);
+    await page.evaluate(async () => {
+      const path = "/src/lib/state/store.svelte.ts";
+      const { store } = await import(path);
+      store.phase = "download";
+    });
+    await expect(toast).toHaveClass(/visible/);
+    await page.evaluate(async () => {
+      const path = "/src/lib/state/store.svelte.ts";
+      const { store } = await import(path);
+      store.measuring = false;
+    });
+    await expect(toast).toContainText("Connection lost");
+    await page.waitForTimeout(1500);
+    await expect(toast).toHaveClass(/visible/);
+    await page.evaluate(async () => {
+      const path = "/src/lib/state/store.svelte.ts";
+      const { store } = await import(path);
+      store.measuring = true;
+    });
+    await expect(toast).not.toHaveClass(/visible/);
+    await page.evaluate(async () => {
+      const path = "/src/lib/state/store.svelte.ts";
+      const { store } = await import(path);
+      store.stageFailures = {
+        download: { stage: "download", message: "Download unavailable" },
+      };
+    });
+    await expect(toast).toContainText("Download skipped");
+    await page.waitForTimeout(1500);
+    await expect(toast).toHaveClass(/visible/);
+    await expect(toast).not.toHaveClass(/visible/);
+  } finally {
+    await server.close();
+  }
+});
+
 function parseElapsed(text: string): number {
   const match = text.match(/elapsed\s+([0-9]+(?:\.[0-9]+)?)s/);
   return match ? Number(match[1]) : 0;

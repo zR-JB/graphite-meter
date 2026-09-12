@@ -190,35 +190,75 @@ export class Locator {
     await this.evaluate((element) => element.click());
   }
   async hover() {
-    const point = await this.actionPoint(false);
+    const point = await this.actionPoint(false, true);
     await this.page.raw.cdp("Input.dispatchMouseEvent", {
       type: "mouseMoved",
       ...point,
     });
   }
-  private actionPoint(requireEnabled: boolean) {
+  private actionPoint(requireEnabled: boolean, requireStable = false) {
     return retry(async () => {
-      const point = await this.evaluate<{
-        x: number;
-        y: number;
-        actionable: boolean;
-      }>((element, enabled) => {
-        element.scrollIntoView({ block: "center", inline: "center" });
-        const box = element.getBoundingClientRect();
-        const x = box.x + box.width / 2;
-        const y = box.y + box.height / 2;
-        const hit = document.elementFromPoint(x, y);
-        return {
-          x,
-          y,
-          actionable:
-            box.width > 0 &&
-            box.height > 0 &&
-            (!enabled || !element.disabled) &&
-            !!hit &&
-            (hit === element || element.contains(hit)),
-        };
-      }, requireEnabled);
+      const point = await this.evaluate<
+        Promise<{
+          x: number;
+          y: number;
+          actionable: boolean;
+        }>
+      >(
+        async (element, options) => {
+          element.scrollIntoView({ block: "center", inline: "center" });
+          if (options.requireStable) {
+            const animations: Animation[] = [];
+            for (let anchor = element; anchor; anchor = anchor.parentElement) {
+              animations.push(
+                ...anchor
+                  .getAnimations()
+                  .filter(
+                    (animation: Animation) =>
+                      animation.playState === "running" &&
+                      animation.effect?.getComputedTiming().iterations !==
+                        Infinity,
+                  ),
+              );
+            }
+            await Promise.allSettled(
+              animations.map((animation) => animation.finished),
+            );
+          }
+          const before = element.getBoundingClientRect();
+          if (options.requireStable) {
+            // Entry motion and scroll reveal must settle before sending a pointer
+            // coordinate; otherwise a small target can move away from the mouse.
+            await new Promise<void>((resolve) =>
+              requestAnimationFrame(() =>
+                requestAnimationFrame(() => resolve()),
+              ),
+            );
+          }
+          const box = element.getBoundingClientRect();
+          const stable =
+            !options.requireStable ||
+            (box.x === before.x &&
+              box.y === before.y &&
+              box.width === before.width &&
+              box.height === before.height);
+          const x = box.x + box.width / 2;
+          const y = box.y + box.height / 2;
+          const hit = document.elementFromPoint(x, y);
+          return {
+            x,
+            y,
+            actionable:
+              box.width > 0 &&
+              box.height > 0 &&
+              stable &&
+              (!options.requireEnabled || !element.disabled) &&
+              !!hit &&
+              (hit === element || element.contains(hit)),
+          };
+        },
+        { requireEnabled, requireStable },
+      );
       if (!point.actionable) throw new Error("locator is not actionable");
       return { x: point.x, y: point.y };
     });

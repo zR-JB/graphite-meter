@@ -147,6 +147,7 @@
     use:focusTrap={open && !docked}
     onkeydown={(e) => {
       if (e.key === "Escape") {
+        if (document.querySelector(":popover-open")) return;
         e.stopPropagation();
         close();
       }

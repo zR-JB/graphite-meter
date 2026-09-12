@@ -76,10 +76,23 @@
   });
 
   $effect(() => {
-    const failures = Object.values(store.stageFailures);
+    const failures = store.serverDetails?.failures.length
+      ? store.serverDetails.failures.map((failure) => {
+          const name =
+            store.serverDetails?.selection.find(
+              (server) => server.id === failure.serverId,
+            )?.name ?? "Server";
+          return `${name}: ${STAGE_LABEL[failure.stage] ?? failure.stage} unavailable`;
+        })
+      : Object.values(store.stageFailures).map(
+          (failure) =>
+            `${STAGE_LABEL[failure.stage]} skipped — ${failureDetail(failure.message)}`,
+        );
     if (failures.length > prevFailCount) {
-      const latest = failures[failures.length - 1];
-      skipMessage = `${STAGE_LABEL[latest.stage]} skipped — ${failureDetail(latest.message)}`;
+      skipMessage =
+        failures.length > 1
+          ? `${failures.length} measurement issues — details in results`
+          : failures[failures.length - 1];
       visible = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
@@ -88,15 +101,6 @@
       }, LINGER_ALERT_MS);
     }
     prevFailCount = failures.length;
-  });
-
-  // Dropping the auto-dismiss timer holds the stall notice for the whole
-  // dead-air window, past any phase toast underneath it.
-  $effect(() => {
-    if (stalled && timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
   });
 </script>
 
@@ -115,7 +119,7 @@
     >{stalled
       ? "Link"
       : skipMessage
-        ? "Skipped"
+        ? "Issue"
         : phaseKicker(store.phase, store.result?.outcome)}</span
   >
   <strong

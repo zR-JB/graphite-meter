@@ -136,7 +136,13 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       autoDismissTimer = 0;
     }
     if (!bubble) return;
-    bubble.remove();
+    const leaving = bubble;
+    leaving.removeAttribute("role");
+    leaving.setAttribute("aria-hidden", "true");
+    leaving.dataset.show = "false";
+    void Promise.allSettled(
+      leaving.getAnimations().map((animation) => animation.finished),
+    ).then(() => leaving.remove());
     bubble = null;
     if (prevDescribedBy === null) node.removeAttribute("aria-describedby");
     else node.setAttribute("aria-describedby", prevDescribedBy);
@@ -168,14 +174,18 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     hide();
   }
   // Keyboard focus asks for the tip; focus landing from a click does not.
-  function onFocus() {
-    if (!node.matches(":focus-visible")) return;
+  function onFocus(event: FocusEvent) {
+    const target = event.target as HTMLElement;
+    if (!target.matches(":focus-visible")) return;
     // Let focus reveal and its queued scroll event settle across rendering
     // before subscribing to dismissal, including resized history details.
     focusFrame = requestAnimationFrame(() => {
       focusFrame = requestAnimationFrame(() => {
         focusFrame = 0;
-        if (document.activeElement === node && node.matches(":focus-visible"))
+        if (
+          document.activeElement === target &&
+          target.matches(":focus-visible")
+        )
           show();
       });
     });
@@ -213,8 +223,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     ["pointerdown", onPointerDown],
     ["pointerenter", onPointerEnter],
     ["pointerleave", onPointerLeave],
-    ["focus", onFocus],
-    ["blur", onBlur],
+    ["focusin", onFocus],
+    ["focusout", onBlur],
     ["pointerup", onPointerUp],
     ["keydown", onKeydown],
     ["click", onClick],

@@ -264,110 +264,56 @@ test("an origin-only catalogue discovers peer identity and paths without repeate
   await page.artifact("origin-only-peer-discovery");
 });
 
-test("server selectors support sliding, keyboard selection, cancellation and narrow layouts", async ({
+test("server selectors support native keyboard selection and compact narrow layouts", async ({
   page,
 }) => {
   await configure(page, ["self", "server-1"]);
   await ready(page);
   const settings = await openSettings(page);
-  const selector = settings.getByRole("radiogroup", {
+  const selector = settings.getByRole("combobox", {
     name: "Latency measurement servers",
   });
-  const all = selector.getByRole("radio", { name: /All servers/ });
-  const home = selector.getByRole("radio", { name: "Home" });
-  const peer = selector.getByRole("radio", { name: "Frankfurt" });
-  await all.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(home).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("End");
-  await expect(peer).toHaveAttribute("aria-checked", "true");
+  await expect(selector.locator("option")).toHaveCount(3);
+  await expect(selector.locator('option[value="server-1"]')).toContainText(
+    "Frankfurt",
+  );
+  await selector.focus();
   await page.keyboard.press("Home");
-  await expect(all).toHaveAttribute("aria-checked", "true");
-  const cdp = await page.context.newCDPSession();
-  const point = async (option: typeof all) =>
-    option.evaluate((element) => {
-      const box = element.getBoundingClientRect();
-      return { x: box.left + box.width / 2, y: box.top + box.height / 2 };
-    });
-  const from = await point(all);
-  const to = await point(home);
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    ...from,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    ...to,
-    buttons: 1,
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    ...to,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
-  await expect(home).toHaveAttribute("aria-checked", "true");
-  const cancelTo = await point(peer);
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    ...to,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    ...cancelTo,
-    buttons: 1,
-  });
-  await page.keyboard.press("Escape");
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    ...cancelTo,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
-  await expect(home).toHaveAttribute("aria-checked", "true");
-  await expect(settings).toBeVisible();
+  await expect(selector).toHaveValue("");
+  await page.keyboard.press("ArrowDown");
+  await expect(selector).toHaveValue("self");
+  await page.keyboard.press("End");
+  await expect(selector).toHaveValue("server-1");
+  await expect(selector).toBeFocused();
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await expectNoHorizontalOverflow(settings.locator(".panel-body"));
-    await expect
-      .poll(() =>
-        selector.evaluate((element) => {
-          const selected = element
-            .querySelector('[aria-checked="true"]')!
-            .getBoundingClientRect();
-          const thumb = element
-            .querySelector(".selector-thumb")!
-            .getBoundingClientRect();
-          return (
-            Math.abs(selected.left - thumb.left) +
-            Math.abs(selected.top - thumb.top) +
-            Math.abs(selected.width - thumb.width) +
-            Math.abs(selected.height - thumb.height)
-          );
-        }),
-      )
-      .toBeLessThan(1);
+    expect(
+      await selector.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return (
+          box.height === (matchMedia("(pointer: coarse)").matches ? 44 : 32) &&
+          box.left >= 0 &&
+          box.right <= innerWidth
+        );
+      }),
+    ).toBe(true);
   }
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await expect
-    .poll(() =>
-      selector
-        .locator(".selector-thumb")
-        .evaluate((element) =>
-          Number.parseFloat(getComputedStyle(element).transitionDuration),
-        ),
-    )
-    .toBeLessThan(0.0001);
-  await all.click();
-  await expect(all).toHaveAttribute("aria-checked", "true");
+  expect(
+    await selector.evaluate((element) =>
+      Number.parseFloat(getComputedStyle(element).transitionDuration),
+    ),
+  ).toBeLessThan(0.0001);
+  await selector.press("Home");
+  await expect(selector).toHaveValue("");
+  expect(
+    await selector.evaluate(
+      (element) =>
+        document.getElementById(element.getAttribute("aria-describedby")!)
+          ?.textContent,
+    ),
+  ).toBe("Ping each server");
   expect(
     (
       await new AxeBuilder({ page })
@@ -375,7 +321,7 @@ test("server selectors support sliding, keyboard selection, cancellation and nar
         .analyze()
     ).violations,
   ).toEqual([]);
-  await page.artifact("sliding-server-selector-phone");
+  await page.artifact("compact-server-selector-phone");
 });
 
 test("retrying an upgraded server refreshes capability evidence without checking healthy peers", async ({
@@ -523,14 +469,11 @@ test("enabling all latency checks only the new peer path and retries leave healt
       peerPage: fleet[1].url,
     },
   );
-  const selector = settings.getByRole("radiogroup", {
+  const selector = settings.getByRole("combobox", {
     name: "Latency measurement servers",
   });
-  await expect(selector.getByRole("radio", { name: "Home" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
-  await selector.getByRole("radio", { name: /All servers/ }).click();
+  await expect(selector).toHaveValue("self");
+  await selector.press("Home");
   await expect(
     settings.getByRole("button", { name: "Retry Frankfurt" }),
   ).toBeVisible({ timeout: 15000 });
@@ -571,8 +514,10 @@ test("enabling all latency checks only the new peer path and retries leave healt
   ]);
   expect(verified.workers).toBe(2);
   for (let cycle = 0; cycle < 3; cycle++) {
-    await selector.getByRole("radio", { name: "Home" }).click();
-    await selector.getByRole("radio", { name: /All servers/ }).click();
+    await selector.press("ArrowDown");
+    await expect(selector).toHaveValue("self");
+    await selector.press("Home");
+    await expect(selector).toHaveValue("");
   }
   const choices = settings.getByRole("group", {
     name: "Servers to test",
@@ -654,21 +599,15 @@ for (const theme of ["light", "dark"] as const)
       theme,
     );
     const settings = await openSettings(page);
-    await settings
-      .getByRole("radiogroup", { name: "Latency measurement servers" })
-      .getByRole("radio", { name: "Home" })
-      .click();
-    const primary = settings.getByRole("radiogroup", {
+    const primary = settings.getByRole("combobox", {
       name: "Latency measurement servers",
     });
-    await primary.getByRole("radio", { name: "Home" }).focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(
-      primary.getByRole("radio", { name: "Frankfurt" }),
-    ).toBeFocused();
-    await expect(
-      primary.getByRole("radio", { name: "Frankfurt" }),
-    ).toHaveAttribute("aria-checked", "true");
+    await primary.press("Home");
+    await page.keyboard.press("ArrowDown");
+    await expect(primary).toHaveValue("self");
+    await page.keyboard.press("ArrowDown");
+    await expect(primary).toBeFocused();
+    await expect(primary).toHaveValue("server-1");
     await page.keyboard.press("Escape");
     await openSettings(page);
     await expectNoHorizontalOverflow(settings);

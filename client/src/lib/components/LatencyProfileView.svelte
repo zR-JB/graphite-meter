@@ -189,6 +189,7 @@
   aria-label={label}
 >
   {#each lanes as lane (lane.key)}
+    {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="lane-icon" aria-hidden="true"
@@ -223,20 +224,18 @@
             ? "range —"
             : `${fmtMs(lane.min)} – ${fmtMs(lane.max)}`}
         </em>
-      </div>
-
-      {#if hasProbeAccountingNotice(lane)}
-        <p class="probe-accounting">
-          {#if lane.accountingComplete === false}
+        <span class="accounting-slot">
+          {#if hasProbeAccountingNotice(lane)}
             <span
-              class="accounting-warning"
+              class="timing-info accounting-warning"
               role="note"
-              use:tooltip={PARTIAL_ACCOUNTING_HELP}>Partial accounting</span
+              aria-label={`${lane.label}: ${accounting}`}
+              use:tooltip={accounting}>{@html ICON.info}</span
             >
           {/if}
-          <span>{probeAccountingDetails(lane)}</span>
-        </p>
-      {/if}
+        </span>
+      </div>
+
       <div class="strip">
         <div class="ticks" aria-hidden="true">
           {#each ticks as tick, index (index)}
@@ -351,19 +350,17 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  .probe-accounting {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1) var(--space-2);
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 11px;
+  .accounting-slot {
+    display: inline-flex;
+    flex: 0 0 12px;
+    align-self: center;
   }
   .accounting-warning {
     color: var(--warn);
     font-weight: 600;
   }
   .lanes {
+    container: latency-lanes / inline-size;
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
@@ -408,7 +405,7 @@
   .lane-meta {
     display: flex;
     align-items: baseline;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: var(--space-1) var(--space-2);
     min-width: 0;
   }
@@ -429,23 +426,26 @@
     height: 11px;
   }
   .lane-label {
-    min-width: 0;
     flex: 1 0 auto;
-    overflow: hidden;
     color: var(--text-muted);
     font: 800 10px var(--font-mono);
     letter-spacing: 0.06em;
-    text-overflow: ellipsis;
     text-transform: uppercase;
     white-space: nowrap;
   }
   .lane-meta strong {
+    flex: none;
+    white-space: nowrap;
     color: var(--text);
     font: 700 13px var(--font-mono);
     font-variant-numeric: tabular-nums;
     line-height: 1;
   }
   .lane-meta em {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--text-muted);
     font: 400 10px var(--font-mono);
     font-style: normal;
@@ -679,12 +679,15 @@
     top: 3px;
     bottom: 3px;
   }
-  @media (max-width: 759px) {
-    .lane-meta {
-      flex-wrap: wrap;
-    }
+  @container latency-lanes (max-width: 420px) {
+    .jit,
     .range-label {
       display: none;
+    }
+  }
+  @container latency-lanes (max-width: 300px) {
+    .lanes[data-variant] .lane-meta strong {
+      font-size: 11px;
     }
   }
 </style>
