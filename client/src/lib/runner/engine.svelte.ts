@@ -474,7 +474,7 @@ export function createApplicationController(
     }
     if (event.type === "connectivity") {
       if (event.state === "offline") offline(serverId);
-      else onlineAgain();
+      else onlineAgain(serverId);
     }
     if (
       event.type === "error" &&
@@ -501,8 +501,8 @@ export function createApplicationController(
     );
     requestValidation();
   }
-  function onlineAgain() {
-    connections.recover();
+  function onlineAgain(serverId?: string | Event) {
+    connections.recover(typeof serverId === "string" ? serverId : undefined);
     requestValidation();
   }
   function visibilityChanged() {
