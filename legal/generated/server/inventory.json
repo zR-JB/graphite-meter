@@ -235,7 +235,7 @@
     },
     {
       "name": "golang.org/x/oauth2",
-      "version": "v0.36.0",
+      "version": "v0.37.0",
       "ecosystem": "go",
       "source": "https://go.googlesource.com/oauth2",
       "declaredLicenseExpression": "BSD-3-Clause",
