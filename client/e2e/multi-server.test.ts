@@ -38,10 +38,9 @@ test("an HTTP page automatically verifies HTTP/3 for its server and a TLS-only p
   });
   await expect(choices).toHaveAttribute("aria-busy", "false");
   await expect(choices.locator(".server-preflight")).toHaveCount(4);
-  await expect(settings.getByRole("radio", { name: "Home" })).toHaveAttribute(
-    "aria-checked",
-    "true",
-  );
+  await expect(
+    settings.getByRole("combobox", { name: "Latency measurement servers" }),
+  ).toHaveValue("self");
   await settings.getByRole("button", { name: "Close Settings" }).click();
   const startedAt = Date.now();
   await startTest(page);
@@ -153,28 +152,20 @@ test("four real servers share one run and retain separate receiver windows and l
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);
   }
-  const resultSelector = page.getByRole("radiogroup", {
+  const resultSelector = page.getByRole("combobox", {
     name: "Result measurements",
   });
-  await resultSelector.getByRole("radio", { name: /^Combined,/ }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(
-    resultSelector.getByRole("radio", { name: "Home" }),
-  ).toBeFocused();
-  await expect(
-    resultSelector.getByRole("radio", { name: "Home" }),
-  ).toHaveAttribute("aria-checked", "true");
-  await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
-  await page.keyboard.press("End");
-  await expect(
-    resultSelector.getByRole("radio", { name: "Helsinki" }),
-  ).toHaveAttribute("aria-checked", "true");
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("radio", { name: /^Combined,/ })).toHaveAttribute(
-    "aria-checked",
-    "true",
+  await resultSelector.press("Home");
+  await page.keyboard.press("ArrowDown");
+  await expect(resultSelector).toBeFocused();
+  await expect(resultSelector).toHaveValue("self");
+  await expect(resultSelector.locator('option[value="self"]')).toContainText(
+    "Home",
   );
+  await page.keyboard.press("End");
+  await expect(resultSelector).toHaveValue("server-3");
+  await page.keyboard.press("Home");
+  await expect(resultSelector).toHaveValue("");
   const audit = await new AxeBuilder({ page })
     .include(".results-slot")
     .analyze();
@@ -184,9 +175,7 @@ test("four real servers share one run and retain separate receiver windows and l
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".result-server-context")).toBeVisible();
-  await expect(
-    page.locator('.result-server-context [role="radio"]'),
-  ).toHaveCount(5);
+  await expect(page.locator(".result-server-context option")).toHaveCount(5);
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await page.artifact("multi-server-history-desktop");
@@ -413,9 +402,9 @@ test("primary latency selection is fixed for the run and saved alongside every t
   );
   const settings = await openSettings(page);
   await settings
-    .getByRole("radiogroup", { name: "Latency measurement servers" })
-    .getByRole("radio", { name: "Home" })
-    .click();
+    .getByRole("combobox", { name: "Latency measurement servers" })
+    .press("Home");
+  await page.keyboard.press("ArrowDown");
   await expect
     .poll(() =>
       page.evaluate(
@@ -426,9 +415,8 @@ test("primary latency selection is fixed for the run and saved alongside every t
     )
     .toBe(0);
   await settings
-    .getByRole("radiogroup", { name: "Latency measurement servers" })
-    .getByRole("radio", { name: "Frankfurt" })
-    .click();
+    .getByRole("combobox", { name: "Latency measurement servers" })
+    .press("End");
   await expect
     .poll(() =>
       page.evaluate(
@@ -444,14 +432,7 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await startTest(page);
   await openSettings(page);
   await expect(
-    settings
-      .getByRole("radiogroup", { name: "Latency measurement servers" })
-      .getByRole("radio", { name: /All servers/ }),
-  ).toBeDisabled();
-  await expect(
-    settings
-      .getByRole("radiogroup", { name: "Latency measurement servers" })
-      .getByRole("radio", { name: "Home" }),
+    settings.getByRole("combobox", { name: "Latency measurement servers" }),
   ).toBeDisabled();
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await waitForCompletion(page, 30000);
@@ -479,11 +460,11 @@ test("primary latency selection is fixed for the run and saved alongside every t
     "aria-label",
     /Frankfurt/,
   );
-  await expect(page.locator(".latency-focus [role=radio]")).toHaveCount(0);
+  await expect(page.locator(".latency-focus select")).toHaveCount(0);
   await page
-    .getByRole("radiogroup", { name: "Result measurements" })
-    .getByRole("radio", { name: "Home" })
-    .click();
+    .getByRole("combobox", { name: "Result measurements" })
+    .press("Home");
+  await page.keyboard.press("ArrowDown");
   await expect(page.locator(".result-cards")).toContainText("Not measured");
   await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
     "aria-label",
@@ -495,15 +476,23 @@ test("primary latency selection is fixed for the run and saved alongside every t
   await page.locator("a.result-row").first().click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await expect(page.locator(".saved-server-context")).toBeVisible();
-  await page
+  const savedScope = page
     .locator(".saved-server-context")
-    .getByRole("radiogroup", { name: "Result measurements" })
-    .getByRole("radio", { name: "Frankfurt" })
-    .click();
+    .getByRole("combobox", { name: "Result measurements" });
+  await savedScope.press("Home");
+  await expect(savedScope).toHaveValue("");
+  await expect(page.locator(".latency-empty")).toHaveCount(0);
   await expect(
-    page
-      .locator(".saved-server-context")
-      .getByRole("radio", { name: "Frankfurt" }),
-  ).toHaveAttribute("aria-checked", "true");
+    page.getByRole("combobox", { name: "Saved latency server" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("ArrowDown");
+  await expect(savedScope).toHaveValue("self");
+  await expect(page.locator(".latency-empty")).toBeVisible();
+  await page.keyboard.press("End");
+  await expect(savedScope).toHaveValue("server-1");
+  await expect(page.locator(".latency-empty")).toHaveCount(0);
+  await expect(
+    page.locator('[data-latency-profile][data-variant="detailed"]'),
+  ).toBeVisible();
   await page.artifact("primary-latency-history");
 });
