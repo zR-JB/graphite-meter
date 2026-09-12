@@ -13,7 +13,7 @@ One Go server, a responsive web interface, and a native terminal client.
 
 <img src="docs/assets/hero.png" alt="Graphite Meter completed results on desktop with an overlapping phone companion" width="1080">
 
-<sub>v0.8.2 · simulated measurements · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
+<sub>v0.8.5 · simulated measurements · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
 </div>
 
@@ -65,7 +65,8 @@ for controlled performance testing.
 ## Browser client
 
 Run a test from a phone or desktop without installing a client. The gauge, timeline, and latency
-profiles keep transfer speed and responsiveness visible together.
+profiles keep transfer speed and responsiveness visible together. **v0.8.5 refines the workspace**
+with compact phone controls, clearer saved results, and persistent desktop panels.
 
 - **Flexible tests:** stage toggles, duration presets or custom timings, automatic or fixed stream
   counts, and optional early completion when a stage stabilizes.
@@ -73,10 +74,32 @@ profiles keep transfer speed and responsiveness visible together.
   and per-server contributions in result details. Automatic paths resolve separately for each server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.
+- **Phone layout:** compact phase cards keep names and status readable. The toolbar stays within
+  reach, and the bottom status bar keeps the current phase and remaining time visible while the
+  workspace scrolls.
+- **Wide desktop workspace:** open Settings and Endpoint info side by side with the meter. Resize
+  each panel to suit your monitor; your widths and open panels survive a narrower window and reload.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
-  inspect past runs while keeping the live meter available.
+  inspect past runs while the live test continues, then return to it from the toolbar.
 
-See the [gallery](docs/SCREENSHOTS.md) for settings, endpoint details, history, and mobile views.
+<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Endpoint info open beside the completed meter on a wide desktop" width="1080">
+
+<p align="center"><sub>v0.8.5 · simulated measurements · resizable desktop panels</sub></p>
+
+### Read a saved result
+
+For multi-server runs, choose **Throughput results** to inspect the combined run or one server's
+contribution. Choose **Latency source** separately to compare that server's idle and loaded responsiveness. The two
+controls preserve their own selection, and a server without latency measurements stays explicitly
+unmeasured.
+
+Latency notes and probe details explain timeouts, interrupted probes, and server timing. Secondary
+server and path metadata sits under **Servers & run context**, so the measurements remain the first thing you see.
+History is stored in the current browser; it is not a server-side archive or a recording of every
+raw sample.
+
+See the [gallery](docs/SCREENSHOTS.md) for light and dark themes, mobile controls, saved results,
+and endpoint details.
 
 ## Native terminal client
 
@@ -105,7 +128,7 @@ Press **s** in setup for the server chooser, **l** to change the displayed laten
 
 [All terminal flags](docs/DEPLOYMENT.md#native-terminal-client) ·
 [Build the client from source](docs/DEVELOPMENT.md#development-commands) ·
-[Upgrading from 0.6](docs/DEPLOYMENT.md#upgrading-to-07)
+[Upgrading to 0.8](docs/DEPLOYMENT.md#upgrading-to-08)
 
 ## Documentation
 
