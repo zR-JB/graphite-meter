@@ -70,6 +70,8 @@ export async function measurementFetch(
   input: string,
   init?: RequestInit,
 ): Promise<Response> {
+  // Receiver checkpoints and session control must stay responsive during bulk transfers.
+  init = { priority: "high", ...init };
   const options = requestOptions(context, input, init?.method);
   if (!context || context.kind === "session")
     return authenticatedFetch(input, init);
