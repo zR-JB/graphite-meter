@@ -533,9 +533,43 @@ export class Page {
     const dom = await this.raw
       .evaluate<string>("document.documentElement.outerHTML.slice(0, 50000)")
       .catch(() => "");
+    const layout = await this.evaluate(() => {
+      const describe = (node: Element) => ({
+        tag: node.tagName,
+        id: node.id,
+        class: node.getAttribute("class"),
+        role: node.getAttribute("role"),
+        label: node.getAttribute("aria-label"),
+        describedBy: node.getAttribute("aria-describedby"),
+        rect: node.getBoundingClientRect().toJSON(),
+        scroll: { top: node.scrollTop, left: node.scrollLeft },
+      });
+      return {
+        viewport: { width: innerWidth, height: innerHeight },
+        visualViewport: visualViewport && {
+          width: visualViewport.width,
+          height: visualViewport.height,
+          left: visualViewport.offsetLeft,
+          top: visualViewport.offsetTop,
+          scale: visualViewport.scale,
+        },
+        visibility: document.visibilityState,
+        documentFocused: document.hasFocus(),
+        focus: document.activeElement && {
+          ...describe(document.activeElement),
+          visible: document.activeElement.matches(":focus-visible"),
+        },
+        scrolled: [...document.querySelectorAll("*")]
+          .filter((node) => node.scrollTop || node.scrollLeft)
+          .map(describe),
+        overlays: [
+          ...document.querySelectorAll(":popover-open, .gm-tooltip"),
+        ].map(describe),
+      };
+    }).catch((error) => ({ error: String(error) }));
     await Bun.write(
       resolve(artifacts, `${stem}.txt`),
-      `URL: ${this.raw.url}\n\nERRORS\n${this.errors.join("\n")}\n\nCONSOLE\n${this.console.join("\n")}\n\nDOM\n${dom}`,
+      `URL: ${this.raw.url}\n\nERRORS\n${this.errors.join("\n")}\n\nCONSOLE\n${this.console.join("\n")}\n\nLAYOUT\n${JSON.stringify(layout, null, 2)}\n\nDOM\n${dom}`,
     );
   }
   close() {
