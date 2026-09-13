@@ -857,7 +857,7 @@ test("wordmark semantics preserve a live run away from the meter", async ({
   await expect(page.getByRole("button", { name: "Abort test" })).toBeVisible();
 });
 
-test("wide panels compose over History and survive a narrow viewport", async ({
+test("wide panels compose over History and narrow routes match the visible flyout", async ({
   page,
 }) => {
   await openApp(page, "dummy", { width: 1440, height: 900 });
@@ -901,15 +901,11 @@ test("wide panels compose over History and survive a narrow viewport", async ({
   await expect(settingsPanel(page)).toHaveAttribute("inert", "");
   await expect(endpointPanel(page)).toBeVisible();
   expect(await page.evaluate(() => window.location.hash)).toBe(
-    "#/history?panels=settings,endpoint",
+    "#/history?panels=endpoint",
   );
 
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect
-    .poll(() =>
-      settingsPanel(page).evaluate((node) => node.hasAttribute("inert")),
-    )
-    .toBe(false);
+  await expect(settingsPanel(page)).toHaveAttribute("inert", "");
   await expect
     .poll(() =>
       endpointPanel(page).evaluate((node) => node.hasAttribute("inert")),
@@ -917,17 +913,7 @@ test("wide panels compose over History and survive a narrow viewport", async ({
     .toBe(false);
   await page.setViewportSize({ width: 390, height: 844 });
   await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
-  await expect
-    .poll(() =>
-      settingsPanel(page).evaluate((node) => node.hasAttribute("inert")),
-    )
-    .toBe(false);
-  expect(await page.evaluate(() => window.location.hash)).toBe(
-    "#/history?panels=settings",
-  );
-  await settingsPanel(page)
-    .getByRole("button", { name: "Close Settings" })
-    .click();
+  await expect(settingsPanel(page)).toHaveAttribute("inert", "");
   expect(await page.evaluate(() => window.location.hash)).toBe("#/history");
 
   await page.setViewportSize({ width: 1440, height: 900 });
