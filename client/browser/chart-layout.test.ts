@@ -257,3 +257,36 @@ test("pointer inspection stays visible through sample gaps without repainting th
   await page.mouse.move(bounds.x, bounds.y - 20);
   await expect(plot.locator(".chip")).toHaveCount(0);
 });
+
+test("chart bitmap stays aligned through transformed resizes and context restoration", async ({
+  page,
+}) => {
+  await openApp(page);
+  const canvas = page.locator(".chart canvas");
+  const aligned = () =>
+    canvas.evaluate((node) => {
+      const ratio = Math.min(Math.max(devicePixelRatio, 1), 2);
+      return (
+        node.width === Math.round(node.clientWidth * ratio) &&
+        node.height === Math.round(node.clientHeight * ratio)
+      );
+    });
+  for (const width of [430, 1200, 900]) {
+    await page.locator(".plot").evaluate((node) => {
+      node.style.transform = "scale(0.85)";
+    });
+    await page.setViewportSize({ width, height: 800 });
+    await expect.poll(aligned).toBe(true);
+    await page.locator(".plot").evaluate((node) => {
+      node.style.transform = "";
+    });
+    await expect.poll(aligned).toBe(true);
+  }
+  await canvas.evaluate((node) => {
+    // A restored surface has lost its drawing state, including the DPR transform.
+    node.width = 1;
+    node.dispatchEvent(new Event("contextrestored"));
+  });
+  await expect.poll(aligned).toBe(true);
+  await expect(page.locator(".chart .time-label").first()).toBeVisible();
+});

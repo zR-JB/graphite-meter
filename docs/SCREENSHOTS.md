@@ -22,8 +22,8 @@ visible while you adjust the test; on smaller screens, the same settings open as
 ## Make room for both panels
 
 On a wide desktop, keep Settings and Endpoint info open together. Resize each panel to leave the
-space you want for the meter. A narrower window shows the most recent panel; widening it restores
-both panels and their saved widths.
+space you want for the meter. Below the docked layout, the most recent panel becomes a flyout. Your saved panel widths
+are kept when you return to a wider window.
 
 <img src="assets/workspace.png" alt="v0.8.5 wide desktop with resizable Settings and Endpoint info docks open together" width="1080">
 

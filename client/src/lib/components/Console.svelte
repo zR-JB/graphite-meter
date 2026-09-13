@@ -141,10 +141,12 @@
   let consoleWidth = $state(
     typeof window === "undefined" ? 0 : window.innerWidth,
   );
-  const allowMultiplePanels = $derived(
-    consoleWidth >= MIN_STAGE_WIDTH + 2 * MIN_DOCK_WIDTH,
-  );
   const dockQuery = mediaQuery(`(min-width: 1200px)`);
+  const allowMultiplePanels = $derived(dockQuery.matches);
+  $effect(() => {
+    const next = panelsForLayout(currentRoute);
+    if (next !== currentRoute) routeTo(next, true);
+  });
   let topbar: HTMLElement;
   let directActions = $state(3);
   $effect(() => {
@@ -204,7 +206,7 @@
     return returnToLiveIndicator(store.preparing, store.phase, recovering);
   });
 
-  // Routes retain panel intent; narrow layouts display the most recent one.
+  // Docked panels share the stage; flyouts have one active surface.
   const currentPanels = $derived(
     currentRoute.kind === "app" ? currentRoute.panels : [],
   );
@@ -261,11 +263,18 @@
       dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
     ),
   );
+  const stageMinimum = $derived(
+    Math.min(
+      MIN_STAGE_WIDTH,
+      consoleWidth -
+        MIN_DOCK_WIDTH * (Number(settingsOpen) + Number(telemetryOpen)),
+    ),
+  );
   const dockMaxLeft = $derived(
-    Math.min(MAX_DOCK_WIDTH, consoleWidth - MIN_STAGE_WIDTH - docks.right),
+    Math.min(MAX_DOCK_WIDTH, consoleWidth - stageMinimum - docks.right),
   );
   const dockMaxRight = $derived(
-    Math.min(MAX_DOCK_WIDTH, consoleWidth - MIN_STAGE_WIDTH - docks.left),
+    Math.min(MAX_DOCK_WIDTH, consoleWidth - stageMinimum - docks.left),
   );
 
   let resizedDock = false;
@@ -298,7 +307,13 @@
     routeTo(appRoute());
   }
 
+  function panelsForLayout(next: Route): Route {
+    return !allowMultiplePanels && next.kind === "app" && next.panels.length > 1
+      ? { ...next, panels: next.panels.slice(-1) }
+      : next;
+  }
   function routeTo(next: Route, replace = false) {
+    next = panelsForLayout(next);
     const parent = serializeRoute(currentRoute);
     commitRoute(next);
     const hash = serializeRoute(next);
@@ -596,8 +611,16 @@
         });
     };
     window.addEventListener("pagehide", saveDockWidths);
-    const onHashChange = () =>
-      commitRoute(parseRoute(window.location.hash), true);
+    const onHashChange = () => {
+      const next = panelsForLayout(parseRoute(window.location.hash));
+      if (serializeRoute(next) !== window.location.hash)
+        window.history.replaceState(
+          { graphiteRoute: false },
+          "",
+          serializeRoute(next),
+        );
+      commitRoute(next, true);
+    };
     window.addEventListener("hashchange", onHashChange);
     window.addEventListener("popstate", onHashChange);
     onHashChange();
