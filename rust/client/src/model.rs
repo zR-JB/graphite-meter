@@ -66,6 +66,13 @@ pub struct ServerSummary {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct AuthPrompt {
+    pub origin: String,
+    pub browser_url: String,
+    pub code: String,
+}
+
 /// Latest display state; a slow terminal cannot backpressure measurement IO.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
@@ -77,6 +84,7 @@ pub struct Snapshot {
     pub results: Vec<StageResult>,
     pub servers: Vec<ServerSummary>,
     pub error: Option<String>,
+    pub auth: Option<AuthPrompt>,
 }
 
 impl Snapshot {

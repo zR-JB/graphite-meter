@@ -36,6 +36,7 @@ pub enum Command {
     Verify(Config),
     Cancel,
     Quit,
+    OpenBrowser,
 }
 
 const MAX_TEXT: usize = 4096;
@@ -403,6 +404,10 @@ impl Ui {
             }
             return false;
         }
+        if key.code == KeyCode::Char('o') && self.snapshot.auth.is_some() {
+            self.send(Command::OpenBrowser, commands);
+            return false;
+        }
         if self.chooser {
             let length = self.snapshot.servers.len();
             match key.code {
@@ -636,6 +641,22 @@ impl Ui {
         }
         let notice = self.snapshot.error.as_deref().unwrap_or(&self.notice);
         frame.render_widget(Paragraph::new(vec![Line::styled(safe_text(notice,300),Style::new().fg(Color::Yellow)),Line::from("r run/rerun · v verify · s servers · Tab setup/live · Esc cancel/back · ? help · q quit")]).wrap(Wrap {trim:true}),regions[2]);
+        if let Some(auth) = &self.snapshot.auth {
+            let area = popup(frame.area(), 100, 10);
+            frame.render_widget(Clear, area);
+            let text = format!(
+                "Origin: {}\nConfirmation code: {}\n\n{}\n\no opens browser · approve the matching code · Esc cancels",
+                safe_text(&auth.origin, 300),
+                safe_text(&auth.code, 80),
+                safe_text(&auth.browser_url, MAX_TEXT)
+            );
+            frame.render_widget(
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: false })
+                    .block(panel("Client approval required")),
+                area,
+            );
+        }
         if self.chooser {
             self.draw_servers(frame);
         }
@@ -724,7 +745,7 @@ impl Ui {
                 .collect::<Vec<_>>()
                 .join("\n");
             let selected = if self.config.servers.is_empty() {
-                "Default server".into()
+                "Catalogue default selection".into()
             } else {
                 safe_text(&self.config.servers.join(", "), 300)
             };
