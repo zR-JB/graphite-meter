@@ -56,7 +56,7 @@ runs:
       run: mkdir -p "$(dirname "$OCI_OUTPUT")"
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       with:
         # setup-qemu runs this image privileged to register binfmt. Pin the
         # secondary image as tightly as the Action that launches it.
@@ -65,15 +65,17 @@ runs:
         cache-image: 'false'
 
     - name: Set up Buildx
-      uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       with:
+        version: v0.37.1
+        driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
         cache-binary: 'false'
         # Supplying any explicit flags resets setup-buildx's default
         # security.insecure/network.host entitlements. This build needs neither.
         buildkitd-flags: --log-level=info
 
     - name: Build linux/amd64 + linux/arm64 OCI archive
-      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       env:
         # Avoid an extra build-record artifact from this untrusted/verification build.
         DOCKER_BUILD_RECORD_UPLOAD: 'false'

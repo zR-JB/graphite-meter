@@ -16,6 +16,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
+import toolchains
 from github_api import JsonObject, JsonValue
 from precommit import (
     CheckPlan,
@@ -876,12 +877,26 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("--network", calls[0])
         self.assertIn("none", calls[0])
 
+    def test_skopeo_release_tags_still_require_an_immutable_digest(self) -> None:
+        root = self._copy_policy_tree()
+        self.addCleanup(shutil.rmtree, root)
+        config = root / "mise.toml"
+        original = config.read_text()
+        current = toolchains.pin("images.skopeo")
+        for tag in ("v1.24.1", "v1.24.1-immutable"):
+            image = f"quay.io/containers/skopeo:{tag}@sha256:" + "a" * 64
+            config.write_text(original.replace(current, image))
+            self.assertEqual(toolchains.skopeo_version(root), "1.24.1")
+        config.write_text(original.replace(current, "quay.io/containers/skopeo:v1.24.1"))
+        with self.assertRaisesRegex(ValueError, "exact version or image digest"):
+            toolchains.load_pins(root)
+
     def test_policy_rejects_skopeo_digest_drift_between_consumers(self) -> None:
         root = self._copy_policy_tree()
         self.addCleanup(shutil.rmtree, root)
         path = root / ".github/workflows/_promote-oci.yml"
         text = path.read_text().replace(
-            "ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad",
+            toolchains.pin("images.skopeo").split("@sha256:", 1)[1],
             "a" * 64,
             1,
         )

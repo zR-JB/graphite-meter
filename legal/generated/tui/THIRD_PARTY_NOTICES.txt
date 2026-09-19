@@ -385,7 +385,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ============================================================
 
 Component: github.com/dunglas/httpsfv
-Version: v1.1.1
+Version: v1.1.2
 Source: https://github.com/dunglas/httpsfv
 License: BSD-3-Clause
 Modified by Graphite Meter: no
@@ -527,7 +527,7 @@ Yasuhiro Matsumoto (a.k.a. mattn)
 ============================================================
 
 Component: github.com/mattn/go-runewidth
-Version: v0.0.29
+Version: v0.0.30
 Source: https://github.com/mattn/go-runewidth
 License: MIT
 Modified by Graphite Meter: no
@@ -785,7 +785,7 @@ SOFTWARE.
 ============================================================
 
 Component: github.com/xo/terminfo
-Version: v1.0.0
+Version: v1.2.0
 Source: https://github.com/xo/terminfo
 License: MIT
 Modified by Graphite Meter: no
@@ -880,7 +880,7 @@ shall terminate as of the date such litigation is filed.
 ============================================================
 
 Component: golang.org/x/net
-Version: v0.58.0
+Version: v0.59.0
 Source: https://go.googlesource.com/net
 License: BSD-3-Clause
 Modified by Graphite Meter: no

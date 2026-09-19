@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2-immutable@sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad
+  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4
   SKOPEO_VERSION: 1.22.2
 
 jobs:
@@ -47,7 +47,7 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.3
+          version: 2026.9.11
           install_args: --locked python
           cache: false
 
@@ -201,7 +201,7 @@ jobs:
         env:
           MISE_AUTO_INSTALL: '0'
         with:
-          version: 2026.9.3
+          version: 2026.9.11
           install_args: --locked python
           cache: false
 
