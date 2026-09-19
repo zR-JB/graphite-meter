@@ -15,14 +15,33 @@ export function canvasPixelRatio(
 }
 export function watchCanvasPixelRatio(onChange: () => void): () => void {
   const viewport = window.visualViewport;
-  if (!viewport) return () => {};
   let ratio = canvasPixelRatio();
+  let density = window.matchMedia(
+    `(resolution: ${window.devicePixelRatio}dppx)`,
+  );
   const onResize = () => {
     const next = canvasPixelRatio();
     if (next === ratio) return;
     ratio = next;
     onChange();
   };
-  viewport.addEventListener("resize", onResize);
-  return () => viewport.removeEventListener("resize", onResize);
+  const onDensity = () => {
+    density.removeEventListener("change", onDensity);
+    density = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    density.addEventListener("change", onDensity);
+    onResize();
+  };
+  const onVisibility = () => {
+    if (!document.hidden) onDensity();
+  };
+  density.addEventListener("change", onDensity);
+  viewport?.addEventListener("resize", onResize);
+  window.addEventListener("resize", onResize);
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    density.removeEventListener("change", onDensity);
+    viewport?.removeEventListener("resize", onResize);
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
 }

@@ -98,7 +98,11 @@ function canvasEnvironment(reducedMotion: boolean) {
   const canvas = {
     width: 0,
     height: 0,
+    clientWidth: 600,
+    clientHeight: 240,
     getContext: () => context,
+    addEventListener() {},
+    removeEventListener() {},
     getBoundingClientRect: () => ({ width: 600, height: 240 }),
   } as unknown as HTMLCanvasElement;
   const restore = stubGlobals({
@@ -428,6 +432,32 @@ test("inspection retains a time position through gaps without inventing latency"
     expect(counts.paths).toBe(before);
     engine.destroy();
   } finally {
+    restore();
+  }
+});
+
+test("canvas sizing ignores entry transforms and recovers after a layout resize", () => {
+  const { canvas, restore } = canvasEnvironment(true);
+  let published!: ChartPresentation;
+  const engine = new ChartEngine(
+    () => data(),
+    (next) => (published = next),
+  );
+  canvas.getBoundingClientRect = () =>
+    ({ width: 591, height: 236.4 }) as DOMRect;
+  try {
+    engine.attach(canvas);
+    engine.render(0);
+    expect(canvas.width).toBe(600);
+    expect(canvas.height).toBe(240);
+    expect(published.layout.width).toBe(600);
+    Object.defineProperty(canvas, "clientWidth", { value: 450 });
+    engine.invalidateTheme();
+    engine.render(100);
+    expect(canvas.width).toBe(450);
+    expect(published.layout.width).toBe(450);
+  } finally {
+    engine.destroy();
     restore();
   }
 });

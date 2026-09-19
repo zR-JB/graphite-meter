@@ -78,7 +78,7 @@ with compact phone controls, clearer saved results, and persistent desktop panel
   reach, and the bottom status bar keeps the current phase and remaining time visible while the
   workspace scrolls.
 - **Wide desktop workspace:** open Settings and Endpoint info side by side with the meter. Resize
-  each panel to suit your monitor; your widths and open panels survive a narrower window and reload.
+  each panel to suit your monitor; your widths survive resizing and reload. Below the docked layout, one panel opens as a flyout.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
   inspect past runs while the live test continues, then return to it from the toolbar.
 

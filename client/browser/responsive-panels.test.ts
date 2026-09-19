@@ -67,11 +67,11 @@ for (const viewport of [
     await page.reload();
     await openSettings(page);
     await openEndpointInfo(page);
-    await expect
-      .poll(async () => (await geometry(page)).widths.length)
-      .toBe(viewport.width < 1440 ? 1 : 2);
+    await expect.poll(async () => (await geometry(page)).widths.length).toBe(2);
     const actual = await geometry(page);
-    expect(actual.stage).toBeGreaterThanOrEqual(799);
+    expect(actual.stage).toBeGreaterThanOrEqual(
+      Math.min(800, viewport.width - 640) - 1,
+    );
     expect(actual.widths.every((width) => width >= 320 && width <= 720)).toBe(
       true,
     );
@@ -106,10 +106,12 @@ for (const viewport of [
       ).toBeVisible();
       await expectNoHorizontalOverflow(page.locator("#console"));
       await page.artifact("docks-tablet-landscape");
-      expect(await page.evaluate(() => location.hash)).toContain(
-        "panels=settings,endpoint",
-      );
+      expect(await page.evaluate(() => location.hash)).toBe("#/endpoint");
       await viewportSize(page, { width: 1600, height: 900 });
+      await expect
+        .poll(async () => (await geometry(page)).widths.length)
+        .toBe(1);
+      await openSettings(page);
       await expect
         .poll(async () => (await geometry(page)).widths.length)
         .toBe(2);
@@ -209,3 +211,39 @@ for (const interruption of [
     }
   });
 }
+
+test("flyout deep links and browser navigation keep one panel in the URL", async ({
+  page,
+}) => {
+  await openApp(page, "dummy", { width: 1199, height: 800 });
+  await viewportSize(page, { width: 1199, height: 800 });
+  await page.evaluate(() => {
+    location.hash = "#/?panels=settings,endpoint";
+  });
+  await expect
+    .poll(() => page.evaluate(() => location.hash))
+    .toBe("#/endpoint");
+  await expect(
+    page.getByRole("dialog", { name: "Endpoint info" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await openSettings(page);
+  await expect
+    .poll(() => page.evaluate(() => location.hash))
+    .toBe("#/settings");
+  await page.evaluate(() => history.back());
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#/");
+  await page.evaluate(() => history.forward());
+  await expect
+    .poll(() => page.evaluate(() => location.hash))
+    .toBe("#/settings");
+  await viewportSize(page, { width: 1200, height: 800 });
+  await expect(
+    page.getByRole("slider", { name: /Resize Settings panel/ }),
+  ).toBeVisible();
+  await openEndpointInfo(page);
+  await expect.poll(async () => (await geometry(page)).widths.length).toBe(2);
+  expect(await page.evaluate(() => location.hash)).toContain(
+    "panels=settings,endpoint",
+  );
+});

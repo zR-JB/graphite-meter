@@ -228,6 +228,8 @@ export class ChartEngine {
     this.#ctx = canvas.getContext("2d");
     this.#scene = document.createElement("canvas");
     this.#sceneCtx = this.#scene.getContext("2d");
+    canvas.addEventListener("contextrestored", this.#restoreSurface);
+    this.#scene.addEventListener("contextrestored", this.#restoreSurface);
     this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.#reducedMotion = this.#motionQuery.matches;
     this.#onMotionChange = (event) => {
@@ -238,6 +240,7 @@ export class ChartEngine {
     this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
+  #restoreSurface = (): void => this.invalidateTheme();
   wake(): void {
     this.#sceneDirty = true;
     this.#dirty = true;
@@ -250,6 +253,8 @@ export class ChartEngine {
     this.#onMotionChange = null;
     this.#presentation?.destroy();
     this.#presentation = null;
+    this.#canvas?.removeEventListener("contextrestored", this.#restoreSurface);
+    this.#scene?.removeEventListener("contextrestored", this.#restoreSurface);
     this.#canvas = null;
     this.#ctx = null;
     this.#scene = null;
@@ -260,9 +265,10 @@ export class ChartEngine {
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
     this.#dpr = canvasPixelRatio();
-    const rect = this.#canvas.getBoundingClientRect();
-    this.#w = Math.max(1, rect.width);
-    this.#h = Math.max(1, rect.height);
+    // Entry transforms do not resize the layout box or trigger ResizeObserver.
+    // Keep the bitmap and DOM axes in the same untransformed coordinate space.
+    this.#w = Math.max(1, this.#canvas.clientWidth);
+    this.#h = Math.max(1, this.#canvas.clientHeight);
     this.#canvas.width = Math.round(this.#w * this.#dpr);
     this.#canvas.height = Math.round(this.#h * this.#dpr);
     this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
