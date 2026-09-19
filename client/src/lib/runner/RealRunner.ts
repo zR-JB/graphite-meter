@@ -8,6 +8,7 @@ import type {
   PhaseActivity,
   TransferStreamPolicy,
   RecoveryCause,
+  ReceiverCheckpoint,
 } from "./contract";
 import type { CoreHost, RunnerBackend } from "./core";
 import { readJSONResponse, parseResponseToken } from "../api/decode";
@@ -36,6 +37,7 @@ import {
 import { TransferDirection, transferStageStalled } from "./real/direction";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./real/budgets";
 import { LatencyChannel } from "./real/latencyChannel";
+import { abortable } from "./abortable";
 import { UploadProgressChannel } from "./real/uploadProgress";
 import { UploadPresentationBridge } from "./uploadPresentationBridge";
 
@@ -164,6 +166,7 @@ class TransportStage {
   #directions: Partial<Record<FlowDirection, TransferDirection>> = {};
   #upload: UploadProgressChannel | null = null;
   #uploadId: string | null = null;
+  #checkpointTask: Promise<ReceiverCheckpoint | null> | null = null;
   readonly #streamCount?: (
     activity: PhaseActivity,
     dir: FlowDirection,
@@ -249,7 +252,7 @@ class TransportStage {
         try {
           // Verify receiver evidence last, when the other primed channels are ready.
           // A transient checkpoint failure retries within this same readiness budget.
-          if ((await this.checkpoint(signal)) !== null) return;
+          if (((await this.checkpoint(signal))?.nanos ?? 0) > 0) return;
         } catch {
           signal.throwIfAborted();
         }
@@ -438,6 +441,10 @@ class TransportStage {
       sampleProvesStageLiveness: () => !this.#stalled,
       discardTransfer: () => this.discard(),
       recoveryStartedAt,
+      checkpoint:
+        this.#paths.discovery.uploadCheckpoint && !progressUrl
+          ? (signal) => this.checkpoint(signal)
+          : undefined,
       credentials: this.#paths.credentials,
       authoritativePresentation: (bytesPerSec) => {
         this.#uploadPresentation.authoritative(
@@ -472,12 +479,23 @@ class TransportStage {
     this.#directions.down?.flush(now);
   }
 
-  async checkpoint(
-    signal: AbortSignal,
-  ): Promise<import("./contract").ReceiverCheckpoint | null> {
+  checkpoint(signal: AbortSignal): Promise<ReceiverCheckpoint | null> {
+    signal.throwIfAborted();
+    // The coordinator and the stream watchdog share one in-flight request.
+    if (!this.#checkpointTask) {
+      const task = this.#requestCheckpoint().finally(() => {
+        if (this.#checkpointTask === task) this.#checkpointTask = null;
+      });
+      this.#checkpointTask = task;
+    }
+    return abortable(this.#checkpointTask, signal);
+  }
+
+  async #requestCheckpoint(): Promise<ReceiverCheckpoint | null> {
     const id = this.#uploadId;
     if (!id || this.#abort.signal.aborted) return null;
     const target = this.#paths.throughput.fetch;
+    const meter = this.#upload;
     const requestedAtMs = performance.now();
     const response = await measurementFetch(
       this.#paths.credentials,
@@ -485,8 +503,8 @@ class TransportStage {
       {
         method: "POST",
         cache: "no-store",
+        priority: "high",
         signal: AbortSignal.any([
-          signal,
           this.#abort.signal,
           AbortSignal.timeout(1500),
         ]),
@@ -501,16 +519,24 @@ class TransportStage {
       !Number.isSafeInteger(snapshot.bytes) ||
       (snapshot.bytes as number) < 0 ||
       !Number.isSafeInteger(snapshot.nanos) ||
-      (snapshot.nanos as number) <= 0
+      (snapshot.nanos as number) < 0
     )
       return null;
-    return {
+    if (
+      this.#abort.signal.aborted ||
+      id !== this.#uploadId ||
+      meter !== this.#upload
+    )
+      return null;
+    const checkpoint = {
       id,
       bytes: snapshot.bytes as number,
       nanos: snapshot.nanos as number,
       requestedAtMs,
       receivedAtMs: performance.now(),
     };
+    meter?.observeCheckpoint(checkpoint);
+    return checkpoint;
   }
 
   async #mintUploadSession(ownerSignal: AbortSignal): Promise<string> {

@@ -118,7 +118,7 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     "control capacity",
   );
 });
-test("a direct H1 upload reserves progress capacity without an unused aggregate checkpoint slot", () => {
+test("a direct H1 upload reserves progress and receiver checkpoint capacity", () => {
   const paths = [{ id: "self", paths: testPreparedPaths() }];
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
@@ -129,7 +129,13 @@ test("a direct H1 upload reserves progress capacity without an unused aggregate 
     transfer: ["up" as const],
     loadedLatency: true,
   };
-  expect(planServerStreams(config, paths, activity, false).self.up).toBe(4);
+  expect(
+    planServerStreams(
+      { ...config, transferStreams: { mode: "auto", count: 4 } },
+      paths,
+      activity,
+    ).self.up,
+  ).toBe(3);
   expect(() => planServerStreams(config, paths, activity)).toThrow(
     "control capacity",
   );
@@ -138,7 +144,6 @@ test("a direct H1 upload reserves progress capacity without an unused aggregate 
       { ...config, transferStreams: { mode: "forced", count: 5 } },
       paths,
       activity,
-      false,
     ),
   ).toThrow("control capacity");
 });

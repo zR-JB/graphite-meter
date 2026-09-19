@@ -21,6 +21,7 @@ async function run(
     adaptive?: boolean;
     readinessOwnsReceiver?: boolean;
     terminalDownloadBytes?: number;
+    missingCheckpoints?: boolean;
   } = {},
 ) {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
@@ -105,6 +106,7 @@ async function run(
       onAbort() {},
       onComplete() {},
       checkpoint: async () => {
+        if (options.missingCheckpoints && measuring && id === "a") return null;
         if (options.readinessOwnsReceiver && !measuring)
           throw new DOMException(
             "Redundant preparation checkpoint timed out",
@@ -155,7 +157,8 @@ async function run(
             upload: !!(
               options.adaptive ||
               options.laterPreparationFailure ||
-              options.readinessOwnsReceiver
+              options.readinessOwnsReceiver ||
+              options.missingCheckpoints
             ),
             bidirectional: false,
           },
@@ -166,9 +169,12 @@ async function run(
             downloadMs: options.adaptive ? 6000 : 1400,
             uploadMs: options.adaptive
               ? 6000
-              : options.laterPreparationFailure || options.readinessOwnsReceiver
-                ? 1400
-                : 0,
+              : options.missingCheckpoints
+                ? 2200
+                : options.laterPreparationFailure ||
+                    options.readinessOwnsReceiver
+                  ? 1400
+                  : 0,
             bidirectionalMs: 0,
           },
           adaptive: {
@@ -485,4 +491,22 @@ test("a conflicting live stream plan is rejected without changing the running sc
     coordinator.dispose();
     restore();
   }
+});
+
+test("repeated missing upload checkpoints drop only the unobservable peer and retain survivor evidence", async () => {
+  const { result, events } = await run({ missingCheckpoints: true });
+  expect(result.outcome).toBe("partial");
+  expect(result.upload).not.toBeNull();
+  const failures = events.filter((event) => event.type === "serverFailure");
+  expect(failures).toHaveLength(1);
+  expect(failures[0]).toMatchObject({
+    failure: { serverId: "a", reason: "receiver-checkpoint-failed" },
+    participants: ["b"],
+  });
+  expect(result.upload!.reportedBytesPerSec).toBeCloseTo(3000, 0);
+  expect(
+    events.some(
+      (event) => event.type === "aggregateEvidence" && event.available,
+    ),
+  ).toBe(true);
 });

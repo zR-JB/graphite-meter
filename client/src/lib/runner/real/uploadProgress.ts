@@ -1,6 +1,10 @@
 // One upload id owns one receiver meter. Replacing the id creates a new instance.
 import type { CoreHost } from "../core";
-import type { PhaseActivity, RecoveryCause } from "../contract";
+import type {
+  PhaseActivity,
+  RecoveryCause,
+  ReceiverCheckpoint,
+} from "../contract";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import {
   requestOptions,
@@ -39,6 +43,7 @@ interface UploadProgressDeps {
   discardTransfer: () => void;
   authoritativePresentation: (bytesPerSec: number) => void;
   recoveryStartedAt?: number;
+  checkpoint?: (signal: AbortSignal) => Promise<ReceiverCheckpoint | null>;
 }
 
 export class UploadProgressChannel {
@@ -52,6 +57,10 @@ export class UploadProgressChannel {
     timer: ReturnType<typeof setTimeout>;
   } | null = null;
   #closed = false;
+  #checkpointAbort = new AbortController();
+  #checkpointTimer: ReturnType<typeof setTimeout> | undefined;
+  #observedAt = performance.now();
+  #checkpointAt = -Infinity;
   #serverBytes = 0;
   #id = "";
   #serverNanos = 0;
@@ -68,6 +77,7 @@ export class UploadProgressChannel {
   prime(uploadId: string): Promise<boolean> {
     if (this.#closed) return Promise.resolve(false);
     this.#id = uploadId;
+    this.#watchReceiver();
     const target = this.#deps.target;
     const ready = this.#awaitReady();
     this.#feed = startUploadFeed({
@@ -79,6 +89,33 @@ export class UploadProgressChannel {
       onEvent: (event) => this.accept(event),
     });
     return ready;
+  }
+
+  // A finite checkpoint can pass a proxy that withholds streaming response chunks.
+  // It observes the same receiver id and clock; it is never a client byte estimate.
+  observeCheckpoint(checkpoint: ReceiverCheckpoint): void {
+    if (this.#closed || checkpoint.id !== this.#id) return;
+    this.#ready?.(true);
+    if (
+      checkpoint.nanos > this.#serverNanos &&
+      checkpoint.bytes >= this.#serverBytes
+    )
+      this.#checkpointAt = performance.now();
+    this.accept({ type: "bytes", n: checkpoint.bytes, t: checkpoint.nanos });
+  }
+
+  #watchReceiver(): void {
+    if (!this.#deps.checkpoint || this.#closed) return;
+    this.#checkpointTimer = setTimeout(async () => {
+      try {
+        if (performance.now() - this.#observedAt >= 500)
+          await this.#deps.checkpoint!(this.#checkpointAbort.signal);
+      } catch {
+        // Direction liveness owns stalls and recovery; a failed check proves nothing.
+      } finally {
+        this.#watchReceiver();
+      }
+    }, 250);
   }
 
   /** The WT session worker carries this feed and normally performs its finalizing DELETE. */
@@ -136,6 +173,8 @@ export class UploadProgressChannel {
 
   #close(): void {
     this.#closed = true;
+    this.#checkpointAbort.abort();
+    clearTimeout(this.#checkpointTimer);
     this.#ready?.(false);
     this.#finalize = null;
     this.#feed?.dispose();
@@ -178,7 +217,8 @@ export class UploadProgressChannel {
       return;
     }
     if (msg.type === "stall") {
-      if (lane.measuring) lane.setStalled(true, msg.detail);
+      if (lane.measuring && performance.now() - this.#checkpointAt >= 500)
+        lane.setStalled(true, msg.detail);
       return;
     }
     // Reopening the feed proves no delivery; only an advancing receiver count clears a stall.
@@ -187,6 +227,7 @@ export class UploadProgressChannel {
     const serverNs = msg.t;
     const previousServerBytes = this.#serverBytes;
     if (msg.n < previousServerBytes || serverNs < this.#serverNanos) return;
+    if (serverNs > this.#serverNanos) this.#observedAt = performance.now();
     this.#serverNanos = serverNs;
     const advancing = msg.n > previousServerBytes;
     if (advancing) this.#serverBytes = msg.n; // cumulative + monotonic guard

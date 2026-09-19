@@ -30,6 +30,9 @@ function channelUnderTest(
   laneState: Partial<UploadProgressLane> = {},
   sampleProvesStageLiveness = true,
   recoveryStartedAt?: number,
+  checkpoint?: ConstructorParameters<
+    typeof UploadProgressChannel
+  >[0]["checkpoint"],
 ): {
   channel: UploadProgressChannel;
   failures: string[];
@@ -92,6 +95,7 @@ function channelUnderTest(
     target,
     lane,
     recoveryStartedAt,
+    checkpoint,
     sampleProvesStageLiveness: () => sampleProvesStageLiveness,
     discardTransfer: () => {},
     authoritativePresentation: (bytesPerSec) => presentations.push(bytesPerSec),
@@ -367,4 +371,86 @@ test("a replacement session cannot regress either receiver counter", () => {
   channel.accept({ type: "bytes", n: 120, t: 3e9 });
   expect(curve).toEqual([20]);
   expect(durations).toEqual([2]);
+});
+
+test("a buffered feed uses same-receiver checkpoints without inventing delivery or double counting late chunks", async () => {
+  globalThis.fetch = (async () =>
+    new Response(new ReadableStream())) as unknown as typeof fetch;
+  let requests = 0;
+  const fixture = channelUnderTest({}, true, undefined, async () => {
+    requests++;
+    const checkpoint = {
+      id: "buffered",
+      bytes: 0,
+      nanos: 0,
+      requestedAtMs: 0,
+      receivedAtMs: 1,
+    };
+    fixture.channel.observeCheckpoint(checkpoint);
+    return checkpoint;
+  });
+  expect(await fixture.channel.prime("buffered")).toBe(true);
+  expect(requests).toBe(1);
+  expect(fixture.progress).toEqual([]);
+  expect(fixture.curve).toEqual([]);
+  // Switch to a measured meter to verify mixing stream and checkpoint observations.
+  fixture.channel.discard();
+  const measured = channelUnderTest({ measuring: true });
+  void measured.channel.attachExternal(() => {}, "same");
+  measured.channel.observeCheckpoint({
+    id: "same",
+    bytes: 100,
+    nanos: 100_000_000,
+    requestedAtMs: 0,
+    receivedAtMs: 1,
+  });
+  measured.channel.observeCheckpoint({
+    id: "same",
+    bytes: 300,
+    nanos: 300_000_000,
+    requestedAtMs: 2,
+    receivedAtMs: 3,
+  });
+  measured.channel.accept({ type: "bytes", n: 150, t: 150_000_000 });
+  measured.channel.observeCheckpoint({
+    id: "old-id",
+    bytes: 900,
+    nanos: 900_000_000,
+    requestedAtMs: 4,
+    receivedAtMs: 5,
+  });
+  measured.channel.accept({ type: "bytes", n: 400, t: 400_000_000 });
+  expect(measured.curve).toEqual([200, 100]);
+  expect(measured.durations).toEqual([0.2, 0.1]);
+  expect(measured.progress).toEqual([200, 100]);
+  measured.channel.accept({ type: "stall", detail: "stream disconnected" });
+  expect(measured.stalls).toEqual([]);
+});
+
+test("discard aborts a pending fallback checkpoint and cannot reopen a meter", async () => {
+  globalThis.fetch = (async () =>
+    new Response(new ReadableStream())) as unknown as typeof fetch;
+  let pendingSignal: AbortSignal | undefined;
+  let resolve!: (value: null) => void;
+  const fixture = channelUnderTest({}, true, undefined, (signal) => {
+    pendingSignal = signal;
+    return new Promise((done) => {
+      resolve = done;
+    });
+  });
+  const ready = fixture.channel.prime("disposed");
+  for (let i = 0; i < 150 && !pendingSignal; i++) await Bun.sleep(5);
+  expect(pendingSignal).toBeDefined();
+  fixture.channel.discard();
+  expect(pendingSignal!.aborted).toBe(true);
+  resolve(null);
+  expect(await ready).toBe(false);
+  fixture.channel.observeCheckpoint({
+    id: "disposed",
+    bytes: 99,
+    nanos: 1,
+    requestedAtMs: 0,
+    receivedAtMs: 1,
+  });
+  expect(fixture.progress).toEqual([]);
 });

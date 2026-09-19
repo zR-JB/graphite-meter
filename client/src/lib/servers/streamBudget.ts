@@ -11,12 +11,11 @@ import {
 import { needsPings } from "../runner/real/backendPure";
 
 export type ServerStreamPlan = Record<string, Record<FlowDirection, number>>;
-/** Browser pools may be shared by catalogue entries. Aggregation needs an extra checkpoint request slot. */
+/** Browser pools may be shared by catalogue entries. Upload recovery and aggregation share a checkpoint request slot. */
 export function planServerStreams(
   config: RunnerConfig,
   paths: readonly { id: string; paths: PreparedPaths }[],
   activity: PhaseActivity,
-  pollUploadCheckpoints = true,
 ): ServerStreamPlan {
   const plan: ServerStreamPlan = Object.create(null);
   const h1 = new Map<string, { id: string; direction: FlowDirection }[]>();
@@ -57,7 +56,7 @@ export function planServerStreams(
     const available =
       BROWSER_CONNECTION_BUDGET -
       (control.get(origin) ?? 0) -
-      (pollUploadCheckpoints && activity.transfer.includes("up") ? 1 : 0);
+      (activity.transfer.includes("up") ? 1 : 0);
     if (available < lanes.length)
       throw new Error(
         `The selected servers share ${origin}, which has insufficient HTTP/1 connection capacity for this stage`,
@@ -98,7 +97,6 @@ export function planServerStreams(
 export function validateServerStreams(
   config: RunnerConfig,
   paths: readonly { id: string; paths: PreparedPaths }[],
-  pollUploadCheckpoints = true,
 ): void {
   const loadedLatency =
     !config.skipLoadedLatencyWhenStageOff || config.stages.latency;
@@ -109,5 +107,5 @@ export function validateServerStreams(
   ];
   for (const activity of activities)
     if (config.stages[activity.stage])
-      planServerStreams(config, paths, activity, pollUploadCheckpoints);
+      planServerStreams(config, paths, activity);
 }

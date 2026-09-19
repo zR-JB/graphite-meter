@@ -76,6 +76,10 @@
     background: var(--err);
     box-shadow: 0 0 0 4px var(--err-soft);
   }
+  .dot[data-state="checking"] {
+    background: var(--text-soft);
+    opacity: 0.6;
+  }
   .dot[data-state="offline"] {
     background: transparent;
     border: 1.5px solid var(--text-soft);
