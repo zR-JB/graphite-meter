@@ -1,11 +1,15 @@
 # Experimental Rust implementation
 
 The server executable is under development; it is not yet a drop-in replacement.
-Go remains the default. The native client has HTTP and WebTransport transports
-and a Ratatui interface, but its executable and measurement orchestration are
-not yet integrated. Release packaging and Rust dependency notices are unfinished.
+Go remains the default. The native Rust TUI is runnable, including latency,
+download, upload, and bidirectional stages. Multi-server recovery, adaptive
+stream control, release packaging, and Rust dependency notices are unfinished.
 Preliminary footprint measurements are promising; feature-complete performance
 and size comparisons have not been established.
+
+Run `mise run rust-client-run` to open the experimental TUI, or pass
+`-- --url https://your-server`. Press `r` to run, `?` for help, and `q` to quit.
+The TUI can connect to either implementation's server.
 
 Set `GM_IMPLEMENTATION=rust` when running `mise run dev` or `mise run prod` to
 select the experimental server. Leaving it unset selects Go.

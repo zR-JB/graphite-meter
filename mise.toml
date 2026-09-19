@@ -273,6 +273,17 @@ depends = ["client-build-dev"]
 env = { GM_RUST_ASSET_DIR = "{{config_root}}/client/dist" }
 run = "cargo run --locked --bin graphite-meter-server --"
 
+[tasks.rust-client-run]
+description = "Run the experimental Rust TUI against a server"
+dir = "rust"
+raw = true
+run = "cargo run --locked --bin graphite-meter-client --"
+
+[tasks.rust-client-build]
+description = "Build the experimental Rust TUI without browser assets"
+dir = "rust"
+run = "cargo build --release --locked --bin graphite-meter-client"
+
 [tasks.rust-check]
 description = "Check experimental Rust formatting, lints, and tests"
 dir = "rust"
