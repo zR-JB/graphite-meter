@@ -390,32 +390,56 @@
   @container viz (max-width: 680px) {
     .seg {
       padding: 6px;
+      gap: 3px;
     }
     .seg-bar {
-      flex: 0 0 4px;
-      margin-block: 3px;
+      flex: 0 0 3px;
+      margin: 0;
     }
-    .seg:has(.seg-tag) .seg-bar {
-      width: calc(100% - 56px);
+    .seg-row {
+      display: grid;
+      grid-template-rows: 14px 10px;
+      gap: 2px;
+      align-content: start;
+    }
+    .seg-main {
+      gap: 3px;
+    }
+    .seg-main .seg-ico {
+      width: 12px;
+      height: 12px;
+    }
+    .seg-main .seg-ico :global(svg) {
+      width: 12px;
+      height: 12px;
     }
     .seg-label {
       overflow: visible;
       font-size: 11px;
+      line-height: 14px;
     }
     .seg-tag {
-      position: absolute;
-      top: 6px;
-      right: 6px;
+      justify-self: start;
       margin: 0;
       height: 10px;
       padding: 0;
       border: 0;
       background: transparent;
-      font-size: 8px;
-      letter-spacing: 0.03em;
+      font-family: var(--font-sans);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
     }
     .seg-check {
-      display: none;
+      justify-self: start;
+      margin: 0;
+      width: 10px;
+      height: 10px;
+    }
+    .seg-check :global(svg) {
+      width: 10px;
+      height: 10px;
     }
   }
 </style>

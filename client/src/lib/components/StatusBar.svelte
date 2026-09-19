@@ -77,8 +77,8 @@
   </span>
 {/if}
 <span class="transferred"
-  >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption">
-    xfer</span
+  >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption"
+    >&nbsp;xfer</span
   ></span
 >
 <span class="build">{BUILD_IDENTITY}</span>
@@ -90,7 +90,6 @@
   .label {
     color: var(--text);
     font-weight: 600;
-    margin-right: auto;
   }
   .build {
     margin-left: auto;

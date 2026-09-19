@@ -282,6 +282,9 @@ class AppStore {
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   activeConfig = $state<RunnerConfig | null>(null);
   activePaths = $state.raw<PreparedPaths | null>(null);
+  activeServers = $state.raw<import("../servers/coordinator").PreparedServer[]>(
+    [],
+  );
   connectionValidation = $state.raw<ConnectionValidation>(
     emptyConnectionValidation(),
   );
@@ -889,6 +892,7 @@ class AppStore {
       error: null,
       activeConfig: null,
       activePaths: null,
+      activeServers: [],
       startEpoch: 0,
       historyCandidate: null,
     });

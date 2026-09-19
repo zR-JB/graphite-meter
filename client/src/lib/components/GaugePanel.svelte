@@ -446,13 +446,15 @@
               aria-hidden="true"
             >
               <span class="terminal-direction">
-                {#if terminalPrimary.direction === "download"}
-                  {@html ICON.download}
-                {:else if terminalPrimary.direction === "upload"}
-                  {@html ICON.upload}
-                {:else}
-                  {@html ICON.bidirectional}
-                {/if}
+                <span class="terminal-icon">
+                  {#if terminalPrimary.direction === "download"}
+                    {@html ICON.download}
+                  {:else if terminalPrimary.direction === "upload"}
+                    {@html ICON.upload}
+                  {:else}
+                    {@html ICON.bidirectional}
+                  {/if}
+                </span>
                 {terminalPrimary.direction === "download"
                   ? "Download"
                   : terminalPrimary.direction === "upload"
@@ -757,7 +759,7 @@
     justify-items: center;
     gap: var(--space-1);
     max-width: 72%;
-    color: var(--result-accent);
+    color: var(--text);
   }
   .terminal-readout.download {
     --result-accent: var(--phase-download);
@@ -773,25 +775,37 @@
     bottom: calc(100% + clamp(10px, 4cqmin, 16px));
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
+    color: var(--text-muted);
     font-size: clamp(11px, 3.6cqmin, 13px);
     font-weight: 600;
     line-height: 1;
     white-space: nowrap;
   }
-  .terminal-direction :global(svg) {
-    width: 1em;
-    height: 1em;
+  .terminal-icon {
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border: 1px solid
+      color-mix(in srgb, var(--result-accent) 24%, var(--border-subtle));
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, var(--result-accent) 10%, var(--surface-2));
+    color: var(--result-accent);
+  }
+  .terminal-icon :global(svg) {
+    width: 13px;
+    height: 13px;
   }
   .terminal-number {
     font-family: var(--font-display);
-    font-variant-numeric: lining-nums proportional-nums;
+    font-variant-numeric: lining-nums tabular-nums;
     font-feature-settings:
       "lnum" 1,
-      "pnum" 1;
-    font-size: clamp(28px, 17cqmin, 64px);
+      "tnum" 1;
+    font-size: clamp(28px, 15.5cqmin, 62px);
     font-weight: 600;
-    letter-spacing: -0.04em;
+    letter-spacing: var(--track-tight);
     line-height: 1;
     white-space: nowrap;
   }

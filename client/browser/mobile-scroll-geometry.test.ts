@@ -33,6 +33,22 @@ async function anchoredLayout(page: import("./webview").Page) {
           },
         );
       }),
+      progressTracksFit: [...document.querySelectorAll(".seg")].every(
+        (card) => {
+          const track = card.querySelector(".seg-bar");
+          if (!track) return true;
+          const bar = track.getBoundingClientRect();
+          const box = card.getBoundingClientRect();
+          const style = getComputedStyle(card);
+          const contentWidth =
+            box.width -
+            parseFloat(style.paddingLeft) -
+            parseFloat(style.paddingRight) -
+            parseFloat(style.borderLeftWidth) -
+            parseFloat(style.borderRightWidth);
+          return Math.abs(bar.width - contentWidth) <= 1;
+        },
+      ),
       statusFits: [...document.querySelectorAll("footer.status > span")].every(
         (node) => {
           const box = node.getBoundingClientRect();
@@ -52,6 +68,7 @@ async function anchoredLayout(page: import("./webview").Page) {
   expect(layout.chartBottom).toBeLessThanOrEqual(layout.footerTop);
   expect(layout.rootOverflow).toBeLessThanOrEqual(1);
   expect(layout.labelsFit).toBe(true);
+  expect(layout.progressTracksFit).toBe(true);
   expect(layout.statusFits).toBe(true);
 }
 async function gaugeHeight(page: import("./webview").Page) {
@@ -87,6 +104,23 @@ test("portrait phone gauge height is stable across live and result content", asy
     await page.setViewportSize({ width, height: 844 });
     await anchoredLayout(page);
     await page.artifact(`mobile-results-${width}`);
+  }
+  for (const width of [1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    const spacing = await page.evaluate(() => {
+      const box = (selector: string) =>
+        document
+          .querySelector(`footer.status ${selector}`)!
+          .getBoundingClientRect();
+      return {
+        elapsedGap: box(".elapsed").left - box(".label").right,
+        bytesGap: box(".transferred").left - box(".elapsed").right,
+      };
+    });
+    expect(spacing.elapsedGap).toBeGreaterThanOrEqual(0);
+    expect(spacing.elapsedGap).toBeLessThanOrEqual(24);
+    expect(spacing.bytesGap).toBeGreaterThanOrEqual(0);
+    expect(spacing.bytesGap).toBeLessThanOrEqual(24);
   }
   await page.setViewportSize({ width: 390, height: 844 });
   // Resetting to the short, latency-free document must not leave a trailing root/body scroll area below the footer.

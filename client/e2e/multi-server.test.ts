@@ -3,6 +3,7 @@ import {
   AxeBuilder,
   expectNoHorizontalOverflow,
   openSettings,
+  openEndpointInfo,
   startTest,
   waitForCompletion,
 } from "../browser/webview";
@@ -55,6 +56,35 @@ test("an HTTP page automatically verifies clear and TLS HTTP/1.1 streams", async
   expect(peer.throughput?.origin).toBe(fleet[1].url);
   expect(home.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget).toBeNull();
+  const endpoint = await openEndpointInfo(page);
+  const inspector = endpoint.getByRole("combobox", { name: "Inspect server" });
+  await inspector.press("End");
+  await page.keyboard.press("Enter");
+  await expect(inspector).toHaveValue(fleet[1].id);
+  await expect(endpoint.locator(".server-card")).toContainText(fleet[1].url);
+  await expect(
+    endpoint
+      .locator(".path")
+      .filter({ hasText: "throughput path" })
+      .locator("mark"),
+  ).toHaveText("Used");
+  await expect(
+    endpoint
+      .locator(".path")
+      .filter({ hasText: "latency path" })
+      .locator("mark"),
+  ).toHaveText("Not in test");
+  await inspector.press("Home");
+  await page.keyboard.press("Enter");
+  await expect(inspector).toHaveValue("self");
+  await expect(
+    endpoint
+      .locator(".path")
+      .filter({ hasText: "latency path" })
+      .locator("mark"),
+  ).toHaveText("Used");
+  await page.artifact("multi-server-endpoint-inspector");
+  await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
   for (const server of [home, peer]) {
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);

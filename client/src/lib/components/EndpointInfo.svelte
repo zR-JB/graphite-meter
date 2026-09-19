@@ -1,4 +1,9 @@
 <script lang="ts">
+  import {
+    presentConnections,
+    emptyConnectionValidation,
+    latencyPathNeeded,
+  } from "../runner/connectionModel";
   import { store } from "../state/store.svelte";
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
@@ -16,19 +21,60 @@
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
 
-  // A completed result, chart, and endpoint description must identify the
-  // same run. Configuration remains editable after completion, so retain its
-  // frozen connection evidence until the next run begins.
-  const discovery = $derived(
-    store.activePaths?.discovery ?? store.transportDiscovery,
+  let inspectedServer = $state("");
+  const availableServers = $derived(
+    store.activeServers.length
+      ? store.activeServers.map((entry) => entry.server)
+      : (store.serverCatalog?.servers.filter((server) =>
+          store.selectedServers.includes(server.id),
+        ) ?? []),
   );
-  const connections = $derived(store.runConnections);
-  const server = $derived(discovery?.server);
+  const selectedServer = $derived(
+    availableServers.find((server) => server.id === inspectedServer) ??
+      availableServers.find((server) => server.id === store.latencyFocus) ??
+      availableServers[0],
+  );
+  const captured = $derived(
+    store.activeServers.find((entry) => entry.server.id === selectedServer?.id),
+  );
+  // Inspection never changes run selection or the latency chart's focus.
+  // Completed runs retain every server's prepared paths, even after settings change.
+  const activePaths = $derived(
+    captured?.paths ?? (store.activeServers.length ? null : store.activePaths),
+  );
+  const discovery = $derived(
+    activePaths?.discovery ??
+      (selectedServer
+        ? (store.serverDiscoveries.get(selectedServer.id) ?? null)
+        : store.transportDiscovery),
+  );
+  const validation = $derived(
+    selectedServer
+      ? (store.serverValidation.get(selectedServer.id) ??
+          emptyConnectionValidation())
+      : store.connectionValidation,
+  );
+  const connections = $derived(
+    presentConnections(store.runConfig, discovery, validation, activePaths),
+  );
+  const server = $derived(discovery?.server ?? selectedServer);
+  const latencyRequested = $derived(
+    activePaths
+      ? activePaths.latency !== null
+      : latencyPathNeeded(store.config) &&
+          (store.latencySelection.mode === "all" ||
+            selectedServer?.id === store.primaryLatencyServer),
+  );
+  const failures = $derived(
+    store.serverDetails?.failures.filter(
+      (failure) => failure.serverId === selectedServer?.id,
+    ) ?? [],
+  );
   const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
   const pathMode = $derived(
-    store.isRunning ? "running" : store.activePaths ? "result" : "live",
+    store.isRunning ? "running" : activePaths ? "result" : "live",
   );
 
   function clientEvidence(role: PathRole) {
@@ -93,10 +139,7 @@
   });
   const serverLoad = $derived(
     serverLoadSummary(
-      (
-        store.activePaths?.throughput ??
-        store.connectionValidation.throughput.path
-      )?.probe.load,
+      (activePaths?.throughput ?? validation.throughput.path)?.probe.load,
     ),
   );
   const httpPaths = $derived(advertisedServerHttpPaths(discovery));
@@ -128,6 +171,13 @@
       {
         client: BUILD,
         server,
+        scope: pathMode,
+        selectedServers: availableServers.map(({ id, name, url }) => ({
+          id,
+          name,
+          url,
+        })),
+        failures,
         generation: discovery?.generation,
         throughput: connections.throughput,
         latency: connections.latency,
@@ -154,8 +204,30 @@
 
 <section class="infra">
   <div class="grid">
-    <article class="card">
-      <h3>Server</h3>
+    <article class="card server-card">
+      <header>
+        <h3>
+          {pathMode === "live" ? "Selected endpoints" : "Tested endpoints"}
+        </h3>
+        <span class="scope-label"
+          >{availableServers.length > 1
+            ? `${availableServers.length} servers`
+            : "Single server"}</span
+        >
+      </header>
+      {#if availableServers.length > 1}
+        <label class="server-picker">
+          <span>Inspect server</span>
+          <select
+            value={selectedServer?.id}
+            onchange={(event) => (inspectedServer = event.currentTarget.value)}
+          >
+            {#each availableServers as entry (entry.id)}
+              <option value={entry.id}>{entry.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
       <dl>
         <div>
           <dt>Node</dt>
@@ -165,35 +237,23 @@
           <dt>Location</dt>
           <dd>{server?.location ?? "Unavailable"}</dd>
         </div>
+        {#if selectedServer}
+          <div>
+            <dt>Address</dt>
+            <dd>{selectedServer.url}</dd>
+          </div>
+        {/if}
       </dl>
-    </article>
-
-    <article class="card">
-      <h3>Server capabilities</h3>
-      <dl>
-        <div>
-          <dt>HTTP versions</dt>
-          {#if httpPaths === null}
-            <dd>Checking server</dd>
-          {:else if !httpPaths.length}
-            <dd>None advertised</dd>
-          {:else}
-            <dd class="protocols" aria-label={httpPaths.join(" · ")}>
-              {#each httpPaths as path}
-                <span class="protocol">{path}</span>
-              {/each}
-            </dd>
-          {/if}
-        </div>
-        <div>
-          <dt>Throughput</dt>
-          <dd>{capabilities("throughput")}</dd>
-        </div>
-        <div>
-          <dt>Latency</dt>
-          <dd>{capabilities("latency")}</dd>
-        </div>
-      </dl>
+      <p class="scope-note">
+        {pathMode === "live"
+          ? "Current selection and verified connections."
+          : pathMode === "running"
+            ? "Connections used by this test."
+            : "Connections captured for the displayed result."}
+      </p>
+      {#each failures as failure}
+        <p class="endpoint-failure">{failure.message}</p>
+      {/each}
     </article>
 
     {#each PATH_ROLES as role}
@@ -202,12 +262,25 @@
       <article class="card path">
         <header>
           <h3>{role} path</h3>
-          <mark data-state={status.tone}>{status.label}</mark>
+          <mark
+            data-state={role === "latency" && !latencyRequested
+              ? "used"
+              : status.tone}
+            >{role === "latency" && !latencyRequested
+              ? pathMode === "live"
+                ? "Not selected"
+                : "Not in test"
+              : status.label}</mark
+          >
         </header>
         <dl>
           <div>
             <dt>Selected</dt>
-            <dd>{connection.summary}</dd>
+            <dd>
+              {role === "latency" && !latencyRequested
+                ? "Not selected for latency measurement"
+                : connection.summary}
+            </dd>
           </div>
           <div>
             <dt>Path evidence</dt>
@@ -230,7 +303,9 @@
               <dd>
                 {connection.preTestPingMs !== undefined
                   ? `${fmtMs(connection.preTestPingMs)} ms`
-                  : "Pending"}
+                  : latencyRequested
+                    ? "Pending"
+                    : "—"}
               </dd>
             </div>
           {/if}
@@ -238,6 +313,34 @@
       </article>
     {/each}
   </div>
+
+  <details class="card capabilities-card">
+    <summary>Server capabilities</summary>
+    <dl>
+      <div>
+        <dt>HTTP versions</dt>
+        {#if httpPaths === null}
+          <dd>Checking server</dd>
+        {:else if !httpPaths.length}
+          <dd>None advertised</dd>
+        {:else}
+          <dd class="protocols" aria-label={httpPaths.join(" · ")}>
+            {#each httpPaths as path}
+              <span class="protocol">{path}</span>
+            {/each}
+          </dd>
+        {/if}
+      </div>
+      <div>
+        <dt>Throughput</dt>
+        <dd>{capabilities("throughput")}</dd>
+      </div>
+      <div>
+        <dt>Latency</dt>
+        <dd>{capabilities("latency")}</dd>
+      </div>
+    </dl>
+  </details>
 
   <details class="diagnostics-card">
     <summary>Diagnostics</summary>
@@ -315,6 +418,56 @@
 </section>
 
 <style>
+  .server-card {
+    grid-column: 1 / -1;
+  }
+  .scope-label {
+    font-size: 11px;
+    color: var(--text-soft);
+  }
+  .scope-note {
+    margin: 10px 0 0;
+    color: var(--text-soft);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+  .endpoint-failure {
+    color: var(--err);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  .server-picker {
+    display: grid;
+    gap: 5px;
+    margin-bottom: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .server-picker select {
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 6px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+  }
+  .server-picker select:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .capabilities-card summary {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .capabilities-card[open] summary {
+    margin-bottom: 12px;
+  }
   .infra {
     display: grid;
     gap: 14px;
@@ -416,8 +569,8 @@
     min-width: 0;
     margin: 0;
     color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 11px;
+    font-family: var(--font-sans);
+    font-size: 12px;
     overflow-wrap: anywhere;
     word-break: normal;
     line-height: 1.43;
