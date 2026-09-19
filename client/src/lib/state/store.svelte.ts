@@ -1,3 +1,4 @@
+import { connectionQuality } from "./connectionHealth";
 import { historyWireEstimates } from "../history/wire";
 import type {
   RunnerEvent,
@@ -397,12 +398,29 @@ class AppStore {
     );
   });
 
-  effectiveConnectivity = $derived.by<ConnectivityState>(() => {
-    if (this.isRunning && !this.measuring) return "offline";
+  effectiveConnectivity = $derived.by<ConnectivityState | "checking">(() => {
+    if (!this.isRunning) {
+      if (
+        this.preparing ||
+        this.catalogLoading ||
+        this.selectionValidation === "checking" ||
+        this.selectionValidation === "stale"
+      )
+        return "checking";
+      if (this.selectionValidation === "failed")
+        return this.selectedServers.some(
+          (id) => this.serverReadiness.get(id)?.state === "ready",
+        )
+          ? "degraded"
+          : "offline";
+    } else if (!this.measuring) {
+      return this.phase === "connecting" || this.phase === "warmup"
+        ? "checking"
+        : "degraded";
+    }
     if (this.connectivity === "offline") return "offline";
-    if (this.rollingLossPct > 5) return "unstable";
-    if (this.rollingLossPct > 0.5 || this.jitterMs > 30) return "degraded";
-    return "connected";
+    // Completed-run samples stay on the chart, but cannot classify a new idle connection.
+    return connectionQuality(this.isRunning ? this.latency : this.idleLatency);
   });
 
   totalEtaMs = $derived(buildSegments(this.config).totalMs);
@@ -852,6 +870,7 @@ class AppStore {
       aggregateEvidence: true,
       bytesTransferred: 0,
       latency: [],
+      idleLatency: [],
       serverDetails: null,
       latencySummaries: {},
       phase: "idle" as const,

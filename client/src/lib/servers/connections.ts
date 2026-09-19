@@ -133,7 +133,9 @@ export class ServerConnections {
   #disposed = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #active = 0;
-  #queue: { priority: () => number; start: () => void }[] = [];
+  #background = 0;
+  #activeOrigins = new Map<string, number>();
+  #queue: { origin: string; priority: () => number; start: () => void }[] = [];
 
   constructor(dependencies: Dependencies) {
     this.#deps = dependencies;
@@ -258,6 +260,7 @@ export class ServerConnections {
         }
       }
     }
+    this.#drain();
     for (const state of this.#servers.values()) this.#publish(state);
     this.#refreshIdle();
     this.#schedule();
@@ -513,6 +516,7 @@ export class ServerConnections {
       state.discoveryTask === task &&
       !task.abort.signal.aborted;
     task.promise = this.#network(
+      new URL(state.server.url).origin,
       () => (state.config ? 0 : 1),
       task.abort.signal,
       5000,
@@ -603,6 +607,7 @@ export class ServerConnections {
       state.discovery?.generation === discovery.generation &&
       !task.abort.signal.aborted;
     task.promise = this.#network(
+      new URL(state.server.url).origin,
       () => 0,
       task.abort.signal,
       12000,
@@ -882,12 +887,13 @@ export class ServerConnections {
     this.#schedule();
   }
   async #network<T>(
+    origin: string,
     priority: () => number,
     owner: AbortSignal,
     timeoutMs: number,
     run: (signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
-    const release = await this.#acquire(priority, owner);
+    const release = await this.#acquire(origin, priority, owner);
     try {
       return await withinBudget(owner, timeoutMs, run);
     } finally {
@@ -895,7 +901,11 @@ export class ServerConnections {
     }
   }
 
-  #acquire(priority: () => number, signal: AbortSignal): Promise<() => void> {
+  #acquire(
+    origin: string,
+    priority: () => number,
+    signal: AbortSignal,
+  ): Promise<() => void> {
     return new Promise((resolve, reject) => {
       if (signal.aborted) {
         reject(signal.reason);
@@ -906,12 +916,23 @@ export class ServerConnections {
         reject(signal.reason);
       };
       const item = {
+        origin,
         priority,
         start: () => {
           signal.removeEventListener("abort", abort);
           this.#active++;
+          const background = priority() > 0;
+          if (background) this.#background++;
+          this.#activeOrigins.set(
+            origin,
+            (this.#activeOrigins.get(origin) ?? 0) + 1,
+          );
           resolve(() => {
             this.#active--;
+            if (background) this.#background--;
+            const remaining = this.#activeOrigins.get(origin)! - 1;
+            if (remaining) this.#activeOrigins.set(origin, remaining);
+            else this.#activeOrigins.delete(origin);
             this.#drain();
           });
         },
@@ -923,8 +944,21 @@ export class ServerConnections {
   }
   #drain(): void {
     this.#queue.sort((a, b) => a.priority() - b.priority());
-    while (this.#active < 2 && this.#queue.length) this.#queue.shift()!.start();
+    // Independent origins can validate together. Two checks per origin leave
+    // HTTP/1 capacity for sockets and other control requests; background metadata
+    // never fills the pool ahead of a new selection.
+    while (this.#active < 8 && this.#queue.length) {
+      const index = this.#queue.findIndex((item) => {
+        const active = this.#activeOrigins.get(item.origin) ?? 0;
+        return item.priority() === 0
+          ? active < 2
+          : active === 0 && this.#background < 4;
+      });
+      if (index < 0) break;
+      this.#queue.splice(index, 1)[0].start();
+    }
   }
+
   #stop(): void {
     clearTimeout(this.#timer);
     this.#timer = undefined;

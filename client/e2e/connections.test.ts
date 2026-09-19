@@ -117,7 +117,8 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   await expect(choices).toHaveAttribute("aria-busy", "false");
   const first = await activity();
   expect(first.requests).toEqual(fleet.map((server) => server.url));
-  expect(first.peak).toBeLessThanOrEqual(2);
+  // Independent origins can overlap; each origin still shares one discovery.
+  expect(first.peak).toBeLessThanOrEqual(4);
   expect(first.probes).toBe(2);
   expect(first.workers).toBe(1);
   expect(first.activeWorkers).toBe(1);
@@ -155,9 +156,9 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
   ).toHaveLength(1);
   expect(refreshed.workers).toBe(2);
   expect(refreshed.probes).toBe(4);
-  expect(refreshed.peak).toBeLessThanOrEqual(2);
+  expect(refreshed.peak).toBeLessThanOrEqual(4);
 
-  // Closing Settings aborts both active fetches and prevents queued metadata from starting.
+  // Closing Settings aborts every outstanding peer discovery.
   await settings.getByRole("button", { name: "Close Settings" }).click();
   await page.evaluate(() => {
     const state = (
@@ -167,12 +168,12 @@ test("settings and path checks share bounded discovery, cancel on close, and ret
     state.hold = true;
   });
   await openSettings(page);
-  await expect.poll(async () => (await activity()).inFlight).toBe(2);
+  await expect.poll(async () => (await activity()).inFlight).toBe(3);
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await expect.poll(async () => (await activity()).aborted).toBe(2);
+  await expect.poll(async () => (await activity()).aborted).toBe(3);
   const closed = await activity();
   expect(closed.inFlight).toBe(0);
-  expect(closed.requests).toHaveLength(10);
+  expect(closed.requests).toHaveLength(11);
   expect(closed.workers).toBe(2);
   await page.evaluate(() => {
     (

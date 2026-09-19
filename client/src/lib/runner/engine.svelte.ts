@@ -155,7 +155,17 @@ export function createApplicationController(
     !!store.serverCatalog &&
     !store.unresolvedServers.length &&
     connections.ready(ids, fresh ? CONNECTION_FRESH_MS : Infinity);
+  let idleEvidenceKey = "";
   function syncIntent() {
+    const key = JSON.stringify([
+      store.selectedServers,
+      store.latencySelection,
+      store.config.transports.latencyTarget,
+    ]);
+    if (key !== idleEvidenceKey) {
+      idleEvidenceKey = key;
+      store.idleLatency = [];
+    }
     connections.select(
       store.serverCatalog
         ? store.selectedServers.map((id) => ({ id, config: serverConfig(id) }))

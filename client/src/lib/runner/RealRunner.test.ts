@@ -1603,3 +1603,41 @@ test("transport dispatch distinguishes sessions and supported roles", () => {
   ]);
   expect(kindsForRole("latency")).toEqual(["websocket", "webtransport"]);
 });
+
+test("latency preparation collects replies while metadata is still pending", async () => {
+  FakePingWorker.all = [];
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let probes = 0;
+  const fetchNormally = probeFetch();
+  const restore = stubProbeEnvironment((async (input, init) => {
+    if (String(input).includes("/probe") && ++probes === 2) await held;
+    return fetchNormally(input, init);
+  }) as typeof fetch);
+  const realWorker = globalThis.Worker;
+  globalThis.Worker = FakePingWorker as unknown as typeof Worker;
+  const preparation = await preparationHarness();
+  try {
+    const pending = preparation.check(probeConfig(true));
+    for (let i = 0; i < 100 && probes < 2; i++) {
+      FakePingWorker.all.at(-1)?.emit({ type: "ready" });
+      await Promise.resolve();
+    }
+    expect(probes).toBe(2);
+    FakePingWorker.all.at(-1)!.emit({ type: "ready" });
+    // Allow readiness to start collection, then deliver every sample before metadata.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    FakePingWorker.all
+      .at(-1)!
+      .emit({ type: "samples", samples: pingSamples(7) });
+    release();
+    expect((await pending).latency!.rttMs).toBe(7);
+  } finally {
+    release();
+    preparation.stop();
+    globalThis.Worker = realWorker;
+    restore();
+  }
+});

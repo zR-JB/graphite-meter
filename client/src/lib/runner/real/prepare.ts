@@ -396,13 +396,20 @@ async function prepareLatencyTarget(
   const abort = () => idle.stop();
   signal.addEventListener("abort", abort, { once: true });
   try {
-    await idle.verifyReady(signal);
-    const { probe } = await pathProbe(
-      `${target.origin}${target.routes.probe}?cb=${performance.now()}`,
-      signal,
-      credentials,
-    );
-    const rtts = await idle.collectRtts(signal);
+    // Socket readiness, metadata and RTT collection are independent evidence.
+    // Collect from the first replies instead of discarding replies while the
+    // metadata request completes and then waiting for another five probes.
+    const collecting = idle
+      .verifyReady(signal)
+      .then(() => idle.collectRtts(signal));
+    const [{ probe }, rtts] = await Promise.all([
+      pathProbe(
+        `${target.origin}${target.routes.probe}?cb=${performance.now()}`,
+        signal,
+        credentials,
+      ),
+      collecting,
+    ]);
     signal.throwIfAborted();
     return {
       idle,

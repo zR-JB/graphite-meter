@@ -605,3 +605,130 @@ for (const failure of ["discovery", "latency"] as const)
       clock.mockRestore();
     }
   });
+
+test("slow background discovery leaves capacity for a newly selected server", async () => {
+  const background = deferred<void>();
+  const started: string[] = [];
+  const { manager, config } = fixture(
+    async () => preparation(),
+    async (_signal, credentials) => {
+      started.push(credentials!.server.id);
+      if (credentials!.server.id !== "selected") await background.promise;
+      return testPreparedPaths().discovery;
+    },
+  );
+  try {
+    manager.reset(
+      ["slow-a", "slow-b", "selected"].map((id) => ({
+        id,
+        name: id,
+        url: "http://meter.test",
+      })),
+    );
+    manager.metadata(true);
+    manager.activity(true, null);
+    for (let i = 0; i < 100 && !started.length; i++) await Bun.sleep(5);
+    expect(started).toEqual(["slow-a"]);
+    manager.select([{ id: "selected", config }]);
+    await manager.check();
+    expect(manager.paths("selected")).not.toBeNull();
+    expect(started).toEqual(["slow-a", "selected"]);
+  } finally {
+    background.resolve();
+    manager.dispose();
+    await settle();
+  }
+});
+
+for (const count of [1, 2, 3, 4])
+  test(`${count} selected origins validate both paths concurrently without repeating discovery`, async () => {
+    const release = deferred<void>();
+    let probes = 0;
+    let discoveries = 0;
+    const { manager, config } = fixture(
+      async () => {
+        probes++;
+        await release.promise;
+        return preparation();
+      },
+      async () => {
+        discoveries++;
+        return testPreparedPaths().discovery;
+      },
+    );
+    try {
+      const servers = Array.from({ length: count }, (_, i) => ({
+        id: `peer-${i}`,
+        name: `Peer ${i}`,
+        url: `http://peer-${i}.test`,
+      }));
+      manager.reset(servers);
+      manager.select(servers.map(({ id }) => ({ id, config })));
+      const checking = manager.check();
+      await settle();
+      expect(probes).toBe(count * 2);
+      expect(discoveries).toBe(count);
+      release.resolve();
+      await checking;
+      await manager.check({ fresh: true });
+      expect(probes).toBe(count * 2);
+      expect(discoveries).toBe(count);
+    } finally {
+      release.resolve();
+      manager.dispose();
+    }
+  });
+
+test("catalogue entries sharing an origin retain a two-check connection budget", async () => {
+  const release = deferred<void>();
+  let active = 0,
+    peak = 0;
+  const { manager } = fixture(async () => {
+    peak = Math.max(peak, ++active);
+    await release.promise;
+    active--;
+    return preparation();
+  });
+  try {
+    const checking = manager.check();
+    await settle();
+    expect(active).toBe(2);
+    release.resolve();
+    await checking;
+    expect(peak).toBe(2);
+  } finally {
+    release.resolve();
+    manager.dispose();
+  }
+});
+
+test("independent background metadata checks overlap while leaving capacity for selected paths", async () => {
+  const held = deferred<void>();
+  const started: string[] = [];
+  const { manager, config } = fixture(
+    async () => preparation(),
+    async (_signal, credentials) => {
+      const id = credentials!.server.id;
+      started.push(id);
+      if (id.startsWith("slow")) await held.promise;
+      return testPreparedPaths().discovery;
+    },
+  );
+  try {
+    const servers = ["slow-a", "slow-b", "slow-c", "slow-d", "selected"].map(
+      (id) => ({ id, name: id, url: `http://${id}.test` }),
+    );
+    manager.reset(servers);
+    manager.metadata(true);
+    manager.activity(true, null);
+    for (let i = 0; i < 100 && started.length < 4; i++) await Bun.sleep(5);
+    expect(started).toHaveLength(4);
+    manager.select([{ id: "selected", config }]);
+    await manager.check();
+    expect(manager.paths("selected")).not.toBeNull();
+  } finally {
+    held.resolve();
+    manager.dispose();
+    await settle();
+  }
+});

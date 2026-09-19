@@ -35,9 +35,9 @@ export function createServerRunner(
     createBackend(
       selected.paths,
       (activity, dir) =>
-        planServerStreams(core.config!, planned, activity, false)[
-          selected.server.id
-        ][dir],
+        planServerStreams(core.config!, planned, activity)[selected.server.id][
+          dir
+        ],
     ),
   );
   let started = 0;
@@ -66,14 +66,14 @@ export function createServerRunner(
       return core.phase;
     },
     start(config: RunnerConfig, rtt: number) {
-      validateServerStreams(config, planned, false);
+      validateServerStreams(config, planned);
       started = performance.now();
       failures = [];
       core.start(config, rtt);
     },
     reconfigure(config: LiveRunConfig) {
       if (core.config)
-        validateServerStreams({ ...core.config, ...config }, planned, false);
+        validateServerStreams({ ...core.config, ...config }, planned);
       core.reconfigure(config);
     },
     abort: () => core.abort(),

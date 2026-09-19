@@ -62,6 +62,7 @@ interface Participant extends PreparedServer {
   } | null;
   latencyTimer: ReturnType<typeof setTimeout> | null;
   summaryAt: number;
+  checkpointMisses: number;
 }
 const CHECKPOINT_CADENCE_MS = 250;
 
@@ -123,6 +124,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       recovery: null,
       latencyTimer: null,
       summaryAt: 0,
+      checkpointMisses: 0,
     }));
     const backend: RunnerBackend = {
       attach: () => {},
@@ -247,6 +249,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       server.latencyFailed = false;
       server.accum.beginPhase();
       server.down = 0;
+      server.checkpointMisses = 0;
       server.rates.down.reset();
       server.rates.up.reset();
     }
@@ -340,6 +343,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     };
     if (final) this.#measuring = false;
     const work = async () => {
+      const unresponsive: Participant[] = [];
       if (this.#activity?.transfer.includes("up")) {
         const results = await Promise.allSettled(
           participants.map((server) =>
@@ -350,12 +354,27 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
           const result = results[index];
           boundary.up[server.server.id] =
             result.status === "fulfilled" ? result.value : null;
+          server.checkpointMisses = boundary.up[server.server.id]
+            ? 0
+            : server.checkpointMisses + 1;
+          if (server.checkpointMisses >= 3 && !final) unresponsive.push(server);
         });
       }
       if (epoch !== this.#epoch || this.#boundaryAbort.signal.aborted) return;
       const previousInterval = this.#aggregate.current?.id;
       const sample = this.#aggregate.observe(boundary);
       this.#emit({ type: "aggregateEvidence", available: sample !== null });
+      if (unresponsive.length) {
+        // Do not repeatedly invalidate healthy peers for an unobservable receiver.
+        // The missing boundary remains incomplete; survivors start a new interval.
+        for (const server of unresponsive)
+          this.#remove(
+            server,
+            "receiver-checkpoint-failed",
+            "Upload receiver checkpoints repeatedly failed",
+          );
+        return;
+      }
       if (!sample || previousInterval !== this.#aggregate.current?.id)
         this.#core.resetMeasurementInterval();
       if (sample)

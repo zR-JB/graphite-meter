@@ -232,6 +232,7 @@ type ValidationContext = {
   environment: ReturnType<typeof stubEventBootEnvironment>;
   probeCalls: () => number;
   idleStops: () => number;
+  idleActive: () => boolean;
 };
 async function withValidationRunner(
   probe: (serverId?: string) => Promise<PreparedPaths>,
@@ -246,6 +247,7 @@ async function withValidationRunner(
   const { store } = await import("../state/store.svelte");
   let calls = 0;
   let stops = 0;
+  let idleActive = false;
   let onEvent: (event: RunnerEvent) => void = () => {};
   const runner = new TestRunner();
   const engine = createApplicationController(store, {
@@ -274,8 +276,11 @@ async function withValidationRunner(
           },
           idle: roles.includes("latency")
             ? {
-                start() {},
+                start() {
+                  idleActive = true;
+                },
                 stop() {
+                  idleActive = false;
                   stops++;
                 },
                 get onEvent() {
@@ -321,6 +326,7 @@ async function withValidationRunner(
       environment,
       probeCalls: () => calls,
       idleStops: () => stops,
+      idleActive: () => idleActive,
     });
   } finally {
     engine.dispose();
@@ -1228,5 +1234,25 @@ test("live upload changes use committed capabilities and preserve the active pla
     undefined,
     testServerCatalog,
     async () => structuredClone(paths.discovery),
+  );
+});
+
+test("idle latency is stopped before the measurement runner starts and resumes after abort", async () => {
+  await withValidationRunner(
+    async () => testPreparedPaths(),
+    async ({ engine, runner, idleActive }) => {
+      expect(idleActive()).toBe(true);
+      const start = runner.start.bind(runner);
+      runner.start = () => {
+        expect(idleActive()).toBe(false);
+        start();
+      };
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts === 1);
+      expect(idleActive()).toBe(false);
+      engine.toggleRun();
+      await settleValidation();
+      expect(idleActive()).toBe(true);
+    },
   );
 });
