@@ -253,6 +253,35 @@ description = "Run all Go tests, including loopback integration"
 dir = "go"
 run = "go test ./..."
 
+[tasks.rust-format]
+description = "Format the experimental Rust workspace"
+dir = "rust"
+run = "cargo fmt --all"
+
+[tasks.rust-server-build]
+description = "Build the experimental Rust server"
+dir = "rust"
+depends = ["client-build-prod"]
+env = { GM_RUST_ASSET_DIR = "{{config_root}}/client/dist" }
+run = "cargo build --release --locked --bin graphite-meter-server"
+
+[tasks.rust-server-run]
+description = "Run the experimental Rust server with GM_* configuration"
+dir = "rust"
+raw = true
+depends = ["client-build-dev"]
+env = { GM_RUST_ASSET_DIR = "{{config_root}}/client/dist" }
+run = "cargo run --locked --bin graphite-meter-server --"
+
+[tasks.rust-check]
+description = "Check experimental Rust formatting, lints, and tests"
+dir = "rust"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "cargo test --workspace --all-targets --locked",
+]
+
 [tasks.check-generated]
 shell = "bash -e -o pipefail -c"
 description = "Check embedded authentication asset drift"
@@ -441,7 +470,16 @@ raw = true
 run = [
   { task = "client-build-dev" },
   { task = "_embed-client" },
-  "cd go && go run ./cmd/graphite-meter",
+  '''
+case "${GM_IMPLEMENTATION:-go}" in
+  go) cd go && go run ./cmd/graphite-meter ;;
+  rust)
+    export GM_RUST_ASSET_DIR="$PWD/client/dist"
+    cd rust && cargo run --locked --bin graphite-meter-server
+    ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+''',
 ]
 
 [tasks.prod]
@@ -454,7 +492,14 @@ run = [
   '''
 version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
 case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
+case "${GM_IMPLEMENTATION:-go}" in
+  go) cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter ;;
+  rust)
+    export GM_ENGINE_VERSION="$version-rust" GM_RUST_ASSET_DIR="$PWD/client/dist"
+    cd rust && cargo run --release --locked --bin graphite-meter-server
+    ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
 ''',
 ]
 

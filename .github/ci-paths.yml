@@ -26,6 +26,12 @@ go:
   - 'go/**'
   - 'client/src/auth/**'
 
+rust:
+  - *workflow
+  - 'rust/**'
+  - 'api/**'
+  - 'go/**'
+
 browser:
   - *workflow
   - 'api/**'
