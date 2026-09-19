@@ -1,5 +1,5 @@
 [workspace]
-members = ["core"]
+members = ["core", "server"]
 resolver = "3"
 exclude = ["vendor/h3", "vendor/h3-noq", "vendor/noq-proto"]
 

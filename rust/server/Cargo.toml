@@ -1,0 +1,43 @@
+[package]
+name = "graphite-meter-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+graphite-meter-core = { path = "../core" }
+bytes = "1"
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
+zeroize = "1.9.0"
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+base64 = "0.22.1"
+subtle = "2.6.1"
+http = "1"
+httpdate = "1.0.3"
+socket2 = "0.6.5"
+time = { version = "0.3.55", default-features = false, features = ["formatting"] }
+h2 = "0.4.19"
+hyper = { version = "1.11.1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+ipnet = "2.12.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.0"
+hmac = { version = "0.13.0", features = ["zeroize"] }
+url = "2.5.8"
+h3 = { version = "0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
+h3-noq = { path = "../vendor/h3-noq" }
+quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["test-util"] }
