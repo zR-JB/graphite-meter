@@ -485,6 +485,12 @@ test("endpoint summary and diagnostics use accessible disclosure", async ({
   await openApp(page);
   const endpoint = await openEndpointInfo(page);
   await expectVisible(endpoint.getByText("Fetch stream · HTTP/1.1 · clear"));
+  const capabilities = endpoint.locator("summary", {
+    hasText: "Server capabilities",
+  });
+  await expect(endpoint.locator(".capabilities-card[open]")).toHaveCount(0);
+  await capabilities.focus();
+  await capabilities.press("Enter");
   await expectVisible(
     endpoint.getByText(
       "Fetch streams · WebTransport streams · WebTransport datagrams",

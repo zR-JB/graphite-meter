@@ -694,6 +694,10 @@ export function createApplicationController(
       unsubscribe = runner.on(ingest);
       store.activeConfig = structuredClone(config);
       store.activePaths = paths;
+      store.activeServers = prepared.map(({ server, paths }) => ({
+        server: { ...server },
+        paths,
+      }));
       if (runner instanceof ServerCoordinator)
         store.serverDetails = runner.details();
       runner.start(config, paths.latency?.rttMs ?? 0);

@@ -54,7 +54,9 @@ handler. Missing or interrupted evidence stays explicit.
 **Control over the connection path.** Select throughput and latency paths independently. Dedicated
 listeners expose HTTP/1.1, HTTP/2, and HTTP/3; WebSocket and WebTransport provide latency paths.
 Endpoint details distinguish browser-observed and server-observed protocol evidence, including
-when a reverse proxy sits between them.
+when a reverse proxy sits between them. Inspect each selected server separately; after a run,
+the panel retains the paths actually used. Server capabilities and diagnostic evidence are
+available in expandable sections.
 
 WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
 UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
@@ -74,11 +76,12 @@ with compact phone controls, clearer saved results, and persistent desktop panel
   and per-server contributions in result details. Automatic paths resolve separately for each server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.
-- **Phone layout:** compact phase cards keep names and status readable. The toolbar stays within
+- **Phone layout:** compact phase cards keep names and status readable above full-width progress bars. The toolbar stays within
   reach, and the bottom status bar keeps the current phase and remaining time visible while the
   workspace scrolls.
 - **Wide desktop workspace:** open Settings and Endpoint info side by side with the meter. Resize
-  each panel to suit your monitor; your widths survive resizing and reload. Below the docked layout, one panel opens as a flyout.
+  each panel to suit your monitor; your widths survive resizing and reload. Below the docked
+  layout, one panel opens as a flyout and the URL follows the visible panel.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
   inspect past runs while the live test continues, then return to it from the toolbar.
 
