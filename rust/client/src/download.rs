@@ -1,6 +1,10 @@
 //! Owned download lanes. Only received bytes contribute to measurement.
-use crate::{Error, transport::Transport};
-use graphite_meter_core::route::Route;
+use crate::{Error, net::Http, transport::Transport, webtransport::Session};
+use graphite_meter_core::{
+    discovery::{ThroughputTarget, ThroughputTransport},
+    origin::canonical_origin,
+    route::Route,
+};
 use http::Method;
 use std::{
     sync::{
@@ -96,6 +100,76 @@ impl Download {
         Ok(owner)
     }
 
+    /// Start bounded WebTransport lanes using the same received-byte owner as HTTP.
+    /// Each connection has one session and at most sixteen readers. A failed lane
+    /// remains an error; data received before failure stays in the counter.
+    pub async fn start_webtransport(
+        http: &Http,
+        target: &ThroughputTarget,
+        lanes: usize,
+        duration: Duration,
+        insecure: bool,
+        mut cancel: watch::Receiver<bool>,
+    ) -> Result<Self, Error> {
+        if !(1..=128).contains(&lanes) || duration.is_zero() {
+            return Err("invalid WebTransport download lanes or duration".into());
+        }
+        let datagrams = match target.transport {
+            ThroughputTransport::WebTransport => false,
+            ThroughputTransport::WebTransportDatagram => true,
+            ThroughputTransport::FetchStream => {
+                return Err("WebTransport download requires a WebTransport target".into());
+            }
+        };
+        let origin = canonical_origin(&target.base_url)?;
+        let mut owner = Self {
+            bytes: Arc::new(AtomicU64::new(0)),
+            tasks: JoinSet::new(),
+        };
+        let (ready, mut received) = mpsc::channel(lanes);
+        let lane_cancel = cancel.clone();
+        let start = async {
+            for first in (0..lanes).step_by(WT_LANES_PER_SESSION) {
+                let group = (lanes - first).min(WT_LANES_PER_SESSION);
+                let target = format!(
+                    "{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}&datagrams={}",
+                    u8::from(datagrams)
+                );
+                let session = Arc::new(
+                    Session::dial(http, &target, insecure, Duration::from_secs(10)).await?,
+                );
+                for _ in 0..group {
+                    let session = session.clone();
+                    let bytes = owner.bytes.clone();
+                    let ready = ready.clone();
+                    let mut cancel = lane_cancel.clone();
+                    owner.tasks.spawn(async move {
+                        tokio::select! {biased;
+                            _ = cancel.wait_for(|value| *value) => Ok(()),
+                            result = timeout(duration, receive_webtransport(session, bytes, ready, datagrams)) => result?,
+                        }
+                    });
+                }
+            }
+            drop(ready);
+            for _ in 0..lanes {
+                tokio::select! {
+                    value = received.recv() => value.ok_or("WebTransport download ended before readiness")?,
+                    task = owner.tasks.join_next() => {
+                        task.ok_or("no WebTransport download lanes")???;
+                        return Err::<(), Error>("WebTransport download cancelled before readiness".into());
+                    }
+                }
+            }
+            Ok(())
+        };
+        tokio::select! {biased;
+            _ = cancel.wait_for(|value| *value) => return Err("download cancelled before readiness".into()),
+            result = timeout(Duration::from_secs(10), start) => result??,
+        }
+        Ok(owner)
+    }
+
     pub fn bytes(&self) -> u64 {
         self.bytes.load(Ordering::Relaxed)
     }
@@ -111,4 +185,53 @@ impl Download {
     pub async fn stop(mut self) {
         self.tasks.shutdown().await;
     }
+}
+
+const WT_LANES_PER_SESSION: usize = 16;
+const WT_STREAM_BYTES: u64 = 64 * 1024 * 1024;
+
+async fn receive_webtransport(
+    session: Arc<Session>,
+    bytes: Arc<AtomicU64>,
+    ready: mpsc::Sender<()>,
+    datagrams: bool,
+) -> Result<(), Error> {
+    let mut announced = false;
+    loop {
+        if datagrams {
+            let chunk = session.recv_datagram().await?;
+            record_webtransport(&bytes, &ready, &mut announced, chunk.len())?;
+            continue;
+        }
+        let mut stream = session.accept_uni().await?;
+        let mut received = 0_u64;
+        while let Some(chunk) = stream.read_chunk().await? {
+            received = received
+                .checked_add(chunk.len() as u64)
+                .ok_or("download byte count overflow")?;
+            record_webtransport(&bytes, &ready, &mut announced, chunk.len())?;
+            if received > WT_STREAM_BYTES {
+                return Err("WebTransport download exceeded its declared byte count".into());
+            }
+        }
+        if received != WT_STREAM_BYTES {
+            return Err("WebTransport download ended before its declared byte count".into());
+        }
+    }
+}
+
+fn record_webtransport(
+    bytes: &AtomicU64,
+    ready: &mpsc::Sender<()>,
+    announced: &mut bool,
+    count: usize,
+) -> Result<(), Error> {
+    bytes.fetch_add(count as u64, Ordering::Relaxed);
+    if !*announced && count > 0 {
+        ready
+            .try_send(())
+            .map_err(|_| "download readiness receiver closed")?;
+        *announced = true;
+    }
+    Ok(())
 }

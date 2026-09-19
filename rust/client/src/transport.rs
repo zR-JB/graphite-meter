@@ -6,6 +6,7 @@ use crate::{
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
 use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
 use graphite_meter_core::{
     discovery::Protocol, origin::canonical_origin, route::Route, wire::decode_json,
 };
@@ -18,6 +19,7 @@ pub struct Transport {
     http: Http,
     origin: String,
     protocol: Protocol,
+    insecure: bool,
     h3: Option<Http3Client>,
 }
 
@@ -38,8 +40,23 @@ impl Transport {
             http,
             origin,
             protocol,
+            insecure,
             h3,
         })
+    }
+
+    pub async fn webtransport(
+        &self,
+        route: Route,
+        query: &[(&str, &str)],
+    ) -> Result<crate::webtransport::Session, Error> {
+        crate::webtransport::Session::dial(
+            &self.http,
+            &self.url(route, query)?,
+            self.insecure,
+            Duration::from_secs(10),
+        )
+        .await
     }
 
     pub fn url(&self, route: Route, query: &[(&str, &str)]) -> Result<String, Error> {
@@ -95,6 +112,78 @@ impl Transport {
             deadline,
             remaining: limit,
         })
+    }
+
+    /// Stream a finite request without materializing its body. No sender counts
+    /// escape this API: upload measurements must use the receiver's counters.
+    pub async fn send<S>(
+        &self,
+        route: Route,
+        query: &[(&str, &str)],
+        body: S,
+        length: u64,
+        duration: Duration,
+    ) -> Result<(), Error>
+    where
+        S: Stream<Item = Result<Bytes, Error>> + Send + 'static,
+    {
+        let target = self.url(route, query)?;
+        let deadline = Instant::now()
+            .checked_add(duration)
+            .ok_or("request duration is too large")?;
+        timeout_at(deadline, async {
+            if let Some(h3) = &self.h3 {
+                let mut request = Request::builder()
+                    .method(Method::POST)
+                    .uri(&target)
+                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
+                    .header(http::header::CONTENT_LENGTH, length);
+                if let Some(auth) = self.http.authorization(&target) {
+                    request = request.header(http::header::AUTHORIZATION, auth);
+                }
+                let mut request = h3
+                    .open(
+                        request.body(())?,
+                        RequestLimits {
+                            timeout: duration,
+                            max_send_bytes: length,
+                            max_receive_bytes: 64 * 1024,
+                        },
+                    )
+                    .await?;
+                futures_util::pin_mut!(body);
+                let mut sent = 0_u64;
+                while let Some(chunk) = body.next().await {
+                    let chunk = chunk?;
+                    sent = sent
+                        .checked_add(chunk.len() as u64)
+                        .filter(|sent| *sent <= length)
+                        .ok_or("request body exceeds content length")?;
+                    request.send_data(chunk).await?;
+                }
+                if sent != length {
+                    return Err("request body shorter than content length".into());
+                }
+                request.finish().await?;
+                let response = request.response().await?;
+                self.http
+                    .check_status(&target, response.status(), response.headers())?;
+                request.recv_body().await?;
+            } else {
+                let response = self
+                    .http
+                    .builder(Method::POST, &target, self.protocol)?
+                    .header(http::header::CONTENT_TYPE, "application/octet-stream")
+                    .header(http::header::CONTENT_LENGTH, length)
+                    .body(reqwest::Body::wrap_stream(body))
+                    .send()
+                    .await?;
+                let response = self.http.check_response(response)?;
+                crate::net::bounded_body(response).await?;
+            }
+            Ok(())
+        })
+        .await?
     }
 
     pub async fn json<T: DeserializeOwned>(
