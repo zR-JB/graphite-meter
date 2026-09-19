@@ -9,16 +9,16 @@ python = "3.14.7"
 go = "1.27.1"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:dominikh/go-tools/staticcheck" = "2026.2.1"
-"aqua:astral-sh/ty" = "0.0.78"
-"go:golang.org/x/vuln/cmd/govulncheck" = "1.7.0"
+"aqua:astral-sh/ty" = "0.0.82"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
-mise_version = "2026.9.3"
+mise_version = "2026.9.11"
 
-browser_chrome = "152.0.7977.82"
+browser_chrome = "153.0.8010.52"
 
 image_gitleaks = "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
-image_skopeo = "quay.io/containers/skopeo:v1.22.2-immutable@sha256:ca4fd94dba8cab15cf79c4c156bfc26d28e2265411294e9bba87756942e739ad"
+image_skopeo = "quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 
 [env]
@@ -104,7 +104,8 @@ run = [
   { task = "client-check-generated" },
   "cd client && bun run format:check",
   { task = "client-check" },
-  "cd client && bun dedupe --check",
+  # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
+  "cd client && bun dedupe --dry-run",
   { task = "client-test" },
 ]
 

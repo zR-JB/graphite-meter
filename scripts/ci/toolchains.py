@@ -21,7 +21,7 @@ PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},
     "images": {
         "gitleaks": r"ghcr\.io/gitleaks/gitleaks@sha256:[0-9a-f]{64}",
-        "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+-immutable@sha256:[0-9a-f]{64}",
+        "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+(?:-immutable)?@sha256:[0-9a-f]{64}",
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
     },
 }
@@ -62,7 +62,7 @@ def pin(name: str, root: Path = ROOT) -> str:
 
 
 def skopeo_version(root: Path = ROOT) -> str:
-    return pin("images.skopeo", root).split(":v", 1)[1].split("-immutable@", 1)[0]
+    return pin("images.skopeo", root).split(":v", 1)[1].split("@", 1)[0].removesuffix("-immutable")
 
 
 def runtime_pins(root: Path = ROOT) -> dict[str, str]:

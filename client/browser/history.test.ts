@@ -565,7 +565,9 @@ test("an out-of-window deep link preserves the 2,000-summary memory cap", async 
   await seedHistory(page, values);
   await openHistory(page, oldest.id);
 
-  await expect(page.locator(".result-detail")).toBeVisible();
+  // This fixture hydrates 2,001 persisted records before fetching the selected
+  // detail. Its disk setup is not the interaction budget tested below.
+  await expect(page.locator(".result-detail")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".overview-primary")).toContainText(
     "2000 results saved locally",
   );

@@ -243,3 +243,12 @@ function to have annotations; keep the tooling explicitly annotated in review.
 
 Update `aqua:astral-sh/ty` in `mise.toml`, regenerate `mise.lock`, and run
 `mise run setup` to update the checker. Python tooling does not use the client's Bun dependencies.
+
+## Dependency updates
+
+CI installs the committed Bun lockfile with `--frozen-lockfile`. Dedupe output is
+advisory: compatible duplicate versions are valid resolutions, and automated
+updates can introduce them without changing application behavior. CI does not
+rewrite the lockfile or test a different resolution. Run `bun dedupe` in `client/`
+after a dependency refresh to commit a normalized lockfile. Type checks, tests,
+security scans and reviewed legal inventories remain required.
