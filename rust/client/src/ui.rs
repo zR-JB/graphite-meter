@@ -349,6 +349,8 @@ struct Ui {
     servers: ListState,
     live: bool,
     chooser: bool,
+    details: bool,
+    details_scroll: u16,
     help: bool,
     edit: Option<Edit>,
     notice: String,
@@ -370,6 +372,8 @@ impl Ui {
             servers,
             live: false,
             chooser: false,
+            details: false,
+            details_scroll: 0,
             help: false,
             edit: None,
             notice: String::new(),
@@ -393,6 +397,10 @@ impl Ui {
         }
         snapshot.results.truncate(16);
         self.awaiting = false;
+        if snapshot.results.is_empty() || snapshot.auth.is_some() {
+            self.details = false;
+            self.details_scroll = 0;
+        }
         self.snapshot = snapshot;
     }
     fn notice(&self) -> (&str, bool) {
@@ -491,7 +499,34 @@ impl Ui {
             }
             return false;
         }
+        if self.details {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('d') => self.details = false,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.details_scroll = self.details_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.details_scroll = self.details_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp => {
+                    self.details_scroll = self.details_scroll.saturating_sub(10);
+                }
+                KeyCode::PageDown => {
+                    self.details_scroll = self.details_scroll.saturating_add(10);
+                }
+                _ => {}
+            }
+            return false;
+        }
         match key.code {
+            KeyCode::Char('d')
+                if self.live
+                    && self.snapshot.auth.is_none()
+                    && !self.snapshot.results.is_empty() =>
+            {
+                self.details = true;
+                self.details_scroll = 0;
+            }
             KeyCode::Char('l') if !self.snapshot.server_latencies.is_empty() => {
                 let hosts = &self.snapshot.server_latencies;
                 let current = hosts
@@ -504,6 +539,7 @@ impl Ui {
                 Ok(()) => {
                     self.send(Command::Run(self.config.clone()), commands);
                     self.live = true;
+                    self.details = false;
                 }
                 Err(error) => self.notice = error.to_string(),
             },
@@ -800,5 +836,79 @@ mod tests {
         };
         ui.update(next);
         assert_eq!(ui.notice(), ("new transfer error", true));
+    }
+    #[test]
+    fn details_show_both_server_contributions_and_close_with_escape() {
+        use crate::model::{ServerContribution, ServerSummary, StageResult};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let snapshot = Snapshot {
+            phase: Phase::Complete,
+            results: vec![StageResult {
+                stage: Stage::Download,
+                elapsed: Duration::from_secs(1),
+                down_bytes: 1_500_000,
+                up_bytes: 0,
+                down_bps: Some(12_000_000.0),
+                up_bps: None,
+                latency: Default::default(),
+                complete: false,
+                server_latencies: Vec::new(),
+                server_results: vec![
+                    ServerContribution {
+                        id: "near".into(),
+                        down_bytes: 1_500_000,
+                        up_bytes: 0,
+                        down_bps: Some(12_000_000.0),
+                        up_bps: None,
+                        error: None,
+                    },
+                    ServerContribution {
+                        id: "far".into(),
+                        down_bytes: 0,
+                        up_bytes: 0,
+                        down_bps: None,
+                        up_bps: None,
+                        error: Some("peer disconnected".into()),
+                    },
+                ],
+            }],
+            servers: vec![
+                ServerSummary {
+                    id: "near".into(),
+                    name: "Near".into(),
+                    ..ServerSummary::default()
+                },
+                ServerSummary {
+                    id: "far".into(),
+                    name: "Far".into(),
+                    ..ServerSummary::default()
+                },
+            ],
+            ..Snapshot::default()
+        };
+        let mut ui = Ui::new(Config::default(), snapshot);
+        ui.live = true;
+        let (commands, _) = mpsc::channel(1);
+        ui.key(
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+            &commands,
+        );
+        assert!(ui.details);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Near"));
+        assert!(rendered.contains("Far"));
+        assert!(rendered.contains("peer disconnected"));
+        assert!(rendered.contains("12.00 Mbit/s"));
+        ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+        assert!(!ui.details);
     }
 }

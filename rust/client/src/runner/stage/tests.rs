@@ -194,6 +194,25 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     assert!(observed.borrow().results[0].complete);
     let first_bytes = observed.borrow().results[0].down_bytes;
     assert!(first_bytes > 0);
+    {
+        let snapshot = observed.borrow();
+        let first = &snapshot.results[0];
+        assert_eq!(first.server_results.len(), 2);
+        assert_eq!(
+            first
+                .server_results
+                .iter()
+                .map(|server| server.down_bytes)
+                .sum::<u64>(),
+            first.down_bytes
+        );
+        assert!(
+            first
+                .server_results
+                .iter()
+                .all(|server| server.down_bps.is_some())
+        );
+    }
 
     // A stalled first peer must not consume the next peer's startup budget.
     near_failed.store(2, Ordering::SeqCst);
@@ -215,6 +234,18 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     assert!(!snapshot.results[1].complete);
     assert!(snapshot.results[1].down_bytes > 0);
     assert!(snapshot.results[1].down_bps.is_some());
+    let contributions = &snapshot.results[1].server_results;
+    assert_eq!(contributions.len(), 2);
+    assert_eq!(
+        contributions
+            .iter()
+            .map(|server| server.down_bytes)
+            .sum::<u64>(),
+        snapshot.results[1].down_bytes
+    );
+    assert!(contributions[0].down_bps.is_none());
+    assert!(contributions[0].error.is_some());
+    assert!(contributions[1].down_bps.is_some());
     assert!(snapshot.servers[0].error.is_some());
     assert!(snapshot.servers[1].error.is_none());
     drop(snapshot);

@@ -5,7 +5,10 @@ use crate::{
     config::Config,
     download::Download,
     latency::Observation,
-    model::{Phase, Point, ServerLatency, ServerLatencyResult, Snapshot, Stage, StageResult},
+    model::{
+        Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
+        StageResult,
+    },
     net::Http,
     stream_plan::StageLanePlan,
     upload::Upload,
@@ -359,6 +362,40 @@ impl StageResources {
             .extend(futures_util::future::try_join_all(checkpoints).await?);
         Ok(boundary)
     }
+}
+
+fn server_contributions(
+    stage: Option<TransferStage>,
+    servers: &[PreparedServer],
+    accounting: &AggregateMeasurements,
+    snapshot: &Snapshot,
+) -> Vec<ServerContribution> {
+    let Some(stage) = stage else {
+        return Vec::new();
+    };
+    servers
+        .iter()
+        .map(|server| {
+            let id = &server.entry.id;
+            let totals = accounting.stage_total_for_server(stage, id);
+            ServerContribution {
+                id: id.clone(),
+                down_bytes: totals.down,
+                up_bytes: totals.up,
+                down_bps: accounting
+                    .server_rate(stage, Direction::Down, id)
+                    .map(|rate| rate * 8.0),
+                up_bps: accounting
+                    .server_rate(stage, Direction::Up, id)
+                    .map(|rate| rate * 8.0),
+                error: snapshot
+                    .servers
+                    .iter()
+                    .find(|summary| summary.id == *id)
+                    .and_then(|summary| summary.error.clone()),
+            }
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -902,6 +939,8 @@ pub(super) async fn measure(
         let up = transfer_stage.map(|stage| accounting.result(stage, Direction::Up));
         snapshots.send_modify(|snapshot| {
             latency.sample(snapshot, ended.duration_since(started));
+            let server_results =
+                server_contributions(transfer_stage, servers, &accounting, snapshot);
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: ended.duration_since(started),
@@ -934,6 +973,7 @@ pub(super) async fn measure(
                         error: host.error.clone(),
                     })
                     .collect(),
+                server_results,
                 complete: result.is_ok()
                     && resources.failed.is_empty()
                     && !resources.latency_failed
@@ -953,6 +993,8 @@ pub(super) async fn measure(
         // A failed preparation still belongs to this stage. Earlier completed
         // results remain untouched, and this missing population is explicit.
         snapshots.send_modify(|snapshot| {
+            let server_results =
+                server_contributions(transfer_stage, servers, &accounting, snapshot);
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: Duration::ZERO,
@@ -971,6 +1013,7 @@ pub(super) async fn measure(
                         error: host.error.clone(),
                     })
                     .collect(),
+                server_results,
             });
         });
     }

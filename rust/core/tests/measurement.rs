@@ -81,6 +81,18 @@ fn receiver_rates_keep_each_server_clock_and_unique_byte_ledger() {
     assert_eq!(result.mean_bytes_per_sec, Some(4000.0));
     assert_eq!(result.total_bytes, 7000);
     assert_eq!(result.unavailable_reason, None);
+    assert_eq!(
+        engine.server_rate(Stage::Upload, Direction::Up, "a"),
+        Some(1000.0)
+    );
+    assert_eq!(
+        engine.server_rate(Stage::Upload, Direction::Up, "b"),
+        Some(3000.0)
+    );
+    assert_eq!(
+        engine.server_rate(Stage::Upload, Direction::Up, "missing"),
+        None
+    );
 }
 
 #[test]
@@ -118,12 +130,30 @@ fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_revokes_headline(
     assert_eq!(result.mean_bytes_per_sec, None);
     assert_eq!(result.total_bytes, 9000);
     assert_eq!(
+        engine.server_rate(Stage::Download, Direction::Down, "a"),
+        None
+    );
+    assert_eq!(
+        engine.server_rate(Stage::Download, Direction::Down, "b"),
+        None
+    );
+    assert_eq!(
         engine.intervals()[0]
             .window
             .as_ref()
             .unwrap()
             .down_bytes_per_sec,
         Some(4000.0)
+    );
+    engine.observe(boundary(3500, &[("b", 6000)], &[]));
+    assert!(
+        engine
+            .server_rate(Stage::Download, Direction::Down, "b")
+            .is_some()
+    );
+    assert_eq!(
+        engine.server_rate(Stage::Download, Direction::Down, "a"),
+        None
     );
 }
 

@@ -297,6 +297,22 @@ impl AggregateMeasurements {
         result
     }
 
+    /// A peer's rate is valid only when the coordinated survivor window is
+    /// valid. Its lifetime byte total is available separately even if this
+    /// rate is unavailable or the peer dropped out of the final interval.
+    pub fn server_rate(&self, stage: Stage, direction: Direction, id: &str) -> Option<f64> {
+        self.result(stage, direction).mean_bytes_per_sec?;
+        let window = self.intervals.back()?.window.as_ref()?;
+        let components = match direction {
+            Direction::Down => &window.down,
+            Direction::Up => &window.up,
+        };
+        components
+            .iter()
+            .find(|component| component.server_id == id)
+            .map(|component| component.bytes_per_sec)
+    }
+
     fn resume_at(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
         let interval = self.intervals.back().unwrap();
         let (stage, participants) = (interval.stage, interval.participants.clone());

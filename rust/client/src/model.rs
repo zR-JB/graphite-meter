@@ -56,6 +56,17 @@ pub struct StageResult {
     pub latency: graphite_meter_core::latency::LatencySummary,
     pub complete: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
+    pub server_results: Vec<ServerContribution>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServerContribution {
+    pub id: String,
+    pub down_bytes: u64,
+    pub up_bytes: u64,
+    pub down_bps: Option<f64>,
+    pub up_bps: Option<f64>,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug)]

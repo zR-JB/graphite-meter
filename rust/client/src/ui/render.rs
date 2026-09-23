@@ -100,6 +100,9 @@ impl Ui {
             .wrap(Wrap { trim: true }),
             regions[2],
         );
+        if self.details {
+            self.draw_details(frame);
+        }
         if let Some(auth) = &self.snapshot.auth {
             let area = popup(frame.area(), 100, 10);
             frame.render_widget(Clear, area);
@@ -431,10 +434,117 @@ impl Ui {
                     .style(Style::new().fg(self.theme.brand_strong)),
             )
             .block(panel(
-                "Stage results · receiver-accounted upload",
+                "Stage results · d per-server · receiver upload",
                 self.theme,
             )),
             regions[2],
+        );
+    }
+    fn draw_details(&mut self, frame: &mut Frame) {
+        let area = popup(frame.area(), 108, frame.area().height.saturating_sub(2));
+        let mut lines = Vec::new();
+        for result in &self.snapshot.results {
+            lines.push(Line::styled(
+                format!(
+                    "{}{}  ↓ {}  ↑ {}",
+                    result.stage.name(),
+                    if result.complete { "" } else { " (partial)" },
+                    rate(result.down_bps),
+                    rate(result.up_bps),
+                ),
+                Style::new()
+                    .fg(self.theme.brand_strong)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            for server in &result.server_results {
+                let name = self
+                    .snapshot
+                    .servers
+                    .iter()
+                    .find(|summary| summary.id == server.id)
+                    .map_or(server.id.as_str(), |summary| summary.name.as_str());
+                lines.push(Line::from(format!(
+                    "  {}  ↓ {}  ↑ {}",
+                    safe_text(name, 32),
+                    rate(server.down_bps),
+                    rate(server.up_bps),
+                )));
+                lines.push(Line::styled(
+                    format!(
+                        "    received ↓ {} B  ↑ {} B",
+                        server.down_bytes, server.up_bytes
+                    ),
+                    Style::new().fg(self.theme.muted),
+                ));
+                if let Some(host) = result
+                    .server_latencies
+                    .iter()
+                    .find(|host| host.id == server.id)
+                {
+                    let p50 = host
+                        .summary
+                        .distribution
+                        .map(|distribution| distribution.p50 as f64 / 1_000_000.0);
+                    lines.push(Line::styled(
+                        format!(
+                            "    RTT {}  replies {}  timeouts {}  pending {}",
+                            milliseconds(p50),
+                            host.summary.count,
+                            host.summary.timeouts,
+                            host.summary.unresolved,
+                        ),
+                        Style::new().fg(self.theme.muted),
+                    ));
+                    if let Some(error) = &host.error {
+                        lines.push(Line::styled(
+                            format!("    Latency: {}", safe_text(error, 110)),
+                            Style::new().fg(self.theme.error),
+                        ));
+                    }
+                }
+                if let Some(error) = &server.error {
+                    lines.push(Line::styled(
+                        format!("    {}", safe_text(error, 120)),
+                        Style::new().fg(self.theme.error),
+                    ));
+                }
+            }
+            if result.stage == Stage::Latency {
+                for host in &result.server_latencies {
+                    let p50 = host
+                        .summary
+                        .distribution
+                        .map(|distribution| distribution.p50 as f64 / 1_000_000.0);
+                    lines.push(Line::from(format!(
+                        "  {}  RTT {}  replies {}  timeouts {}  pending {}",
+                        safe_text(&host.id, 32),
+                        milliseconds(p50),
+                        host.summary.count,
+                        host.summary.timeouts,
+                        host.summary.unresolved,
+                    )));
+                    if let Some(error) = &host.error {
+                        lines.push(Line::styled(
+                            format!("    {}", safe_text(error, 120)),
+                            Style::new().fg(self.theme.error),
+                        ));
+                    }
+                }
+            }
+            lines.push(Line::from(""));
+        }
+        let visible = usize::from(area.height.saturating_sub(2));
+        let maximum_scroll = lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16;
+        self.details_scroll = self.details_scroll.min(maximum_scroll);
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((self.details_scroll, 0))
+                .block(panel(
+                    "Per-server results · ↑/↓ scroll · d/Esc close",
+                    self.theme,
+                )),
+            area,
         );
     }
     fn draw_servers(&mut self, frame: &mut Frame) {
@@ -505,7 +615,8 @@ impl Ui {
                 "v  verify configuration    a  automatic transport paths\n",
                 "r  start measurement\n\n",
                 "MEASUREMENT\nEsc  cancel active work        r  rerun after completion\n",
-                "l  next latency server        Tab/Shift-Tab  section\n\n",
+                "l  next latency server        d  per-server results\n",
+                "Tab/Shift-Tab  section\n\n",
                 "EDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\n",
                 "Paste is bounded and terminal controls are removed.\n\n",
                 "q or Ctrl-C  quit              ? or Esc  close help\n",

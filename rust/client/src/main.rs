@@ -104,6 +104,21 @@ fn report(snapshot: &Snapshot) {
                 println!("    Latency unavailable: {}", safe(error));
             }
         }
+        if result.server_results.len() > 1 {
+            for server in &result.server_results {
+                println!(
+                    "  {}: down {}, up {}, received down {} bytes / up {} bytes",
+                    safe(&server.id),
+                    rate(server.down_bps),
+                    rate(server.up_bps),
+                    server.down_bytes,
+                    server.up_bytes,
+                );
+                if let Some(error) = &server.error {
+                    println!("    Unavailable: {}", safe(error));
+                }
+            }
+        }
     }
     if let Some(error) = &snapshot.error {
         println!("Error: {}", safe(error));
