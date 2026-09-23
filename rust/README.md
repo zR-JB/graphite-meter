@@ -53,6 +53,12 @@ python3 rust/tests/interop.py
 Ring remains the default TLS/QUIC crypto provider. `mise run rust-crypto-check`
 checks the alternative AWS-LC build for both binaries. Build one binary at a
 time for provider comparisons; combining both provider features is rejected.
+The first-party Rust crates forbid unsafe code. This does not make the full
+dependency graph free of unsafe code or native cryptography: ring contains
+C/assembly. Isolated probes of rustls-graviola 0.4.0 and rustls-rustcrypto
+0.0.2-alpha compiled, but neither exposed a QUIC cipher suite to Noq. The
+RustCrypto provider also explicitly warns against production use. A pure-Rust
+QUIC performance comparison therefore remains unmeasured.
 
 The tests require OpenSSL; interoperability checks also require Go.
 `server_interop.py` exercises the assembled debug server with unchanged Go
