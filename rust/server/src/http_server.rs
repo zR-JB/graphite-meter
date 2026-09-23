@@ -480,6 +480,7 @@ impl HttpServer {
             if let Authorization::Authenticated(guard) = authorized.authorization() {
                 lease = Some(guard.clone());
             }
+            origin = authorized.request().headers().get(header::ORIGIN).cloned();
             let path = authorized.request().uri().path();
             if path == "/login"
                 || path.starts_with("/auth/")
@@ -487,6 +488,7 @@ impl HttpServer {
             {
                 let logout =
                     path == "/auth/logout" && authorized.request().method() == Method::POST;
+                let ticket = matches!(path, "/ws/session" | "/wt/session");
                 // Even public auth endpoints collect only 4096 bytes within 15s.
                 let execute = async {
                     let authorized = authorized.try_map_body(collect_auth_body).await?;
@@ -505,6 +507,17 @@ impl HttpServer {
                         result.map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??
                     },
                 };
+                // Socket tickets are measurement endpoints. Their authenticated
+                // responses must be readable from the browser's approved origin,
+                // including when the native listener uses a different port.
+                if ticket && let (Some(lease), Some(origin)) = (&lease, &origin) {
+                    if lease.is_bearer() {
+                        Access::Bearer(origin)
+                    } else {
+                        Access::Cookie(origin)
+                    }
+                    .apply_measurement(response.headers_mut());
+                }
                 // A successful logout deliberately revokes the current lease;
                 // its cookie-clearing response must still reach the browser.
                 if !(logout && response.status().is_redirection()) {
@@ -512,7 +525,6 @@ impl HttpServer {
                 }
                 return Ok(response);
             }
-            origin = authorized.request().headers().get(header::ORIGIN).cloned();
             authorized.into_parts().0
         } else {
             request

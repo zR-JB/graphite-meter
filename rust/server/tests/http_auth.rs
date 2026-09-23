@@ -185,6 +185,18 @@ async fn password_flow() {
     assert!(!denied.contains("access-control-allow-origin: *"));
     let (session, csrf) = h.login().await;
     let headers = credentials(&session, &csrf);
+    for (route, target) in [
+        ("/ws/session", "https://localhost/ws/ping"),
+        ("/wt/session", "https://localhost:8443/wt/ping"),
+    ] {
+        let (minted, body) = h
+            .request("POST", &format!("{route}?target={target}"), &headers, "")
+            .await;
+        assert!(minted.starts_with("HTTP/1.1 200"));
+        assert!(minted.contains("access-control-allow-origin: https://localhost\r\n"));
+        assert!(minted.contains("access-control-allow-credentials: true\r\n"));
+        assert!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["token"].is_string());
+    }
     let (other, other_csrf) = h.login().await;
     let (ok, body) = h.request("GET", "/download?bytes=1000", &headers, "").await;
     assert!(ok.starts_with("HTTP/1.1 200"));
