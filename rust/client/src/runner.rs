@@ -94,9 +94,15 @@ async fn prepare(
         } else {
             None
         };
-        let latency = (latency && index == 0)
-            .then(|| selection::latency(config, entry, &preflight))
-            .transpose()?;
+        let latency = if !latency {
+            None
+        } else if index == 0 {
+            Some(selection::latency(config, entry, &preflight)?)
+        } else {
+            // Optional fallback for a later stage if the primary drops out.
+            // A throughput-only secondary never blocks the selected run.
+            selection::latency(config, entry, &preflight).ok()
+        };
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot
                 .servers
@@ -151,7 +157,7 @@ pub async fn run(
         snapshot.latest = Point::default();
         snapshot.stage = None;
     });
-    let prepared = tokio::select! {
+    let mut prepared = tokio::select! {
         result = prepare(&config, &http, &snapshots) => result?,
         _ = cancel.wait_for(|value| *value) => return Ok(()),
     };
@@ -159,7 +165,7 @@ pub async fn run(
         if *cancel.borrow() {
             break;
         }
-        measure(
+        let failed = measure(
             *stage,
             &config,
             &http,
@@ -168,6 +174,7 @@ pub async fn run(
             cancel.clone(),
         )
         .await?;
+        prepared.retain(|server| !failed.contains(&server.entry.id));
     }
     snapshots.send_modify(|snapshot| {
         snapshot.phase = if *cancel.borrow() {
@@ -177,6 +184,10 @@ pub async fn run(
         };
         snapshot.status = if *cancel.borrow() {
             "Cancelled"
+        } else if snapshot.servers.iter().any(|server| server.error.is_some())
+            || snapshot.results.iter().any(|result| !result.complete)
+        {
+            "Finished with partial results"
         } else {
             "Measurement complete"
         }
@@ -196,6 +207,50 @@ struct StageResources {
     latency: JoinSet<Result<(), Error>>,
     stop: watch::Sender<bool>,
     stop_latency: watch::Sender<bool>,
+    retired: JoinSet<Result<(), Error>>,
+    failed: Vec<String>,
+    latency_failed: bool,
+}
+
+#[derive(Debug)]
+struct ParticipantFailure {
+    id: String,
+    source: Error,
+}
+impl std::fmt::Display for ParticipantFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.id, self.source)
+    }
+}
+impl std::error::Error for ParticipantFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+#[derive(Debug)]
+struct LatencyFailure(Error);
+impl std::fmt::Display for LatencyFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "latency unavailable: {}", self.0)
+    }
+}
+impl std::error::Error for LatencyFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+impl Transfer {
+    async fn close(self) -> Result<(), Error> {
+        if let Some(down) = self.down {
+            down.stop().await;
+        }
+        if let Some(up) = self.up {
+            up.finish().await?;
+        }
+        Ok(())
+    }
 }
 
 impl StageResources {
@@ -203,15 +258,7 @@ impl StageResources {
         self.stop.send_replace(true);
         self.stop_latency.send_replace(true);
         let mut failure = None;
-        let finalizers = self.transfers.drain(..).map(|transfer| async move {
-            if let Some(down) = transfer.down {
-                down.stop().await;
-            }
-            if let Some(up) = transfer.up {
-                up.finish().await?;
-            }
-            Ok::<(), Error>(())
-        });
+        let finalizers = self.transfers.drain(..).map(Transfer::close);
         for result in futures_util::future::join_all(finalizers).await {
             if let Err(error) = result {
                 failure.get_or_insert(error);
@@ -222,21 +269,92 @@ impl StageResources {
                 failure.get_or_insert(error);
             }
         }
+        // Retired participants already have a recorded failure. Reap their
+        // bounded cleanup without turning a survivor result into another failure.
+        while self.retired.join_next().await.is_some() {}
         failure.map_or(Ok(()), Err)
     }
 
     fn health(&mut self) -> Result<(), Error> {
         for transfer in &mut self.transfers {
             if let Some(down) = &mut transfer.down {
-                down.health()?;
+                down.health().map_err(|source| ParticipantFailure {
+                    id: transfer.id.clone(),
+                    source,
+                })?;
             }
             if let Some(up) = &mut transfer.up {
-                up.health()?;
+                up.health().map_err(|source| ParticipantFailure {
+                    id: transfer.id.clone(),
+                    source,
+                })?;
             }
         }
         if let Some(result) = self.latency.try_join_next() {
-            result??;
-            return Err("latency session ended before stage boundary".into());
+            let source = result
+                .map_err(Error::from)
+                .and_then(|result| result)
+                .err()
+                .unwrap_or_else(|| "latency session ended before stage boundary".into());
+            return Err(LatencyFailure(source).into());
+        }
+        Ok(())
+    }
+
+    fn recover(
+        &mut self,
+        error: Error,
+        accounting: &mut AggregateMeasurements,
+        stage: Option<TransferStage>,
+        epoch: Instant,
+        snapshots: &watch::Sender<Snapshot>,
+    ) -> Result<(), Error> {
+        if error.is::<LatencyFailure>() && stage.is_some() {
+            self.latency_failed = true;
+            self.stop_latency.send_replace(true);
+            snapshots.send_modify(|snapshot| {
+                snapshot.status = format!("{error}; throughput measurement continues");
+            });
+            return Ok(());
+        }
+        let failure = error.downcast::<ParticipantFailure>()?;
+        let Some(index) = self
+            .transfers
+            .iter()
+            .position(|transfer| transfer.id == failure.id)
+        else {
+            return Err(failure);
+        };
+        accounting.observe(self.local_boundary(epoch));
+        let transfer = self.transfers.remove(index);
+        snapshots.send_modify(|snapshot| {
+            if let Some(server) = snapshot
+                .servers
+                .iter_mut()
+                .find(|server| server.id == failure.id)
+            {
+                server.error = Some(failure.source.to_string());
+            }
+            snapshot.status = format!(
+                "{} unavailable; continuing with remaining servers",
+                failure.id
+            );
+        });
+        self.failed.push(failure.id);
+        self.retired.spawn(transfer.close());
+        if self.transfers.is_empty() {
+            return Err("all selected servers failed".into());
+        }
+        if let Some(stage) = stage {
+            accounting.begin(
+                stage,
+                self.transfers
+                    .iter()
+                    .map(|transfer| transfer.id.clone())
+                    .collect(),
+                nanos(epoch.elapsed()),
+                IntervalReason::Dropout,
+            );
         }
         Ok(())
     }
@@ -265,7 +383,13 @@ impl StageResources {
         let mut boundary = self.local_boundary(epoch);
         let checkpoints = self.transfers.iter().filter_map(|transfer| {
             transfer.up.as_ref().map(|up| async move {
-                Ok::<_, Error>((transfer.id.clone(), up.checkpoint().await?))
+                Ok::<_, Error>((
+                    transfer.id.clone(),
+                    up.checkpoint().await.map_err(|source| ParticipantFailure {
+                        id: transfer.id.clone(),
+                        source,
+                    })?,
+                ))
             })
         });
         boundary
@@ -282,7 +406,7 @@ async fn measure(
     servers: &[PreparedServer],
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
-) -> Result<(), Error> {
+) -> Result<Vec<String>, Error> {
     let epoch = Instant::now();
     let (stop, stopped) = watch::channel(false);
     let (stop_latency, latency_stopped) = watch::channel(false);
@@ -291,6 +415,9 @@ async fn measure(
         latency: JoinSet::new(),
         stop,
         stop_latency,
+        retired: JoinSet::new(),
+        failed: Vec::new(),
+        latency_failed: false,
     };
     let (observations, mut events) = mpsc::channel(1024);
     let operation_limit = config
@@ -372,12 +499,14 @@ async fn measure(
             }
             resources.transfers.push(transfer);
         }
-        // One primary latency stream measures the shared load, matching native client semantics.
-        if stage == Stage::Latency || config.loaded_latency {
-            let target = servers
-                .first()
-                .and_then(|server| server.latency.clone())
-                .ok_or("missing primary latency target")?;
+        // One primary latency stream measures the shared load.
+        let latency_target = servers.first().and_then(|server| server.latency.clone());
+        if stage == Stage::Latency && latency_target.is_none() {
+            return Err("missing primary latency target".into());
+        }
+        if let Some(target) =
+            latency_target.filter(|_| stage == Stage::Latency || config.loaded_latency)
+        {
             let http = http.clone();
             let stopped = latency_stopped.clone();
             let observations = observations.clone();
@@ -480,7 +609,9 @@ async fn measure(
             snapshot.status = format!("Measuring {}", stage.name());
         });
         loop {
-            resources.health()?;
+            if let Err(error) = resources.health() {
+                resources.recover(error, &mut accounting, transfer_stage, epoch, snapshots)?;
+            }
             tokio::select! {
                 biased;
                 _ = tokio::time::sleep_until(end) => break,
@@ -489,20 +620,30 @@ async fn measure(
                 },
                 _ = sample.tick() => {
                     let window = if transfer_stage.is_some() {
-                        let checkpoint = resources.boundary(epoch);
-                        tokio::pin!(checkpoint);
-                        let boundary = loop {
-                            tokio::select! {
-                                biased;
-                                _ = tokio::time::sleep_until(end) => break None,
-                                event = events.recv() => {
-                                    if let Some(event) = event { observe_latency(event, started, end, &mut latency, &mut latest_latency); }
-                                },
-                                result = &mut checkpoint => break Some(result?),
+                        let boundary = {
+                            let checkpoint = resources.boundary(epoch);
+                            tokio::pin!(checkpoint);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    _ = tokio::time::sleep_until(end) => break None,
+                                    event = events.recv() => {
+                                        if let Some(event) = event {
+                                            observe_latency(event, started, end, &mut latency, &mut latest_latency);
+                                        }
+                                    },
+                                    result = &mut checkpoint => break Some(result),
+                                }
                             }
                         };
                         let Some(boundary) = boundary else { break; };
-                        accounting.observe(boundary)
+                        match boundary {
+                            Ok(boundary) => accounting.observe(boundary),
+                            Err(error) => {
+                                resources.recover(error, &mut accounting, transfer_stage, epoch, snapshots)?;
+                                None
+                            }
+                        }
                     } else { None };
                     snapshots.send_modify(|snapshot| snapshot.sample(Point {
                         elapsed: started.elapsed(),
@@ -516,7 +657,21 @@ async fn measure(
         measurement_end = Some(end);
         resources.stop_latency.send_replace(true);
         if transfer_stage.is_some() {
-            accounting.observe(resources.boundary(epoch).await?);
+            loop {
+                match resources.boundary(epoch).await {
+                    Ok(boundary) => {
+                        accounting.observe(boundary);
+                        break;
+                    }
+                    Err(error) => resources.recover(
+                        error,
+                        &mut accounting,
+                        transfer_stage,
+                        epoch,
+                        snapshots,
+                    )?,
+                }
+            }
         }
         resources.stop.send_replace(true);
         while let Some(result) = resources.latency.join_next().await {
@@ -570,6 +725,8 @@ async fn measure(
                     .map(|rate| rate * 8.0),
                 latency: latency.snapshot(),
                 complete: result.is_ok()
+                    && resources.failed.is_empty()
+                    && !resources.latency_failed
                     && !*cancel.borrow()
                     && (stage != Stage::Latency || latency.snapshot().count > 0)
                     && (!stage.downloads()
@@ -579,6 +736,7 @@ async fn measure(
             })
         });
     }
+    let failed = resources.failed.clone();
     let cleanup = resources.close().await;
     if cleanup.is_err() {
         snapshots.send_modify(|snapshot| {
@@ -589,7 +747,7 @@ async fn measure(
             }
         });
     }
-    result.and(cleanup)
+    result.and(cleanup).map(|()| failed)
 }
 
 fn observe_latency(
