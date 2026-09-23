@@ -20,6 +20,7 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_LINE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -383,7 +384,7 @@ async fn send_lane(
                 ))
             },
         );
-        transport
+        let result = transport
             .send(
                 Route::Upload,
                 &[("id", id), ("lane", &lane)],
@@ -391,7 +392,23 @@ async fn send_lane(
                 REQUEST_BYTES,
                 REQUEST_LIFETIME,
             )
-            .await?;
+            .await;
+        match result {
+            Ok(()) => {}
+            // A streaming HTTP request can end when its connection closes,
+            // including at a stage boundary. The upload session's receiver
+            // counter remains authoritative; a fresh request may continue it.
+            // HTTP status/protocol errors stay fatal, and H3 needs a new
+            // connection owner before its request can be retried safely.
+            Err(error)
+                if !transport.is_http3()
+                    && (error.is::<reqwest::Error>()
+                        || error.is::<tokio::time::error::Elapsed>()) =>
+            {
+                tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 async fn progress_loop(
@@ -622,6 +639,61 @@ fn apply_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{io::AsyncReadExt, net::TcpListener};
+
+    #[tokio::test]
+    async fn http_lane_retries_dropped_streaming_request() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let transport = Transport::connect(
+            crate::net::Http::new(false)?,
+            &origin,
+            graphite_meter_core::discovery::Protocol::Http1,
+            false,
+        )
+        .await?;
+        let active = Arc::new(AtomicBool::new(false));
+        let lane = tokio::spawn(async move {
+            send_lane(
+                &transport,
+                "upload-session",
+                0,
+                Bytes::from(vec![42; 64 * 1024]),
+                active,
+            )
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let mut first_closed = None;
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await?;
+                if attempt == 1 {
+                    assert!(
+                        first_closed.is_some_and(|closed: Instant| {
+                            closed.elapsed() >= HTTP_RETRY_BACKOFF
+                        }),
+                        "a dropped upload request was retried without pacing"
+                    );
+                }
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).await?;
+                assert!(request[..count].starts_with(b"POST /upload?"));
+                // Closing before a response models a reset while the request
+                // body is still streaming. The second accept proves recovery.
+                drop(stream);
+                if attempt == 0 {
+                    first_closed = Some(Instant::now());
+                }
+            }
+            Ok::<_, Error>(())
+        })
+        .await??;
+        assert!(!lane.is_finished());
+        lane.abort();
+        let _ = lane.await;
+        Ok(())
+    }
 
     #[test]
     fn receiver_evidence_requires_ready_and_rejects_regression() {

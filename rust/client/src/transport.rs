@@ -24,6 +24,10 @@ pub struct Transport {
 }
 
 impl Transport {
+    pub(crate) fn is_http3(&self) -> bool {
+        self.h3.is_some()
+    }
+
     pub async fn connect(
         http: Http,
         origin: &str,
