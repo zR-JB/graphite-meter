@@ -28,7 +28,9 @@ use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 pub struct Service {
     policy: Policy,
     sessions: SessionStore,
-    password: PasswordLogin,
+    password: Option<PasswordLogin>,
+    oidc: Option<super::oidc::Oidc>,
+    mode: AuthMode,
     attempts: Arc<AttemptLimiter>,
 }
 
@@ -38,17 +40,33 @@ impl Service {
         trusted: Vec<IpNet>,
         sessions: Option<SessionStore>,
     ) -> Result<Self, ConfigError> {
-        if config.mode != AuthMode::Password {
-            return Err("Rust authentication currently supports password mode only".into());
-        }
         let sessions = sessions.unwrap_or_default();
         let attempts = Arc::new(AttemptLimiter::new());
         Ok(Self {
             policy: Policy::new(&config.public_url, config.mode, trusted, sessions.clone())?,
-            password: PasswordLogin::new(config, sessions.clone(), attempts.clone())?,
+            password: config
+                .mode
+                .password()
+                .then(|| PasswordLogin::new(config, sessions.clone(), attempts.clone()))
+                .transpose()?,
+            oidc: config
+                .mode
+                .oidc()
+                .then(|| super::oidc::Oidc::new(config))
+                .transpose()?,
+            mode: config.mode,
             sessions,
             attempts,
         })
+    }
+    pub async fn initialize(&self) -> Result<(), ConfigError> {
+        if let Some(oidc) = &self.oidc {
+            let result = oidc.provider().await;
+            if self.mode == AuthMode::Oidc {
+                result?;
+            }
+        }
+        Ok(())
     }
     pub fn policy(&self) -> &Policy {
         &self.policy
@@ -82,7 +100,9 @@ impl Service {
             return Some(response(StatusCode::FORBIDDEN));
         }
         let result = match (request.method(), path) {
-            (&Method::GET, "/login") => self.login_page(request),
+            (&Method::GET, "/login") => self.login_page(request).await,
+            (&Method::POST, "/auth/oidc/start") => self.oidc_start(authorized).await,
+            (&Method::GET, "/auth/oidc/callback") => self.oidc_callback(authorized).await,
             (&Method::POST, "/auth/password") => self.password_login(authorized).await,
             (&Method::GET, "/auth/session") => self.session_info(authorized),
             (&Method::POST, "/auth/logout") => self.logout(authorized),
@@ -98,7 +118,12 @@ impl Service {
         Some(result)
     }
 
-    fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
+    async fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
+        let provider = if let Some(oidc) = &self.oidc {
+            oidc.provider().await.ok()
+        } else {
+            None
+        };
         let Ok(nonce) = random_token::<32>() else {
             return response(StatusCode::SERVICE_UNAVAILABLE);
         };
@@ -122,15 +147,20 @@ impl Service {
             StatusCode::OK,
             &LoginPage {
                 csrf: &nonce,
-                provider: "",
+                provider: self.oidc.as_ref().map_or("", |oidc| oidc.name()),
                 challenge,
-                password: true,
-                oidc: false,
-                oidc_ready: false,
+                password: self.password.is_some(),
+                oidc: self.oidc.is_some(),
+                oidc_ready: provider.is_some(),
                 notice,
                 status,
             },
         );
+        if let Some(provider) = provider {
+            result.headers_mut().extend(
+                pages::security_headers(Some(&provider.origin)).expect("validated provider origin"),
+            );
+        }
         set_cookie(
             &mut result,
             "__Host-gm_login",
@@ -147,8 +177,10 @@ impl Service {
             return login_rejected("failed", "");
         };
         let challenge = value(&form, "challenge");
-        let result = self
-            .password
+        let Some(password) = &self.password else {
+            return response(StatusCode::NOT_FOUND);
+        };
+        let result = password
             .attempt(PasswordAttempt {
                 client: self
                     .policy
@@ -187,6 +219,135 @@ impl Service {
             }
             Err(failure) => login_rejected(failure.notice(), challenge),
         }
+    }
+
+    async fn oidc_start(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
+        let Some(oidc) = &self.oidc else {
+            return response(StatusCode::NOT_FOUND);
+        };
+        let request = authorized.request();
+        let Ok(form) = form(request) else {
+            return login_rejected("failed", "");
+        };
+        let challenge = value(&form, "challenge");
+        let challenge = if valid_challenge(challenge) {
+            challenge
+        } else {
+            ""
+        };
+        let csrf = value(&form, "csrf");
+        if text(request, "origin") != self.policy.public_origin()
+            || csrf.is_empty()
+            || !cookie(request.headers(), "__Host-gm_login")
+                .is_some_and(|nonce| constant_equal(nonce, csrf))
+        {
+            return login_rejected("stale", challenge);
+        }
+        let Some(address) = self
+            .policy
+            .client_address(request.headers(), authorized.connection().peer)
+        else {
+            return login_rejected("throttled", challenge);
+        };
+        let prior = cookie(request.headers(), "__Host-gm_session")
+            .and_then(|token| self.sessions.lookup(token));
+        match oidc.start(address, challenge.to_owned(), prior).await {
+            Ok(started) => {
+                let mut result = redirect(&started.url);
+                if let Ok(provider) = oidc.provider().await {
+                    *result.headers_mut() = pages::security_headers(Some(&provider.origin))
+                        .expect("validated provider origin");
+                    result.headers_mut().insert(
+                        header::LOCATION,
+                        HeaderValue::from_str(&started.url).expect("authorization URL"),
+                    );
+                }
+                result.headers_mut().append(
+                    header::SET_COOKIE,
+                    HeaderValue::from_str(&format!(
+                        "__Host-gm_oidc={}; Path=/; Max-Age=600; Secure; HttpOnly; SameSite=Lax",
+                        started.browser
+                    ))
+                    .expect("transaction cookie"),
+                );
+                result
+            }
+            Err(_) => login_rejected("provider", challenge),
+        }
+    }
+
+    async fn oidc_callback(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
+        let Some(oidc) = &self.oidc else {
+            return response(StatusCode::NOT_FOUND);
+        };
+        let request = authorized.request();
+        let fields = query(request);
+        let unique = |key: &str| {
+            let mut values = fields.iter().filter(|(name, _)| name == key);
+            let value = values.next().map(|(_, value)| value.as_str());
+            if values.next().is_some() { None } else { value }
+        };
+        let mut result = async {
+            let state = unique("state")
+                .filter(|value| value.len() == 43)
+                .ok_or(())?;
+            let code = unique("code")
+                .filter(|value| {
+                    !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control)
+                })
+                .ok_or(())?;
+            if fields.iter().any(|(key, _)| key == "error")
+                || fields.iter().filter(|(key, _)| key == "iss").count() > 1
+            {
+                return Err(());
+            }
+            let browser = cookie(request.headers(), "__Host-gm_oidc").ok_or(())?;
+            let address = self
+                .policy
+                .client_address(request.headers(), authorized.connection().peer)
+                .ok_or(())?;
+            if !self.attempts.allow(Budget::OidcExchange, address) {
+                return Err(());
+            }
+            let identity = oidc
+                .finish(state, browser, code, unique("iss"))
+                .await
+                .map_err(|_| ())?;
+            let (token, session) = self
+                .sessions
+                .create(&identity.subject, &identity.name, oidc.name(), None)
+                .map_err(|_| ())?;
+            if let Some(prior) = identity.prior {
+                self.sessions.revoke(&prior);
+            }
+            let mut result = html(
+                StatusCode::OK,
+                &ContinuePage {
+                    challenge: &identity.challenge,
+                    opening: false,
+                },
+            );
+            set_cookie(
+                &mut result,
+                "__Host-gm_session",
+                &token,
+                session.session().expires(),
+                true,
+            );
+            set_cookie(
+                &mut result,
+                "__Host-gm_csrf",
+                session.session().csrf(),
+                session.session().expires(),
+                false,
+            );
+            clear_cookie(&mut result, "__Host-gm_login");
+            Ok::<_, ()>(result)
+        }
+        .await
+        .unwrap_or_else(|()| login_rejected("failed", ""));
+        clear_cookie(&mut result, "__Host-gm_oidc");
+        result
     }
 
     fn session_info(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {

@@ -18,6 +18,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
     config.validate()?;
     let config = Arc::new(config);
     let server = Arc::new(HttpServer::new(config.clone())?);
+    server.initialize_auth().await?;
     let tls = if [NativeKind::H1Tls, NativeKind::H2, NativeKind::H3]
         .into_iter()
         .any(|kind| !config.listener(kind).address.is_empty())

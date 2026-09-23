@@ -76,6 +76,13 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
+    pub async fn initialize_auth(&self) -> Result<(), ConfigError> {
+        if let Some(auth) = &self.auth {
+            auth.initialize().await?;
+        }
+        Ok(())
+    }
+
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
         config.validate()?;
         let auth = if config.auth.mode == AuthMode::Off {

@@ -1,0 +1,15 @@
+[advisories]
+# Reviewed 2026-09-23: https://rustsec.org/advisories/RUSTSEC-2023-0071.html
+# openidconnect 4.0.1 unconditionally depends on rsa 0.9.10. The advisory concerns
+# private-key timing leakage; our OIDC path only constructs RsaPublicKey(n, e)
+# and verifies signatures (openidconnect core/crypto.rs::verify_rsa_signature).
+# Provider metadata/JWKS cannot select private-key signing or decryption APIs.
+# Client authentication uses an OAuth shared secret, not an RSA signing key.
+# TLS private-key operations, if RSA certificates are configured, use rustls/ring.
+# CoreRsaPrivateSigningKey appears only in cfg(test) provider fixtures and uses
+# freshly generated disposable keys. No affected private-key operation is
+# reachable in the shipped server or client.
+# Revisit when openidconnect/rsa changes or before adding signing, decryption,
+# private_key_jwt, JWE, or another rsa consumer. Remove when upstream offers an
+# unaffected dependency/backend. Keep all other advisories and warnings fatal.
+ignore = ["RUSTSEC-2023-0071"]

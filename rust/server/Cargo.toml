@@ -9,6 +9,9 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+openidconnect = { version = "4.0.1", default-features = false }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
+rustls-platform-verifier = "0.7.0"
 graphite-meter-core = { path = "../core" }
 bytes = "1"
 askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
