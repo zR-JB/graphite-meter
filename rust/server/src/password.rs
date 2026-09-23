@@ -83,7 +83,7 @@ pub fn hash_password(password: &str) -> Result<String, &'static str> {
     ))
 }
 
-pub(crate) fn validate_password(password: &str) -> Result<(), &'static str> {
+pub fn validate_password(password: &str) -> Result<(), &'static str> {
     if password.is_empty() || password.len() > 1024 {
         return Err("password must contain 1 to 1024 bytes");
     }

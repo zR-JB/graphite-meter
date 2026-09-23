@@ -1,5 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
+mod password_command;
+
 use graphite_meter_server::{
     cli::{self, Arguments},
     config::{Config, ConfigError},
@@ -24,6 +26,10 @@ async fn run() -> Result<(), ConfigError> {
         let report =
             LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
         print!("{report}");
+        return Ok(());
+    }
+    if args.len() == 1 && args[0] == "hash-password" {
+        password_command::run()?;
         return Ok(());
     }
     let config = match cli::parse(&args)? {

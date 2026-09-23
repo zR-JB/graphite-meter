@@ -281,9 +281,16 @@ fn integer(raw: &str) -> Option<i64> {
 }
 
 pub fn help() -> String {
-    let mut help = String::from(
-        "Experimental Graphite Meter Rust server\n\nUsage: graphite-meter-server [flags]\n       graphite-meter-server version\n\nFlags override GM_* environment variables.\nUse -flag value or --flag=value; bare boolean flags enable them.\nExperimental listeners: HTTP/1, HTTPS/WSS, HTTP/2, HTTP/3/WebTransport.\nTUI, OIDC, and hash-password are not integrated yet. Browser assets are included by the mise build tasks.\n\nFlags:\n",
-    );
+    let mut help = String::from(concat!(
+        "Experimental Graphite Meter Rust server\n\n",
+        "Usage: graphite-meter-server [flags]\n",
+        "       graphite-meter-server version\n",
+        "       graphite-meter-server hash-password\n\n",
+        "Flags override GM_* environment variables.\n",
+        "Use -flag value or --flag=value; bare boolean flags enable them.\n",
+        "Experimental listeners: HTTP/1, HTTPS/WSS, HTTP/2, HTTP/3/WebTransport.\n",
+        "Browser assets are included by the mise build tasks.\n\nFlags:\n",
+    ));
     for flag in FLAGS {
         let value = match flag.kind {
             Text => " value",
@@ -293,7 +300,12 @@ pub fn help() -> String {
         };
         help.push_str(&format!("  -{}{value}\t{}\n", flag.name, flag.env));
     }
-    help.push_str("  -h, --help\tShow this help\n  version, --version\tShow engine version\n  --legal\tShow embedded project and dependency notices\n");
+    help.push_str(concat!(
+        "  -h, --help\tShow this help\n",
+        "  version, --version\tShow engine version\n",
+        "  hash-password\tCreate an Argon2id password hash\n",
+        "  --legal\tShow embedded project and dependency notices\n",
+    ));
     help
 }
 

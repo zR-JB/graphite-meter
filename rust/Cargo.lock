@@ -1014,6 +1014,7 @@ dependencies = [
  "noq",
  "openidconnect",
  "reqwest",
+ "rustix",
  "rustls",
  "rustls-platform-verifier",
  "serde",

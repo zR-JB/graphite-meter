@@ -42,5 +42,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time"] }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.5", features = ["termios"] }
+
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }
