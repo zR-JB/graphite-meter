@@ -5,8 +5,7 @@ Go remains the default. The native Rust TUI is runnable, including latency,
 download, upload, and bidirectional stages. A failed transfer server is removed
 from subsequent stages while surviving servers continue; affected results stay
 marked partial. Latency observations and results remain separate for each server;
-press `l` to change the displayed server. Full parity validation and server
-release publication are unfinished.
+press `l` to change the displayed server. Full parity validation is unfinished.
 Preliminary footprint measurements are promising; feature-complete performance
 and size comparisons have not been established.
 
@@ -16,9 +15,11 @@ The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` creates an experimental Linux amd64 GNU
 archive with reviewed dependency notices and matching source. Release automation
-can opt into the additional TUI archive; Go assets remain unchanged. Rust server
-publication and prerelease integration remain gated. The experimental container
-can be built using `container/Dockerfile.rust`; its initial target is Linux amd64.
+can opt into the additional TUI archive. Stable release requests can also opt into
+a separate Linux amd64 server image tagged `VERSION-rust`, with a matching source
+offer. Go remains the release default; Rust prerelease integration remains gated.
+The experimental container uses `container/Dockerfile.rust`. The port remains
+blocked from merging until a human decides its design.
 
 Set `GM_IMPLEMENTATION=rust` when running `mise run dev` or `mise run prod` to
 select the experimental server. Leaving it unset selects Go.

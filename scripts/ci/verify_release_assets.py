@@ -166,14 +166,23 @@ def verify_rust_server_source(dist: Path, version: str) -> None:
         raise VerificationError("Rust server source offer lacks inventory, notices, or patch provenance")
     if not read_tar_text(source, "LEGAL.txt").strip():
         raise VerificationError("Rust server source offer has empty notices")
-    inventory = decode_json(read_tar_text(source, "inventory.json", limit=8 * 1024 * 1024), "Rust server inventory")
-    if (not isinstance(inventory, dict)
-        or type(inventory.get("schemaVersion")) is not int or inventory.get("schemaVersion") != 1
-        or inventory.get("package") != "graphite-meter-server"
-        or inventory.get("target") != "x86_64-unknown-linux-gnu"
-        or inventory.get("profile") != "release"
-        or inventory.get("cargoLockSha256") != sha256_file(Path("rust/Cargo.lock"))):
-        raise VerificationError("Rust server source inventory build identity mismatch")
+    inventory = decode_json(
+        read_tar_text(source, "inventory.json", limit=8 * 1024 * 1024),
+        "Rust server inventory",
+    )
+    if not isinstance(inventory, dict):
+        raise VerificationError("Rust server source inventory must be an object")
+    if type(inventory.get("schemaVersion")) is not int or inventory["schemaVersion"] != 1:
+        raise VerificationError("Rust server source inventory schema is unsupported")
+    expected_identity = {
+        "package": "graphite-meter-server",
+        "target": "x86_64-unknown-linux-gnu",
+        "profile": "release",
+        "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
+    }
+    for field, expected_value in expected_identity.items():
+        if inventory.get(field) != expected_value:
+            raise VerificationError(f"Rust server source inventory {field} mismatch")
     components = inventory.get("components")
     if not isinstance(components, list) or not 1 <= len(components) <= 4096:
         raise VerificationError("Rust server source inventory has no components")
@@ -184,7 +193,8 @@ def verify_rust_server_source(dist: Path, version: str) -> None:
         name, component_version = component.get("name"), component.get("version")
         if not isinstance(name, str) or not isinstance(component_version, str):
             raise VerificationError("invalid Rust server source component identity")
-        if not any(path.startswith(f"third_party/cargo/{name}-{component_version}/") for path in names):
+        prefix = f"third_party/cargo/{name}-{component_version}/"
+        if not any(path.startswith(prefix) for path in names):
             raise VerificationError(f"Rust server source omits {name} {component_version}")
 
 

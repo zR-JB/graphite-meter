@@ -161,7 +161,8 @@ exact artifacts already exist.
 Stable requests may opt into `server`, `tui`, or `both` Rust artifacts; `none`
 remains the default. The server option builds a separate linux/amd64 OCI image
 with version tag `VERSION-rust`, exports its Cargo source offer from the same
-build graph, and adds that offer to the exact checksummed release asset set.
+Dockerfile server-build stage and locked source in a second BuildKit invocation,
+and adds that offer to the exact checksummed release asset set.
 Local `release-artifacts --rust-artifacts server|both` requires
 `RUST_SERVER_SOURCE` to name that exported `THIRD_PARTY_SOURCE.tar.gz`; it does
 not build or publish an image itself. The source verifier checks package, target,

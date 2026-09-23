@@ -82,7 +82,9 @@ class RustServerReleaseTests(unittest.TestCase):
 
     def test_server_source_identity_and_component_presence(self) -> None:
         inventory = {
-            "schemaVersion": 1, "package": "graphite-meter-server", "profile": "release",
+            "schemaVersion": 1,
+            "package": "graphite-meter-server",
+            "profile": "release",
             "target": "x86_64-unknown-linux-gnu",
             "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
             "components": [{"component": {"name": "example", "version": "1.0"}}],
@@ -96,7 +98,8 @@ class RustServerReleaseTests(unittest.TestCase):
                 if mutation == "lock":
                     metadata["cargoLockSha256"] = "0" * 64
                 files = {
-                    "inventory.json": json.dumps(metadata).encode(), "LEGAL.txt": b"notices",
+                    "inventory.json": json.dumps(metadata).encode(),
+                    "LEGAL.txt": b"notices",
                     "rust/vendor/PATCHES.md": b"patch provenance",
                 }
                 if mutation != "missing":
@@ -116,13 +119,28 @@ class RustServerReleaseTests(unittest.TestCase):
 
     def test_publisher_tags_cannot_cross_implementation_boundary(self) -> None:
         workflow = Path(".github/workflows/_publish-oci.yml").read_text()
-        script = textwrap.dedent(workflow[workflow.index('          case "$IMPLEMENTATION" in'):workflow.index('          # Minimize')])
+        start = workflow.index('          case "$IMPLEMENTATION" in')
+        end = workflow.index("          # Minimize")
+        script = textwrap.dedent(workflow[start:end])
         for implementation, tag, pr, accepted in (
-            ("go", "1.2.3", "", True), ("go", "1.2.3-rc.1", "42", True),
-            ("go", "1.2.3-rust", "", False), ("rust", "1.2.3-rust", "", True),
-            ("rust", "1.2.3-rc.1-rust", "", False), ("rust", "1.2.3", "", False), ("rust", "latest-rust", "", False),
-            ("rust", "1.2.3-rust", "42", False), ("unknown", "1.2.3", "", False),
+            ("go", "1.2.3", "", True),
+            ("go", "1.2.3-rc.1", "42", True),
+            ("go", "1.2.3-rust", "", False),
+            ("rust", "1.2.3-rust", "", True),
+            ("rust", "1.2.3-rc.1-rust", "", False),
+            ("rust", "1.2.3", "", False),
+            ("rust", "latest-rust", "", False),
+            ("rust", "1.2.3-rust", "42", False),
+            ("unknown", "1.2.3", "", False),
         ):
             with self.subTest(implementation=implementation, tag=tag, pr=pr):
-                result = subprocess.run(["bash", "-c", script], env={"IMPLEMENTATION": implementation, "IMAGE_TAG": tag, "PR_NUMBER": pr}, capture_output=True)
+                result = subprocess.run(
+                    ["bash", "-c", script],
+                    env={
+                        "IMPLEMENTATION": implementation,
+                        "IMAGE_TAG": tag,
+                        "PR_NUMBER": pr,
+                    },
+                    capture_output=True,
+                )
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
