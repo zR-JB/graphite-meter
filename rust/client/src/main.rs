@@ -59,7 +59,7 @@ async fn run() -> Result<(), Error> {
     Ok(())
 }
 fn report(snapshot: &Snapshot) {
-    println!("Graphite Meter · {:?}", snapshot.phase);
+    println!("Graphite Meter · {}", safe(&snapshot.status));
     for server in snapshot
         .servers
         .iter()
@@ -71,19 +71,37 @@ fn report(snapshot: &Snapshot) {
             safe(&server.origin),
             safe(&server.transport)
         );
+        if let Some(error) = &server.error {
+            println!("  Unavailable: {}", safe(error));
+        }
     }
     for result in &snapshot.results {
         println!(
-            "{}{}: down {}, up {}, received down {} bytes / up {} bytes, timeouts {}, unresolved {}",
+            "{}{}: down {}, up {}, received down {} bytes / up {} bytes",
             result.stage.name(),
             if result.complete { "" } else { " (partial)" },
             rate(result.down_bps),
             rate(result.up_bps),
             result.down_bytes,
-            result.up_bytes,
-            result.latency.timeouts,
-            result.latency.unresolved
+            result.up_bytes
         );
+        for host in &result.server_latencies {
+            let p50 = host.summary.distribution.map_or_else(
+                || "unavailable".into(),
+                |distribution| format!("{:.3} ms", distribution.p50 as f64 / 1_000_000.0),
+            );
+            println!(
+                "  {}: RTT p50 {}, replies {}, timeouts {}, unresolved {}",
+                safe(&host.id),
+                p50,
+                host.summary.count,
+                host.summary.timeouts,
+                host.summary.unresolved
+            );
+            if let Some(error) = &host.error {
+                println!("    Latency unavailable: {}", safe(error));
+            }
+        }
     }
     if let Some(error) = &snapshot.error {
         println!("Error: {}", safe(error));

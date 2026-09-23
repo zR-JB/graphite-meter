@@ -55,6 +55,22 @@ pub struct StageResult {
     pub up_bps: Option<f64>,
     pub latency: graphite_meter_core::latency::LatencySummary,
     pub complete: bool,
+    pub server_latencies: Vec<ServerLatencyResult>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServerLatencyResult {
+    pub id: String,
+    pub summary: graphite_meter_core::latency::LatencySummary,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct ServerLatency {
+    pub id: String,
+    pub latest_ms: Option<f64>,
+    pub history: VecDeque<(Duration, Option<f64>)>,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -85,6 +101,7 @@ pub struct Snapshot {
     pub servers: Vec<ServerSummary>,
     pub error: Option<String>,
     pub auth: Option<AuthPrompt>,
+    pub server_latencies: Vec<ServerLatency>,
 }
 
 impl Snapshot {

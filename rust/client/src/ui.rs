@@ -316,6 +316,7 @@ struct Ui {
     edit: Option<Edit>,
     notice: String,
     awaiting: bool,
+    latency_focus: Option<String>,
 }
 impl Ui {
     fn new(config: Config, snapshot: Snapshot) -> Self {
@@ -334,6 +335,7 @@ impl Ui {
             edit: None,
             notice: String::new(),
             awaiting: false,
+            latency_focus: None,
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
@@ -341,6 +343,12 @@ impl Ui {
             snapshot.history.pop_front();
         }
         snapshot.servers.truncate(MAX_SERVERS);
+        snapshot.server_latencies.truncate(4);
+        for host in &mut snapshot.server_latencies {
+            while host.history.len() > MAX_POINTS {
+                host.history.pop_front();
+            }
+        }
         snapshot.results.truncate(16);
         self.awaiting = false;
         self.snapshot = snapshot;
@@ -420,6 +428,14 @@ impl Ui {
             return false;
         }
         match key.code {
+            KeyCode::Char('l') if !self.snapshot.server_latencies.is_empty() => {
+                let hosts = &self.snapshot.server_latencies;
+                let current = hosts
+                    .iter()
+                    .position(|host| Some(&host.id) == self.latency_focus.as_ref())
+                    .unwrap_or(0);
+                self.latency_focus = Some(hosts[(current + 1) % hosts.len()].id.clone());
+            }
             KeyCode::Char('r') if !self.active() => match self.config.validate() {
                 Ok(()) => {
                     self.send(Command::Run(self.config.clone()), commands);
@@ -640,7 +656,7 @@ impl Ui {
             self.draw_setup(frame, regions[1]);
         }
         let notice = self.snapshot.error.as_deref().unwrap_or(&self.notice);
-        frame.render_widget(Paragraph::new(vec![Line::styled(safe_text(notice,300),Style::new().fg(Color::Yellow)),Line::from("r run/rerun · v verify · s servers · Tab setup/live · Esc cancel/back · ? help · q quit")]).wrap(Wrap {trim:true}),regions[2]);
+        frame.render_widget(Paragraph::new(vec![Line::styled(safe_text(notice,300),Style::new().fg(Color::Yellow)),Line::from("r run/rerun · v verify · s servers · l latency focus · Tab setup/live · Esc cancel/back · ? help · q quit")]).wrap(Wrap {trim:true}),regions[2]);
         if let Some(auth) = &self.snapshot.auth {
             let area = popup(frame.area(), 100, 10);
             frame.render_widget(Clear, area);
@@ -767,6 +783,14 @@ impl Ui {
             );
         }
     }
+    fn focused_latency(&self) -> Option<&crate::model::ServerLatency> {
+        self.snapshot
+            .server_latencies
+            .iter()
+            .find(|host| Some(&host.id) == self.latency_focus.as_ref())
+            .or_else(|| self.snapshot.server_latencies.first())
+    }
+
     fn draw_live(&self, frame: &mut Frame, area: Rect) {
         let regions = Layout::vertical([
             Constraint::Length(3),
@@ -774,11 +798,26 @@ impl Ui {
             Constraint::Length(7),
         ])
         .split(area);
+        let focus = self.focused_latency();
+        let focus_name = focus
+            .map(|host| {
+                self.snapshot
+                    .servers
+                    .iter()
+                    .find(|server| server.id == host.id)
+                    .map_or(host.id.as_str(), |server| server.name.as_str())
+            })
+            .unwrap_or("unavailable");
         let metrics = format!(
-            "↓ {}   ↑ {}   RTT {}   elapsed {:.1}s",
+            "↓ {}   ↑ {}   RTT {} [{}]   elapsed {:.1}s",
             rate(self.snapshot.latest.down_bps),
             rate(self.snapshot.latest.up_bps),
-            milliseconds(self.snapshot.latest.latency_ms),
+            milliseconds(
+                focus
+                    .filter(|host| host.error.is_none())
+                    .and_then(|host| host.latest_ms)
+            ),
+            safe_text(focus_name, 50),
             self.snapshot.latest.elapsed.as_secs_f64()
         );
         let stage = self.snapshot.stage.map_or("Waiting", Stage::name);
@@ -814,7 +853,22 @@ impl Ui {
                 })
                 .collect::<Vec<_>>()
         };
-        let down = series(true);
+        let down = if latency {
+            focus
+                .map(|host| {
+                    host.history
+                        .iter()
+                        .filter_map(|(elapsed, value)| {
+                            value
+                                .filter(|value| value.is_finite() && *value >= 0.0)
+                                .map(|value| (elapsed.as_secs_f64(), value))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            series(true)
+        };
         let up = series(false);
         let maximum = down
             .iter()
@@ -864,6 +918,14 @@ impl Ui {
             regions[1],
         );
         let rows = self.snapshot.results.iter().take(16).map(|result| {
+            let summary = focus
+                .and_then(|focus| {
+                    result
+                        .server_latencies
+                        .iter()
+                        .find(|host| host.id == focus.id)
+                })
+                .map(|host| &host.summary);
             Row::new(vec![
                 format!(
                     "{}{}",
@@ -873,13 +935,12 @@ impl Ui {
                 rate(result.down_bps),
                 rate(result.up_bps),
                 milliseconds(
-                    result
-                        .latency
-                        .distribution
+                    summary
+                        .and_then(|summary| summary.distribution)
                         .map(|d| d.p50 as f64 / 1_000_000.0),
                 ),
-                result.latency.timeouts.to_string(),
-                result.latency.unresolved.to_string(),
+                summary.map_or_else(|| "—".into(), |summary| summary.timeouts.to_string()),
+                summary.map_or_else(|| "—".into(), |summary| summary.unresolved.to_string()),
             ])
         });
         frame.render_widget(
@@ -950,7 +1011,7 @@ impl Ui {
     fn draw_help(&self, frame: &mut Frame) {
         let area = popup(frame.area(), 78, 18);
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new("SETUP\n↑/↓ or j/k  select setting     Enter/Space  edit or toggle\ns  server chooser             v  verify configuration\na  automatic transport paths  r  start measurement\n\nMEASUREMENT\nEsc  cancel active work        r  rerun after completion\nTab  setup / live view         Esc  return to setup\n\nEDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\nPaste is bounded and terminal controls are removed.\n\nq or Ctrl-C  quit              ? or Esc  close help\nMissing samples remain missing; partial results stay labelled.").block(panel("Keyboard help")).wrap(Wrap{trim:true}),area);
+        frame.render_widget(Paragraph::new("SETUP\n↑/↓ or j/k  select setting     Enter/Space  edit or toggle\ns  server chooser             v  verify configuration\na  automatic transport paths  r  start measurement\n\nMEASUREMENT\nEsc  cancel active work        r  rerun after completion\nl  next latency server        Tab  setup / live view\n\nEDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\nPaste is bounded and terminal controls are removed.\n\nq or Ctrl-C  quit              ? or Esc  close help\nMissing samples remain missing; partial results stay labelled.").block(panel("Keyboard help")).wrap(Wrap{trim:true}),area);
     }
 }
 

@@ -2,11 +2,15 @@
 use crate::{
     Error,
     config::Config,
-    model::{Phase, ServerSummary, Snapshot},
+    model::{Phase, ServerLatency, ServerLatencyResult, ServerSummary, Snapshot},
     net::Http,
     selection,
     stream_plan::{Participant, StageLanePlan},
     transport::Transport,
+};
+use futures_util::{
+    FutureExt, StreamExt,
+    stream::{BoxStream, SelectAll},
 };
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
@@ -14,7 +18,10 @@ use graphite_meter_core::{
     discovery::{LatencyTarget, Probe, ThroughputTarget},
 };
 use http::Method;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::watch;
 
 struct PreparedServer {
@@ -70,7 +77,7 @@ async fn prepare(
         .any(|stage| stage.downloads() || stage.uploads());
     let latency = config.loaded_latency || config.stages.contains(&crate::model::Stage::Latency);
     let mut prepared = Vec::with_capacity(selected.len());
-    for (index, entry) in selected.into_iter().enumerate() {
+    for entry in selected {
         snapshots.send_modify(|snapshot| snapshot.status = format!("Verifying {}", entry.name));
         let preflight = http.preflight(entry).await?;
         http.approve_targets(entry, &preflight)?;
@@ -91,23 +98,24 @@ async fn prepare(
                 config.insecure,
             )
             .await?;
-            let started = Instant::now();
             let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
             probe.validate()?;
-            idle_rtt = started.elapsed();
             Some(Arc::new(connection))
         } else {
             None
         };
-        let latency = if !latency {
-            None
-        } else if index == 0 {
-            Some(selection::latency(config, entry, &preflight)?)
-        } else {
-            // Optional fallback for a later stage if the primary drops out.
-            // A throughput-only secondary never blocks the selected run.
-            selection::latency(config, entry, &preflight).ok()
-        };
+        let latency = latency
+            .then(|| selection::latency(config, entry, &preflight))
+            .transpose()?;
+        if let Some(target) = &latency {
+            let started = Instant::now();
+            http.probe(
+                &target.base_url,
+                graphite_meter_core::discovery::Protocol::Negotiated,
+            )
+            .await?;
+            idle_rtt = started.elapsed();
+        }
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot
                 .servers
@@ -141,11 +149,10 @@ fn lane_plan(
 ) -> Result<StageLanePlan, Error> {
     let participants: Vec<_> = servers
         .iter()
-        .enumerate()
-        .map(|(index, server)| Participant {
+        .map(|server| Participant {
             id: &server.entry.id,
             throughput: server.throughput.as_ref(),
-            latency: (index == 0).then_some(server.latency.as_ref()).flatten(),
+            latency: server.latency.as_ref(),
         })
         .collect();
     StageLanePlan::new(config, stage, &participants)
@@ -179,6 +186,7 @@ pub async fn run(
 ) -> Result<(), Error> {
     snapshots.send_modify(|snapshot| {
         snapshot.results.clear();
+        snapshot.server_latencies.clear();
         snapshot.history.clear();
         snapshot.latest = Point::default();
         snapshot.stage = None;
@@ -200,15 +208,19 @@ pub async fn run(
             cancel.clone(),
         )
         .await?;
-        if *stage == Stage::Latency
-            && let Some(primary) = prepared.first_mut()
-            && let Some(distribution) = snapshots
-                .borrow()
-                .results
-                .last()
-                .and_then(|result| result.latency.distribution)
-        {
-            primary.idle_rtt = Duration::from_nanos(distribution.p50);
+        if *stage == Stage::Latency {
+            let snapshot = snapshots.borrow();
+            if let Some(result) = snapshot.results.last() {
+                for measured in &result.server_latencies {
+                    if let Some(distribution) = measured.summary.distribution
+                        && let Some(server) = prepared
+                            .iter_mut()
+                            .find(|server| server.entry.id == measured.id)
+                    {
+                        server.idle_rtt = Duration::from_nanos(distribution.p50);
+                    }
+                }
+            }
         }
         prepared.retain(|server| !failed.contains(&server.entry.id));
     }
@@ -242,7 +254,7 @@ struct StageResources {
     transfers: Vec<Transfer>,
     latency: JoinSet<Result<(), Error>>,
     stop: watch::Sender<bool>,
-    stop_latency: watch::Sender<bool>,
+    stop_latency: BTreeMap<String, watch::Sender<bool>>,
     retired: JoinSet<Result<(), Error>>,
     failed: Vec<String>,
     latency_failed: bool,
@@ -265,16 +277,36 @@ impl std::error::Error for ParticipantFailure {
 }
 
 #[derive(Debug)]
-struct LatencyFailure(Error);
+struct LatencyFailure {
+    id: String,
+    source: Error,
+}
 impl std::fmt::Display for LatencyFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "latency unavailable: {}", self.0)
+        write!(
+            formatter,
+            "{} latency unavailable: {}",
+            self.id, self.source
+        )
     }
 }
 impl std::error::Error for LatencyFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
+        Some(self.source.as_ref())
     }
+}
+
+fn latency_task_result(
+    id: String,
+    result: Result<(), Error>,
+    stop_requested: bool,
+) -> Result<(), Error> {
+    let source = match result {
+        Ok(()) if stop_requested => return Ok(()),
+        Ok(()) => "latency session ended before stage boundary".into(),
+        Err(error) => error,
+    };
+    Err(LatencyFailure { id, source }.into())
 }
 
 impl Transfer {
@@ -290,9 +322,21 @@ impl Transfer {
 }
 
 impl StageResources {
+    fn stop_all_latency(&self) {
+        for stop in self.stop_latency.values() {
+            stop.send_replace(true);
+        }
+    }
+
+    fn stop_host_latency(&self, id: &str) {
+        if let Some(stop) = self.stop_latency.get(id) {
+            stop.send_replace(true);
+        }
+    }
+
     async fn close(mut self) -> Result<(), Error> {
         self.stop.send_replace(true);
-        self.stop_latency.send_replace(true);
+        self.stop_all_latency();
         let mut failure = None;
         let finalizers = self.transfers.drain(..).map(Transfer::close);
         for result in futures_util::future::join_all(finalizers).await {
@@ -326,15 +370,45 @@ impl StageResources {
                 })?;
             }
         }
-        if let Some(result) = self.latency.try_join_next() {
-            let source = result
-                .map_err(Error::from)
-                .and_then(|result| result)
-                .err()
-                .unwrap_or_else(|| "latency session ended before stage boundary".into());
-            return Err(LatencyFailure(source).into());
+        while let Some(result) = self.latency.try_join_next() {
+            result??;
         }
         Ok(())
+    }
+
+    fn record_latency_failure(
+        &mut self,
+        failure: &LatencyFailure,
+        snapshots: &watch::Sender<Snapshot>,
+    ) {
+        self.latency_failed = true;
+        self.stop_host_latency(&failure.id);
+        snapshots.send_modify(|snapshot| {
+            if let Some(latency) = snapshot
+                .server_latencies
+                .iter_mut()
+                .find(|latency| latency.id == failure.id)
+            {
+                latency.error = Some(failure.source.to_string());
+                latency.latest_ms = None;
+            }
+            snapshot.status = format!("{failure}; other measurements continue");
+        });
+    }
+
+    fn latency_completion(
+        &mut self,
+        completed: Result<Result<(), Error>, tokio::task::JoinError>,
+        snapshots: &watch::Sender<Snapshot>,
+    ) -> Result<(), Error> {
+        match completed? {
+            Err(error) if error.is::<LatencyFailure>() => {
+                let failure = error.downcast::<LatencyFailure>()?;
+                self.record_latency_failure(&failure, snapshots);
+                Ok(())
+            }
+            result => result,
+        }
     }
 
     fn recover(
@@ -345,12 +419,12 @@ impl StageResources {
         epoch: Instant,
         snapshots: &watch::Sender<Snapshot>,
     ) -> Result<(), Error> {
-        if error.is::<LatencyFailure>() && stage.is_some() {
-            self.latency_failed = true;
-            self.stop_latency.send_replace(true);
-            snapshots.send_modify(|snapshot| {
-                snapshot.status = format!("{error}; throughput measurement continues");
-            });
+        if error.is::<LatencyFailure>() {
+            let failure = error.downcast::<LatencyFailure>()?;
+            self.record_latency_failure(&failure, snapshots);
+            if stage.is_none() && self.stop_latency.values().all(|stop| *stop.borrow()) {
+                return Err("all selected latency sessions failed".into());
+            }
             return Ok(());
         }
         let failure = error.downcast::<ParticipantFailure>()?;
@@ -375,6 +449,17 @@ impl StageResources {
                 "{} unavailable; continuing with remaining servers",
                 failure.id
             );
+        });
+        self.stop_host_latency(&failure.id);
+        snapshots.send_modify(|snapshot| {
+            if let Some(latency) = snapshot
+                .server_latencies
+                .iter_mut()
+                .find(|latency| latency.id == failure.id)
+            {
+                latency.error = Some("throughput participant disconnected".into());
+                latency.latest_ms = None;
+            }
         });
         self.failed.push(failure.id);
         self.retired.spawn(transfer.close());
@@ -449,17 +534,16 @@ async fn measure(
     });
     let epoch = Instant::now();
     let (stop, stopped) = watch::channel(false);
-    let (stop_latency, latency_stopped) = watch::channel(false);
     let mut resources = StageResources {
         transfers: Vec::new(),
         latency: JoinSet::new(),
         stop,
-        stop_latency,
+        stop_latency: BTreeMap::new(),
         retired: JoinSet::new(),
         failed: Vec::new(),
         latency_failed: false,
     };
-    let (observations, mut events) = mpsc::channel(1024);
+    let mut events: SelectAll<BoxStream<'static, (String, Observation)>> = SelectAll::new();
     let operation_limit = warmup
         .checked_add(config.duration(stage))
         .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
@@ -470,6 +554,17 @@ async fn measure(
         snapshot.status = format!("Preparing {}", stage.name());
         snapshot.history.clear();
         snapshot.latest = Point::default();
+        snapshot.server_latencies = if stage == Stage::Latency || config.loaded_latency {
+            servers
+                .iter()
+                .map(|server| ServerLatency {
+                    id: server.entry.id.clone(),
+                    ..ServerLatency::default()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
     });
     let transfer_stage = match stage {
         Stage::Latency => None,
@@ -478,8 +573,7 @@ async fn measure(
         Stage::Bidirectional => Some(TransferStage::Bidirectional),
     };
     let mut accounting = AggregateMeasurements::default();
-    let mut latency = LatencyAccumulator::default();
-    let mut latest_latency = None;
+    let mut latency = LatencyMeasurements::default();
     let mut measurement_start = None;
     let mut measurement_end = None;
     let operation = async {
@@ -547,54 +641,72 @@ async fn measure(
             }
             resources.transfers.push(transfer);
         }
-        // One primary latency stream measures the shared load.
-        let latency_target = servers.first().and_then(|server| server.latency.clone());
-        if stage == Stage::Latency && latency_target.is_none() {
-            return Err("missing primary latency target".into());
-        }
-        if let Some(target) =
-            latency_target.filter(|_| stage == Stage::Latency || config.loaded_latency)
-        {
-            let http = http.clone();
-            let stopped = latency_stopped.clone();
-            let observations = observations.clone();
-            let insecure = config.insecure;
-            let interval = config.ping_interval;
-            resources.latency.spawn(async move {
-                match target.transport {
-                    LatencyTransport::WebSocket => {
-                        crate::latency::run(
-                            &http,
-                            &target.base_url,
-                            insecure,
-                            interval,
-                            operation_limit,
-                            observations,
-                            stopped,
-                        )
-                        .await
-                    }
-                    LatencyTransport::WebTransport => {
-                        crate::webtransport::run_latency(
-                            &http,
-                            &target.base_url,
-                            insecure,
-                            interval,
-                            operation_limit,
-                            observations,
-                            stopped,
-                        )
-                        .await
-                    }
-                }
-            });
-        }
-        if !resources.latency.is_empty() {
+        if stage == Stage::Latency || config.loaded_latency {
+            for server in servers {
+                let target = server
+                    .latency
+                    .clone()
+                    .ok_or("missing selected latency target")?;
+                let id = server.entry.id.clone();
+                let http = http.clone();
+                let (stop, stopped) = watch::channel(false);
+                resources.stop_latency.insert(id.clone(), stop);
+                // Each transport can settle up to 256 unresolved probes at once.
+                // Keep headroom for observations queued during receiver checkpoints.
+                let (observations, receiver) = mpsc::channel(1024);
+                events.push(
+                    futures_util::stream::unfold(
+                        (id.clone(), receiver),
+                        |(id, mut receiver)| async {
+                            receiver
+                                .recv()
+                                .await
+                                .map(|event| ((id.clone(), event), (id, receiver)))
+                        },
+                    )
+                    .boxed(),
+                );
+                latency.hosts.insert(id.clone(), HostLatency::default());
+                let insecure = config.insecure;
+                let interval = config.ping_interval;
+                resources.latency.spawn(async move {
+                    let result = match target.transport {
+                        LatencyTransport::WebSocket => {
+                            crate::latency::run(
+                                &http,
+                                &target.base_url,
+                                insecure,
+                                interval,
+                                operation_limit,
+                                observations,
+                                stopped.clone(),
+                            )
+                            .await
+                        }
+                        LatencyTransport::WebTransport => {
+                            crate::webtransport::run_latency(
+                                &http,
+                                &target.base_url,
+                                insecure,
+                                interval,
+                                operation_limit,
+                                observations,
+                                stopped.clone(),
+                            )
+                            .await
+                        }
+                    };
+                    latency_task_result(id, result, *stopped.borrow())
+                });
+            }
             tokio::time::timeout(Duration::from_secs(10), async {
-                loop {
+                let mut ready = HashSet::new();
+                while ready.len() < servers.len() {
                     tokio::select! {
-                        event = events.recv() => match event {
-                            Some(Observation::Sample { .. }) => return Ok::<(), Error>(()),
+                        event = events.next(), if !events.is_empty() => match event {
+                            Some((id, Observation::Sample { .. })) => {
+                                ready.insert(id);
+                            },
                             Some(_) => {},
                             None => return Err("latency observations ended before readiness".into()),
                         },
@@ -604,6 +716,7 @@ async fn measure(
                         }
                     }
                 }
+                Ok::<(), Error>(())
             }).await??;
         }
         snapshots.send_modify(|snapshot| {
@@ -615,7 +728,7 @@ async fn measure(
             resources.health()?;
             tokio::select! {
                 _ = tokio::time::sleep_until(warmup_end) => break,
-                _ = events.recv() => {},
+                _ = events.next(), if !events.is_empty() => {},
             }
         }
         let started = Instant::now();
@@ -637,9 +750,9 @@ async fn measure(
                 tokio::select! {
                     biased;
                     _ = tokio::time::sleep_until(end) => return Err("initial receiver checkpoint exceeded stage deadline".into()),
-                    event = events.recv() => {
+                    event = events.next(), if !events.is_empty() => {
                         if let Some(event) = event {
-                            observe_latency(event, started, end, &mut latency, &mut latest_latency);
+                            latency.observe(event, started, end);
                         }
                     },
                     boundary = &mut initial => {
@@ -663,8 +776,10 @@ async fn measure(
             tokio::select! {
                 biased;
                 _ = tokio::time::sleep_until(end) => break,
-                event = events.recv() => {
-                    if let Some(event) = event { observe_latency(event, started, end, &mut latency, &mut latest_latency); }
+                event = events.next(), if !events.is_empty() => {
+                    if let Some(event) = event {
+                        latency.observe(event, started, end);
+                    }
                 },
                 _ = sample.tick() => {
                     let window = if transfer_stage.is_some() {
@@ -675,9 +790,9 @@ async fn measure(
                                 tokio::select! {
                                     biased;
                                     _ = tokio::time::sleep_until(end) => break None,
-                                    event = events.recv() => {
+                                    event = events.next(), if !events.is_empty() => {
                                         if let Some(event) = event {
-                                            observe_latency(event, started, end, &mut latency, &mut latest_latency);
+                                            latency.observe(event, started, end);
                                         }
                                     },
                                     result = &mut checkpoint => break Some(result),
@@ -692,18 +807,28 @@ async fn measure(
                                 None
                             }
                         }
-                    } else { None };
-                    snapshots.send_modify(|snapshot| snapshot.sample(Point {
-                        elapsed: started.elapsed(),
-                        down_bps: window.as_ref().and_then(|window| window.down_bytes_per_sec).map(|rate| rate * 8.0),
-                        up_bps: window.as_ref().and_then(|window| window.up_bytes_per_sec).map(|rate| rate * 8.0),
-                        latency_ms: latest_latency.take(),
-                    }));
+                    } else {
+                        None
+                    };
+                    snapshots.send_modify(|snapshot| {
+                        latency.sample(snapshot, started.elapsed());
+                        snapshot.sample(Point {
+                            elapsed: started.elapsed(),
+                            down_bps: window.as_ref()
+                                .and_then(|window| window.down_bytes_per_sec)
+                                .map(|rate| rate * 8.0),
+                            up_bps: window.as_ref()
+                                .and_then(|window| window.up_bytes_per_sec)
+                                .map(|rate| rate * 8.0),
+                            latency_ms: snapshot.server_latencies.first()
+                                .and_then(|host| host.latest_ms),
+                        });
+                    });
                 }
             }
         }
         measurement_end = Some(end);
-        resources.stop_latency.send_replace(true);
+        resources.stop_all_latency();
         if transfer_stage.is_some() {
             loop {
                 match resources.boundary(epoch).await {
@@ -723,10 +848,10 @@ async fn measure(
         }
         resources.stop.send_replace(true);
         while let Some(result) = resources.latency.join_next().await {
-            result??;
+            resources.latency_completion(result, snapshots)?;
         }
-        while let Ok(event) = events.try_recv() {
-            observe_latency(event, started, end, &mut latency, &mut latest_latency);
+        while let Some(Some(event)) = events.next().now_or_never() {
+            latency.observe(event, started, end);
         }
         Ok::<(), Error>(())
     };
@@ -741,10 +866,10 @@ async fn measure(
         // checkpoint. Missing receiver windows remain explicitly incomplete.
         accounting.observe(resources.local_boundary(epoch));
     }
-    resources.stop_latency.send_replace(true);
+    resources.stop_all_latency();
     let mut result = result;
     while let Some(joined) = resources.latency.join_next().await {
-        if let Err(error) = joined.map_err(Error::from).and_then(|value| value)
+        if let Err(error) = resources.latency_completion(joined, snapshots)
             && result.is_ok()
         {
             result = Err(error);
@@ -752,12 +877,13 @@ async fn measure(
     }
     if let Some(started) = measurement_start {
         let ended = measurement_end.unwrap_or_else(Instant::now);
-        while let Ok(event) = events.try_recv() {
-            observe_latency(event, started, ended, &mut latency, &mut latest_latency);
+        while let Some(Some(event)) = events.next().now_or_never() {
+            latency.observe(event, started, ended);
         }
         let down = transfer_stage.map(|stage| accounting.result(stage, Direction::Down));
         let up = transfer_stage.map(|stage| accounting.result(stage, Direction::Up));
         snapshots.send_modify(|snapshot| {
+            latency.sample(snapshot, ended.duration_since(started));
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: ended.duration_since(started),
@@ -771,12 +897,34 @@ async fn measure(
                     .as_ref()
                     .and_then(|result| result.mean_bytes_per_sec)
                     .map(|rate| rate * 8.0),
-                latency: latency.snapshot(),
+                latency: snapshot
+                    .server_latencies
+                    .first()
+                    .and_then(|host| latency.hosts.get(&host.id))
+                    .map(|host| host.accumulator.snapshot())
+                    .unwrap_or_default(),
+                server_latencies: snapshot
+                    .server_latencies
+                    .iter()
+                    .map(|host| ServerLatencyResult {
+                        id: host.id.clone(),
+                        summary: latency
+                            .hosts
+                            .get(&host.id)
+                            .map(|host| host.accumulator.snapshot())
+                            .unwrap_or_default(),
+                        error: host.error.clone(),
+                    })
+                    .collect(),
                 complete: result.is_ok()
                     && resources.failed.is_empty()
                     && !resources.latency_failed
                     && !*cancel.borrow()
-                    && (stage != Stage::Latency || latency.snapshot().count > 0)
+                    && (stage != Stage::Latency
+                        || latency
+                            .hosts
+                            .values()
+                            .all(|host| host.accumulator.snapshot().count > 0))
                     && (!stage.downloads()
                         || down.is_some_and(|result| result.mean_bytes_per_sec.is_some()))
                     && (!stage.uploads()
@@ -796,6 +944,37 @@ async fn measure(
         });
     }
     result.and(cleanup).map(|()| failed)
+}
+
+#[derive(Default)]
+struct HostLatency {
+    accumulator: LatencyAccumulator,
+    latest: Option<f64>,
+}
+
+#[derive(Default)]
+struct LatencyMeasurements {
+    hosts: BTreeMap<String, HostLatency>,
+}
+impl LatencyMeasurements {
+    fn observe(&mut self, (id, event): (String, Observation), start: Instant, end: Instant) {
+        if let Some(host) = self.hosts.get_mut(&id) {
+            observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
+        }
+    }
+
+    fn sample(&mut self, snapshot: &mut Snapshot, elapsed: Duration) {
+        for host in &mut snapshot.server_latencies {
+            host.latest_ms = self
+                .hosts
+                .get_mut(&host.id)
+                .and_then(|state| state.latest.take());
+            if host.history.len() == 300 {
+                host.history.pop_front();
+            }
+            host.history.push_back((elapsed, host.latest_ms));
+        }
+    }
 }
 
 fn observe_latency(
@@ -894,5 +1073,140 @@ mod tests {
             );
         }
         assert!(!accumulator.snapshot().has_observations());
+    }
+
+    #[test]
+    fn host_latency_populations_and_continuity_are_independent() {
+        let start = Instant::now();
+        let end = start + Duration::from_secs(1);
+        let mut measurements = LatencyMeasurements::default();
+        measurements
+            .hosts
+            .insert("near".into(), HostLatency::default());
+        measurements
+            .hosts
+            .insert("far".into(), HostLatency::default());
+        for (id, rtt_ms) in [("near", 2), ("far", 200), ("near", 4), ("far", 220)] {
+            measurements.observe(
+                (
+                    id.into(),
+                    Observation::Sample {
+                        sent: start + Duration::from_millis(10),
+                        received: start + Duration::from_millis(10 + rtt_ms),
+                        rtt: Duration::from_millis(rtt_ms),
+                        server_handling: Duration::ZERO,
+                    },
+                ),
+                start,
+                end,
+            );
+        }
+        let near = measurements.hosts["near"].accumulator.snapshot();
+        let far = measurements.hosts["far"].accumulator.snapshot();
+        assert_eq!(near.count, 2);
+        assert_eq!(far.count, 2);
+        assert_eq!(near.jitter, Some(2_000_000));
+        assert_eq!(far.jitter, Some(20_000_000));
+        measurements.observe(("near".into(), Observation::ConnectionBoundary), start, end);
+        let mut snapshot = Snapshot {
+            server_latencies: vec![
+                ServerLatency {
+                    id: "near".into(),
+                    ..ServerLatency::default()
+                },
+                ServerLatency {
+                    id: "far".into(),
+                    ..ServerLatency::default()
+                },
+            ],
+            ..Snapshot::default()
+        };
+        measurements.sample(&mut snapshot, Duration::from_millis(500));
+        assert_eq!(snapshot.server_latencies[0].latest_ms, Some(4.0));
+        assert_eq!(snapshot.server_latencies[1].latest_ms, Some(220.0));
+        measurements.sample(&mut snapshot, Duration::from_secs(1));
+        assert_eq!(snapshot.server_latencies[0].latest_ms, None);
+        assert_eq!(snapshot.server_latencies[1].latest_ms, None);
+    }
+
+    #[tokio::test]
+    async fn latency_failure_preserves_payload_and_throughput_failure_stops_only_its_latency() {
+        let (stop, _) = watch::channel(false);
+        let (near_stop, near_cancelled) = watch::channel(false);
+        let (far_stop, far_cancelled) = watch::channel(false);
+        let mut resources = StageResources {
+            transfers: ["near", "far"]
+                .into_iter()
+                .map(|id| Transfer {
+                    id: id.into(),
+                    down: None,
+                    up: None,
+                })
+                .collect(),
+            latency: JoinSet::new(),
+            stop,
+            stop_latency: BTreeMap::from([("near".into(), near_stop), ("far".into(), far_stop)]),
+            retired: JoinSet::new(),
+            failed: Vec::new(),
+            latency_failed: false,
+        };
+        let (snapshots, observed) = watch::channel(Snapshot {
+            server_latencies: ["near", "far"]
+                .into_iter()
+                .map(|id| ServerLatency {
+                    id: id.into(),
+                    ..ServerLatency::default()
+                })
+                .collect(),
+            ..Snapshot::default()
+        });
+        let mut accounting = AggregateMeasurements::default();
+        let epoch = Instant::now();
+        resources
+            .recover(
+                LatencyFailure {
+                    id: "near".into(),
+                    source: "latency socket closed".into(),
+                }
+                .into(),
+                &mut accounting,
+                Some(TransferStage::Bidirectional),
+                epoch,
+                &snapshots,
+            )
+            .unwrap();
+        assert_eq!(resources.transfers.len(), 2);
+        assert!(*near_cancelled.borrow());
+        assert!(!*far_cancelled.borrow());
+        assert!(observed.borrow().server_latencies[0].error.is_some());
+        assert!(observed.borrow().server_latencies[1].error.is_none());
+        resources
+            .recover(
+                ParticipantFailure {
+                    id: "far".into(),
+                    source: "payload disconnected".into(),
+                }
+                .into(),
+                &mut accounting,
+                Some(TransferStage::Bidirectional),
+                epoch,
+                &snapshots,
+            )
+            .unwrap();
+        assert_eq!(resources.transfers.len(), 1);
+        assert_eq!(resources.transfers[0].id, "near");
+        assert!(*far_cancelled.borrow());
+        resources.close().await.unwrap();
+    }
+
+    #[test]
+    fn requested_stop_does_not_hide_a_latency_error() {
+        assert!(latency_task_result("near".into(), Ok(()), true).is_ok());
+        let error = latency_task_result("near".into(), Err("observation queue full".into()), true)
+            .unwrap_err();
+        let failure = error.downcast::<LatencyFailure>().unwrap();
+        assert_eq!(failure.id, "near");
+        assert_eq!(failure.source.to_string(), "observation queue full");
+        assert!(latency_task_result("far".into(), Ok(()), false).is_err());
     }
 }
