@@ -14,10 +14,11 @@ import (
 
 // Preflight is the discovery document a server serves at /preflight: who it is and which measurement targets it offers.
 type Preflight struct {
-	Server        ServerInfo   `json:"server"`
-	EngineVersion string       `json:"engineVersion"`
-	Generation    string       `json:"generation"`
-	Capabilities  Capabilities `json:"capabilities"`
+	Server         ServerInfo   `json:"server"`
+	EngineVersion  string       `json:"engineVersion"`
+	Implementation string       `json:"implementation,omitempty"`
+	Generation     string       `json:"generation"`
+	Capabilities   Capabilities `json:"capabilities"`
 }
 
 // ServerInfo identifies the server behind a Preflight document.
@@ -179,6 +180,9 @@ func targetOrigin(raw string) (*url.URL, error) {
 // Validate bounds discovery metadata before a client constructs its target catalog.
 func (p Preflight) Validate() error {
 	if len(p.Server.Name) > 256 || len(p.Server.Location) > 256 || len(p.EngineVersion) > 256 || len(p.Generation) == 0 || len(p.Generation) > 256 {
+		return fmt.Errorf("invalid discovery metadata")
+	}
+	if p.Implementation != "" && p.Implementation != "go" && p.Implementation != "rust" {
 		return fmt.Errorf("invalid discovery metadata")
 	}
 	if p.Capabilities.ThroughputTargets == nil || p.Capabilities.LatencyTargets == nil || len(p.Capabilities.ThroughputTargets) > 32 || len(p.Capabilities.LatencyTargets) > 32 {

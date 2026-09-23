@@ -260,18 +260,12 @@ run = "cargo fmt --all"
 
 [tasks.rust-server-build]
 description = "Build the experimental Rust server"
-dir = "rust"
-depends = ["client-build-prod"]
-env = { GM_RUST_ASSET_DIR = "{{config_root}}/client/dist" }
-run = "cargo build --release --locked --bin graphite-meter-server"
+run = "python3 scripts/run-rust-server.py --profile release --version \"${VERSION:-development}\" --build-only"
 
 [tasks.rust-server-run]
 description = "Run the experimental Rust server with GM_* configuration"
-dir = "rust"
 raw = true
-depends = ["client-build-dev"]
-env = { GM_RUST_ASSET_DIR = "{{config_root}}/client/dist" }
-run = "cargo run --locked --bin graphite-meter-server --"
+run = "python3 scripts/run-rust-server.py --profile dev"
 
 [tasks.rust-client-run]
 description = "Run the experimental Rust TUI against a server"
@@ -523,41 +517,27 @@ esac
 [tasks.dev]
 description = "Build the development client and run the embedded server"
 raw = true
-run = [
-  { task = "client-build-dev" },
-  { task = "_embed-client" },
-  '''
+run = '''
 case "${GM_IMPLEMENTATION:-go}" in
-  go) cd go && go run ./cmd/graphite-meter ;;
-  rust)
-    export GM_RUST_ASSET_DIR="$PWD/client/dist"
-    cd rust && cargo run --locked --bin graphite-meter-server
-    ;;
+  go) mise run client-build-dev && mise run _embed-client && cd go && go run ./cmd/graphite-meter ;;
+  rust) python3 scripts/run-rust-server.py --profile dev ;;
   *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
 esac
-''',
-]
+'''
 
 [tasks.prod]
 shell = "bash -e -o pipefail -c"
 description = "Build the production client and run the stamped server"
 raw = true
-run = [
-  { task = "client-build-prod" },
-  { task = "_embed-client" },
-  '''
+run = '''
 version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
 case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
 case "${GM_IMPLEMENTATION:-go}" in
-  go) cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter ;;
-  rust)
-    export GM_ENGINE_VERSION="$version-rust" GM_RUST_ASSET_DIR="$PWD/client/dist"
-    cd rust && cargo run --release --locked --bin graphite-meter-server
-    ;;
+  go) mise run client-build-prod && mise run _embed-client && cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter ;;
+  rust) python3 scripts/run-rust-server.py --profile release --version "$version" ;;
   *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
 esac
-''',
-]
+'''
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"

@@ -48,6 +48,17 @@ fn generate() -> Result<()> {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing package directory")?)
             .join(configured)
     };
+    let reviewed_legal = if let Some(directory) = env::var_os("GM_RUST_LEGAL_DIR") {
+        let expected = PathBuf::from(directory).join("browser-assets");
+        if root != expected {
+            return Err(
+                "reviewed Rust legal assets must come from GM_RUST_LEGAL_DIR/browser-assets".into(),
+            );
+        }
+        true
+    } else {
+        false
+    };
     let root_text = root.to_str().ok_or("asset directory must be UTF-8")?;
     if root_text.chars().any(char::is_control) {
         return Err("asset directory must not contain control characters".into());
@@ -62,6 +73,11 @@ fn generate() -> Result<()> {
     let mut manifest = String::from("static EMBEDDED: &[EmbeddedAsset] = &[\n");
     let mut index_found = false;
     for (number, (name, source)) in files.into_iter().enumerate() {
+        // The ordinary browser build contains Go notices. Never embed them in
+        // an unreviewed Rust binary as if they described its dependency closure.
+        if name.starts_with("legal/") && !reviewed_legal {
+            continue;
+        }
         let content_type = content_type(&name)
             .ok_or_else(|| format!("unsupported browser asset extension: {name}"))?;
         let bytes = fs::read(&source)?;

@@ -57,6 +57,8 @@ pub struct Preflight {
     pub server: ServerInfo,
     #[serde(default, deserialize_with = "null_default")]
     pub engine_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub implementation: Option<String>,
     pub generation: String,
     pub capabilities: Capabilities,
 }
@@ -122,6 +124,10 @@ impl Preflight {
         if self.server.name.len() > 256
             || self.server.location.len() > 256
             || self.engine_version.len() > 256
+            || self
+                .implementation
+                .as_deref()
+                .is_some_and(|implementation| !matches!(implementation, "go" | "rust"))
             || self.generation.is_empty()
             || self.generation.len() > 256
         {

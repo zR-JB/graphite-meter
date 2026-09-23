@@ -97,6 +97,7 @@ impl Preflight {
                 location: config.server_location.clone(),
             },
             engine_version: config.engine_version.clone(),
+            implementation: Some("rust".into()),
             generation: self.generation.clone(),
             capabilities,
         };

@@ -16,6 +16,10 @@ export interface Preflight {
     location?: string;
   };
   engineVersion: string;
+  /**
+   * Implementation serving this discovery document.
+   */
+  implementation?: "go" | "rust";
   generation: string;
   capabilities: {
     /**

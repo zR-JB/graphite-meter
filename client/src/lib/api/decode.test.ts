@@ -35,6 +35,16 @@ test("discovery preserves independent listeners, self origin, and explicit trans
   });
 });
 
+test("discovery identifies the serving implementation without assuming one for older peers", () => {
+  expect(parsePreflight(discovery()).implementation).toBeUndefined();
+  expect(
+    parsePreflight({ ...discovery(), implementation: "rust" }).implementation,
+  ).toBe("rust");
+  expect(() =>
+    parsePreflight({ ...discovery(), implementation: "other" }),
+  ).toThrow();
+});
+
 test("discovery rejects malformed origins before target construction", () => {
   for (const baseUrl of [
     "https://u:p@example.com",

@@ -148,6 +148,7 @@ mod tests {
             ..Default::default()
         };
         let mut preflight = Preflight {
+            implementation: None,
             server: ServerInfo::default(),
             engine_version: String::new(),
             generation: "one".into(),
