@@ -413,12 +413,25 @@ description = "Build exact production client and server release artifacts"
 usage = 'arg "[version]" default="development"'
 run = [{ task = "server-build-prod", env = { VERSION = "{{usage.version}}" } }]
 
-[tasks.release-artifacts]
-description = "Build distributable native archives and checksums without publishing"
+[tasks.rust-client-package]
+description = "Package the experimental native Linux x86_64 Rust TUI with reviewed source and notices"
 usage = 'arg "[version]" default="development"'
 run = '''
 #!/usr/bin/env sh
 set -eu
+python3 scripts/package-rust.py "$usage_version" --output "${RELEASE_DIST:-go/dist}" --supplement "${GM_RUST_PLATFORM_SUPPLEMENT:-legal/rust-platform-linux-gnu.json}"
+'''
+
+[tasks.release-artifacts]
+description = "Build distributable native archives and checksums without publishing"
+usage = '''
+arg "[version]" default="development"
+flag "--rust-artifacts <selection>" default="none" { choices "none" "server" "tui" "both" }
+'''
+run = '''
+#!/usr/bin/env sh
+set -eu
+python3 scripts/ci/release.py rust-artifacts --selection "$usage_rust_artifacts"
 VERSION=$usage_version
 export VERSION
 dist=${RELEASE_DIST:-go/dist}
@@ -430,6 +443,9 @@ while IFS= read -r target; do
   [ -n "$target" ] || continue
   scripts/package-tui.sh "$VERSION" "${target%/*}" "${target#*/}" "$dist"
 done < scripts/tui-targets.txt
+if [ "$usage_rust_artifacts" = tui ]; then
+  python3 scripts/package-rust.py "$VERSION" --container --output "$dist"
+fi
 (cd "$dist" && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt)
 '''
 

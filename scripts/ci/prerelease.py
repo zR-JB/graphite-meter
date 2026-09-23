@@ -39,6 +39,7 @@ from github_api import (
     int_field,
     str_field,
 )
+from release import request_rust_artifacts, require_rust_packaging
 from trust import (
     TrustError,
     actor_login,
@@ -91,6 +92,7 @@ PRERELEASE_CI_CONTROL_PLANE: tuple[str, ...] = (
     "scripts/ci/github_api.py",
     "scripts/ci/prerelease.py",
     "scripts/ci/release.py",
+    "scripts/package-rust.py",
     "scripts/ci/test_pipeline.py",
     "scripts/ci/trust.py",
     "scripts/ci/verify_oci.py",
@@ -199,12 +201,6 @@ def exact_file_set(directory: Path, expected: set[str], label: str) -> None:
             die(f"{label} entry {name} is not a regular file")
 
 
-def require_exact_keys(value: JsonObject, expected: set[str], context: str) -> None:
-    actual = set(value)
-    if actual != expected:
-        die(f"{context} keys are {sorted(actual)}; expected {sorted(expected)}")
-
-
 def command_request_prepare() -> None:
     """Fail early for a normal main dispatch; trusted publication revalidates all fields."""
     repository = env("REPOSITORY")
@@ -219,6 +215,8 @@ def command_request_prepare() -> None:
     pr_number = env_int("PR_NUMBER")
     requested_sha = env("REQUESTED_SHA")
     requested_tag = env("REQUESTED_TAG")
+    rust_artifacts = os.environ.get("RUST_ARTIFACTS", "none")
+    require_rust_packaging(rust_artifacts, prerelease=True)
 
     if event_name != "workflow_dispatch":
         die("only workflow_dispatch may request a prerelease")
@@ -243,10 +241,13 @@ def command_request_prepare() -> None:
         sha=requested_sha,
         tag=requested_tag,
         version=requested_tag[1:],
+        rust_artifacts=rust_artifacts,
     )
 
 
 def command_request_finalize() -> None:
+    rust_artifacts = os.environ.get("RUST_ARTIFACTS", "none")
+    require_rust_packaging(rust_artifacts, prerelease=True)
     repository = env("REPOSITORY")
     pr_number = env_int("PR_NUMBER")
     head_sha = env("HEAD_SHA")
@@ -277,7 +278,8 @@ def command_request_finalize() -> None:
         f"{digest}  graphite-meter.oci.tar\n", encoding="utf-8"
     )
     candidate: JsonObject = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "rustArtifacts": rust_artifacts,
         "repository": repository,
         "pr": pr_number,
         "headSha": head_sha,
@@ -392,9 +394,9 @@ def command_publish_validate() -> None:
         "candidate artifact",
     )
     candidate = read_json(candidate_dir / "candidate.json")
-    require_exact_keys(candidate, CANDIDATE_KEYS, "candidate artifact")
+    rust_artifacts = request_rust_artifacts(candidate, CANDIDATE_KEYS, "candidate artifact")
+    require_rust_packaging(rust_artifacts, prerelease=True)
     try:
-        schema_version = int_field(candidate, "schemaVersion", "candidate artifact")
         candidate_repository = str_field(candidate, "repository", "candidate artifact")
         pr_number = int_field(candidate, "pr", "candidate artifact")
         expected_sha = str_field(candidate, "headSha", "candidate artifact")
@@ -405,8 +407,6 @@ def command_publish_validate() -> None:
     except JsonShapeError as exc:
         die(str(exc))
 
-    if schema_version != 1:
-        die("unsupported candidate artifact schema")
     if candidate_repository != repository:
         die("candidate artifact repository mismatch")
     if pr_number <= 0:
@@ -463,6 +463,7 @@ def command_publish_validate() -> None:
         tag=tag,
         oci_sha256=actual_digest,
         main_sha=current_main,
+        rust_artifacts=rust_artifacts,
     )
     append_summary(
         f"""### Prerelease candidate validation passed
@@ -485,6 +486,7 @@ The request run was previously bound to exact current-main workflow provenance. 
 
 
 def command_publish_recheck() -> None:
+    require_rust_packaging(os.environ.get("RUST_ARTIFACTS", "none"), prerelease=True)
     repository = env("REPOSITORY")
     pr_number = env_int("PR_NUMBER")
     expected_sha = env("EXPECTED_SHA")

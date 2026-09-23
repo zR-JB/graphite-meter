@@ -80,10 +80,16 @@ jobs:
             echo "release handoff is missing required third-party source asset: $source_asset" >&2
             exit 1
           }
+          source_archives="**$source_asset**"
+          while IFS=$'\t' read -r name digest; do
+            if [[ "$name" != "$source_asset" && "$name" == *_third-party-source.tar.gz ]]; then
+              source_archives+=", **$name**"
+            fi
+          done <"$local_map"
           source_notice=$(printf '%s\n\n%s\n\n%s' \
             '## Source availability' \
             "Graphite Meter source for this release is the repository snapshot at tag **$TAG** (commit **$TARGET_SHA**). GitHub provides that tagged project source below as **Source code (zip)** and **Source code (tar.gz)**." \
-            "Source for third-party components included in the distributed artifacts is attached as **$source_asset**. Together, the tagged repository source and that archive form the source offer for this release.")
+            "Source for third-party components included in the distributed artifacts is attached as $source_archives. Together, the tagged repository source and the attached dependency source archives form the source offer for this release.")
 
           resolve_tag_target() {
             local ref_json=$1 object_type object_sha tag_json

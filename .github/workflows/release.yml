@@ -34,6 +34,7 @@ jobs:
       version: ${{ steps.guard.outputs.version }}
       series: ${{ steps.guard.outputs.series }}
       publish: ${{ steps.guard.outputs.publish }}
+      rust_artifacts: ${{ steps.guard.outputs.rust_artifacts }}
     steps:
       - name: Checkout trusted default-branch release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,13 +111,15 @@ jobs:
       - name: Build native artifacts and third-party source
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: mise run release-artifacts "$VERSION"
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
+        run: mise run release-artifacts "$VERSION" --rust-artifacts "$RUST_ARTIFACTS"
 
       - name: Verify exact native artifacts and embedded versions
         env:
           RELEASE_DIST: go/dist
           VERSION: ${{ needs.guard.outputs.version }}
-        run: python3 scripts/ci/verify_release_assets.py "$VERSION"
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
+        run: python3 scripts/ci/verify_release_assets.py "$VERSION" --rust-artifacts "$RUST_ARTIFACTS"
 
       - name: Build linux/amd64 + linux/arm64 OCI archive
         uses: ./.github/actions/build-oci
@@ -212,6 +215,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
           REQUESTED_VERSION: ${{ needs.guard.outputs.tag }}
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
         run: python3 scripts/ci/release.py recheck
 
   publish-image:

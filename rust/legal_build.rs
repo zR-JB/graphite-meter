@@ -3,7 +3,11 @@ use std::{env, error::Error, fs, path::PathBuf, process::Command};
 pub fn embed() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-env-changed=GM_ENGINE_VERSION");
     if let Ok(version) = env::var("GM_ENGINE_VERSION") {
-        if version.is_empty() || !version.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte)) {
+        if version.is_empty()
+            || !version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
+        {
             return Err("GM_ENGINE_VERSION must be a nonempty release identifier".into());
         }
         println!("cargo:rustc-env=GM_ENGINE_VERSION={version}");

@@ -21,6 +21,17 @@ on:
           - validate
           - publish
 
+      rust_artifacts:
+        description: Additional experimental Rust artifacts (Go artifacts are always retained)
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - server
+          - tui
+          - both
+
 permissions: {}
 
 concurrency:
@@ -45,6 +56,7 @@ jobs:
           RUN_ATTEMPT: ${{ github.run_attempt }}
           VERSION: ${{ inputs.version }}
           MODE: ${{ inputs.mode }}
+          RUST_ARTIFACTS: ${{ inputs.rust_artifacts }}
         run: |
           set -euo pipefail
           [[ "$REF" == refs/heads/main ]] || { echo "stable release requests must be dispatched from main" >&2; exit 1; }
@@ -60,6 +72,8 @@ jobs:
           }
           [[ "$MODE" == validate || "$MODE" == publish ]] || { echo "invalid release mode" >&2; exit 1; }
 
+          case "$RUST_ARTIFACTS" in none|server|tui|both) ;; *) echo "invalid Rust artifact selection" >&2; exit 1 ;; esac
+
           out="$RUNNER_TEMP/stable-release-request"
           mkdir -p "$out"
           jq -nc \
@@ -67,9 +81,10 @@ jobs:
             --arg sourceSha "$SOURCE_SHA" \
             --arg version "$VERSION" \
             --arg mode "$MODE" \
+            --arg rustArtifacts "$RUST_ARTIFACTS" \
             --argjson requestRunId "$RUN_ID" \
             --argjson requestRunAttempt "$RUN_ATTEMPT" \
-            '{schemaVersion:1,repository:$repository,sourceSha:$sourceSha,version:$version,mode:$mode,requestRunId:$requestRunId,requestRunAttempt:$requestRunAttempt}' \
+            '{schemaVersion:2,rustArtifacts:$rustArtifacts,repository:$repository,sourceSha:$sourceSha,version:$version,mode:$mode,requestRunId:$requestRunId,requestRunAttempt:$requestRunAttempt}' \
             >"$out/request.json"
 
       - name: Upload untrusted stable release request
