@@ -35,7 +35,7 @@ async fn run() -> Result<(), Error> {
         }
         Action::Run(config) => *config,
     };
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = graphite_meter_client::crypto::provider().install_default();
     #[cfg(unix)]
     let snapshot = {
         let mut interrupt =

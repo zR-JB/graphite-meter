@@ -459,7 +459,7 @@ fn nanos(duration: Duration) -> u64 {
     duration.as_nanos().min(u64::MAX as u128) as u64
 }
 fn random(bytes: &mut [u8]) -> Result<(), UploadError> {
-    rustls::crypto::ring::default_provider()
+    crate::crypto::provider()
         .secure_random
         .fill(bytes)
         .map_err(|_| UploadError::RandomUnavailable)

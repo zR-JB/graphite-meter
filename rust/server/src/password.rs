@@ -71,7 +71,7 @@ impl Hash {
 pub fn hash_password(password: &str) -> Result<String, &'static str> {
     validate_password(password)?;
     let mut salt = [0; 16];
-    rustls::crypto::ring::default_provider()
+    crate::crypto::provider()
         .secure_random
         .fill(&mut salt)
         .map_err(|_| "failed to generate password salt")?;

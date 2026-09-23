@@ -341,12 +341,10 @@ fn valid_url(url: &url::Url) -> Result<(), ConfigError> {
 struct ProviderHttp(reqwest::Client);
 impl ProviderHttp {
     fn new() -> Result<Self, ConfigError> {
-        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()?
-        .with_platform_verifier()?
-        .with_no_client_auth();
+        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+            .with_safe_default_protocol_versions()?
+            .with_platform_verifier()?
+            .with_no_client_auth();
         Ok(Self(
             reqwest::Client::builder()
                 .use_preconfigured_tls(tls)

@@ -333,7 +333,7 @@ mod tests {
             }
         }
         let mut nonce = [0; 16];
-        rustls::crypto::ring::default_provider()
+        crate::crypto::provider()
             .secure_random
             .fill(&mut nonce)
             .map_err(|_| "test randomness unavailable")?;
@@ -366,7 +366,7 @@ mod tests {
         if !output.status.success() {
             return Err("test certificate generation failed".into());
         }
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let provider = Arc::new(crate::crypto::provider());
         let mut tls = rustls::ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?
             .with_no_client_auth()

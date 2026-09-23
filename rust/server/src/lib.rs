@@ -10,6 +10,7 @@ pub mod client_address;
 pub mod config;
 pub mod connections;
 pub mod cors;
+pub mod crypto;
 pub mod discovery;
 pub mod duration;
 pub mod http_server;

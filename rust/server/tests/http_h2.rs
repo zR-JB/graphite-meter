@@ -39,7 +39,7 @@ impl Harness {
         let certificate =
             CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let provider = Arc::new(graphite_meter_server::crypto::provider());
         let mut tls = ServerConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()

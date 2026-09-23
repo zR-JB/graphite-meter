@@ -18,7 +18,7 @@ impl Preflight {
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
         config.validate()?;
         let mut nonce = [0_u8; 16];
-        rustls::crypto::ring::default_provider()
+        crate::crypto::provider()
             .secure_random
             .fill(&mut nonce)
             .map_err(|_| "failed to generate discovery identity")?;

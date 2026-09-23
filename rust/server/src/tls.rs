@@ -99,7 +99,7 @@ impl Certificates {
         self: &Arc<Self>,
         protocols: Vec<Vec<u8>>,
     ) -> Result<Arc<ServerConfig>, ConfigError> {
-        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let provider = Arc::new(crate::crypto::provider());
         let mut config = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?
             .with_no_client_auth()
@@ -144,6 +144,6 @@ fn read_identity(
     Ok(CertifiedKey::from_der(
         chain,
         key,
-        &rustls::crypto::ring::default_provider(),
+        &crate::crypto::provider(),
     )?)
 }

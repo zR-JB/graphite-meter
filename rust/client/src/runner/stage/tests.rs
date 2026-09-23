@@ -71,7 +71,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
 
 #[tokio::test]
 async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), Error> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let active = Arc::new(AtomicUsize::new(0));
@@ -149,7 +149,7 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
 #[tokio::test]
 async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() -> Result<(), Error>
 {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = crate::crypto::provider().install_default();
     let (near, near_failed, near_task) = download_peer().await?;
     let (far, far_failed, far_task) = download_peer().await?;
     let http = Http::new(false)?;

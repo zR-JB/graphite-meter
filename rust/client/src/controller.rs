@@ -358,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_joins_operation_before_returning_its_partial_result() {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::crypto::provider().install_default();
         let (snapshots, _) = watch::channel(Snapshot {
             phase: Phase::Measuring,
             ..Snapshot::default()

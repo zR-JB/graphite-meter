@@ -287,7 +287,7 @@ impl Http {
         let source = canonical_origin(source)?;
         let login = validated_login(&source, auth_url)?;
         let mut entropy = [0_u8; 32];
-        rustls::crypto::ring::default_provider()
+        crate::crypto::provider()
             .secure_random
             .fill(&mut entropy)
             .map_err(|_| "secure randomness unavailable")?;
@@ -418,7 +418,7 @@ mod tests {
     use super::*;
 
     fn http(insecure: bool) -> Http {
-        let _ = rustls::crypto::ring::default_provider().install_default();
+        let _ = crate::crypto::provider().install_default();
         Http::new(insecure).unwrap()
     }
 

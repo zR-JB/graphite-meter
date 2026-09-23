@@ -20,7 +20,7 @@ fn configs(identity: &support::Identity) -> (Arc<ServerConfig>, RootCertStore) {
     let mut roots = RootCertStore::empty();
     roots.add(certificate.clone()).unwrap();
     let mut server =
-        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        ServerConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
             .with_no_client_auth()
@@ -32,7 +32,7 @@ fn configs(identity: &support::Identity) -> (Arc<ServerConfig>, RootCertStore) {
 
 fn connector(roots: RootCertStore, version: &'static SupportedProtocolVersion) -> TlsConnector {
     let mut client =
-        ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        ClientConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
             .with_protocol_versions(&[version])
             .unwrap()
             .with_root_certificates(roots)

@@ -2,7 +2,7 @@ use graphite_meter_client::{Error, webtransport::Session};
 use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _ = graphite_meter_client::crypto::provider().install_default();
     let origin = std::env::args()
         .nth(1)
         .ok_or("usage: wt_probe HTTPS_ORIGIN")?;

@@ -8,14 +8,19 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["crypto-ring"]
+crypto-ring = ["quinn/rustls-ring", "rustls/ring", "tokio-rustls/ring"]
+crypto-aws-lc = ["quinn/rustls-aws-lc-rs", "rustls/aws_lc_rs", "tokio-rustls/aws_lc_rs"]
+
 [dependencies]
 graphite-meter-core = { path = "../core" }
 ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "json", "stream", "form", "query"] }
 rustls-platform-verifier = "0.7.0"
-rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12"] }
+tokio-rustls = { version = "0.26.5", default-features = false }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "connect", "rustls-tls-native-roots"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time", "sync", "process"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
@@ -29,4 +34,4 @@ sha2 = "0.11.0"
 zeroize = "1.9.0"
 h3 = { version = "0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 h3-noq = { path = "../vendor/h3-noq" }
-quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio"] }

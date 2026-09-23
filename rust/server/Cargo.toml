@@ -8,6 +8,11 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = ["crypto-ring"]
+crypto-ring = ["quinn/rustls-ring", "rustls/ring", "tokio-rustls/ring"]
+crypto-aws-lc = ["quinn/rustls-aws-lc-rs", "rustls/aws_lc_rs", "tokio-rustls/aws_lc_rs"]
+
 [dependencies]
 openidconnect = { version = "4.0.1", default-features = false }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
@@ -34,9 +39,9 @@ hmac = { version = "0.13.0", features = ["zeroize"] }
 url = "2.5.8"
 h3 = { version = "0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 h3-noq = { path = "../vendor/h3-noq" }
-quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
-tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
+quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12"] }
+tokio-rustls = { version = "0.26.5", default-features = false }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }

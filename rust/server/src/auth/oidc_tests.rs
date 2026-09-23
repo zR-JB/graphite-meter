@@ -47,14 +47,12 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
-    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(certificates.clone(), key)
-    .unwrap();
+    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(certificates.clone(), key)
+        .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!(
         "https://localhost:{}",
@@ -74,13 +72,12 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     for cert in certificates {
         roots.add(cert).unwrap();
     }
-    let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_root_certificates(roots)
-    .with_no_client_auth();
+    let client_tls =
+        rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
     oidc.http = ProviderHttp(
         reqwest::Client::builder()
             .use_preconfigured_tls(client_tls)

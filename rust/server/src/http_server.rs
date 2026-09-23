@@ -105,7 +105,7 @@ impl HttpServer {
             config.trusted_proxies.clone(),
         );
         let mut block = vec![0; 256 * 1024];
-        rustls::crypto::ring::default_provider()
+        crate::crypto::provider()
             .secure_random
             .fill(&mut block)
             .map_err(|_| "download payload randomness unavailable")?;

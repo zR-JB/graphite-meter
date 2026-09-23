@@ -23,7 +23,7 @@ async fn exercise() -> Result<(), TestError> {
     let identity = support::Identity::generate()?;
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = Arc::new(graphite_meter_server::crypto::provider());
     let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()

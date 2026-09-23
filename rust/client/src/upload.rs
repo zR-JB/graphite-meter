@@ -140,7 +140,7 @@ impl Upload {
             return Err("server returned an invalid upload session ID".into());
         }
         let mut block = vec![0_u8; 64 * 1024];
-        rustls::crypto::ring::default_provider()
+        crate::crypto::provider()
             .secure_random
             .fill(&mut block)
             .map_err(|_| "secure randomness unavailable")?;

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    rustls::crypto::ring::default_provider()
+    graphite_meter_client::crypto::provider()
         .install_default()
         .map_err(|_| "TLS provider already installed")?;
     let args = std::env::args().skip(1).collect::<Vec<_>>();

@@ -9,7 +9,7 @@ use rustls::{
 use rustls_platform_verifier::BuilderVerifierExt;
 use std::sync::Arc;
 pub(crate) fn config(insecure: bool) -> Result<rustls::ClientConfig, Error> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = Arc::new(crate::crypto::provider());
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?;
     let mut tls = if insecure {

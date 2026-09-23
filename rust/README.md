@@ -49,6 +49,12 @@ python3 rust/tests/server_interop.py
 python3 rust/tests/interop.py
 ```
 
+Ring remains the default TLS/QUIC crypto provider. To check the alternative
+AWS-LC provider in isolation, run `cargo check --locked -p graphite-meter-server
+--no-default-features --features crypto-aws-lc` or substitute
+`graphite-meter-client` while in `rust/`. Build one binary at a time for provider
+comparisons; combining both provider features is rejected.
+
 The tests require OpenSSL; interoperability checks also require Go.
 `server_interop.py` exercises the assembled debug server with unchanged Go
 libraries: bootstrap, HTTP/3 transfers, WebTransport pings, downloads, upload

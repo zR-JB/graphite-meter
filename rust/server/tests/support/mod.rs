@@ -11,7 +11,7 @@ pub struct Identity(PathBuf);
 impl Identity {
     pub fn generate() -> Result<Self, Box<dyn Error + Send + Sync>> {
         let mut nonce = [0_u8; 16];
-        rustls::crypto::ring::default_provider()
+        crypto_provider()
             .secure_random
             .fill(&mut nonce)
             .map_err(|_| "test identity randomness unavailable")?;
@@ -55,6 +55,16 @@ impl Identity {
     pub fn directory(&self) -> &Path {
         &self.0
     }
+}
+
+#[cfg(feature = "crypto-aws-lc")]
+fn crypto_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::aws_lc_rs::default_provider()
+}
+
+#[cfg(not(feature = "crypto-aws-lc"))]
+fn crypto_provider() -> rustls::crypto::CryptoProvider {
+    rustls::crypto::ring::default_provider()
 }
 
 impl Drop for Identity {
