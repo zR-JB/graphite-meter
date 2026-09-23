@@ -20,13 +20,6 @@ pub fn servers<'a>(
         &config.servers
     };
     catalog.validate_selection(ids)?;
-    if config
-        .streams
-        .checked_mul(ids.len())
-        .is_none_or(|count| count > 128)
-    {
-        return Err("forced stream count exceeds 128 per direction across selected servers".into());
-    }
     ids.iter()
         .map(|id| {
             catalog
@@ -184,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_budget_uses_selected_servers_only() {
+    fn selection_uses_selected_servers_only() {
         let mut catalog = ServerCatalog::singleton().resolve("https://meter.example");
         catalog.servers.push(ServerEntry {
             id: "peer".into(),
@@ -197,6 +190,6 @@ mod tests {
         };
         assert_eq!(servers(&catalog, &config).unwrap().len(), 1);
         config.servers = vec!["self".into(), "peer".into()];
-        assert!(servers(&catalog, &config).is_err());
+        assert_eq!(servers(&catalog, &config).unwrap().len(), 2);
     }
 }

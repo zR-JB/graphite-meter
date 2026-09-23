@@ -31,8 +31,19 @@ impl Download {
         duration: Duration,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        if !(1..=128).contains(&lanes) {
-            return Err("invalid download lane count".into());
+        Self::start_staggered(transport, lanes, duration, Duration::ZERO, cancel).await
+    }
+
+    /// Delay each successive lane before its first request; cancellation covers the delay.
+    pub async fn start_staggered(
+        transport: Arc<Transport>,
+        lanes: usize,
+        duration: Duration,
+        stagger: Duration,
+        cancel: watch::Receiver<bool>,
+    ) -> Result<Self, Error> {
+        if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
+            return Err("invalid download lane count or stagger".into());
         }
         let bytes = Arc::new(AtomicU64::new(0));
         let mut owner = Self {
@@ -47,6 +58,9 @@ impl Download {
             let mut cancel = cancel.clone();
             owner.tasks.spawn(async move {
                 let transfer = async {
+                    if lane > 0 && !stagger.is_zero() {
+                        tokio::time::sleep(stagger * lane as u32).await;
+                    }
                     let lane = lane.to_string();
                     let mut announced = false;
                     loop {
@@ -78,8 +92,9 @@ impl Download {
                     }
                 };
                 tokio::select! {
-                    result = transfer => result,
+                    biased;
                     _ = cancel.wait_for(|value| *value) => Ok(()),
+                    result = transfer => result,
                 }
             });
         }

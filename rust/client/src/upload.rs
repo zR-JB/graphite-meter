@@ -74,7 +74,18 @@ impl Upload {
         epoch: Instant,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, epoch, cancel, None).await
+        Self::start_staggered(transport, lanes, epoch, Duration::ZERO, cancel).await
+    }
+
+    /// Stagger first HTTP requests inside the stage-owned cancellation scope.
+    pub async fn start_staggered(
+        transport: Arc<Transport>,
+        lanes: usize,
+        epoch: Instant,
+        stagger: Duration,
+        cancel: watch::Receiver<bool>,
+    ) -> Result<Self, Error> {
+        Self::start_inner(transport, lanes, epoch, cancel, None, stagger).await
     }
     pub async fn start_webtransport(
         transport: Arc<Transport>,
@@ -83,10 +94,20 @@ impl Upload {
         datagrams: bool,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        if lanes > 16 {
-            return Err("WebTransport upload supports at most sixteen lanes per session".into());
+        // Datagrams share one receiver byte counter and have no stream identifiers.
+        // The sixteen-stream limit therefore applies only to reliable upload lanes.
+        if !datagrams && lanes > 16 {
+            return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
-        Self::start_inner(transport, lanes, epoch, cancel, Some(datagrams)).await
+        Self::start_inner(
+            transport,
+            lanes,
+            epoch,
+            cancel,
+            Some(datagrams),
+            Duration::ZERO,
+        )
+        .await
     }
     async fn start_inner(
         transport: Arc<Transport>,
@@ -94,9 +115,10 @@ impl Upload {
         epoch: Instant,
         mut cancel: watch::Receiver<bool>,
         datagrams: Option<bool>,
+        stagger: Duration,
     ) -> Result<Self, Error> {
-        if !(1..=128).contains(&lanes) {
-            return Err("upload requires between one and 128 lanes".into());
+        if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
+            return Err("invalid upload lane count or stagger".into());
         }
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
@@ -157,7 +179,11 @@ impl Upload {
                 tokio::select! {
                     biased;
                     () = cancelled(&mut stop) => {},
-                    result = progress_feed(&transport, &id, epoch, &state, session) => if let Err(error) = result { fail(&state, error); },
+                    result = progress_feed(&transport, &id, epoch, &state, session) => {
+                        if let Err(error) = result {
+                            fail(&state, error);
+                        }
+                    },
                 }
             });
         }
@@ -182,9 +208,19 @@ impl Upload {
                     () = cancelled(&mut cancelled_stage) => {},
                     () = failed(&mut health) => {},
                     result = async {
-                        if let Some(session) = session { send_wt_lane(&session, datagrams.unwrap_or(false), block, active).await }
-                        else { send_lane(&transport, &id, index, block, active).await }
-                    } => if let Err(error) = result { fail(&state, error); },
+                        if index > 0 && !stagger.is_zero() {
+                            tokio::time::sleep(stagger * index as u32).await;
+                        }
+                        if let Some(session) = session {
+                            send_wt_lane(&session, datagrams.unwrap_or(false), block, active).await
+                        } else {
+                            send_lane(&transport, &id, index, block, active).await
+                        }
+                    } => {
+                        if let Err(error) = result {
+                            fail(&state, error);
+                        }
+                    },
                 }
             });
         }
@@ -192,7 +228,11 @@ impl Upload {
             loop {
                 owner.health()?;
                 let state = owner.state.borrow().clone();
-                if state.ready && state.latest.is_some_and(|count| count.bytes > 0 && count.nanos > 0) && started.iter().all(|active| active.load(Ordering::Acquire)) { return Ok::<(), Error>(()); }
+                let receiver_observed = state.latest.is_some_and(|count| count.bytes > 0 && count.nanos > 0);
+                let all_lanes_started = started.iter().all(|active| active.load(Ordering::Acquire));
+                if state.ready && receiver_observed && all_lanes_started {
+                    return Ok::<(), Error>(());
+                }
                 tokio::select! {
                     biased;
                     () = cancelled(&mut cancel) => return Err("upload cancelled during startup".into()),

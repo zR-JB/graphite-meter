@@ -5,6 +5,7 @@ use crate::{
     model::{Phase, ServerSummary, Snapshot},
     net::Http,
     selection,
+    stream_plan::{Participant, StageLanePlan},
     transport::Transport,
 };
 use graphite_meter_core::route::Route;
@@ -21,6 +22,7 @@ struct PreparedServer {
     throughput: Option<ThroughputTarget>,
     http: Option<Arc<Transport>>,
     latency: Option<LatencyTarget>,
+    idle_rtt: Duration,
 }
 
 pub async fn verify(
@@ -80,6 +82,7 @@ async fn prepare(
         {
             return Err("selected server does not support authoritative upload checkpoints".into());
         }
+        let mut idle_rtt = Duration::ZERO;
         let transport = if let Some(target) = &throughput {
             let connection = Transport::connect(
                 http.clone(),
@@ -88,8 +91,10 @@ async fn prepare(
                 config.insecure,
             )
             .await?;
+            let started = Instant::now();
             let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
             probe.validate()?;
+            idle_rtt = started.elapsed();
             Some(Arc::new(connection))
         } else {
             None
@@ -120,9 +125,30 @@ async fn prepare(
             throughput,
             http: transport,
             latency,
+            idle_rtt,
         });
     }
+    for stage in &config.stages {
+        lane_plan(config, *stage, &prepared)?;
+    }
     Ok(prepared)
+}
+
+fn lane_plan(
+    config: &Config,
+    stage: Stage,
+    servers: &[PreparedServer],
+) -> Result<StageLanePlan, Error> {
+    let participants: Vec<_> = servers
+        .iter()
+        .enumerate()
+        .map(|(index, server)| Participant {
+            id: &server.entry.id,
+            throughput: server.throughput.as_ref(),
+            latency: (index == 0).then_some(server.latency.as_ref()).flatten(),
+        })
+        .collect();
+    StageLanePlan::new(config, stage, &participants)
 }
 
 use crate::{
@@ -132,7 +158,7 @@ use crate::{
     upload::Upload,
 };
 use graphite_meter_core::{
-    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    discovery::{LatencyTransport, ThroughputTransport},
     latency::LatencyAccumulator,
     measurement::{
         AggregateMeasurements, Boundary, Direction, IntervalReason, Stage as TransferStage,
@@ -174,6 +200,16 @@ pub async fn run(
             cancel.clone(),
         )
         .await?;
+        if *stage == Stage::Latency
+            && let Some(primary) = prepared.first_mut()
+            && let Some(distribution) = snapshots
+                .borrow()
+                .results
+                .last()
+                .and_then(|result| result.latency.distribution)
+        {
+            primary.idle_rtt = Duration::from_nanos(distribution.p50);
+        }
         prepared.retain(|server| !failed.contains(&server.entry.id));
     }
     snapshots.send_modify(|snapshot| {
@@ -407,6 +443,10 @@ async fn measure(
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<Vec<String>, Error> {
+    let plan = lane_plan(config, stage, servers)?;
+    let warmup = servers.iter().fold(config.warmup, |warmup, server| {
+        warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
+    });
     let epoch = Instant::now();
     let (stop, stopped) = watch::channel(false);
     let (stop_latency, latency_stopped) = watch::channel(false);
@@ -420,8 +460,7 @@ async fn measure(
         latency_failed: false,
     };
     let (observations, mut events) = mpsc::channel(1024);
-    let operation_limit = config
-        .warmup
+    let operation_limit = warmup
         .checked_add(config.duration(stage))
         .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
         .ok_or("stage duration overflow")?;
@@ -459,13 +498,16 @@ async fn measure(
                     .http
                     .as_ref()
                     .ok_or("missing throughput connection")?;
-                let lanes = |upload| stream_count(config, target, servers.len(), upload);
+                let lanes = plan
+                    .lanes(&server.entry.id)
+                    .ok_or("missing stream allocation")?;
                 if stage.downloads() {
                     transfer.down = Some(if target.transport == ThroughputTransport::FetchStream {
-                        Download::start(
+                        Download::start_staggered(
                             transport.clone(),
-                            lanes(false),
+                            lanes.download,
                             operation_limit,
+                            lane_stagger(config.warmup, server.idle_rtt, lanes.download),
                             stopped.clone(),
                         )
                         .await?
@@ -473,7 +515,7 @@ async fn measure(
                         Download::start_webtransport(
                             http,
                             target,
-                            lanes(false),
+                            lanes.download,
                             operation_limit,
                             config.insecure,
                             stopped.clone(),
@@ -483,12 +525,18 @@ async fn measure(
                 }
                 if stage.uploads() {
                     transfer.up = Some(if target.transport == ThroughputTransport::FetchStream {
-                        Upload::start(transport.clone(), lanes(true), epoch, stopped.clone())
-                            .await?
+                        Upload::start_staggered(
+                            transport.clone(),
+                            lanes.upload,
+                            epoch,
+                            lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
+                            stopped.clone(),
+                        )
+                        .await?
                     } else {
                         Upload::start_webtransport(
                             transport.clone(),
-                            lanes(true),
+                            lanes.upload,
                             epoch,
                             target.transport == ThroughputTransport::WebTransportDatagram,
                             stopped.clone(),
@@ -562,7 +610,7 @@ async fn measure(
             snapshot.phase = Phase::Warmup;
             snapshot.status = "Warming up".into();
         });
-        let warmup_end = Instant::now() + config.warmup;
+        let warmup_end = Instant::now() + warmup;
         loop {
             resources.health()?;
             tokio::select! {
@@ -781,18 +829,16 @@ fn observe_latency(
     }
 }
 
-fn stream_count(config: &Config, target: &ThroughputTarget, servers: usize, upload: bool) -> usize {
-    if config.streams > 0 {
-        return config.streams;
+fn adaptive_warmup(base: Duration, rtt: Duration) -> Duration {
+    base.max(rtt.saturating_mul(10)).min(Duration::from_secs(4))
+}
+
+fn lane_stagger(base: Duration, rtt: Duration, lanes: usize) -> Duration {
+    if lanes <= 1 {
+        Duration::ZERO
+    } else {
+        (adaptive_warmup(base, rtt) / 2 / (lanes - 1) as u32).min(Duration::from_millis(75))
     }
-    let desired = match (target.transport, target.protocol, upload) {
-        (ThroughputTransport::FetchStream, Protocol::Http1 | Protocol::Negotiated, _) => {
-            config.auto_streams
-        }
-        (ThroughputTransport::FetchStream, Protocol::Http2, true) => 4,
-        _ => 1,
-    };
-    desired.min(128 / servers.max(1)).max(1)
 }
 
 fn nanos(duration: Duration) -> u64 {

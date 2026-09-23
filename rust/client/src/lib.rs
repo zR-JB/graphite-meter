@@ -9,6 +9,7 @@ pub mod net;
 pub mod quic;
 pub mod runner;
 pub mod selection;
+pub mod stream_plan;
 pub mod transport;
 pub mod upload;
 
