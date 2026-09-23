@@ -137,7 +137,13 @@ impl Body for RequestBody {
 impl Drop for RequestBody {
     fn drop(&mut self) {
         if !self.finished {
-            self.stream.stop_sending(Code::H3_REQUEST_CANCELLED);
+            // A route may ignore a bodyless request. Check for FIN at the
+            // last possible moment: stopping an already finished request
+            // makes some HTTP/3 clients report a reset after a full response.
+            let mut cx = Context::from_waker(std::task::Waker::noop());
+            if !matches!(self.stream.poll_recv_data(&mut cx), Poll::Ready(Ok(None))) {
+                self.stream.stop_sending(Code::H3_REQUEST_CANCELLED);
+            }
         }
     }
 }

@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -50,6 +51,25 @@ def main() -> None:
             (directory / "client.log").write_text(result.stdout + result.stderr)
             print(result.stdout + result.stderr, end="", flush=True)
             result.check_returncode()
+            curl = shutil.which("curl")
+            curl_version = (
+                subprocess.run([curl, "--version"], check=True, capture_output=True, text=True).stdout
+                if curl else ""
+            )
+            if "HTTP3" in curl_version:
+                # curl reports a stream reset after the full byte count when an
+                # empty request body is cancelled instead of observing its FIN.
+                result = subprocess.run([
+                    curl, "--http3-only", "--cacert", str(cert), "--fail", "--silent", "--show-error",
+                    "--max-time", "10", "--output", os.devnull,
+                    "--write-out", "%{http_code} %{http_version} %{size_download}",
+                    f"https://{address}/download?bytes=65537",
+                ], capture_output=True, text=True, timeout=12)
+                (directory / "curl-h3.log").write_text(result.stdout + result.stderr)
+                result.check_returncode()
+                if result.stdout != "200 3 65537":
+                    raise RuntimeError(f"curl HTTP/3 download mismatch: {result.stdout!r}")
+                print("curl HTTP/3 download: clean FIN, 65537 bytes", flush=True)
         finally:
             server.send_signal(signal.SIGINT)
             try:
