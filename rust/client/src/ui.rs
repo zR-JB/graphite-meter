@@ -378,6 +378,9 @@ impl Ui {
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
+        if snapshot.error != self.snapshot.error {
+            self.notice.clear();
+        }
         while snapshot.history.len() > MAX_POINTS {
             snapshot.history.pop_front();
         }
@@ -391,6 +394,15 @@ impl Ui {
         snapshot.results.truncate(16);
         self.awaiting = false;
         self.snapshot = snapshot;
+    }
+    fn notice(&self) -> (&str, bool) {
+        if !self.notice.is_empty() {
+            (&self.notice, false)
+        } else if let Some(error) = self.snapshot.error.as_deref() {
+            (error, true)
+        } else {
+            ("", false)
+        }
     }
     fn active(&self) -> bool {
         self.awaiting
@@ -768,5 +780,25 @@ mod tests {
         assert!(!ui.live);
         ui.change_section(-1);
         assert!(ui.live);
+    }
+    #[test]
+    fn current_setup_notice_is_visible_after_a_failed_run() {
+        let mut ui = Ui::new(Config::default(), Snapshot::default());
+        let failed = Snapshot {
+            error: Some("old transfer error".into()),
+            ..Snapshot::default()
+        };
+        ui.update(failed);
+        assert_eq!(ui.notice(), ("old transfer error", true));
+
+        ui.notice = "Transport paths set to automatic.".into();
+        assert_eq!(ui.notice(), ("Transport paths set to automatic.", false));
+
+        let next = Snapshot {
+            error: Some("new transfer error".into()),
+            ..Snapshot::default()
+        };
+        ui.update(next);
+        assert_eq!(ui.notice(), ("new transfer error", true));
     }
 }

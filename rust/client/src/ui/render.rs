@@ -74,8 +74,8 @@ impl Ui {
         } else {
             self.draw_setup(frame, regions[1]);
         }
-        let notice = self.snapshot.error.as_deref().unwrap_or(&self.notice);
-        let notice_color = if self.snapshot.error.is_some() {
+        let (notice, is_error) = self.notice();
+        let notice_color = if is_error {
             self.theme.error
         } else {
             self.theme.warning
