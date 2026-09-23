@@ -34,7 +34,9 @@ correctness.
 
 The experimental server integrates these data paths, but complete current-draft
 WebTransport conformance is unproven. Per-session flow control is deliberately
-unnegotiated. Stream-association headers have a ten-second deadline; classified
+unnegotiated. The server advertises and enforces one active WebTransport session
+per HTTP/3 connection; ordinary HTTP/3 requests may coexist with that session.
+Stream-association headers have a ten-second deadline; classified
 streams arriving before CONNECT are bounded to 64 per connection with the same
 expiry. Queued datagram payload is bounded to 256 KiB per connection. Broader
 reordering, cancellation and hostile-peer behavior still need validation.

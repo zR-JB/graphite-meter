@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -131,10 +132,24 @@ func run() error {
 	}
 	fmt.Println("H3 application download/upload: 65537 bytes each")
 	dial := func(path string) (*webtransport.Session, error) {
-		_, session, err := client.Dial(ctx, base+path, nil)
+		// Per-session flow control is not negotiated: each concurrent session
+		// needs its own QUIC connection. Ordinary H3 requests may still share it.
+		connection, err := quic.DialAddr(ctx, target.Host, config, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+		if err != nil {
+			return nil, err
+		}
+		peer, err := transport.NewClientConn(connection)
+		if err != nil {
+			connection.CloseWithError(0, "initialization failed")
+			return nil, err
+		}
+		_, session, err := peer.Dial(ctx, base+path, nil)
+		if err != nil {
+			connection.CloseWithError(0, "session failed")
+		}
 		return session, err
 	}
-	ping, err := dial("/wt/ping")
+	_, ping, err := client.Dial(ctx, base+"/wt/ping", nil)
 	if err != nil {
 		return err
 	}
@@ -155,6 +170,16 @@ func run() error {
 	if err = pong(ping, "41"); err != nil {
 		return err
 	}
+	_, extra, err := client.Dial(ctx, base+"/wt/ping", nil)
+	if err == nil {
+		extra.CloseWithError(0, "unexpected second session")
+		return fmt.Errorf("server accepted concurrent WT sessions without session flow control")
+	}
+	streamErr, ok := errors.AsType[*quic.StreamError](err)
+	if !ok || !streamErr.Remote || streamErr.ErrorCode != quic.StreamErrorCode(http3.ErrCodeRequestRejected) {
+		return fmt.Errorf("expected remote H3_REQUEST_REJECTED for second WT session: %w", err)
+	}
+	fmt.Println("Second WT session without session flow control: rejected; connection remains usable")
 	download, err := dial("/wt/download?bytes=65537&streams=2")
 	if err != nil {
 		return err
@@ -180,7 +205,10 @@ func run() error {
 	if err = pong(ping, "42"); err != nil {
 		return fmt.Errorf("close isolation: %w", err)
 	}
-	fmt.Println("WT ping and two download streams: exact lengths; concurrent session survives close")
+	if _, err = request("GET", "/download?bytes=1", nil); err != nil {
+		return fmt.Errorf("H3 request sharing ping connection: %w", err)
+	}
+	fmt.Println("WT ping and two download streams: exact lengths; independent ping connection survives close; H3 shares ping connection")
 	id, err = mint()
 	if err != nil {
 		return err
@@ -265,6 +293,12 @@ func run() error {
 	if err = pong(ping, "43"); err != nil {
 		return err
 	}
-	fmt.Println("WT upload: ready, measured progress, HTTP finish, complete=131073; ping remains live")
+	if err = ping.CloseWithError(0, "ping finished"); err != nil {
+		return err
+	}
+	if _, err = request("GET", "/download?bytes=1", nil); err != nil {
+		return fmt.Errorf("H3 request after sibling WT close: %w", err)
+	}
+	fmt.Println("WT upload: ready, measured progress, HTTP finish, complete=131073; H3 survives sibling WT close")
 	return nil
 }
