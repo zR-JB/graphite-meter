@@ -15,6 +15,8 @@ use serde::de::DeserializeOwned;
 use std::time::Duration;
 use tokio::time::{Instant, timeout_at};
 
+pub(crate) const HTTP_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+
 pub struct Transport {
     http: Http,
     origin: String,
@@ -26,6 +28,11 @@ pub struct Transport {
 impl Transport {
     pub(crate) fn is_http3(&self) -> bool {
         self.h3.is_some()
+    }
+
+    pub(crate) fn retryable_http_error(&self, error: &Error) -> bool {
+        !self.is_http3()
+            && (error.is::<reqwest::Error>() || error.is::<tokio::time::error::Elapsed>())
     }
 
     pub async fn connect(

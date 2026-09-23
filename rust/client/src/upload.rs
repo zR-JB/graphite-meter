@@ -1,5 +1,8 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
-use crate::{Error, transport::Transport};
+use crate::{
+    Error,
+    transport::{HTTP_RETRY_BACKOFF, Transport},
+};
 use bytes::Bytes;
 use graphite_meter_core::{
     measurement::{ObservedUpload, ReceiverSnapshot},
@@ -20,7 +23,6 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
-const HTTP_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_LINE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -400,11 +402,7 @@ async fn send_lane(
             // counter remains authoritative; a fresh request may continue it.
             // HTTP status/protocol errors stay fatal, and H3 needs a new
             // connection owner before its request can be retried safely.
-            Err(error)
-                if !transport.is_http3()
-                    && (error.is::<reqwest::Error>()
-                        || error.is::<tokio::time::error::Elapsed>()) =>
-            {
+            Err(error) if transport.retryable_http_error(&error) => {
                 tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
             }
             Err(error) => return Err(error),

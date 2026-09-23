@@ -1,5 +1,10 @@
 //! Owned download lanes. Only received bytes contribute to measurement.
-use crate::{Error, net::Http, transport::Transport, webtransport::Session};
+use crate::{
+    Error,
+    net::Http,
+    transport::{HTTP_RETRY_BACKOFF, Transport},
+    webtransport::Session,
+};
 use graphite_meter_core::{
     discovery::{ThroughputTarget, ThroughputTransport},
     origin::canonical_origin,
@@ -61,35 +66,7 @@ impl Download {
                     if lane > 0 && !stagger.is_zero() {
                         tokio::time::sleep(stagger * lane as u32).await;
                     }
-                    let lane = lane.to_string();
-                    let mut announced = false;
-                    loop {
-                        const LIMIT: u64 = 64 * 1024 * 1024 * 1024;
-                        let mut body = transport
-                            .receive(
-                                Method::GET,
-                                Route::Download,
-                                &[("bytes", "68719476736"), ("lane", &lane)],
-                                LIMIT,
-                                duration,
-                            )
-                            .await?;
-                        let mut received = 0_u64;
-                        while let Some(chunk) = body.chunk().await? {
-                            bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                            received += chunk.len() as u64;
-                            if !announced && !chunk.is_empty() {
-                                ready
-                                    .send(())
-                                    .await
-                                    .map_err(|_| "download readiness receiver closed")?;
-                                announced = true;
-                            }
-                        }
-                        if received != LIMIT {
-                            return Err("download ended before its declared byte count".into());
-                        }
-                    }
+                    receive_http_lane(&transport, lane, &bytes, &ready, duration).await
                 };
                 tokio::select! {
                     biased;
@@ -202,6 +179,64 @@ impl Download {
     }
 }
 
+const HTTP_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+
+async fn receive_http_lane(
+    transport: &Transport,
+    lane: usize,
+    bytes: &AtomicU64,
+    ready: &mpsc::Sender<()>,
+    duration: Duration,
+) -> Result<(), Error> {
+    let lane = lane.to_string();
+    let requested_bytes = HTTP_DOWNLOAD_BYTES.to_string();
+    let mut announced = false;
+    loop {
+        let response = transport
+            .receive(
+                Method::GET,
+                Route::Download,
+                &[("bytes", &requested_bytes), ("lane", &lane)],
+                HTTP_DOWNLOAD_BYTES,
+                duration,
+            )
+            .await;
+        let mut body = match response {
+            Ok(body) => body,
+            Err(error) if transport.retryable_http_error(&error) => {
+                tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let mut received = 0_u64;
+        loop {
+            match body.chunk().await {
+                Ok(Some(chunk)) => {
+                    bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                    received += chunk.len() as u64;
+                    if !announced && !chunk.is_empty() {
+                        ready
+                            .send(())
+                            .await
+                            .map_err(|_| "download readiness receiver closed")?;
+                        announced = true;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) if transport.retryable_http_error(&error) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        if received != HTTP_DOWNLOAD_BYTES {
+            if transport.is_http3() {
+                return Err("download ended before its declared byte count".into());
+            }
+            tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+        }
+    }
+}
+
 const WT_LANES_PER_SESSION: usize = 16;
 const WT_STREAM_BYTES: u64 = 64 * 1024 * 1024;
 
@@ -249,4 +284,59 @@ fn record_webtransport(
         *announced = true;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphite_meter_core::discovery::Protocol;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
+
+    #[tokio::test]
+    async fn http_lane_preserves_received_bytes_across_partial_responses() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            let mut first_closed = None;
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await?;
+                if attempt == 1 {
+                    assert!(first_closed.is_some_and(|closed: tokio::time::Instant| {
+                        closed.elapsed() >= HTTP_RETRY_BACKOFF
+                    }));
+                }
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).await?;
+                assert!(request[..count].starts_with(b"GET /download?"));
+                stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n")
+                    .await?;
+                stream.write_all(&[42; 1024]).await?;
+                drop(stream);
+                if attempt == 0 {
+                    first_closed = Some(tokio::time::Instant::now());
+                }
+            }
+            Ok::<_, Error>(())
+        });
+        let transport =
+            Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?);
+        let (_stop, cancelled) = watch::channel(false);
+        let mut download = Download::start(transport, 1, Duration::from_secs(5), cancelled).await?;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while download.bytes() < 2048 {
+                download.health()?;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok::<_, Error>(())
+        })
+        .await??;
+        download.stop().await;
+        server.await??;
+        Ok(())
+    }
 }
