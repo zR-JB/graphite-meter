@@ -24,6 +24,7 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
+const CHECKPOINT_RECOVERY: Duration = Duration::from_secs(2);
 const MAX_LINE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -283,30 +284,53 @@ impl Upload {
         Ok(())
     }
     pub async fn checkpoint(&self) -> Result<ReceiverSnapshot, Error> {
-        self.health()?;
         #[derive(Deserialize)]
         struct Count {
             bytes: u64,
             nanos: u64,
         }
-        let requested_at_nanos = elapsed(self.epoch)?;
-        let count: Count = self
-            .transport
-            .json(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)])
-            .await?;
-        let received_at_nanos = elapsed(self.epoch)?;
-        if count.bytes > MAX_UPLOAD_COUNTER || count.nanos == 0 || count.nanos > MAX_UPLOAD_COUNTER
-        {
-            return Err("invalid receiver checkpoint counters".into());
+        let deadline = Instant::now() + CHECKPOINT_RECOVERY;
+        loop {
+            self.health()?;
+            let requested_at_nanos = elapsed(self.epoch)?;
+            let response = tokio::time::timeout_at(
+                deadline,
+                self.transport.json::<Count>(
+                    Method::POST,
+                    Route::UploadCheckpoint,
+                    &[("id", &self.id)],
+                ),
+            )
+            .await;
+            let count = match response {
+                Ok(Ok(count)) => count,
+                Ok(Err(error)) if self.transport.retryable_transfer_error(&error) => {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        return Err("upload receiver checkpoint did not recover".into());
+                    }
+                    tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
+                    continue;
+                }
+                Ok(Err(error)) => return Err(error),
+                Err(_) => return Err("upload receiver checkpoint timed out".into()),
+            };
+            let received_at_nanos = elapsed(self.epoch)?;
+            if count.bytes > MAX_UPLOAD_COUNTER
+                || count.nanos == 0
+                || count.nanos > MAX_UPLOAD_COUNTER
+            {
+                return Err("invalid receiver checkpoint counters".into());
+            }
+            self.health()?;
+            return Ok(ReceiverSnapshot {
+                id: self.id.clone(),
+                bytes: count.bytes,
+                nanos: count.nanos,
+                requested_at_nanos,
+                received_at_nanos,
+            });
         }
-        self.health()?;
-        Ok(ReceiverSnapshot {
-            id: self.id.clone(),
-            bytes: count.bytes,
-            nanos: count.nanos,
-            requested_at_nanos,
-            received_at_nanos,
-        })
     }
     pub async fn finish(mut self) -> Result<Option<ReceiverProgress>, Error> {
         let result = tokio::time::timeout(CONTROL_TIMEOUT, async {
@@ -682,7 +706,10 @@ fn apply_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{io::AsyncReadExt, net::TcpListener};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     #[tokio::test]
     async fn http_lane_retries_dropped_streaming_request() -> Result<(), Error> {
@@ -735,6 +762,65 @@ mod tests {
         assert!(!lane.is_finished());
         lane.abort();
         let _ = lane.await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn checkpoint_retries_a_dropped_response_without_inventing_bytes() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            let mut first_closed = None;
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await?;
+                if attempt == 1 {
+                    assert!(first_closed.is_some_and(|closed: Instant| {
+                        closed.elapsed() >= Duration::from_millis(100)
+                    }));
+                }
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).await?;
+                assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
+                if attempt == 0 {
+                    first_closed = Some(Instant::now());
+                    continue;
+                }
+                let body = br#"{"bytes":123,"nanos":456}"#;
+                let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                stream.write_all(headers.as_bytes()).await?;
+                stream.write_all(body).await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Arc::new(
+            Transport::connect(
+                crate::net::Http::new(false)?,
+                &origin,
+                graphite_meter_core::discovery::Protocol::Http1,
+                false,
+            )
+            .await?,
+        );
+        let (state_sender, state) = watch::channel(State::default());
+        let (stop_lanes, _) = watch::channel(false);
+        let (stop_all, _) = watch::channel(false);
+        let upload = Upload {
+            transport,
+            id: "test-session".into(),
+            epoch: Instant::now(),
+            state,
+            stop_lanes,
+            stop_all,
+            lanes: JoinSet::new(),
+            progress: JoinSet::new(),
+            session: None,
+        };
+        let snapshot = upload.checkpoint().await?;
+        assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
+        assert!(snapshot.received_at_nanos >= snapshot.requested_at_nanos);
+        assert!(state_sender.borrow().latest.is_none());
+        server.await??;
         Ok(())
     }
 
