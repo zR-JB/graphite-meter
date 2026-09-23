@@ -118,6 +118,15 @@ impl Transport {
         .await
     }
 
+    pub async fn webtransport_slot(
+        &self,
+        route: Route,
+        query: &[(&str, &str)],
+    ) -> Result<crate::webtransport::SessionSlot, Error> {
+        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)?, self.insecure)
+            .await
+    }
+
     pub fn url(&self, route: Route, query: &[(&str, &str)]) -> Result<String, Error> {
         let mut url = url::Url::parse(&format!("{}{}", self.origin, route.path()))?;
         if !query.is_empty() {

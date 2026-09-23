@@ -3,7 +3,7 @@ use crate::{
     Error,
     net::Http,
     transport::{TRANSFER_RETRY_BACKOFF, Transport},
-    webtransport::Session,
+    webtransport::{ConnectRejected, Session, SessionSlot},
 };
 use graphite_meter_core::{
     discovery::{ThroughputTarget, ThroughputTransport},
@@ -93,8 +93,8 @@ impl Download {
     }
 
     /// Start bounded WebTransport lanes using the same received-byte owner as HTTP.
-    /// Each connection has one session and at most sixteen readers. A failed lane
-    /// remains an error; data received before failure stays in the counter.
+    /// Each connection has one session and at most sixteen readers. Lost
+    /// connections are replaced once per group; observed bytes remain counted.
     pub async fn start_webtransport(
         http: &Http,
         target: &ThroughputTarget,
@@ -127,18 +127,16 @@ impl Download {
                     "{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}&datagrams={}",
                     u8::from(datagrams)
                 );
-                let session = Arc::new(
-                    Session::dial(http, &target, insecure, Duration::from_secs(10)).await?,
-                );
+                let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
                 for _ in 0..group {
-                    let session = session.clone();
+                    let slot = slot.clone();
                     let bytes = owner.bytes.clone();
                     let ready = ready.clone();
                     let mut cancel = lane_cancel.clone();
                     owner.tasks.spawn(async move {
                         tokio::select! {biased;
                             _ = cancel.wait_for(|value| *value) => Ok(()),
-                            result = timeout(duration, receive_webtransport(session, bytes, ready, datagrams)) => result?,
+                            result = timeout(duration, receive_webtransport(slot, bytes, ready, datagrams)) => result?,
                         }
                     });
                 }
@@ -238,33 +236,61 @@ const WT_LANES_PER_SESSION: usize = 16;
 const WT_STREAM_BYTES: u64 = 64 * 1024 * 1024;
 
 async fn receive_webtransport(
-    session: Arc<Session>,
+    slot: Arc<SessionSlot>,
     bytes: Arc<AtomicU64>,
     ready: mpsc::Sender<()>,
     datagrams: bool,
 ) -> Result<(), Error> {
     let mut announced = false;
     loop {
-        if datagrams {
-            let chunk = session.recv_datagram().await?;
-            record_webtransport(&bytes, &ready, &mut announced, chunk.len())?;
-            continue;
-        }
-        let mut stream = session.accept_uni().await?;
-        let mut received = 0_u64;
-        while let Some(chunk) = stream.read_chunk().await? {
-            received = received
-                .checked_add(chunk.len() as u64)
-                .ok_or("download byte count overflow")?;
-            record_webtransport(&bytes, &ready, &mut announced, chunk.len())?;
-            if received > WT_STREAM_BYTES {
-                return Err("WebTransport download exceeded its declared byte count".into());
+        let session = slot.current().await;
+        let result =
+            receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, datagrams).await;
+        if let Err(error) = result {
+            if !session.retryable_failure(&error) {
+                return Err(error);
+            }
+            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
+            if !session.retryable_failure(&error) {
+                return Err(error);
+            }
+            if session.is_closed()
+                && let Err(error) = slot.reconnect(&session).await
+                && (error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>())
+            {
+                return Err(error);
             }
         }
-        if received != WT_STREAM_BYTES {
-            return Err("WebTransport download ended before its declared byte count".into());
+    }
+}
+
+async fn receive_webtransport_chunk(
+    session: &Session,
+    bytes: &AtomicU64,
+    ready: &mpsc::Sender<()>,
+    announced: &mut bool,
+    datagrams: bool,
+) -> Result<(), Error> {
+    if datagrams {
+        let chunk = session.recv_datagram().await?;
+        record_webtransport(bytes, ready, announced, chunk.len())?;
+        return Ok(());
+    }
+    let mut stream = session.accept_uni().await?;
+    let mut received = 0_u64;
+    while let Some(chunk) = stream.read_chunk().await? {
+        received = received
+            .checked_add(chunk.len() as u64)
+            .ok_or("download byte count overflow")?;
+        record_webtransport(bytes, ready, announced, chunk.len())?;
+        if received > WT_STREAM_BYTES {
+            return Err("WebTransport download exceeded its declared byte count".into());
         }
     }
+    if received != WT_STREAM_BYTES {
+        return Err("WebTransport download ended before its declared byte count".into());
+    }
+    Ok(())
 }
 
 fn record_webtransport(

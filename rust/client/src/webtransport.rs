@@ -1,5 +1,6 @@
 //! One explicitly owned WebTransport session per QUIC connection.
 use crate::Error;
+use crate::net::Http;
 use bytes::{Buf, Bytes};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::capsule;
@@ -10,7 +11,10 @@ use std::{
     collections::HashMap,
     future::{Future, poll_fn},
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     task::Poll,
     time::Duration,
 };
@@ -44,6 +48,7 @@ pub struct Session {
     resets: ResetQueue,
     streams: Mutex<mpsc::Receiver<ReceiveStream>>,
     datagrams: Mutex<mpsc::Receiver<Datagram>>,
+    graceful_connect_close: Arc<AtomicBool>,
 }
 struct Datagram {
     bytes: Bytes,
@@ -159,6 +164,7 @@ impl Session {
             let (resets, reset_rx) = ResetQueue::new(QUEUE);
             let (stream_tx, stream_rx) = mpsc::channel(QUEUE);
             let (datagram_tx, datagram_rx) = mpsc::channel(QUEUE);
+            let graceful_connect_close = Arc::new(AtomicBool::new(false));
             let mut owner = Self {
                 endpoint,
                 connection,
@@ -168,6 +174,7 @@ impl Session {
                 resets,
                 streams: Mutex::new(stream_rx),
                 datagrams: Mutex::new(datagram_rx),
+                graceful_connect_close: graceful_connect_close.clone(),
             };
             let (http, mut sender) = h3::client::builder()
                 .max_field_section_size(32 * 1024)
@@ -244,6 +251,7 @@ impl Session {
                     Ok(())
                 }
                 .await;
+                graceful_connect_close.store(result.is_ok(), Ordering::Release);
                 quic.close(
                     0_u32.into(),
                     if result.is_ok() {
@@ -285,6 +293,17 @@ impl Session {
     pub fn id(&self) -> u64 {
         self.id
     }
+    pub fn is_closed(&self) -> bool {
+        self.connection.close_reason().is_some()
+    }
+    pub fn retryable_failure(&self, error: &Error) -> bool {
+        match self.connection.close_reason() {
+            Some(reason) => {
+                self.graceful_connect_close.load(Ordering::Acquire) || retryable_quic_close(&reason)
+            }
+            None => retryable_stream_error(error),
+        }
+    }
     pub fn max_datagram_size(&self) -> Option<usize> {
         let mut prefix = Vec::new();
         capsule::encode_varint(self.id / 4, &mut prefix).ok()?;
@@ -293,8 +312,11 @@ impl Session {
             .checked_sub(prefix.len())
     }
     pub async fn send_datagram(&self, payload: &[u8]) -> Result<(), Error> {
-        if payload.len() > self.max_datagram_size().ok_or("peer disabled datagrams")? {
-            return Err("WebTransport datagram exceeds path limit".into());
+        let max = self
+            .max_datagram_size()
+            .ok_or(quinn::SendDatagramError::UnsupportedByPeer)?;
+        if payload.len() > max {
+            return Err(quinn::SendDatagramError::TooLarge.into());
         }
         let mut frame = Vec::with_capacity(payload.len() + 8);
         capsule::encode_varint(self.id / 4, &mut frame)?;
@@ -331,6 +353,112 @@ impl Session {
         let _ = timeout(Duration::from_secs(1), self.endpoint.0.wait_idle()).await;
     }
 }
+
+/// A stage group shares one live session. Replacement is serialized, so a
+/// connection loss cannot make every lane dial its own replacement session.
+pub struct SessionSlot {
+    current: Mutex<Arc<Session>>,
+    http: Http,
+    target: String,
+    insecure: bool,
+}
+
+impl SessionSlot {
+    pub async fn dial(http: &Http, target: String, insecure: bool) -> Result<Self, Error> {
+        let session = Session::dial(http, &target, insecure, Duration::from_secs(10)).await?;
+        Ok(Self {
+            current: Mutex::new(Arc::new(session)),
+            http: http.clone(),
+            target,
+            insecure,
+        })
+    }
+
+    pub async fn current(&self) -> Arc<Session> {
+        self.current.lock().await.clone()
+    }
+
+    pub async fn reconnect(&self, failed: &Arc<Session>) -> Result<Arc<Session>, Error> {
+        let mut current = self.current.lock().await;
+        if !Arc::ptr_eq(&current, failed) {
+            return Ok(current.clone());
+        }
+        if !failed.is_closed() {
+            return Err("WebTransport stream failed while its session remained open".into());
+        }
+        let session = Session::dial(
+            &self.http,
+            &self.target,
+            self.insecure,
+            Duration::from_secs(10),
+        )
+        .await?;
+        *current = Arc::new(session);
+        Ok(current.clone())
+    }
+
+    pub async fn close(self) {
+        let session = self.current.into_inner();
+        if let Ok(session) = Arc::try_unwrap(session) {
+            session.close().await;
+        }
+    }
+}
+
+/// Transfer lanes may resume after a lost connection or the application's
+/// explicit cancellation reset. Other stream errors remain protocol failures.
+pub fn retryable_stream_error(error: &Error) -> bool {
+    const RESET: u64 = 0x52e4a40fa8db;
+    if let Some(error) = error.downcast_ref::<h3::quic::StreamErrorIncoming>() {
+        return match error {
+            h3::quic::StreamErrorIncoming::ConnectionErrorIncoming { connection_error } => {
+                retryable_h3_close(connection_error)
+            }
+            h3::quic::StreamErrorIncoming::StreamTerminated { error_code } => *error_code == RESET,
+            _ => false,
+        };
+    }
+    if let Some(error) = error.downcast_ref::<quinn::WriteError>() {
+        return match error {
+            quinn::WriteError::ConnectionLost(error) => retryable_quic_close(error),
+            quinn::WriteError::Stopped(code) => code.into_inner() == RESET,
+            _ => false,
+        };
+    }
+    if let Some(quinn::SendDatagramError::ConnectionLost(error)) =
+        error.downcast_ref::<quinn::SendDatagramError>()
+    {
+        return retryable_quic_close(error);
+    }
+    error
+        .downcast_ref::<quinn::ConnectionError>()
+        .is_some_and(retryable_quic_close)
+}
+
+fn retryable_h3_close(error: &h3::quic::ConnectionErrorIncoming) -> bool {
+    match error {
+        h3::quic::ConnectionErrorIncoming::Timeout => true,
+        h3::quic::ConnectionErrorIncoming::ApplicationClose { error_code } => {
+            *error_code == 0 || *error_code == h3::error::Code::H3_NO_ERROR.value()
+        }
+        h3::quic::ConnectionErrorIncoming::Undefined(error) => error
+            .as_ref()
+            .downcast_ref::<quinn::ConnectionError>()
+            .is_some_and(retryable_quic_close),
+        _ => false,
+    }
+}
+
+fn retryable_quic_close(error: &quinn::ConnectionError) -> bool {
+    match error {
+        quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut => true,
+        quinn::ConnectionError::ApplicationClosed(close) => {
+            close.error_code.into_inner() == 0
+                || close.error_code.into_inner() == h3::error::Code::H3_NO_ERROR.value()
+        }
+        _ => false,
+    }
+}
 impl Drop for Session {
     fn drop(&mut self) {
         self.connection.close(0_u32.into(), b"session dropped");
@@ -347,7 +475,7 @@ impl ReceiveStream {
     pub async fn read_chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let data = poll_fn(|cx| self.stream.poll_data(cx))
             .await
-            .map_err(|e| format!("WebTransport read failed: {e:?}"))?;
+            .map_err(|error| -> Error { Box::new(error) })?;
         if data.is_none() {
             self.finished = true;
         }
@@ -528,4 +656,35 @@ pub async fn run_latency(
         crate::latency::Kind::WebTransport,
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_retry_excludes_protocol_and_local_transport_failures() {
+        use h3::quic::{ConnectionErrorIncoming, StreamErrorIncoming};
+        let retryable: Vec<Error> = vec![
+            Box::new(StreamErrorIncoming::StreamTerminated { error_code: CANCEL }),
+            Box::new(StreamErrorIncoming::ConnectionErrorIncoming {
+                connection_error: ConnectionErrorIncoming::Timeout,
+            }),
+            Box::new(quinn::ConnectionError::Reset),
+        ];
+        for error in retryable {
+            assert!(retryable_stream_error(&error), "{error}");
+        }
+        let fatal: Vec<Error> = vec![
+            Box::new(StreamErrorIncoming::StreamTerminated { error_code: 42 }),
+            Box::new(StreamErrorIncoming::ConnectionErrorIncoming {
+                connection_error: ConnectionErrorIncoming::InternalError("adapter failure".into()),
+            }),
+            Box::new(quinn::ConnectionError::VersionMismatch),
+            Box::new(quinn::ConnectionError::LocallyClosed),
+        ];
+        for error in fatal {
+            assert!(!retryable_stream_error(&error), "{error}");
+        }
+    }
 }

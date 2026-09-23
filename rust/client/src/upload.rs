@@ -2,6 +2,7 @@
 use crate::{
     Error,
     transport::{TRANSFER_RETRY_BACKOFF, Transport},
+    webtransport::{ConnectRejected, SessionSlot},
 };
 use bytes::Bytes;
 use graphite_meter_core::{
@@ -67,7 +68,7 @@ pub struct Upload {
     stop_all: watch::Sender<bool>,
     lanes: JoinSet<()>,
     progress: JoinSet<()>,
-    session: Option<Arc<crate::webtransport::Session>>,
+    session: Option<Arc<SessionSlot>>,
 }
 
 impl Upload {
@@ -168,7 +169,7 @@ impl Upload {
             let session = tokio::select! {
                 biased;
                 () = cancelled(&mut cancel) => return Err("WebTransport upload cancelled during setup".into()),
-                session = owner.transport.webtransport(Route::WtUpload, &query) => session?,
+                session = owner.transport.webtransport_slot(Route::WtUpload, &query) => session?,
             };
             owner.session = Some(Arc::new(session));
         }
@@ -215,7 +216,7 @@ impl Upload {
                             tokio::time::sleep(stagger * index as u32).await;
                         }
                         if let Some(session) = session {
-                            send_wt_lane(&session, datagrams.unwrap_or(false), block, active).await
+                            send_wt_reconnecting(&session, datagrams.unwrap_or(false), block, active).await
                         } else {
                             send_lane(&transport, &id, index, block, active).await
                         }
@@ -541,13 +542,28 @@ async fn send_wt_lane(
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
     if datagrams {
+        let mut size = session
+            .max_datagram_size()
+            .filter(|size| *size > 0)
+            .ok_or("WebTransport peer has no datagram capacity")?
+            .min(block.len());
         loop {
-            let size = session
-                .max_datagram_size()
-                .filter(|size| *size > 0)
-                .ok_or("WebTransport peer has no datagram capacity")?
-                .min(block.len());
-            session.send_datagram(&block[..size]).await?;
+            match session.send_datagram(&block[..size]).await {
+                Ok(()) => {}
+                Err(error)
+                    if error
+                        .downcast_ref::<quinn::SendDatagramError>()
+                        .is_some_and(|error| {
+                            matches!(error, quinn::SendDatagramError::TooLarge)
+                        })
+                        && size > 1 =>
+                {
+                    // Quinn's path MTU may shrink after max_datagram_size was read.
+                    size = (size * 3 / 4).max(1);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
             active.store(true, Ordering::Release);
             tokio::task::yield_now().await;
         }
@@ -565,16 +581,45 @@ async fn send_wt_lane(
         }
     }
 }
+
+async fn send_wt_reconnecting(
+    slot: &SessionSlot,
+    datagrams: bool,
+    block: Bytes,
+    active: Arc<AtomicBool>,
+) -> Result<(), Error> {
+    loop {
+        let session = slot.current().await;
+        let error = match send_wt_lane(&session, datagrams, block.clone(), active.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        if !session.retryable_failure(&error) {
+            return Err(error);
+        }
+        tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
+        if !session.retryable_failure(&error) {
+            return Err(error);
+        }
+        if session.is_closed()
+            && let Err(error) = slot.reconnect(&session).await
+            && (error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>())
+        {
+            return Err(error);
+        }
+    }
+}
+
 async fn progress_feed(
     transport: &Transport,
     id: &str,
     epoch: Instant,
     state: &watch::Sender<State>,
-    session: Option<Arc<crate::webtransport::Session>>,
+    session: Option<Arc<SessionSlot>>,
 ) -> Result<(), Error> {
     if let Some(session) = session {
         let read = async {
-            let mut stream = session.upload_progress().await?;
+            let mut stream = session.current().await.upload_progress().await?;
             let mut ready = false;
             loop {
                 let event = tokio::time::timeout(CONTROL_TIMEOUT, stream.next()).await??;
