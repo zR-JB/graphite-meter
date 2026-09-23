@@ -94,10 +94,10 @@ impl Recv {
         self.assembler.clear();
         // Issue flow control credit for unread data
         // Reliable reset already returned credit for the undeliverable tail.
-        // Its stored cap includes bytes read before the reset, so subtraction
-        // remains valid when the application already consumed beyond the wire cap.
+        // Count only delivered offsets below the cap: unordered reads may have
+        // consumed data beyond it without filling the reliable prefix.
         let credit_end = self.reliable_reset_deliver_cap().unwrap_or(self.end);
-        let read_credits = credit_end - self.assembler.bytes_read();
+        let read_credits = credit_end - self.assembler.delivered_within(0, credit_end);
         // This may send a spurious STOP_SENDING if we've already received all data, but it's a bit
         // fiddly to distinguish that from the case where we've received a FIN but are missing some
         // data that the peer might still be trying to retransmit, in which case a STOP_SENDING is
@@ -245,7 +245,7 @@ impl Recv {
         }
 
         // We cannot un-deliver data already read beyond the reliable size.
-        let deliver_cap = reliable_size.max(self.assembler.bytes_read());
+        let deliver_cap = reliable_size.max(self.assembler.delivered_prefix());
 
         match self.state {
             RecvState::ResetRecvd {
@@ -286,7 +286,9 @@ impl Recv {
                 // longer be delivered. The final size, and thus `data_recvd`, is unchanged.
                 Ok(ResetAtOutcome::Applied {
                     received_delta: 0,
-                    credit: prev_cap - deliver_cap,
+                    credit: prev_cap
+                        - deliver_cap
+                        - self.assembler.delivered_within(deliver_cap, prev_cap),
                 })
             }
             RecvState::Recv { .. } => {
@@ -305,7 +307,9 @@ impl Recv {
                 // be delivered. Data up to the reliable size releases its credit as it is read.
                 Ok(ResetAtOutcome::Applied {
                     received_delta,
-                    credit: final_size - deliver_cap,
+                    credit: final_size
+                        - deliver_cap
+                        - self.assembler.delivered_within(deliver_cap, final_size),
                 })
             }
         }
@@ -452,7 +456,7 @@ impl<'a> Chunks<'a> {
                 error_code,
                 ..
             } => {
-                if rs.assembler.bytes_read() >= reliable_size {
+                if rs.assembler.delivered_prefix() >= reliable_size {
                     // All reliable data has been delivered; surface the reset and dispose of the
                     // stream. Any data buffered beyond the reliable size is dropped undelivered.
                     let state = mem::replace(&mut self.state, ChunksState::Reset(error_code));

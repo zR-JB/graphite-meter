@@ -24,12 +24,11 @@ Current settings and protocol spelling were corroborated against [webtransport-g
 
 ## Integration limits
 
-The pinned Noq branch is not production-ready. The ordered receive-stop credit
-defect is fixed by the local noq-proto source patch below. Its unordered reader
-still mistakes consumed tail bytes for delivery of the reliable prefix. The
-application and HTTP/3 adapter use ordered reads exclusively; unordered reads
-must not be introduced without correcting and validating that defect. Passing
-the interoperability probe or an advisory scan does not establish transport
+The pinned Noq branch is not production-ready. The local noq-proto patch below
+corrects reliable-reset delivery and connection credit for both ordered and
+unordered reads. The application and HTTP/3 adapter still use ordered reads;
+the broader upstream transport has not been exhaustively audited. Passing the
+interoperability probe or an advisory scan does not establish transport
 correctness.
 
 The experimental server integrates these data paths, but complete current-draft
@@ -64,11 +63,14 @@ that tail again inflates connection flow-control credit. The stored cap is the
 maximum of the wire reliable size and bytes already read, preserving subtraction
 when an ordered application read beyond the later reliable size.
 
-Two regressions in `src/connection/streams/state.rs` cover both event orders:
+Regressions in `src/connection/streams/state.rs` cover both event orders:
 reset(final 100, reliable 40), read 10, stop; and read 80, reset(final 100,
 reliable 40), stop. Each must release exactly 100 credits over its lifetime.
-Unpatched upstream releases 160 and 120 respectively. This patch deliberately
-does not claim to repair the separate unordered delivery-accounting defect.
+Unpatched upstream releases 160 and 120 respectively. Unordered reads now track
+delivered byte ranges, so a consumed tail neither masquerades as the reliable
+prefix nor earns connection credit twice. Plain and reliable reset after a
+stopped receive stream now release only the unseen final tail. The focused reset
+tests and complete 410-test noq-proto suite pass locally.
 
 ## Native client support
 
