@@ -143,6 +143,8 @@ jobs:
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
       - name: Check experimental Rust implementation
         run: mise run rust-check
+      - name: Check optional Rust AWS-LC provider
+        run: mise run rust-crypto-check
       - name: Audit Rust dependencies
         working-directory: rust
         run: |
