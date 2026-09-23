@@ -11,6 +11,9 @@ and size comparisons have not been established.
 
 Run `mise run rust-client-run` to open the experimental TUI, or pass
 `-- --url https://your-server`. Press `r` to run, `?` for help, and `q` to quit.
+Use left/right arrows for the four setup pages and Tab for the live view. The
+carbon palette follows `COLORFGBG` when available; set `GM_TUI_THEME=light` or
+`dark` to override it. `NO_COLOR` disables color.
 The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` creates an experimental Linux amd64 GNU

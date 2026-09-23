@@ -15,6 +15,7 @@ pub mod upload;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
+mod theme;
 mod tls;
 pub mod webtransport;
 

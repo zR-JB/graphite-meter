@@ -3,6 +3,7 @@ use crate::{
     Error,
     config::Config,
     model::{Phase, Snapshot, Stage},
+    theme::Theme,
 };
 use crossterm::{
     event::{
@@ -15,13 +16,13 @@ use futures_util::StreamExt;
 use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Constraint, Layout, Margin, Rect},
+    style::{Modifier, Style},
     symbols::Marker,
     text::{Line, Span},
     widgets::{
-        Axis, Block, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState,
-        Paragraph, Row, Table, Wrap,
+        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem,
+        ListState, Paragraph, Row, Table, Tabs, Wrap,
     },
 };
 use std::{
@@ -42,7 +43,6 @@ pub enum Command {
 const MAX_TEXT: usize = 4096;
 const MAX_POINTS: usize = 300;
 const MAX_SERVERS: usize = 128;
-const ACCENT: Color = Color::Cyan;
 
 /// Return paths, cancellation and partial initialization all restore the terminal.
 /// Ratatui additionally installs its panic hook before entering raw mode.
@@ -148,25 +148,59 @@ enum Field {
 const FIELDS: [Field; 21] = [
     Field::Url,
     Field::Servers,
-    Field::ThroughputOrigin,
-    Field::Protocol,
-    Field::ThroughputTransport,
-    Field::LatencyOrigin,
-    Field::LatencyTransport,
     Field::LatencyStage,
     Field::DownloadStage,
     Field::UploadStage,
     Field::BidiStage,
+    Field::Streams,
+    Field::AutoStreams,
+    Field::LoadedLatency,
     Field::Warmup,
     Field::LatencyDuration,
     Field::DownloadDuration,
     Field::UploadDuration,
     Field::BidiDuration,
-    Field::Streams,
-    Field::AutoStreams,
     Field::PingInterval,
-    Field::LoadedLatency,
+    Field::ThroughputOrigin,
+    Field::Protocol,
+    Field::ThroughputTransport,
+    Field::LatencyOrigin,
+    Field::LatencyTransport,
     Field::Insecure,
+];
+
+#[derive(Clone, Copy)]
+struct SetupPage {
+    label: &'static str,
+    start: usize,
+    end: usize,
+}
+impl SetupPage {
+    fn fields(self) -> &'static [Field] {
+        &FIELDS[self.start..self.end]
+    }
+}
+const PAGES: [SetupPage; 4] = [
+    SetupPage {
+        label: "Server",
+        start: 0,
+        end: 2,
+    },
+    SetupPage {
+        label: "Run setup",
+        start: 2,
+        end: 9,
+    },
+    SetupPage {
+        label: "Timing",
+        start: 9,
+        end: 15,
+    },
+    SetupPage {
+        label: "Connections",
+        start: 15,
+        end: 21,
+    },
 ];
 impl Field {
     fn label(self) -> &'static str {
@@ -308,6 +342,8 @@ impl Edit {
 struct Ui {
     config: Config,
     snapshot: Snapshot,
+    theme: Theme,
+    page: usize,
     rows: ListState,
     servers: ListState,
     live: bool,
@@ -327,6 +363,8 @@ impl Ui {
         Self {
             config,
             snapshot,
+            theme: Theme::terminal(),
+            page: 0,
             rows,
             servers,
             live: false,
@@ -359,6 +397,10 @@ impl Ui {
                 self.snapshot.phase,
                 Phase::Preparing | Phase::Warmup | Phase::Measuring
             )
+    }
+    fn change_page(&mut self, direction: isize) {
+        self.page = (self.page as isize + direction).rem_euclid(PAGES.len() as isize) as usize;
+        self.rows.select(Some(0));
     }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) {
         match commands.try_send(command) {
@@ -461,11 +503,13 @@ impl Ui {
                 self.config.latency_transport = None;
                 self.notice = "Transport paths set to automatic.".into();
             }
+            KeyCode::Left if !self.live => self.change_page(-1),
+            KeyCode::Right if !self.live => self.change_page(1),
             KeyCode::Up | KeyCode::Char('k') if !self.live => {
-                move_selection(&mut self.rows, FIELDS.len(), -1)
+                move_selection(&mut self.rows, PAGES[self.page].fields().len(), -1)
             }
             KeyCode::Down | KeyCode::Char('j') if !self.live => {
-                move_selection(&mut self.rows, FIELDS.len(), 1)
+                move_selection(&mut self.rows, PAGES[self.page].fields().len(), 1)
             }
             KeyCode::Enter | KeyCode::Char(' ') if !self.live && !self.active() => self.activate(),
             _ => {}
@@ -489,7 +533,13 @@ impl Ui {
         }
     }
     fn activate(&mut self) {
-        let field = FIELDS[self.rows.selected().unwrap_or(0)];
+        let Some(&field) = self
+            .rows
+            .selected()
+            .and_then(|index| PAGES[self.page].fields().get(index))
+        else {
+            return;
+        };
         if let Some(stage) = field.stage() {
             if self.config.stages.contains(&stage) {
                 self.config.stages.retain(|existing| *existing != stage);
@@ -626,27 +676,58 @@ impl Ui {
             );
             return;
         }
+        let area = area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
         let regions = Layout::vertical([
             Constraint::Length(3),
             Constraint::Min(4),
             Constraint::Length(3),
         ])
         .split(area);
-        let status = format!(
-            "{:?} · {}",
-            self.snapshot.phase,
-            safe_text(&self.snapshot.status, 160)
-        );
+        let status = if self.snapshot.status.is_empty() {
+            format!("{:?}", self.snapshot.phase)
+        } else {
+            self.snapshot.status.clone()
+        };
+        let status = safe_text(&status, usize::from(regions[0].width / 2).saturating_sub(4));
+        let title = " Graphite Meter ";
+        let status_pill = format!(" {status} ");
+        let spacer =
+            usize::from(regions[0].width).saturating_sub(title.len() + status_pill.chars().count());
+        let status_background = match self.snapshot.phase {
+            Phase::Complete => self.theme.success,
+            Phase::Cancelled => self.theme.warning,
+            Phase::Failed => self.theme.error,
+            _ => self.theme.brand_strong,
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
                     Span::styled(
-                        "GRAPHITE METER",
-                        Style::new().fg(ACCENT).add_modifier(Modifier::BOLD),
+                        title,
+                        Style::new()
+                            .fg(self.theme.inverse)
+                            .bg(self.theme.brand)
+                            .add_modifier(Modifier::BOLD),
                     ),
-                    Span::raw(format!("  Rust client · {status}")),
+                    Span::raw(" ".repeat(spacer)),
+                    Span::styled(
+                        status_pill,
+                        Style::new()
+                            .fg(self.theme.inverse)
+                            .bg(status_background)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]),
-                Line::from(safe_text(&self.config.url, 200)),
+                Line::from(vec![
+                    Span::styled("native rust client  ", Style::new().fg(self.theme.muted)),
+                    Span::styled(
+                        safe_text(&self.config.url, 200),
+                        Style::new().fg(self.theme.brand_strong),
+                    ),
+                ]),
             ]),
             regions[0],
         );
@@ -656,7 +737,31 @@ impl Ui {
             self.draw_setup(frame, regions[1]);
         }
         let notice = self.snapshot.error.as_deref().unwrap_or(&self.notice);
-        frame.render_widget(Paragraph::new(vec![Line::styled(safe_text(notice,300),Style::new().fg(Color::Yellow)),Line::from("r run/rerun · v verify · s servers · l latency focus · Tab setup/live · Esc cancel/back · ? help · q quit")]).wrap(Wrap {trim:true}),regions[2]);
+        let notice_color = if self.snapshot.error.is_some() {
+            self.theme.error
+        } else {
+            self.theme.warning
+        };
+        let shortcuts = match regions[2].width {
+            0..=74 => "r run · Tab view · ? help · q quit",
+            75..=109 => {
+                "r run · v verify · s servers · ←/→ pages · Tab view · Esc cancel · ? help · q quit"
+            }
+            _ => {
+                "r run · v verify · s servers · l latency · ←/→ setup pages · Tab setup/live · Esc cancel · ? help · q quit"
+            }
+        };
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::styled(
+                    safe_text(notice, usize::from(regions[2].width) * 2),
+                    Style::new().fg(notice_color),
+                ),
+                Line::styled(shortcuts, Style::new().fg(self.theme.muted)),
+            ])
+            .wrap(Wrap { trim: true }),
+            regions[2],
+        );
         if let Some(auth) = &self.snapshot.auth {
             let area = popup(frame.area(), 100, 10);
             frame.render_widget(Clear, area);
@@ -669,7 +774,7 @@ impl Ui {
             frame.render_widget(
                 Paragraph::new(text)
                     .wrap(Wrap { trim: false })
-                    .block(panel("Client approval required")),
+                    .block(panel("Client approval required", self.theme)),
                 area,
             );
         }
@@ -708,20 +813,40 @@ impl Ui {
                         Span::raw(after),
                     ]),
                     Line::from("Enter apply · Esc discard · ←/→ Home/End move"),
-                    Line::styled(safe_text(&self.notice, 200), Style::new().fg(Color::Yellow)),
+                    Line::styled(
+                        safe_text(&self.notice, 200),
+                        Style::new().fg(self.theme.warning),
+                    ),
                 ])
-                .block(panel(edit.field.label())),
+                .block(panel(edit.field.label(), self.theme)),
                 area,
             );
         }
     }
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
-        let regions = if area.width >= 95 {
-            Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).split(area)
+        let setup = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+        frame.render_widget(
+            Tabs::new(PAGES.map(|page| page.label))
+                .select(self.page)
+                .style(Style::new().fg(self.theme.muted))
+                .highlight_style(
+                    Style::new()
+                        .fg(self.theme.inverse)
+                        .bg(self.theme.brand)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .divider(" "),
+            setup[0],
+        );
+        let content = setup[1];
+        let regions = if content.width >= 95 {
+            Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(content)
         } else {
-            Layout::horizontal([Constraint::Percentage(100), Constraint::Length(0)]).split(area)
+            Layout::horizontal([Constraint::Percentage(100), Constraint::Length(0)]).split(content)
         };
-        let items = FIELDS
+        let items = PAGES[self.page]
+            .fields()
             .iter()
             .map(|field| {
                 let value = field.value(&self.config);
@@ -733,15 +858,20 @@ impl Ui {
                         } else {
                             safe_text(&value, 200)
                         },
-                        Style::new().fg(ACCENT),
+                        Style::new().fg(self.theme.brand_strong),
                     ),
                 ]))
             })
             .collect::<Vec<_>>();
         frame.render_stateful_widget(
             List::new(items)
-                .block(panel("Setup · Enter edit/toggle"))
-                .highlight_style(Style::new().bg(Color::DarkGray))
+                .block(panel("Enter edit/toggle", self.theme))
+                .highlight_style(
+                    Style::new()
+                        .fg(self.theme.text)
+                        .bg(self.theme.surface)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("› "),
             regions[0],
             &mut self.rows,
@@ -777,7 +907,7 @@ impl Ui {
             );
             frame.render_widget(
                 Paragraph::new(text)
-                    .block(panel("Run plan"))
+                    .block(panel("Run plan", self.theme))
                     .wrap(Wrap { trim: true }),
                 regions[1],
             );
@@ -823,8 +953,8 @@ impl Ui {
         let stage = self.snapshot.stage.map_or("Waiting", Stage::name);
         frame.render_widget(
             Paragraph::new(metrics)
-                .block(panel(stage))
-                .style(Style::new().fg(ACCENT)),
+                .block(panel(stage, self.theme))
+                .style(Style::new().fg(self.theme.brand_strong)),
             regions[0],
         );
         let points = self
@@ -888,23 +1018,26 @@ impl Ui {
                 .name(if latency { "RTT ms" } else { "↓ Mbps" })
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Scatter)
-                .style(Style::new().fg(Color::Cyan))
+                .style(Style::new().fg(self.theme.brand))
                 .data(&down),
             Dataset::default()
                 .name(if latency { "" } else { "↑ Mbps" })
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Scatter)
-                .style(Style::new().fg(Color::Magenta))
+                .style(Style::new().fg(self.theme.brand_strong))
                 .data(&up),
         ];
         // Scatter plots leave missing observations empty; no loss is interpolated.
         frame.render_widget(
             Chart::new(datasets)
-                .block(panel(if latency {
-                    "Recent observed latency"
-                } else {
-                    "Recent observed throughput"
-                }))
+                .block(panel(
+                    if latency {
+                        "Recent observed latency"
+                    } else {
+                        "Recent observed throughput"
+                    },
+                    self.theme,
+                ))
                 .x_axis(
                     Axis::default()
                         .bounds([start, end])
@@ -957,9 +1090,12 @@ impl Ui {
             )
             .header(
                 Row::new(["Stage", "Down", "Up", "RTT p50", "Timeout", "Pending"])
-                    .style(Style::new().fg(ACCENT)),
+                    .style(Style::new().fg(self.theme.brand_strong)),
             )
-            .block(panel("Stage results · receiver-accounted upload")),
+            .block(panel(
+                "Stage results · receiver-accounted upload",
+                self.theme,
+            )),
             regions[2],
         );
     }
@@ -988,21 +1124,34 @@ impl Ui {
                             safe_text(detail, 160)
                         ),
                         Style::new().fg(if server.error.is_some() {
-                            Color::Yellow
+                            self.theme.error
                         } else {
-                            Color::DarkGray
+                            self.theme.muted
                         }),
                     ),
                 ])
             })
             .collect::<Vec<_>>();
         if items.is_empty() {
-            frame.render_widget(Paragraph::new("No catalogue yet. Esc returns to setup; v discovers servers.\nServer IDs can also be entered in setup.").wrap(Wrap{trim:true}).block(panel("Servers")),area);
+            frame.render_widget(
+                Paragraph::new("No catalogue yet. Esc returns to setup; v discovers servers.\nServer IDs can also be entered in setup.")
+                    .wrap(Wrap { trim: true })
+                    .block(panel("Servers", self.theme)),
+                area,
+            );
         } else {
             frame.render_stateful_widget(
                 List::new(items)
-                    .block(panel("Servers · Space toggle · Enter apply · maximum four"))
-                    .highlight_style(Style::new().bg(Color::DarkGray)),
+                    .block(panel(
+                        "Servers · Space toggle · Enter apply · maximum four",
+                        self.theme,
+                    ))
+                    .highlight_style(
+                        Style::new()
+                            .fg(self.theme.text)
+                            .bg(self.theme.surface)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 area,
                 &mut self.servers,
             );
@@ -1011,7 +1160,23 @@ impl Ui {
     fn draw_help(&self, frame: &mut Frame) {
         let area = popup(frame.area(), 78, 18);
         frame.render_widget(Clear, area);
-        frame.render_widget(Paragraph::new("SETUP\n↑/↓ or j/k  select setting     Enter/Space  edit or toggle\ns  server chooser             v  verify configuration\na  automatic transport paths  r  start measurement\n\nMEASUREMENT\nEsc  cancel active work        r  rerun after completion\nl  next latency server        Tab  setup / live view\n\nEDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\nPaste is bounded and terminal controls are removed.\n\nq or Ctrl-C  quit              ? or Esc  close help\nMissing samples remain missing; partial results stay labelled.").block(panel("Keyboard help")).wrap(Wrap{trim:true}),area);
+        frame.render_widget(
+            Paragraph::new(concat!(
+                "SETUP\n↑/↓ or j/k  select setting     ←/→  change setup page\n",
+                "Enter/Space  edit or toggle   s  server chooser\n",
+                "v  verify configuration    a  automatic transport paths\n",
+                "r  start measurement\n\n",
+                "MEASUREMENT\nEsc  cancel active work        r  rerun after completion\n",
+                "l  next latency server        Tab  setup / live view\n\n",
+                "EDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\n",
+                "Paste is bounded and terminal controls are removed.\n\n",
+                "q or Ctrl-C  quit              ? or Esc  close help\n",
+                "Missing samples remain missing; partial results stay labelled.",
+            ))
+            .block(panel("Keyboard help", self.theme))
+            .wrap(Wrap { trim: true }),
+            area,
+        );
     }
 }
 
@@ -1024,8 +1189,17 @@ fn move_selection(state: &mut ListState, length: usize, direction: isize) {
         (state.selected().unwrap_or(0) as isize + direction).rem_euclid(length as isize) as usize;
     state.select(Some(next));
 }
-fn panel(title: &str) -> Block<'_> {
-    Block::default().borders(Borders::ALL).title(title)
+fn panel(title: &str, theme: Theme) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(theme.border))
+        .title(Span::styled(
+            title,
+            Style::new()
+                .fg(theme.brand_strong)
+                .add_modifier(Modifier::BOLD),
+        ))
 }
 fn popup(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width.saturating_sub(2));
