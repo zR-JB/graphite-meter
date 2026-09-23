@@ -21,6 +21,7 @@ fn native_and_public_discovery_match_shared_golden() {
     let mut expected: serde_json::Value =
         serde_json::from_str(include_str!("../../../api/preflight.golden.json")).unwrap();
     expected["generation"] = document.generation.clone().into();
+    expected["implementation"] = "rust".into();
     expected["capabilities"]["uploadCheckpoint"] = true.into();
     assert_eq!(serde_json::to_value(&document).unwrap(), expected);
     assert_eq!(document.generation.len(), 32);
