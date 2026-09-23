@@ -15,6 +15,7 @@ go/dist
 go/internal/static/dist
 .go-cache
 .tools
+rust/target
 **/.DS_Store
 **/__pycache__
 .claude

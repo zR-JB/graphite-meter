@@ -259,8 +259,15 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
     if not path.is_file():
         fail("missing .github/actions/build-oci/action.yml")
     text = path.read_text(encoding="utf-8")
+    # Source export must not satisfy invariants missing from the image build.
+    image_build = text.split("\n    - name: Export Rust server dependency source", 1)[0]
     for required in (
-        "platforms: linux/amd64,linux/arm64",
+        "default: go",
+        'case "$IMPLEMENTATION" in',
+        "dockerfile=container/Dockerfile\n            platforms=linux/amd64,linux/arm64",
+        "dockerfile=container/Dockerfile.rust\n            platforms=linux/amd64",
+        '*) echo "unknown server implementation" >&2; exit 2 ;;',
+        "platforms: ${{ steps.source.outputs.platforms }}",
         "outputs: type=oci,dest=${{ inputs.output }}",
         "provenance: mode=max",
         "cache-image: 'false'",
@@ -272,7 +279,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
         'context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"',
         "context: ${{ steps.source.outputs.context }}",
-        "file: container/Dockerfile",
+        "file: ${{ steps.source.outputs.dockerfile }}",
         "CLIENT_VERSION=${{ inputs.version }}",
         "GM_CLIENT_BUILD_PROFILE=prod",
         "GM_CLIENT_REVISION=${{ inputs.revision }}",
@@ -280,7 +287,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "DOCKER_BUILD_RECORD_UPLOAD: 'false'",
         "bun=$(python3 scripts/ci/toolchains.py get runtime.bun)",
     ):
-        if required not in text:
+        if required not in image_build:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
     if re.search(
         r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*$",
