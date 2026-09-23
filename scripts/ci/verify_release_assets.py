@@ -161,7 +161,6 @@ def expected_rust_artifacts(version: str, selection: str) -> set[str]:
 def verify_rust_server_source(dist: Path, version: str) -> None:
     source = dist / f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz"
     names = archive_names(source)
-    verify_no_certificate_material(source, names)
     if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= names:
         raise VerificationError("Rust server source offer lacks inventory, notices, or patch provenance")
     if not read_tar_text(source, "LEGAL.txt").strip():
@@ -186,16 +185,37 @@ def verify_rust_server_source(dist: Path, version: str) -> None:
     components = inventory.get("components")
     if not isinstance(components, list) or not 1 <= len(components) <= 4096:
         raise VerificationError("Rust server source inventory has no components")
+    package_directories: set[str] = set()
     for item in components:
         component = item.get("component") if isinstance(item, dict) else None
         if not isinstance(component, dict):
             raise VerificationError("invalid Rust server source component")
         name, component_version = component.get("name"), component.get("version")
-        if not isinstance(name, str) or not isinstance(component_version, str):
+        if (
+            not isinstance(name, str)
+            or SAFE_RELEASE_NAME.fullmatch(name) is None
+            or not isinstance(component_version, str)
+            or SAFE_RELEASE_NAME.fullmatch(component_version) is None
+        ):
             raise VerificationError("invalid Rust server source component identity")
-        prefix = f"third_party/cargo/{name}-{component_version}/"
+        directory = f"{name}-{component_version}"
+        package_directories.add(directory)
+        prefix = f"third_party/cargo/{directory}/"
         if not any(path.startswith(prefix) for path in names):
             raise VerificationError(f"Rust server source omits {name} {component_version}")
+    for path in names:
+        if not path.startswith("third_party/cargo/"):
+            continue
+        parts = path.split("/", 3)
+        if len(parts) != 4 or parts[2] not in package_directories:
+            raise VerificationError(f"Rust server source contains undeclared Cargo tree: {path}")
+    # Published crate sources include public certificate and key test vectors.
+    # Preserve the checked Cargo source, while rejecting any such material in
+    # repository-owned files and other release content.
+    first_party_and_other_sources = {
+        path for path in names if not path.startswith("third_party/cargo/")
+    }
+    verify_no_certificate_material(source, first_party_and_other_sources)
 
 
 def verify_rust_client_archive(dist: Path, version: str) -> None:

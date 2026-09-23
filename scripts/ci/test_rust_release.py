@@ -89,7 +89,15 @@ class RustServerReleaseTests(unittest.TestCase):
             "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
             "components": [{"component": {"name": "example", "version": "1.0"}}],
         }
-        for mutation in ("valid", "package", "lock", "missing"):
+        for mutation in (
+            "valid",
+            "cargo_fixture",
+            "package",
+            "lock",
+            "missing",
+            "first_party_key",
+            "undeclared_tree",
+        ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 dist = Path(temporary)
                 metadata = dict(inventory)
@@ -104,6 +112,12 @@ class RustServerReleaseTests(unittest.TestCase):
                 }
                 if mutation != "missing":
                     files["third_party/cargo/example-1.0/source.rs"] = b"source"
+                if mutation == "cargo_fixture":
+                    files["third_party/cargo/example-1.0/tests/test_vector.pem"] = b"public upstream fixture"
+                if mutation == "first_party_key":
+                    files["rust/vendor/.dev-certs/private.key"] = b"must not ship"
+                if mutation == "undeclared_tree":
+                    files["third_party/cargo/other-2.0/tests/key.pem"] = b"not in inventory"
                 archive_path = dist / next(iter(expected_rust_artifacts("1.2.3", "server")))
                 with tarfile.open(archive_path, "w:gz") as archive:
                     for name, payload in files.items():
@@ -111,7 +125,7 @@ class RustServerReleaseTests(unittest.TestCase):
                         member.size = len(payload)
                         archive.addfile(member, io.BytesIO(payload))
                 with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
-                    if mutation == "valid":
+                    if mutation in {"valid", "cargo_fixture"}:
                         verify_rust_server_source(dist, "1.2.3")
                     else:
                         with self.assertRaises(VerificationError):
