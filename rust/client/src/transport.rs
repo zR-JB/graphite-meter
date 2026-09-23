@@ -177,7 +177,8 @@ impl Transport {
                     .header(http::header::CONTENT_LENGTH, length)
                     .body(reqwest::Body::wrap_stream(body))
                     .send()
-                    .await?;
+                    .await
+                    .map_err(reqwest::Error::without_url)?;
                 let response = self.http.check_response(response)?;
                 crate::net::bounded_body(response).await?;
             }
@@ -218,7 +219,10 @@ impl Body<'_> {
     pub async fn chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let chunk = timeout_at(self.deadline, async {
             match &mut self.inner {
-                BodyInner::Http(response) => Ok(response.chunk().await?),
+                BodyInner::Http(response) => Ok(response
+                    .chunk()
+                    .await
+                    .map_err(reqwest::Error::without_url)?),
                 BodyInner::H3(stream) => stream.recv_data().await,
             }
         })

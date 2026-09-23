@@ -71,7 +71,6 @@ impl Http {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(CONTROL_TIMEOUT)
-                .read_timeout(CONTROL_TIMEOUT)
                 .tls_danger_accept_invalid_certs(insecure)
         };
         Ok(Self {
@@ -119,7 +118,8 @@ impl Http {
             CONTROL_TIMEOUT,
             self.builder(method, target, protocol)?.send(),
         )
-        .await??;
+        .await?
+        .map_err(reqwest::Error::without_url)?;
         self.check_response(response)
     }
     pub fn check_response(&self, response: Response) -> Result<Response> {
@@ -315,7 +315,8 @@ impl Http {
                         .json(&serde_json::json!({"verifier":pending.verifier.as_str()}))
                         .send(),
                 )
-                .await??;
+                .await?
+                .map_err(reqwest::Error::without_url)?;
                 let status = response.status();
                 let data = tokio::time::timeout(CONTROL_TIMEOUT, bounded_body(response)).await??;
                 if status == StatusCode::OK {
@@ -362,7 +363,11 @@ async fn read_bounded_body(mut response: Response) -> Result<Vec<u8>> {
         return Err("control response exceeds 64 KiB".into());
     }
     let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(reqwest::Error::without_url)?
+    {
         if chunk.len() > CONTROL_LIMIT - body.len() {
             return Err("control response exceeds 64 KiB".into());
         }
