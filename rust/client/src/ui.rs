@@ -402,6 +402,15 @@ impl Ui {
         self.page = (self.page as isize + direction).rem_euclid(PAGES.len() as isize) as usize;
         self.rows.select(Some(0));
     }
+    fn change_section(&mut self, direction: isize) {
+        let current = if self.live { PAGES.len() } else { self.page };
+        let next = (current as isize + direction).rem_euclid((PAGES.len() + 1) as isize) as usize;
+        self.live = next == PAGES.len();
+        if !self.live {
+            self.page = next;
+            self.rows.select(Some(0));
+        }
+    }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) {
         match commands.try_send(command) {
             Ok(()) => {
@@ -490,7 +499,8 @@ impl Ui {
             }
             KeyCode::Esc if self.active() => self.send(Command::Cancel, commands),
             KeyCode::Esc => self.live = false,
-            KeyCode::Tab | KeyCode::BackTab => self.live = !self.live,
+            KeyCode::Tab => self.change_section(1),
+            KeyCode::BackTab => self.change_section(-1),
             KeyCode::Char('s') if !self.active() => {
                 self.chooser = true;
                 self.notice = "Space selects up to four servers; Enter applies.".into();
@@ -743,12 +753,12 @@ impl Ui {
             self.theme.warning
         };
         let shortcuts = match regions[2].width {
-            0..=74 => "r run · Tab view · ? help · q quit",
+            0..=74 => "r run · Tab section · ? help · q quit",
             75..=109 => {
-                "r run · v verify · s servers · ←/→ pages · Tab view · Esc cancel · ? help · q quit"
+                "r run · v verify · s servers · Tab sections · ←/→ pages · Esc cancel · ? help · q quit"
             }
             _ => {
-                "r run · v verify · s servers · l latency · ←/→ setup pages · Tab setup/live · Esc cancel · ? help · q quit"
+                "r run · v verify · s servers · l latency · Tab sections · ←/→ setup pages · Esc cancel · ? help · q quit"
             }
         };
         frame.render_widget(
@@ -1167,7 +1177,7 @@ impl Ui {
                 "v  verify configuration    a  automatic transport paths\n",
                 "r  start measurement\n\n",
                 "MEASUREMENT\nEsc  cancel active work        r  rerun after completion\n",
-                "l  next latency server        Tab  setup / live view\n\n",
+                "l  next latency server        Tab/Shift-Tab  section\n\n",
                 "EDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\n",
                 "Paste is bounded and terminal controls are removed.\n\n",
                 "q or Ctrl-C  quit              ? or Esc  close help\n",
@@ -1255,5 +1265,21 @@ mod tests {
         assert_eq!(edit.text(), "a界b");
         edit.insert(&"x".repeat(MAX_TEXT * 2));
         assert_eq!(edit.chars.len(), MAX_TEXT);
+    }
+    #[test]
+    fn sections_cycle_through_setup_and_live_in_both_directions() {
+        let mut ui = Ui::new(Config::default(), Snapshot::default());
+        for page in 1..PAGES.len() {
+            ui.change_section(1);
+            assert_eq!(ui.page, page);
+            assert!(!ui.live);
+        }
+        ui.change_section(1);
+        assert!(ui.live);
+        ui.change_section(1);
+        assert_eq!(ui.page, 0);
+        assert!(!ui.live);
+        ui.change_section(-1);
+        assert!(ui.live);
     }
 }
