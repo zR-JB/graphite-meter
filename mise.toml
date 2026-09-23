@@ -498,6 +498,20 @@ dir = "go"
 raw = true
 run = "go run ./cmd/graphite-meter-client"
 
+[tasks.tui]
+description = "Run the native TUI; select Rust with GM_IMPLEMENTATION=rust"
+raw = true
+raw_args = true
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+case "${GM_IMPLEMENTATION:-go}" in
+  go) cd go && go run ./cmd/graphite-meter-client "$@" ;;
+  rust) cd rust && cargo run --locked --bin graphite-meter-client -- "$@" ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+'''
+
 [tasks.dev]
 description = "Build the development client and run the embedded server"
 raw = true

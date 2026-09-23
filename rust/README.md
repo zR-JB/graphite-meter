@@ -9,8 +9,10 @@ press `l` to change the displayed server. Full parity validation is unfinished.
 Preliminary footprint measurements are promising; feature-complete performance
 and size comparisons have not been established.
 
-Run `mise run rust-client-run` to open the experimental TUI, or pass
-`-- --url https://your-server`. Press `r` to run, `?` for help, and `q` to quit.
+Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
+`--url https://your-server`. `mise run tui` selects Go by default.
+`mise run rust-client-run -- --url https://your-server` remains available.
+Press `r` to run, `?` for help, and `q` to quit.
 Use left/right arrows for the four setup pages and Tab/Shift-Tab to cycle through
 setup and the live view. The carbon palette follows `COLORFGBG` when available
 and adapts to truecolor, 256-color, or ANSI terminals. Set `GM_TUI_THEME=light`
