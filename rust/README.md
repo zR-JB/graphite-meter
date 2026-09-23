@@ -6,8 +6,10 @@ download, upload, and bidirectional stages. A failed transfer server is removed
 from subsequent stages while surviving servers continue; affected results stay
 marked partial. Latency observations and results remain separate for each server;
 press `l` to change the displayed server. Full parity validation is unfinished.
-Preliminary footprint measurements are promising; feature-complete performance
-and size comparisons have not been established.
+Matched local HTTP/3 downloads show lower peak server memory with the adaptive
+QUIC send window, but Rust server CPU remains above Go in that workload.
+Browser, WebTransport, WAN, and full application performance comparisons are
+still needed before claiming a general improvement.
 
 Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
 `--url https://your-server`. `mise run tui` selects Go by default.

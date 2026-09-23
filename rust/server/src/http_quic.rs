@@ -13,6 +13,8 @@ const MAX_PENDING_STREAMS: usize = 64;
 const SESSION_QUEUE: usize = 32;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 const WT_SESSION_GONE: u64 = 0x170d7b68;
+const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
+const MAX_SEND_WINDOW: u64 = 4 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
@@ -30,7 +32,7 @@ impl HttpServer {
         transport.max_concurrent_uni_streams(260_u32.into());
         transport.stream_receive_window((1024 * 1024_u32).into());
         transport.receive_window((4 * 1024 * 1024_u32).into());
-        transport.send_window(4 * 1024 * 1024);
+        transport.send_window(MIN_SEND_WINDOW);
         transport.datagram_receive_buffer_size(Some(64 * 1024));
         transport.datagram_send_buffer_size(64 * 1024);
         transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
@@ -106,9 +108,15 @@ impl HttpServer {
         initializing.0.take();
         let mut expiry = tokio::time::interval(Duration::from_secs(1));
         expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut tuning = tokio::time::interval(Duration::from_millis(250));
+        tuning.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut window = SendWindow::new();
         loop {
             tokio::select! {
                 _ = expiry.tick() => connection.sessions.expire(),
+                _ = tuning.tick(), if !connection.requests.is_empty() && window.current < MAX_SEND_WINDOW => {
+                    window.update(&connection.quic);
+                }
                 Some(_) = connection.requests.next() => {},
                 Some(result) = connection.cleanup.next() => result?,
                 Some(reset) = pending_resets.recv() => {
@@ -161,6 +169,65 @@ impl HttpServer {
             }
         }
     }
+}
+
+struct SendWindow {
+    last: Option<(tokio::time::Instant, u64)>,
+    current: u64,
+}
+
+impl SendWindow {
+    fn new() -> Self {
+        Self {
+            last: None,
+            current: MIN_SEND_WINDOW,
+        }
+    }
+
+    fn update(&mut self, connection: &quinn::Connection) {
+        // Read the aggregate first so a concurrent send on the initial path
+        // cannot look like traffic on another path.
+        let all_sent = connection.stats().udp_tx.bytes;
+        let Some(path) = connection.path_stats(quinn::PathId::ZERO) else {
+            connection.set_send_window(MAX_SEND_WINDOW);
+            self.current = MAX_SEND_WINDOW;
+            return;
+        };
+        // A second path invalidates this path's throughput estimate. Restore
+        // the original window rather than cap a migrated connection.
+        if all_sent > path.udp_tx.bytes {
+            connection.set_send_window(MAX_SEND_WINDOW);
+            self.current = MAX_SEND_WINDOW;
+            return;
+        }
+        let now = tokio::time::Instant::now();
+        let sent = path.udp_tx.bytes;
+        if let Some((last, previous)) = self.last {
+            // Two observed bandwidth-delay products allow a new path to
+            // grow without reserving the full window on fast local links.
+            let target = desired_send_window(
+                sent.saturating_sub(previous),
+                path.rtt,
+                now.duration_since(last),
+            );
+            if target > self.current.saturating_add(256 * 1024) {
+                connection.set_send_window(target);
+                self.current = target;
+            }
+        }
+        self.last = Some((now, sent));
+    }
+}
+
+fn desired_send_window(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
+    let Some(demand) = u128::from(sent)
+        .saturating_mul(rtt.as_nanos())
+        .saturating_mul(2)
+        .checked_div(elapsed.as_nanos())
+    else {
+        return MIN_SEND_WINDOW;
+    };
+    demand.clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
 }
 
 struct OwnedConnection {
@@ -318,7 +385,26 @@ fn stop(mut stream: ReceiveStream) {
 
 #[cfg(test)]
 mod tests {
-    use super::Sessions;
+    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, Sessions, desired_send_window};
+    use std::time::Duration;
+
+    #[test]
+    fn send_window_keeps_local_traffic_small_but_allows_high_rtt_paths_to_grow() {
+        let elapsed = Duration::from_millis(250);
+        let sent = 8 * 1024 * 1024;
+        assert_eq!(
+            desired_send_window(sent, Duration::from_millis(1), elapsed),
+            MIN_SEND_WINDOW
+        );
+        assert_eq!(
+            desired_send_window(sent, Duration::from_millis(100), elapsed),
+            MAX_SEND_WINDOW
+        );
+        assert_eq!(
+            desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
+            MIN_SEND_WINDOW
+        );
+    }
 
     #[test]
     fn session_reservation_is_exclusive_and_released_on_drop() {
