@@ -206,9 +206,22 @@ impl HttpServer {
                     event = events.recv() => match event {
                         None => break,
                         Some(SessionEvent::Datagram { payload, _budget }) => {
-                            touch(&activity);
-                            if path == "/wt/ping" { if let Some(reply) = crate::ping::reply(&payload) { let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?); } }
-                            else if let Some(lane) = &mut datagram_lane { lane.record(payload.len()); }
+                            match path {
+                                "/wt/ping" => {
+                                    touch(&activity);
+                                    if let Some(reply) = crate::ping::reply(&payload) {
+                                        let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?);
+                                    }
+                                }
+                                "/wt/download" if datagrams => touch(&activity),
+                                "/wt/upload" => {
+                                    if let Some(lane) = &mut datagram_lane {
+                                        lane.record(payload.len());
+                                        touch(&activity);
+                                    }
+                                }
+                                _ => {} // A route without a datagram lane gets no idle credit.
+                            }
                         }
                         Some(SessionEvent::Stream(mut incoming)) => {
                             if path != "/wt/upload" || lanes.len() >= MAX_LANES { h3::quic::RecvStream::stop_sending(&mut incoming, RESET); continue; }
