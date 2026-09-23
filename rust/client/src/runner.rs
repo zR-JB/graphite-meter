@@ -199,6 +199,11 @@ pub async fn run(
         if *cancel.borrow() {
             break;
         }
+        let completed_stage = snapshots
+            .borrow()
+            .results
+            .iter()
+            .any(|result| result.complete);
         let failed = measure(
             *stage,
             &config,
@@ -206,6 +211,7 @@ pub async fn run(
             &prepared,
             &snapshots,
             cancel.clone(),
+            completed_stage,
         )
         .await?;
         if *stage == Stage::Latency {
@@ -277,6 +283,35 @@ impl std::error::Error for ParticipantFailure {
 }
 
 #[derive(Debug)]
+struct AllParticipantsFailed(ParticipantFailure);
+impl std::fmt::Display for AllParticipantsFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "all selected servers failed during stage preparation: {}",
+            self.0
+        )
+    }
+}
+impl std::error::Error for AllParticipantsFailed {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+fn has_auth_required(mut error: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if error.is::<crate::net::AuthRequired>() {
+            return true;
+        }
+        let Some(source) = error.source() else {
+            return false;
+        };
+        error = source;
+    }
+}
+
+#[derive(Debug)]
 struct LatencyFailure {
     id: String,
     source: Error,
@@ -322,6 +357,30 @@ impl Transfer {
 }
 
 impl StageResources {
+    fn preparation_failure(
+        &mut self,
+        id: &str,
+        error: &Error,
+        snapshots: &watch::Sender<Snapshot>,
+    ) {
+        self.failed.push(id.to_owned());
+        self.stop_host_latency(id);
+        snapshots.send_modify(|snapshot| {
+            if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
+                server.error = Some(error.to_string());
+            }
+            if let Some(latency) = snapshot
+                .server_latencies
+                .iter_mut()
+                .find(|latency| latency.id == id)
+            {
+                latency.error = Some("throughput participant unavailable".into());
+                latency.latest_ms = None;
+            }
+            snapshot.status = format!("{id} unavailable; preparing remaining servers");
+        });
+    }
+
     fn stop_all_latency(&self) {
         for stop in self.stop_latency.values() {
             stop.send_replace(true);
@@ -416,6 +475,7 @@ impl StageResources {
         error: Error,
         accounting: &mut AggregateMeasurements,
         stage: Option<TransferStage>,
+        measuring: bool,
         epoch: Instant,
         snapshots: &watch::Sender<Snapshot>,
     ) -> Result<(), Error> {
@@ -466,7 +526,7 @@ impl StageResources {
         if self.transfers.is_empty() {
             return Err("all selected servers failed".into());
         }
-        if let Some(stage) = stage {
+        if measuring && let Some(stage) = stage {
             accounting.begin(
                 stage,
                 self.transfers
@@ -520,6 +580,98 @@ impl StageResources {
     }
 }
 
+#[derive(Clone, Copy)]
+struct StageTiming {
+    epoch: Instant,
+    operation_limit: Duration,
+    setup_timeout: Duration,
+}
+
+async fn start_transfer(
+    stage: Stage,
+    server: &PreparedServer,
+    plan: &StageLanePlan,
+    config: &Config,
+    http: &Http,
+    timing: StageTiming,
+    stopped: watch::Receiver<bool>,
+) -> Result<Transfer, Error> {
+    let mut transfer = Transfer {
+        id: server.entry.id.clone(),
+        down: None,
+        up: None,
+    };
+    let started = tokio::time::timeout(timing.setup_timeout, async {
+        if stage.downloads() || stage.uploads() {
+            let target = server
+                .throughput
+                .as_ref()
+                .ok_or("missing throughput target")?;
+            let transport = server
+                .http
+                .as_ref()
+                .ok_or("missing throughput connection")?;
+            let lanes = plan
+                .lanes(&server.entry.id)
+                .ok_or("missing stream allocation")?;
+            if stage.downloads() {
+                transfer.down = Some(if target.transport == ThroughputTransport::FetchStream {
+                    Download::start_staggered(
+                        transport.clone(),
+                        lanes.download,
+                        timing.operation_limit,
+                        lane_stagger(config.warmup, server.idle_rtt, lanes.download),
+                        stopped.clone(),
+                    )
+                    .await?
+                } else {
+                    Download::start_webtransport(
+                        http,
+                        target,
+                        lanes.download,
+                        timing.operation_limit,
+                        config.insecure,
+                        stopped.clone(),
+                    )
+                    .await?
+                });
+            }
+            if stage.uploads() {
+                transfer.up = Some(if target.transport == ThroughputTransport::FetchStream {
+                    Upload::start_staggered(
+                        transport.clone(),
+                        lanes.upload,
+                        timing.epoch,
+                        lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
+                        stopped.clone(),
+                    )
+                    .await?
+                } else {
+                    Upload::start_webtransport(
+                        transport.clone(),
+                        lanes.upload,
+                        timing.epoch,
+                        target.transport == ThroughputTransport::WebTransportDatagram,
+                        stopped.clone(),
+                    )
+                    .await?
+                });
+            }
+        }
+        Ok::<(), Error>(())
+    })
+    .await;
+    let error = match started {
+        Ok(Ok(())) => return Ok(transfer),
+        Ok(Err(error)) => error,
+        Err(error) => error.into(),
+    };
+    // A bidirectional peer may have a live download when upload setup fails.
+    // This also runs when setup times out after the download became ready.
+    let _ = transfer.close().await;
+    Err(error)
+}
+
 async fn measure(
     stage: Stage,
     config: &Config,
@@ -527,9 +679,10 @@ async fn measure(
     servers: &[PreparedServer],
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
+    completed_stage: bool,
 ) -> Result<Vec<String>, Error> {
     let plan = lane_plan(config, stage, servers)?;
-    let warmup = servers.iter().fold(config.warmup, |warmup, server| {
+    let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
         warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
     });
     let epoch = Instant::now();
@@ -544,7 +697,7 @@ async fn measure(
         latency_failed: false,
     };
     let mut events: SelectAll<BoxStream<'static, (String, Observation)>> = SelectAll::new();
-    let operation_limit = warmup
+    let operation_limit = planned_warmup
         .checked_add(config.duration(stage))
         .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
         .ok_or("stage duration overflow")?;
@@ -577,72 +730,55 @@ async fn measure(
     let mut measurement_start = None;
     let mut measurement_end = None;
     let operation = async {
+        let mut last_failure = None;
         for server in servers {
-            let mut transfer = Transfer {
-                id: server.entry.id.clone(),
-                down: None,
-                up: None,
-            };
-            if stage.downloads() || stage.uploads() {
-                let target = server
-                    .throughput
-                    .as_ref()
-                    .ok_or("missing throughput target")?;
-                let transport = server
-                    .http
-                    .as_ref()
-                    .ok_or("missing throughput connection")?;
-                let lanes = plan
-                    .lanes(&server.entry.id)
-                    .ok_or("missing stream allocation")?;
-                if stage.downloads() {
-                    transfer.down = Some(if target.transport == ThroughputTransport::FetchStream {
-                        Download::start_staggered(
-                            transport.clone(),
-                            lanes.download,
-                            operation_limit,
-                            lane_stagger(config.warmup, server.idle_rtt, lanes.download),
-                            stopped.clone(),
-                        )
-                        .await?
-                    } else {
-                        Download::start_webtransport(
-                            http,
-                            target,
-                            lanes.download,
-                            operation_limit,
-                            config.insecure,
-                            stopped.clone(),
-                        )
-                        .await?
-                    });
-                }
-                if stage.uploads() {
-                    transfer.up = Some(if target.transport == ThroughputTransport::FetchStream {
-                        Upload::start_staggered(
-                            transport.clone(),
-                            lanes.upload,
-                            epoch,
-                            lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
-                            stopped.clone(),
-                        )
-                        .await?
-                    } else {
-                        Upload::start_webtransport(
-                            transport.clone(),
-                            lanes.upload,
-                            epoch,
-                            target.transport == ThroughputTransport::WebTransportDatagram,
-                            stopped.clone(),
-                        )
-                        .await?
-                    });
+            let started = start_transfer(
+                stage,
+                server,
+                &plan,
+                config,
+                http,
+                StageTiming {
+                    epoch,
+                    operation_limit,
+                    setup_timeout: Duration::from_secs(12),
+                },
+                stopped.clone(),
+            )
+            .await;
+            match started {
+                Ok(transfer) => resources.transfers.push(transfer),
+                Err(error) => {
+                    if !completed_stage {
+                        return Err(error);
+                    }
+                    resources.preparation_failure(&server.entry.id, &error, snapshots);
+                    if last_failure
+                        .as_ref()
+                        .is_none_or(|failure: &ParticipantFailure| {
+                            !has_auth_required(failure.source.as_ref())
+                        })
+                        || has_auth_required(error.as_ref())
+                    {
+                        last_failure = Some(ParticipantFailure {
+                            id: server.entry.id.clone(),
+                            source: error,
+                        });
+                    }
                 }
             }
-            resources.transfers.push(transfer);
+        }
+        if resources.transfers.is_empty() {
+            return Err(AllParticipantsFailed(
+                last_failure.expect("one preparation failure for each selected server"),
+            )
+            .into());
         }
         if stage == Stage::Latency || config.loaded_latency {
-            for server in servers {
+            for server in servers
+                .iter()
+                .filter(|server| !resources.failed.contains(&server.entry.id))
+            {
                 let target = server
                     .latency
                     .clone()
@@ -699,9 +835,15 @@ async fn measure(
                     latency_task_result(id, result, *stopped.borrow())
                 });
             }
-            tokio::time::timeout(Duration::from_secs(10), async {
-                let mut ready = HashSet::new();
-                while ready.len() < servers.len() {
+            let mut ready = HashSet::new();
+            let readiness = async {
+                while resources.transfers.iter().any(|transfer| {
+                    !ready.contains(&transfer.id)
+                        && resources
+                            .stop_latency
+                            .get(&transfer.id)
+                            .is_none_or(|stop| !*stop.borrow())
+                }) {
                     tokio::select! {
                         event = events.next(), if !events.is_empty() => match event {
                             Some((id, Observation::Sample { .. })) => {
@@ -711,56 +853,143 @@ async fn measure(
                             None => return Err("latency observations ended before readiness".into()),
                         },
                         task = resources.latency.join_next() => {
-                            task.ok_or("missing latency task")???;
-                            return Err("latency session ended before readiness".into());
+                            let task = task.ok_or("missing latency task")?;
+                            if completed_stage {
+                                resources.latency_completion(task, snapshots)?;
+                            } else {
+                                task??;
+                                return Err("latency session ended before readiness".into());
+                            }
                         }
                     }
                 }
                 Ok::<(), Error>(())
-            }).await??;
+            };
+            match tokio::time::timeout(Duration::from_secs(12), readiness).await {
+                Ok(result) => result?,
+                Err(_) if completed_stage => {
+                    let missing: Vec<_> = resources
+                        .transfers
+                        .iter()
+                        .filter(|transfer| {
+                            !ready.contains(&transfer.id)
+                                && resources
+                                    .stop_latency
+                                    .get(&transfer.id)
+                                    .is_some_and(|stop| !*stop.borrow())
+                        })
+                        .map(|transfer| transfer.id.clone())
+                        .collect();
+                    for id in missing {
+                        resources.record_latency_failure(
+                            &LatencyFailure {
+                                id,
+                                source: "latency session was not ready within 12 seconds".into(),
+                            },
+                            snapshots,
+                        );
+                    }
+                    if stage == Stage::Latency
+                        && resources.stop_latency.values().all(|stop| *stop.borrow())
+                    {
+                        return Err("all selected latency sessions failed".into());
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+            if stage == Stage::Latency && resources.stop_latency.values().all(|stop| *stop.borrow())
+            {
+                return Err("all selected latency sessions failed".into());
+            }
         }
+        let warmup = servers
+            .iter()
+            .filter(|server| !resources.failed.contains(&server.entry.id))
+            .fold(config.warmup, |warmup, server| {
+                warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
+            });
         snapshots.send_modify(|snapshot| {
             snapshot.phase = Phase::Warmup;
             snapshot.status = "Warming up".into();
         });
         let warmup_end = Instant::now() + warmup;
         loop {
-            resources.health()?;
+            if let Err(error) = resources.health() {
+                if !completed_stage {
+                    return Err(error);
+                }
+                resources.recover(
+                    error,
+                    &mut accounting,
+                    transfer_stage,
+                    false,
+                    epoch,
+                    snapshots,
+                )?;
+            }
             tokio::select! {
                 _ = tokio::time::sleep_until(warmup_end) => break,
                 _ = events.next(), if !events.is_empty() => {},
             }
         }
+        let baseline_deadline = Instant::now() + Duration::from_secs(12);
+        let mut initial = None;
+        if transfer_stage.is_some() {
+            loop {
+                let result = {
+                    let checkpoint = resources.boundary(epoch);
+                    tokio::pin!(checkpoint);
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = tokio::time::sleep_until(baseline_deadline) => {
+                                break Err("initial receiver checkpoint exceeded preparation deadline".into());
+                            }
+                            _ = events.next(), if !events.is_empty() => {},
+                            boundary = &mut checkpoint => break boundary,
+                        }
+                    }
+                };
+                match result {
+                    Ok(boundary) => {
+                        initial = Some(boundary);
+                        break;
+                    }
+                    Err(error) if completed_stage && error.is::<ParticipantFailure>() => {
+                        resources.recover(
+                            error,
+                            &mut accounting,
+                            transfer_stage,
+                            false,
+                            epoch,
+                            snapshots,
+                        )?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         let started = Instant::now();
         let end = started + config.duration(stage);
         measurement_start = Some(started);
-        if let Some(stage) = transfer_stage {
+        if let (Some(stage), Some(mut boundary)) = (transfer_stage, initial) {
+            // Receiver snapshots retain their request/response brackets. Refresh
+            // the local download counters at the actual measurement start.
+            let local = resources.local_boundary(epoch);
+            boundary.at_nanos = local.at_nanos;
+            boundary.down = local.down;
+            boundary.observed_up = local.observed_up;
             accounting.begin(
                 stage,
-                servers
+                resources
+                    .transfers
                     .iter()
-                    .map(|server| server.entry.id.clone())
+                    .map(|transfer| transfer.id.clone())
                     .collect(),
-                nanos(epoch.elapsed()),
+                boundary.at_nanos,
                 IntervalReason::StageStart,
             );
-            let initial = resources.boundary(epoch);
-            tokio::pin!(initial);
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = tokio::time::sleep_until(end) => return Err("initial receiver checkpoint exceeded stage deadline".into()),
-                    event = events.next(), if !events.is_empty() => {
-                        if let Some(event) = event {
-                            latency.observe(event, started, end);
-                        }
-                    },
-                    boundary = &mut initial => {
-                        accounting.observe(boundary?);
-                        break;
-                    }
-                }
-            }
+            accounting.observe(boundary);
         }
         let mut sample = tokio::time::interval(Duration::from_millis(500));
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -771,7 +1000,14 @@ async fn measure(
         });
         loop {
             if let Err(error) = resources.health() {
-                resources.recover(error, &mut accounting, transfer_stage, epoch, snapshots)?;
+                resources.recover(
+                    error,
+                    &mut accounting,
+                    transfer_stage,
+                    true,
+                    epoch,
+                    snapshots,
+                )?;
             }
             tokio::select! {
                 biased;
@@ -803,7 +1039,7 @@ async fn measure(
                         match boundary {
                             Ok(boundary) => accounting.observe(boundary),
                             Err(error) => {
-                                resources.recover(error, &mut accounting, transfer_stage, epoch, snapshots)?;
+                                resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?;
                                 None
                             }
                         }
@@ -840,6 +1076,7 @@ async fn measure(
                         error,
                         &mut accounting,
                         transfer_stage,
+                        true,
                         epoch,
                         snapshots,
                     )?,
@@ -930,6 +1167,30 @@ async fn measure(
                     && (!stage.uploads()
                         || up.is_some_and(|result| result.mean_bytes_per_sec.is_some())),
             })
+        });
+    } else if result.is_err() && !*cancel.borrow() {
+        // A failed preparation still belongs to this stage. Earlier completed
+        // results remain untouched, and this missing population is explicit.
+        snapshots.send_modify(|snapshot| {
+            snapshot.results.push(StageResult {
+                stage,
+                elapsed: Duration::ZERO,
+                down_bytes: 0,
+                up_bytes: 0,
+                down_bps: None,
+                up_bps: None,
+                latency: LatencyAccumulator::default().snapshot(),
+                complete: false,
+                server_latencies: snapshot
+                    .server_latencies
+                    .iter()
+                    .map(|host| ServerLatencyResult {
+                        id: host.id.clone(),
+                        summary: LatencyAccumulator::default().snapshot(),
+                        error: host.error.clone(),
+                    })
+                    .collect(),
+            });
         });
     }
     let failed = resources.failed.clone();
@@ -1027,6 +1288,248 @@ fn nanos(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphite_meter_core::discovery::Protocol;
+    use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        task::JoinHandle,
+    };
+
+    async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let failed = Arc::new(AtomicU8::new(0));
+        let flag = failed.clone();
+        let server = tokio::spawn(async move {
+            let mut clients = JoinSet::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        let Ok((mut stream, _)) = accepted else { break; };
+                        let flag = flag.clone();
+                        clients.spawn(async move {
+                            let mut request = [0_u8; 4096];
+                            if stream.read(&mut request).await.is_err() { return; }
+                            if flag.load(Ordering::SeqCst) == 2 {
+                                tokio::time::sleep(Duration::from_secs(30)).await;
+                                return;
+                            }
+                            if flag.load(Ordering::SeqCst) == 1 {
+                                let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n").await;
+                                return;
+                            }
+                            if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
+                            let bytes = [0_u8; 65536];
+                            while stream.write_all(&bytes).await.is_ok() {
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
+                        });
+                    }
+                    _ = clients.join_next(), if !clients.is_empty() => {},
+                }
+            }
+        });
+        Ok((origin, failed, server))
+    }
+
+    async fn prepared_download(
+        id: &str,
+        origin: &str,
+        http: &Http,
+    ) -> Result<PreparedServer, Error> {
+        Ok(PreparedServer {
+            entry: ServerEntry {
+                id: id.into(),
+                url: origin.into(),
+                name: id.into(),
+                ..ServerEntry::default()
+            },
+            throughput: Some(ThroughputTarget {
+                base_url: origin.into(),
+                transport: ThroughputTransport::FetchStream,
+                protocol: Protocol::Http1,
+            }),
+            http: Some(Arc::new(
+                Transport::connect(http.clone(), origin, Protocol::Http1, false).await?,
+            )),
+            latency: None,
+            idle_rtt: Duration::ZERO,
+        })
+    }
+
+    #[tokio::test]
+    async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), Error> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let active = Arc::new(AtomicUsize::new(0));
+        let saw_upload = Arc::new(AtomicBool::new(false));
+        let active_server = active.clone();
+        let upload_server = saw_upload.clone();
+        let peer = tokio::spawn(async move {
+            let mut clients = JoinSet::new();
+            loop {
+                tokio::select! {
+                    accepted = listener.accept() => {
+                        let Ok((mut stream, _)) = accepted else { break; };
+                        let active = active_server.clone();
+                        let saw_upload = upload_server.clone();
+                        clients.spawn(async move {
+                            let mut request = [0_u8; 4096];
+                            let Ok(length) = stream.read(&mut request).await else { return; };
+                            if request[..length].starts_with(b"POST /upload/session") {
+                                saw_upload.store(true, Ordering::SeqCst);
+                                tokio::time::sleep(Duration::from_secs(30)).await;
+                                return;
+                            }
+                            if !request[..length].starts_with(b"GET /download") { return; }
+                            if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
+                            active.fetch_add(1, Ordering::SeqCst);
+                            let bytes = [0_u8; 65536];
+                            while stream.write_all(&bytes).await.is_ok() {
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
+                            active.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    }
+                    _ = clients.join_next(), if !clients.is_empty() => {},
+                }
+            }
+        });
+        let http = Http::new(false)?;
+        let server = prepared_download("near", &origin, &http).await?;
+        let config = Config {
+            url: origin,
+            stages: vec![Stage::Bidirectional],
+            warmup: Duration::from_millis(10),
+            streams: 1,
+            loaded_latency: false,
+            ..Config::default()
+        };
+        let plan = lane_plan(&config, Stage::Bidirectional, std::slice::from_ref(&server))?;
+        let (_stop, stopped) = watch::channel(false);
+        let result = start_transfer(
+            Stage::Bidirectional,
+            &server,
+            &plan,
+            &config,
+            &http,
+            StageTiming {
+                epoch: Instant::now(),
+                operation_limit: Duration::from_secs(60),
+                setup_timeout: Duration::from_millis(300),
+            },
+            stopped,
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(saw_upload.load(Ordering::SeqCst));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while active.load(Ordering::SeqCst) != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        peer.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes()
+    -> Result<(), Error> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let (near, near_failed, near_task) = download_peer().await?;
+        let (far, far_failed, far_task) = download_peer().await?;
+        let http = Http::new(false)?;
+        let servers = vec![
+            prepared_download("near", &near, &http).await?,
+            prepared_download("far", &far, &http).await?,
+        ];
+        let config = Config {
+            url: near,
+            servers: vec!["near".into(), "far".into()],
+            stages: vec![Stage::Download],
+            warmup: Duration::from_millis(10),
+            download_duration: Duration::from_millis(1400),
+            streams: 1,
+            loaded_latency: false,
+            ..Config::default()
+        };
+        let (snapshots, observed) = watch::channel(Snapshot {
+            servers: servers
+                .iter()
+                .map(|server| ServerSummary {
+                    id: server.entry.id.clone(),
+                    name: server.entry.name.clone(),
+                    origin: server.entry.url.clone(),
+                    ..ServerSummary::default()
+                })
+                .collect(),
+            ..Snapshot::default()
+        });
+        let (_stop, cancelled) = watch::channel(false);
+        let first = measure(
+            Stage::Download,
+            &config,
+            &http,
+            &servers,
+            &snapshots,
+            cancelled.clone(),
+            false,
+        )
+        .await?;
+        assert!(first.is_empty());
+        assert!(observed.borrow().results[0].complete);
+        let first_bytes = observed.borrow().results[0].down_bytes;
+        assert!(first_bytes > 0);
+
+        // A stalled first peer must not consume the next peer's startup budget.
+        near_failed.store(2, Ordering::SeqCst);
+        let second = measure(
+            Stage::Download,
+            &config,
+            &http,
+            &servers,
+            &snapshots,
+            cancelled.clone(),
+            true,
+        )
+        .await?;
+        assert_eq!(second, vec!["near"]);
+        let snapshot = observed.borrow();
+        assert_eq!(snapshot.results.len(), 2);
+        assert!(snapshot.results[0].complete);
+        assert_eq!(snapshot.results[0].down_bytes, first_bytes);
+        assert!(!snapshot.results[1].complete);
+        assert!(snapshot.results[1].down_bytes > 0);
+        assert!(snapshot.results[1].down_bps.is_some());
+        assert!(snapshot.servers[0].error.is_some());
+        assert!(snapshot.servers[1].error.is_none());
+        drop(snapshot);
+
+        far_failed.store(1, Ordering::SeqCst);
+        let third = measure(
+            Stage::Download,
+            &config,
+            &http,
+            &servers[1..],
+            &snapshots,
+            cancelled,
+            true,
+        )
+        .await;
+        assert!(third.is_err());
+        let snapshot = observed.borrow();
+        assert_eq!(snapshot.results.len(), 3);
+        assert!(snapshot.results[0].complete);
+        assert_eq!(snapshot.results[0].down_bytes, first_bytes);
+        assert!(!snapshot.results[2].complete);
+        assert!(snapshot.servers[1].error.is_some());
+        near_task.abort();
+        far_task.abort();
+        Ok(())
+    }
 
     #[test]
     fn replies_after_stage_end_remain_unresolved() {
@@ -1171,6 +1674,7 @@ mod tests {
                 .into(),
                 &mut accounting,
                 Some(TransferStage::Bidirectional),
+                true,
                 epoch,
                 &snapshots,
             )
@@ -1189,6 +1693,7 @@ mod tests {
                 .into(),
                 &mut accounting,
                 Some(TransferStage::Bidirectional),
+                true,
                 epoch,
                 &snapshots,
             )
@@ -1196,6 +1701,54 @@ mod tests {
         assert_eq!(resources.transfers.len(), 1);
         assert_eq!(resources.transfers[0].id, "near");
         assert!(*far_cancelled.borrow());
+        resources.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn loaded_latency_failure_during_warmup_keeps_throughput_participant() {
+        let (stop, _) = watch::channel(false);
+        let (latency_stop, stopped) = watch::channel(false);
+        let mut resources = StageResources {
+            transfers: vec![Transfer {
+                id: "near".into(),
+                down: None,
+                up: None,
+            }],
+            latency: JoinSet::new(),
+            stop,
+            stop_latency: BTreeMap::from([("near".into(), latency_stop)]),
+            retired: JoinSet::new(),
+            failed: Vec::new(),
+            latency_failed: false,
+        };
+        let (snapshots, observed) = watch::channel(Snapshot {
+            server_latencies: vec![ServerLatency {
+                id: "near".into(),
+                ..ServerLatency::default()
+            }],
+            ..Snapshot::default()
+        });
+        let mut accounting = AggregateMeasurements::default();
+        resources
+            .recover(
+                LatencyFailure {
+                    id: "near".into(),
+                    source: "latency socket closed".into(),
+                }
+                .into(),
+                &mut accounting,
+                Some(TransferStage::Download),
+                false,
+                Instant::now(),
+                &snapshots,
+            )
+            .unwrap();
+        assert_eq!(resources.transfers[0].id, "near");
+        assert!(resources.failed.is_empty());
+        assert!(resources.latency_failed);
+        assert!(*stopped.borrow());
+        assert!(observed.borrow().server_latencies[0].error.is_some());
+        assert!(accounting.intervals().is_empty());
         resources.close().await.unwrap();
     }
 
