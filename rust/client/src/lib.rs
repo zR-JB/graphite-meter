@@ -1,4 +1,5 @@
 //! Native client orchestration, separate from terminal rendering.
+#![forbid(unsafe_code)]
 
 pub mod cli;
 pub mod config;

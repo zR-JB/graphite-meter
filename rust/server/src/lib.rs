@@ -1,4 +1,5 @@
 //! Experimental Graphite Meter server.
+#![forbid(unsafe_code)]
 
 pub mod admission;
 pub mod app_security;

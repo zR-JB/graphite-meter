@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
 use graphite_meter_client::{

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 #[path = "../legal_build.rs"]
 mod legal;
 

@@ -1,4 +1,5 @@
 //! Shared Graphite Meter protocol and measurement contracts.
+#![forbid(unsafe_code)]
 
 pub mod capsule;
 pub mod catalog;
