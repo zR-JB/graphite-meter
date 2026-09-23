@@ -1,3 +1,5 @@
+include!(concat!(env!("OUT_DIR"), "/legal.rs"));
+
 use graphite_meter_client::{
     Error,
     cli::{self, Action},
@@ -19,15 +21,17 @@ async fn run() -> Result<(), Error> {
             return Ok(());
         }
         Action::Version => {
-            println!("{}-rust-dev", env!("CARGO_PKG_VERSION"));
+            println!(
+                "{}",
+                option_env!("GM_ENGINE_VERSION")
+                    .unwrap_or(concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"))
+            );
             return Ok(());
         }
         Action::Legal => {
-            println!(
-                "Graphite Meter experimental Rust client — AGPL-3.0-or-later\n\n{}",
-                include_str!("../../../LICENSE")
-            );
-            return Err("complete Rust third-party dependency notices are not generated yet; the Go TUI notice bundle does not describe this binary".into());
+            let report = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle; build with GM_RUST_LEGAL_DIR to embed generated notices")?;
+            print!("{report}");
+            return Ok(());
         }
         Action::Run(config) => *config,
     };

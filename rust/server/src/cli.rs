@@ -293,7 +293,7 @@ pub fn help() -> String {
         };
         help.push_str(&format!("  -{}{value}\t{}\n", flag.name, flag.env));
     }
-    help.push_str("  -h, --help\tShow this help\n  version, --version\tShow engine version\n");
+    help.push_str("  -h, --help\tShow this help\n  version, --version\tShow engine version\n  --legal\tShow embedded project and dependency notices\n");
     help
 }
 

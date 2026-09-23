@@ -1,3 +1,6 @@
+#[path = "../legal_build.rs"]
+mod legal;
+
 use std::{
     env,
     error::Error,
@@ -8,6 +11,9 @@ use std::{
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main() {
+    if let Err(error) = legal::embed() {
+        panic!("Rust legal notice embedding failed: {error}");
+    }
     println!("cargo:rerun-if-env-changed=GM_RUST_ASSET_DIR");
     if let Err(error) = generate() {
         panic!("browser asset embedding failed: {error}");

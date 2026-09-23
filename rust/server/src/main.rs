@@ -1,3 +1,5 @@
+include!(concat!(env!("OUT_DIR"), "/legal.rs"));
+
 use graphite_meter_server::{
     cli::{self, Arguments},
     config::{Config, ConfigError},
@@ -16,6 +18,12 @@ async fn run() -> Result<(), ConfigError> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && (args[0] == "version" || args[0] == "--version") {
         println!("{}", graphite_meter_server::config::ENGINE_VERSION);
+        return Ok(());
+    }
+    if args.len() == 1 && (args[0] == "--legal" || args[0] == "-legal") {
+        let report =
+            LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
+        print!("{report}");
         return Ok(());
     }
     let config = match cli::parse(&args)? {
