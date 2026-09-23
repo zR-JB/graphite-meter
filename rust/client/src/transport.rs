@@ -1,5 +1,5 @@
 //! Streaming HTTP operations shared by measurement lanes and control requests.
-//! The connection owns its H3 driver; response bodies borrow that owner.
+//! The connection owns its H3 driver; response bodies retain that owner.
 use crate::{
     Error,
     net::Http,
@@ -12,17 +12,20 @@ use graphite_meter_core::{
 };
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
-use std::time::Duration;
-use tokio::time::{Instant, timeout_at};
+use std::{sync::Arc, time::Duration};
+use tokio::{
+    sync::Mutex,
+    time::{Instant, timeout_at},
+};
 
-pub(crate) const HTTP_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
 pub struct Transport {
     http: Http,
     origin: String,
     protocol: Protocol,
     insecure: bool,
-    h3: Option<Http3Client>,
+    h3: Option<Mutex<Arc<Http3Client>>>,
 }
 
 impl Transport {
@@ -30,9 +33,52 @@ impl Transport {
         self.h3.is_some()
     }
 
-    pub(crate) fn retryable_http_error(&self, error: &Error) -> bool {
-        !self.is_http3()
-            && (error.is::<reqwest::Error>() || error.is::<tokio::time::error::Elapsed>())
+    pub(crate) fn retryable_transfer_error(&self, error: &Error) -> bool {
+        if error.is::<tokio::time::error::Elapsed>() {
+            return true;
+        }
+        if !self.is_http3() {
+            return error.is::<reqwest::Error>();
+        }
+        if let Some(stream) = error.downcast_ref::<h3::error::StreamError>() {
+            return match stream {
+                h3::error::StreamError::RemoteTerminate { code } => {
+                    matches!(
+                        *code,
+                        h3::error::Code::H3_NO_ERROR
+                            | h3::error::Code::H3_REQUEST_REJECTED
+                            | h3::error::Code::H3_REQUEST_CANCELLED
+                    )
+                }
+                h3::error::StreamError::RemoteClosing => true,
+                h3::error::StreamError::ConnectionError(error) => retryable_h3_connection(error),
+                _ => false,
+            };
+        }
+        error
+            .downcast_ref::<h3::error::ConnectionError>()
+            .is_some_and(retryable_h3_connection)
+            || error
+                .downcast_ref::<quinn::ConnectionError>()
+                .is_some_and(retryable_quic_connection)
+    }
+
+    async fn h3_client(&self) -> Result<Option<Arc<Http3Client>>, Error> {
+        let Some(slot) = &self.h3 else {
+            return Ok(None);
+        };
+        let mut owner = slot.lock().await;
+        if owner.is_closed() {
+            *owner = Arc::new(
+                Http3Client::connect(
+                    &self.origin.parse()?,
+                    self.insecure,
+                    Duration::from_secs(10),
+                )
+                .await?,
+            );
+        }
+        Ok(Some(owner.clone()))
     }
 
     pub async fn connect(
@@ -43,7 +89,9 @@ impl Transport {
     ) -> Result<Self, Error> {
         let origin = canonical_origin(origin)?;
         let h3 = if protocol == Protocol::Http3 {
-            Some(Http3Client::connect(&origin.parse()?, insecure, Duration::from_secs(10)).await?)
+            Some(Mutex::new(Arc::new(
+                Http3Client::connect(&origin.parse()?, insecure, Duration::from_secs(10)).await?,
+            )))
         } else {
             None
         };
@@ -85,13 +133,13 @@ impl Transport {
         query: &[(&str, &str)],
         limit: u64,
         duration: Duration,
-    ) -> Result<Body<'_>, Error> {
+    ) -> Result<Body, Error> {
         let target = self.url(route, query)?;
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
         let inner = timeout_at(deadline, async {
-            if let Some(h3) = &self.h3 {
+            if let Some(h3) = self.h3_client().await? {
                 let mut request = Request::builder().method(method).uri(&target);
                 if let Some(auth) = self.http.authorization(&target) {
                     request = request.header(http::header::AUTHORIZATION, auth);
@@ -143,7 +191,7 @@ impl Transport {
             .checked_add(duration)
             .ok_or("request duration is too large")?;
         timeout_at(deadline, async {
-            if let Some(h3) = &self.h3 {
+            if let Some(h3) = self.h3_client().await? {
                 let mut request = Request::builder()
                     .method(Method::POST)
                     .uri(&target)
@@ -215,18 +263,54 @@ impl Transport {
     }
 }
 
-enum BodyInner<'a> {
-    Http(reqwest::Response),
-    H3(Box<Http3Stream<'a>>),
+fn retryable_h3_connection(error: &h3::error::ConnectionError) -> bool {
+    use h3::quic::ConnectionErrorIncoming;
+    match error {
+        h3::error::ConnectionError::Timeout => true,
+        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Timeout) => true,
+        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose {
+            error_code,
+        }) => retryable_h3_code(*error_code),
+        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Undefined(error)) => error
+            .as_ref()
+            .downcast_ref::<quinn::ConnectionError>()
+            .is_some_and(retryable_quic_connection),
+        _ => false,
+    }
 }
 
-pub struct Body<'a> {
-    inner: BodyInner<'a>,
+fn retryable_quic_connection(error: &quinn::ConnectionError) -> bool {
+    match error {
+        quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut => true,
+        quinn::ConnectionError::ApplicationClosed(close) => {
+            retryable_h3_code(close.error_code.into())
+        }
+        _ => false,
+    }
+}
+
+fn retryable_h3_code(code: u64) -> bool {
+    [
+        h3::error::Code::H3_NO_ERROR,
+        h3::error::Code::H3_REQUEST_REJECTED,
+        h3::error::Code::H3_REQUEST_CANCELLED,
+    ]
+    .into_iter()
+    .any(|allowed| allowed.value() == code)
+}
+
+enum BodyInner {
+    Http(reqwest::Response),
+    H3(Box<Http3Stream>),
+}
+
+pub struct Body {
+    inner: BodyInner,
     deadline: Instant,
     remaining: u64,
 }
 
-impl Body<'_> {
+impl Body {
     pub async fn chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let chunk = timeout_at(self.deadline, async {
             match &mut self.inner {
@@ -245,5 +329,26 @@ impl Body<'_> {
                 .ok_or("response exceeds byte limit")?;
         }
         Ok(chunk)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transfer_retries_exclude_local_quic_and_h3_protocol_errors() {
+        assert!(retryable_quic_connection(&quinn::ConnectionError::Reset));
+        assert!(retryable_quic_connection(&quinn::ConnectionError::TimedOut));
+        assert!(!retryable_quic_connection(
+            &quinn::ConnectionError::VersionMismatch
+        ));
+        assert!(!retryable_quic_connection(
+            &quinn::ConnectionError::LocallyClosed
+        ));
+        assert!(retryable_h3_code(
+            h3::error::Code::H3_REQUEST_REJECTED.value()
+        ));
+        assert!(!retryable_h3_code(h3::error::Code::H3_FRAME_ERROR.value()));
     }
 }

@@ -1,7 +1,7 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    transport::{HTTP_RETRY_BACKOFF, Transport},
+    transport::{TRANSFER_RETRY_BACKOFF, Transport},
 };
 use bytes::Bytes;
 use graphite_meter_core::{
@@ -400,10 +400,10 @@ async fn send_lane(
             // A streaming HTTP request can end when its connection closes,
             // including at a stage boundary. The upload session's receiver
             // counter remains authoritative; a fresh request may continue it.
-            // HTTP status/protocol errors stay fatal, and H3 needs a new
-            // connection owner before its request can be retried safely.
-            Err(error) if transport.retryable_http_error(&error) => {
-                tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+            // HTTP status and local protocol errors stay fatal. HTTP/3
+            // reconnects through the transport's shared connection owner.
+            Err(error) if transport.retryable_transfer_error(&error) => {
+                tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
             }
             Err(error) => return Err(error),
         }
@@ -669,7 +669,7 @@ mod tests {
                 if attempt == 1 {
                     assert!(
                         first_closed.is_some_and(|closed: Instant| {
-                            closed.elapsed() >= HTTP_RETRY_BACKOFF
+                            closed.elapsed() >= TRANSFER_RETRY_BACKOFF
                         }),
                         "a dropped upload request was retried without pacing"
                     );

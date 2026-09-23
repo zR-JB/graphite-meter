@@ -1,5 +1,5 @@
 use graphite_meter_client::{Error, webtransport::Session};
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
@@ -52,12 +52,14 @@ async fn run(origin: &str) -> Result<(), Error> {
         session.close().await;
         println!("download {suffix} PASS");
     }
-    let http = graphite_meter_client::quic::Http3Client::connect(
-        &format!("{origin}/").parse()?,
-        true,
-        Duration::from_secs(5),
-    )
-    .await?;
+    let http = Arc::new(
+        graphite_meter_client::quic::Http3Client::connect(
+            &format!("{origin}/").parse()?,
+            true,
+            Duration::from_secs(5),
+        )
+        .await?,
+    );
     let mut mint = http
         .open(
             http::Request::post(format!("{origin}/upload/session")).body(())?,
@@ -119,7 +121,10 @@ async fn run(origin: &str) -> Result<(), Error> {
     })
     .await??;
     session.close().await;
-    http.close().await;
+    Arc::try_unwrap(http)
+        .map_err(|_| "HTTP/3 request stream retained its owner")?
+        .close()
+        .await;
     println!("upload ready/progress/complete131073 PASS");
     validate_owners(origin).await?;
     Ok(())

@@ -1,5 +1,12 @@
 //! HTTP/3 requests over the pinned Noq transport, with an explicitly owned driver.
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::tls::config as tls_config;
 use bytes::{Buf, Bytes};
@@ -34,8 +41,8 @@ impl Default for RequestLimits {
     }
 }
 
-/// Holds the sole driver task. Request streams borrow this owner, so connection
-/// work cannot outlive it. Requests never follow redirects or change authority.
+/// Holds the sole driver task. Request streams retain this owner, so connection
+/// work cannot outlive them. Requests never follow redirects or change authority.
 pub struct Http3Client {
     endpoint: EndpointOwner,
     connection: quinn::Connection,
@@ -43,6 +50,7 @@ pub struct Http3Client {
     driver: JoinSet<()>,
     permits: Arc<Semaphore>,
     origin: Origin,
+    driver_alive: Arc<AtomicBool>,
 }
 
 /// Close even when cancellation occurs before QUIC or HTTP/3 setup finishes.
@@ -50,6 +58,13 @@ struct EndpointOwner(quinn::Endpoint);
 impl Drop for EndpointOwner {
     fn drop(&mut self) {
         self.0.close(0_u32.into(), b"client endpoint dropped");
+    }
+}
+
+struct DriverAlive(Arc<AtomicBool>);
+impl Drop for DriverAlive {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
     }
 }
 
@@ -106,6 +121,7 @@ impl Http3Client {
                 driver: JoinSet::new(),
                 permits: Arc::new(Semaphore::new(MAX_REQUESTS)),
                 origin,
+                driver_alive: Arc::new(AtomicBool::new(true)),
             };
             // Construct the owner before HTTP/3 setup can suspend, ensuring that
             // cancellation closes QUIC even when peer stream credit is withheld.
@@ -114,7 +130,9 @@ impl Http3Client {
                 .build(h3_noq::Connection::new(owner.connection.clone()))
                 .await?;
             owner.sender = Some(sender);
+            let alive = owner.driver_alive.clone();
             owner.driver.spawn(async move {
+                let _alive = DriverAlive(alive);
                 let _ = driver.wait_idle().await;
             });
             return Ok(owner);
@@ -122,11 +140,15 @@ impl Http3Client {
         Err(last_error.unwrap_or_else(|| "HTTP/3 hostname resolved to no addresses".into()))
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.connection.close_reason().is_some() || !self.driver_alive.load(Ordering::Acquire)
+    }
+
     pub async fn open(
-        &self,
+        self: &Arc<Self>,
         request: Request<()>,
         limits: RequestLimits,
-    ) -> Result<Http3Stream<'_>, Error> {
+    ) -> Result<Http3Stream, Error> {
         if Origin::from_uri(request.uri())? != self.origin {
             return Err("HTTP/3 request authority differs from its connection".into());
         }
@@ -150,7 +172,7 @@ impl Http3Client {
             receive_finished: false,
             response_received: false,
             _permit: permit,
-            _owner: self,
+            _owner: self.clone(),
         })
     }
 
@@ -170,7 +192,7 @@ impl Drop for Http3Client {
     }
 }
 
-pub struct Http3Stream<'a> {
+pub struct Http3Stream {
     stream: Stream,
     deadline: Instant,
     limits: RequestLimits,
@@ -180,10 +202,10 @@ pub struct Http3Stream<'a> {
     receive_finished: bool,
     response_received: bool,
     _permit: OwnedSemaphorePermit,
-    _owner: &'a Http3Client,
+    _owner: Arc<Http3Client>,
 }
 
-impl Http3Stream<'_> {
+impl Http3Stream {
     pub async fn send_data(&mut self, bytes: Bytes) -> Result<(), Error> {
         if self.send_finished {
             return Err("HTTP/3 request body already finished".into());
@@ -238,7 +260,7 @@ impl Http3Stream<'_> {
     }
 }
 
-impl Drop for Http3Stream<'_> {
+impl Drop for Http3Stream {
     fn drop(&mut self) {
         if !self.send_finished {
             self.stream.stop_stream(Code::H3_REQUEST_CANCELLED);
@@ -418,7 +440,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        let client = Http3Client::connect(&uri, true, Duration::from_secs(5)).await?;
+        let client = Arc::new(Http3Client::connect(&uri, true, Duration::from_secs(5)).await?);
         for max_receive_bytes in [100, 3] {
             let request = Request::post(uri.clone()).body(())?;
             let mut stream = client
@@ -441,7 +463,10 @@ mod tests {
                 assert!(result.unwrap_err().to_string().contains("exceeds limit"));
             }
         }
-        client.close().await;
+        Arc::try_unwrap(client)
+            .map_err(|_| "request stream retained its HTTP/3 owner")?
+            .close()
+            .await;
         timeout(Duration::from_secs(5), tasks.join_next())
             .await?
             .ok_or("missing server task")???;

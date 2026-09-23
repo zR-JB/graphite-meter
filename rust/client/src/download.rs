@@ -2,7 +2,7 @@
 use crate::{
     Error,
     net::Http,
-    transport::{HTTP_RETRY_BACKOFF, Transport},
+    transport::{TRANSFER_RETRY_BACKOFF, Transport},
     webtransport::Session,
 };
 use graphite_meter_core::{
@@ -203,8 +203,8 @@ async fn receive_http_lane(
             .await;
         let mut body = match response {
             Ok(body) => body,
-            Err(error) if transport.retryable_http_error(&error) => {
-                tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+            Err(error) if transport.retryable_transfer_error(&error) => {
+                tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
                 continue;
             }
             Err(error) => return Err(error),
@@ -224,15 +224,12 @@ async fn receive_http_lane(
                     }
                 }
                 Ok(None) => break,
-                Err(error) if transport.retryable_http_error(&error) => break,
+                Err(error) if transport.retryable_transfer_error(&error) => break,
                 Err(error) => return Err(error),
             }
         }
         if received != HTTP_DOWNLOAD_BYTES {
-            if transport.is_http3() {
-                return Err("download ended before its declared byte count".into());
-            }
-            tokio::time::sleep(HTTP_RETRY_BACKOFF).await;
+            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
         }
     }
 }
@@ -306,7 +303,7 @@ mod tests {
                 let (mut stream, _) = listener.accept().await?;
                 if attempt == 1 {
                     assert!(first_closed.is_some_and(|closed: tokio::time::Instant| {
-                        closed.elapsed() >= HTTP_RETRY_BACKOFF
+                        closed.elapsed() >= TRANSFER_RETRY_BACKOFF
                     }));
                 }
                 let mut request = [0_u8; 4096];
