@@ -149,10 +149,43 @@ def expected_release_artifacts(version: str, targets_file: Path) -> set[str]:
 def expected_rust_artifacts(version: str, selection: str) -> set[str]:
     if selection not in {"none", "server", "tui", "both"}:
         raise VerificationError("invalid Rust artifact selection")
-    if selection not in {"tui", "both"}:
-        return set()
-    base = f"graphite-meter-client_{version}_linux_amd64_rust"
-    return {f"{base}.tar.gz", f"{base}_third-party-source.tar.gz"}
+    expected: set[str] = set()
+    if selection in {"tui", "both"}:
+        base = f"graphite-meter-client_{version}_linux_amd64_rust"
+        expected.update({f"{base}.tar.gz", f"{base}_third-party-source.tar.gz"})
+    if selection in {"server", "both"}:
+        expected.add(f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz")
+    return expected
+
+
+def verify_rust_server_source(dist: Path, version: str) -> None:
+    source = dist / f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz"
+    names = archive_names(source)
+    verify_no_certificate_material(source, names)
+    if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= names:
+        raise VerificationError("Rust server source offer lacks inventory, notices, or patch provenance")
+    if not read_tar_text(source, "LEGAL.txt").strip():
+        raise VerificationError("Rust server source offer has empty notices")
+    inventory = decode_json(read_tar_text(source, "inventory.json", limit=8 * 1024 * 1024), "Rust server inventory")
+    if (not isinstance(inventory, dict)
+        or type(inventory.get("schemaVersion")) is not int or inventory.get("schemaVersion") != 1
+        or inventory.get("package") != "graphite-meter-server"
+        or inventory.get("target") != "x86_64-unknown-linux-gnu"
+        or inventory.get("profile") != "release"
+        or inventory.get("cargoLockSha256") != sha256_file(Path("rust/Cargo.lock"))):
+        raise VerificationError("Rust server source inventory build identity mismatch")
+    components = inventory.get("components")
+    if not isinstance(components, list) or not 1 <= len(components) <= 4096:
+        raise VerificationError("Rust server source inventory has no components")
+    for item in components:
+        component = item.get("component") if isinstance(item, dict) else None
+        if not isinstance(component, dict):
+            raise VerificationError("invalid Rust server source component")
+        name, component_version = component.get("name"), component.get("version")
+        if not isinstance(name, str) or not isinstance(component_version, str):
+            raise VerificationError("invalid Rust server source component identity")
+        if not any(path.startswith(f"third_party/cargo/{name}-{component_version}/") for path in names):
+            raise VerificationError(f"Rust server source omits {name} {component_version}")
 
 
 def verify_rust_client_archive(dist: Path, version: str) -> None:
@@ -485,6 +518,8 @@ def verify(version: str, dist: Path, rust_artifacts: str = "none") -> None:
     verify_client_archives(dist, version, targets_file)
     if rust_artifacts in {"tui", "both"}:
         verify_rust_client_archive(dist, version)
+    if rust_artifacts in {"server", "both"}:
+        verify_rust_server_source(dist, version)
     verify_client_version(version)
     verify_server_version(version)
     print(f"release asset verification passed: {version}")

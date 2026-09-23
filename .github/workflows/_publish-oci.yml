@@ -3,6 +3,11 @@ name: _Publish exact OCI tag
 on:
   workflow_call:
     inputs:
+      implementation:
+        description: Explicit implementation; Rust uses a separate immutable tag
+        required: false
+        default: go
+        type: string
       artifact:
         description: Artifact in the caller run containing graphite-meter.oci.tar
         required: true
@@ -82,6 +87,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           REGISTRY_ACTOR: ${{ github.actor }}
           IMAGE_TAG: ${{ inputs.tag }}
+          IMPLEMENTATION: ${{ inputs.implementation }}
           SOURCE_SHA: ${{ inputs.source_sha }}
           TRUSTED_MAIN_SHA: ${{ inputs.trusted_main_sha }}
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -93,7 +99,16 @@ jobs:
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid source SHA" >&2; exit 1; }
           [[ "$TRUSTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid trusted main SHA" >&2; exit 1; }
           [[ "$EXPECTED_CI_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "invalid expected CI run ID" >&2; exit 1; }
-          [[ "$IMAGE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]] || {
+          case "$IMPLEMENTATION" in
+            go) version_tag="$IMAGE_TAG" ;;
+            rust)
+              [[ "$IMAGE_TAG" == *-rust && -z "$PR_NUMBER" ]] || { echo "Rust publication requires a stable -rust tag" >&2; exit 1; }
+              version_tag="${IMAGE_TAG%-rust}"
+              [[ "$version_tag" != *-* ]] || { echo "Rust publication requires a stable version" >&2; exit 1; }
+              ;;
+            *) echo "unknown image implementation" >&2; exit 1 ;;
+          esac
+          [[ "$version_tag" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]] || {
             echo "invalid immutable image tag: $IMAGE_TAG" >&2
             exit 1
           }

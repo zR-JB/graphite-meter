@@ -93,7 +93,7 @@ def request_rust_artifacts(request: JsonObject, keys: set[str], label: str) -> s
 
 def require_rust_packaging(selection: str, *, prerelease: bool = False) -> None:
     rust_artifact_selection(selection)
-    if selection in {"server", "both"} or (prerelease and selection != "none"):
+    if prerelease and selection != "none":
         die(
             f"Rust {selection} packaging is not available yet; "
             "use none until verified Rust release artifacts are supported"

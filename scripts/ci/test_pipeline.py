@@ -109,8 +109,9 @@ class RustReleaseSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "packaging is not available"):
             require_rust_packaging("tui", prerelease=True)
         for selection in ("server", "both"):
+            require_rust_packaging(selection)
             with self.assertRaisesRegex(SystemExit, "packaging is not available"):
-                require_rust_packaging(selection)
+                require_rust_packaging(selection, prerelease=True)
         with self.assertRaisesRegex(SystemExit, "must be none"):
             request_rust_artifacts(
                 {"schemaVersion": 2, "rustArtifacts": "server --publish"}, keys, "request"

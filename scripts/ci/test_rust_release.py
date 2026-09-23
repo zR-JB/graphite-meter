@@ -5,11 +5,13 @@ import io
 import json
 import tarfile
 import tempfile
+import subprocess
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from verify_release_assets import VerificationError, read_tar_text, sha256_file, verify_rust_client_archive
+from verify_release_assets import VerificationError, read_tar_text, sha256_file, verify_rust_client_archive, verify_rust_server_source, expected_rust_artifacts
 
 
 class RustArchiveBoundaryTests(unittest.TestCase):
@@ -69,3 +71,58 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                 archive.addfile(member, io.BytesIO(b" " * 32))
             with self.assertRaisesRegex(VerificationError, "exceeds limit"):
                 read_tar_text(path, "BUILD.json", limit=16)
+
+
+class RustServerReleaseTests(unittest.TestCase):
+    def test_artifact_selection_is_additive(self) -> None:
+        self.assertEqual(expected_rust_artifacts("1.2.3", "none"), set())
+        server = expected_rust_artifacts("1.2.3", "server")
+        self.assertEqual(server, {"graphite-meter-server_1.2.3_linux_amd64_rust_third-party-source.tar.gz"})
+        self.assertEqual(expected_rust_artifacts("1.2.3", "both"), server | expected_rust_artifacts("1.2.3", "tui"))
+
+    def test_server_source_identity_and_component_presence(self) -> None:
+        inventory = {
+            "schemaVersion": 1, "package": "graphite-meter-server", "profile": "release",
+            "target": "x86_64-unknown-linux-gnu",
+            "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
+            "components": [{"component": {"name": "example", "version": "1.0"}}],
+        }
+        for mutation in ("valid", "package", "lock", "missing"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                dist = Path(temporary)
+                metadata = dict(inventory)
+                if mutation == "package":
+                    metadata["package"] = "graphite-meter-client"
+                if mutation == "lock":
+                    metadata["cargoLockSha256"] = "0" * 64
+                files = {
+                    "inventory.json": json.dumps(metadata).encode(), "LEGAL.txt": b"notices",
+                    "rust/vendor/PATCHES.md": b"patch provenance",
+                }
+                if mutation != "missing":
+                    files["third_party/cargo/example-1.0/source.rs"] = b"source"
+                archive_path = dist / next(iter(expected_rust_artifacts("1.2.3", "server")))
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    for name, payload in files.items():
+                        member = tarfile.TarInfo(name)
+                        member.size = len(payload)
+                        archive.addfile(member, io.BytesIO(payload))
+                with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
+                    if mutation == "valid":
+                        verify_rust_server_source(dist, "1.2.3")
+                    else:
+                        with self.assertRaises(VerificationError):
+                            verify_rust_server_source(dist, "1.2.3")
+
+    def test_publisher_tags_cannot_cross_implementation_boundary(self) -> None:
+        workflow = Path(".github/workflows/_publish-oci.yml").read_text()
+        script = textwrap.dedent(workflow[workflow.index('          case "$IMPLEMENTATION" in'):workflow.index('          # Minimize')])
+        for implementation, tag, pr, accepted in (
+            ("go", "1.2.3", "", True), ("go", "1.2.3-rc.1", "42", True),
+            ("go", "1.2.3-rust", "", False), ("rust", "1.2.3-rust", "", True),
+            ("rust", "1.2.3-rc.1-rust", "", False), ("rust", "1.2.3", "", False), ("rust", "latest-rust", "", False),
+            ("rust", "1.2.3-rust", "42", False), ("unknown", "1.2.3", "", False),
+        ):
+            with self.subTest(implementation=implementation, tag=tag, pr=pr):
+                result = subprocess.run(["bash", "-c", script], env={"IMPLEMENTATION": implementation, "IMAGE_TAG": tag, "PR_NUMBER": pr}, capture_output=True)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)

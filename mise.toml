@@ -434,6 +434,10 @@ set -eu
 python3 scripts/ci/release.py rust-artifacts --selection "$usage_rust_artifacts"
 VERSION=$usage_version
 export VERSION
+if [ "$usage_rust_artifacts" = server ] || [ "$usage_rust_artifacts" = both ]; then
+  : "${RUST_SERVER_SOURCE:?RUST_SERVER_SOURCE must name the source archive exported with the Rust OCI build}"
+  [ -f "$RUST_SERVER_SOURCE" ] && [ ! -L "$RUST_SERVER_SOURCE" ] || { echo "Rust server source archive is not a regular file" >&2; exit 2; }
+fi
 dist=${RELEASE_DIST:-go/dist}
 case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
 mkdir -p "$dist"
@@ -443,8 +447,11 @@ while IFS= read -r target; do
   [ -n "$target" ] || continue
   scripts/package-tui.sh "$VERSION" "${target%/*}" "${target#*/}" "$dist"
 done < scripts/tui-targets.txt
-if [ "$usage_rust_artifacts" = tui ]; then
+if [ "$usage_rust_artifacts" = tui ] || [ "$usage_rust_artifacts" = both ]; then
   python3 scripts/package-rust.py "$VERSION" --container --output "$dist"
+fi
+if [ "$usage_rust_artifacts" = server ] || [ "$usage_rust_artifacts" = both ]; then
+  cp "$RUST_SERVER_SOURCE" "$dist/graphite-meter-server_${VERSION}_linux_amd64_rust_third-party-source.tar.gz"
 fi
 (cd "$dist" && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt)
 '''
