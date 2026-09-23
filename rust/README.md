@@ -32,7 +32,8 @@ select the experimental server. Leaving it unset selects Go.
 using `GM_*` configuration or server flags. HTTP/1, HTTPS/WSS, HTTP/2, and
 HTTP/3/WebTransport listeners share authentication and measurement state.
 Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
-against a local signed-token provider; deployment-provider validation is pending.
+against a local signed-token provider and a temporary HTTPS Keycloak realm,
+including allowed and denied group membership. Other deployments remain untested.
 
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
