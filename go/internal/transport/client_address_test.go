@@ -67,3 +67,24 @@ func TestForwardedPrecedenceDoesNotMixMalformedHeaders(t *testing.T) {
 		t.Fatalf("ResolveClientAddress() = %s/%s, want 10.0.0.2/%s", got.Addr, got.Source, ClientIPSocket)
 	}
 }
+
+func TestDuplicateForwardedHeadersUseSocketPeer(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+	}{
+		{"X-Real-IP", "203.0.113.4", "198.51.100.9"},
+		{"Forwarded", "for=203.0.113.4", "for=198.51.100.9"},
+		{"X-Forwarded-For", "203.0.113.4", "198.51.100.9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", "/", nil)
+			r.RemoteAddr = "10.0.0.2:1234"
+			r.Header.Add(tc.name, tc.first)
+			r.Header.Add(tc.name, tc.second)
+			got := ResolveClientAddress(r, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+			if got.Addr.String() != "10.0.0.2" || got.Source != ClientIPSocket {
+				t.Fatalf("ResolveClientAddress() = %s/%s, want 10.0.0.2/socket", got.Addr, got.Source)
+			}
+		})
+	}
+}
