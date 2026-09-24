@@ -44,6 +44,10 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ambiguousAuthHeaders(r.Header) {
+			forbidden(w)
+			return
+		}
 		t := s.requestTrust(r)
 		if t.Secure && r.TLS != nil && !strings.EqualFold(requestHostname(r.Host), s.public.Hostname()) {
 			s.writeAuthRequired(w, r, listener)
@@ -130,7 +134,7 @@ func isMeasurementRoute(path string) bool {
 }
 
 func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	if c := uniqueCookie(r, sessionCookie); c != nil {
 		s.revokeSessionHash(sha256.Sum256([]byte(c.Value)), sess)
 	}
 }
@@ -139,11 +143,11 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 	if spec, ok := route.Lookup(r.URL.Path); ok && spec.Kind == route.WebSocket && r.URL.Query().Has("token") {
 		return s.consumeWebTransportToken(r.URL.Query().Get("token"), r)
 	}
-	if r.Header.Get("Authorization") != "" {
+	if len(r.Header.Values("Authorization")) != 0 {
 		return s.authenticateNonAmbient(r)
 	}
-	c, err := r.Cookie(sessionCookie)
-	if err != nil {
+	c := uniqueCookie(r, sessionCookie)
+	if c == nil {
 		return Principal{}, false
 	}
 	h := sha256.Sum256([]byte(c.Value))
@@ -161,7 +165,11 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 }
 
 func (s *Service) authenticateNonAmbient(r *http.Request) (Principal, bool) {
-	raw := r.Header.Get("Authorization")
+	values := r.Header.Values("Authorization")
+	if len(values) != 1 {
+		return Principal{}, false
+	}
+	raw := values[0]
 	raw, ok := strings.CutPrefix(raw, "Bearer ")
 	if !ok {
 		return Principal{}, false
