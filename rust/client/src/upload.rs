@@ -753,11 +753,26 @@ mod tests {
                         "a dropped upload request was retried without pacing"
                     );
                 }
-                let mut request = [0_u8; 4096];
-                let count = stream.read(&mut request).await?;
-                assert!(request[..count].starts_with(b"POST /upload?"));
-                // Closing before a response models a reset while the request
-                // body is still streaming. The second accept proves recovery.
+                let mut headers = Vec::new();
+                let mut chunk = [0_u8; 4096];
+                let body_start = loop {
+                    let count = stream.read(&mut chunk).await?;
+                    assert!(count > 0, "upload ended before request headers");
+                    headers.extend_from_slice(&chunk[..count]);
+                    if let Some(end) = headers.windows(4).position(|bytes| bytes == b"\r\n\r\n") {
+                        break end + 4;
+                    }
+                    assert!(headers.len() <= 16 * 1024, "upload headers are too large");
+                };
+                assert!(headers.starts_with(b"POST /upload?"));
+                let mut payload_bytes = headers.len() - body_start;
+                while attempt == 0 && payload_bytes < 128 * 1024 {
+                    let count = stream.read(&mut chunk).await?;
+                    assert!(count > 0, "upload ended before the partial payload");
+                    payload_bytes += count;
+                }
+                // The first connection drops after accepting payload bytes;
+                // the second request proves recovery after a partial upload.
                 drop(stream);
                 if attempt == 0 {
                     first_closed = Some(Instant::now());

@@ -70,7 +70,13 @@ async fn run_case(url: &str, case: Case) -> Result<(), Error> {
         warmup: Duration::from_millis(100),
         latency_duration: Duration::from_millis(600),
         download_duration: Duration::from_secs(1),
-        upload_duration: Duration::from_secs(1),
+        // Exercise the reported fetch-upload boundary at the TUI's default
+        // duration; the other transports keep this CI replay short.
+        upload_duration: if case.protocol == Protocol::Http1 {
+            Config::default().upload_duration
+        } else {
+            Duration::from_secs(1)
+        },
         bidirectional_duration: Duration::from_secs(1),
         streams: 1,
         loaded_latency: true,
