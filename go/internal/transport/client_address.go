@@ -62,6 +62,11 @@ func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
 
 // forwardedChain returns the proxy chain in client-to-proxy order.
 func forwardedChain(h http.Header) ([]netip.Addr, bool) {
+	// X-Real-IP is a singleton. Forwarded and X-Forwarded-For are lists:
+	// include every field line before walking the chain from the trusted socket.
+	if len(h.Values("X-Real-IP")) > 1 {
+		return nil, false
+	}
 	if raw := h.Get("X-Real-IP"); raw != "" {
 		addr, ok := parseAddress(raw)
 		if !ok {
@@ -69,7 +74,7 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 		}
 		return []netip.Addr{addr}, true
 	}
-	if raw := h.Get("Forwarded"); raw != "" {
+	if raw := strings.Join(h.Values("Forwarded"), ","); raw != "" {
 		elements, ok := splitQuoted(raw, ',')
 		if !ok {
 			return nil, false
@@ -96,7 +101,7 @@ func forwardedChain(h http.Header) ([]netip.Addr, bool) {
 		}
 		return chain, len(chain) > 0
 	}
-	if raw := h.Get("X-Forwarded-For"); raw != "" {
+	if raw := strings.Join(h.Values("X-Forwarded-For"), ","); raw != "" {
 		chain := make([]netip.Addr, 0, strings.Count(raw, ",")+1)
 		for part := range strings.SplitSeq(raw, ",") {
 			addr, ok := parseAddress(part)
