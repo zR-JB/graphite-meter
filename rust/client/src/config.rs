@@ -2,7 +2,7 @@ use crate::{Error, model::Stage};
 use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
 use std::time::Duration;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub url: String,
     pub servers: Vec<String>,

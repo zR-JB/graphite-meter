@@ -385,6 +385,7 @@ impl Edit {
 
 struct Ui {
     config: Config,
+    requested: Config,
     snapshot: Snapshot,
     theme: Theme,
     page: usize,
@@ -408,6 +409,7 @@ impl Ui {
         let mut servers = ListState::default();
         servers.select(Some(0));
         Self {
+            requested: config.clone(),
             config,
             snapshot,
             theme: Theme::terminal(),
@@ -481,8 +483,15 @@ impl Ui {
         }
     }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) {
+        let requested = match &command {
+            Command::Run(config) | Command::Verify(config) => Some(config.clone()),
+            _ => None,
+        };
         match commands.try_send(command) {
             Ok(()) => {
+                if let Some(requested) = requested {
+                    self.requested = requested;
+                }
                 self.notice.clear();
                 self.awaiting = true;
             }
@@ -882,6 +891,59 @@ fn milliseconds(value: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
+        use crate::model::ServerSummary;
+        use graphite_meter_core::discovery::{LatencyTarget, ThroughputTarget};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let config = Config::default();
+        let server = ServerSummary {
+            id: "self".into(),
+            name: "Local peer".into(),
+            origin: "https://meter.example".into(),
+            throughput: Some(ThroughputTarget {
+                base_url: "https://meter.example".into(),
+                transport: ThroughputTransport::FetchStream,
+                protocol: Protocol::Http2,
+            }),
+            latency: Some(LatencyTarget {
+                base_url: "https://meter.example".into(),
+                transport: LatencyTransport::WebTransport,
+            }),
+            ..ServerSummary::default()
+        };
+        let mut ui = Ui::new(
+            config,
+            Snapshot {
+                servers: vec![server],
+                ..Snapshot::default()
+            },
+        );
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let rendered = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&terminal).contains("↓ Fetch stream · HTTP/2 · TLS"));
+        assert!(rendered(&terminal).contains("RTT WebTransport · HTTP/3 · TLS"));
+
+        let mut narrow = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        narrow.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&narrow).contains("↓ Fetch stream · HTTP/2 · TLS"));
+
+        ui.config.throughput_protocol = Some(Protocol::Http1);
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&terminal).contains("Settings changed · verify again"));
+        assert!(!rendered(&terminal).contains("↓ Fetch stream"));
+    }
 
     #[test]
     fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {

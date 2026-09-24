@@ -188,10 +188,8 @@ async fn prepare(
                 .iter_mut()
                 .find(|summary| summary.id == entry.id)
             {
-                summary.transport = throughput.as_ref().map_or_else(
-                    || "Latency".into(),
-                    |target| format!("{:?} / {:?}", target.transport, target.protocol),
-                );
+                summary.throughput.clone_from(&throughput);
+                summary.latency.clone_from(&latency);
             }
         });
         prepared.push(PreparedServer {
