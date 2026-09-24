@@ -121,22 +121,6 @@ impl Ui {
         if self.details {
             self.draw_details(frame);
         }
-        if let Some(auth) = &self.snapshot.auth {
-            let area = popup(frame.area(), 100, 10);
-            frame.render_widget(Clear, area);
-            let text = format!(
-                "Origin: {}\nConfirmation code: {}\n\n{}\n\no opens browser · approve the matching code · Esc cancels",
-                safe_text(&auth.origin, 300),
-                safe_text(&auth.code, 80),
-                safe_text(&auth.browser_url, MAX_TEXT)
-            );
-            frame.render_widget(
-                Paragraph::new(text)
-                    .wrap(Wrap { trim: false })
-                    .block(panel("Client approval required", self.theme)),
-                area,
-            );
-        }
         if self.chooser {
             self.draw_servers(frame);
         }
@@ -168,7 +152,69 @@ impl Ui {
                 area,
             );
         }
+        if self.snapshot.auth.is_some() {
+            self.draw_auth(frame);
+        }
     }
+
+    fn draw_auth(&mut self, frame: &mut Frame) {
+        let auth = self.snapshot.auth.as_ref().expect("active approval");
+        let area = popup(frame.area(), 100, 12);
+        frame.render_widget(Clear, area);
+        frame.render_widget(panel("Client approval required", self.theme), area);
+        let inner = area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        let regions = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+        let width = usize::from(inner.width);
+        frame.render_widget(
+            Paragraph::new(safe_text_width(&format!("Origin: {}", auth.origin), width))
+                .style(Style::new().fg(self.theme.muted)),
+            regions[0],
+        );
+        frame.render_widget(
+            Paragraph::new(safe_text_width(
+                &format!("Confirmation code: {}", auth.code),
+                width,
+            ))
+            .style(
+                Style::new()
+                    .fg(self.theme.brand_strong)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            regions[1],
+        );
+        frame.render_widget(
+            Paragraph::new("Browser URL · ↑/↓ scroll").style(Style::new().fg(self.theme.muted)),
+            regions[2],
+        );
+        let url = safe_text(&auth.browser_url, MAX_TEXT);
+        let lines = wrap_columns(&url, width.max(1));
+        let visible = usize::from(regions[3].height);
+        self.auth_scroll = self
+            .auth_scroll
+            .min(lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .scroll((self.auth_scroll, 0))
+                .style(Style::new().fg(self.theme.text)),
+            regions[3],
+        );
+        frame.render_widget(
+            Paragraph::new("o open browser · Esc cancel · q quit")
+                .style(Style::new().fg(self.theme.brand_strong)),
+            regions[4],
+        );
+    }
+
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
         let setup = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
         frame.render_widget(
@@ -690,4 +736,21 @@ impl Ui {
             area,
         );
     }
+}
+
+fn wrap_columns(value: &str, width: usize) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut columns = 0;
+    for character in value.chars() {
+        let next = cell_width(character);
+        if !current.is_empty() && columns + next > width {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            columns = 0;
+        }
+        current.push(character);
+        columns += next;
+    }
+    lines.push(Line::from(current));
+    lines
 }

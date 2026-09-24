@@ -93,7 +93,7 @@ pub struct ServerSummary {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthPrompt {
     pub origin: String,
     pub browser_url: String,

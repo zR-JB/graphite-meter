@@ -112,7 +112,7 @@ pub async fn run(
                         dirty = true;
                     }
                     Event::Paste(text) => {
-                        if let Some(edit) = &mut ui.edit { edit.insert(&text); }
+                        ui.paste(&text);
                         dirty = true;
                     }
                     Event::Resize(_, _) => dirty = true,
@@ -394,6 +394,7 @@ struct Ui {
     chooser: bool,
     details: bool,
     details_scroll: u16,
+    auth_scroll: u16,
     help: bool,
     edit: Option<Edit>,
     notice: String,
@@ -417,6 +418,7 @@ impl Ui {
             chooser: false,
             details: false,
             details_scroll: 0,
+            auth_scroll: 0,
             help: false,
             edit: None,
             notice: String::new(),
@@ -425,6 +427,9 @@ impl Ui {
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
+        if snapshot.auth != self.snapshot.auth {
+            self.auth_scroll = 0;
+        }
         if snapshot.error != self.snapshot.error {
             self.notice.clear();
         }
@@ -489,10 +494,37 @@ impl Ui {
             }
         }
     }
+    fn paste(&mut self, text: &str) {
+        if self.snapshot.auth.is_none()
+            && let Some(edit) = &mut self.edit
+        {
+            edit.insert(text);
+        }
+    }
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             let _ = commands.try_send(Command::Quit);
             return true;
+        }
+        if self.snapshot.auth.is_some() {
+            match key.code {
+                KeyCode::Char('q') => {
+                    let _ = commands.try_send(Command::Quit);
+                    return true;
+                }
+                KeyCode::Char('o') => self.send(Command::OpenBrowser, commands),
+                KeyCode::Esc => self.send(Command::Cancel, commands),
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.auth_scroll = self.auth_scroll.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.auth_scroll = self.auth_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp => self.auth_scroll = self.auth_scroll.saturating_sub(4),
+                KeyCode::PageDown => self.auth_scroll = self.auth_scroll.saturating_add(4),
+                _ => {}
+            }
+            return false;
         }
         if let Some(edit) = &mut self.edit {
             match key.code {
@@ -850,6 +882,75 @@ fn milliseconds(value: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
+        use crate::model::AuthPrompt;
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let mut ui = Ui::new(
+            Config::default(),
+            Snapshot {
+                phase: Phase::Preparing,
+                auth: Some(AuthPrompt {
+                    origin: "https://meter.example".into(),
+                    code: "782411".into(),
+                    browser_url: format!(
+                        "https://meter.example/auth/cli?challenge={}TAIL",
+                        "x".repeat(300)
+                    ),
+                }),
+                ..Snapshot::default()
+            },
+        );
+        ui.edit = Some(Edit::new(Field::Url, "original".into()));
+        ui.help = true;
+        ui.chooser = true;
+        let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+        let rendered = |terminal: &Terminal<TestBackend>| {
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+        };
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&terminal).contains("Confirmation code: 782411"));
+        assert!(rendered(&terminal).contains("o open browser"));
+        assert!(!rendered(&terminal).contains("TAIL"));
+
+        let (commands, mut received) = mpsc::channel(4);
+        ui.paste("ignored");
+        assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
+        ui.key(
+            KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+            &commands,
+        );
+        assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
+        for _ in 0..12 {
+            ui.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &commands);
+        }
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&terminal).contains("TAIL"));
+        assert!(rendered(&terminal).contains("Confirmation code: 782411"));
+        ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+        assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
+        assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
+
+        let browser_url = ui.snapshot.auth.as_ref().unwrap().browser_url.clone();
+        ui.update(Snapshot {
+            auth: Some(AuthPrompt {
+                origin: "https://meter.example".into(),
+                code: "999999".into(),
+                browser_url,
+            }),
+            ..Snapshot::default()
+        });
+        assert_eq!(ui.auth_scroll, 0);
+    }
+
     #[test]
     fn terminal_text_cannot_emit_controls_or_direction_overrides() {
         let text = safe_text("server\x1b]52;c;secret\x07\r\n\u{202e}name", 100);
