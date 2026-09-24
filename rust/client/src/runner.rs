@@ -8,6 +8,7 @@ use crate::{
     stream_plan::{Participant, StageLanePlan},
     transport::Transport,
 };
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
@@ -29,6 +30,24 @@ struct PreparedServer {
     http: Option<Arc<Transport>>,
     latency: Option<LatencyTarget>,
     idle_rtt: Duration,
+}
+
+#[derive(Debug)]
+struct PreparationFailure {
+    name: String,
+    source: Error,
+}
+
+impl std::fmt::Display for PreparationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.name, self.source)
+    }
+}
+
+impl std::error::Error for PreparationFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
 }
 
 pub async fn verify(
@@ -75,135 +94,190 @@ async fn prepare(
         .iter()
         .any(|stage| stage.downloads() || stage.uploads());
     let latency = config.loaded_latency || config.stages.contains(&crate::model::Stage::Latency);
-    let mut prepared = Vec::with_capacity(selected.len());
-    for entry in selected {
-        snapshots.send_modify(|snapshot| snapshot.status = format!("Verifying {}", entry.name));
-        let preflight = http.preflight(entry).await?;
-        http.approve_targets(entry, &preflight)?;
-        let mut throughput = transfers
-            .then(|| selection::throughput(config, entry, &preflight))
-            .transpose()?;
-        if config.stages.iter().any(|stage| stage.uploads())
-            && !preflight.capabilities.upload_checkpoint
-        {
-            return Err("selected server does not support authoritative upload checkpoints".into());
-        }
-        if let Some(target) = &throughput
-            && target.transport != ThroughputTransport::FetchStream
-        {
-            match verify_throughput_webtransport(http, target, config.insecure).await {
-                Ok(()) => {}
-                Err(error) if config.throughput_transport.is_none() => {
-                    throughput = Some(
-                        selection::throughput_with_transport(
-                            config,
-                            entry,
-                            &preflight,
-                            ThroughputTransport::FetchStream,
-                        )
-                        .map_err(|fallback_error| -> Error {
-                            format!(
-                                "fetch-stream selection failed ({fallback_error}); advertised WebTransport is unavailable: {error}"
-                            )
-                            .into()
-                        })?,
-                    );
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        let mut idle_rtt = Duration::ZERO;
-        let transport = if let Some(target) = &mut throughput {
-            let connection = Transport::connect(
-                http.clone(),
-                &target.base_url,
-                target.protocol,
-                config.insecure,
+    snapshots.send_modify(|snapshot| {
+        snapshot.status = format!("Verifying {} selected servers", selected.len());
+    });
+    // Run independent origins concurrently and publish each result as it
+    // arrives. Retain catalogue order for lane planning and error selection.
+    let mut checks = selected
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| async move {
+            (
+                index,
+                prepare_server(config, http, entry, transfers, latency).await,
             )
-            .await?;
-            if target.protocol == Protocol::Negotiated {
-                let probe = http.probe(&target.base_url, Protocol::Negotiated).await?;
-                target.protocol = match probe.protocol_negotiated {
-                    ProtocolNegotiated::Http1 => Protocol::Http1,
-                    ProtocolNegotiated::Http2 => Protocol::Http2,
-                    ProtocolNegotiated::Http3 => {
-                        return Err("negotiated HTTP probe cannot use HTTP/3".into());
-                    }
-                };
-            } else {
-                let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
-                probe.validate()?;
-            }
-            Some(Arc::new(connection))
-        } else {
-            None
-        };
-        let mut latency = latency
-            .then(|| selection::latency(config, entry, &preflight))
-            .transpose()?;
-        if let Some(target) = &latency
-            && target.transport == LatencyTransport::WebTransport
-        {
-            match crate::latency::verify(http, target, config.insecure).await {
-                Ok(()) => {}
-                Err(error) if config.latency_transport.is_none() => {
-                    latency = Some(
-                        selection::latency_with_transport(
-                            config,
-                            entry,
-                            &preflight,
-                            LatencyTransport::WebSocket,
-                        )
-                        .map_err(|fallback_error| -> Error {
-                            format!(
-                                "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
-                            )
-                            .into()
-                        })?,
-                    );
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        if let Some(target) = &latency {
-            if target.transport == LatencyTransport::WebTransport
-                && config.ping_interval > Duration::from_secs(15)
-            {
-                return Err("WebTransport ping interval must not exceed 15 seconds".into());
-            }
-            let started = Instant::now();
-            http.probe(
-                &target.base_url,
-                graphite_meter_core::discovery::Protocol::Negotiated,
-            )
-            .await?;
-            idle_rtt = started.elapsed();
-            if target.transport == LatencyTransport::WebSocket {
-                crate::latency::verify(http, target, config.insecure).await?;
-            }
-        }
+        })
+        .collect::<FuturesUnordered<_>>();
+    let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
+    let mut completed = 0;
+    while let Some((index, result)) = checks.next().await {
+        completed += 1;
+        let entry = selected[index];
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot
                 .servers
                 .iter_mut()
                 .find(|summary| summary.id == entry.id)
             {
-                summary.throughput.clone_from(&throughput);
-                summary.latency.clone_from(&latency);
+                match &result {
+                    Ok(server) => {
+                        summary.throughput.clone_from(&server.throughput);
+                        summary.latency.clone_from(&server.latency);
+                    }
+                    Err(error) => summary.error = Some(error.to_string()),
+                }
             }
+            snapshot.status = format!("Verified {completed}/{} selected servers", selected.len());
         });
-        prepared.push(PreparedServer {
-            entry: entry.clone(),
-            throughput,
-            http: transport,
-            latency,
-            idle_rtt,
-        });
+        results[index] = Some(result);
+    }
+    let mut prepared = Vec::with_capacity(selected.len());
+    let mut failures = Vec::new();
+    for (entry, result) in selected.iter().zip(results) {
+        match result.expect("every selected verification completed") {
+            Ok(server) => prepared.push(server),
+            Err(source) => failures.push(PreparationFailure {
+                name: entry.name.clone(),
+                source,
+            }),
+        }
+    }
+    if !failures.is_empty() {
+        // The controller can approve one origin at a time. Surface an auth
+        // challenge even when an earlier selected peer failed for another reason.
+        let index = failures
+            .iter()
+            .position(|failure| {
+                crate::net::authentication_required(failure.source.as_ref()).is_some()
+            })
+            .unwrap_or(0);
+        return Err(failures.swap_remove(index).into());
     }
     for stage in &config.stages {
         lane_plan(config, *stage, &prepared)?;
     }
     Ok(prepared)
+}
+
+async fn prepare_server(
+    config: &Config,
+    http: &Http,
+    entry: &ServerEntry,
+    transfers: bool,
+    needs_latency: bool,
+) -> Result<PreparedServer, Error> {
+    let preflight = http.preflight(entry).await?;
+    http.approve_targets(entry, &preflight)?;
+    let mut throughput = transfers
+        .then(|| selection::throughput(config, entry, &preflight))
+        .transpose()?;
+    if config.stages.iter().any(|stage| stage.uploads())
+        && !preflight.capabilities.upload_checkpoint
+    {
+        return Err("selected server does not support authoritative upload checkpoints".into());
+    }
+    if let Some(target) = &throughput
+        && target.transport != ThroughputTransport::FetchStream
+    {
+        match verify_throughput_webtransport(http, target, config.insecure).await {
+            Ok(()) => {}
+            Err(error) if config.throughput_transport.is_none() => {
+                throughput = Some(
+                    selection::throughput_with_transport(
+                        config,
+                        entry,
+                        &preflight,
+                        ThroughputTransport::FetchStream,
+                    )
+                    .map_err(|fallback_error| -> Error {
+                        format!(
+                            "fetch-stream selection failed ({fallback_error}); advertised WebTransport is unavailable: {error}"
+                        )
+                        .into()
+                    })?,
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let mut idle_rtt = Duration::ZERO;
+    let transport = if let Some(target) = &mut throughput {
+        let connection = Transport::connect(
+            http.clone(),
+            &target.base_url,
+            target.protocol,
+            config.insecure,
+        )
+        .await?;
+        if target.protocol == Protocol::Negotiated {
+            let probe = http.probe(&target.base_url, Protocol::Negotiated).await?;
+            target.protocol = match probe.protocol_negotiated {
+                ProtocolNegotiated::Http1 => Protocol::Http1,
+                ProtocolNegotiated::Http2 => Protocol::Http2,
+                ProtocolNegotiated::Http3 => {
+                    return Err("negotiated HTTP probe cannot use HTTP/3".into());
+                }
+            };
+        } else {
+            let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
+            probe.validate()?;
+        }
+        Some(Arc::new(connection))
+    } else {
+        None
+    };
+    let mut latency = needs_latency
+        .then(|| selection::latency(config, entry, &preflight))
+        .transpose()?;
+    if let Some(target) = &latency
+        && target.transport == LatencyTransport::WebTransport
+    {
+        match crate::latency::verify(http, target, config.insecure).await {
+            Ok(()) => {}
+            Err(error) if config.latency_transport.is_none() => {
+                latency = Some(
+                    selection::latency_with_transport(
+                        config,
+                        entry,
+                        &preflight,
+                        LatencyTransport::WebSocket,
+                    )
+                    .map_err(|fallback_error| -> Error {
+                        format!(
+                            "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
+                        )
+                        .into()
+                    })?,
+                );
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if let Some(target) = &latency {
+        if target.transport == LatencyTransport::WebTransport
+            && config.ping_interval > Duration::from_secs(15)
+        {
+            return Err("WebTransport ping interval must not exceed 15 seconds".into());
+        }
+        let started = Instant::now();
+        http.probe(
+            &target.base_url,
+            graphite_meter_core::discovery::Protocol::Negotiated,
+        )
+        .await?;
+        idle_rtt = started.elapsed();
+        if target.transport == LatencyTransport::WebSocket {
+            crate::latency::verify(http, target, config.insecure).await?;
+        }
+    }
+    Ok(PreparedServer {
+        entry: entry.clone(),
+        throughput,
+        http: transport,
+        latency,
+        idle_rtt,
+    })
 }
 
 async fn verify_throughput_webtransport(

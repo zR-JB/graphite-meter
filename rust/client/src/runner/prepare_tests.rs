@@ -4,6 +4,7 @@ use graphite_meter_core::wire;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::Barrier,
 };
 use tokio_tungstenite::tungstenite::Message;
 
@@ -112,6 +113,116 @@ async fn fixture(mode: FixtureMode) -> Result<(String, tokio::task::JoinHandle<(
         }
     });
     Ok((origin, fixture))
+}
+
+async fn serve_selected(
+    mut stream: TcpStream,
+    origin: String,
+    catalog: String,
+    barrier: Arc<Barrier>,
+    refuse_preflight: bool,
+) -> Result<(), Error> {
+    let mut request = [0_u8; 2048];
+    let path = loop {
+        let size = stream.peek(&mut request).await?;
+        if size == 0 {
+            return Ok(());
+        }
+        if let Some(end) = request[..size].windows(2).position(|pair| pair == b"\r\n") {
+            break std::str::from_utf8(&request[..end])?
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .to_owned();
+        }
+        tokio::task::yield_now().await;
+    };
+    if path == "/preflight" {
+        barrier.wait().await;
+        if refuse_preflight {
+            stream
+                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await?;
+            return Ok(());
+        }
+    }
+    if path == "/servers" {
+        let _ = stream.read(&mut request).await?;
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{catalog}",
+                    catalog.len()
+                )
+                .as_bytes(),
+            )
+            .await?;
+        return Ok(());
+    }
+    serve(stream, origin, FixtureMode::Negotiated).await
+}
+
+#[tokio::test]
+async fn selected_servers_verify_concurrently_and_report_each_result() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let first = TcpListener::bind("127.0.0.1:0").await?;
+    let second = TcpListener::bind("127.0.0.1:0").await?;
+    let first_origin = format!("http://{}", first.local_addr()?);
+    let second_origin = format!("http://{}", second.local_addr()?);
+    let catalog = serde_json::json!({
+        "defaultSelection": ["self", "beta"],
+        "servers": [
+            {"id": "self", "url": first_origin, "name": "alpha"},
+            {"id": "beta", "url": second_origin, "name": "beta"}
+        ]
+    })
+    .to_string();
+    let barrier = Arc::new(Barrier::new(2));
+    let serve_listener = |listener: TcpListener, origin: String, refuse_preflight| {
+        let catalog = catalog.clone();
+        let barrier = barrier.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let origin = origin.clone();
+                let catalog = catalog.clone();
+                let barrier = barrier.clone();
+                tokio::spawn(async move {
+                    let _ =
+                        serve_selected(stream, origin, catalog, barrier, refuse_preflight).await;
+                });
+            }
+        })
+    };
+    let first_server = serve_listener(first, first_origin.clone(), false);
+    let second_server = serve_listener(second, second_origin, true);
+    let config = Config {
+        url: first_origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        prepare(&config, &Http::new(false)?, &snapshots),
+    )
+    .await?;
+    let error = result.err().ok_or("refused preflight was accepted")?;
+    assert!(error.to_string().contains("beta"), "{error}");
+    let snapshot = snapshots.borrow();
+    assert!(snapshot.servers.iter().any(|server| {
+        server.id == "self" && server.throughput.is_some() && server.error.is_none()
+    }));
+    assert!(snapshot.servers.iter().any(|server| {
+        server.id == "beta"
+            && server
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("503"))
+    }));
+    first_server.abort();
+    second_server.abort();
+    Ok(())
 }
 
 #[tokio::test]

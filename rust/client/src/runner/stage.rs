@@ -85,18 +85,6 @@ impl std::error::Error for AllParticipantsFailed {
     }
 }
 
-fn has_auth_required(mut error: &(dyn std::error::Error + 'static)) -> bool {
-    loop {
-        if error.is::<crate::net::AuthRequired>() {
-            return true;
-        }
-        let Some(source) = error.source() else {
-            return false;
-        };
-        error = source;
-    }
-}
-
 #[derive(Debug)]
 struct LatencyFailure {
     id: String,
@@ -594,9 +582,9 @@ pub(super) async fn measure(
                     if last_failure
                         .as_ref()
                         .is_none_or(|failure: &ParticipantFailure| {
-                            !has_auth_required(failure.source.as_ref())
+                            crate::net::authentication_required(failure.source.as_ref()).is_none()
                         })
-                        || has_auth_required(error.as_ref())
+                        || crate::net::authentication_required(error.as_ref()).is_some()
                     {
                         last_failure = Some(ParticipantFailure {
                             id: server.entry.id.clone(),

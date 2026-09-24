@@ -3,7 +3,7 @@ use crate::{
     Error,
     config::Config,
     model::{AuthPrompt, Phase, Snapshot},
-    net::{AuthRequired, Http},
+    net::{Http, authentication_required},
     runner,
     ui::{self, Command},
 };
@@ -301,16 +301,6 @@ async fn execute(
             snapshot.auth = None;
             snapshot.status = "Approved; retrying selected operation".into();
         });
-    }
-}
-fn authentication_required<'a>(
-    mut error: &'a (dyn std::error::Error + 'static),
-) -> Option<&'a AuthRequired> {
-    loop {
-        if let Some(required) = error.downcast_ref::<AuthRequired>() {
-            return Some(required);
-        }
-        error = error.source()?;
     }
 }
 async fn cancelled(cancel: &mut watch::Receiver<bool>) {
