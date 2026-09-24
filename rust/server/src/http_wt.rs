@@ -201,7 +201,16 @@ impl HttpServer {
                         let data = data.copy_to_bytes(data.remaining());
                         if decoder.feed(&data)?.iter().any(|capsule| matches!(capsule, Capsule::CloseSession { .. })) { break; }
                     }
-                    Some(_) = lanes.next(), if !lanes.is_empty() => {}
+                    Some(_) = lanes.next(), if !lanes.is_empty() => {
+                        // Download lanes run until their stream can no longer
+                        // make progress. Once every lane has ended, the
+                        // CONNECT has no remaining payload producer.
+                        // Upload lanes may finish normally and be replaced by
+                        // later client-opened streams.
+                        if path == "/wt/download" && lanes.is_empty() {
+                            break;
+                        }
+                    }
                     Some(_) = controls.next(), if !controls.is_empty() => {}
                     event = events.recv() => match event {
                         None => break,
