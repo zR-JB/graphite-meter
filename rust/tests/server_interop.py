@@ -36,8 +36,15 @@ def main() -> None:
         "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
     ], check=True, capture_output=True)
     client = directory / "client"
-    subprocess.run(["go", "build", "-o", str(client), str(ROOT / "rust/tests/server_client.go")], cwd=ROOT / "go", check=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GM_")}
+    cache = ROOT / "rust/target/interop-go-cache"
+    cache.mkdir(exist_ok=True)
+    work = directory / "go-tmp"
+    work.mkdir()
+    environment.update({"GOCACHE": str(cache), "GOTMPDIR": str(work)})
+    subprocess.run([
+        "go", "build", "-o", str(client), str(ROOT / "rust/tests/server_client.go"),
+    ], cwd=ROOT / "go", env=environment, check=True)
     server_log = directory / "server.log"
     with server_log.open("w") as output:
         server = subprocess.Popen([
@@ -147,6 +154,18 @@ def main() -> None:
             (directory / "auth-client.log").write_text(result.stdout + result.stderr)
             print(result.stdout + result.stderr, end="", flush=True)
             result.check_returncode()
+            native_environment = {
+                **auth_environment,
+                "SSL_CERT_FILE": str(cert),
+                "GM_RUST_INTEROP_URL": public,
+            }
+            native = subprocess.run([
+                "go", "test", "./internal/goclient", "-run", "^TestRustServerNativeApproval$",
+                "-count=1", "-v",
+            ], cwd=ROOT / "go", env=native_environment, capture_output=True, text=True, timeout=80)
+            (directory / "native-client.log").write_text(native.stdout + native.stderr)
+            print(native.stdout + native.stderr, end="", flush=True)
+            native.check_returncode()
         finally:
             server.send_signal(signal.SIGINT)
             try:

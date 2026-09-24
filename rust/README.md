@@ -77,9 +77,11 @@ libraries: bootstrap, HTTP/3 transfers, WebTransport pings, stream and datagram
 downloads/uploads, receiver-counted upload progress, independent connections,
 and rejection of excess WebTransport sessions. A password-protected loopback
 replay checks cookie-authenticated HTTP/3, one-use WebTransport tickets, and
-logout revocation. These probes do not exercise the native client's browser
-approval or an external authenticated deployment. `interop.py` separately
-probes low-level transport behavior.
+logout revocation. The same harness simulates the browser approval forms and
+runs all four stages through the actual Go native measurement engine over
+WebTransport. It does not exercise the Bubble Tea interface or an external
+authenticated deployment. `interop.py` separately probes low-level transport
+behavior.
 
 The full probe currently fails on immediate stream reset with the unchanged Go
 peer. `--fix-go-reset-reader` tests a diagnostic correction in a temporary Go
