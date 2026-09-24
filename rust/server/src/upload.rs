@@ -116,7 +116,13 @@ struct Store {
     key: [u8; 32],
     origin: Instant,
     next_sweep: Mutex<Instant>,
-    entries: Mutex<HashMap<String, Arc<Mutex<Aggregate>>>>,
+    entries: Mutex<UploadEntries>,
+}
+#[derive(Default)]
+struct UploadEntries {
+    by_id: HashMap<String, Arc<Mutex<Aggregate>>>,
+    // Counts retained aggregates, including finished ones, by admission budget.
+    by_client: HashMap<String, usize>,
 }
 struct Aggregate {
     owner: Owner,
@@ -153,7 +159,7 @@ impl UploadStore {
                 key,
                 origin: Instant::now(),
                 next_sweep: Mutex::new(Instant::now() + Duration::from_secs(5)),
-                entries: Mutex::new(HashMap::new()),
+                entries: Mutex::new(UploadEntries::default()),
             }),
         })
     }
@@ -199,27 +205,19 @@ impl UploadStore {
     ) -> Result<Arc<Mutex<Aggregate>>, UploadError> {
         self.sweep_if_due();
         let mut entries = self.inner.entries.lock().expect("upload store lock");
-        let aggregate = if let Some(aggregate) = entries.get(id) {
+        let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
             aggregate.clone()
         } else {
             if !create || !self.valid(id) {
                 return Err(UploadError::Invalid);
             }
-            if entries.len() >= MAX_LIVE_UPLOADS {
+            if entries.by_id.len() >= MAX_LIVE_UPLOADS {
                 return Err(UploadError::GlobalFull);
             }
             if entries
-                .values()
-                .filter(|entry| {
-                    entry
-                        .lock()
-                        .expect("upload aggregate lock")
-                        .owner
-                        .budget_key()
-                        == owner.budget_key()
-                })
-                .count()
-                >= MAX_UPLOADS_PER_CLIENT
+                .by_client
+                .get(owner.budget_key())
+                .is_some_and(|count| *count >= MAX_UPLOADS_PER_CLIENT)
             {
                 return Err(UploadError::ClientFull);
             }
@@ -234,7 +232,11 @@ impl UploadStore {
                 claim: None,
                 changed: Arc::new(tokio::sync::Notify::new()),
             }));
-            entries.insert(id.to_owned(), aggregate.clone());
+            entries.by_id.insert(id.to_owned(), aggregate.clone());
+            *entries
+                .by_client
+                .entry(owner.budget_key().to_owned())
+                .or_default() += 1;
             aggregate
         };
         {
@@ -306,25 +308,32 @@ impl UploadStore {
     }
     /// Also permits a caller-owned maintenance loop; no background task is spawned.
     pub fn sweep_at(&self, now: Instant) {
+        let mut entries = self.inner.entries.lock().expect("upload store lock");
+        let UploadEntries { by_id, by_client } = &mut *entries;
+        by_id.retain(|_, aggregate| {
+            let mut state = aggregate.lock().expect("upload aggregate lock");
+            if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
+                let key = state.owner.budget_key();
+                let count = by_client.get_mut(key).expect("indexed upload owner");
+                *count -= 1;
+                if *count == 0 {
+                    by_client.remove(key);
+                }
+                state.expired = true;
+                state.changed.notify_waiters();
+                false
+            } else {
+                true
+            }
+        });
+    }
+    pub fn retained(&self) -> usize {
         self.inner
             .entries
             .lock()
             .expect("upload store lock")
-            .retain(|_, aggregate| {
-                let mut state = aggregate.lock().expect("upload aggregate lock");
-                if state.lanes == 0
-                    && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION
-                {
-                    state.expired = true;
-                    state.changed.notify_waiters();
-                    false
-                } else {
-                    true
-                }
-            });
-    }
-    pub fn retained(&self) -> usize {
-        self.inner.entries.lock().expect("upload store lock").len()
+            .by_id
+            .len()
     }
 }
 
@@ -525,7 +534,7 @@ mod tests {
         let store = UploadStore::new().unwrap();
         let id = store.mint().unwrap();
         drop(store.begin(&id, &Owner::principal("a")).unwrap());
-        let aggregate = store.inner.entries.lock().unwrap()[&id].clone();
+        let aggregate = store.inner.entries.lock().unwrap().by_id[&id].clone();
         let old = Instant::now() - Duration::from_secs(80);
         aggregate.lock().unwrap().touched = old;
         store.checkpoint(&id, &Owner::principal("a")).unwrap();
@@ -543,7 +552,7 @@ mod tests {
         let owner = Owner::principal("original");
         drop(store.begin(&id, &owner).unwrap());
         store.finish(&id, &owner).unwrap();
-        let aggregate = store.inner.entries.lock().unwrap()[&id].clone();
+        let aggregate = store.inner.entries.lock().unwrap().by_id[&id].clone();
         let touched = Instant::now() - TOKEN_TTL;
         aggregate.lock().unwrap().touched = touched;
 
@@ -554,5 +563,33 @@ mod tests {
             store.begin(&id, &Owner::principal("other")).err(),
             Some(UploadError::OwnerMismatch)
         );
+    }
+
+    #[test]
+    fn client_capacity_index_tracks_partial_sweeps() {
+        let store = UploadStore::new().unwrap();
+        let owner = Owner::principal("a");
+        let other = Owner::principal("b");
+        let mut first = None;
+        for _ in 0..MAX_UPLOADS_PER_CLIENT {
+            let id = store.mint().unwrap();
+            drop(store.begin(&id, &owner).unwrap());
+            first.get_or_insert(id);
+        }
+        let other_id = store.mint().unwrap();
+        drop(store.begin(&other_id, &other).unwrap());
+        let first = first.unwrap();
+        let aggregate = store.inner.entries.lock().unwrap().by_id[&first].clone();
+        aggregate.lock().unwrap().touched =
+            Instant::now() - UPLOAD_RETENTION - Duration::from_secs(1);
+        store.sweep();
+
+        assert_eq!(store.retained(), MAX_UPLOADS_PER_CLIENT);
+        drop(store.begin(&store.mint().unwrap(), &owner).unwrap());
+        assert_eq!(
+            store.begin(&store.mint().unwrap(), &owner).err(),
+            Some(UploadError::ClientFull)
+        );
+        drop(store.begin(&store.mint().unwrap(), &other).unwrap());
     }
 }
