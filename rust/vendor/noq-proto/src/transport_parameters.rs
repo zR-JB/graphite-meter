@@ -431,7 +431,7 @@ impl TransportParameters {
                         w.write(val.get());
                     }
                 }
-                TransportParameterId::ResetStreamAt => {
+                TransportParameterId::ResetStreamAt | TransportParameterId::ResetStreamAtLegacy => {
                     if self.reset_stream_at {
                         w.write_var(id as u64);
                         w.write_var(0);
@@ -478,6 +478,8 @@ impl TransportParameters {
             }}
         }
         let mut got = apply_params!(param_state);
+        let mut got_reset_stream_at = false;
+        let mut got_reset_stream_at_legacy = false;
 
         while r.has_remaining() {
             let id = r.get_var()?;
@@ -573,10 +575,16 @@ impl TransportParameters {
 
                     params.max_remote_nat_traversal_addresses = Some(value);
                 }
-                TransportParameterId::ResetStreamAt => {
-                    if len != 0 || params.reset_stream_at {
+                TransportParameterId::ResetStreamAt | TransportParameterId::ResetStreamAtLegacy => {
+                    let got_codepoint = if id == TransportParameterId::ResetStreamAt {
+                        &mut got_reset_stream_at
+                    } else {
+                        &mut got_reset_stream_at_legacy
+                    };
+                    if len != 0 || *got_codepoint {
                         return Err(Error::Malformed);
                     }
+                    *got_codepoint = true;
                     params.reset_stream_at = true;
                 }
                 _ => {
@@ -753,12 +761,14 @@ pub(crate) enum TransportParameterId {
     N0NatTraversal = 0x3d7f91120401,
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-reliable-stream-reset
-    ResetStreamAt = 0x17f7586d2cb571,
+    ResetStreamAt = 0x1d,
+    // Legacy draft codepoint retained for existing WebTransport peers.
+    ResetStreamAtLegacy = 0x17f7586d2cb571,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 25] = [
+    const SUPPORTED: [Self; 26] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -784,6 +794,7 @@ impl TransportParameterId {
         Self::InitialMaxPathId,
         Self::N0NatTraversal,
         Self::ResetStreamAt,
+        Self::ResetStreamAtLegacy,
     ];
 }
 
@@ -827,6 +838,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::InitialMaxPathId == id => Self::InitialMaxPathId,
             id if Self::N0NatTraversal == id => Self::N0NatTraversal,
             id if Self::ResetStreamAt == id => Self::ResetStreamAt,
+            id if Self::ResetStreamAtLegacy == id => Self::ResetStreamAtLegacy,
             _ => return Err(()),
         };
         Ok(param)
@@ -1006,24 +1018,84 @@ mod test {
 
     #[test]
     fn reset_stream_at_empty_value_enables_support() {
-        // The parameter is advertised with an empty value.
+        for id in [
+            TransportParameterId::ResetStreamAt,
+            TransportParameterId::ResetStreamAtLegacy,
+        ] {
+            let mut buf = Vec::new();
+            buf.write_var(id as u64);
+            buf.write_var(0);
+            let params = TransportParameters::read(Side::Server, &mut buf.as_slice()).unwrap();
+            assert!(params.reset_stream_at);
+        }
+    }
+
+    #[test]
+    fn reset_stream_at_accepts_both_codepoints_once() {
         let mut buf = Vec::new();
-        buf.write_var(TransportParameterId::ResetStreamAt as u64);
-        buf.write_var(0);
+        for id in [
+            TransportParameterId::ResetStreamAt,
+            TransportParameterId::ResetStreamAtLegacy,
+        ] {
+            buf.write_var(id as u64);
+            buf.write_var(0);
+        }
         let params = TransportParameters::read(Side::Server, &mut buf.as_slice()).unwrap();
         assert!(params.reset_stream_at);
     }
 
     #[test]
-    fn reset_stream_at_rejects_non_empty_value() {
-        // A non-empty `reset_stream_at` value must be rejected.
+    fn reset_stream_at_advertises_both_codepoints() {
+        let params = TransportParameters {
+            reset_stream_at: true,
+            ..TransportParameters::default()
+        };
         let mut buf = Vec::new();
-        buf.write_var(TransportParameterId::ResetStreamAt as u64);
-        buf.write_var(1);
-        buf.put_u8(0);
-        assert_eq!(
-            TransportParameters::read(Side::Server, &mut buf.as_slice()),
-            Err(Error::Malformed)
-        );
+        params.write(&mut buf);
+
+        let mut encoded = buf.as_slice();
+        let mut ids = Vec::new();
+        while encoded.has_remaining() {
+            ids.push(encoded.get_var().unwrap());
+            let len = encoded.get_var().unwrap();
+            encoded.advance(len as usize);
+        }
+        assert!(ids.contains(&(TransportParameterId::ResetStreamAt as u64)));
+        assert!(ids.contains(&(TransportParameterId::ResetStreamAtLegacy as u64)));
+    }
+
+    #[test]
+    fn reset_stream_at_rejects_non_empty_value() {
+        for id in [
+            TransportParameterId::ResetStreamAt,
+            TransportParameterId::ResetStreamAtLegacy,
+        ] {
+            let mut buf = Vec::new();
+            buf.write_var(id as u64);
+            buf.write_var(1);
+            buf.put_u8(0);
+            assert_eq!(
+                TransportParameters::read(Side::Server, &mut buf.as_slice()),
+                Err(Error::Malformed)
+            );
+        }
+    }
+
+    #[test]
+    fn reset_stream_at_rejects_duplicate_codepoints() {
+        for id in [
+            TransportParameterId::ResetStreamAt,
+            TransportParameterId::ResetStreamAtLegacy,
+        ] {
+            let mut buf = Vec::new();
+            for _ in 0..2 {
+                buf.write_var(id as u64);
+                buf.write_var(0);
+            }
+            assert_eq!(
+                TransportParameters::read(Side::Server, &mut buf.as_slice()),
+                Err(Error::Malformed)
+            );
+        }
     }
 }

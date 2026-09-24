@@ -55,8 +55,8 @@ package fields, dependencies, feature unions and lints to their original values.
 The application workspace's Git-source patch makes this package replace the
 pinned Git noq-proto dependency; Noq itself and noq-udp remain Git dependencies.
 
-The production source change is confined to
-`noq-proto/src/connection/streams/recv.rs`, `Recv::stop`: stop releases credit
+The receive-credit change in
+`noq-proto/src/connection/streams/recv.rs`, `Recv::stop` releases credit
 through the stored reliable delivery cap instead of the stream's final size.
 RESET_STREAM_AT already releases credit for the undeliverable tail; releasing
 that tail again inflates connection flow-control credit. The stored cap is the
@@ -70,7 +70,16 @@ Unpatched upstream releases 160 and 120 respectively. Unordered reads now track
 delivered byte ranges, so a consumed tail neither masquerades as the reliable
 prefix nor earns connection credit twice. Plain and reliable reset after a
 stopped receive stream now release only the unseen final tail. The focused reset
-tests and complete 410-test noq-proto suite pass locally.
+tests and complete 413-test noq-proto suite pass locally.
+
+`noq-proto/src/transport_parameters.rs` advertises both the current
+reliable-reset transport parameter (`0x1d`) and the older draft codepoint
+(`0x17f7586d2cb571`). It accepts either or both once, and rejects duplicate
+instances or nonempty values. This preserves legacy peer compatibility while
+allowing peers that recognize only the current codepoint to negotiate
+`RESET_STREAM_AT`. The frame encoding remains `0x24`. Unit tests cover the
+encoded advertisement and both parsing paths; browser compatibility with a
+current-only peer remains to be tested.
 
 ## Native client support
 
