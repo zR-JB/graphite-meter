@@ -62,6 +62,7 @@ impl std::error::Error for SharedFailure {
 /// finish the remote aggregate; cancelled finish/drop relies on server expiry.
 pub struct Upload {
     transport: Arc<Transport>,
+    control: Arc<Transport>,
     id: String,
     epoch: Instant,
     state: watch::Receiver<State>,
@@ -130,10 +131,15 @@ impl Upload {
         struct Minted {
             upload_id: String,
         }
+        let control = if datagrams.is_none() && transport.is_http3() {
+            transport.isolated_connection().await?
+        } else {
+            transport.clone()
+        };
         let minted: Minted = tokio::select! {
             biased;
             () = cancelled(&mut cancel) => return Err("upload cancelled before startup".into()),
-            minted = transport.json(Method::POST, Route::UploadSession, &[]) => minted?,
+            minted = control.json(Method::POST, Route::UploadSession, &[]) => minted?,
         };
         if minted.upload_id.is_empty()
             || minted.upload_id.len() > 8192
@@ -155,6 +161,7 @@ impl Upload {
         let (stop_all, all_stop) = watch::channel(false);
         let mut owner = Self {
             transport,
+            control,
             id: minted.upload_id,
             epoch,
             state,
@@ -175,7 +182,7 @@ impl Upload {
             owner.session = Some(Arc::new(session));
         }
         {
-            let transport = owner.transport.clone();
+            let transport = owner.control.clone();
             let id = owner.id.clone();
             let state = state_tx.clone();
             let mut stop = all_stop.clone();
@@ -295,7 +302,7 @@ impl Upload {
             let requested_at_nanos = elapsed(self.epoch)?;
             let response = tokio::time::timeout_at(
                 deadline,
-                self.transport.json::<Count>(
+                self.control.json::<Count>(
                     Method::POST,
                     Route::UploadCheckpoint,
                     &[("id", &self.id)],
@@ -304,7 +311,7 @@ impl Upload {
             .await;
             let count = match response {
                 Ok(Ok(count)) => count,
-                Ok(Err(error)) if self.transport.retryable_transfer_error(&error) => {
+                Ok(Err(error)) if self.control.retryable_transfer_error(&error) => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
                         return Err("upload receiver checkpoint did not recover".into());
@@ -339,7 +346,7 @@ impl Upload {
                 result?;
             }
             let mut response = self
-                .transport
+                .control
                 .receive(
                     Method::DELETE,
                     Route::UploadProgress,
@@ -806,7 +813,8 @@ mod tests {
         let (stop_lanes, _) = watch::channel(false);
         let (stop_all, _) = watch::channel(false);
         let upload = Upload {
-            transport,
+            transport: transport.clone(),
+            control: transport,
             id: "test-session".into(),
             epoch: Instant::now(),
             state,

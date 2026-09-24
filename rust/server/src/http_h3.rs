@@ -156,6 +156,10 @@ struct ResponseStream {
 impl ResponseStream {
     async fn response(&mut self, response: Response<ResponseBody>, head: bool) -> io::Result<()> {
         let (parts, mut body) = response.into_parts();
+        let streaming_body = body
+            .size_hint()
+            .upper()
+            .is_some_and(|size| size > 1024 * 1024);
         self.stream
             .send_response(Response::from_parts(parts, ()))
             .await
@@ -171,6 +175,12 @@ impl ResponseStream {
                             .send_data(chunk)
                             .await
                             .map_err(io::Error::other)?;
+                        if streaming_body {
+                            // Share a bounded QUIC send window across active
+                            // measurement lanes instead of letting the first
+                            // ready response fill it before peers get headers.
+                            tokio::task::yield_now().await;
+                        }
                     }
                 }
             }

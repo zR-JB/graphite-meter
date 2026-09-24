@@ -33,6 +33,18 @@ impl Transport {
         self.h3.is_some()
     }
 
+    pub(crate) async fn isolated_connection(&self) -> Result<Arc<Self>, Error> {
+        Ok(Arc::new(
+            Self::connect(
+                self.http.clone(),
+                &self.origin,
+                self.protocol,
+                self.insecure,
+            )
+            .await?,
+        ))
+    }
+
     pub(crate) fn retryable_transfer_error(&self, error: &Error) -> bool {
         if error.is::<tokio::time::error::Elapsed>() {
             return true;

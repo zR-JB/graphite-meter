@@ -76,7 +76,8 @@ impl Download {
             });
         }
         drop(ready);
-        timeout(Duration::from_secs(10), async {
+        let mut ready_lanes = 0;
+        let readiness = async {
             for _ in 0..lanes {
                 tokio::select! {
                     value = received.recv() => value.ok_or("download ended before readiness")?,
@@ -85,10 +86,19 @@ impl Download {
                         return Err::<(), Error>("download cancelled before readiness".into());
                     }
                 }
+                ready_lanes += 1;
             }
             Ok(())
-        })
-        .await??;
+        };
+        match timeout(Duration::from_secs(10), readiness).await {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(format!(
+                    "download readiness timed out: {ready_lanes}/{lanes} lanes received response headers"
+                )
+                .into());
+            }
+        }
         Ok(owner)
     }
 
@@ -207,19 +217,22 @@ async fn receive_http_lane(
             }
             Err(error) => return Err(error),
         };
+        if !announced {
+            // A validated response proves the lane is established. Waiting
+            // for payload on every lane can deadlock preparation when QUIC
+            // shares a bounded send window across many large downloads.
+            ready
+                .send(())
+                .await
+                .map_err(|_| "download readiness receiver closed")?;
+            announced = true;
+        }
         let mut received = 0_u64;
         loop {
             match body.chunk().await {
                 Ok(Some(chunk)) => {
                     bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                     received += chunk.len() as u64;
-                    if !announced && !chunk.is_empty() {
-                        ready
-                            .send(())
-                            .await
-                            .map_err(|_| "download readiness receiver closed")?;
-                        announced = true;
-                    }
                 }
                 Ok(None) => break,
                 Err(error) if transport.retryable_transfer_error(&error) => break,

@@ -11,6 +11,7 @@ use crate::{
     },
     net::Http,
     stream_plan::StageLanePlan,
+    transport::Transport,
     upload::Upload,
 };
 use futures_util::{
@@ -18,7 +19,7 @@ use futures_util::{
     stream::{BoxStream, SelectAll},
 };
 use graphite_meter_core::{
-    discovery::{LatencyTransport, ThroughputTransport},
+    discovery::{LatencyTransport, Protocol, ThroughputTransport},
     latency::LatencyAccumulator,
     measurement::{
         AggregateMeasurements, Boundary, Direction, IntervalReason, Stage as TransferStage,
@@ -26,6 +27,7 @@ use graphite_meter_core::{
 };
 use std::{
     collections::{BTreeMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -432,6 +434,24 @@ async fn start_transfer(
             let lanes = plan
                 .lanes(&server.entry.id)
                 .ok_or("missing stream allocation")?;
+            let upload_transport = if stage == Stage::Bidirectional
+                && target.transport == ThroughputTransport::FetchStream
+                && target.protocol == Protocol::Http3
+            {
+                // Sustained downloads can occupy the connection send window
+                // and starve upload control traffic at high lane counts.
+                Arc::new(
+                    Transport::connect(
+                        http.clone(),
+                        &target.base_url,
+                        target.protocol,
+                        config.insecure,
+                    )
+                    .await?,
+                )
+            } else {
+                transport.clone()
+            };
             if stage.downloads() {
                 transfer.down = Some(if target.transport == ThroughputTransport::FetchStream {
                     Download::start_staggered(
@@ -457,7 +477,7 @@ async fn start_transfer(
             if stage.uploads() {
                 transfer.up = Some(if target.transport == ThroughputTransport::FetchStream {
                     Upload::start_staggered(
-                        transport.clone(),
+                        upload_transport.clone(),
                         lanes.upload,
                         timing.epoch,
                         lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
@@ -466,7 +486,7 @@ async fn start_transfer(
                     .await?
                 } else {
                     Upload::start_webtransport(
-                        transport.clone(),
+                        upload_transport,
                         lanes.upload,
                         timing.epoch,
                         target.transport == ThroughputTransport::WebTransportDatagram,
