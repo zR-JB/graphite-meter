@@ -11,7 +11,10 @@ use crate::{
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
-    discovery::{LatencyTarget, LatencyTransport, Probe, ThroughputTarget, ThroughputTransport},
+    discovery::{
+        LatencyTarget, LatencyTransport, Probe, Protocol, ProtocolNegotiated, ThroughputTarget,
+        ThroughputTransport,
+    },
 };
 use http::Method;
 use std::{sync::Arc, time::Duration};
@@ -110,7 +113,7 @@ async fn prepare(
             }
         }
         let mut idle_rtt = Duration::ZERO;
-        let transport = if let Some(target) = &throughput {
+        let transport = if let Some(target) = &mut throughput {
             let connection = Transport::connect(
                 http.clone(),
                 &target.base_url,
@@ -118,8 +121,19 @@ async fn prepare(
                 config.insecure,
             )
             .await?;
-            let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
-            probe.validate()?;
+            if target.protocol == Protocol::Negotiated {
+                let probe = http.probe(&target.base_url, Protocol::Negotiated).await?;
+                target.protocol = match probe.protocol_negotiated {
+                    ProtocolNegotiated::Http1 => Protocol::Http1,
+                    ProtocolNegotiated::Http2 => Protocol::Http2,
+                    ProtocolNegotiated::Http3 => {
+                        return Err("negotiated HTTP probe cannot use HTTP/3".into());
+                    }
+                };
+            } else {
+                let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
+                probe.validate()?;
+            }
             Some(Arc::new(connection))
         } else {
             None

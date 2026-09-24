@@ -11,6 +11,7 @@ use tokio_tungstenite::tungstenite::Message;
 enum FixtureMode {
     Latency,
     Throughput,
+    Negotiated,
 }
 
 async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
@@ -63,6 +64,15 @@ async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Resu
                         {"baseUrl": "http://127.0.0.1:1", "transport": "fetch-stream", "protocol": "negotiated"},
                         {"baseUrl": "http://127.0.0.1:2", "transport": "fetch-stream", "protocol": "negotiated"},
                         {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport", "protocol": "http3"}
+                    ],
+                    "latency": []
+                }
+            }),
+            FixtureMode::Negotiated => serde_json::json!({
+                "generation": "fixture",
+                "capabilities": {
+                    "throughput": [
+                        {"baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated"}
                     ],
                     "latency": []
                 }
@@ -151,6 +161,26 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
         error
             .to_string()
             .contains("advertised WebTransport is unavailable")
+    );
+    fixture.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, fixture) = fixture(FixtureMode::Negotiated).await?;
+    let config = Config {
+        url: origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let prepared = prepare(&config, &Http::new(false)?, &snapshots).await?;
+    assert_eq!(
+        prepared[0].throughput.as_ref().unwrap().protocol,
+        Protocol::Http1
     );
     fixture.abort();
     Ok(())
