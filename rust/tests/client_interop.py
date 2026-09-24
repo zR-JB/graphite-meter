@@ -26,12 +26,38 @@ def main() -> None:
     directory = Path(tempfile.mkdtemp(prefix="client-interop-", dir=target))
     print(f"Evidence: {directory}", flush=True)
     cert, key = directory / "cert.pem", directory / "key.pem"
+    ca, ca_key, request = directory / "ca.pem", directory / "ca.key", directory / "server.csr"
     subprocess.run(
         [
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-days", "1", "-keyout", str(key), "-out", str(cert),
-            "-subj", "/CN=localhost",
-            "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+            "-days", "1", "-keyout", str(ca_key), "-out", str(ca),
+            "-subj", "/CN=Graphite Meter loopback test CA",
+            "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
+            "-keyout", str(key), "-out", str(request), "-subj", "/CN=localhost",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    extensions = directory / "server.ext"
+    extensions.write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=IP:127.0.0.1,DNS:localhost\n"
+    )
+    subprocess.run(
+        [
+            "openssl", "x509", "-req", "-in", str(request),
+            "-CA", str(ca), "-CAkey", str(ca_key), "-set_serial", "1",
+            "-days", "1", "-out", str(cert), "-extfile", str(extensions),
         ],
         check=True,
         capture_output=True,
@@ -76,7 +102,7 @@ def main() -> None:
             stderr=subprocess.STDOUT,
         )
         try:
-            context = ssl.create_default_context(cafile=str(cert))
+            context = ssl.create_default_context(cafile=str(ca))
             opener = urllib.request.build_opener(
                 urllib.request.ProxyHandler({}),
                 urllib.request.HTTPSHandler(context=context),
@@ -93,13 +119,33 @@ def main() -> None:
                     time.sleep(0.05)
             else:
                 raise TimeoutError(f"Go HTTP/3 bootstrap did not start: {log.read_text()}")
-            native = subprocess.run(
-                [
-                    "cargo", "test", "--locked", "-p", "graphite-meter-client",
-                    "--test", "go_server_interop", "--", "--nocapture",
-                ],
+            command = [
+                "cargo", "test", "--locked", "-p", "graphite-meter-client",
+                "--test", "go_server_interop", "--", "--nocapture",
+            ]
+            untrusted_env = {**environment, "GM_GO_INTEROP_URL": discovery}
+            untrusted_env.pop("SSL_CERT_FILE", None)
+            untrusted_env.pop("SSL_CERT_DIR", None)
+            untrusted = subprocess.run(
+                command,
                 cwd=ROOT / "rust",
-                env={**environment, "GM_GO_INTEROP_URL": discovery},
+                env=untrusted_env,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            (directory / "rust-client-untrusted.log").write_text(
+                untrusted.stdout + untrusted.stderr
+            )
+            if untrusted.returncode == 0 or "InvalidCertificate" not in untrusted.stderr:
+                raise RuntimeError("Rust client did not reject the untrusted Go server certificate")
+            print("Rust client rejected the untrusted Go server certificate", flush=True)
+            trusted_env = {**environment, "GM_GO_INTEROP_URL": discovery, "SSL_CERT_FILE": str(ca)}
+            trusted_env.pop("SSL_CERT_DIR", None)
+            native = subprocess.run(
+                command,
+                cwd=ROOT / "rust",
+                env=trusted_env,
                 capture_output=True,
                 text=True,
                 timeout=120,

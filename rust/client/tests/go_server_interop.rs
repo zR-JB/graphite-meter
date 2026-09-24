@@ -74,8 +74,7 @@ async fn run_case(url: &str, case: Case) -> Result<(), Error> {
         bidirectional_duration: Duration::from_secs(1),
         streams: 1,
         loaded_latency: true,
-        // The disposable loopback server uses a fresh self-signed certificate.
-        insecure: true,
+        insecure: false,
         ..Config::default()
     };
     let (snapshots, _snapshot_rx) = watch::channel(Snapshot::default());

@@ -85,9 +85,10 @@ authenticated deployment. `interop.py` separately probes low-level transport
 behavior.
 `client_interop.py` starts an unchanged Go product server and runs the Rust
 measurement engine through all four stages with WebTransport streams, datagrams,
-HTTPS HTTP/1.1 fetch streams, and HTTP/2 fetch streams. The loopback test disables
-certificate verification for its disposable self-signed certificate; it does
-not establish authenticated TLS behavior.
+HTTPS HTTP/1.1 fetch streams, and HTTP/2 fetch streams. The loopback test
+trusts only its disposable CA through `SSL_CERT_FILE`, and verifies
+TLS identity on HTTP and QUIC connections. It does not exercise an external
+identity provider or real deployment.
 
 The full probe currently fails on immediate stream reset with the unchanged Go
 peer. `--fix-go-reset-reader` tests a diagnostic correction in a temporary Go
