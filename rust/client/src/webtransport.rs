@@ -29,6 +29,9 @@ type RawReceive = BufRecvStream<h3_noq::RecvStream, Bytes>;
 const CANCEL: u64 = 0x52e4a40fa8db;
 const QUEUE: usize = 32;
 const DATAGRAM_BYTES: usize = 256 * 1024;
+// Bounded outstanding data per session. Four MiB constrained one upload
+// stream on a simulated 100 ms RTT path after the receiver windows grew.
+const SEND_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 
 struct Endpoint(quinn::Endpoint);
 impl Drop for Endpoint {
@@ -128,7 +131,7 @@ impl Session {
             transport.max_concurrent_bidi_streams(0_u32.into());
             transport.max_concurrent_uni_streams(36_u32.into());
             crate::quic_config::set_receive_credit(&mut transport);
-            transport.send_window(4 * 1024 * 1024);
+            transport.send_window(SEND_WINDOW_BYTES);
             transport.datagram_receive_buffer_size(Some(DATAGRAM_BYTES));
             transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
             config.transport_config(Arc::new(transport));
