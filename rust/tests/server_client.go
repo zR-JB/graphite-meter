@@ -225,7 +225,7 @@ func run() error {
 	deadline, _ := ctx.Deadline()
 	progress.SetReadDeadline(deadline)
 	scanner := bufio.NewScanner(progress)
-	record := func() (string, uint64, error) {
+	record := func(scanner *bufio.Scanner) (string, uint64, error) {
 		for scanner.Scan() {
 			if scanner.Text() == "" {
 				continue
@@ -248,7 +248,7 @@ func run() error {
 		}
 		return "", 0, io.ErrUnexpectedEOF
 	}
-	kind, _, err := record()
+	kind, _, err := record(scanner)
 	if err != nil {
 		return err
 	}
@@ -267,7 +267,7 @@ func run() error {
 		return err
 	}
 	for {
-		kind, count, err := record()
+		kind, count, err := record(scanner)
 		if err != nil {
 			return err
 		}
@@ -279,7 +279,7 @@ func run() error {
 		return err
 	}
 	for {
-		kind, count, err := record()
+		kind, count, err := record(scanner)
 		if err != nil {
 			return err
 		}
@@ -300,5 +300,81 @@ func run() error {
 		return fmt.Errorf("H3 request after sibling WT close: %w", err)
 	}
 	fmt.Println("WT upload: ready, measured progress, HTTP finish, complete=131073; H3 survives sibling WT close")
+
+	datagramDownload, err := dial("/wt/download?bytes=65537&datagrams=1")
+	if err != nil {
+		return err
+	}
+	var received uint64
+	for received < 65537 {
+		payload, err := datagramDownload.ReceiveDatagram(ctx)
+		if err != nil {
+			return fmt.Errorf("WT datagram download after %d bytes: %w", received, err)
+		}
+		if len(payload) == 0 || len(payload) > 1000 {
+			return fmt.Errorf("WT datagram download payload size %d", len(payload))
+		}
+		received += uint64(len(payload))
+	}
+	if err := datagramDownload.CloseWithError(0, "download finished"); err != nil {
+		return err
+	}
+	fmt.Println("WT datagram download: received at least 65537 payload bytes")
+
+	id, err = mint()
+	if err != nil {
+		return err
+	}
+	datagramUpload, err := dial("/wt/upload?datagrams=1&id=" + url.QueryEscape(id))
+	if err != nil {
+		return err
+	}
+	defer datagramUpload.CloseWithError(0, "")
+	datagramProgress, err := datagramUpload.AcceptUniStream(ctx)
+	if err != nil {
+		return err
+	}
+	datagramProgress.SetReadDeadline(deadline)
+	datagramScanner := bufio.NewScanner(datagramProgress)
+	kind, _, err = record(datagramScanner)
+	if err != nil {
+		return err
+	}
+	if kind != "ready" {
+		return fmt.Errorf("expected datagram upload ready, got %q", kind)
+	}
+	const offered = 16 * 1000
+	payload := bytes.Repeat([]byte("d"), 1000)
+	for range 16 {
+		if err := datagramUpload.SendDatagram(payload); err != nil {
+			return err
+		}
+	}
+	var observed uint64
+	for observed == 0 {
+		kind, observed, err = record(datagramScanner)
+		if err != nil {
+			return err
+		}
+		if kind != "progress" || observed > offered {
+			return fmt.Errorf("WT datagram progress kind=%q bytes=%d", kind, observed)
+		}
+	}
+	if _, err = request("DELETE", "/upload/progress?id="+url.QueryEscape(id), nil); err != nil {
+		return err
+	}
+	for {
+		kind, count, err := record(datagramScanner)
+		if err != nil {
+			return err
+		}
+		if kind == "complete" {
+			if count < observed || count > offered {
+				return fmt.Errorf("WT datagram complete bytes=%d, observed=%d", count, observed)
+			}
+			break
+		}
+	}
+	fmt.Println("WT datagram upload: ready, receiver progress, HTTP finish, bounded completion")
 	return nil
 }
