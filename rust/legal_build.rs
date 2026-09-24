@@ -1,6 +1,6 @@
 use std::{env, error::Error, fs, path::PathBuf, process::Command};
 
-pub fn embed() -> Result<(), Box<dyn Error>> {
+pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-env-changed=GM_ENGINE_VERSION");
     if let Ok(version) = env::var("GM_ENGINE_VERSION") {
         if version.is_empty()
@@ -20,7 +20,11 @@ pub fn embed() -> Result<(), Box<dyn Error>> {
     let Some(configured) = env::var_os("GM_RUST_LEGAL_DIR") else {
         fs::write(
             output.join("legal.rs"),
-            "const LEGAL: Option<&str> = None;\n",
+            if share_browser_notices {
+                "const LEGAL: Option<&str> = None;\nconst LEGAL_USES_BROWSER_NOTICES: bool = false;\n"
+            } else {
+                "const LEGAL: Option<&str> = None;\n"
+            },
         )?;
         return Ok(());
     };
@@ -87,12 +91,32 @@ pub fn embed() -> Result<(), Box<dyn Error>> {
     if text.is_empty() {
         return Err("empty Rust legal report".into());
     }
+    // The release server already embeds the exact reviewed browser notice as
+    // an asset. Reuse that one static byte slice for --legal instead of
+    // embedding a second multi-megabyte copy in the executable.
+    let shared = share_browser_notices && env::var_os("GM_RUST_ASSET_DIR").is_some();
+    let (name, legal) = if shared {
+        let notices_path = directory.join("browser-assets/legal/THIRD_PARTY_NOTICES.txt");
+        println!("cargo:rerun-if-changed={}", notices_path.display());
+        let notices = fs::read_to_string(notices_path)?;
+        let prefix = text
+            .strip_suffix(&notices)
+            .ok_or("reviewed CLI notice does not end with the browser notice")?;
+        ("LEGAL_PREFIX.txt", prefix)
+    } else {
+        ("LEGAL.txt", text.as_str())
+    };
     // Copy the checked build input so rustc does not reopen a mutable source file.
-    fs::write(output.join("LEGAL.txt"), text)?;
-    fs::write(
-        output.join("legal.rs"),
-        "const LEGAL: Option<&str> = Some(include_str!(concat!(env!(\"OUT_DIR\"), \"/LEGAL.txt\")));\n",
-    )?;
+    fs::write(output.join(name), legal)?;
+    let mut generated = format!(
+        "const LEGAL: Option<&str> = Some(include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")));\n"
+    );
+    if share_browser_notices {
+        generated.push_str(&format!(
+            "const LEGAL_USES_BROWSER_NOTICES: bool = {shared};\n"
+        ));
+    }
+    fs::write(output.join("legal.rs"), generated)?;
     Ok(())
 }
 

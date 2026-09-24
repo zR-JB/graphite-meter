@@ -11,6 +11,15 @@ struct EmbeddedAsset {
 }
 include!(concat!(env!("OUT_DIR"), "/browser_assets.rs"));
 
+/// The reviewed release notice is also part of the browser's About assets.
+/// The CLI reuses these bytes so the executable contains only one copy.
+pub fn legal_notices() -> Option<&'static [u8]> {
+    EMBEDDED
+        .iter()
+        .find(|entry| entry.path == "legal/THIRD_PARTY_NOTICES.txt")
+        .map(|entry| entry.bytes)
+}
+
 pub struct Assets {
     entries: &'static [EmbeddedAsset],
     index: Option<Bytes>,

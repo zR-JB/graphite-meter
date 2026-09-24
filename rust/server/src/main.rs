@@ -27,7 +27,14 @@ async fn run() -> Result<(), ConfigError> {
     if args.len() == 1 && (args[0] == "--legal" || args[0] == "-legal") {
         let report =
             LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
-        print!("{report}");
+        use std::io::Write;
+        let mut output = std::io::stdout().lock();
+        output.write_all(report.as_bytes())?;
+        if LEGAL_USES_BROWSER_NOTICES {
+            let notices = graphite_meter_server::assets::legal_notices()
+                .ok_or("reviewed browser notices are missing")?;
+            output.write_all(notices)?;
+        }
         return Ok(());
     }
     if args.len() == 1 && args[0] == "hash-password" {

@@ -15,6 +15,8 @@ server CPU and memory. Simulated 100 ms RTT runs
 exposed fixed QUIC receive-window limits in the Rust server and TUI; larger
 bounded windows improved those runs. These short local and delayed-path samples
 do not establish real-WAN, packet-loss, many-user, or sustained-memory superiority.
+The release server embeds one reviewed third-party notice payload for both
+`--legal` and the browser About endpoint.
 
 Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
 `--url https://your-server`. `mise run tui` selects Go by default.

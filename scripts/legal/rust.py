@@ -207,6 +207,7 @@ def main() -> None:
     browser_components: list[Component] = []
     browser_provenance: list[Provenance] = []
     staged_assets = None
+    shared_notices = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
         if args.browser_scan is None:
             raise LegalError('server with browser assets requires the matching production --browser-scan')
@@ -234,7 +235,8 @@ def main() -> None:
         legal_assets = staged_assets / 'legal'
         legal_assets.mkdir(exist_ok=True)
         (legal_assets / 'LICENSE.txt').write_bytes((repo / 'LICENSE').read_bytes())
-        (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_text(notices(components + browser_components) + '\n' + extra)
+        shared_notices = notices(components + browser_components) + '\n' + extra
+        (legal_assets / 'THIRD_PARTY_NOTICES.txt').write_text(shared_notices)
         (legal_assets / 'about.json').write_bytes(marshal({
             'schemaVersion': 2, 'project': project.json(), 'sourceVersion': os.environ.get('GM_ENGINE_VERSION', 'rust-experimental'),
             'sourceURL': project.repository, 'licenseURL': 'legal/LICENSE.txt',
@@ -244,7 +246,8 @@ def main() -> None:
         }))
     report = ('Graphite Meter experimental Rust binary\n\n' + (repo / 'LICENSE').read_text()
               + '\n\nCargo compilation-input notices (including build-time dependencies)\n\n'
-              + notices(components + browser_components) + '\n\nRust sysroot and platform notices\n\n' + extra)
+              + (shared_notices if shared_notices is not None
+                 else notices(components + browser_components) + '\n\nRust sysroot and platform notices\n\n' + extra))
     (output / 'LEGAL.txt').write_text(report)
     # Snapshot dependency-selection inputs; build.rs rejects stale supplied reports.
     inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml', 'rust/rust-toolchain.toml']

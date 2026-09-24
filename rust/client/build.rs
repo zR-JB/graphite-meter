@@ -4,7 +4,7 @@
 mod legal;
 
 fn main() {
-    if let Err(error) = legal::embed() {
+    if let Err(error) = legal::embed(false) {
         panic!("Rust legal notice embedding failed: {error}");
     }
 }
