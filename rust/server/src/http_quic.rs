@@ -31,8 +31,12 @@ impl HttpServer {
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams((MAX_REQUESTS as u32).into());
         transport.max_concurrent_uni_streams(260_u32.into());
-        transport.stream_receive_window((1024 * 1024_u32).into());
-        transport.receive_window((4 * 1024 * 1024_u32).into());
+        // Noq uses fixed receive credit rather than quic-go's autotuning.
+        // A 1 MiB stream window capped one upload near 80 Mbit/s at 100 ms
+        // RTT. These 8/16 MiB limits bound unconsumed inbound data per
+        // stream/connection; connection admission bounds their aggregate.
+        transport.stream_receive_window((8 * 1024 * 1024_u32).into());
+        transport.receive_window((16 * 1024 * 1024_u32).into());
         transport.send_window(MIN_SEND_WINDOW);
         transport.datagram_receive_buffer_size(Some(64 * 1024));
         transport.datagram_send_buffer_size(64 * 1024);
