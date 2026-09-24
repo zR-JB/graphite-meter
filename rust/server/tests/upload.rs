@@ -161,6 +161,11 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
     first.record(100);
     second.record(200);
     store.finish(&id, &Owner::principal("a")).unwrap();
+    assert_eq!(
+        store.begin(&id, &Owner::principal("a")).err(),
+        Some(UploadError::Invalid),
+        "a late lane cannot change a terminal receiver total"
+    );
     drop(first);
     assert!(
         tokio::time::timeout(Duration::from_millis(20), subscription.next())
@@ -176,6 +181,14 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
         complete
     );
     assert_eq!(subscription.next().await, None);
+    assert_eq!(
+        store.begin(&id, &Owner::principal("a")).err(),
+        Some(UploadError::Invalid)
+    );
+    assert_eq!(
+        store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes,
+        330
+    );
     let mut replay = store.subscribe(&id, &Owner::principal("a")).unwrap();
     assert_eq!(replay.next().await, Some(UploadProgress::Ready));
     assert!(matches!(

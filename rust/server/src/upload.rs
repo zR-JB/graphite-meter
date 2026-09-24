@@ -241,6 +241,11 @@ impl UploadStore {
             state.authorize(owner)?;
             // Join under the store lock so sweeping cannot remove a just-admitted lane.
             if lane {
+                // Completion is terminal: a late stream must not change a
+                // total that a progress subscriber may already have emitted.
+                if state.finished {
+                    return Err(UploadError::Invalid);
+                }
                 state.lanes += 1;
                 state.touched = Instant::now();
             }

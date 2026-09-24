@@ -90,6 +90,24 @@ func (a *uploadAgg) changePosts(delta int32) {
 	}
 }
 
+// beginPost and finishFor share postsMu so no lane can join after the
+// completion marker, including between a finished-count check and registration.
+func (a *uploadAgg) beginPost() bool {
+	a.postsMu.Lock()
+	defer a.postsMu.Unlock()
+	select {
+	case <-a.finished:
+		return false
+	default:
+	}
+	a.posts.Add(1)
+	if a.postsChanged != nil {
+		close(a.postsChanged)
+		a.postsChanged = nil
+	}
+	return true
+}
+
 func (a *uploadAgg) elapsedNanos(now int64) int64 {
 	start := a.firstChunkMono.Load()
 	if start == 0 || now <= start {
@@ -191,6 +209,16 @@ func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess
 }
 
 func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
+	return s.accessFor(id, owner, touch, false)
+}
+
+// A lane joins while the shard is held, so sweeping cannot remove the
+// aggregate before its live-post count protects it.
+func (s *UploadStore) joinPostFor(id, owner string) (*uploadAgg, uploadAccess) {
+	return s.accessFor(id, owner, true, true)
+}
+
+func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg, uploadAccess) {
 	if id == "" {
 		return nil, uploadAccessInvalid
 	}
@@ -200,6 +228,9 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 	if agg, ok := sh.m[id]; ok {
 		if agg.owner != "" && owner != agg.owner {
 			return nil, uploadAccessOwnerMismatch
+		}
+		if join && !agg.beginPost() {
+			return nil, uploadAccessInvalid
 		}
 		if touch {
 			agg.lastTouchMono.Store(monoNanos())
@@ -232,6 +263,9 @@ func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*upl
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
 	agg.lastTouchMono.Store(monoNanos())
 	sh.m[id] = agg
+	if join {
+		agg.beginPost() // a new aggregate cannot already be finished
+	}
 	return agg, uploadAccessOK
 }
 
@@ -263,7 +297,9 @@ func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	if agg.owner != "" && owner != agg.owner {
 		return uploadAccessOwnerMismatch
 	}
+	agg.postsMu.Lock()
 	agg.finishOnce.Do(func() { close(agg.finished) })
+	agg.postsMu.Unlock()
 	return uploadAccessOK
 }
 
