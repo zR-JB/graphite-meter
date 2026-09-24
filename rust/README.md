@@ -75,9 +75,11 @@ The tests require OpenSSL; interoperability checks also require Go.
 `server_interop.py` exercises the assembled debug server with unchanged Go
 libraries: bootstrap, HTTP/3 transfers, WebTransport pings, stream and datagram
 downloads/uploads, receiver-counted upload progress, independent connections,
-and rejection of excess WebTransport sessions. It currently covers
-unauthenticated loopback traffic. `interop.py` separately probes low-level
-transport behavior.
+and rejection of excess WebTransport sessions. A password-protected loopback
+replay checks cookie-authenticated HTTP/3, one-use WebTransport tickets, and
+logout revocation. These probes do not exercise the native client's browser
+approval or an external authenticated deployment. `interop.py` separately
+probes low-level transport behavior.
 
 The full probe currently fails on immediate stream reset with the unchanged Go
 peer. `--fix-go-reset-reader` tests a diagnostic correction in a temporary Go

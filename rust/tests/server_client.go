@@ -28,8 +28,8 @@ func main() {
 	}
 }
 func run() error {
-	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: server_client URL CERT")
+	if len(os.Args) != 3 && len(os.Args) != 4 {
+		return fmt.Errorf("usage: server_client H3_URL CERT [AUTH_PUBLIC_ORIGIN]")
 	}
 	cert, err := os.ReadFile(os.Args[2])
 	if err != nil {
@@ -43,6 +43,9 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	base := os.Args[1]
+	if len(os.Args) == 4 {
+		return runAuthenticated(ctx, base, os.Args[3], config)
+	}
 	tcp := &http.Transport{TLSClientConfig: config}
 	defer tcp.CloseIdleConnections()
 	req, _ := http.NewRequestWithContext(ctx, "GET", base+"/probe", nil)
@@ -376,5 +379,226 @@ func run() error {
 		}
 	}
 	fmt.Println("WT datagram upload: ready, receiver progress, HTTP finish, bounded completion")
+	return nil
+}
+
+func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.Config) error {
+	tcp := &http.Transport{TLSClientConfig: tlsConfig}
+	defer tcp.CloseIdleConnections()
+	https := &http.Client{
+		Transport:     tcp,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request := func(method, target string, body io.Reader) (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, method, target, body)
+	}
+	login, err := request("GET", public+"/login", nil)
+	if err != nil {
+		return err
+	}
+	loginResponse, err := https.Do(login)
+	if err != nil {
+		return err
+	}
+	loginResponse.Body.Close()
+	if loginResponse.StatusCode != http.StatusOK {
+		return fmt.Errorf("login page status=%d", loginResponse.StatusCode)
+	}
+	loginNonce := responseCookie(loginResponse, "__Host-gm_login")
+	if loginNonce == nil {
+		return fmt.Errorf("login page omitted nonce cookie")
+	}
+	form := url.Values{"csrf": {loginNonce.Value}, "password": {"correct horse battery staple"}}
+	password, err := request("POST", public+"/auth/password", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	password.Header.Set("Origin", public)
+	password.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	password.AddCookie(loginNonce)
+	signedIn, err := https.Do(password)
+	if err != nil {
+		return err
+	}
+	signedIn.Body.Close()
+	if signedIn.StatusCode != http.StatusSeeOther {
+		return fmt.Errorf("password sign-in status=%d", signedIn.StatusCode)
+	}
+	session := responseCookie(signedIn, "__Host-gm_session")
+	csrf := responseCookie(signedIn, "__Host-gm_csrf")
+	if session == nil || csrf == nil {
+		return fmt.Errorf("password sign-in omitted session or CSRF cookie")
+	}
+	fmt.Println("Password login: canonical HTTPS origin and session cookies")
+
+	protected := func(method, target string, body io.Reader) (*http.Request, error) {
+		req, err := request(method, target, body)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Origin", public)
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		req.Header.Set("X-CSRF-Token", csrf.Value)
+		req.AddCookie(session)
+		return req, nil
+	}
+	target, err := url.Parse(base)
+	if err != nil {
+		return err
+	}
+	quicTLS := tlsConfig.Clone()
+	quicTLS.NextProtos = []string{http3.NextProtoH3}
+	transport := &webtransport.Transport{TLSClientConfig: quicTLS}
+	defer transport.Close()
+	connection, err := quic.DialAddr(ctx, target.Host, quicTLS, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+	if err != nil {
+		return err
+	}
+	defer connection.CloseWithError(0, "probe finished")
+	client, err := transport.NewClientConn(connection)
+	if err != nil {
+		return err
+	}
+	unauthorized, err := request("GET", base+"/download?bytes=1", nil)
+	if err != nil {
+		return err
+	}
+	denied, err := client.RoundTrip(unauthorized)
+	if err != nil {
+		return err
+	}
+	denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden || denied.Header.Get("Graphite-Meter-Auth") != "required" {
+		return fmt.Errorf("unauthenticated H3 download status=%d auth=%q", denied.StatusCode, denied.Header.Get("Graphite-Meter-Auth"))
+	}
+	allowed, err := protected("GET", base+"/download?bytes=65537", nil)
+	if err != nil {
+		return err
+	}
+	download, err := client.RoundTrip(allowed)
+	if err != nil {
+		return err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(download.Body, 65538))
+	download.Body.Close()
+	if readErr != nil || download.StatusCode != http.StatusOK || len(data) != 65537 {
+		return fmt.Errorf("authenticated H3 download status=%d bytes=%d: %v", download.StatusCode, len(data), readErr)
+	}
+	fmt.Println("Authenticated H3: missing cookie denied; same-origin cookie download 65537 bytes")
+
+	mint := func() (string, error) {
+		query := url.Values{"target": {base + "/wt/ping"}}
+		req, err := protected("POST", public+"/wt/session?"+query.Encode(), nil)
+		if err != nil {
+			return "", err
+		}
+		response, err := https.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("WT ticket status=%d", response.StatusCode)
+		}
+		var ticket struct {
+			Token string `json:"token"`
+		}
+		if err := json.UnmarshalRead(response.Body, &ticket); err != nil {
+			return "", err
+		}
+		if ticket.Token == "" {
+			return "", fmt.Errorf("empty WT ticket")
+		}
+		return ticket.Token, nil
+	}
+	ticket, err := mint()
+	if err != nil {
+		return err
+	}
+	connect := func(peer *webtransport.ClientConn, token string) (*http.Response, *webtransport.Session, error) {
+		return peer.Dial(ctx, base+"/wt/ping?token="+url.QueryEscape(token), http.Header{"Origin": {public}})
+	}
+	_, ping, err := connect(client, ticket)
+	if err != nil {
+		return err
+	}
+	if err := ping.SendDatagram([]byte("PING,77")); err != nil {
+		return err
+	}
+	pong, err := ping.ReceiveDatagram(ctx)
+	if err != nil || !strings.HasPrefix(string(pong), "PONG,77,") {
+		return fmt.Errorf("authenticated WT ping reply=%q: %v", pong, err)
+	}
+	if err := ping.CloseWithError(0, "ping finished"); err != nil {
+		return err
+	}
+	rejectTicket := func(token string) error {
+		connection, err := quic.DialAddr(ctx, target.Host, quicTLS, &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true})
+		if err != nil {
+			return err
+		}
+		defer connection.CloseWithError(0, "probe finished")
+		peer, err := transport.NewClientConn(connection)
+		if err != nil {
+			return err
+		}
+		response, session, err := connect(peer, token)
+		if err == nil {
+			session.CloseWithError(0, "unexpected admission")
+			return fmt.Errorf("WT ticket unexpectedly admitted a session")
+		}
+		if response == nil || response.StatusCode != http.StatusForbidden {
+			return fmt.Errorf("rejected WT ticket response=%v: %w", response, err)
+		}
+		return nil
+	}
+	if err := rejectTicket(ticket); err != nil {
+		return fmt.Errorf("consumed WT ticket: %w", err)
+	}
+	fmt.Println("Authenticated WT: one-use ticket admitted datagram ping, then replay was denied")
+
+	unused, err := mint()
+	if err != nil {
+		return err
+	}
+	logoutForm := url.Values{"csrf": {csrf.Value}}
+	logout, err := protected("POST", public+"/auth/logout", strings.NewReader(logoutForm.Encode()))
+	if err != nil {
+		return err
+	}
+	logout.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loggedOut, err := https.Do(logout)
+	if err != nil {
+		return err
+	}
+	loggedOut.Body.Close()
+	if loggedOut.StatusCode != http.StatusSeeOther {
+		return fmt.Errorf("logout status=%d", loggedOut.StatusCode)
+	}
+	before, err := protected("GET", base+"/download?bytes=1", nil)
+	if err != nil {
+		return err
+	}
+	denied, err = client.RoundTrip(before)
+	if err != nil {
+		return err
+	}
+	denied.Body.Close()
+	if denied.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("revoked H3 session status=%d", denied.StatusCode)
+	}
+	if err := rejectTicket(unused); err != nil {
+		return fmt.Errorf("revoked WT ticket: %w", err)
+	}
+	fmt.Println("Logout: prior H3 cookie and unused WT ticket rejected")
+	return nil
+}
+
+func responseCookie(response *http.Response, name string) *http.Cookie {
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
 	return nil
 }

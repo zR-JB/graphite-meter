@@ -1,15 +1,26 @@
-"""Run one unchanged-Go-client flow against the assembled Rust server binary."""
+"""Run unchanged-Go-dependency peers against the assembled Rust server binary."""
 
 import argparse
 import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+PASSWORD_HASH = (
+    "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$"
+    "gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
+)
+
+
+def unused_port(kind: int) -> int:
+    with socket.socket(socket.AF_INET, kind) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
 
 
 def main() -> None:
@@ -99,6 +110,53 @@ def main() -> None:
                 raise RuntimeError("server failed to shut down within five seconds")
             if server.returncode != 0:
                 raise RuntimeError(f"server exited {server.returncode}: {server_log.read_text()}")
+
+    tls_port = unused_port(socket.SOCK_STREAM)
+    h3_port = unused_port(socket.SOCK_DGRAM)
+    while h3_port == tls_port:
+        h3_port = unused_port(socket.SOCK_DGRAM)
+    public = f"https://127.0.0.1:{tls_port}"
+    auth_log = directory / "auth-server.log"
+    auth_environment = {
+        **environment,
+        "GM_AUTH_MODE": "password",
+        "GM_AUTH_PUBLIC_URL": public,
+        "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH,
+    }
+    with auth_log.open("w") as output:
+        server = subprocess.Popen([
+            str(args.server.resolve()), "--h1-addr=127.0.0.2:0",
+            f"--h1-tls-addr=127.0.0.1:{tls_port}", "--h2-addr=",
+            f"--h3-addr=127.0.0.1:{h3_port}",
+            "--advertised-native-endpoints=http1-tls,http3",
+            f"--tls-cert={cert}", f"--tls-key={key}",
+        ], env=auth_environment, stdout=output, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if f"graphite-meter Rust: http3 on 127.0.0.1:{h3_port}" in auth_log.read_text():
+                    break
+                if server.poll() is not None:
+                    raise RuntimeError(auth_log.read_text())
+                time.sleep(0.05)
+            else:
+                raise TimeoutError("Authenticated Rust H3 listener did not report readiness")
+            result = subprocess.run([
+                str(client), f"https://127.0.0.1:{h3_port}", str(cert), public,
+            ], capture_output=True, text=True, timeout=35)
+            (directory / "auth-client.log").write_text(result.stdout + result.stderr)
+            print(result.stdout + result.stderr, end="", flush=True)
+            result.check_returncode()
+        finally:
+            server.send_signal(signal.SIGINT)
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+                raise RuntimeError("authenticated server failed to shut down within five seconds")
+            if server.returncode != 0:
+                raise RuntimeError(f"authenticated server exited {server.returncode}: {auth_log.read_text()}")
 
 
 if __name__ == "__main__":
