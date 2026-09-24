@@ -121,9 +121,11 @@ const (
 	maxLiveUploads          = 1000
 	maxLiveUploadsPerClient = 32
 	uploadReconnectGrace    = 30 * time.Second
-	uploadIDTTL             = 2*wire.WTIdleBound + uploadReconnectGrace
 	uploadTokenTTL          = 2 * time.Minute
-	uploadSweepInterval     = 5 * time.Second
+	// A retained ID must outlive its signed token. Otherwise sweeping can
+	// forget completion and ownership while the same token can still mint state.
+	uploadIDTTL         = max(2*wire.WTIdleBound+uploadReconnectGrace, uploadTokenTTL)
+	uploadSweepInterval = 5 * time.Second
 )
 
 // NewUploadStore builds an empty store with its shard maps initialised.

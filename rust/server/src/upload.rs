@@ -13,8 +13,9 @@ use std::{
 
 pub const MAX_LIVE_UPLOADS: usize = 1000;
 pub const MAX_UPLOADS_PER_CLIENT: usize = 32;
-pub const UPLOAD_RETENTION: Duration = Duration::from_secs(90);
 const TOKEN_TTL: Duration = Duration::from_secs(120);
+// Retain completion and ownership until a signed ID can no longer create state.
+pub const UPLOAD_RETENTION: Duration = TOKEN_TTL;
 
 /// Access identity and shared client admission budget are separate values.
 /// A browser grant narrows access without creating another subject budget.
@@ -533,5 +534,25 @@ mod tests {
         assert_eq!(aggregate.lock().unwrap().touched, old);
         store.sweep_at(old + UPLOAD_RETENTION + Duration::from_secs(1));
         assert_eq!(store.retained(), 0);
+    }
+
+    #[test]
+    fn finished_id_cannot_reopen_at_the_last_valid_token_age() {
+        let store = UploadStore::new().unwrap();
+        let id = store.mint().unwrap();
+        let owner = Owner::principal("original");
+        drop(store.begin(&id, &owner).unwrap());
+        store.finish(&id, &owner).unwrap();
+        let aggregate = store.inner.entries.lock().unwrap()[&id].clone();
+        let touched = Instant::now() - TOKEN_TTL;
+        aggregate.lock().unwrap().touched = touched;
+
+        store.sweep_at(touched + TOKEN_TTL);
+        assert_eq!(store.retained(), 1);
+        assert_eq!(store.begin(&id, &owner).err(), Some(UploadError::Invalid));
+        assert_eq!(
+            store.begin(&id, &Owner::principal("other")).err(),
+            Some(UploadError::OwnerMismatch)
+        );
     }
 }
