@@ -86,7 +86,11 @@ impl Ui {
         } else {
             self.theme.warning
         };
-        let shortcuts = if self.live {
+        let shortcuts = if self.cancel == CancelState::Confirming {
+            "Esc confirm cancel · any other key continue · q quit"
+        } else if self.cancel == CancelState::Requested {
+            "Cancelling run · q quit"
+        } else if self.live {
             if regions[2].width < 75 {
                 if self.active() {
                     "d details · l peer · Esc cancel · q quit"
@@ -211,7 +215,7 @@ impl Ui {
             regions[3],
         );
         frame.render_widget(
-            Paragraph::new("o open browser · Esc cancel · q quit")
+            Paragraph::new("Enter/Space/o open · Esc cancel · q quit")
                 .style(Style::new().fg(self.theme.brand_strong)),
             regions[4],
         );
@@ -774,7 +778,7 @@ impl Ui {
                 "Enter/Space  edit or toggle   s  server chooser\n",
                 "v  verify configuration    a  automatic transport paths\n",
                 "r  start measurement\n\n",
-                "MEASUREMENT\nEsc  cancel active work        r  rerun after completion\n",
+                "MEASUREMENT\nEsc twice  cancel active run    r  rerun after completion\n",
                 "l  next latency server        d  per-server results\n",
                 "Tab/Shift-Tab  section\n\n",
                 "EDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\n",

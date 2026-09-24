@@ -96,6 +96,46 @@ fn rejected_run_command_keeps_the_setup_visible() {
 }
 
 #[test]
+fn active_run_requires_second_escape_but_setup_verification_cancels_immediately() {
+    let (commands, mut received) = mpsc::channel(4);
+    let mut ui = Ui::new(
+        Config::default(),
+        Snapshot {
+            phase: Phase::Measuring,
+            ..Snapshot::default()
+        },
+    );
+    ui.live = true;
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    assert_eq!(ui.cancel, CancelState::Confirming);
+    assert!(received.try_recv().is_err());
+    ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &commands);
+    assert_eq!(ui.cancel, CancelState::Idle);
+    assert_eq!(ui.notice().0, "Run continues.");
+    assert!(received.try_recv().is_err());
+
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    assert_eq!(ui.cancel, CancelState::Requested);
+    assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    assert!(received.try_recv().is_err());
+
+    ui.update(Snapshot {
+        phase: Phase::Complete,
+        ..Snapshot::default()
+    });
+    assert_eq!(ui.cancel, CancelState::Idle);
+    ui.live = false;
+    ui.update(Snapshot {
+        phase: Phase::Preparing,
+        ..Snapshot::default()
+    });
+    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
+}
+
+#[test]
 fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
     use crate::model::ServerSummary;
     use graphite_meter_core::discovery::{LatencyTarget, ThroughputTarget};
@@ -189,7 +229,7 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     };
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("Confirmation code: 782411"));
-    assert!(rendered(&terminal).contains("o open browser"));
+    assert!(rendered(&terminal).contains("Enter/Space/o open"));
     assert!(!rendered(&terminal).contains("TAIL"));
 
     let (commands, mut received) = mpsc::channel(4);
@@ -197,6 +237,13 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
     ui.key(
         KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
+        &commands,
+    );
+    assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
+    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &commands);
+    assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
+    ui.key(
+        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
         &commands,
     );
     assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));

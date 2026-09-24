@@ -47,6 +47,14 @@ const MAX_TEXT: usize = 4096;
 const MAX_POINTS: usize = 300;
 const MAX_SERVERS: usize = 128;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CancelState {
+    #[default]
+    Idle,
+    Confirming,
+    Requested,
+}
+
 /// Return paths, cancellation and partial initialization all restore the terminal.
 /// Ratatui additionally installs its panic hook before entering raw mode.
 struct Restore;
@@ -141,6 +149,7 @@ struct Ui {
     edit: Option<Edit>,
     notice: String,
     awaiting: bool,
+    cancel: CancelState,
     latency_focus: Option<String>,
 }
 impl Ui {
@@ -166,6 +175,7 @@ impl Ui {
             edit: None,
             notice: String::new(),
             awaiting: false,
+            cancel: CancelState::Idle,
             latency_focus: None,
         }
     }
@@ -188,6 +198,17 @@ impl Ui {
         }
         snapshot.results.truncate(16);
         self.awaiting = false;
+        if snapshot.auth.is_some()
+            || !matches!(
+                snapshot.phase,
+                Phase::Preparing | Phase::Warmup | Phase::Measuring
+            )
+        {
+            if self.cancel != CancelState::Idle {
+                self.notice.clear();
+            }
+            self.cancel = CancelState::Idle;
+        }
         if snapshot.results.is_empty() || snapshot.auth.is_some() {
             self.details = false;
             self.details_scroll = 0;
@@ -195,7 +216,14 @@ impl Ui {
         self.snapshot = snapshot;
     }
     fn notice(&self) -> (&str, bool) {
-        if !self.notice.is_empty() {
+        if self.cancel == CancelState::Confirming {
+            (
+                "Cancel the run? Esc confirms; any other key continues.",
+                false,
+            )
+        } else if self.cancel == CancelState::Requested {
+            ("Cancelling run; waiting for owned IO.", false)
+        } else if !self.notice.is_empty() {
             (&self.notice, false)
         } else if let Some(error) = self.snapshot.error.as_deref() {
             (error, true)
@@ -232,6 +260,7 @@ impl Ui {
             Ok(()) => {
                 if let Some(requested) = requested {
                     self.requested = requested;
+                    self.cancel = CancelState::Idle;
                 }
                 self.notice.clear();
                 self.awaiting = true;
@@ -265,7 +294,7 @@ impl Ui {
                     let _ = commands.try_send(Command::Quit);
                     return true;
                 }
-                KeyCode::Char('o') => {
+                KeyCode::Char('o') | KeyCode::Enter | KeyCode::Char(' ') => {
                     self.send(Command::OpenBrowser, commands);
                 }
                 KeyCode::Esc => {
@@ -305,6 +334,17 @@ impl Ui {
         if key.code == KeyCode::Char('q') {
             let _ = commands.try_send(Command::Quit);
             return true;
+        }
+        if self.cancel == CancelState::Confirming {
+            self.cancel = CancelState::Idle;
+            if key.code == KeyCode::Esc {
+                if self.send(Command::Cancel, commands) {
+                    self.cancel = CancelState::Requested;
+                }
+            } else {
+                self.notice = "Run continues.".into();
+            }
+            return false;
         }
         if key.code == KeyCode::Char('?') {
             self.help = !self.help;
@@ -374,6 +414,11 @@ impl Ui {
             },
             KeyCode::Char('v') if !self.active() => {
                 self.send(Command::Verify(self.config.clone()), commands);
+            }
+            KeyCode::Esc if self.active() && self.live => {
+                if self.cancel != CancelState::Requested {
+                    self.cancel = CancelState::Confirming;
+                }
             }
             KeyCode::Esc if self.active() => {
                 self.send(Command::Cancel, commands);
