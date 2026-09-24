@@ -47,6 +47,11 @@ func (s discardSink) Write(p []byte) (int, error) {
 
 // HandleHTTP owns HTTP deadlines, refusal status, and the final byte response.
 func (u *Upload) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return nil
+	}
 	deadline := time.Now().Add(uploadReadTimeout)
 	if requestDeadline, ok := r.Context().Deadline(); ok && requestDeadline.Before(deadline) {
 		deadline = requestDeadline

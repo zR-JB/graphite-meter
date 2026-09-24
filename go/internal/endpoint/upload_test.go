@@ -46,6 +46,26 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 	}
 }
 
+func TestUploadRejectsGETWithoutReadingOrCreatingAggregate(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	upload := NewUpload(nil, store)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/upload?id="+id, strings.NewReader("not an upload"))
+	if err := upload.HandleHTTP(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "POST" {
+		t.Fatalf("GET status=%d allow=%q", response.Code, response.Header().Get("Allow"))
+	}
+	if _, ok := store.get(id); ok {
+		t.Fatal("GET created an upload aggregate")
+	}
+	if store.live.Load() != 0 {
+		t.Fatalf("GET retained %d upload aggregates", store.live.Load())
+	}
+}
+
 func TestUploadAggregatesByID(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
