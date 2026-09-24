@@ -33,6 +33,14 @@ const MAX_CONNECT_FRAMES: u64 = 1024;
 const RESET: u64 = 0x52e4a40fa8db;
 type Lane = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 type Activity = Arc<Mutex<Instant>>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SessionRoute {
+    Ping,
+    Download,
+    Upload,
+}
+
 fn touch(activity: &Activity) {
     *activity.lock().expect("WT activity poisoned") = Instant::now();
 }
@@ -89,15 +97,17 @@ impl HttpServer {
         } else {
             (request, None)
         };
-        let path = request.uri().path();
-        if !matches!(path, "/wt/ping" | "/wt/download" | "/wt/upload") {
-            return refuse(&mut stream, StatusCode::NOT_FOUND).await;
-        }
+        let route = match request.uri().path() {
+            "/wt/ping" => SessionRoute::Ping,
+            "/wt/download" => SessionRoute::Download,
+            "/wt/upload" => SessionRoute::Upload,
+            _ => return refuse(&mut stream, StatusCode::NOT_FOUND).await,
+        };
         let owner = lease
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let class = if path == "/wt/ping" {
+        let class = if route == SessionRoute::Ping {
             Class::Request
         } else {
             Class::Session
@@ -126,7 +136,14 @@ impl HttpServer {
             stream.stop_stream(h3::error::Code::H3_REQUEST_REJECTED);
             return Ok(());
         };
-        tokio::select! { biased; _ = lease_ended(lease.clone()) => return Ok(()), result = tokio::time::timeout(Duration::from_secs(10), stream.send_response(Response::builder().status(200).body(())?)) => result?? }
+        tokio::select! {
+            biased;
+            _ = lease_ended(lease.clone()) => return Ok(()),
+            result = tokio::time::timeout(
+                Duration::from_secs(10),
+                stream.send_response(Response::builder().status(200).body(())?),
+            ) => result??,
+        }
         let query = request.uri().query().unwrap_or("");
         let params: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
         let value = |name: &str| {
@@ -137,13 +154,13 @@ impl HttpServer {
         };
         let datagrams = value("datagrams").is_some_and(datagram_mode);
         let count = download_bytes(query);
-        let verify = path == "/wt/download" && count == 0;
+        let verify = route == SessionRoute::Download && count == 0;
         let activity = Arc::new(Mutex::new(Instant::now()));
         let mut lanes: FuturesUnordered<Lane> = FuturesUnordered::new();
         let mut controls: FuturesUnordered<Lane> = FuturesUnordered::new();
         let upload_id = value("id").unwrap_or("").to_owned();
         let mut datagram_lane = None;
-        if path == "/wt/download" && !verify {
+        if route == SessionRoute::Download && !verify {
             if datagrams {
                 let quic = quic.clone();
                 let block = self.download_block.clone();
@@ -181,7 +198,7 @@ impl HttpServer {
                     )));
                 }
             }
-        } else if path == "/wt/upload" {
+        } else if route == SessionRoute::Upload {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
             controls.push(Box::pin(progress(
                 quic.clone(),
@@ -218,9 +235,12 @@ impl HttpServer {
                     _ = lease_ended(lease.clone()) => break,
                     _ = tokio::time::sleep_until(deadline) => break,
                     _ = tick.tick() => {
-                        if verify && Instant::now() >= verify_deadline { break; }
-                        if !verify && activity.lock().expect("WT activity poisoned").elapsed() >= IDLE { break; }
-
+                        if verify && Instant::now() >= verify_deadline {
+                            break;
+                        }
+                        if !verify && activity.lock().expect("WT activity poisoned").elapsed() >= IDLE {
+                            break;
+                        }
                     }
                     _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
                     data = stream.recv_data() => {
@@ -231,7 +251,9 @@ impl HttpServer {
                             return Err("WebTransport CONNECT control-data budget exceeded".into());
                         }
                         let data = data.copy_to_bytes(data.remaining());
-                        if decoder.feed(&data)?.iter().any(|capsule| matches!(capsule, Capsule::CloseSession { .. })) { break; }
+                        if decoder.feed(&data)?.iter().any(|capsule| matches!(capsule, Capsule::CloseSession { .. })) {
+                            break;
+                        }
                     }
                     Some(_) = lanes.next(), if !lanes.is_empty() => {
                         // Download lanes run until their stream can no longer
@@ -239,7 +261,7 @@ impl HttpServer {
                         // CONNECT has no remaining payload producer.
                         // Upload lanes may finish normally and be replaced by
                         // later client-opened streams.
-                        if path == "/wt/download" && lanes.is_empty() {
+                        if route == SessionRoute::Download && lanes.is_empty() {
                             break;
                         }
                     }
@@ -247,15 +269,15 @@ impl HttpServer {
                     event = events.recv() => match event {
                         None => break,
                         Some(SessionEvent::Datagram { payload, _budget }) => {
-                            match path {
-                                "/wt/ping" => {
+                            match route {
+                                SessionRoute::Ping => {
                                     touch(&activity);
                                     if let Some(reply) = crate::ping::reply(&payload) {
                                         let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?);
                                     }
                                 }
-                                "/wt/download" if datagrams => touch(&activity),
-                                "/wt/upload" => {
+                                SessionRoute::Download if datagrams => touch(&activity),
+                                SessionRoute::Upload => {
                                     if let Some(lane) = &mut datagram_lane {
                                         lane.record(payload.len());
                                         touch(&activity);
@@ -265,12 +287,17 @@ impl HttpServer {
                             }
                         }
                         Some(SessionEvent::Stream(mut incoming)) => {
-                            if path != "/wt/upload" || lanes.len() >= MAX_LANES { h3::quic::RecvStream::stop_sending(&mut incoming, RESET); continue; }
+                            if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
+                                h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
+                                continue;
+                            }
                             match self.uploads.begin(&upload_id, &owner) {
                                 Ok(lane) => lanes.push(Box::pin(upload_lane(incoming, lane, activity.clone()))),
                                 Err(error) => {
                                     h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
-                                    if controls.len() < 2 { controls.push(Box::pin(progress(quic.clone(), resets.clone(), session_id, Err(error)))); }
+                                    if controls.len() < 2 {
+                                        controls.push(Box::pin(progress(quic.clone(), resets.clone(), session_id, Err(error))));
+                                    }
                                 }
                             }
                         }
