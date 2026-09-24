@@ -39,8 +39,8 @@ Stream-association headers have a ten-second deadline; classified
 streams arriving before CONNECT are bounded to 64 per connection with the same
 expiry. Queued datagram payload is bounded to 256 KiB per connection. Broader
 reordering, cancellation and hostile-peer behavior still need validation.
-An immediate-reset probe identifies an existing Go byte-reader defect; see the
-parent README for the unchanged-peer failure and diagnostic correction.
+The immediate-reset probe now passes with unchanged quic-go v0.63.0; earlier
+v0.62.0 lost the last session-association byte on a read with a reset error.
 Advertising the current setting does not establish complete protocol guarantees.
 
 ## Noq protocol source patch

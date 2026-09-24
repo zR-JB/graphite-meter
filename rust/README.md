@@ -90,10 +90,10 @@ trusts only its disposable CA through `SSL_CERT_FILE`, and verifies
 TLS identity on HTTP and QUIC connections. It does not exercise an external
 identity provider or real deployment.
 
-The full probe currently fails on immediate stream reset with the unchanged Go
-peer. `--fix-go-reset-reader` tests a diagnostic correction in a temporary Go
-dependency copy; it changes neither product dependencies nor the module cache.
-A passing diagnostic does not establish compatibility with the unchanged peer.
+The full probe includes immediate WebTransport stream reset against the unchanged
+Go client using quic-go v0.63.0. It requires the session association prefix to
+survive reset without a temporary dependency overlay. Earlier quic-go v0.62.0
+lost the final prefix byte when a read returned that byte with a reset error.
 
 The QUIC stack uses an experimental Noq commit and local HTTP/3 patches; see
 [vendor/PATCHES.md](vendor/PATCHES.md) for provenance and limitations.
