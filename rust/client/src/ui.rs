@@ -943,6 +943,12 @@ mod tests {
         terminal.draw(|frame| ui.draw(frame)).unwrap();
         assert!(rendered(&terminal).contains("Settings changed · verify again"));
         assert!(!rendered(&terminal).contains("↓ Fetch stream"));
+
+        let (commands, _receiver) = mpsc::channel(1);
+        ui.send(Command::Verify(ui.config.clone()), &commands);
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        assert!(rendered(&terminal).contains("Checking selected servers"));
+        assert!(!rendered(&terminal).contains("↓ Fetch stream"));
     }
 
     #[test]
