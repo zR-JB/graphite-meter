@@ -5,6 +5,7 @@ use super::*;
 use crate::{webtransport, webtransport_send::ResetQueue};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::AtomicUsize;
 use tokio::sync::mpsc;
 use webtransport::{Incoming, ReceiveStream, TransportError};
 
@@ -105,6 +106,7 @@ impl HttpServer {
             cleanup: FuturesUnordered::new(),
             sessions: Sessions::default(),
         };
+        let active_responses = Arc::new(AtomicUsize::new(0));
         initializing.0.take();
         let mut expiry = tokio::time::interval(Duration::from_secs(1));
         expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -147,6 +149,7 @@ impl HttpServer {
                             let sessions = connection.sessions.clone();
                             let quic = connection.quic.clone();
                             let resets = resets.clone();
+                            let active_responses = active_responses.clone();
                             connection.requests.push(Box::pin(async move {
                                 let (request, mut stream) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await??;
                                 if request.method() == Method::CONNECT {
@@ -158,7 +161,7 @@ impl HttpServer {
                                     };
                                     server.serve_webtransport(request, stream, quic, peer, resets, events).await
                                 } else {
-                                    server.serve_http3_request(request, stream, peer).await.map_err(Into::into)
+                                    server.serve_http3_request(request, stream, peer, active_responses).await.map_err(Into::into)
                                 }
                             }));
                         }

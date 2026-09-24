@@ -2,11 +2,13 @@
 use super::*;
 use bytes::Buf;
 use h3::error::Code;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Http3RequestStream = h3::server::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
 type Receive = h3::server::RequestStream<h3_noq::RecvStream, Bytes>;
 type Send = h3::server::RequestStream<h3_noq::SendStream<Bytes>, Bytes>;
 const DATA_BYTES: usize = 16 * 1024;
+const FAIRNESS_LANES: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Http3RequestKind {
@@ -42,6 +44,7 @@ impl HttpServer {
         request: Request<()>,
         stream: Http3RequestStream,
         peer: SocketAddr,
+        active_responses: Arc<AtomicUsize>,
     ) -> io::Result<()> {
         let head = request.method() == Method::HEAD;
         let connect = request.method() == Method::CONNECT;
@@ -76,7 +79,7 @@ impl HttpServer {
                 )
                 .await?
             };
-            send.response(response, head).await
+            send.response(response, head, active_responses).await
         };
         let mut exchange = std::pin::pin!(exchange);
         let guarded = std::future::poll_fn(|cx| {
@@ -153,13 +156,39 @@ struct ResponseStream {
     finished: bool,
 }
 
+struct ActiveResponse(Arc<AtomicUsize>);
+
+impl ActiveResponse {
+    fn new(count: Arc<AtomicUsize>) -> Self {
+        count.fetch_add(1, Ordering::Relaxed);
+        Self(count)
+    }
+
+    fn contended(&self) -> bool {
+        self.0.load(Ordering::Relaxed) > FAIRNESS_LANES
+    }
+}
+
+impl Drop for ActiveResponse {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl ResponseStream {
-    async fn response(&mut self, response: Response<ResponseBody>, head: bool) -> io::Result<()> {
+    async fn response(
+        &mut self,
+        response: Response<ResponseBody>,
+        head: bool,
+        active_responses: Arc<AtomicUsize>,
+    ) -> io::Result<()> {
         let (parts, mut body) = response.into_parts();
-        let streaming_body = body
-            .size_hint()
-            .upper()
-            .is_some_and(|size| size > 1024 * 1024);
+        let active = (!head
+            && body
+                .size_hint()
+                .upper()
+                .is_some_and(|size| size > 1024 * 1024))
+        .then(|| ActiveResponse::new(active_responses));
         self.stream
             .send_response(Response::from_parts(parts, ()))
             .await
@@ -175,10 +204,10 @@ impl ResponseStream {
                             .send_data(chunk)
                             .await
                             .map_err(io::Error::other)?;
-                        if streaming_body {
-                            // Share a bounded QUIC send window across active
-                            // measurement lanes instead of letting the first
-                            // ready response fill it before peers get headers.
+                        if active.as_ref().is_some_and(ActiveResponse::contended) {
+                            // Only a crowded connection needs a scheduler
+                            // handoff; per-chunk yields halve ordinary H3
+                            // download throughput on this workload.
                             tokio::task::yield_now().await;
                         }
                     }

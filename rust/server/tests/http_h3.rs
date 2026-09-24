@@ -6,7 +6,11 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_server::{config::Config, http_server::HttpServer};
 use http::Request;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-use std::{error::Error, sync::Arc, time::Duration};
+use std::{
+    error::Error,
+    sync::{Arc, atomic::AtomicUsize},
+    time::Duration,
+};
 use tokio::sync::oneshot;
 
 type TestError = Box<dyn Error + Send + Sync>;
@@ -70,6 +74,7 @@ async fn exercise() -> Result<(), TestError> {
     let (stop, stopped) = oneshot::channel();
     let serving = tokio::spawn(async move {
         let mut requests = FuturesUnordered::new();
+        let active_responses = Arc::new(AtomicUsize::new(0));
         tokio::pin!(stopped);
         loop {
             tokio::select! {
@@ -79,10 +84,11 @@ async fn exercise() -> Result<(), TestError> {
                     let Some(resolver) = accepted? else {break;};
                     assert!(requests.len() < 256);
                     let server = server.clone();
+                    let active_responses = active_responses.clone();
                     requests.push(async move {
                         let (request, stream) = resolver.resolve_request().await?;
                         // Cancellation is local to this owned request future.
-                        let _ = server.serve_http3_request(request, stream, peer).await;
+                        let _ = server.serve_http3_request(request, stream, peer, active_responses).await;
                         Ok::<_,TestError>(())
                     });
                 }
