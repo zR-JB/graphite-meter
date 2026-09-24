@@ -32,6 +32,7 @@ serde_json = "1"
 base64 = "0.22.1"
 sha2 = "0.11.0"
 zeroize = "1.9.0"
+unicode-width = "0.2.2"
 h3 = { version = "0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 h3-noq = { path = "../vendor/h3-noq" }
 quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio"] }

@@ -31,6 +31,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, watch};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Clone, Debug)]
 pub enum Command {
@@ -320,6 +321,48 @@ impl Edit {
     }
     fn text(&self) -> String {
         self.chars.iter().collect()
+    }
+    fn viewport(&self, width: usize) -> (String, char, String) {
+        let width = width.max(1);
+        let mut cursor = self.chars.get(self.cursor).copied().unwrap_or(' ');
+        if cell_width(cursor) > width {
+            cursor = ' ';
+        }
+        let available = width.saturating_sub(cell_width(cursor).max(1));
+        let mut right_width = 0;
+        for &character in self.chars.iter().skip(self.cursor + 1) {
+            let next = right_width + cell_width(character);
+            if next > available / 3 {
+                break;
+            }
+            right_width = next;
+        }
+        let mut start = self.cursor;
+        let mut left_width = 0;
+        while start > 0 {
+            let next = left_width + cell_width(self.chars[start - 1]);
+            if next > available - right_width {
+                break;
+            }
+            start -= 1;
+            left_width = next;
+        }
+        let after_cursor = self.cursor + usize::from(self.cursor < self.chars.len());
+        let mut end = after_cursor;
+        let mut remaining = available - left_width;
+        while let Some(&character) = self.chars.get(end) {
+            let width = cell_width(character);
+            if width > remaining {
+                break;
+            }
+            remaining -= width;
+            end += 1;
+        }
+        (
+            self.chars[start..self.cursor].iter().collect(),
+            cursor,
+            self.chars[after_cursor..end].iter().collect(),
+        )
     }
     fn key(&mut self, key: KeyCode) {
         match key {
@@ -767,6 +810,30 @@ fn safe_text(value: &str, limit: usize) -> String {
         .map(|c| if safe_character(c) { c } else { '�' })
         .collect()
 }
+fn cell_width(character: char) -> usize {
+    UnicodeWidthChar::width(character).unwrap_or(0)
+}
+fn safe_text_width(value: &str, columns: usize) -> String {
+    if columns == 0 {
+        return String::new();
+    }
+    let mut text = String::new();
+    let mut width = 0;
+    for character in value.chars().take(MAX_TEXT) {
+        let character = if safe_character(character) {
+            character
+        } else {
+            '�'
+        };
+        let next = width + cell_width(character);
+        if next > columns {
+            break;
+        }
+        text.push(character);
+        width = next;
+    }
+    text
+}
 fn rate(value: Option<f64>) -> String {
     match value.filter(|v| v.is_finite() && *v >= 0.0) {
         Some(value) if value >= 1_000_000_000.0 => format!("{:.2} Gbit/s", value / 1_000_000_000.0),
@@ -800,6 +867,29 @@ mod tests {
         assert_eq!(edit.text(), "a界b");
         edit.insert(&"x".repeat(MAX_TEXT * 2));
         assert_eq!(edit.chars.len(), MAX_TEXT);
+    }
+    #[test]
+    fn editing_keeps_the_whole_value_visible_when_it_fits() {
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let url = "https://meter.example/some/moderately/long/path";
+        let mut ui = Ui::new(Config::default(), Snapshot::default());
+        ui.edit = Some(Edit::new(Field::Url, url.into()));
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains(url));
+
+        let edit = Edit::new(Field::Url, "界".repeat(30));
+        let (before, cursor, after) = edit.viewport(20);
+        assert!(before.width() + cursor.width().unwrap_or(0) + after.width() <= 20);
+        assert!(before.ends_with("界"));
     }
     #[test]
     fn sections_cycle_through_setup_and_live_in_both_directions() {

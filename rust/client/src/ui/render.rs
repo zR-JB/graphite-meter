@@ -29,11 +29,11 @@ impl Ui {
         } else {
             self.snapshot.status.clone()
         };
-        let status = safe_text(&status, usize::from(regions[0].width / 2).saturating_sub(4));
+        let status = safe_text_width(&status, usize::from(regions[0].width / 2).saturating_sub(4));
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
         let spacer =
-            usize::from(regions[0].width).saturating_sub(title.len() + status_pill.chars().count());
+            usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
         let status_background = match self.snapshot.phase {
             Phase::Complete => self.theme.success,
             Phase::Cancelled => self.theme.warning,
@@ -62,7 +62,11 @@ impl Ui {
                 Line::from(vec![
                     Span::styled("native rust client  ", Style::new().fg(self.theme.muted)),
                     Span::styled(
-                        safe_text(&self.config.url, 200),
+                        safe_text_width(
+                            &self.config.url,
+                            usize::from(regions[0].width)
+                                .saturating_sub("native rust client  ".width()),
+                        ),
                         Style::new().fg(self.theme.brand_strong),
                     ),
                 ]),
@@ -129,20 +133,7 @@ impl Ui {
             let area = popup(frame.area(), 80, 7);
             frame.render_widget(Clear, area);
             let width = usize::from(area.width.saturating_sub(6)).max(1);
-            let start = edit.cursor.saturating_sub(width / 2);
-            let before: String = edit
-                .chars
-                .iter()
-                .skip(start)
-                .take(edit.cursor - start)
-                .collect();
-            let cursor = edit.chars.get(edit.cursor).copied().unwrap_or(' ');
-            let after: String = edit
-                .chars
-                .iter()
-                .skip(edit.cursor + 1)
-                .take(width / 2)
-                .collect();
+            let (before, cursor, after) = edit.viewport(width);
             frame.render_widget(
                 Paragraph::new(vec![
                     Line::from(vec![
