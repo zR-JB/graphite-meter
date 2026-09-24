@@ -50,21 +50,25 @@ def main() -> None:
         check=True,
     )
     h1_port = unused_port()
+    h2_port = unused_port()
     h3_port = unused_port()
-    while h3_port == h1_port:
-        h3_port = unused_port()
-    discovery = f"http://127.0.0.1:{h1_port}"
+    while len({h1_port, h2_port, h3_port}) != 3:
+        h2_port, h3_port = unused_port(), unused_port()
+    discovery = f"https://127.0.0.1:{h1_port}"
+    h2_origin = f"https://127.0.0.1:{h2_port}"
     h3_origin = f"https://127.0.0.1:{h3_port}"
     log = directory / "go-server.log"
     with log.open("w") as output:
         server = subprocess.Popen(
             [
-                str(binary), f"--h1-addr=127.0.0.1:{h1_port}",
-                "--h1-tls-addr=", "--h2-addr=",
+                str(binary), "--h1-addr=127.0.0.2:0",
+                f"--h1-tls-addr=127.0.0.1:{h1_port}",
+                f"--h2-addr=127.0.0.1:{h2_port}",
                 f"--h3-addr=127.0.0.1:{h3_port}",
-                f"--h1-public-origin={discovery}",
+                f"--h1-tls-public-origin={discovery}",
+                f"--h2-public-origin={h2_origin}",
                 f"--h3-public-origin={h3_origin}",
-                "--advertised-native-endpoints=http1-clear,http3",
+                "--advertised-native-endpoints=http1-tls,http2,http3",
                 f"--tls-cert={cert}", f"--tls-key={key}",
             ],
             env=environment,
