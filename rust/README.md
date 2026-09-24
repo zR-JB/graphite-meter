@@ -17,6 +17,8 @@ bounded windows improved those runs. These short local and delayed-path samples
 do not establish real-WAN, packet-loss, many-user, or sustained-memory superiority.
 The release server embeds one reviewed third-party notice payload for both
 `--legal` and the browser About endpoint.
+The packaged TUI keeps its reviewed notice compressed inside the executable and
+expands it only for `--legal`; the archive also carries the readable `LEGAL.txt`.
 
 Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
 `--url https://your-server`. `mise run tui` selects Go by default.

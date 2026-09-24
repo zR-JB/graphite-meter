@@ -1,6 +1,34 @@
 [
   {
     "ecosystem": "cargo",
+    "name": "adler2",
+    "reviewedVersion": "2.0.1",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "0BSD OR MIT OR Apache-2.0",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE-0BSD",
+        "sha256": "861399f8c21c042b110517e76dc6b63a2b334276c8cf17412fc3c8908ca8dc17",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-APACHE",
+        "sha256": "8ada45cd9f843acf64e4722ae262c622a2b3b3007c7310ef36ac1061a30f6adb",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT",
+        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/oyvindln/adler2; revision 89a031a0f42eeff31c70dc598b398cbf31f1680f. Cargo archive SHA-256 320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa. Reviewed packaged MIT permission/disclaimer and copyright-bearing 0BSD text; retain all three packaged alternative-license files. Unmodified pure-Rust checksum dependency."
+  },
+  {
+    "ecosystem": "cargo",
     "name": "aead",
     "reviewedVersion": "0.5.2",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -3022,6 +3050,39 @@
     "modified": false,
     "reviewDecision": "approved",
     "reviewNotes": "Source: https://github.com/BurntSushi/memchr; revision 5fdb40c054e1fff359a2f7bdf7f87a13b34b465d. Cargo archive SHA-256 cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "miniz_oxide",
+    "reviewedVersion": "0.9.1",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "MIT OR Zlib OR Apache-2.0",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE",
+        "sha256": "4108245a1f2df9d4e94df8abed5b4ba0759bb2f9b40a6b939f1be141077ae50b",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-APACHE.md",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT.md",
+        "sha256": "799e9ca9d179295ef372f25d3769cdda7d25bb2668add6a6a1e22d1e4c678b8d",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-ZLIB.md",
+        "sha256": "0a54e647fe54104658b5e563c04c6f9edf251710e47bce692e0bd990a4ddaa39",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/Frommi/miniz_oxide; revision 4e582392df3a739d2b0dfd2c537dc33e8942be38. Cargo archive SHA-256 b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c. Reviewed packaged MIT permission/disclaimer and copyright text, plus the Apache and zlib alternatives; retain all four packaged license files. Unmodified pure-Rust codec used only to compress and expand the build-owned CLI notice."
   },
   {
     "ecosystem": "cargo",
