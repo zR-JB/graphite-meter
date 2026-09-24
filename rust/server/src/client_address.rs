@@ -63,11 +63,16 @@ fn unmap(addr: IpAddr) -> IpAddr {
     }
 }
 fn forwarded_chain(headers: &HeaderMap) -> Option<Vec<IpAddr>> {
-    // HeaderMap::get returns the first field value, matching http.Header.Get.
+    // A proxy may append its own value after a client-supplied field. Picking
+    // the first value would let that client choose their admission identity.
     for name in ["x-real-ip", "forwarded", "x-forwarded-for"] {
-        let Some(value) = headers.get(name) else {
+        let mut values = headers.get_all(name).iter();
+        let Some(value) = values.next() else {
             continue;
         };
+        if values.next().is_some() {
+            return None;
+        }
         if value.as_bytes().is_empty() {
             continue;
         }

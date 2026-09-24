@@ -131,7 +131,7 @@ fn go_address_and_chain_vectors() {
 }
 
 #[test]
-fn precedence_uses_first_value_without_fallback_on_malformed() {
+fn precedence_rejects_ambiguous_values_without_fallback() {
     let mut headers = HeaderMap::new();
     headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.8"));
     headers.insert("forwarded", HeaderValue::from_static("for=203.0.113.4"));
@@ -140,6 +140,11 @@ fn precedence_uses_first_value_without_fallback_on_malformed() {
     assert_eq!(
         resolve(peer, &headers, &trusted()).addr.to_string(),
         "198.51.100.9"
+    );
+    headers.append("x-real-ip", HeaderValue::from_static("203.0.113.5"));
+    assert_eq!(
+        resolve(peer, &headers, &trusted()).source,
+        ClientIpSource::Socket
     );
     headers.insert("x-real-ip", HeaderValue::from_static("bad"));
     headers.append("x-real-ip", HeaderValue::from_static("203.0.113.5"));
@@ -158,6 +163,23 @@ fn precedence_uses_first_value_without_fallback_on_malformed() {
         resolve(peer, &headers, &trusted()).addr.to_string(),
         "198.51.100.8"
     );
+}
+
+#[test]
+fn repeated_forwarding_fields_cannot_choose_an_anonymous_budget() {
+    let peer = "10.0.0.2:1234".parse().unwrap();
+    for (name, first, second) in [
+        ("x-real-ip", "203.0.113.4", "198.51.100.9"),
+        ("forwarded", "for=203.0.113.4", "for=198.51.100.9"),
+        ("x-forwarded-for", "203.0.113.4", "198.51.100.9"),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.append(name, HeaderValue::from_str(first).unwrap());
+        headers.append(name, HeaderValue::from_str(second).unwrap());
+        let result = resolve(peer, &headers, &trusted());
+        assert_eq!(result.addr.to_string(), "10.0.0.2", "{name}");
+        assert_eq!(result.source, ClientIpSource::Socket, "{name}");
+    }
 }
 
 #[test]
