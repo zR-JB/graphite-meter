@@ -10,6 +10,8 @@ import tempfile
 import time
 import urllib.request
 
+from server_interop import PASSWORD_HASH
+
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -163,6 +165,77 @@ def main() -> None:
                 raise RuntimeError("Go server failed to shut down within five seconds")
             if server.returncode != 0:
                 raise RuntimeError(f"Go server exited {server.returncode}: {log.read_text()}")
+
+    auth_port = unused_port()
+    auth_h3_port = unused_port()
+    while auth_h3_port == auth_port:
+        auth_h3_port = unused_port()
+    auth_url = f"https://127.0.0.1:{auth_port}"
+    auth_log = directory / "go-auth-server.log"
+    auth_environment = {
+        **environment,
+        "GM_AUTH_MODE": "password",
+        "GM_AUTH_PUBLIC_URL": auth_url,
+        "GM_AUTH_PASSWORD_HASH": PASSWORD_HASH,
+    }
+    with auth_log.open("w") as output:
+        server = subprocess.Popen(
+            [
+                str(binary), "--h1-addr=127.0.0.2:0",
+                f"--h1-tls-addr=127.0.0.1:{auth_port}",
+                "--h2-addr=",
+                f"--h3-addr=127.0.0.1:{auth_h3_port}",
+                f"--h1-tls-public-origin={auth_url}",
+                f"--h3-public-origin=https://127.0.0.1:{auth_h3_port}",
+                "--advertised-native-endpoints=http1-tls,http3",
+                f"--tls-cert={cert}", f"--tls-key={key}",
+            ],
+            env=auth_environment,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if server.poll() is not None:
+                    raise RuntimeError(f"authenticated Go server exited: {auth_log.read_text()}")
+                try:
+                    with opener.open(auth_url + "/login", timeout=1) as response:
+                        if response.status == 200:
+                            break
+                except (OSError, TimeoutError):
+                    time.sleep(0.05)
+            else:
+                raise TimeoutError(f"authenticated Go server did not start: {auth_log.read_text()}")
+            native = subprocess.run(
+                [
+                    "cargo", "test", "--locked", "-p", "graphite-meter-client",
+                    "--test", "go_server_interop", "go_server_completes_approved_native_stages",
+                    "--", "--nocapture",
+                ],
+                cwd=ROOT / "rust",
+                env={
+                    **auth_environment,
+                    "SSL_CERT_FILE": str(ca),
+                    "GM_GO_AUTH_URL": auth_url,
+                },
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            (directory / "rust-client-auth.log").write_text(native.stdout + native.stderr)
+            print(native.stdout + native.stderr, end="", flush=True)
+            native.check_returncode()
+        finally:
+            server.send_signal(signal.SIGINT)
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+                raise RuntimeError("authenticated Go server failed to shut down")
+            if server.returncode != 0:
+                raise RuntimeError(f"authenticated Go server exited {server.returncode}: {auth_log.read_text()}")
 
 
 if __name__ == "__main__":

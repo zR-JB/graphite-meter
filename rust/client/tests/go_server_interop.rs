@@ -3,11 +3,14 @@ use graphite_meter_client::{
     Error,
     config::Config,
     model::{Phase, Snapshot, Stage},
-    net::Http,
+    net::{AuthRequired, Http},
     runner,
 };
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
-use std::time::Duration;
+use graphite_meter_core::{
+    catalog::ServerEntry,
+    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+};
+use std::{path::PathBuf, time::Duration};
 use tokio::sync::watch;
 
 #[derive(Clone, Copy)]
@@ -56,6 +59,64 @@ async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
 }
 
 async fn run_case(url: &str, case: Case) -> Result<(), Error> {
+    run_case_with_http(url, case, Http::new(false)?).await
+}
+
+#[tokio::test]
+async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
+    let Ok(url) = std::env::var("GM_GO_AUTH_URL") else {
+        return Ok(());
+    };
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    let http = Http::new(false)?;
+    let entry = ServerEntry {
+        id: "self".into(),
+        url: url.clone(),
+        name: "authenticated Go server".into(),
+        ..ServerEntry::default()
+    };
+    let challenge = http.preflight(&entry).await.unwrap_err();
+    let required = challenge.downcast::<AuthRequired>()?;
+    let pending = http.begin_authorization(&required.origin, &required.login_url)?;
+    let helper = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("missing Rust workspace directory")?
+        .join("tests/approve_native.py");
+    let approved = tokio::process::Command::new("python3")
+        .arg(helper)
+        .arg(&url)
+        .arg(&pending.browser_url)
+        .arg(std::env::var("SSL_CERT_FILE")?)
+        .output()
+        .await?;
+    if !approved.status.success() {
+        return Err(format!(
+            "browser approval fixture failed: {}",
+            String::from_utf8_lossy(&approved.stderr)
+        )
+        .into());
+    }
+    http.poll_authorization(pending).await?;
+    for case in [
+        Case {
+            name: "approved WebTransport stream",
+            protocol: Protocol::Http3,
+            throughput: ThroughputTransport::WebTransport,
+            latency: LatencyTransport::WebTransport,
+        },
+        Case {
+            name: "approved HTTPS HTTP/1.1 fetch stream",
+            protocol: Protocol::Http1,
+            throughput: ThroughputTransport::FetchStream,
+            latency: LatencyTransport::WebSocket,
+        },
+    ] {
+        run_case_with_http(&url, case, http.clone()).await?;
+    }
+    Ok(())
+}
+
+async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Error> {
     let config = Config {
         url: url.into(),
         stages: vec![
@@ -85,7 +146,6 @@ async fn run_case(url: &str, case: Case) -> Result<(), Error> {
     };
     let (snapshots, _snapshot_rx) = watch::channel(Snapshot::default());
     let (cancel_tx, cancel) = watch::channel(false);
-    let http = Http::new(config.insecure)?;
     tokio::time::timeout(
         Duration::from_secs(40),
         runner::run(config, http, snapshots.clone(), cancel),
