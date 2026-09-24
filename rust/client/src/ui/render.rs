@@ -296,7 +296,7 @@ impl Ui {
                     .snapshot
                     .servers
                     .iter()
-                    .filter(|server| server.checked())
+                    .filter(|server| server.has_check_result())
                     .take(4)
                     .collect::<Vec<_>>();
                 if checked.is_empty() {
@@ -316,6 +316,9 @@ impl Ui {
                     }
                     if let Some(label) = server.latency_label() {
                         lines.push(format!("  RTT {label}"));
+                    }
+                    if let Some(error) = &server.error {
+                        lines.push(format!("  Unavailable: {}", safe_text(error, 120)));
                     }
                 }
             }

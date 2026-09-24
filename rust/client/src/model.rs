@@ -103,6 +103,10 @@ impl ServerSummary {
         self.throughput.is_some() || self.latency.is_some()
     }
 
+    pub fn has_check_result(&self) -> bool {
+        self.checked() || self.error.is_some()
+    }
+
     pub fn throughput_label(&self) -> Option<String> {
         let target = self.throughput.as_ref()?;
         let transport = match target.transport {

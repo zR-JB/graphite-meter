@@ -136,12 +136,15 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
 }
 
 #[test]
-fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
+fn setup_shows_verified_paths_and_failed_selected_peers() {
     use crate::model::ServerSummary;
     use graphite_meter_core::discovery::{LatencyTarget, ThroughputTarget};
     use ratatui::{Terminal, backend::TestBackend};
 
-    let config = Config::default();
+    let config = Config {
+        servers: vec!["self".into(), "beta".into()],
+        ..Config::default()
+    };
     let server = ServerSummary {
         id: "self".into(),
         name: "Local peer".into(),
@@ -160,7 +163,16 @@ fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
     let mut ui = Ui::new(
         config,
         Snapshot {
-            servers: vec![server],
+            servers: vec![
+                server,
+                ServerSummary {
+                    id: "beta".into(),
+                    name: "Remote peer".into(),
+                    origin: "https://remote.example".into(),
+                    error: Some("preflight refused".into()),
+                    ..ServerSummary::default()
+                },
+            ],
             ..Snapshot::default()
         },
     );
@@ -177,6 +189,8 @@ fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("↓ Fetch stream · HTTP/2 · TLS"));
     assert!(rendered(&terminal).contains("RTT WebTransport · HTTP/3 · TLS"));
+    assert!(rendered(&terminal).contains("Remote peer"));
+    assert!(rendered(&terminal).contains("Unavailable: preflight refused"));
 
     let mut narrow = Terminal::new(TestBackend::new(80, 24)).unwrap();
     narrow.draw(|frame| ui.draw(frame)).unwrap();

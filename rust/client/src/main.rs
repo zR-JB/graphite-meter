@@ -69,12 +69,20 @@ async fn run() -> Result<(), Error> {
 }
 fn report(snapshot: &Snapshot) {
     println!("Graphite Meter · {}", safe(&snapshot.status));
-    for server in snapshot.servers.iter().filter(|server| server.checked()) {
+    for server in snapshot
+        .servers
+        .iter()
+        .filter(|server| server.has_check_result())
+    {
         println!(
             "{} · {} · {}",
             safe(&server.name),
             safe(&server.origin),
-            safe(&server.connection_label())
+            if server.checked() {
+                safe(&server.connection_label())
+            } else {
+                "Unavailable".into()
+            }
         );
         if let Some(error) = &server.error {
             println!("  Unavailable: {}", safe(error));
