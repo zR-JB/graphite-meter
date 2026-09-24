@@ -11,11 +11,14 @@ use crate::{
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
-    discovery::{LatencyTarget, Probe, ThroughputTarget},
+    discovery::{LatencyTarget, LatencyTransport, Probe, ThroughputTarget},
 };
 use http::Method;
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
+
+#[cfg(test)]
+mod prepare_tests;
 
 struct PreparedServer {
     entry: ServerEntry,
@@ -97,10 +100,39 @@ async fn prepare(
         } else {
             None
         };
-        let latency = latency
+        let mut latency = latency
             .then(|| selection::latency(config, entry, &preflight))
             .transpose()?;
+        if let Some(target) = &latency
+            && target.transport == LatencyTransport::WebTransport
+        {
+            match crate::latency::verify(http, target, config.insecure).await {
+                Ok(()) => {}
+                Err(error) if config.latency_transport.is_none() => {
+                    latency = Some(
+                        selection::latency_with_transport(
+                            config,
+                            entry,
+                            &preflight,
+                            LatencyTransport::WebSocket,
+                        )
+                        .map_err(|fallback_error| -> Error {
+                            format!(
+                                "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
+                            )
+                            .into()
+                        })?,
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
         if let Some(target) = &latency {
+            if target.transport == LatencyTransport::WebTransport
+                && config.ping_interval > Duration::from_secs(15)
+            {
+                return Err("WebTransport ping interval must not exceed 15 seconds".into());
+            }
             let started = Instant::now();
             http.probe(
                 &target.base_url,
@@ -108,6 +140,9 @@ async fn prepare(
             )
             .await?;
             idle_rtt = started.elapsed();
+            if target.transport == LatencyTransport::WebSocket {
+                crate::latency::verify(http, target, config.insecure).await?;
+            }
         }
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot

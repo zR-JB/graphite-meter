@@ -84,8 +84,26 @@ pub fn latency(
     entry: &ServerEntry,
     preflight: &Preflight,
 ) -> Result<LatencyTarget, Error> {
+    select_latency(config, entry, preflight, config.latency_transport)
+}
+
+pub fn latency_with_transport(
+    config: &Config,
+    entry: &ServerEntry,
+    preflight: &Preflight,
+    transport: LatencyTransport,
+) -> Result<LatencyTarget, Error> {
+    select_latency(config, entry, preflight, Some(transport))
+}
+
+fn select_latency(
+    config: &Config,
+    entry: &ServerEntry,
+    preflight: &Preflight,
+    selected: Option<LatencyTransport>,
+) -> Result<LatencyTarget, Error> {
     entry.validate_discovery(preflight)?;
-    let order = config.latency_transport.map_or_else(
+    let order = selected.map_or_else(
         || vec![LatencyTransport::WebTransport, LatencyTransport::WebSocket],
         |transport| vec![transport],
     );
@@ -102,11 +120,6 @@ pub fn latency(
             &entry.url,
             |target| &target.base_url,
         )? {
-            if transport == LatencyTransport::WebTransport
-                && config.ping_interval > std::time::Duration::from_secs(15)
-            {
-                return Err("WebTransport ping interval must not exceed 15 seconds".into());
-            }
             return Ok((*target).clone());
         }
     }

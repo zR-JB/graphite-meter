@@ -2,7 +2,12 @@
 //! Native CLI grants authenticate the handshake directly: they cannot mint browser tickets.
 use crate::{Error, net::Http};
 use futures_util::{SinkExt, StreamExt};
-use graphite_meter_core::{latency::ProbeOutcome, origin::canonical_origin, wire};
+use graphite_meter_core::{
+    discovery::{LatencyTarget, LatencyTransport},
+    latency::ProbeOutcome,
+    origin::canonical_origin,
+    wire,
+};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -198,6 +203,63 @@ impl Reader {
             })),
         }
     }
+}
+
+/// Check the actual latency channel before a run starts. A successful HTTP
+/// probe does not establish that QUIC datagrams or WebSocket pings work.
+pub(crate) async fn verify(
+    http: &Http,
+    target: &LatencyTarget,
+    insecure: bool,
+) -> Result<(), Error> {
+    let kind = match target.transport {
+        LatencyTransport::WebSocket => Kind::WebSocket,
+        LatencyTransport::WebTransport => Kind::WebTransport,
+    };
+    let attempt = async {
+        let (_stop, mut cancel) = watch::channel(false);
+        let bus = connect(http, &target.base_url, insecure, &mut cancel, kind)
+            .await?
+            .ok_or("latency verification cancelled")?;
+        let (mut writer, mut reader) = bus.split();
+        let result = async {
+            let reply_window = match kind {
+                Kind::WebTransport => Duration::from_millis(750),
+                Kind::WebSocket => Duration::from_secs(3),
+            };
+            loop {
+                writer.send(wire::encode_ping(0)).await?;
+                let reply = tokio::time::timeout(reply_window, async {
+                    loop {
+                        match reader.next().await {
+                            Some(Ok(Message::Text(text))) => {
+                                if wire::decode_pong(&text).is_ok_and(|pong| pong.id == 0) {
+                                    return Ok(());
+                                }
+                            }
+                            Some(Ok(Message::Close(_))) | None => {
+                                return Err("latency channel closed before replying".into());
+                            }
+                            Some(Err(error)) => return Err(error),
+                            _ => {}
+                        }
+                    }
+                })
+                .await;
+                match reply {
+                    Ok(result) => return result,
+                    Err(_) if matches!(kind, Kind::WebTransport) => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        .await;
+        writer.close(reader).await;
+        result
+    };
+    tokio::time::timeout(Duration::from_secs(3), attempt)
+        .await
+        .map_err(|_| -> Error { "latency channel did not reply within three seconds".into() })?
 }
 async fn connect(
     http: &Http,
