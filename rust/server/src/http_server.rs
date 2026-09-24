@@ -697,6 +697,9 @@ impl HttpServer {
                 return response;
             }
         };
+        if request.method() != Method::GET && request.method() != Method::HEAD {
+            return method_not_allowed("GET, HEAD");
+        }
         let count = download_bytes(request.uri().query().unwrap_or_default());
         let mut body = ResponseBody {
             block: self.download_block.clone(),
@@ -787,6 +790,14 @@ fn text_response(status: StatusCode) -> Response<ResponseBody> {
             status.canonical_reason().unwrap_or("error")
         ))))
         .expect("static error response")
+}
+
+fn method_not_allowed(allow: &'static str) -> Response<ResponseBody> {
+    let mut response = text_response(StatusCode::METHOD_NOT_ALLOWED);
+    response
+        .headers_mut()
+        .insert(header::ALLOW, http::HeaderValue::from_static(allow));
+    response
 }
 
 /// Direct callers own capacity through this body. A listener additionally holds
@@ -1060,6 +1071,74 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for DeadlineIo<T> {
 mod tests {
     use super::*;
     use tokio::io::AsyncWriteExt;
+
+    struct UnreadBody;
+
+    impl Body for UnreadBody {
+        type Data = Bytes;
+        type Error = io::Error;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+            panic!("rejected upload method must not read the request body");
+        }
+    }
+
+    #[tokio::test]
+    async fn measurement_methods_reject_work_before_touching_the_body_or_upload_store() {
+        let server = HttpServer::new(Arc::new(Config::default())).unwrap();
+        let peer = "127.0.0.1:31000".parse().unwrap();
+        let id = server.uploads.mint().unwrap();
+
+        let download = server.respond(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/download?bytes=1048576")
+                .body(())
+                .unwrap(),
+            peer,
+        );
+        assert_eq!(download.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(download.headers()[header::ALLOW], "GET, HEAD");
+        let head = server.respond(
+            Request::builder()
+                .method(Method::HEAD)
+                .uri("/download?bytes=1048576")
+                .body(())
+                .unwrap(),
+            peer,
+        );
+        assert_eq!(head.status(), StatusCode::OK);
+        assert_eq!(head.headers()[header::CONTENT_LENGTH], "1048576");
+        assert!(head.body().is_end_stream());
+
+        let uri = format!("/upload?id={id}");
+        let direct = server.respond(
+            Request::builder()
+                .method(Method::GET)
+                .uri(&uri)
+                .body(())
+                .unwrap(),
+            peer,
+        );
+        assert_eq!(direct.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(direct.headers()[header::ALLOW], "POST");
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(UnreadBody)
+            .unwrap();
+        let owner = server.upload_owner(&request, peer);
+        let response = server
+            .receive_upload(request, &owner, &Arc::new(Mutex::new(Vec::new())))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(response.headers()[header::ALLOW], "POST");
+        assert_eq!(server.uploads.retained(), 0);
+    }
 
     #[tokio::test]
     async fn last_frame_keeps_capacity_until_io_flush() {

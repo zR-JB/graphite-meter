@@ -70,6 +70,25 @@ def main() -> None:
                 if result.stdout != "200 3 65537":
                     raise RuntimeError(f"curl HTTP/3 download mismatch: {result.stdout!r}")
                 print("curl HTTP/3 download: clean FIN, 65537 bytes", flush=True)
+
+                for method, path, allow in (
+                    ("POST", "/download?bytes=65537", "GET, HEAD"),
+                    ("GET", "/upload", "POST"),
+                ):
+                    headers = directory / f"curl-h3-{method.lower()}-{path.split('?')[0].strip('/')}.headers"
+                    result = subprocess.run([
+                        curl, "--http3-only", "--cacert", str(cert), "--silent", "--show-error",
+                        "--max-time", "10", "--request", method, "--dump-header", str(headers),
+                        "--output", os.devnull, "--write-out", "%{http_code} %{http_version}",
+                        f"https://{address}{path}",
+                    ], capture_output=True, text=True, timeout=12)
+                    result.check_returncode()
+                    response_headers = headers.read_text().lower()
+                    if result.stdout != "405 3" or f"allow: {allow.lower()}" not in response_headers.splitlines():
+                        raise RuntimeError(
+                            f"curl HTTP/3 {method} {path}: {result.stdout!r}, {response_headers!r}"
+                        )
+                print("curl HTTP/3 method boundaries: 405 with Allow headers", flush=True)
         finally:
             server.send_signal(signal.SIGINT)
             try:

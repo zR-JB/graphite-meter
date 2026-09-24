@@ -245,10 +245,12 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let path = format!("/upload?id={id}");
         let first = vec![1; 1234];
         let second = vec![2; 5678];
+        let (rejected, _) = upload_request(address, "PUT", &path, "192.0.2.1", &second).await;
+        assert!(rejected.starts_with("HTTP/1.1 405"));
+        assert!(rejected.contains("allow: POST"));
         let (first, second) = tokio::join!(
             upload_request(address, "POST", &path, "192.0.2.1", &first),
-            // Concrete Go upload handler does not restrict methods.
-            upload_request(address, "PUT", &path, "192.0.2.1", &second),
+            upload_request(address, "POST", &path, "192.0.2.1", &second),
         );
         for (reply, expected) in [(first, 1234), (second, 5678)] {
             assert!(reply.0.starts_with("HTTP/1.1 200"));

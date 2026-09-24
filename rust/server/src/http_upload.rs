@@ -43,10 +43,14 @@ impl HttpServer {
                     Err(error) => return admission_refusal(error),
                 };
                 let mut response = if request.uri().path() == "/upload" {
-                    // The synchronous API represents an empty request body.
-                    match self.uploads.begin(&id, owner) {
-                        Ok(_lane) => json_response(&serde_json::json!({"bytes": 0})),
-                        Err(error) => refusal(error),
+                    if request.method() != Method::POST {
+                        method_not_allowed("POST")
+                    } else {
+                        // The synchronous API represents an empty request body.
+                        match self.uploads.begin(&id, owner) {
+                            Ok(_lane) => json_response(&serde_json::json!({"bytes": 0})),
+                            Err(error) => refusal(error),
+                        }
                     }
                 } else if request.method() == Method::DELETE {
                     match self.uploads.finish(&id, owner) {
@@ -116,6 +120,9 @@ impl HttpServer {
             Ok(operation) => operation,
             Err(error) => return Ok(admission_refusal(error)),
         };
+        if request.method() != Method::POST {
+            return Ok(method_not_allowed("POST"));
+        }
         // Register before awaiting the body: socket IO must enforce this deadline
         // even while the response future has not produced its first byte.
         operations
