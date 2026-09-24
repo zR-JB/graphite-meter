@@ -127,8 +127,7 @@ impl Session {
             let mut transport = quinn::TransportConfig::default();
             transport.max_concurrent_bidi_streams(0_u32.into());
             transport.max_concurrent_uni_streams(36_u32.into());
-            transport.stream_receive_window((1024 * 1024_u32).into());
-            transport.receive_window((4 * 1024 * 1024_u32).into());
+            crate::quic_config::set_receive_credit(&mut transport);
             transport.send_window(4 * 1024 * 1024);
             transport.datagram_receive_buffer_size(Some(DATAGRAM_BYTES));
             transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
