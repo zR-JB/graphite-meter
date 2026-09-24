@@ -1001,4 +1001,64 @@ mod tests {
         ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
         assert!(!ui.details);
     }
+    #[test]
+    fn minimum_supported_terminal_keeps_live_measurement_visible() {
+        use crate::model::{Point, ServerLatency, StageResult};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let snapshot = Snapshot {
+            phase: Phase::Measuring,
+            stage: Some(Stage::Upload),
+            latest: Point {
+                elapsed: Duration::from_secs(3),
+                up_bps: Some(12_000_000.0),
+                ..Point::default()
+            },
+            server_latencies: vec![ServerLatency {
+                id: "near".into(),
+                latest_ms: Some(25.0),
+                ..ServerLatency::default()
+            }],
+            results: vec![StageResult {
+                stage: Stage::Download,
+                elapsed: Duration::from_secs(1),
+                down_bytes: 1_500_000,
+                up_bytes: 0,
+                down_bps: Some(12_000_000.0),
+                up_bps: None,
+                latency: Default::default(),
+                complete: true,
+                server_latencies: Vec::new(),
+                server_results: Vec::new(),
+            }],
+            ..Snapshot::default()
+        };
+        let mut ui = Ui::new(Config::default(), snapshot);
+        ui.live = true;
+        let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Upload · 3.0s"));
+        assert!(rendered.contains("↑ 12.00 Mbit/s"));
+        assert!(rendered.contains("RTT 25.00 ms"));
+        assert!(rendered.contains("Download: ↓ 12.00 Mbit/s"));
+        assert!(rendered.contains("d details"));
+
+        ui.snapshot.phase = Phase::Complete;
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let completed = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(completed.contains("r rerun"));
+    }
 }

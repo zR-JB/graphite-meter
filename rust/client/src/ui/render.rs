@@ -84,13 +84,27 @@ impl Ui {
         } else {
             self.theme.warning
         };
-        let shortcuts = match regions[2].width {
-            0..=74 => "r run · Tab section · ? help · q quit",
-            75..=109 => {
-                "r run · v verify · s servers · Tab sections · ←/→ pages · Esc cancel · ? help · q quit"
+        let shortcuts = if self.live {
+            if regions[2].width < 75 {
+                if self.active() {
+                    "d details · l peer · Esc cancel · q quit"
+                } else {
+                    "r rerun · d details · l peer · q quit"
+                }
+            } else if self.active() {
+                "d per-server · l latency peer · Tab sections · Esc cancel · ? help · q quit"
+            } else {
+                "r rerun · d per-server · l latency peer · Tab sections · ? help · q quit"
             }
-            _ => {
-                "r run · v verify · s servers · l latency · Tab sections · ←/→ setup pages · Esc cancel · ? help · q quit"
+        } else {
+            match regions[2].width {
+                0..=74 => "r run · Tab section · ? help · q quit",
+                75..=109 => {
+                    "r run · v verify · s servers · Tab sections · ←/→ pages · Esc cancel · ? help · q quit"
+                }
+                _ => {
+                    "r run · v verify · s servers · l latency · Tab sections · ←/→ setup pages · Esc cancel · ? help · q quit"
+                }
             }
         };
         frame.render_widget(
@@ -252,16 +266,8 @@ impl Ui {
             .find(|host| Some(&host.id) == self.latency_focus.as_ref())
             .or_else(|| self.snapshot.server_latencies.first())
     }
-
-    fn draw_live(&self, frame: &mut Frame, area: Rect) {
-        let regions = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(7),
-        ])
-        .split(area);
-        let focus = self.focused_latency();
-        let focus_name = focus
+    fn latency_name<'a>(&'a self, focus: Option<&'a crate::model::ServerLatency>) -> &'a str {
+        focus
             .map(|host| {
                 self.snapshot
                     .servers
@@ -269,7 +275,22 @@ impl Ui {
                     .find(|server| server.id == host.id)
                     .map_or(host.id.as_str(), |server| server.name.as_str())
             })
-            .unwrap_or("unavailable");
+            .unwrap_or("unavailable")
+    }
+
+    fn draw_live(&self, frame: &mut Frame, area: Rect) {
+        if area.height < 14 || area.width < 72 {
+            self.draw_live_compact(frame, area);
+            return;
+        }
+        let regions = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Min(3),
+            Constraint::Length(7),
+        ])
+        .split(area);
+        let focus = self.focused_latency();
+        let focus_name = self.latency_name(focus);
         let metrics = format!(
             "↓ {}   ↑ {}   RTT {} [{}]   elapsed {:.1}s",
             rate(self.snapshot.latest.down_bps),
@@ -430,6 +451,57 @@ impl Ui {
             )),
             regions[2],
         );
+    }
+    fn draw_live_compact(&self, frame: &mut Frame, area: Rect) {
+        let width = usize::from(
+            area.width
+                .saturating_sub(if area.height < 7 { 0 } else { 2 }),
+        );
+        let stage = self.snapshot.stage.map_or("Waiting", Stage::name);
+        let focus = self.focused_latency();
+        let focus_name = self.latency_name(focus);
+        let mut lines = vec![
+            format!(
+                "{stage} · {:.1}s",
+                self.snapshot.latest.elapsed.as_secs_f64()
+            ),
+            format!(
+                "↓ {}   ↑ {}",
+                rate(self.snapshot.latest.down_bps),
+                rate(self.snapshot.latest.up_bps)
+            ),
+            format!(
+                "RTT {} · {}",
+                milliseconds(
+                    focus
+                        .filter(|host| host.error.is_none())
+                        .and_then(|host| host.latest_ms)
+                ),
+                safe_text(focus_name, 50)
+            ),
+        ];
+        if self.snapshot.results.is_empty() {
+            lines.push("No stage result yet".to_owned());
+        } else {
+            for result in self.snapshot.results.iter().rev().take(4) {
+                lines.push(format!(
+                    "{}{}: ↓ {}  ↑ {}",
+                    result.stage.name(),
+                    if result.complete { "" } else { " (partial)" },
+                    rate(result.down_bps),
+                    rate(result.up_bps),
+                ));
+            }
+        }
+        let lines = lines
+            .into_iter()
+            .map(|line| Line::from(safe_text_width(&line, width)))
+            .collect::<Vec<_>>();
+        let mut summary = Paragraph::new(lines).style(Style::new().fg(self.theme.brand_strong));
+        if area.height >= 7 {
+            summary = summary.block(panel("Live · d per-server results", self.theme));
+        }
+        frame.render_widget(summary, area);
     }
     fn draw_details(&mut self, frame: &mut Frame) {
         let area = popup(frame.area(), 108, frame.area().height.saturating_sub(2));
