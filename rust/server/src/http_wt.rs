@@ -27,6 +27,8 @@ const MAX_LANES: usize = 16;
 // still get executor time without paying a scheduler round-trip per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
 const IDLE: Duration = Duration::from_secs(30);
+const MAX_CONNECT_DATA: u64 = 1024 * 1024;
+const MAX_CONNECT_FRAMES: u64 = 1024;
 const RESET: u64 = 0x52e4a40fa8db;
 type Lane = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 type Activity = Arc<Mutex<Instant>>;
@@ -191,6 +193,8 @@ impl HttpServer {
         };
         tokio::pin!(datagram_finished);
         let mut decoder = capsule::Decoder::new();
+        let mut connect_bytes = 0_u64;
+        let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         let verify_deadline = Instant::now() + IDLE;
         let result: Result<(), TransportError> = async {
@@ -215,6 +219,11 @@ impl HttpServer {
                     _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
                     data = stream.recv_data() => {
                         let Some(mut data) = data? else { decoder.finish()?; break; };
+                        connect_bytes = connect_bytes.saturating_add(data.remaining() as u64);
+                        connect_frames += 1;
+                        if connect_bytes > MAX_CONNECT_DATA || connect_frames > MAX_CONNECT_FRAMES {
+                            return Err("WebTransport CONNECT control-data budget exceeded".into());
+                        }
                         let data = data.copy_to_bytes(data.remaining());
                         if decoder.feed(&data)?.iter().any(|capsule| matches!(capsule, Capsule::CloseSession { .. })) { break; }
                     }
