@@ -26,6 +26,7 @@ mod prepare_tests;
 
 struct PreparedServer {
     entry: ServerEntry,
+    client: Http,
     throughput: Option<ThroughputTarget>,
     http: Option<Arc<Transport>>,
     latency: Option<LatencyTarget>,
@@ -168,7 +169,7 @@ async fn prepare_server(
     needs_latency: bool,
 ) -> Result<PreparedServer, Error> {
     let preflight = http.preflight(entry).await?;
-    http.approve_targets(entry, &preflight)?;
+    let client = http.for_server(entry, &preflight)?;
     let mut throughput = transfers
         .then(|| selection::throughput(config, entry, &preflight))
         .transpose()?;
@@ -180,8 +181,11 @@ async fn prepare_server(
     if let Some(target) = &throughput
         && target.transport != ThroughputTransport::FetchStream
     {
-        match verify_throughput_webtransport(http, target, config.insecure).await {
+        match verify_throughput_webtransport(&client, target, config.insecure).await {
             Ok(()) => {}
+            Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
+                return Err(error);
+            }
             Err(error) if config.throughput_transport.is_none() => {
                 throughput = Some(
                     selection::throughput_with_transport(
@@ -204,14 +208,14 @@ async fn prepare_server(
     let mut idle_rtt = Duration::ZERO;
     let transport = if let Some(target) = &mut throughput {
         let connection = Transport::connect(
-            http.clone(),
+            client.clone(),
             &target.base_url,
             target.protocol,
             config.insecure,
         )
         .await?;
         if target.protocol == Protocol::Negotiated {
-            let probe = http.probe(&target.base_url, Protocol::Negotiated).await?;
+            let probe = client.probe(&target.base_url, Protocol::Negotiated).await?;
             target.protocol = match probe.protocol_negotiated {
                 ProtocolNegotiated::Http1 => Protocol::Http1,
                 ProtocolNegotiated::Http2 => Protocol::Http2,
@@ -233,8 +237,11 @@ async fn prepare_server(
     if let Some(target) = &latency
         && target.transport == LatencyTransport::WebTransport
     {
-        match crate::latency::verify(http, target, config.insecure).await {
+        match crate::latency::verify(&client, target, config.insecure).await {
             Ok(()) => {}
+            Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
+                return Err(error);
+            }
             Err(error) if config.latency_transport.is_none() => {
                 latency = Some(
                     selection::latency_with_transport(
@@ -261,18 +268,20 @@ async fn prepare_server(
             return Err("WebTransport ping interval must not exceed 15 seconds".into());
         }
         let started = Instant::now();
-        http.probe(
-            &target.base_url,
-            graphite_meter_core::discovery::Protocol::Negotiated,
-        )
-        .await?;
+        client
+            .probe(
+                &target.base_url,
+                graphite_meter_core::discovery::Protocol::Negotiated,
+            )
+            .await?;
         idle_rtt = started.elapsed();
         if target.transport == LatencyTransport::WebSocket {
-            crate::latency::verify(http, target, config.insecure).await?;
+            crate::latency::verify(&client, target, config.insecure).await?;
         }
     }
     Ok(PreparedServer {
         entry: entry.clone(),
+        client,
         throughput,
         http: transport,
         latency,
@@ -344,7 +353,6 @@ pub async fn run(
         let failed = measure(
             *stage,
             &config,
-            &http,
             &prepared,
             &snapshots,
             cancel.clone(),

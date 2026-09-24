@@ -9,7 +9,6 @@ use crate::{
         Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
         StageResult,
     },
-    net::Http,
     stream_plan::StageLanePlan,
     transport::Transport,
     upload::Upload,
@@ -400,7 +399,6 @@ async fn start_transfer(
     server: &PreparedServer,
     plan: &StageLanePlan,
     config: &Config,
-    http: &Http,
     timing: StageTiming,
     stopped: watch::Receiver<bool>,
 ) -> Result<Transfer, Error> {
@@ -430,7 +428,7 @@ async fn start_transfer(
                 // and starve upload control traffic at high lane counts.
                 Arc::new(
                     Transport::connect(
-                        http.clone(),
+                        server.client.clone(),
                         &target.base_url,
                         target.protocol,
                         config.insecure,
@@ -452,7 +450,7 @@ async fn start_transfer(
                     .await?
                 } else {
                     Download::start_webtransport(
-                        http,
+                        &server.client,
                         target,
                         lanes.download,
                         timing.operation_limit,
@@ -501,7 +499,6 @@ async fn start_transfer(
 pub(super) async fn measure(
     stage: Stage,
     config: &Config,
-    http: &Http,
     servers: &[PreparedServer],
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
@@ -573,7 +570,6 @@ pub(super) async fn measure(
                             server,
                             plan,
                             config,
-                            http,
                             StageTiming {
                                 epoch,
                                 operation_limit,
@@ -637,7 +633,7 @@ pub(super) async fn measure(
                     .clone()
                     .ok_or("missing selected latency target")?;
                 let id = server.entry.id.clone();
-                let http = http.clone();
+                let http = server.client.clone();
                 let (stop, stopped) = watch::channel(false);
                 resources.stop_latency.insert(id.clone(), stop);
                 // Each transport can settle up to 256 unresolved probes at once.

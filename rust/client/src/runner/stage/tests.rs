@@ -1,6 +1,6 @@
 use super::*;
-use crate::model::ServerSummary;
 use crate::transport::Transport;
+use crate::{model::ServerSummary, net::Http};
 use graphite_meter_core::discovery::Protocol;
 use graphite_meter_core::{catalog::ServerEntry, discovery::ThroughputTarget};
 use std::sync::Arc;
@@ -102,7 +102,6 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
         measure(
             Stage::Download,
             &config,
-            &http,
             &servers,
             &snapshots,
             cancelled,
@@ -135,6 +134,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
             name: id.into(),
             ..ServerEntry::default()
         },
+        client: http.clone(),
         throughput: Some(ThroughputTarget {
             base_url: origin.into(),
             transport: ThroughputTransport::FetchStream,
@@ -204,7 +204,6 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
         &server,
         &plan,
         &config,
-        &http,
         StageTiming {
             epoch: Instant::now(),
             operation_limit: Duration::from_secs(60),
@@ -262,7 +261,6 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let first = measure(
         Stage::Download,
         &config,
-        &http,
         &servers,
         &snapshots,
         cancelled.clone(),
@@ -298,7 +296,6 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let second = measure(
         Stage::Download,
         &config,
-        &http,
         &servers,
         &snapshots,
         cancelled.clone(),
@@ -333,7 +330,6 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let third = measure(
         Stage::Download,
         &config,
-        &http,
         &servers[1..],
         &snapshots,
         cancelled,

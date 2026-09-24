@@ -14,7 +14,7 @@ use reqwest::{
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt,
     sync::{Arc, Mutex},
     time::Duration,
@@ -31,11 +31,15 @@ pub struct Http {
     negotiated: reqwest::Client,
     insecure: bool,
     grants: Arc<Mutex<HashMap<String, Grant>>>,
+    scope: Option<Arc<GrantScope>>,
 }
 #[derive(Clone)]
 struct Grant {
-    issuer: String,
     header: HeaderValue,
+}
+struct GrantScope {
+    issuer: String,
+    targets: HashSet<String>,
 }
 pub struct Discovery {
     pub source: String,
@@ -90,14 +94,20 @@ impl Http {
             negotiated: builder().build()?,
             insecure,
             grants: Arc::new(Mutex::new(HashMap::new())),
+            scope: None,
         })
     }
     pub fn authorization(&self, target: &str) -> Option<HeaderValue> {
         let origin = destination_origin(target).ok()?;
+        let issuer = match &self.scope {
+            Some(scope) if scope.targets.contains(&origin) => &scope.issuer,
+            Some(_) => return None,
+            None => &origin,
+        };
         self.grants
             .lock()
             .expect("client grants poisoned")
-            .get(&origin)
+            .get(issuer)
             .map(|grant| grant.header.clone())
     }
     pub fn builder(
@@ -153,16 +163,24 @@ impl Http {
                 .is_some_and(|value| value == "required")
         {
             let origin = destination_origin(target)?;
+            let issuer = match &self.scope {
+                Some(scope) if scope.targets.contains(&origin) => &scope.issuer,
+                Some(_) => {
+                    return Err("authentication refusal came from an unapproved target".into());
+                }
+                None => &origin,
+            };
             let raw = headers
                 .get("graphite-meter-auth-url")
                 .and_then(|value| value.to_str().ok())
                 .ok_or("missing authentication URL")?;
-            let login_url = validated_login(&origin, raw)?;
+            let login_url = validated_login(issuer, raw)?;
             let mut grants = self.grants.lock().expect("client grants poisoned");
-            if let Some(grant) = grants.get(&origin).cloned() {
-                grants.retain(|_, retained| retained.issuer != grant.issuer);
-            }
-            return Err(Box::new(AuthRequired { origin, login_url }));
+            grants.remove(issuer);
+            return Err(Box::new(AuthRequired {
+                origin: issuer.clone(),
+                login_url,
+            }));
         }
         if !status.is_success() {
             return Err(format!("server returned HTTP {}", status.as_u16()).into());
@@ -243,21 +261,14 @@ impl Http {
         }
         Ok(probe)
     }
-    /// Explicitly enroll only advertised, validated HTTPS targets on the grant's host.
-    /// Additional discovery origins on a different host never receive this grant.
-    pub fn approve_targets(&self, entry: &ServerEntry, preflight: &Preflight) -> Result<()> {
+    /// Bind one selected server's grant to its validated HTTPS targets. The
+    /// shared grant store retains issuer tokens only; overlapping target ports
+    /// cannot replace another selected server's credential.
+    pub fn for_server(&self, entry: &ServerEntry, preflight: &Preflight) -> Result<Self> {
         entry.validate_discovery(preflight)?;
         let issuer = canonical_origin(&entry.url)?;
         let issuer_host = target_origin(&issuer)?.ok_or("missing grant origin")?.host;
-        let mut grants = self.grants.lock().expect("client grants poisoned");
-        let Some(grant) = grants
-            .get(&issuer)
-            .filter(|grant| grant.issuer == issuer)
-            .cloned()
-        else {
-            return Ok(());
-        };
-        let mut targets = Vec::new();
+        let mut targets = HashSet::from([issuer.clone()]);
         for raw in preflight
             .capabilities
             .throughput
@@ -278,14 +289,12 @@ impl Http {
             };
             let parsed = target_origin(&origin)?.ok_or("missing target origin")?;
             if parsed.scheme == "https" && parsed.host.eq_ignore_ascii_case(&issuer_host) {
-                targets.push(origin);
+                targets.insert(origin);
             }
         }
-        grants.retain(|origin, retained| retained.issuer != issuer || origin == &issuer);
-        for target in targets {
-            grants.entry(target).or_insert_with(|| grant.clone());
-        }
-        Ok(())
+        let mut scoped = self.clone();
+        scoped.scope = Some(Arc::new(GrantScope { issuer, targets }));
+        Ok(scoped)
     }
     pub fn begin_authorization(
         &self,
@@ -343,14 +352,7 @@ impl Http {
                     let mut header = HeaderValue::from_str(&format!("Bearer {}", token.as_str()))?;
                     header.set_sensitive(true);
                     let mut grants = self.grants.lock().expect("client grants poisoned");
-                    grants.retain(|_, grant| grant.issuer != pending.source);
-                    grants.insert(
-                        pending.source.clone(),
-                        Grant {
-                            issuer: pending.source,
-                            header,
-                        },
-                    );
+                    grants.insert(pending.source.clone(), Grant { header });
                     return Ok(());
                 }
                 if status != StatusCode::ACCEPTED {
@@ -432,6 +434,9 @@ fn approval_code(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphite_meter_core::discovery::{
+        Capabilities, Protocol, ThroughputTarget, ThroughputTransport,
+    };
 
     fn http(insecure: bool) -> Http {
         let _ = crate::crypto::provider().install_default();
@@ -476,7 +481,6 @@ mod tests {
         http.grants.lock().unwrap().insert(
             "https://meter.example".into(),
             Grant {
-                issuer: "https://meter.example".into(),
                 header: HeaderValue::from_static("Bearer fixture"),
             },
         );
@@ -500,19 +504,113 @@ mod tests {
             ..ServerEntry::default()
         };
         let preflight = Preflight::decode(br#"{"generation":"fixture","capabilities":{"throughput":[{"baseUrl":"https://meter.example:8443","transport":"fetch-stream","protocol":"http2"},{"baseUrl":"https://other.example","transport":"fetch-stream","protocol":"http1"}],"latency":[]}}"#).unwrap();
-        http.approve_targets(&entry, &preflight).unwrap();
+        let scoped = http.for_server(&entry, &preflight).unwrap();
         assert!(
-            http.authorization("https://meter.example:8443/upload")
+            scoped
+                .authorization("https://meter.example:8443/upload")
                 .is_some()
         );
-        assert!(http.authorization("https://other.example/upload").is_none());
-        let mut withdrawn = preflight.clone();
-        withdrawn.capabilities.throughput.clear();
-        http.approve_targets(&entry, &withdrawn).unwrap();
+        assert!(
+            scoped
+                .authorization("https://other.example/upload")
+                .is_none()
+        );
         assert!(
             http.authorization("https://meter.example:8443/upload")
                 .is_none()
         );
-        assert!(http.authorization("https://meter.example/upload").is_some());
+        let mut withdrawn = preflight.clone();
+        withdrawn.capabilities.throughput.clear();
+        let withdrawn = http.for_server(&entry, &withdrawn).unwrap();
+        assert!(
+            withdrawn
+                .authorization("https://meter.example:8443/upload")
+                .is_none()
+        );
+        assert!(
+            withdrawn
+                .authorization("https://meter.example/upload")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn overlapping_selected_targets_keep_their_issuer_grants() {
+        let http = http(false);
+        let first = "https://meter.example:7247";
+        let second = "https://meter.example:7248";
+        for (issuer, token) in [(first, "Bearer first"), (second, "Bearer second")] {
+            http.grants.lock().unwrap().insert(
+                issuer.into(),
+                Grant {
+                    header: HeaderValue::from_str(token).unwrap(),
+                },
+            );
+        }
+        let entry = |id: &str, url: &str| ServerEntry {
+            id: id.into(),
+            url: url.into(),
+            name: id.into(),
+            ..ServerEntry::default()
+        };
+        let preflight = |target: &str| Preflight {
+            server: Default::default(),
+            engine_version: String::new(),
+            implementation: None,
+            generation: "fixture".into(),
+            capabilities: Capabilities {
+                upload_checkpoint: false,
+                throughput: vec![ThroughputTarget {
+                    base_url: target.into(),
+                    transport: ThroughputTransport::FetchStream,
+                    protocol: Protocol::Http2,
+                }],
+                latency: Vec::new(),
+            },
+        };
+        let first_client = http
+            .for_server(&entry("first", first), &preflight(second))
+            .unwrap();
+        let second_client = http
+            .for_server(&entry("second", second), &preflight(second))
+            .unwrap();
+        let target = format!("{second}/upload");
+        assert_eq!(first_client.authorization(&target).unwrap(), "Bearer first");
+        assert_eq!(
+            second_client.authorization(&target).unwrap(),
+            "Bearer second"
+        );
+        let first_request = first_client
+            .builder(Method::POST, &target, Protocol::Http1)
+            .unwrap()
+            .build()
+            .unwrap();
+        let second_request = second_client
+            .builder(Method::POST, &target, Protocol::Http1)
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(first_request.headers()[AUTHORIZATION], "Bearer first");
+        assert_eq!(second_request.headers()[AUTHORIZATION], "Bearer second");
+        assert_eq!(http.authorization(&target).unwrap(), "Bearer second");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("graphite-meter-auth", HeaderValue::from_static("required"));
+        headers.insert(
+            "graphite-meter-auth-url",
+            HeaderValue::from_static("https://meter.example:7247/login"),
+        );
+        let error = first_client
+            .check_status(&target, StatusCode::FORBIDDEN, &headers)
+            .unwrap_err();
+        assert_eq!(
+            authentication_required(error.as_ref()).unwrap().origin,
+            first
+        );
+        assert!(first_client.authorization(&target).is_none());
+        assert_eq!(
+            second_client.authorization(&target).unwrap(),
+            "Bearer second"
+        );
     }
 }
