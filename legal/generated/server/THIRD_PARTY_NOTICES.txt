@@ -755,7 +755,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ============================================================
 
 Component: github.com/quic-go/quic-go
-Version: v0.62.0
+Version: v0.63.0
 Source: https://github.com/quic-go/quic-go
 License: MIT
 Modified by Graphite Meter: no
