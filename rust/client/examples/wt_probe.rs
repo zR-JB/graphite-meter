@@ -14,6 +14,16 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn run(origin: &str) -> Result<(), Error> {
+    for query in ["bytes=0", "bytes=0&datagrams=1"] {
+        let readiness = Session::connect(
+            http::Request::get(format!("{origin}/wt/download?{query}")).body(())?,
+            true,
+            Duration::from_secs(3),
+        )
+        .await?;
+        readiness.close().await;
+        println!("zero-byte download CONNECT {query} PASS");
+    }
     let ping = Session::connect(
         http::Request::get(format!("{origin}/wt/ping")).body(())?,
         true,

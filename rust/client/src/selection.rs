@@ -36,7 +36,6 @@ pub fn throughput(
     entry: &ServerEntry,
     preflight: &Preflight,
 ) -> Result<ThroughputTarget, Error> {
-    entry.validate_discovery(preflight)?;
     let order = config.throughput_transport.map_or_else(
         || {
             vec![
@@ -46,37 +45,65 @@ pub fn throughput(
         },
         |transport| vec![transport],
     );
+    let mut first_error = None;
     for transport in order {
-        let candidates = preflight
-            .capabilities
-            .throughput
-            .iter()
-            .filter(|target| {
-                target.transport == transport
-                    && config.throughput_protocol.is_none_or(|protocol| {
-                        target.protocol == Protocol::Negotiated || target.protocol == protocol
-                    })
-            })
-            .collect::<Vec<_>>();
-        if let Some(target) = choose(
-            &candidates,
-            config.throughput_origin.as_deref(),
-            &entry.url,
-            |target| &target.base_url,
-        )? {
-            let mut target = (*target).clone();
-            if target.protocol == Protocol::Negotiated {
-                target.protocol = config.throughput_protocol.unwrap_or(Protocol::Negotiated);
+        match throughput_candidate(config, entry, preflight, transport) {
+            Ok(Some(target)) => return Ok(target),
+            Ok(None) => {}
+            Err(error) if config.throughput_transport.is_some() => return Err(error),
+            Err(error) => {
+                first_error.get_or_insert(error);
             }
-            if target.transport != ThroughputTransport::FetchStream
-                && target.protocol != Protocol::Http3
-            {
-                return Err("WebTransport requires HTTP/3".into());
-            }
-            return Ok(target);
         }
     }
-    Err("selected throughput endpoint is not advertised".into())
+    Err(first_error.unwrap_or_else(|| "selected throughput endpoint is not advertised".into()))
+}
+
+pub fn throughput_with_transport(
+    config: &Config,
+    entry: &ServerEntry,
+    preflight: &Preflight,
+    transport: ThroughputTransport,
+) -> Result<ThroughputTarget, Error> {
+    throughput_candidate(config, entry, preflight, transport)?
+        .ok_or_else(|| "selected throughput endpoint is not advertised".into())
+}
+
+fn throughput_candidate(
+    config: &Config,
+    entry: &ServerEntry,
+    preflight: &Preflight,
+    transport: ThroughputTransport,
+) -> Result<Option<ThroughputTarget>, Error> {
+    entry.validate_discovery(preflight)?;
+    let candidates = preflight
+        .capabilities
+        .throughput
+        .iter()
+        .filter(|target| {
+            target.transport == transport
+                && config.throughput_protocol.is_none_or(|protocol| {
+                    target.protocol == Protocol::Negotiated || target.protocol == protocol
+                })
+        })
+        .collect::<Vec<_>>();
+    let Some(target) = choose(
+        &candidates,
+        config.throughput_origin.as_deref(),
+        &entry.url,
+        |target| &target.base_url,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut target = (*target).clone();
+    if target.protocol == Protocol::Negotiated {
+        target.protocol = config.throughput_protocol.unwrap_or(Protocol::Negotiated);
+    }
+    if target.transport != ThroughputTransport::FetchStream && target.protocol != Protocol::Http3 {
+        return Err("WebTransport requires HTTP/3".into());
+    }
+    Ok(Some(target))
 }
 
 pub fn latency(

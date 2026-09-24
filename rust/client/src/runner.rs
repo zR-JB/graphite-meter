@@ -11,7 +11,7 @@ use crate::{
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
-    discovery::{LatencyTarget, LatencyTransport, Probe, ThroughputTarget},
+    discovery::{LatencyTarget, LatencyTransport, Probe, ThroughputTarget, ThroughputTransport},
 };
 use http::Method;
 use std::{sync::Arc, time::Duration};
@@ -77,13 +77,37 @@ async fn prepare(
         snapshots.send_modify(|snapshot| snapshot.status = format!("Verifying {}", entry.name));
         let preflight = http.preflight(entry).await?;
         http.approve_targets(entry, &preflight)?;
-        let throughput = transfers
+        let mut throughput = transfers
             .then(|| selection::throughput(config, entry, &preflight))
             .transpose()?;
         if config.stages.iter().any(|stage| stage.uploads())
             && !preflight.capabilities.upload_checkpoint
         {
             return Err("selected server does not support authoritative upload checkpoints".into());
+        }
+        if let Some(target) = &throughput
+            && target.transport != ThroughputTransport::FetchStream
+        {
+            match verify_throughput_webtransport(http, target, config.insecure).await {
+                Ok(()) => {}
+                Err(error) if config.throughput_transport.is_none() => {
+                    throughput = Some(
+                        selection::throughput_with_transport(
+                            config,
+                            entry,
+                            &preflight,
+                            ThroughputTransport::FetchStream,
+                        )
+                        .map_err(|fallback_error| -> Error {
+                            format!(
+                                "fetch-stream selection failed ({fallback_error}); advertised WebTransport is unavailable: {error}"
+                            )
+                            .into()
+                        })?,
+                    );
+                }
+                Err(error) => return Err(error),
+            }
         }
         let mut idle_rtt = Duration::ZERO;
         let transport = if let Some(target) = &throughput {
@@ -168,6 +192,25 @@ async fn prepare(
         lane_plan(config, *stage, &prepared)?;
     }
     Ok(prepared)
+}
+
+async fn verify_throughput_webtransport(
+    http: &Http,
+    target: &ThroughputTarget,
+    insecure: bool,
+) -> Result<(), Error> {
+    let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
+    let query = match target.transport {
+        ThroughputTransport::WebTransport => "bytes=0",
+        ThroughputTransport::WebTransportDatagram => "bytes=0&datagrams=1",
+        ThroughputTransport::FetchStream => return Err("fetch stream is not WebTransport".into()),
+    };
+    let url = format!("{origin}{}?{query}", Route::WtDownload.path());
+    crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3))
+        .await?
+        .close()
+        .await;
+    Ok(())
 }
 
 fn lane_plan(

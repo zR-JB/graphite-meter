@@ -7,7 +7,13 @@ use tokio::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
-async fn serve(mut stream: TcpStream, origin: String) -> Result<(), Error> {
+#[derive(Clone, Copy)]
+enum FixtureMode {
+    Latency,
+    Throughput,
+}
+
+async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
     let mut request = [0_u8; 2048];
     let path = loop {
         let size = stream.peek(&mut request).await?;
@@ -39,16 +45,29 @@ async fn serve(mut stream: TcpStream, origin: String) -> Result<(), Error> {
             "defaultSelection": ["self"],
             "servers": [{"id": "self", "url": ".", "name": "fixture"}]
         }),
-        "/preflight" => serde_json::json!({
-            "generation": "fixture",
-            "capabilities": {
-                "throughput": [],
-                "latency": [
-                    {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport"},
-                    {"baseUrl": ".", "transport": "websocket"}
-                ]
-            }
-        }),
+        "/preflight" => match mode {
+            FixtureMode::Latency => serde_json::json!({
+                "generation": "fixture",
+                "capabilities": {
+                    "throughput": [],
+                    "latency": [
+                        {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport"},
+                        {"baseUrl": ".", "transport": "websocket"}
+                    ]
+                }
+            }),
+            FixtureMode::Throughput => serde_json::json!({
+                "generation": "fixture",
+                "capabilities": {
+                    "throughput": [
+                        {"baseUrl": "http://127.0.0.1:1", "transport": "fetch-stream", "protocol": "negotiated"},
+                        {"baseUrl": "http://127.0.0.1:2", "transport": "fetch-stream", "protocol": "negotiated"},
+                        {"baseUrl": origin.replacen("http://", "https://", 1), "transport": "webtransport", "protocol": "http3"}
+                    ],
+                    "latency": []
+                }
+            }),
+        },
         "/probe" => serde_json::json!({
             "clientIp": "127.0.0.1",
             "clientIpVersion": 4,
@@ -70,9 +89,7 @@ async fn serve(mut stream: TcpStream, origin: String) -> Result<(), Error> {
     Ok(())
 }
 
-#[tokio::test]
-async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
+async fn fixture(mode: FixtureMode) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let fixture_origin = origin.clone();
@@ -80,10 +97,17 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         while let Ok((stream, _)) = listener.accept().await {
             let origin = fixture_origin.clone();
             tokio::spawn(async move {
-                let _ = serve(stream, origin).await;
+                let _ = serve(stream, origin, mode).await;
             });
         }
     });
+    Ok((origin, fixture))
+}
+
+#[tokio::test]
+async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, fixture) = fixture(FixtureMode::Latency).await?;
     let http = Http::new(false)?;
     let config = Config {
         url: origin,
@@ -103,6 +127,31 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         ..config
     };
     assert!(prepare(&forced, &http, &snapshots).await.is_err());
+    fixture.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, fixture) = fixture(FixtureMode::Throughput).await?;
+    let config = Config {
+        url: origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let error = prepare(&config, &Http::new(false)?, &snapshots)
+        .await
+        .err()
+        .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
+    assert!(error.to_string().contains("select an origin explicitly"));
+    assert!(
+        error
+            .to_string()
+            .contains("advertised WebTransport is unavailable")
+    );
     fixture.abort();
     Ok(())
 }
