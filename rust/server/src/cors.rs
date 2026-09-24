@@ -82,14 +82,13 @@ pub fn authenticated_preflight<'a>(
         return None;
     }
     let route = route?;
-    let method = request
-        .get(header::ACCESS_CONTROL_REQUEST_METHOD)?
+    let method = unique(request, header::ACCESS_CONTROL_REQUEST_METHOD)?
         .to_str()
         .ok()?;
     if !route::spec(route).allows_cors_method(method) {
         return None;
     }
-    let origin = request.get(header::ORIGIN)?;
+    let origin = unique(request, header::ORIGIN)?;
     let same_origin = origin == public_origin;
     if !same_origin {
         let raw = origin.to_str().ok()?;
@@ -101,8 +100,9 @@ pub fn authenticated_preflight<'a>(
         }
     }
 
-    let requested_headers = match request.get(header::ACCESS_CONTROL_REQUEST_HEADERS) {
+    let requested_headers = match unique(request, header::ACCESS_CONTROL_REQUEST_HEADERS) {
         Some(value) => value.to_str().ok()?,
+        None if request.contains_key(header::ACCESS_CONTROL_REQUEST_HEADERS) => return None,
         None => "",
     };
     let mut has_authorization = false;
@@ -123,4 +123,10 @@ pub fn authenticated_preflight<'a>(
     } else {
         None
     }
+}
+
+fn unique(headers: &HeaderMap, name: header::HeaderName) -> Option<&HeaderValue> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
 }

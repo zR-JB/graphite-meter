@@ -331,11 +331,7 @@ impl Policy {
         {
             return self.consume_ticket(request, &token);
         }
-        if request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .is_some_and(|value| !value.is_empty())
-        {
+        if request.headers().contains_key(header::AUTHORIZATION) {
             return self.bearer(request.headers());
         }
         self.sessions
@@ -345,11 +341,7 @@ impl Policy {
 
     fn bearer(&self, headers: &HeaderMap) -> Option<AuthLease> {
         self.sessions.lookup_bearer(
-            headers
-                .get(header::AUTHORIZATION)?
-                .to_str()
-                .ok()?
-                .strip_prefix("Bearer ")?,
+            single_header(headers, header::AUTHORIZATION.as_str())?.strip_prefix("Bearer ")?,
         )
     }
 
@@ -403,7 +395,7 @@ impl Policy {
     }
 
     fn browser_preflight(&self, headers: &HeaderMap) -> Result<HeaderMap, Refusal> {
-        let origin = headers.get(header::ORIGIN).ok_or(Refusal::Forbidden)?;
+        let origin = unique_header(headers, header::ORIGIN.as_str()).ok_or(Refusal::Forbidden)?;
         let raw = origin.to_str().map_err(|_| Refusal::Forbidden)?;
         if !raw.starts_with("https://")
             || canonical_origin(raw).ok().as_deref() != Some(raw)
@@ -467,9 +459,10 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     if count > 3000 {
         return None;
     }
+    let mut found = None;
     for header in values {
         let Ok(header) = header.to_str() else {
-            continue;
+            return None;
         };
         for part in header.split(';').map(str::trim) {
             let Some((key, value)) = part.split_once('=') else {
@@ -478,19 +471,23 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
             if key.trim() != name {
                 continue;
             }
+            if found.is_some() {
+                return None;
+            }
             let value = value
                 .strip_prefix('"')
                 .and_then(|value| value.strip_suffix('"'))
                 .unwrap_or(value);
-            if value
+            if !value
                 .bytes()
                 .all(|byte| (0x20..0x7f).contains(&byte) && !matches!(byte, b'"' | b';' | b'\\'))
             {
-                return Some(value);
+                return None;
             }
+            found = Some(value);
         }
     }
-    None
+    found
 }
 
 fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
@@ -500,24 +497,39 @@ fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
 }
 
 fn authority<B>(request: &Request<B>) -> Option<&str> {
-    request
-        .uri()
-        .authority()
-        .map(|authority| authority.as_str())
-        .or_else(|| request.headers().get(header::HOST)?.to_str().ok())
+    let host = if request.headers().contains_key(header::HOST) {
+        Some(
+            unique_header(request.headers(), header::HOST.as_str())?
+                .to_str()
+                .ok()?,
+        )
+    } else {
+        None
+    };
+    match (request.uri().authority(), host) {
+        (Some(authority), Some(host)) if !authority.as_str().eq_ignore_ascii_case(host) => None,
+        (Some(authority), _) => Some(authority.as_str()),
+        (None, host) => host,
+    }
 }
 
 fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    match headers.get(name) {
+    match unique_header(headers, name) {
         Some(value) => value.to_str().ok(),
+        None if headers.contains_key(name) => None,
         None => Some(""),
     }
 }
 
-fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+fn unique_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
     let mut values = headers.get_all(name).iter();
-    let value = values.next()?.to_str().ok()?;
-    (values.next().is_none() && !value.contains(',')).then(|| value.trim())
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
+}
+
+fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    let value = unique_header(headers, name)?.to_str().ok()?;
+    (!value.contains(',')).then(|| value.trim())
 }
 
 fn equal_host(first: &str, second: &str) -> bool {

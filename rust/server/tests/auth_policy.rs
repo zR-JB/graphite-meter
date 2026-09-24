@@ -85,6 +85,14 @@ fn tls_hostnames_and_proxy_evidence_have_distinct_trust_boundaries() {
         .insert(header::HOST, "other.example".parse().unwrap());
     assert!(!policy.trust(&req, peer(), true).secure);
     req.headers_mut()
+        .insert(header::HOST, "meter.example".parse().unwrap());
+    req.headers_mut()
+        .append(header::HOST, "other.example".parse().unwrap());
+    assert!(!policy.trust(&req, peer(), true).secure);
+    req.headers_mut().remove(header::HOST);
+    req.headers_mut()
+        .insert(header::HOST, "other.example".parse().unwrap());
+    req.headers_mut()
         .insert("x-forwarded-proto", "https".parse().unwrap());
     req.headers_mut()
         .insert("x-forwarded-host", "meter.example".parse().unwrap());
@@ -164,6 +172,15 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
         .insert(header::ORIGIN, PUBLIC.parse().unwrap());
     bearer(&mut req, "invalid");
     refused(&policy, &req, Refusal::AuthenticationRequired);
+    req.headers_mut()
+        .insert(header::AUTHORIZATION, "".parse().unwrap());
+    req.headers_mut()
+        .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
+    refused(&policy, &req, Refusal::AuthenticationRequired);
+    bearer(&mut req, &cli);
+    req.headers_mut()
+        .append(header::AUTHORIZATION, "Bearer invalid".parse().unwrap());
+    refused(&policy, &req, Refusal::AuthenticationRequired);
     bearer(&mut req, &cli);
     assert_eq!(allowed(&policy, &req).provider(), "cli");
     *req.uri_mut() = "/ws/ping?token=".parse().unwrap();
@@ -174,6 +191,46 @@ fn explicit_credentials_never_fall_back_to_ambient_cookies() {
     assert_eq!(allowed(&policy, &req).provider(), "local");
     store.revoke(&session);
     refused(&policy, &req, Refusal::AuthenticationRequired);
+}
+
+#[test]
+fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
+    let store = SessionStore::new();
+    let policy = policy(&store);
+    let (token, session) = store.create("operator", "Operator", "local", None).unwrap();
+    let mut req = request("POST", "/upload");
+    cookie(&mut req, &token);
+    req.headers_mut()
+        .insert(header::ORIGIN, PUBLIC.parse().unwrap());
+    req.headers_mut()
+        .insert("sec-fetch-site", "same-origin".parse().unwrap());
+    req.headers_mut()
+        .insert("x-csrf-token", session.session().csrf().parse().unwrap());
+    allowed(&policy, &req);
+
+    req.headers_mut()
+        .append(header::COOKIE, "__Host-gm_session=other".parse().unwrap());
+    refused(&policy, &req, Refusal::AuthenticationRequired);
+    req.headers_mut().remove(header::COOKIE);
+    cookie(&mut req, &token);
+
+    for (name, value) in [
+        (header::ORIGIN, PUBLIC),
+        (
+            header::HeaderName::from_static("sec-fetch-site"),
+            "same-origin",
+        ),
+        (
+            header::HeaderName::from_static("x-csrf-token"),
+            session.session().csrf(),
+        ),
+    ] {
+        req.headers_mut()
+            .append(name.clone(), value.parse().unwrap());
+        refused(&policy, &req, Refusal::Forbidden);
+        req.headers_mut().remove(name.clone());
+        req.headers_mut().insert(name, value.parse().unwrap());
+    }
 }
 
 #[test]

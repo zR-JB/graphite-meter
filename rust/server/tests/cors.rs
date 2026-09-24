@@ -113,6 +113,24 @@ fn refused_preflights_cannot_authorize_a_browser_request() {
 }
 
 #[test]
+fn repeated_preflight_fields_cannot_choose_a_more_privileged_interpretation() {
+    let public = HeaderValue::from_static("https://meter.example");
+    for name in [
+        header::ORIGIN,
+        header::ACCESS_CONTROL_REQUEST_METHOD,
+        header::ACCESS_CONTROL_REQUEST_HEADERS,
+    ] {
+        let mut headers = request("https://meter.example", "POST", "Content-Type");
+        let duplicate = headers.get(&name).unwrap().clone();
+        headers.append(name, duplicate);
+        assert!(
+            authenticated_preflight(&public, true, Some(Route::Upload), &headers).is_none(),
+            "repeated preflight field was accepted"
+        );
+    }
+}
+
+#[test]
 fn public_measurements_expose_timing_without_cookies() {
     let mut headers = HeaderMap::new();
     Access::Public.apply_measurement(&mut headers);
