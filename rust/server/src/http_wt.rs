@@ -23,6 +23,9 @@ pub(super) enum SessionEvent {
     Stream(ReceiveStream),
 }
 const MAX_LANES: usize = 16;
+// A ready datagram send need not yield. Bound each burst so sibling sessions
+// still get executor time without paying a scheduler round-trip per packet.
+const DATAGRAM_YIELD_BATCH: usize = 16;
 const IDLE: Duration = Duration::from_secs(30);
 const RESET: u64 = 0x52e4a40fa8db;
 type Lane = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
@@ -137,6 +140,7 @@ impl HttpServer {
                 let quic = quic.clone();
                 let block = self.download_block.clone();
                 lanes.push(Box::pin(async move {
+                    let mut since_yield = 0;
                     loop {
                         let mut remaining = count;
                         while remaining > 0 {
@@ -144,7 +148,11 @@ impl HttpServer {
                             quic.send_datagram_wait(frame_datagram(session_id, &block[..size])?)
                                 .await?;
                             remaining -= size as u64;
-                            tokio::task::yield_now().await;
+                            since_yield += 1;
+                            if since_yield == DATAGRAM_YIELD_BATCH {
+                                since_yield = 0;
+                                tokio::task::yield_now().await;
+                            }
                         }
                     }
                 }));

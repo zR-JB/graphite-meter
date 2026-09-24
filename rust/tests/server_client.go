@@ -319,10 +319,27 @@ func run() error {
 		}
 		received += uint64(len(payload))
 	}
+	concurrentPing, err := dial("/wt/ping")
+	if err != nil {
+		return fmt.Errorf("WT ping during datagram download: %w", err)
+	}
+	defer concurrentPing.CloseWithError(0, "")
+	if err := concurrentPing.SendDatagram([]byte("PING,44")); err != nil {
+		return err
+	}
+	pingCtx, stopPing := context.WithTimeout(ctx, 2*time.Second)
+	answer, err := concurrentPing.ReceiveDatagram(pingCtx)
+	stopPing()
+	if err != nil {
+		return fmt.Errorf("WT ping during datagram download: %w", err)
+	}
+	if !strings.HasPrefix(string(answer), "PONG,44,") {
+		return fmt.Errorf("WT ping during datagram download: unexpected reply %q", answer)
+	}
 	if err := datagramDownload.CloseWithError(0, "download finished"); err != nil {
 		return err
 	}
-	fmt.Println("WT datagram download: received at least 65537 payload bytes")
+	fmt.Println("WT datagram download: received at least 65537 payload bytes; concurrent ping replied")
 
 	id, err = mint()
 	if err != nil {
