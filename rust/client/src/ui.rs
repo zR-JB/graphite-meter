@@ -482,7 +482,7 @@ impl Ui {
             self.rows.select(Some(0));
         }
     }
-    fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) {
+    fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) -> bool {
         let requested = match &command {
             Command::Run(config) | Command::Verify(config) => Some(config.clone()),
             _ => None,
@@ -494,12 +494,15 @@ impl Ui {
                 }
                 self.notice.clear();
                 self.awaiting = true;
+                true
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                self.notice = "Controller is busy; try again.".into()
+                self.notice = "Controller is busy; try again.".into();
+                false
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                self.notice = "Controller is unavailable.".into()
+                self.notice = "Controller is unavailable.".into();
+                false
             }
         }
     }
@@ -521,8 +524,12 @@ impl Ui {
                     let _ = commands.try_send(Command::Quit);
                     return true;
                 }
-                KeyCode::Char('o') => self.send(Command::OpenBrowser, commands),
-                KeyCode::Esc => self.send(Command::Cancel, commands),
+                KeyCode::Char('o') => {
+                    self.send(Command::OpenBrowser, commands);
+                }
+                KeyCode::Esc => {
+                    self.send(Command::Cancel, commands);
+                }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.auth_scroll = self.auth_scroll.saturating_sub(1);
                 }
@@ -621,16 +628,19 @@ impl Ui {
             }
             KeyCode::Char('r') if !self.active() => match self.config.validate() {
                 Ok(()) => {
-                    self.send(Command::Run(self.config.clone()), commands);
-                    self.live = true;
-                    self.details = false;
+                    if self.send(Command::Run(self.config.clone()), commands) {
+                        self.live = true;
+                        self.details = false;
+                    }
                 }
                 Err(error) => self.notice = error.to_string(),
             },
             KeyCode::Char('v') if !self.active() => {
-                self.send(Command::Verify(self.config.clone()), commands)
+                self.send(Command::Verify(self.config.clone()), commands);
             }
-            KeyCode::Esc if self.active() => self.send(Command::Cancel, commands),
+            KeyCode::Esc if self.active() => {
+                self.send(Command::Cancel, commands);
+            }
             KeyCode::Esc => self.live = false,
             KeyCode::Tab => self.change_section(1),
             KeyCode::BackTab => self.change_section(-1),
@@ -891,6 +901,30 @@ fn milliseconds(value: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_run_command_keeps_the_setup_visible() {
+        let (commands, mut receiver) = mpsc::channel(1);
+        let mut ui = Ui::new(Config::default(), Snapshot::default());
+        commands.try_send(Command::Cancel).unwrap();
+
+        ui.key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            &commands,
+        );
+        assert!(!ui.live);
+        assert!(!ui.awaiting);
+        assert_eq!(ui.notice().0, "Controller is busy; try again.");
+
+        assert!(matches!(receiver.try_recv(), Ok(Command::Cancel)));
+        ui.key(
+            KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
+            &commands,
+        );
+        assert!(ui.live);
+        assert!(ui.awaiting);
+        assert!(matches!(receiver.try_recv(), Ok(Command::Run(_))));
+    }
 
     #[test]
     fn setup_shows_checked_paths_and_marks_changed_settings_stale() {
