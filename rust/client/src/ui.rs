@@ -903,6 +903,74 @@ mod tests {
     use super::*;
 
     #[test]
+    fn finished_latency_result_remains_visible_after_live_probes_end() {
+        use crate::model::{ServerLatencyResult, StageResult};
+        use graphite_meter_core::latency::{Distribution, LatencySummary};
+        use ratatui::{Terminal, backend::TestBackend};
+
+        let rtt = 1_500_000;
+        let mut ui = Ui::new(
+            Config::default(),
+            Snapshot {
+                phase: Phase::Complete,
+                results: vec![StageResult {
+                    stage: Stage::Latency,
+                    elapsed: Duration::from_secs(1),
+                    down_bytes: 0,
+                    up_bytes: 0,
+                    down_bps: None,
+                    up_bps: None,
+                    latency: LatencySummary::default(),
+                    complete: true,
+                    server_latencies: vec![ServerLatencyResult {
+                        id: "self".into(),
+                        summary: LatencySummary {
+                            distribution: Some(Distribution {
+                                min: rtt,
+                                max: rtt,
+                                mean: rtt,
+                                p10: rtt,
+                                p50: rtt,
+                                p90: rtt,
+                                p95: rtt,
+                            }),
+                            count: 4,
+                            ..LatencySummary::default()
+                        },
+                        error: None,
+                    }],
+                    server_results: Vec::new(),
+                }],
+                ..Snapshot::default()
+            },
+        );
+        ui.live = true;
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("1.50 ms"));
+
+        // A selected peer absent from this stage must not inherit another
+        // peer's RTT merely because its summary is first in the result.
+        ui.latency_focus = Some("other".into());
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(!rendered.contains("1.50 ms"));
+    }
+
+    #[test]
     fn rejected_run_command_keeps_the_setup_visible() {
         let (commands, mut receiver) = mpsc::channel(1);
         let mut ui = Ui::new(Config::default(), Snapshot::default());

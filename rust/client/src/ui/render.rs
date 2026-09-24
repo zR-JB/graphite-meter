@@ -491,14 +491,16 @@ impl Ui {
             regions[1],
         );
         let rows = self.snapshot.results.iter().take(16).map(|result| {
-            let summary = focus
-                .and_then(|focus| {
-                    result
-                        .server_latencies
-                        .iter()
-                        .find(|host| host.id == focus.id)
-                })
-                .map(|host| &host.summary);
+            // A later stage may have no live latency probes, but earlier
+            // stage results still own their recorded per-server summaries.
+            let focused_id = focus
+                .map(|host| host.id.as_str())
+                .or(self.latency_focus.as_deref());
+            let summary = match focused_id {
+                Some(id) => result.server_latencies.iter().find(|host| host.id == id),
+                None => result.server_latencies.first(),
+            }
+            .map(|host| &host.summary);
             Row::new(vec![
                 format!(
                     "{}{}",
