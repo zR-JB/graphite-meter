@@ -500,7 +500,7 @@
   {
     "ecosystem": "go",
     "name": "github.com/quic-go/quic-go",
-    "reviewedVersion": "v0.62.0",
+    "reviewedVersion": "v0.63.0",
     "upstream": "https://github.com/quic-go/quic-go",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
