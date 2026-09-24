@@ -63,20 +63,36 @@ fn unmap(addr: IpAddr) -> IpAddr {
     }
 }
 fn forwarded_chain(headers: &HeaderMap) -> Option<Vec<IpAddr>> {
-    // A proxy may append its own value after a client-supplied field. Picking
-    // the first value would let that client choose their admission identity.
+    // X-Real-IP is a singleton. Forwarded and X-Forwarded-For are lists: a
+    // proxy may append a second field line to a client-supplied first one, so
+    // parse every line and walk the complete chain from the trusted socket.
     for name in ["x-real-ip", "forwarded", "x-forwarded-for"] {
         let mut values = headers.get_all(name).iter();
         let Some(value) = values.next() else {
             continue;
         };
-        if values.next().is_some() {
+        let first = value.to_str().ok()?;
+        let second = values.next();
+        if name == "x-real-ip" && second.is_some() {
             return None;
         }
-        if value.as_bytes().is_empty() {
+        let joined;
+        let raw = if let Some(second) = second {
+            let mut raw = first.to_owned();
+            raw.push(',');
+            raw.push_str(second.to_str().ok()?);
+            for value in values {
+                raw.push(',');
+                raw.push_str(value.to_str().ok()?);
+            }
+            joined = raw;
+            joined.as_str()
+        } else {
+            first
+        };
+        if raw.is_empty() {
             continue;
         }
-        let raw = value.to_str().ok()?;
         return match name {
             "x-real-ip" => Some(vec![parse_address(raw)?]),
             "forwarded" => split_quoted(raw, b',')?

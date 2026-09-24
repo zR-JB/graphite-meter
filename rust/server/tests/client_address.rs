@@ -166,19 +166,37 @@ fn precedence_rejects_ambiguous_values_without_fallback() {
 }
 
 #[test]
-fn repeated_forwarding_fields_cannot_choose_an_anonymous_budget() {
+fn repeated_forwarding_fields_use_the_first_untrusted_hop() {
     let peer = "10.0.0.2:1234".parse().unwrap();
-    for (name, first, second) in [
-        ("x-real-ip", "203.0.113.4", "198.51.100.9"),
-        ("forwarded", "for=203.0.113.4", "for=198.51.100.9"),
-        ("x-forwarded-for", "203.0.113.4", "198.51.100.9"),
+    for (name, first, second, expected, source) in [
+        (
+            "x-real-ip",
+            "203.0.113.4",
+            "198.51.100.9",
+            "10.0.0.2",
+            ClientIpSource::Socket,
+        ),
+        (
+            "forwarded",
+            "for=203.0.113.4",
+            "for=198.51.100.9",
+            "198.51.100.9",
+            ClientIpSource::Forwarded,
+        ),
+        (
+            "x-forwarded-for",
+            "203.0.113.4",
+            "198.51.100.9",
+            "198.51.100.9",
+            ClientIpSource::Forwarded,
+        ),
     ] {
         let mut headers = HeaderMap::new();
         headers.append(name, HeaderValue::from_str(first).unwrap());
         headers.append(name, HeaderValue::from_str(second).unwrap());
         let result = resolve(peer, &headers, &trusted());
-        assert_eq!(result.addr.to_string(), "10.0.0.2", "{name}");
-        assert_eq!(result.source, ClientIpSource::Socket, "{name}");
+        assert_eq!(result.addr.to_string(), expected, "{name}");
+        assert_eq!(result.source, source, "{name}");
     }
 }
 
