@@ -6,11 +6,15 @@ download, upload, and bidirectional stages. A failed transfer server is removed
 from subsequent stages while surviving servers continue; affected results stay
 marked partial. Latency observations and results remain separate for each server;
 press `l` to change the displayed server. Full parity validation is unfinished.
-Matched local HTTP/3 downloads show lower peak server memory with the adaptive
-QUIC send window, but Rust server CPU remains above Go in that workload. A
-matched WebTransport stream-download run likewise showed lower Rust peak memory
-and lower throughput than Go. WAN, datagram, upload, multi-user, and full
-application comparisons are still needed before claiming a general improvement.
+An adaptive HTTP/3 send window reduced Rust peak memory versus a fixed-window
+Rust build. A separate Go/Rust HTTP/3 batch still showed higher Rust CPU and
+peak memory. A matched WebTransport stream-download run showed lower Rust server
+memory and CPU but lower throughput than Go. Short WebTransport stream-upload
+and datagram runs found similar or higher Rust receiver throughput with lower
+server CPU and memory. Simulated 100 ms RTT runs
+exposed fixed QUIC receive-window limits in the Rust server and TUI; larger
+bounded windows improved those runs. These short local and delayed-path samples
+do not establish real-WAN, packet-loss, many-user, or sustained-memory superiority.
 
 Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
 `--url https://your-server`. `mise run tui` selects Go by default.
