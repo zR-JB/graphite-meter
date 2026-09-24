@@ -1,5 +1,7 @@
 //! Terminal rendering, separate from editing and command dispatch.
+use super::setup::{on_off, seconds};
 use super::*;
+use crate::model::Stage;
 
 impl Ui {
     pub(super) fn draw(&mut self, frame: &mut Frame) {
