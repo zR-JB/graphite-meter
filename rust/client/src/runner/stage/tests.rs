@@ -8,14 +8,22 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
+    sync::Barrier,
     task::JoinHandle,
 };
 
 async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
+    download_peer_with_gate(None).await
+}
+
+async fn download_peer_with_gate(
+    gate: Option<Arc<Barrier>>,
+) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let failed = Arc::new(AtomicU8::new(0));
     let flag = failed.clone();
+    let first_request = Arc::new(AtomicBool::new(false));
     let server = tokio::spawn(async move {
         let mut clients = JoinSet::new();
         loop {
@@ -23,9 +31,16 @@ async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Erro
                 accepted = listener.accept() => {
                     let Ok((mut stream, _)) = accepted else { break; };
                     let flag = flag.clone();
+                    let gate = gate.clone();
+                    let first_request = first_request.clone();
                     clients.spawn(async move {
                         let mut request = [0_u8; 4096];
                         if stream.read(&mut request).await.is_err() { return; }
+                        if !first_request.swap(true, Ordering::SeqCst)
+                            && let Some(gate) = gate
+                        {
+                            gate.wait().await;
+                        }
                         if flag.load(Ordering::SeqCst) == 2 {
                             tokio::time::sleep(Duration::from_secs(30)).await;
                             return;
@@ -46,6 +61,70 @@ async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Erro
         }
     });
     Ok((origin, failed, server))
+}
+
+#[tokio::test]
+async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let gate = Arc::new(Barrier::new(2));
+    let (near, _, near_task) = download_peer_with_gate(Some(gate.clone())).await?;
+    let (far, _, far_task) = download_peer_with_gate(Some(gate)).await?;
+    let http = Http::new(false)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        url: near,
+        servers: vec!["near".into(), "far".into()],
+        stages: vec![Stage::Download],
+        warmup: Duration::from_millis(10),
+        download_duration: Duration::from_millis(1400),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, observed) = watch::channel(Snapshot {
+        servers: servers
+            .iter()
+            .map(|server| ServerSummary {
+                id: server.entry.id.clone(),
+                name: server.entry.name.clone(),
+                origin: server.entry.url.clone(),
+                ..ServerSummary::default()
+            })
+            .collect(),
+        ..Snapshot::default()
+    });
+    let (_stop, cancelled) = watch::channel(false);
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        measure(
+            Stage::Download,
+            &config,
+            &http,
+            &servers,
+            &snapshots,
+            cancelled,
+            false,
+        ),
+    )
+    .await??;
+    assert!(result.is_empty());
+    let snapshot = observed.borrow();
+    let stage = &snapshot.results[0];
+    assert!(stage.complete);
+    assert_eq!(stage.server_results[0].id, "near");
+    assert_eq!(stage.server_results[1].id, "far");
+    assert!(
+        stage
+            .server_results
+            .iter()
+            .all(|server| server.down_bytes > 0)
+    );
+    near_task.abort();
+    far_task.abort();
+    Ok(())
 }
 
 async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<PreparedServer, Error> {

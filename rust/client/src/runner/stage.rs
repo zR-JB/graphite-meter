@@ -16,7 +16,7 @@ use crate::{
 };
 use futures_util::{
     FutureExt, StreamExt,
-    stream::{BoxStream, SelectAll},
+    stream::{BoxStream, FuturesUnordered, SelectAll},
 };
 use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
@@ -557,26 +557,50 @@ pub(super) async fn measure(
     let mut measurement_end = None;
     let operation = async {
         let mut last_failure = None;
-        for server in servers {
-            let started = start_transfer(
-                stage,
-                server,
-                &plan,
-                config,
-                http,
-                StageTiming {
-                    epoch,
-                    operation_limit,
-                    setup_timeout: Duration::from_secs(12),
-                },
-                stopped.clone(),
-            )
-            .await;
-            match started {
+        // Start every selected peer within the same preparation window. One
+        // slow origin must not postpone another peer's first request.
+        let mut starts = servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                let stopped = stopped.clone();
+                let plan = &plan;
+                async move {
+                    (
+                        index,
+                        start_transfer(
+                            stage,
+                            server,
+                            plan,
+                            config,
+                            http,
+                            StageTiming {
+                                epoch,
+                                operation_limit,
+                                setup_timeout: Duration::from_secs(12),
+                            },
+                            stopped,
+                        )
+                        .await,
+                    )
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        let mut started: Vec<Option<Result<Transfer, Error>>> =
+            (0..servers.len()).map(|_| None).collect();
+        while let Some((index, result)) = starts.next().await {
+            started[index] = Some(result);
+        }
+        for (server, result) in servers.iter().zip(started) {
+            match result.expect("every selected transfer preparation completed") {
                 Ok(transfer) => resources.transfers.push(transfer),
                 Err(error) => {
                     if !completed_stage {
-                        return Err(error);
+                        last_failure.get_or_insert(ParticipantFailure {
+                            id: server.entry.id.clone(),
+                            source: error,
+                        });
+                        continue;
                     }
                     resources.preparation_failure(&server.entry.id, &error, snapshots);
                     if last_failure
@@ -593,6 +617,9 @@ pub(super) async fn measure(
                     }
                 }
             }
+        }
+        if !completed_stage && let Some(failure) = last_failure {
+            return Err(failure.source);
         }
         if resources.transfers.is_empty() {
             return Err(AllParticipantsFailed(
