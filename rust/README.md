@@ -58,6 +58,7 @@ mise run rust-check
 mise run rust-crypto-check
 mise run rust-format
 python3 rust/tests/server_interop.py
+python3 rust/tests/client_interop.py
 python3 rust/tests/interop.py
 ```
 
@@ -82,6 +83,10 @@ runs all four stages through the actual Go native measurement engine over
 WebTransport. It does not exercise the Bubble Tea interface or an external
 authenticated deployment. `interop.py` separately probes low-level transport
 behavior.
+`client_interop.py` starts an unchanged Go product server and runs the Rust
+measurement engine through all four stages with forced HTTP/3 WebTransport
+streams and pings. The disposable loopback certificate is intentionally not
+trusted by the client; this check does not establish authenticated TLS behavior.
 
 The full probe currently fails on immediate stream reset with the unchanged Go
 peer. `--fix-go-reset-reader` tests a diagnostic correction in a temporary Go

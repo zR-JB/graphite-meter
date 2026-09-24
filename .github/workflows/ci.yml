@@ -152,6 +152,8 @@ jobs:
           cargo audit --deny warnings
       - name: Rust server with unchanged Go clients
         run: python3 rust/tests/server_interop.py
+      - name: Rust client with unchanged Go server
+        run: python3 rust/tests/client_interop.py
       - name: Diagnostic corrected-Go interoperability
         # The unchanged Go peer still fails reset handling; this diagnostic is not parity evidence.
         run: python3 rust/tests/interop.py --fix-go-reset-reader
