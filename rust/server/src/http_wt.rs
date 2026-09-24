@@ -195,7 +195,16 @@ impl HttpServer {
         let verify_deadline = Instant::now() + IDLE;
         let result: Result<(), TransportError> = async {
             loop {
-                tokio::select! { biased;
+                // A peer may keep CONNECT DATA continuously ready. Let Tokio
+                // rotate ready work so that it cannot starve session streams
+                // and datagrams. Recheck authorization before each operation;
+                // the revocation future below wakes a blocked loop promptly.
+                if lease.as_ref().is_some_and(|lease| !lease.is_active())
+                    || Instant::now() >= deadline
+                {
+                    break;
+                }
+                tokio::select! {
                     _ = lease_ended(lease.clone()) => break,
                     _ = tokio::time::sleep_until(deadline) => break,
                     _ = tick.tick() => {
