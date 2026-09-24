@@ -25,11 +25,19 @@ func NewDownload(block []byte, meter *Meter) *Download {
 
 // HandleHTTP sets the response framing before streaming bytes.
 func (d *Download) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+		return nil
+	}
 	n := parseBytes(r.URL.Query().Get("bytes"))
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Length", strconv.FormatInt(n, 10))
+	if r.Method == http.MethodHead {
+		return nil
+	}
 	return d.HandleDownload(r.Context(), n, w)
 }
 
