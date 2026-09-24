@@ -61,6 +61,38 @@ func TestDownloadExactByteCount(t *testing.T) {
 	}
 }
 
+func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
+	meter := NewMeter("test:download")
+	download := NewDownload(randomBlock(4096), meter)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil)
+	if err := download.HandleHTTP(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
+		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
+	}
+	if response.Body.Len() != 0 || meter.bytes.Load() != 0 || meter.conns.Load() != 0 {
+		t.Fatalf("HEAD generated %d body bytes; meter bytes=%d conns=%d", response.Body.Len(), meter.bytes.Load(), meter.conns.Load())
+	}
+}
+
+func TestDownloadRejectsOtherMethodsBeforeGeneratingBytes(t *testing.T) {
+	meter := NewMeter("test:download")
+	download := NewDownload(randomBlock(4096), meter)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/download?bytes=1048576", nil)
+	if err := download.HandleHTTP(response, request); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("POST status=%d allow=%q", response.Code, response.Header().Get("Allow"))
+	}
+	if meter.bytes.Load() != 0 {
+		t.Fatalf("POST generated %d download bytes", meter.bytes.Load())
+	}
+}
+
 func TestDownloadFirstByte(t *testing.T) {
 	srv, _ := newDownloadServer(testBlockSize)
 	defer srv.Close()
