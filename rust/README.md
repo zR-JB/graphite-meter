@@ -82,7 +82,11 @@ logout revocation. The same harness simulates the browser approval forms and
 runs all four stages through the actual Go native measurement engine over
 WebTransport. It does not exercise the Bubble Tea interface or an external
 authenticated deployment. `interop.py` separately probes low-level transport
-behavior.
+behavior against both unchanged quic-go and a disposable build that offers
+only the current reliable-reset transport parameter. The latter checks QUIC
+negotiation, WebTransport transfers, and immediate reset without modifying the
+shipped Go implementation.
+
 `client_interop.py` starts an unchanged Go product server and runs the Rust
 measurement engine through all four stages with WebTransport streams, datagrams,
 HTTPS HTTP/1.1 fetch streams, and HTTP/2 fetch streams. The loopback test
@@ -94,6 +98,8 @@ The full probe includes immediate WebTransport stream reset against the unchange
 Go client using quic-go v0.63.0. It requires the session association prefix to
 survive reset without a temporary dependency overlay. Earlier quic-go v0.62.0
 lost the final prefix byte when a read returned that byte with a reset error.
+The current-only Go probe exercises the draft-09+ transport parameter; it is
+not evidence of Safari browser parity.
 
 The QUIC stack uses an experimental Noq commit and local HTTP/3 patches; see
 [vendor/PATCHES.md](vendor/PATCHES.md) for provenance and limitations.

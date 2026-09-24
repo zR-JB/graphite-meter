@@ -78,8 +78,9 @@ reliable-reset transport parameter (`0x1d`) and the older draft codepoint
 instances or nonempty values. This preserves legacy peer compatibility while
 allowing peers that recognize only the current codepoint to negotiate
 `RESET_STREAM_AT`. The frame encoding remains `0x24`. Unit tests cover the
-encoded advertisement and both parsing paths; browser compatibility with a
-current-only peer remains to be tested.
+encoded advertisement and both parsing paths. A disposable Go client offering
+only the current parameter passes the HTTP/3 and WebTransport probes; Safari
+browser compatibility remains untested.
 
 ## Native client support
 

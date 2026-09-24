@@ -1,14 +1,70 @@
-"""Probe the Rust transport candidate against Graphite Meter's unchanged Go peer."""
+"""Probe Rust HTTP/3 against unchanged and current-codepoint-only Go peers."""
 
 import argparse
-from pathlib import Path
 import selectors
+import shutil
 import signal
 import subprocess
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def build_current_reset_peer(directory: Path) -> Path:
+    """Build the pinned Go peer with only the current reliable-reset offer."""
+    wire = subprocess.run(
+        ["go", "list", "-f", "{{.Dir}}", "github.com/quic-go/quic-go/internal/wire"],
+        cwd=ROOT / "go",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    # Go forbids overlays of files in GOMODCACHE. Patch a disposable module
+    # copy and point only this probe build at it through a temporary modfile.
+    module = Path(wire).parents[1]
+    local_module = directory / "quic-go-current-reset"
+    shutil.copytree(module, local_module)
+    source = local_module / "internal/wire/transport_parameters.go"
+    legacy_offer = (
+        "\t\tb = quicvarint.Append(b, uint64(legacyResetStreamAtParameterID))\n"
+        "\t\tb = quicvarint.Append(b, 0)\n"
+    )
+    original = source.read_text()
+    if original.count(legacy_offer) != 1:
+        raise RuntimeError("quic-go reliable-reset offer changed; review the current-only probe")
+    source.chmod(0o644)
+    source.write_text(original.replace(legacy_offer, ""))
+    modfile = directory / "probe.mod"
+    modfile.write_bytes((ROOT / "go/go.mod").read_bytes())
+    (directory / "probe.sum").write_bytes((ROOT / "go/go.sum").read_bytes())
+    subprocess.run(
+        [
+            "go",
+            "mod",
+            "edit",
+            "-modfile",
+            str(modfile),
+            f"-replace=github.com/quic-go/quic-go={local_module}",
+        ],
+        cwd=ROOT / "go",
+        check=True,
+    )
+    binary = directory / "client-current-reset"
+    subprocess.run(
+        [
+            "go",
+            "build",
+            "-modfile",
+            str(modfile),
+            "-o",
+            str(binary),
+            str(ROOT / "rust/tests/h3_client.go"),
+        ],
+        cwd=ROOT / "go",
+        check=True,
+    )
+    return binary
 
 
 def main() -> None:
@@ -49,6 +105,7 @@ def main() -> None:
             cwd=ROOT / "go",
             check=True,
         )
+        current_reset_client = build_current_reset_peer(directory)
         server = subprocess.Popen(
             [str(binary), "127.0.0.1:0", str(cert), str(key)],
             stdout=subprocess.PIPE,
@@ -66,11 +123,16 @@ def main() -> None:
             address = line.removeprefix("listening ")
             # A nonzero exit is a failed compatibility gate. Never turn a
             # handshake or immediate-reset rejection into a pass.
-            subprocess.run(
-                [str(client), f"https://{address}", str(cert)],
-                check=True,
-                timeout=15,
-            )
+            for label, peer in [
+                ("unchanged Go peer", client),
+                ("current-only reliable-reset Go peer", current_reset_client),
+            ]:
+                print(f"Probing {label}", flush=True)
+                subprocess.run(
+                    [str(peer), f"https://{address}", str(cert)],
+                    check=True,
+                    timeout=15,
+                )
         finally:
             server.send_signal(signal.SIGINT)
             try:

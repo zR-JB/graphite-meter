@@ -154,7 +154,7 @@ jobs:
         run: python3 rust/tests/server_interop.py
       - name: Rust client with unchanged Go server
         run: python3 rust/tests/client_interop.py
-      - name: Unchanged-Go immediate-reset interoperability
+      - name: Unchanged and current-only Go reliable-reset interoperability
         run: python3 rust/tests/interop.py
 
   browser:
