@@ -535,9 +535,17 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	connect := func(peer *webtransport.ClientConn, token string) (*http.Response, *webtransport.Session, error) {
 		return peer.Dial(ctx, base+"/wt/ping?token="+url.QueryEscape(token), http.Header{"Origin": {public}})
 	}
+	deniedConnect, rejected, err := connect(client, "invalid-ticket")
+	if err == nil {
+		rejected.CloseWithError(0, "unexpected admission")
+		return fmt.Errorf("invalid WT ticket unexpectedly admitted a session")
+	}
+	if deniedConnect == nil || deniedConnect.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("invalid WT ticket response=%v: %w", deniedConnect, err)
+	}
 	_, ping, err := connect(client, ticket)
 	if err != nil {
-		return err
+		return fmt.Errorf("valid WT ticket after denied CONNECT: %w", err)
 	}
 	if err := ping.SendDatagram([]byte("PING,77")); err != nil {
 		return err
@@ -572,7 +580,7 @@ func runAuthenticated(ctx context.Context, base, public string, tlsConfig *tls.C
 	if err := rejectTicket(ticket); err != nil {
 		return fmt.Errorf("consumed WT ticket: %w", err)
 	}
-	fmt.Println("Authenticated WT: one-use ticket admitted datagram ping, then replay was denied")
+	fmt.Println("Authenticated WT: denied CONNECT preserved same connection; one-use ticket admitted datagram ping, then replay was denied")
 
 	unused, err := mint()
 	if err != nil {

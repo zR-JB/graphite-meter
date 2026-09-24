@@ -155,15 +155,9 @@ impl HttpServer {
                             let resets = resets.clone();
                             let active_responses = active_responses.clone();
                             connection.requests.push(Box::pin(async move {
-                                let (request, mut stream) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await??;
+                                let (request, stream) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await??;
                                 if request.method() == Method::CONNECT {
-                                    let id = stream.send_id().into_inner();
-                                    let Some((_registration, events)) = sessions.register(id) else {
-                                        stream.stop_sending(h3::error::Code::H3_REQUEST_REJECTED);
-                                        stream.stop_stream(h3::error::Code::H3_REQUEST_REJECTED);
-                                        return Ok(());
-                                    };
-                                    server.serve_webtransport(request, stream, quic, peer, resets, events).await
+                                    server.serve_webtransport(request, stream, quic, peer, resets, sessions).await
                                 } else {
                                     server.serve_http3_request(request, stream, peer, active_responses).await.map_err(Into::into)
                                 }
@@ -270,7 +264,7 @@ struct Registry {
 }
 
 #[derive(Clone)]
-struct Sessions {
+pub(super) struct Sessions {
     registry: Arc<Mutex<Registry>>,
     datagram_bytes: Arc<tokio::sync::Semaphore>,
 }
@@ -285,11 +279,11 @@ impl Default for Sessions {
 }
 
 impl Sessions {
-    fn register(&self, id: u64) -> Option<(Registration, mpsc::Receiver<SessionEvent>)> {
+    pub(super) fn register(&self, id: u64) -> Option<(Registration, mpsc::Receiver<SessionEvent>)> {
         let (sender, receiver) = mpsc::channel(SESSION_QUEUE);
         let mut registry = self.registry.lock().expect("session registry poisoned");
         // Multiple sessions require negotiated per-session flow control.
-        // Reserve atomically before awaiting authorization or sending success.
+        // Reserve atomically after authorization but before sending success.
         if !registry.active.is_empty() {
             return None;
         }
@@ -361,7 +355,7 @@ impl Sessions {
     }
 }
 
-struct Registration {
+pub(super) struct Registration {
     sessions: Sessions,
     id: u64,
 }

@@ -1,6 +1,7 @@
 //! A CONNECT task owns every application lane; dropping it cancels all session IO.
 //! The connection advertises no INITIAL_MAX_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
+use super::http_quic::Sessions;
 use super::*;
 use crate::{
     webtransport::{ReceiveStream, TransportError},
@@ -12,7 +13,7 @@ use graphite_meter_core::{
     capsule::{self, Capsule},
     wire::{self, UploadProgress},
 };
-use tokio::{io::AsyncReadExt, sync::mpsc, time::Instant};
+use tokio::{io::AsyncReadExt, time::Instant};
 
 pub(super) type H3RequestStream = h3::server::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
 pub(super) enum SessionEvent {
@@ -44,7 +45,7 @@ impl HttpServer {
         quic: quinn::Connection,
         peer: SocketAddr,
         resets: ResetQueue,
-        mut events: mpsc::Receiver<SessionEvent>,
+        sessions: Sessions,
     ) -> Result<(), TransportError> {
         if request.method() != Method::CONNECT
             || request.extensions().get::<h3::ext::Protocol>()
@@ -120,6 +121,11 @@ impl HttpServer {
         };
         let deadline = Instant::now() + lifetime;
         let session_id = stream.send_id().into_inner();
+        let Some((_registration, mut events)) = sessions.register(session_id) else {
+            stream.stop_sending(h3::error::Code::H3_REQUEST_REJECTED);
+            stream.stop_stream(h3::error::Code::H3_REQUEST_REJECTED);
+            return Ok(());
+        };
         tokio::select! { biased; _ = lease_ended(lease.clone()) => return Ok(()), result = tokio::time::timeout(Duration::from_secs(10), stream.send_response(Response::builder().status(200).body(())?)) => result?? }
         let query = request.uri().query().unwrap_or("");
         let params: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
