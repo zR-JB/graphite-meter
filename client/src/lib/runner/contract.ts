@@ -1,7 +1,7 @@
 // Shared runner contract for phases, config, events, results, and backend interfaces.
 
 import type { ServerCredentials } from "../servers/credentials";
-import type { Probe } from "../api/probe";
+import type { Probe } from "../api/decode";
 import type {
   FetchThroughputTarget,
   LatencyTarget,

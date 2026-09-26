@@ -107,9 +107,8 @@ run = [
 ]
 
 [tasks.client-ci]
-description = "Check generated client types, formatting, types, dependencies, and tests"
+description = "Check client formatting, types, dependencies, and tests"
 run = [
-  { task = "client-check-generated" },
   "cd client && bun run format:check",
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
@@ -196,23 +195,6 @@ arg "[mode]" default="hybrid"
 arg "[oidc_ready]" default="true"
 '''
 run = 'go run ./internal/auth/cmd/authpreview --mode "${usage_mode?}" --oidc-ready="${usage_oidc_ready?}"'
-
-[tasks.client-gen-types]
-description = "Generate client API types from JSON schemas"
-dir = "client"
-run = [
-  "bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts",
-  "bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts",
-  "bunx json-schema-to-typescript ../api/servers.schema.json -o src/lib/api/servers.ts",
-]
-
-[tasks.client-check-generated]
-shell = "bash -e -o pipefail -c"
-description = "Check schema-derived client type drift"
-run = [
-  { task = "client-gen-types" },
-  'git diff --quiet -- client/src/lib/api/ || { echo "Client API types are stale; run mise run client-gen-types and commit the result" >&2; exit 1; }',
-]
 
 [tasks._embed-client]
 hide = true

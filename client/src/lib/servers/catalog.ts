@@ -1,9 +1,15 @@
-import type { Preflight } from "../api/preflight";
-import type { ServerEntry } from "../api/servers";
-export type { ServerEntry } from "../api/servers";
+import type { Preflight } from "../api/decode";
 
 const MAX_SERVERS = 32;
 const MAX_SELECTED_SERVERS = 4;
+/** One operator catalog entry (api/servers.schema.json); runtime parsing enforces its limits. */
+export interface ServerEntry {
+  id: string;
+  url: string;
+  name: string;
+  location?: string;
+  additionalOrigins?: string[];
+}
 export type ServerIdentity = Omit<ServerEntry, "additionalOrigins">;
 export interface ServerCatalog {
   defaultSelection: string[];

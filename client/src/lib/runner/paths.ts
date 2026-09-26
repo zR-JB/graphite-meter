@@ -19,7 +19,7 @@ import type {
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../api/endpoints";
-import type { LatencyEndpoint, ThroughputEndpoint } from "../api/preflight";
+import type { LatencyEndpoint, ThroughputEndpoint } from "../api/decode";
 import {
   browserOriginRestriction,
   isLoopbackHostname,
