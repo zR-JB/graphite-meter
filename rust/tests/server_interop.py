@@ -74,7 +74,7 @@ def main() -> None:
                 time.sleep(0.05)
             if not address:
                 raise TimeoutError("Rust H3 listener did not report readiness")
-            result = subprocess.run([str(client), f"https://{address}", str(cert)], capture_output=True, text=True, timeout=35)
+            result = subprocess.run([str(client), address.rpartition(":")[2]], cwd=directory, capture_output=True, text=True, timeout=35)
             (directory / "client.log").write_text(result.stdout + result.stderr)
             print(result.stdout + result.stderr, end="", flush=True)
             result.check_returncode()
@@ -157,9 +157,9 @@ def main() -> None:
                 time.sleep(0.05)
             else:
                 raise TimeoutError("Authenticated Rust H3 listener did not report readiness")
-            result = subprocess.run([
-                str(client), f"https://127.0.0.1:{h3_port}", str(cert), public,
-            ], capture_output=True, text=True, timeout=35)
+            result = subprocess.run(
+                [str(client), str(h3_port), str(tls_port)], cwd=directory, capture_output=True, text=True, timeout=35,
+            )
             (directory / "auth-client.log").write_text(result.stdout + result.stderr)
             print(result.stdout + result.stderr, end="", flush=True)
             result.check_returncode()

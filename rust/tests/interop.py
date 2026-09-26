@@ -129,7 +129,8 @@ def main() -> None:
             ]:
                 print(f"Probing {label}", flush=True)
                 subprocess.run(
-                    [str(peer), f"https://{address}", str(cert)],
+                    [str(peer), address.rpartition(":")[2]],
+                    cwd=directory,
                     check=True,
                     timeout=15,
                 )

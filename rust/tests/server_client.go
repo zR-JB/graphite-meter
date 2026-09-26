@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,11 +28,19 @@ func main() {
 		os.Exit(1)
 	}
 }
-func run() error {
-	if len(os.Args) != 3 && len(os.Args) != 4 {
-		return fmt.Errorf("usage: server_client H3_URL CERT [AUTH_PUBLIC_ORIGIN]")
+func loopback(port string) (string, error) {
+	number, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return "", fmt.Errorf("invalid loopback port %q", port)
 	}
-	cert, err := os.ReadFile(os.Args[2])
+	return fmt.Sprintf("https://127.0.0.1:%d", number), nil
+}
+
+func run() error {
+	if len(os.Args) != 2 && len(os.Args) != 3 {
+		return fmt.Errorf("usage: server_client H3_PORT [AUTH_TLS_PORT] (reads cert.pem from the working directory)")
+	}
+	cert, err := os.ReadFile("cert.pem")
 	if err != nil {
 		return err
 	}
@@ -42,9 +51,16 @@ func run() error {
 	config := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	base := os.Args[1]
-	if len(os.Args) == 4 {
-		return runAuthenticated(ctx, base, os.Args[3], config)
+	base, err := loopback(os.Args[1])
+	if err != nil {
+		return err
+	}
+	if len(os.Args) == 3 {
+		public, err := loopback(os.Args[2])
+		if err != nil {
+			return err
+		}
+		return runAuthenticated(ctx, base, public, config)
 	}
 	tcp := &http.Transport{TLSClientConfig: config}
 	defer tcp.CloseIdleConnections()

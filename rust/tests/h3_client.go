@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
+
+var base string
 
 func main() {
 	if err := run(); err != nil {
@@ -27,10 +30,15 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) != 3 {
-		return fmt.Errorf("usage: h3_client URL CERT_PEM")
+	if len(os.Args) != 2 {
+		return fmt.Errorf("usage: h3_client PORT (reads cert.pem from the working directory)")
 	}
-	cert, err := os.ReadFile(os.Args[2])
+	port, err := strconv.ParseUint(os.Args[1], 10, 16)
+	if err != nil {
+		return fmt.Errorf("invalid loopback port %q", os.Args[1])
+	}
+	base = fmt.Sprintf("https://127.0.0.1:%d", port)
+	cert, err := os.ReadFile("cert.pem")
 	if err != nil {
 		return err
 	}
@@ -43,7 +51,7 @@ func run() error {
 	defer cancel()
 	tr := &http3.Transport{TLSClientConfig: tlsConfig}
 	defer tr.Close()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, os.Args[1]+"/probe", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/probe", nil)
 	if err != nil {
 		return err
 	}
@@ -76,7 +84,7 @@ func run() error {
 }
 
 func probeSession(ctx context.Context, wt *webtransport.Transport, path string) error {
-	_, session, err := wt.Dial(ctx, os.Args[1]+"/wt/"+path, nil)
+	_, session, err := wt.Dial(ctx, base+"/wt/"+path, nil)
 	if err != nil {
 		return err
 	}
@@ -126,7 +134,7 @@ func probeSession(ctx context.Context, wt *webtransport.Transport, path string) 
 }
 
 func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsConfig *tls.Config) error {
-	target, err := url.Parse(os.Args[1])
+	target, err := url.Parse(base)
 	if err != nil {
 		return err
 	}
@@ -145,7 +153,7 @@ func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsC
 		return err
 	}
 	// Consume request stream zero, so every session below has a nonzero ID.
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, os.Args[1]+"/probe", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/probe", nil)
 	if err != nil {
 		return err
 	}
@@ -161,12 +169,12 @@ func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsC
 	if response.StatusCode != http.StatusOK || string(body) != "transport probe\n" {
 		return fmt.Errorf("shared HTTP3 response: %d %q", response.StatusCode, body)
 	}
-	_, first, err := client.Dial(ctx, os.Args[1]+"/wt/ping", nil)
+	_, first, err := client.Dial(ctx, base+"/wt/ping", nil)
 	if err != nil {
 		return err
 	}
 	defer first.CloseWithError(0, "probe complete")
-	_, second, err := client.Dial(ctx, os.Args[1]+"/wt/ping", nil)
+	_, second, err := client.Dial(ctx, base+"/wt/ping", nil)
 	if err != nil {
 		return err
 	}
@@ -206,7 +214,7 @@ func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsC
 	if err := expectPong(ctx, second, "203"); err != nil {
 		return err
 	}
-	_, closing, err := client.Dial(ctx, os.Args[1]+"/wt/close", nil)
+	_, closing, err := client.Dial(ctx, base+"/wt/close", nil)
 	if err != nil {
 		return err
 	}
@@ -223,7 +231,7 @@ func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsC
 	if err := expectPong(ctx, second, "204"); err != nil {
 		return err
 	}
-	_, resetting, err := client.Dial(ctx, os.Args[1]+"/wt/reset", nil)
+	_, resetting, err := client.Dial(ctx, base+"/wt/reset", nil)
 	if err != nil {
 		return err
 	}
