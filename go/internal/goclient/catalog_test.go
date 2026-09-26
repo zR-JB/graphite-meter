@@ -160,8 +160,8 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 	var details *RunDetails
 	doneCount := 0
 	err = runSelected(ctx, cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
-			time.AfterFunc(time.Second, cancel)
+		if e.Kind == EventThroughput {
+			cancel()
 		}
 		if e.Servers != nil {
 			details = e.Servers

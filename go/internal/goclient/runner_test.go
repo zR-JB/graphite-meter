@@ -126,10 +126,12 @@ func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 		TransferStreams:  TransferStreamPolicy{Forced: 1},
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	time.AfterFunc(150*time.Millisecond, cancel)
 	var terminal []Event
 	started := time.Now()
 	err := runDirect(ctx, cfg, func(e Event) {
+		if e.Kind == EventStage && e.Phase == PhaseWarmup {
+			cancel()
+		}
 		if e.Kind == EventDone {
 			terminal = append(terminal, e)
 		}
