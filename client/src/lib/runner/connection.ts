@@ -66,7 +66,7 @@ interface Role extends Job<void> {
 
 const backoff = (): Backoff => ({ attempts: 0, at: 0, signIn: false });
 /** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays Ready. */
-const LIVENESS_MS = 30_000;
+const LIVENESS_MS = 5_000;
 const superseded = () =>
   new DOMException("Connection selection changed", "AbortError");
 
@@ -113,6 +113,7 @@ export class ServerConnection {
   #timer?: ReturnType<typeof setTimeout>;
   #watched = false;
   #closed = false;
+  #quiet = false;
 
   constructor(
     public server: ServerEntry,
@@ -182,6 +183,7 @@ export class ServerConnection {
             ? LIVENESS_MS
             : Infinity,
       signal,
+      due,
     );
     const config = this.config;
     if (!discovery || !config || signal?.aborted || this.#closed) return;
@@ -291,13 +293,15 @@ export class ServerConnection {
   #discover(
     maxAgeMs: number,
     owner?: AbortSignal,
+    quiet = false,
   ): Promise<TransportDiscovery | null> {
     const job = this.#discovering;
     if (job.task && !job.task.signal.aborted) return job.task.promise;
     const known = this.#discovery;
     if (known && !this.#error && epochMs() - known.fetchedAt < maxAgeMs)
       return Promise.resolve(known);
-    this.#error = undefined;
+    this.#quiet = quiet;
+    if (!quiet) this.#error = undefined;
     return this.#job(
       job,
       5000,
@@ -309,6 +313,7 @@ export class ServerConnection {
         const restarted =
           !!previous && previous.generation !== discovery.generation;
         this.#discovery = discovery;
+        this.#error = undefined;
         job.backoff = backoff();
         this.server = {
           ...this.server,
@@ -476,7 +481,7 @@ export class ServerConnection {
     const { config } = this;
     const expired = this.#expired();
     const roles = this.#required();
-    const discovering = !!this.#discovering.task;
+    const discovering = !!this.#discovering.task && !this.#quiet;
     const failed = roles.find(
       (role) => this.#validation[role].state === "failed",
     );

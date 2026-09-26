@@ -83,9 +83,9 @@ With several servers, **Latency server** picks the one probed for latency (defau
 selector.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
-back off (30 s doubling to 5 min, reset when the page or network returns), sign-in failures wait for Sign in or
-Retry. A selected server without idle latency pings re-reads its `/preflight` every 30 s and whenever the page
-returns, so a server that stopped answering shows Failed; an offline device blocks remote servers until it is
+back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or
+Retry. A selected server without idle latency pings quietly re-reads its `/preflight` every 5 s and whenever the
+page returns, so a server that stopped answering shows Failed; an offline device blocks remote servers until it is
 back. Start re-reads every selected server's `/preflight` and rechecks paths older than two minutes; a failed run
 invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit) is shown
 before Start. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish

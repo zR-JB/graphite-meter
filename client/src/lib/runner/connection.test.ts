@@ -222,7 +222,7 @@ test("sign-in is required by a wrapped refusal or an expired grant and never ret
   }
 });
 
-test("a required sign-in yields to the next check; failures back off 30 s then 60 s", async () => {
+test("a required sign-in yields to the next check; failures back off 5 s then 10 s", async () => {
   const clock = spyOn(Date, "now").mockReturnValue(1000);
   let offline = false;
   try {
@@ -245,26 +245,28 @@ test("a required sign-in yields to the next check; failures back off 30 s then 6
       readiness: "failed",
       message: "Connection check failed",
     });
-    expect(connection.dueAt()).toBe(31_000);
+    expect(connection.dueAt()).toBe(6_000);
     await connection.check();
-    expect(connection.dueAt()).toBe(61_000);
+    expect(connection.dueAt()).toBe(11_000);
     connection.resume();
     expect(connection.dueAt()).toBe(0);
     await connection.check();
-    expect(connection.dueAt()).toBe(31_000);
+    expect(connection.dueAt()).toBe(6_000);
   } finally {
     clock.mockRestore();
   }
 });
 
-test("an unmonitored server re-reads discovery, so a peer that died stops being Ready", async () => {
+test("an unmonitored server quietly re-reads discovery, so a peer that died stops being Ready", async () => {
   const clock = spyOn(Date, "now").mockReturnValue(1000);
   let active = false;
   let alive = true;
   let discoveries = 0;
+  const shown: string[] = [];
   try {
     const connection = connect({
       active: () => active,
+      publish: (view) => void shown.push(view.readiness),
       discover: async () => {
         discoveries++;
         if (!alive) throw new TypeError("Failed to fetch");
@@ -274,11 +276,13 @@ test("an unmonitored server re-reads discovery, so a peer that died stops being 
     await connection.check();
     await connection.check({ fresh: true });
     expect([discoveries, connection.view.readiness]).toEqual([2, "verified"]);
-    expect(connection.dueAt()).toBe(31_000);
+    expect(connection.dueAt()).toBe(6_000);
     [alive, active] = [false, true];
-    clock.mockReturnValue(31_000);
+    clock.mockReturnValue(6_000);
+    shown.length = 0;
     connection.wake();
     await until(() => connection.view.readiness === "failed");
+    expect(shown).toEqual(["failed"]);
     expect(connection.view.message).toBe("Connection check failed");
     expect(connection.paths(Infinity)).toBeNull();
     alive = true;

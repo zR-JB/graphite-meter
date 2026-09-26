@@ -591,9 +591,7 @@ export const emptyConnectionValidation = (): ConnectionValidation => ({
 export const CONNECTION_FRESH_MS = 2 * 60_000;
 export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
 export const connectionFailureBackoff = (attempt: number): number =>
-  [30_000, 60_000, 120_000, 240_000, 300_000][
-    Math.max(0, Math.min(attempt - 1, 4))
-  ];
+  Math.min(60_000, 5_000 * 2 ** Math.max(0, attempt - 1));
 
 export const connectionSelection = (
   config: RunnerConfig,
