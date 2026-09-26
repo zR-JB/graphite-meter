@@ -1,7 +1,6 @@
 import { stubGlobals } from "../../test-helpers.testutil";
 import { test, expect, jest, spyOn } from "bun:test";
 import {
-  httpToWs,
   needsPings,
   laneStaggerMs,
   protocolFromNextHop,
@@ -362,16 +361,6 @@ test("clear DNS and IPv4 loopback targets stay usable from HTTPS", () => {
   expect(isLoopbackHostname("[::1]")).toBe(true);
 });
 
-test("httpToWs: maps https:// to wss:// and http:// to ws://", () => {
-  expect(httpToWs("https://example.com:443")).toBe("wss://example.com:443");
-  expect(httpToWs("http://example.com:7246")).toBe("ws://example.com:7246");
-});
-
-test("httpToWs: passes through anything already ws(s):// or relative", () => {
-  expect(httpToWs("wss://example.com")).toBe("wss://example.com");
-  expect(httpToWs("ws://example.com")).toBe("ws://example.com");
-  expect(httpToWs("")).toBe("");
-});
 const activity = (overrides: Partial<PhaseActivity> = {}): PhaseActivity => ({
   stage: "download",
   transfer: ["down"],

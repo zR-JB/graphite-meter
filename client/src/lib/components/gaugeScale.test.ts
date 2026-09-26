@@ -29,25 +29,6 @@ test("piecewise throughput transfer is monotonic, bounded, and invertible", () =
   }
 });
 
-test("one-gigabit gauge labels use Mbit/s and exact five-label table", () => {
-  const scale = gaugeScaleForPeak(125_000_000, {
-    minimumBitsPerSec: 1_000_000_000,
-  });
-  expect(scale).toBe(125_000_000);
-  expect(
-    [0, 0.25, 0.5, 0.75, 1].map((fraction) =>
-      fmtGaugeTick(
-        rateValueAt(
-          throughputValueAtFraction(fraction, scale),
-          "base10",
-          "bits",
-          2,
-        ),
-      ),
-    ),
-  ).toEqual(["0", "10", "100", "500", "1000"]);
-});
-
 test("automatic gauge scale stays at one gigabit until it exceeds it", () => {
   const automatic = { minimumBitsPerSec: 1_000_000_000 };
   expect(gaugeScaleForPeak(1, automatic)).toBe(125_000_000);

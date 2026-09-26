@@ -24,8 +24,9 @@ const activity = (
         : ["down", "up"],
   loadedLatency: false,
 });
-async function until(predicate: () => boolean, ms = 200): Promise<void> {
-  for (let i = 0; i < ms && !predicate(); i++) await Bun.sleep(1);
+/** Stubbed I/O settles on microtasks alone, so no wall time passes. */
+async function until(predicate: () => boolean, turns = 2_000): Promise<void> {
+  for (let i = 0; i < turns && !predicate(); i++) await Promise.resolve();
   expect(predicate()).toBe(true);
 }
 async function settle(predicate: () => boolean): Promise<void> {
@@ -187,7 +188,7 @@ test("HTTP upload lanes start after the receiver feed opens; only receiver evide
   ).toBe("one");
   const feed = h.feeds.get("one")!;
   feed.write({ type: "progress", bytes: 50, nanos: 1e8 });
-  await Bun.sleep(5);
+  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
   stage.measure();
   feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
   feed.write({ type: "progress", bytes: 90, nanos: 3e9 });
@@ -264,6 +265,7 @@ test("upload refusals fail the stage, an unknown id stalls, and one replacement 
 });
 
 test("a quiet feed is backed by same-receiver checkpoints", async () => {
+  jest.useFakeTimers();
   let bytes = 0;
   const h = await http({
     checkpoint: () =>
@@ -274,7 +276,7 @@ test("a quiet feed is backed by same-receiver checkpoints", async () => {
   await h.open(0, "quiet");
   await preparing;
   stage.measure();
-  await until(() => h.receivers.length >= 2, 2_000);
+  await settle(() => h.receivers.length >= 2);
   expect(h.receivers[0]).toMatchObject({
     id: "quiet",
     requestedAtMs: 42,
@@ -477,7 +479,7 @@ test("stage readiness wakes on the first bytes of every download lane", async ()
   void waiting.then(() => (ready = true));
   const [lane] = workers("download");
   lane.emit({ type: "progress", bytes: 0 });
-  await Bun.sleep(5);
+  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
   expect(ready).toBe(false);
   lane.emit({ type: "progress", bytes: 10 });
   await waiting;

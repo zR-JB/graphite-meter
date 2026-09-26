@@ -5,44 +5,29 @@ import {
   INITIAL_RTT_ESTIMATE,
 } from "./rttEstimator";
 
-test("observeRtt: the first sample seeds srtt directly and rttvar to half of it", () => {
-  const est = observeRtt(INITIAL_RTT_ESTIMATE, 100);
-  expect(est).toEqual({ srtt: 100, rttvar: 50, haveRtt: true });
-});
-
-test("observeRtt: a repeated identical RTT holds srtt and decays rttvar", () => {
-  const first = observeRtt(INITIAL_RTT_ESTIMATE, 100);
-  const second = observeRtt(first, 100); // same RTT again: srtt unchanged; 0.875*100 + 0.125*100 = 100.
-  expect(second.srtt).toBeCloseTo(100, 10);
-  // rttvar: 0.75*50 + 0.25*|100-100| = 37.5 (decays toward 0 over repeats)
-  expect(second.rttvar).toBeCloseTo(37.5, 10);
-});
-
-test("observeRtt: an RTT jump moves srtt slowly but spikes rttvar immediately", () => {
+test("the RTT estimate and probe deadline follow RFC 6298 between a floor and a ceiling", () => {
   const warm = observeRtt(INITIAL_RTT_ESTIMATE, 100);
-  const jump = observeRtt(warm, 300);
-  // srtt: 0.875*100 + 0.125*300 = 125
-  expect(jump.srtt).toBeCloseTo(125, 10);
-  // rttvar: 0.75*50 + 0.25*|100-300| = 87.5
-  expect(jump.rttvar).toBeCloseTo(87.5, 10);
-});
-
-test("probeDeadline: before any sample, the floor governs (cold start)", () => {
-  expect(probeDeadline(INITIAL_RTT_ESTIMATE, 4, 250, 10_000)).toBe(250);
-});
-
-test("probeDeadline: RTO = srtt + k*rttvar once warmed", () => {
-  const est = { srtt: 100, rttvar: 20, haveRtt: true };
-  expect(probeDeadline(est, 4, 250, 10_000)).toBe(250); // 180 < floor(250)
-  expect(probeDeadline(est, 4, 50, 10_000)).toBe(180); // 100 + 4*20
-});
-
-test("probeDeadline: rttvar is floored at 1 so a perfectly stable link still has margin", () => {
-  const est = { srtt: 100, rttvar: 0, haveRtt: true };
-  expect(probeDeadline(est, 4, 50, 10_000)).toBe(104); // 100 + 4*max(1,0)
-});
-
-test("probeDeadline: clamps at the ceiling on a pathologically slow/jittery link", () => {
-  const est = { srtt: 50_000, rttvar: 10_000, haveRtt: true };
-  expect(probeDeadline(est, 4, 250, 10_000)).toBe(10_000);
+  expect(warm).toEqual({ srtt: 100, rttvar: 50, haveRtt: true });
+  for (const [rtt, srtt, rttvar] of [
+    [100, 100, 37.5],
+    [300, 125, 87.5],
+  ] as const) {
+    const next = observeRtt(warm, rtt);
+    expect(next.srtt).toBeCloseTo(srtt, 10);
+    expect(next.rttvar).toBeCloseTo(rttvar, 10);
+  }
+  const est = (srtt: number, rttvar: number) => ({
+    srtt,
+    rttvar,
+    haveRtt: true,
+  });
+  for (const [estimate, floor, deadline] of [
+    [INITIAL_RTT_ESTIMATE, 250, 250],
+    [est(100, 20), 250, 250],
+    [est(100, 20), 50, 180],
+    // A perfectly stable link still keeps a 1 ms variance.
+    [est(100, 0), 50, 104],
+    [est(50_000, 10_000), 250, 10_000],
+  ] as const)
+    expect(probeDeadline(estimate, 4, floor, 10_000)).toBe(deadline);
 });

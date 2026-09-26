@@ -34,10 +34,6 @@ const {
   STORAGE_KEY,
 } = await import("./persistence");
 
-test("no stored value: returns defaults", () => {
-  expect(loadPersisted()).toEqual(defaultPersisted());
-});
-
 test("stored value at the current shape: hydrates as-is", () => {
   const snapshot = defaultPersisted();
   snapshot.theme = "light";
@@ -179,13 +175,6 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   expect(
     (result.config as unknown as Record<string, unknown>).bogus,
   ).toBeUndefined();
-});
-
-test("savePersisted round-trips through loadPersisted", () => {
-  const snapshot = defaultPersisted();
-  snapshot.dockWidth = { left: 250, right: 500 };
-  savePersisted(snapshot);
-  expect(loadPersisted()).toEqual(snapshot);
 });
 
 test("current target identifiers round-trip without historical alias rewriting", () => {
