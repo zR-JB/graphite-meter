@@ -1,6 +1,6 @@
 //go:build stress && unix
 
-// The CPU column reads getrusage, so this harness is Unix-only; `mise run stress` is a measurement tool, never part of CI.
+// The CPU column reads getrusage, so this harness is Unix-only; `mise run stress` is a measurement tool, not CI.
 
 package server
 
@@ -33,11 +33,12 @@ func TestSaturationEnvelope(t *testing.T) {
 	h3Base, base, _ := wtServer(t, liftCaps, nil)
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
-	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
+	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); " +
+		"spammers are reply-driven ping chains")
 	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s",
 		"cpu")
 
-	// A second server whose sessions die every few seconds, so one scenario drives the redial and progress-handover paths.
+	// A second server whose sessions die every few seconds drives the redial and progress-handover paths.
 	_, redialBase, _ := wtServer(t, func(c *config.Config) {
 		liftCaps(c)
 		// The session bound may not sit below the request bound, so both drop.

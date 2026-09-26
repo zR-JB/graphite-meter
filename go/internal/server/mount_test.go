@@ -67,7 +67,8 @@ func TestPublicMeasurementCORS(t *testing.T) {
 		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 		mux.ServeHTTP(rec, req)
 		want := map[string]string{"Access-Control-Allow-Origin": "*", "Timing-Allow-Origin": "*",
-			"Access-Control-Expose-Headers": "X-Graphite-Upload-Refusal, Retry-After", "X-Graphite-Upload-Refusal": "invalid"}
+			"Access-Control-Expose-Headers": "X-Graphite-Upload-Refusal, Retry-After",
+			"X-Graphite-Upload-Refusal":     "invalid"}
 		if method == http.MethodOptions {
 			want = map[string]string{"Access-Control-Allow-Origin": "*", "Access-Control-Max-Age": "7200",
 				"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "*"}

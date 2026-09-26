@@ -78,8 +78,9 @@ func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Servers) != 3 || first.Servers[1].URL != "https://example.net" || first.Servers[1].Name != "example.net" ||
-		first.Servers[2].Name != "[::1]:8080" || first.DefaultSelection[0] != "self" {
+	if len(first.Servers) != 3 || first.Servers[1].URL != "https://example.net" ||
+		first.Servers[1].Name != "example.net" || first.Servers[2].Name != "[::1]:8080" ||
+		first.DefaultSelection[0] != "self" {
 		t.Fatalf("catalogue: %+v", first)
 	}
 	t.Setenv("GM_SERVER_CATALOG", `["http://[::1]:8080", "https://example.net/"]`)

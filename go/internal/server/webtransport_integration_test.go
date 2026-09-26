@@ -390,7 +390,7 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	// A second's worth of accepting has passed, so a session that was going to be torn down has been.
 	select {
 	case <-sess.Context().Done():
-		t.Fatal("verify session closed instead of lingering: its answer is the handshake, and the client is what closes it")
+		t.Fatal("verify session closed instead of lingering: its answer is the handshake, and the client closes it")
 	default:
 	}
 }
@@ -538,7 +538,7 @@ func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
 	for {
 		if _, err := lane.Write(block); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				t.Fatal("a refused upload lane was left open: the client parked on flow control instead of seeing the reset that is the only refusal a byte stream can carry")
+				t.Fatal("a refused upload lane was left open: the client parked on flow control instead of seeing the reset")
 			}
 			return
 		}
@@ -951,10 +951,10 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	if !closed {
-		t.Fatal("the stage never reported a throughput sample, so the session budget was never shut and nothing was tested")
+		t.Fatal("the stage never reported a throughput sample, so the session budget was never shut")
 	}
 	if err == nil {
-		t.Fatal("a download whose session was refused for the rest of its window returned no error: the shortfall is being published as a rate")
+		t.Fatal("a download refused for the rest of its window returned no error: the shortfall became a rate")
 	}
 	const want = "webtransport session lost and not replaced within 2s"
 	if !strings.Contains(err.Error(), want) {
@@ -1065,7 +1065,8 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 
 	observed := up.observed()
 	if len(observed) != 1 {
-		t.Fatalf("a reset lane cost the stage %d WebTransport sessions, want 1: replacing the session stops every sibling lane mid-transfer to serve the retry of the one that faulted", len(observed))
+		t.Fatalf("a reset lane cost the stage %d WebTransport sessions, want 1: a new session stops every sibling lane",
+			len(observed))
 	}
 	// The reset lane reopened on that same session: the original lanes plus at least one replacement.
 	if observed[0].lanes < lanes+1 {

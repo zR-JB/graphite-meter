@@ -21,7 +21,8 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	rr := preflight("/download", s.origin, http.MethodGet, "authorization,x-csrf-token", true)
 	if rr.Code != http.StatusNoContent || rr.Header().Get("Access-Control-Allow-Origin") != s.origin ||
-		rr.Header().Get("Access-Control-Allow-Credentials") != "true" || rr.Header().Get("Access-Control-Max-Age") != "7200" ||
+		rr.Header().Get("Access-Control-Allow-Credentials") != "true" ||
+		rr.Header().Get("Access-Control-Max-Age") != "7200" ||
 		!strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "X-Graphite-Upload-Refusal") {
 		t.Fatalf("valid preflight code=%d headers=%v", rr.Code, rr.Header())
 	}

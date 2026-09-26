@@ -122,7 +122,7 @@ func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
 	}
 }
 
-// An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server must advertise the larger windows.
+// An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server advertises larger ones.
 func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
 	srv.Config = baseServer(http.NotFoundHandler(), nil)
@@ -197,7 +197,8 @@ func TestListenerTopologies(t *testing.T) {
 		{"h2", muxTopology{transfers: true, requiredProto: 2}, 2,
 			[]string{"/probe", "/download?bytes=1", "/upload/session", "/upload", "/upload/progress"},
 			[]string{"/", "/assets/app.js", "/preflight", "/ws/ping"}},
-		{"h2 over h1", muxTopology{transfers: true, requiredProto: 2}, 1, nil, []string{"/download?bytes=1", "/ws/ping"}},
+		{"h2 over h1", muxTopology{transfers: true, requiredProto: 2}, 1, nil,
+			[]string{"/download?bytes=1", "/ws/ping"}},
 		{"h3", muxTopology{transfers: true}, 3, []string{"/upload/progress?id=unknown"}, nil},
 		{"h3 bootstrap", muxTopology{bootstrap: true}, 1, []string{"/probe"},
 			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"}},
@@ -250,8 +251,9 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 			}
 			_, _ = io.Copy(io.Discard, res.Body)
 			// The FIN precedes the server's lingering close, so it arrives with the drain deadline.
-			if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) || time.Since(sent) > 450*time.Millisecond {
-				t.Fatalf("answered %d, then the connection stayed open for %v: %v", res.StatusCode, time.Since(sent), err)
+			_, err = conn.Read(make([]byte, 1))
+			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 450*time.Millisecond {
+				t.Fatalf("answered %d, then the connection stayed open for %v: %v", res.StatusCode, open, err)
 			}
 		})
 	}

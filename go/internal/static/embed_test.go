@@ -85,7 +85,8 @@ func TestHandlerMethods(t *testing.T) {
 				head.Header().Get("Content-Length"), get.Header().Get("Content-Length"))
 		}
 	}
-	if rr := serve(h, http.MethodPost, "/"); rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != "GET, HEAD" {
+	rr := serve(h, http.MethodPost, "/")
+	if rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != "GET, HEAD" {
 		t.Fatalf("POST / = %d Allow %q, want 405 GET, HEAD", rr.Code, rr.Header().Get("Allow"))
 	}
 }
@@ -122,7 +123,8 @@ func TestScriptCSPHash(t *testing.T) {
 		`document.documentElement.setAttribute("data-theme",r)}catch(c){}var e,t,r;`
 	for html, want := range map[string]string{
 		`<!doctype html><head><style>x</style> <script>` + inline +
-			`</script> <script type="module" src="/assets/app.js"></script></head>`: "i18M9x6p8PNJSBUDdO2pX/7us3FTrwpVfsQ1eUfPYqw=",
+			`</script> <script type="module" src="/assets/app.js"></script></head>`: //
+		"i18M9x6p8PNJSBUDdO2pX/7us3FTrwpVfsQ1eUfPYqw=",
 		`<html><body>no scripts</body></html>`: "",
 		`<script src="/a.js"></script>`:        "",
 	} {

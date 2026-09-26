@@ -213,8 +213,10 @@ func (c *Config) settings() []setting {
 			"public `origin` of the native clear HTTP/1.1 listener", &c.NativePublic.H1),
 		text("GM_H1_TLS_PUBLIC_ORIGIN", "h1-tls-public-origin",
 			"public `origin` of the native HTTPS HTTP/1.1 listener", &c.NativePublic.H1TLS),
-		text("GM_H2_PUBLIC_ORIGIN", "h2-public-origin", "public `origin` of the native HTTP/2 listener", &c.NativePublic.H2),
-		text("GM_H3_PUBLIC_ORIGIN", "h3-public-origin", "public `origin` of the native HTTP/3 listener", &c.NativePublic.H3),
+		text("GM_H2_PUBLIC_ORIGIN", "h2-public-origin",
+			"public `origin` of the native HTTP/2 listener", &c.NativePublic.H2),
+		text("GM_H3_PUBLIC_ORIGIN", "h3-public-origin",
+			"public `origin` of the native HTTP/3 listener", &c.NativePublic.H3),
 		field("GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints",
 			"all, none, or comma-separated native endpoint `names`", &c.AdvertisedNative, parseAdvertisedNative, true),
 		list("GM_PUBLIC_ORIGINS", "public-origins",
@@ -233,7 +235,8 @@ func (c *Config) settings() []setting {
 		number("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "max-active-measurements-per-client",
 			"maximum `number` of concurrent measurement handlers per client", &c.MaxActiveMeasurementsPerClient),
 		number("GM_MAX_ACTIVE_SESSIONS", "max-active-sessions",
-			"maximum `number` of concurrent WebTransport sessions, a share of the measurement pool", &c.MaxActiveSessions),
+			"maximum `number` of concurrent WebTransport sessions, a share of the measurement pool",
+			&c.MaxActiveSessions),
 		number("GM_MAX_SESSIONS_PER_CLIENT", "max-sessions-per-client",
 			"maximum `number` of concurrent WebTransport sessions per client", &c.MaxSessionsPerClient),
 		number("GM_MAX_CONNECTIONS", "max-connections",
@@ -364,7 +367,8 @@ func (c Config) Validate() error {
 			return err
 		}
 	}
-	for _, check := range []func() error{c.validateAuth, c.validateLimits, c.validateListeners, c.validatePublicOrigins} {
+	checks := []func() error{c.validateAuth, c.validateLimits, c.validateListeners, c.validatePublicOrigins}
+	for _, check := range checks {
 		if err := check(); err != nil {
 			return err
 		}
@@ -523,7 +527,8 @@ func (a AuthConfig) validateSecrets() error {
 		return errors.New("password hash configured while password authentication is disabled")
 	case wantsOIDC && (a.OIDCIssuer == "" || a.OIDCClientID == "" || len(a.OIDCAllowedGroups) == 0 ||
 		a.OIDCClientSecret == "" && a.OIDCSecretFile == ""):
-		return errors.New("OIDC authentication requires issuer, client ID, one client secret source, and allowed groups")
+		return errors.New(
+			"OIDC authentication requires issuer, client ID, one client secret source, and allowed groups")
 	case !wantsOIDC && a.oidcConfigured():
 		return errors.New("OIDC settings configured while OIDC authentication is disabled")
 	}
@@ -541,7 +546,8 @@ func (a AuthConfig) validateSecrets() error {
 
 func validOIDCIssuer(raw string) bool {
 	u, err := url.Parse(raw)
-	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" && u.Fragment == ""
+	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil && u.RawQuery == "" &&
+		u.Fragment == ""
 }
 
 func (c Config) validateAdvertisedAuthOrigins(hostname string) error {

@@ -95,7 +95,8 @@ func TestExplicitDefaultAuthSettingRejectedWhenOff(t *testing.T) {
 
 func passwordAuth(c *Config) {
 	c.AdvertisedNative = map[string]bool{}
-	c.Auth = AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: "hash", OIDCProviderName: "Authelia"}
+	c.Auth = AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: "hash",
+		OIDCProviderName: "Authelia"}
 	c.Public.Throughput = []string{"https://meter.example"}
 }
 
@@ -109,7 +110,9 @@ func TestValidate(t *testing.T) {
 		{"proxy only", "", func(c *Config) { c.AdvertisedNative, c.Public.Both = map[string]bool{}, []string{"self"} }},
 		{"equal session budgets", "", func(c *Config) { c.MaxActiveSessions, c.MaxSessionsPerClient = 8, 8 }},
 		{"password auth", "", passwordAuth},
-		{"disabled advertisement", "disabled endpoint", func(c *Config) { c.AdvertisedNative = map[string]bool{NativeH2: true} }},
+		{"disabled advertisement", "disabled endpoint", func(c *Config) {
+			c.AdvertisedNative = map[string]bool{NativeH2: true}
+		}},
 		{"no throughput", "no throughput", func(c *Config) {
 			c.AdvertisedNative, c.Public.Latency = map[string]bool{}, []string{"self"}
 		}},
@@ -147,7 +150,10 @@ func TestValidate(t *testing.T) {
 			passwordAuth(c)
 			c.Auth.PublicURL = "https://meter.example:443"
 		}},
-		{"two password sources", "mutually exclusive", func(c *Config) { passwordAuth(c); c.Auth.PasswordHashFile = "/secret" }},
+		{"two password sources", "mutually exclusive", func(c *Config) {
+			passwordAuth(c)
+			c.Auth.PasswordHashFile = "/secret"
+		}},
 		{"clear listener advertised", "clear HTTP/1.1", func(c *Config) { passwordAuth(c); c.AdvertisedNative = nil }},
 		{"alternate hostname", "canonical authentication hostname", func(c *Config) {
 			passwordAuth(c)
