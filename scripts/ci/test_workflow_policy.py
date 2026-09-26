@@ -173,7 +173,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             (zizmor, "persist-credentials: false", "fetch-depth: 1", "artipacked"),
             (zizmor, "on:\n", "on:\n  pull_request_target:\n", "dangerous-triggers"),
             (("actionlint", "-shellcheck=", "-pyflakes=", W + "ci.yml"),
-             "needs.plan.outputs.core ==", "needs.plan.outputs.missing ==", "missing"),
+             "needs.plan.outputs.code ==", "needs.plan.outputs.missing ==", "missing"),
         ):
             if shutil.which(command[0]) is None:
                 self.fail(f"{command[0]} must be on PATH; run through mise run pipeline-test")

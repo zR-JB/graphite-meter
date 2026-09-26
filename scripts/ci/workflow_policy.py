@@ -85,9 +85,8 @@ FORBIDDEN = {
 }
 PATH_FILTERS = {
     "go": ("api/**", "client/src/auth/**", "client/src/app.css"),
-    "smoke": (".dockerignore",),
-    "release": (".dockerignore",),
-    "security": ("client/package.json", "client/bun.lock", "client/bunfig.toml"),
+    "code": (".dockerignore",),
+    "deps": ("client/package.json", "client/bun.lock", "client/bunfig.toml"),
 }
 
 

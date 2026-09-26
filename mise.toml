@@ -355,20 +355,6 @@ sys.exit(1 if rules else 0)
 PY
 '''
 
-[tasks.tui-cross-build]
-description = "Build every supported native TUI target"
-run = '''
-#!/usr/bin/env sh
-set -eu
-while IFS= read -r target; do
-  [ -n "$target" ] || continue
-  goos=${target%/*}
-  goarch=${target#*/}
-  echo "building ${goos}/${goarch}"
-  (cd go && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -o /dev/null ./cmd/graphite-meter-client)
-done < scripts/tui-targets.txt
-'''
-
 [tasks.bench-servers]
 description = "Measure one, two, and four real servers in isolated Linux network namespaces (manual)"
 run = [
@@ -432,7 +418,6 @@ run = [
   { task = "client-audit" },
   { task = "secret-scan-ci" },
   { task = "e2e" },
-  { task = "tui-cross-build" },
   { task = "release-check" },
   { task = "container-smoke" },
 ]

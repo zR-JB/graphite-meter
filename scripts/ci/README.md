@@ -26,7 +26,6 @@ narrow PR runs only; every push to main runs every job.
 | `plan` | `workflow-check`, `pipeline-test` |
 | `core` | `legal-check`, `core-check` |
 | `go` | `server-race` |
-| `tui` | `tui-cross-build` |
 | `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |
 | `smoke` | `container-smoke` |
 | `release` | `release-check` |

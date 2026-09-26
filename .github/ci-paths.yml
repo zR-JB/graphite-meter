@@ -9,13 +9,14 @@ workflow: &workflow
   - 'go/go.mod'
   - 'go/go.sum'
 
-core:
+code:
   - *workflow
   - 'api/**'
   - 'client/**'
   - 'go/**'
   - 'legal/**'
   - 'container/**'
+  - '.dockerignore'
   - 'LICENSE'
   - 'COPYRIGHT'
 
@@ -26,40 +27,7 @@ go:
   - 'client/src/auth/**'
   - 'client/src/app.css'
 
-tui:
-  - *workflow
-  - 'go/**'
-
-e2e:
-  - *workflow
-  - 'api/**'
-  - 'client/**'
-  - 'go/**'
-  - 'container/**'
-
-smoke:
-  - *workflow
-  - 'api/**'
-  - 'client/**'
-  - 'go/**'
-  - 'container/**'
-  - '.dockerignore'
-  - 'legal/**'
-  - 'LICENSE'
-  - 'COPYRIGHT'
-
-release:
-  - *workflow
-  - 'api/**'
-  - 'client/**'
-  - 'go/**'
-  - 'legal/**'
-  - 'container/**'
-  - '.dockerignore'
-  - 'LICENSE'
-  - 'COPYRIGHT'
-
-security:
+deps:
   - *workflow
   - 'go/**'
   - 'client/package.json'
