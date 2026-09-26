@@ -10,10 +10,11 @@ import re
 import stat
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import ControlPlaneError, decode_json
+from github_api import ControlPlaneError, confined_path, decode_json
 from precommit import TLS_NAME
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
@@ -205,12 +206,18 @@ def verify(version: str, dist: Path) -> None:
     print(f"release asset verification passed: {version}")
 
 
+def release_dist() -> Path:
+    """RELEASE_DIST, which must lie in the checkout or a temporary directory."""
+    roots = (os.getcwd(), tempfile.gettempdir(), os.environ.get("RUNNER_TEMP") or os.getcwd())
+    return confined_path(os.environ.get("RELEASE_DIST", "go/dist"), *roots)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
     version = parser.parse_args().version
     try:
-        verify(version, Path(os.environ.get("RELEASE_DIST", "go/dist")))
+        verify(version, release_dist())
     except (ControlPlaneError, OSError) as exc:
         raise SystemExit(f"release verification failed: {exc}") from exc
 

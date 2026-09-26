@@ -31,9 +31,11 @@ from verify_oci import (
     validate_index_descriptors,
     verify as verify_oci,
 )
+from github_api import ControlPlaneError
 from verify_release_assets import (
     VerificationError,
     archive_names,
+    release_dist,
     tui_archives,
     verify_artifacts,
     verify_checksums,
@@ -191,6 +193,17 @@ class ReleaseAssetTests(unittest.TestCase):
         verify_server_version("1.2.3")
         with self.assertRaisesRegex(VerificationError, "expected '1.2.4'"):
             verify_server_version("1.2.4")
+
+    def test_release_dist_stays_in_the_checkout_or_a_temporary_directory(self) -> None:
+        with patch.dict(os.environ, {"RELEASE_DIST": str(self.dist / "dist")}):
+            self.assertEqual(release_dist(), self.dist.resolve() / "dist")
+        with patch.dict(os.environ):
+            os.environ.pop("RELEASE_DIST", None)
+            self.assertEqual(release_dist(), Path("go/dist").resolve())
+        for outside in ("/", "/etc/../usr/bin"):
+            with (self.subTest(outside=outside), patch.dict(os.environ, {"RELEASE_DIST": outside}),
+                  self.assertRaisesRegex(ControlPlaneError, "is outside")):
+                release_dist()
 
 
 class OCITests(unittest.TestCase):
