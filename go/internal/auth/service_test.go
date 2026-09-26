@@ -312,21 +312,23 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 	s.SetConnectOrigins([]string{
 		"https://[2001:db8::1]:7248", "wss://[2001:db8::1]:7247", "https://meter.example:*", "wss://meter.example:*",
 	})
-	raw, _, _ := s.createSession("subject", "Name", "local")
-	rr := httptest.NewRecorder()
-	s.Enforce(statusHandler(http.StatusOK), Listener{UI: true}).ServeHTTP(rr,
-		withSessionCookie(secureRequest(http.MethodGet, "/", nil), raw))
-	policy := rr.Header().Get("Content-Security-Policy")
+	policy := s.PagePolicy()
 	for _, want := range []string{
 		"default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
 		"form-action 'self'", "connect-src 'self' https://meter.example:* wss://meter.example:*",
 	} {
-		if !strings.Contains(policy, want) {
-			t.Fatalf("CSP missing %q: %s", want, policy)
+		if !strings.Contains(policy, want) || strings.Contains(policy, "[") {
+			t.Fatalf("page policy missing %q or holding an IPv6 literal: %s", want, policy)
 		}
 	}
-	if strings.Contains(policy, "[") || rr.Header().Get("Strict-Transport-Security") == "" ||
-		rr.Header().Get("X-Frame-Options") != "DENY" || rr.Header().Get("Referrer-Policy") != "same-origin" {
+	// A measurement answer is no page, so it carries transport hardening without the page's policy.
+	raw, _, _ := s.createSession("subject", "Name", "local")
+	r := withSessionCookie(secureRequest(http.MethodGet, "/download", nil), raw)
+	r.Header.Set("Origin", "https://meter.example")
+	rr := httptest.NewRecorder()
+	s.Enforce(statusHandler(http.StatusOK), Listener{UI: true}).ServeHTTP(rr, r)
+	if rr.Code != http.StatusOK || rr.Header().Get("Strict-Transport-Security") == "" || rr.Header().Get("Referrer-Policy") != "same-origin" ||
+		rr.Header().Get("Content-Security-Policy") != "" || rr.Header().Get("X-Frame-Options") != "" {
 		t.Fatalf("headers=%v", rr.Header())
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
@@ -58,11 +57,10 @@ func equalHost(a, b string) bool {
 }
 
 func requestHostname(host string) string {
-	u, err := url.Parse("//" + host)
-	if err != nil {
-		return ""
+	if name, _, err := net.SplitHostPort(host); err == nil {
+		return name
 	}
-	return u.Hostname()
+	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 }
 
 // ClientKeys keys every per-client budget: a principal is one key, an address its transport.AddressKeys.

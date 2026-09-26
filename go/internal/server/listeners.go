@@ -175,20 +175,21 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	}
 	e := buildEndpoints(ctx, cfg)
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
-	var spa http.Handler
 	if authn.Enabled() {
-		spa = static.Handler(true, cfg.ResultHistoryDefault)
 		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
 			cfg.ServerCatalog.ConnectSources()))
-	} else {
-		page := static.Handler(false, cfg.ResultHistoryDefault)
-		spa = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy", e.discovery.PagePolicy(endpoint.RequestHost(r)))
-			w.Header().Set("X-Frame-Options", "DENY")
-			auth.HardeningHeaders(w.Header())
-			page.ServeHTTP(w, r)
-		})
 	}
+	page := static.Handler(authn.Enabled(), cfg.ResultHistoryDefault)
+	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		policy := authn.PagePolicy()
+		if policy == "" {
+			policy = e.discovery.PagePolicy(endpoint.RequestHost(r))
+		}
+		w.Header().Set("Content-Security-Policy", policy)
+		w.Header().Set("X-Frame-Options", "DENY")
+		auth.HardeningHeaders(w.Header())
+		page.ServeHTTP(w, r)
+	})
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}

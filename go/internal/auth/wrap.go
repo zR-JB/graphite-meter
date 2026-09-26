@@ -46,7 +46,8 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			return
 		}
 		if t.Secure {
-			s.authenticatedSecurityHeaders(w.Header())
+			w.Header().Set("Strict-Transport-Security", hstsThisHostOnly)
+			HardeningHeaders(w.Header())
 		}
 		if r.Method == http.MethodOptions && (isMeasurementRoute(r.URL.Path) || r.URL.Path == "/auth/browser/token") {
 			s.corsPreflight(w, r, t)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -61,7 +62,7 @@ type Service struct {
 	oidc             *oidcState
 	verbose          bool
 	counters         [counters]atomic.Uint64
-	connectSources   []string
+	pagePolicy       string
 }
 
 func authModes(mode string) (password, oidc bool) {
@@ -69,10 +70,13 @@ func authModes(mode string) (password, oidc bool) {
 }
 
 func (s *Service) SetConnectOrigins(origins []string) {
-	s.connectSources = slices.DeleteFunc(slices.Clone(origins), func(origin string) bool {
+	s.pagePolicy = static.PagePolicy(slices.DeleteFunc(slices.Clone(origins), func(origin string) bool {
 		return !wire.BrowserConnectSourceSupported(origin)
-	})
+	}))
 }
+
+// PagePolicy is the client shell's policy under authentication, or "" in public mode.
+func (s *Service) PagePolicy() string { return s.pagePolicy }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {
 	s := &Service{

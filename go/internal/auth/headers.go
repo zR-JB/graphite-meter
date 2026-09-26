@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
 
 const (
@@ -53,13 +52,6 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 	if s.oidc != nil {
 		h.Set("Content-Security-Policy", authPageCSP(s.oidc.authorizationOrigin()))
 	}
-}
-
-func (s *Service) authenticatedSecurityHeaders(h http.Header) {
-	h.Set("Strict-Transport-Security", hstsThisHostOnly)
-	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", static.PagePolicy(s.connectSources))
-	HardeningHeaders(h)
 }
 
 // ServePreflight answers every measurement route's CORS preflight; Enforce sends authenticated ones here first.
