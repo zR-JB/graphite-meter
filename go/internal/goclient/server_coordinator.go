@@ -75,8 +75,11 @@ type coordinator struct {
 var errNoSurvivors = errors.New("all selected servers failed")
 
 const (
+	sampleInterval        = 250 * time.Millisecond
 	checkpointBudget      = 1500 * time.Millisecond
 	finalCheckpointBudget = 500 * time.Millisecond
+	// A longer gap between sampled boundaries means the client itself stalled.
+	maximumBoundaryGap = sampleInterval + checkpointBudget
 )
 
 var errHandover = errors.New("stage handed over")
@@ -467,7 +470,7 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan, handover bool)
 				close(start)
 				timer.Reset(time.Until(started.Add(stage.Duration)))
 				if transfer {
-					ticker := time.NewTicker(250 * time.Millisecond)
+					ticker := time.NewTicker(sampleInterval)
 					defer ticker.Stop()
 					tick = ticker.C
 					sampling.begin(started, initial)
@@ -609,10 +612,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 		s.capture(s.ending)
 		return false, nil
 	}
-	if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
-		c.emitRates(s.stage, window)
-	}
-	removed := false
+	removed, stalled := false, false
 	for _, server := range servers {
 		if server.removed {
 			continue
@@ -630,16 +630,24 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 			bytes.up = sample.boundary.observedUp[id].maximum
 		}
 		for _, dir := range s.stage.Directions {
-			if dir == Down && bytes.down > s.lastBytes[id].down || dir == Up && bytes.up > s.lastBytes[id].up {
+			switch {
+			case bytes.of(dir) > s.lastBytes[id].of(dir):
 				s.lastMovement[id][dir] = time.Now()
-			} else if !s.ending && time.Since(s.lastMovement[id][dir]) >= redialWindow {
-				stalled := fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow)
-				c.failure(server, s.stage, string(dir), stalled, time.Now())
+			case sample.final:
+				stalled = true
+			case !s.ending && time.Since(s.lastMovement[id][dir]) >= redialWindow:
+				err := fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow)
+				c.failure(server, s.stage, string(dir), err, time.Now())
 				removed = true
-				break
 			}
 		}
 		s.lastBytes[id] = bytes
+	}
+	// A final boundary where a direction stood still ends the result at the last good boundary.
+	if stalled {
+		c.aggregate.ledger(sample.boundary)
+	} else if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
+		c.emitRates(s.stage, window)
 	}
 	switch {
 	case len(c.ids()) == 0:

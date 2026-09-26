@@ -332,6 +332,46 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	}
 }
 
+func TestAClientStallResumesEvidence(t *testing.T) {
+	t.Parallel()
+	var a aggregateMeasurements
+	a.begin(StageDownload, []string{"a"}, 0, "stage-start")
+	for _, at := range []int{0, 250, 500, 2500, 2750, 3000} {
+		a.observe(nativeBoundary(at, map[string]uint64{"a": uint64(at)}, nil))
+	}
+	if len(a.intervals) != 2 || a.intervals[0].Complete || a.intervals[0].End != 500*time.Millisecond ||
+		a.intervals[1].Reason != "evidence-resumed" || a.intervals[1].Start != 2500*time.Millisecond {
+		t.Fatalf("a %v gap between boundaries stayed in one window: %+v", 2*time.Second, a.intervals)
+	}
+}
+
+func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {
+	t.Parallel()
+	for _, moved := range []uint64{0, 100} {
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
+		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
+		initial := nativeBoundary(0, map[string]uint64{"a": 0}, nil)
+		co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+		co.aggregate.observe(initial)
+		s := &sampler{c: co, stage: stage}
+		s.begin(time.Now(), initial)
+		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
+		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 1000}, nil)}, own)
+		final := sampledBoundary{boundary: nativeBoundary(1250, map[string]uint64{"a": 1000 + moved}, nil), final: true}
+		if done, err := s.observe(final, own); !done || err != nil {
+			t.Fatalf("final boundary did not end the stage: %v %v", done, err)
+		}
+		want := 1250 * time.Millisecond
+		if moved == 0 {
+			want = time.Second
+		}
+		if end := co.aggregate.current().End; end != want || p.removed {
+			t.Errorf("moved %d: window ends at %v (removed %v), want %v", moved, end, p.removed, want)
+		}
+	}
+}
+
 func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	t.Parallel()
 	p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}

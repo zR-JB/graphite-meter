@@ -88,6 +88,7 @@ type aggregateMeasurements struct {
 	uploads               map[string]uploadLedger
 	downSeen              map[string]uint64
 	stage                 Stage
+	seen                  time.Duration
 }
 
 func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duration, reason string) {
@@ -185,6 +186,10 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 		return nil, false
 	}
 	a.ledger(b)
+	if a.first != nil && b.at-a.seen > maximumBoundaryGap {
+		return nil, a.restart(interval, b)
+	}
+	a.seen = b.at
 	if len(interval.Participants) == 0 || slices.ContainsFunc(interval.Participants, func(id string) bool {
 		_, down := b.down[id]
 		return interval.Stage != StageUpload && !down || interval.Stage != StageDownload && b.up[id] == nil
@@ -203,10 +208,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 	}
 	full, fullErr := aggregateWindow(*a.first, b, *interval)
 	if err != nil || fullErr != nil {
-		interval.Complete = false
-		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
-		a.observe(b)
-		return nil, true
+		return nil, a.restart(interval, b)
 	}
 	a.last = new(b)
 	interval.End = b.at
@@ -229,6 +231,13 @@ func (w *AggregateWindow) shortest() time.Duration {
 		span = min(span, c.Duration)
 	}
 	return span
+}
+
+func (a *aggregateMeasurements) restart(interval *AggregationInterval, b measurementBoundary) bool {
+	interval.Complete = false
+	a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
+	a.observe(b)
+	return true
 }
 
 func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {
