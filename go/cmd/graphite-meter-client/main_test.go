@@ -183,11 +183,11 @@ func TestRowActivation(t *testing.T) {
 	}{
 		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, true},
 		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, true},
-		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == rowDownloadDuration }, false},
+		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == sections[1].rows[7] }, false},
 		{2, 0, func(m model) bool { return m.cfg.PingInterval == 600*time.Millisecond }, true},
 		{2, 1, func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
 		{2, 3, func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
-		{0, 0, func(m model) bool { return m.edit != nil && m.edit.row == rowCatalogue }, false},
+		{0, 0, func(m model) bool { return m.edit != nil && m.edit.row == catalogueRow }, false},
 	} {
 		m := testModel(t)
 		m.section, m.row = c.section, c.row
@@ -196,7 +196,7 @@ func TestRowActivation(t *testing.T) {
 		if !c.check(m) || (m.prepareSeq != seq) != c.recheck || c.recheck && cmd == nil {
 			t.Errorf(
 				"%s: config=%+v edit=%v rechecked=%v",
-				m.setupRow(sections[c.section].rows[c.row]).label,
+				sections[c.section].rows[c.row].row(m).label,
 				m.cfg,
 				m.edit != nil,
 				m.prepareSeq != seq,
@@ -208,51 +208,51 @@ func TestRowActivation(t *testing.T) {
 func TestCommitEdit(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
-		row     rowID
+		row     *setting
 		forced  bool
 		typed   string
 		check   func(goclient.Config) bool
 		wantErr string
 	}{
 		{
-			rowCatalogue,
+			catalogueRow,
 			false,
 			"meter.example:8443/",
 			func(c goclient.Config) bool { return c.BaseURL == "http://meter.example:8443" },
 			"",
 		},
 		{
-			rowCatalogue,
+			catalogueRow,
 			false,
 			"https://METER.example",
 			func(c goclient.Config) bool { return c.BaseURL == "https://meter.example" },
 			"",
 		},
-		{rowCatalogue, false, "ftp://meter.example", nil, "http:// or https://"},
-		{rowWarmup, false, "0", func(c goclient.Config) bool { return c.Warmup == 0 }, ""},
+		{catalogueRow, false, "ftp://meter.example", nil, "http:// or https://"},
+		{warmupRow, false, "0", func(c goclient.Config) bool { return c.Warmup == 0 }, ""},
 		{
-			rowDownloadDuration,
+			sections[1].rows[7],
 			false,
 			"12",
 			func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second },
 			"",
 		},
 		{
-			rowDownloadDuration,
+			sections[1].rows[7],
 			false,
 			"1.5m",
 			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
 			"",
 		},
-		{rowUploadDuration, false, "0", nil, "greater than zero"},
-		{rowUploadDuration, false, "soon", nil, "duration like"},
-		{rowStreams, false, "8", func(c goclient.Config) bool {
+		{sections[1].rows[8], false, "0", nil, "greater than zero"},
+		{sections[1].rows[8], false, "soon", nil, "duration like"},
+		{streamsRow, false, "8", func(c goclient.Config) bool {
 			return c.TransferStreams == goclient.TransferStreamPolicy{AutomaticMax: 8}
 		}, ""},
-		{rowStreams, true, "9", func(c goclient.Config) bool {
+		{streamsRow, true, "9", func(c goclient.Config) bool {
 			return c.TransferStreams.Forced == 9 && c.TransferStreams.AutomaticMax == 6
 		}, ""},
-		{rowStreams, false, "129", nil, "1 to 128"},
+		{streamsRow, false, "129", nil, "1 to 128"},
 	} {
 		m := testModel(t)
 		if c.forced {
@@ -278,13 +278,13 @@ func TestCommitEdit(t *testing.T) {
 func TestEditKeysDiscardAndQuit(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.beginEdit(rowCatalogue, m.cfg.BaseURL)
+	m.beginEdit(catalogueRow, m.cfg.BaseURL)
 	m, _ = modelAndCmd(m.Update(press("x")))
 	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil ||
 		m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
 		t.Fatal("esc applied the edit")
 	}
-	m.beginEdit(rowCatalogue, "")
+	m.beginEdit(catalogueRow, "")
 	if m, cmd := modelAndCmd(m.Update(press("q"))); quits(cmd) || m.edit.input.Value() != "q" {
 		t.Fatal("q left the editor")
 	}

@@ -152,12 +152,12 @@ func (m model) tabBar(w int) string {
 func (m model) sectionView(w int) string {
 	rows := sections[m.section].rows
 	labelWidth := 0
-	for _, id := range rows {
-		labelWidth = max(labelWidth, len(m.setupRow(id).label))
+	for _, s := range rows {
+		labelWidth = max(labelWidth, len(s.row(m).label))
 	}
 	var lines []string
-	for i, id := range rows {
-		row := m.setupRow(id)
+	for i, s := range rows {
+		row := s.row(m)
 		value := m.st.value.Render(row.value)
 		if row.inert {
 			value = m.st.muted.Render(row.value)
@@ -280,7 +280,7 @@ func (m model) editView() (string, string) {
 	if m.edit.err != "" {
 		note = m.st.err.Render(m.edit.err)
 	}
-	return m.setupRow(m.edit.row).label, m.edit.input.View() + "\n" + note
+	return m.edit.row.row(m).label, m.edit.input.View() + "\n" + note
 }
 
 func (m model) runView(w, h int) string {

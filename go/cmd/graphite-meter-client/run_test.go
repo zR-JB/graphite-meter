@@ -67,7 +67,7 @@ func TestQuitAndShutdownCancelOwnedWork(t *testing.T) {
 		m := newModel(goclient.DefaultConfig())
 		preparation := m.preparation
 		if editing {
-			m.beginEdit(rowCatalogue, m.cfg.BaseURL)
+			m.beginEdit(catalogueRow, m.cfg.BaseURL)
 		}
 		if _, cmd := modelAndCmd(m.Update(press("ctrl+c"))); !quits(cmd) {
 			t.Fatal("ctrl+c did not quit")
@@ -520,8 +520,8 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 			t.Errorf("plan lost %q: %q", want, plan)
 		}
 	}
-	if !m.canUseAvailable() || !strings.Contains(m.setupRow(rowServers).note, "1 of 3 ready") {
-		t.Fatalf("available servers not offered: %q", m.setupRow(rowServers).note)
+	if !m.canUseAvailable() || !strings.Contains(serversRow.row(m).note, "1 of 3 ready") {
+		t.Fatalf("available servers not offered: %q", serversRow.row(m).note)
 	}
 	m, _ = modelAndCmd(m.Update(press("u")))
 	if m.notice == "" {
@@ -590,7 +590,7 @@ func TestViewFitsTheTerminal(t *testing.T) {
 		}
 		run.popup = popupDetails
 		frames["details"] = view(run)
-		setup.beginEdit(rowCatalogue, setup.cfg.BaseURL)
+		setup.beginEdit(catalogueRow, setup.cfg.BaseURL)
 		frames["edit"] = view(setup)
 		setup.edit = nil
 		setup.auth = &signIn{pending: &goclient.PendingAuthorization{Code: "ABCD", BrowserURL: "https://x/" +
