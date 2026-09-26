@@ -173,5 +173,22 @@
       {"reason": "dropout", "complete": true,
        "window": {"startMs": 2250, "endMs": 3000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
     ]
+  },
+  {
+    "name": "a final boundary where a server did not advance is skipped",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 1000}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 2000}, "up": {}},
+      {"atMs": 1250, "final": true, "down": {"a": 1250, "b": 2000}, "up": {}}
+    ],
+    "headline": {"down": 3000, "up": null},
+    "peak": {"downBytesPerSec": 3000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
   }
 ]
