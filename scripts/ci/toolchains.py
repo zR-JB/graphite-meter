@@ -80,7 +80,8 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     replacements = {
         "go/go.mod": [(r"(?m)^go \S+$", f"go {runtimes['go']}")],
         "container/Dockerfile": [
-            (r"(?m)^FROM docker\.io/oven/bun:\S+ AS client$", f"FROM {pins['images']['bun']} AS client"),
+            (r"(?m)^FROM docker\.io/oven/bun:\S+ AS client$",
+             f"FROM {pins['images']['bun']} AS client"),
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
              f"FROM {pins['images']['golang']} AS server"),
         ],

@@ -207,8 +207,8 @@ class PromotionTests(unittest.TestCase):
                 ' sh -ec "$2"; }\n')
         with tempfile.TemporaryDirectory() as directory:
             skopeo = pathlib.Path(directory) / "skopeo"
-            skopeo.write_text('#!/bin/sh\necho "$*" >>"$SKOPEO_LOG"\n'
-                              '[ "$1" = inspect ] && case "$4" in *:1.2.3) echo "$VERSION_DIGEST" ;;'
+            skopeo.write_text('#!/bin/sh\necho "$*" >>"$SKOPEO_LOG"\n[ "$1" = inspect ] &&'
+                              ' case "$4" in *:1.2.3) echo "$VERSION_DIGEST" ;;'
                               ' *) echo "$DIGEST" ;; esac\nexit 0\n')
             skopeo.chmod(0o755)
             log = pathlib.Path(directory) / "skopeo.log"
