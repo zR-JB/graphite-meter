@@ -16,6 +16,7 @@ import {
 import {
   bandForState,
   isStillStable,
+  stabilityPct,
   transferConfidence,
   type ConfidenceScore,
   type LatencyConfidenceScore,
@@ -482,7 +483,6 @@ export class AggregateMeasurements {
     const rate = window[key],
       full = record.full![key];
     if (rate === null || full === null) return null;
-    const confidence = transferConfidence([...open.rates[dir].rates]);
     return {
       reportedBytesPerSec: rate,
       fullAverageBytesPerSec: full,
@@ -491,10 +491,7 @@ export class AggregateMeasurements {
         0,
       ),
       peakBytesPerSec: open.peak[dir],
-      stabilityPct:
-        confidence.sampleCount >= 2
-          ? Math.max(0, 1 - confidence.varianceRatio) * 100
-          : 0,
+      stabilityPct: stabilityPct(open.rates[dir].rates),
       method: window !== record.full ? "stable-window" : "full-average",
       stabilityScore: open.score,
       band: bandForState(open.wasStable, open.score),

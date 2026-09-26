@@ -127,33 +127,15 @@ function latencyTransportKind(
 function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
   return (
     value && {
-      reportedBytesPerSec: value.reportedBytesPerSec,
-      peakBytesPerSec: value.peakBytesPerSec,
-      fullAverageBytesPerSec: value.fullAverageBytesPerSec,
-      method: value.method,
-      totalBytes: value.totalBytes,
-      stabilityPct: value.stabilityPct,
-      probeTimeoutPct: value.probeTimeoutPct,
-      stabilityScore: value.stabilityScore,
-      band: value.band,
+      ...value,
       serverAuthoritative: value.serverAuthoritative === true,
     }
   );
 }
 function latency(value: LatencyResult | null): LatencySnapshot | null {
-  return (
-    value && {
-      reportedMs: value.reportedMs,
-      minMs: value.minMs,
-      p50Ms: value.p50Ms,
-      p95Ms: value.p95Ms,
-      jitterMs: value.jitterMs,
-      probeTimeoutPct: value.probeTimeoutPct,
-      method: value.method,
-      stabilityScore: value.stabilityScore,
-      band: value.band,
-    }
-  );
+  if (!value) return null;
+  const { idleMs: _headline, ...snapshot } = value;
+  return snapshot;
 }
 function status(
   result: unknown,

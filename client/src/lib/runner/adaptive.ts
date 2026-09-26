@@ -145,6 +145,14 @@ export function transferConfidence(
   return { score, varianceRatio, slopeRatio, sampleCount: values.length };
 }
 
+/** Descriptive 0..100 steadiness of fixed-time rate buckets, reported with a transfer result. */
+export function stabilityPct(bytesPerSecValues: Iterable<number>): number {
+  const { sampleCount, varianceRatio } = transferConfidence([
+    ...bytesPerSecValues,
+  ]);
+  return sampleCount >= 2 ? Math.max(0, 1 - varianceRatio) * 100 : 0;
+}
+
 /* Latency confidence from unloaded ping outcomes. */
 export function latencyConfidence(
   outcomes: TimedLatencyOutcome[],

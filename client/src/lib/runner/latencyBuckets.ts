@@ -5,7 +5,7 @@ import {
   PRESENTATION_POINT_LIMIT,
 } from "./presentationHistory";
 
-export const LATENCY_PRESENTATION_BUCKET_MS = 200;
+const LATENCY_PRESENTATION_BUCKET_MS = 200;
 /* Keep the same bounded history in the producer and store so a delayed worker delivery can revise any bucket the. */
 const LATENCY_PRESENTATION_HISTORY_LIMIT = 1_200;
 

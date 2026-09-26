@@ -14,7 +14,7 @@ export const authEnabled =
     ?.getAttribute("content") === "enabled";
 
 export const AUTHENTICATION_REQUIRED_EVENT = "graphite-meter-auth-required";
-export type AuthenticationReason = "expired" | "renew";
+type AuthenticationReason = "expired" | "renew";
 
 /** Transport code reports evidence; the active application owns navigation. */
 export function reportAuthenticationRequired(

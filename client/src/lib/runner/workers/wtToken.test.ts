@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
 import { stubFetch } from "./test-helpers.test";
-import { nextBackoff } from "./backoff";
 
 const MINT = { url: "https://meter.test/wt/session" };
 
@@ -213,7 +212,7 @@ test("repeated unavailable dials stay within the eight-ticket pool and honor ser
     let backoff = 0;
     for (let elapsed = 0; elapsed < 90_000;) {
       expect((await mintWtToken(mint)).token).not.toBe("");
-      backoff = nextBackoff(backoff, 100, 2000);
+      backoff = backoff ? Math.min(backoff * 2, 2000) : 100;
       elapsed += backoff;
       now += backoff;
     }

@@ -1,5 +1,5 @@
 /** The client owns the uint32 probe ID; handling is retained as exact uint64 digits. */
-export interface Pong {
+interface Pong {
   id: number;
   handlingNanos: string;
 }
