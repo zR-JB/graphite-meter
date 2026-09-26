@@ -31,8 +31,7 @@ Definitions used throughout:
 Download counts payload bytes consumed by the client. Upload counts bytes and elapsed time at the server's receiver
 (receiver-timed); sender-queued bytes are not delivery. The headline is an adaptive stable window where configured,
 otherwise the full-window mean (both windows stay in the saved intervals); the peak is distinct, and chart
-smoothing affects none of them.
-Warmup bytes are excluded.
+smoothing affects none of them. Warmup bytes are excluded.
 
 ### Coordinated servers
 
@@ -79,7 +78,8 @@ server never retargets probes or changes saved statistics. The native client pro
 A hidden run continues: workers keep timing bytes and probes while page timers may be throttled. The schedule still
 enters every warmup and stage in order; one late tick never skips past the current segment. A timer gap over 1.5 s
 starts a new interval and restarts stability confirmation, so no headline or early finish spans the gap; a stage
-whose remaining evidence is too short fails.
+whose remaining evidence is too short fails. The native client applies the same limit to its own sampler: a gap
+over 1.75 s between sampled boundaries starts a new interval.
 
 ## Latency probing
 
