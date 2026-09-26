@@ -609,8 +609,8 @@ func (c *nativeCoordinator) finishTransferStage(stage StagePlan, stageErr error)
 			} else {
 				own.TotalBytes = total.up
 			}
-			for i := len(c.aggregate.intervals) - 1; i >= 0; i-- {
-				interval := c.aggregate.intervals[i]
+			for _, interval := range slices.Backward(c.aggregate.intervals) {
+
 				if interval.Stage != stage.Name || interval.Window == nil {
 					continue
 				}

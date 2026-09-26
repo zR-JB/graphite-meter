@@ -71,7 +71,7 @@ def review_template(scopes: dict[str, list[Component]]) -> bytes:
             'selectedLicenseExpression': '', 'legalFiles': [item.json() for item in component.legalTexts + component.notices],
             'reviewDecision': '', 'reviewNotes': '',
         }
-        result.append(dict(sorted(value.items())))
+        result.append({key: value[key] for key in sorted(value)})
     return marshal(result)
 
 

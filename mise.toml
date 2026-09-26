@@ -9,11 +9,11 @@ python = "3.14.7"
 go = "1.27.1"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:dominikh/go-tools/staticcheck" = "2026.2.1"
-"aqua:astral-sh/ty" = "0.0.82"
+"aqua:astral-sh/ty" = "0.0.84"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
-mise_version = "2026.9.11"
+mise_version = "2026.9.14"
 
 browser_chrome = "153.0.8010.52"
 

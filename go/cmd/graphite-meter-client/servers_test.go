@@ -83,7 +83,7 @@ func TestServerChooserAndResultDetailsFitNarrowTerminal(t *testing.T) {
 	m.width = 44
 	m.serverDraft = []string{"self", "0"}
 	m.serverRow = 7
-	for _, line := range strings.Split(m.serverChooserView(38), "\n") {
+	for line := range strings.SplitSeq(m.serverChooserView(38), "\n") {
 		if lipgloss.Width(line) > 38 {
 			t.Fatalf("chooser overflow: %q", line)
 		}

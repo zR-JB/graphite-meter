@@ -9,7 +9,9 @@
     "src/**/*.svelte",
     "browser/**/*.ts",
     "bench/**/*.ts",
-    "e2e/**/*.ts"
+    "e2e/**/*.ts",
+    "vite.config.ts",
+    "vite.e2e.config.ts"
   ],
   "exclude": []
 }
