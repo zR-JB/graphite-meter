@@ -1,5 +1,6 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
+  import Disclosure from "./Disclosure.svelte";
   import { loadLegal, retryLegal } from "../legal/loader";
   import type { LegalAbout, LegalComponent } from "../legal/types";
 
@@ -98,8 +99,11 @@
         <h3 class="caps" id="third-party-title">Third-party software</h3>
         {#each data.components as component (component.ecosystem + component.name + component.version)}
           <article class="component">
-            <details class="surface disclosure" open={true}>
-              <summary>{componentTitle(component)}</summary>
+            <Disclosure class="surface" open>
+              {#snippet summary()}
+                <span class="disclosure-facts">{componentTitle(component)}</span
+                >
+              {/snippet}
               <dl class="kv">
                 <div>
                   <dt>Version</dt>
@@ -124,7 +128,7 @@
                   <dd>{component.modified ? "yes" : "no"}</dd>
                 </div>
               </dl>
-            </details>
+            </Disclosure>
           </article>
         {/each}
       </section>
@@ -181,15 +185,9 @@
   .component {
     margin-top: var(--space-2);
   }
-  summary {
-    padding: var(--space-2) var(--space-3);
-    color: var(--text);
-  }
   .kv {
     --kv-label: 190px;
     gap: 2px;
-    padding: var(--space-2) var(--space-3) var(--space-3);
-    border-top: 1px solid var(--border-subtle);
     font-family: var(--font-mono);
   }
   .kv :is(dt, dd) {

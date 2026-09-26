@@ -28,3 +28,9 @@ test("hints draw no dotted underline", async () => {
 test("focus styles answer the keyboard only", async () => {
   expect(await offenders(/:focus(?![-\w])/)).toEqual([]);
 });
+
+test("only the disclosure primitive renders <details>", async () => {
+  expect(
+    await offenders(/<details\b/, ["lib/components/Disclosure.svelte"]),
+  ).toEqual([]);
+});

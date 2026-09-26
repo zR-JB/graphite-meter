@@ -23,6 +23,7 @@
     reasonLabel,
     transportLabel,
   } from "../presentation/vocabulary";
+  import Disclosure from "./Disclosure.svelte";
   import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
@@ -174,129 +175,110 @@
 </script>
 
 <section class="infra">
-  <div class="grid">
-    <article class="surface-inset card server-card">
-      <header>
-        <h3 class="caps">
-          {pathMode === "live" ? "Selected servers" : "Tested servers"}
-        </h3>
-        <span class="hint"
-          >{availableServers.length > 1
-            ? `${availableServers.length} servers`
-            : "Single server"}</span
-        >
-      </header>
-      {#if availableServers.length > 1}
-        <ServerScope
-          servers={availableServers}
-          value={selectedServer?.id ?? ""}
-          label="Inspect server"
-          onchange={(id) => (inspectedServer = id)}
-        />
+  {#if availableServers.length > 1}
+    <ServerScope
+      servers={availableServers}
+      value={selectedServer?.id ?? ""}
+      label="Inspect server"
+      onchange={(id) => (inspectedServer = id)}
+    />
+  {/if}
+  {#each failures as failure}
+    <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
+  {/each}
+  <Disclosure
+    class="surface-inset server-card"
+    title={pathMode === "live" ? "Selected server" : "Tested server"}
+    facts={[server?.name ?? "Checking server", server?.location]
+      .filter(Boolean)
+      .join(" · ")}
+  >
+    <dl class="kv">
+      {#if selectedServer}
+        <div>
+          <dt>Address</dt>
+          <dd>{selectedServer.url}</dd>
+        </div>
       {/if}
+      <div>
+        <dt>Location</dt>
+        <dd>{server?.location ?? "Unavailable"}</dd>
+      </div>
+    </dl>
+    <p class="hint">
+      {pathMode === "live"
+        ? "Current selection and verified connections."
+        : pathMode === "running"
+          ? "Connections used by this test."
+          : "Connections captured for the displayed result."}
+    </p>
+  </Disclosure>
+
+  {#each PATH_ROLES as role}
+    {@const connection = connections[role]}
+    {@const status = endpointPathStatus(connection.validation, pathMode)}
+    {@const inTest = role === "throughput" || latencyRequested}
+    <Disclosure
+      class="surface-inset path"
+      title={`${role} path`}
+      facts={inTest
+        ? connection.summary
+        : "Not selected for latency measurement"}
+    >
+      {#snippet aside()}
+        <span class="badge" data-tone={inTest ? status.tone : "neutral"}
+          >{inTest
+            ? status.label
+            : pathMode === "live"
+              ? "Not selected"
+              : "Not in test"}</span
+        >
+      {/snippet}
       <dl class="kv">
         <div>
-          <dt>Server</dt>
-          <dd>{server?.name ?? "Checking server"}</dd>
+          <dt>Path evidence</dt>
+          <dd>
+            {pathEvidence(
+              role,
+              connection.browserProtocol,
+              connection.serverProtocol,
+            )}
+          </dd>
         </div>
-        <div>
-          <dt>Location</dt>
-          <dd>{server?.location ?? "Unavailable"}</dd>
-        </div>
-        {#if selectedServer}
+        {#if role === "throughput"}
           <div>
-            <dt>Address</dt>
-            <dd>{selectedServer.url}</dd>
+            <dt>Upload progress</dt>
+            <dd>{uploadProgressPath}</dd>
+          </div>
+        {:else}
+          <div>
+            <dt>Pre-test latency</dt>
+            <dd>
+              {connection.preTestPingMs !== undefined
+                ? `${fmtMs(connection.preTestPingMs)} ms`
+                : latencyRequested
+                  ? "Pending"
+                  : MISSING}
+            </dd>
           </div>
         {/if}
       </dl>
-      <p class="hint">
-        {pathMode === "live"
-          ? "Current selection and verified connections."
-          : pathMode === "running"
-            ? "Connections used by this test."
-            : "Connections captured for the displayed result."}
-      </p>
-      {#each failures as failure}
-        <p class="endpoint-failure">{reasonLabel(failure.reason)}</p>
-      {/each}
-    </article>
+    </Disclosure>
+  {/each}
 
-    {#each PATH_ROLES as role}
-      {@const connection = connections[role]}
-      {@const status = endpointPathStatus(connection.validation, pathMode)}
-      <article class="surface-inset card path">
-        <header>
-          <h3 class="caps">{role} path</h3>
-          <span
-            class="badge"
-            data-tone={role === "latency" && !latencyRequested
-              ? "neutral"
-              : status.tone}
-            >{role === "latency" && !latencyRequested
-              ? pathMode === "live"
-                ? "Not selected"
-                : "Not in test"
-              : status.label}</span
-          >
-        </header>
-        <dl class="kv">
-          <div>
-            <dt>Selected</dt>
-            <dd>
-              {role === "latency" && !latencyRequested
-                ? "Not selected for latency measurement"
-                : connection.summary}
-            </dd>
-          </div>
-          <div>
-            <dt>Path evidence</dt>
-            <dd>
-              {pathEvidence(
-                role,
-                connection.browserProtocol,
-                connection.serverProtocol,
-              )}
-            </dd>
-          </div>
-          {#if role === "throughput"}
-            <div>
-              <dt>Upload progress</dt>
-              <dd>{uploadProgressPath}</dd>
-            </div>
-          {:else}
-            <div>
-              <dt>Pre-test latency</dt>
-              <dd>
-                {connection.preTestPingMs !== undefined
-                  ? `${fmtMs(connection.preTestPingMs)} ms`
-                  : latencyRequested
-                    ? "Pending"
-                    : MISSING}
-              </dd>
-            </div>
-          {/if}
-        </dl>
-      </article>
-    {/each}
-  </div>
-
-  <details class="surface-inset card disclosure capabilities-card">
-    <summary>Server capabilities</summary>
+  <Disclosure
+    class="surface-inset"
+    title="Server capabilities"
+    facts={capabilities("throughput")}
+  >
     <dl class="kv">
       <div>
         <dt>HTTP versions</dt>
-        {#if httpPaths === null}
-          <dd>Checking server</dd>
-        {:else if !httpPaths.length}
-          <dd>None advertised</dd>
-        {:else}
-          <dd class="protocols" aria-label={httpPaths.join(" · ")}>
-            {#each httpPaths as path}
-              <span class="badge" data-tone="brand">{path}</span>
-            {/each}
-          </dd>
-        {/if}
+        <dd>
+          {httpPaths === null
+            ? "Checking server"
+            : httpPaths.join(", ") || "None advertised"}
+        </dd>
       </div>
       <div>
         <dt>Throughput</dt>
@@ -307,68 +289,65 @@
         <dd>{capabilities("latency")}</dd>
       </div>
     </dl>
-  </details>
+  </Disclosure>
 
-  <details class="surface-inset disclosure diagnostics-card">
-    <summary>Diagnostics</summary>
-    <div class="diagnostics">
-      <dl class="kv">
+  <Disclosure
+    class="surface-inset"
+    title="Diagnostics"
+    facts={`Client ${BUILD.identity} · server ${discovery?.engineVersion ?? MISSING}`}
+  >
+    <dl class="kv">
+      <div>
+        <dt>Server instance</dt>
+        <dd>{discovery?.generation || MISSING}</dd>
+      </div>
+      <div>
+        <dt>Client version</dt>
+        <dd>{BUILD.version ? `v${BUILD.version}` : MISSING}</dd>
+      </div>
+      <div>
+        <dt>Build profile</dt>
+        <dd>{BUILD.profile}</dd>
+      </div>
+      <div>
+        <dt>Source revision</dt>
+        <dd>{BUILD.revision}</dd>
+      </div>
+      <div>
+        <dt>Throughput origin</dt>
+        <dd>{connections.throughput.target?.origin ?? MISSING}</dd>
+      </div>
+      <div>
+        <dt>Throughput client</dt>
+        <dd>{clientEvidence("throughput")}</dd>
+      </div>
+      {#if serverLoad}
         <div>
-          <dt>Server instance</dt>
-          <dd>{discovery?.generation || MISSING}</dd>
+          <dt>Server load</dt>
+          <dd>{serverLoad}</dd>
         </div>
-        <div>
-          <dt>Server version</dt>
-          <dd>{discovery?.engineVersion ?? MISSING}</dd>
-        </div>
-        <div>
-          <dt>Client version</dt>
-          <dd>{BUILD.version ? `v${BUILD.version}` : MISSING}</dd>
-        </div>
-        <div>
-          <dt>Build profile</dt>
-          <dd>{BUILD.profile}</dd>
-        </div>
-        <div>
-          <dt>Source revision</dt>
-          <dd>{BUILD.revision}</dd>
-        </div>
-        <div>
-          <dt>Throughput origin</dt>
-          <dd>{connections.throughput.target?.origin ?? MISSING}</dd>
-        </div>
-        <div>
-          <dt>Throughput client</dt>
-          <dd>{clientEvidence("throughput")}</dd>
-        </div>
-        {#if serverLoad}
-          <div>
-            <dt>Server load</dt>
-            <dd>{serverLoad}</dd>
-          </div>
-        {/if}
-        <div>
-          <dt>Latency origin</dt>
-          <dd>{connections.latency.target?.origin ?? MISSING}</dd>
-        </div>
-        <div>
-          <dt>Latency client</dt>
-          <dd>{clientEvidence("latency")}</dd>
-        </div>
-        <div>
-          <dt>Streams</dt>
-          <dd>{transferStreams}</dd>
-        </div>
-      </dl>
-      <p class="hint">
-        Server instance changes when the backend restarts. Path evidence names
-        browser and server observations only when that path exposes them.
-      </p>
-      <button class="btn" type="button" onclick={copyReport}
-        >{copied ? "Copied" : "Copy diagnostic report"}</button
-      >
-    </div>
-  </details>
+      {/if}
+      <div>
+        <dt>Latency origin</dt>
+        <dd>{connections.latency.target?.origin ?? MISSING}</dd>
+      </div>
+      <div>
+        <dt>Latency client</dt>
+        <dd>{clientEvidence("latency")}</dd>
+      </div>
+      <div>
+        <dt>Streams</dt>
+        <dd>{transferStreams}</dd>
+      </div>
+    </dl>
+    <p class="hint">
+      Server instance changes when the backend restarts. Path evidence names
+      browser and server observations only when that path exposes them.
+    </p>
+    <button class="btn" type="button" onclick={copyReport}
+      >{copied ? "Copied" : "Copy diagnostic report"}</button
+    >
+  </Disclosure>
   <p class="license">
     <span>Legal</span>
     <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
@@ -378,70 +357,23 @@
 </section>
 
 <style>
-  .infra,
-  .grid {
+  .infra {
     display: grid;
-    gap: var(--space-3);
-  }
-  .grid {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
-  }
-  .server-card {
-    grid-column: 1 / -1;
-  }
-  .card {
-    display: grid;
-    align-content: start;
-    gap: 10px;
-    min-width: 0;
-    padding: var(--space-3);
-  }
-  header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
     gap: var(--space-2);
-  }
-  .endpoint-failure {
-    color: var(--err);
-    font-size: var(--type-sm);
-    line-height: 1.45;
   }
   .kv {
     --kv-label: 6.5rem;
   }
+  .btn {
+    justify-self: start;
+  }
   .license {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
+    align-items: center;
     gap: var(--space-2);
     padding: 0 var(--space-1);
     color: var(--text-soft);
     font-size: var(--type-xs);
-  }
-  .protocols {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-  }
-  .capabilities-card[open] summary {
-    margin-bottom: var(--space-1);
-  }
-  .diagnostics-card > summary {
-    padding: var(--space-3);
-  }
-  .diagnostics-card[open] > summary {
-    border-bottom: 1px solid var(--border);
-  }
-  /* Full-bleed against a clipping card, so the ring goes inside the edge. */
-  .diagnostics-card > summary:focus-visible {
-    outline-offset: -2px;
-  }
-  .diagnostics {
-    display: grid;
-    justify-items: start;
-    gap: var(--space-3);
-    padding: var(--space-3);
   }
 </style>

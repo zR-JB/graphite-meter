@@ -654,37 +654,85 @@
     color: var(--brand-strong);
   }
 
-  /* Disclosure: a details element with a rotating chevron. */
+  /* Disclosure (Disclosure.svelte): the summary states the key facts and is the
+     whole hit area; the surface carries the ring, the chevron and the opening. */
+  .disclosure {
+    --disclosure-pad: var(--space-3);
+    interpolate-size: allow-keywords;
+    min-width: 0;
+    overflow: clip;
+  }
   .disclosure > summary {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
+    position: relative;
+    display: block;
+    padding: var(--disclosure-pad);
     list-style: none;
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
     transition: var(--transition-control);
   }
   .disclosure > summary::-webkit-details-marker {
     display: none;
   }
-  .disclosure > summary::before {
+  .disclosure > summary::after {
     content: "";
-    flex: none;
+    position: absolute;
+    top: calc(var(--disclosure-pad) + 4px);
+    right: calc(var(--disclosure-pad) + 3px);
     width: 6px;
     height: 6px;
-    border: solid var(--brand);
+    border: solid var(--text-soft);
     border-width: 0 1.5px 1.5px 0;
-    transform: translateX(-1px) rotate(-45deg);
-    transition: transform var(--dur-hover) var(--ease-out);
+    rotate: 45deg;
+    transition: rotate var(--dur-hover) var(--ease-out);
   }
-  .disclosure[open] > summary::before {
-    transform: translateY(-1px) rotate(45deg);
+  .disclosure[open] > summary::after {
+    rotate: 225deg;
+    translate: 0 3px;
+  }
+  .disclosure > summary:focus-visible {
+    outline: none;
+  }
+  .disclosure:has(> summary:focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
   }
   @media (hover: hover) {
     .disclosure > summary:hover {
-      color: var(--text);
+      background: var(--surface-2);
     }
+  }
+  .disclosure::details-content {
+    block-size: 0;
+    transition:
+      block-size var(--dur-slide) var(--ease-out),
+      content-visibility var(--dur-slide) allow-discrete;
+  }
+  .disclosure[open]::details-content {
+    block-size: auto;
+  }
+  .disclosure-summary {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .disclosure-summary > :first-child {
+    padding-right: var(--space-5);
+  }
+  .disclosure-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .disclosure-facts {
+    color: var(--text);
+    font-size: var(--type-sm);
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .disclosure-body {
+    display: grid;
+    gap: var(--space-3);
+    padding: 0 var(--disclosure-pad) var(--disclosure-pad);
   }
 
   /* Centred placeholder for loading, empty and error states. */

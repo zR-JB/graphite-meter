@@ -33,6 +33,7 @@
     probeAccountingSummary,
     hasProbeAccountingNotice,
   } from "../latencyProfile";
+  import Disclosure from "../Disclosure.svelte";
   import MoreMenu from "../MoreMenu.svelte";
   import ResultSummary from "../ResultSummary.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
@@ -108,6 +109,16 @@
             lane.sendFailureCount,
         )
       : [],
+  );
+
+  const accountingFacts = $derived(
+    accounting
+      .flatMap((lane) =>
+        probeAccountingSummary(lane).exceptions.map(
+          (exception) => `${lane.label} ${exception}`,
+        ),
+      )
+      .join(" · ") || "No timeouts or failed sends",
   );
 
   function path(
@@ -271,94 +282,115 @@
       </section>
     {/if}
 
-    <details class="disclosure">
-      <summary>Servers &amp; paths</summary>
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th scope="col">Server</th>
-              <th scope="col">{STAGE.download.short}</th>
-              <th scope="col">{STAGE.upload.short}</th>
-              <th scope="col">Latency</th>
-              <th scope="col">Throughput path</th>
-              <th scope="col">Latency path</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each serverRows as row (row.id)}
+    <div class="sections">
+      <Disclosure
+        class="surface-inset"
+        title="Servers & paths"
+        facts={serverRows.length > 1
+          ? serverRows.map((row) => row.name).join(", ")
+          : `${serverRows[0]?.name ?? MISSING} · ${serverRows[0]?.throughputPath ?? MISSING}`}
+      >
+        <div class="table-scroll">
+          <table>
+            <thead>
               <tr>
-                <th scope="row"
-                  >{row.name}{#if row.host}<small>{row.host}</small>{/if}</th
-                >
-                <td>{row.down}</td>
-                <td>{row.up}</td>
-                <td>{row.latency}</td>
-                <td>{row.throughputPath}</td>
-                <td>{row.latencyPath}</td>
+                <th scope="col">Server</th>
+                <th scope="col">{STAGE.download.short}</th>
+                <th scope="col">{STAGE.upload.short}</th>
+                <th scope="col">Latency</th>
+                <th scope="col">Throughput path</th>
+                <th scope="col">Latency path</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    </details>
+            </thead>
+            <tbody>
+              {#each serverRows as row (row.id)}
+                <tr>
+                  <th scope="row"
+                    >{row.name}{#if row.host}<small>{row.host}</small>{/if}</th
+                  >
+                  <td>{row.down}</td>
+                  <td>{row.up}</td>
+                  <td>{row.latency}</td>
+                  <td>{row.throughputPath}</td>
+                  <td>{row.latencyPath}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Disclosure>
 
-    {#if accounting.length}
-      <details class="disclosure">
-        <summary>Probe accounting</summary>
-        <p class="hint">
-          Timeouts: no reply before the deadline. Unfinished probes and failed
-          sends are counted separately.
-        </p>
-        <ul class="accounting">
-          {#each accounting as lane (lane.key)}
-            {@const counts = probeAccountingSummary(lane)}
-            <li
-              data-tone={lane.key}
-              aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
-            >
-              <strong>{lane.label}</strong>
-              <span>{counts.replies}</span>
-              <span
-                >{counts.exceptions.join(" · ") ||
-                  "No timeouts"}{#if lane.accountingComplete === false}<em
-                    {@attach tooltip(() => PARTIAL_ACCOUNTING_HELP)}
-                    >· partial accounting</em
-                  >{/if}</span
-              >
-            </li>
-          {/each}
-        </ul>
-      </details>
-    {/if}
-
-    {#if issues.length}
-      <details class="disclosure">
-        <summary
-          >Issues <span class="badge" data-tone="warn">{issues.length}</span
-          ></summary
+      {#if accounting.length}
+        <Disclosure
+          class="surface-inset"
+          title="Probe accounting"
+          facts={accountingFacts}
         >
-        <ul class="issues">
-          {#each issues as issue, index (index)}
-            <li>{issue}</li>
-          {/each}
-        </ul>
-      </details>
-    {/if}
+          <p class="hint">
+            Timeouts: no reply before the deadline. Unfinished probes and failed
+            sends are counted separately.{accounting.some(
+              (lane) => lane.accountingComplete === false,
+            )
+              ? ` Partial accounting: ${PARTIAL_ACCOUNTING_HELP}`
+              : ""}
+          </p>
+          <ul class="accounting">
+            {#each accounting as lane (lane.key)}
+              {@const counts = probeAccountingSummary(lane)}
+              <li
+                data-tone={lane.key}
+                aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
+              >
+                <strong>{lane.label}</strong>
+                <span>{counts.replies}</span>
+                <span
+                  >{[
+                    ...counts.exceptions,
+                    ...(lane.accountingComplete === false
+                      ? ["partial accounting"]
+                      : []),
+                  ].join(" · ") || "No timeouts"}</span
+                >
+              </li>
+            {/each}
+          </ul>
+        </Disclosure>
+      {/if}
 
-    <details class="disclosure">
-      <summary>Build &amp; environment</summary>
-      <dl class="kv">
-        {#each environment as [label, value] (label)}
-          <div>
-            <dt>{label}</dt>
-            <dd>{value}</dd>
-          </div>
-        {:else}
-          <p class="hint">{MISSING}</p>
-        {/each}
-      </dl>
-    </details>
+      {#if issues.length}
+        <Disclosure
+          class="surface-inset"
+          title="Issues"
+          facts={issues.length > 1
+            ? `${issues[0]} and ${issues.length - 1} more`
+            : issues[0]}
+        >
+          {#snippet aside()}
+            <span class="badge" data-tone="warn">{issues.length}</span>
+          {/snippet}
+          <ul class="issues">
+            {#each issues as issue, index (index)}
+              <li>{issue}</li>
+            {/each}
+          </ul>
+        </Disclosure>
+      {/if}
+
+      <Disclosure
+        class="surface-inset"
+        title="Build & environment"
+        facts={environment.map(([, value]) => value).join(" · ") || MISSING}
+      >
+        <dl class="kv">
+          {#each environment as [label, value] (label)}
+            <div>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          {/each}
+        </dl>
+      </Disclosure>
+    </div>
   </div>
 </article>
 
@@ -408,12 +440,9 @@
   h3 {
     margin-bottom: var(--space-2);
   }
-  .disclosure {
-    border-top: 1px solid var(--border);
-    padding-top: var(--space-3);
-  }
-  .disclosure[open] > summary {
-    margin-bottom: var(--space-3);
+  .sections {
+    display: grid;
+    gap: var(--space-2);
   }
   .table-scroll {
     overflow-x: auto;
@@ -448,7 +477,6 @@
   .issues {
     display: grid;
     gap: var(--space-1);
-    margin-top: var(--space-2);
     font-size: var(--type-xs);
   }
   .accounting li {
@@ -462,11 +490,6 @@
   }
   .accounting strong {
     color: var(--tone);
-  }
-  .accounting em {
-    margin-left: var(--space-1);
-    color: var(--warn);
-    font-style: normal;
   }
   .issues li {
     color: var(--text-muted);
