@@ -17,6 +17,7 @@ import (
 )
 
 func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
+	t.Parallel()
 	var raw, timed latencyStats
 	for _, row := range []struct {
 		rtt      time.Duration
@@ -50,8 +51,10 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 }
 
 func TestReflectorTimingDurationBounds(t *testing.T) {
+	t.Parallel()
 	for _, nanos := range []uint64{0, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
 		t.Run(fmt.Sprint(nanos), func(t *testing.T) {
+			t.Parallel()
 			var stats latencyStats
 			stats.add(time.Duration(math.MaxInt64), false, nanos)
 			got := stats.snapshot()
@@ -72,8 +75,10 @@ func TestReflectorTimingDurationBounds(t *testing.T) {
 }
 
 func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"zero", "impossible", "reconnect"} {
 		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
 			var connections atomic.Int32
 			var mu sync.Mutex
 			var samples []LatencySample

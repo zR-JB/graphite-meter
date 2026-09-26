@@ -7,6 +7,7 @@ import (
 )
 
 func TestControlJSONBoundsAndSyntax(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{`{} {}`, `{"a":1,"a":2}`, `"` + strings.Repeat("a", maxControlBytes-1) + `"`} {
 		var out any
 		if err := readControlJSON(strings.NewReader(body), &out); err == nil {
@@ -30,6 +31,7 @@ func (r *endlessControlReader) Read(p []byte) (int, error) {
 var _ io.Reader = (*endlessControlReader)(nil)
 
 func TestControlJSONStopsReadingOversizedStream(t *testing.T) {
+	t.Parallel()
 	body := &endlessControlReader{}
 	var out any
 	if err := readControlJSON(body, &out); err == nil {

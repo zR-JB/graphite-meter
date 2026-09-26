@@ -15,6 +15,7 @@ import (
 )
 
 func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Download: true}
@@ -55,6 +56,7 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 }
 
 func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
+	t.Parallel()
 	entered, left := make(chan struct{}), make(chan struct{})
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -95,6 +97,7 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 }
 
 func TestNativeFourParticipantsAndCancellation(t *testing.T) {
+	t.Parallel()
 	fixtures := []*serverFixture{}
 	for i := range 4 {
 		fixtures = append(fixtures, coordinatedFixture(t, fmt.Sprint(i)))
@@ -146,6 +149,7 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 }
 
 func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Latency: true, Upload: true}

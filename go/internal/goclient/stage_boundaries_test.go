@@ -84,8 +84,10 @@ func mountStageUpload(mux *http.ServeMux, received *atomic.Uint64, upload http.H
 }
 
 func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
+	t.Parallel()
 	for _, delayed := range []string{"download lane", "upload session", "upload progress", "latency bus"} {
 		t.Run(delayed, func(t *testing.T) {
+			t.Parallel()
 			held, release := make(chan struct{}), make(chan struct{})
 			var holdOnce sync.Once
 			var uploaded atomic.Uint64
@@ -162,8 +164,10 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 }
 
 func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
+	t.Parallel()
 	for _, interruption := range []string{"download failure", "upload failure", "cancel"} {
 		t.Run(interruption, func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			var uploaded atomic.Uint64
@@ -258,6 +262,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 }
 
 func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
+	t.Parallel()
 	var rejectProgress atomic.Bool
 	var uploaded atomic.Uint64
 	mux := http.NewServeMux()
@@ -309,6 +314,7 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 }
 
 func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
+	t.Parallel()
 	warmup := make(chan struct{})
 	checkpointStarted, checkpointStopped := make(chan struct{}), make(chan struct{})
 	mux := http.NewServeMux()
@@ -382,9 +388,11 @@ func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 }
 
 func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []Stage{StageDownload, StageUpload} {
 		for _, duration := range []time.Duration{100 * time.Millisecond, 3 * time.Second} {
 			t.Run(string(stage)+"/"+duration.String(), func(t *testing.T) {
+				t.Parallel()
 				var srv *httptest.Server
 				if stage == StageDownload {
 					srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -434,8 +442,10 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 }
 
 func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
+	t.Parallel()
 	for _, cancelEarly := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelEarly), func(t *testing.T) {
+			t.Parallel()
 			synctest.Test(t, func(t *testing.T) {
 				var phases []Phase
 				var details *RunDetails
@@ -487,6 +497,7 @@ func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
 }
 
 func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		const preparationBytes = 64 * 1024
 		// Keep fake-time completion between ticks so separate captures advance time.

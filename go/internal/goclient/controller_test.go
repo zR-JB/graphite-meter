@@ -13,6 +13,7 @@ import (
 )
 
 func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
@@ -61,8 +62,10 @@ func waitControllerWork(t *testing.T, owner *Controller) {
 }
 
 func TestControllerRunCancellationAndAbandonment(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"cancel", "replace", "close"} {
 		t.Run(operation, func(t *testing.T) {
+			t.Parallel()
 			srv := newLatencyOnlyServer(t)
 			defer srv.Close()
 			cfg := Config{BaseURL: srv.URL, Stages: StageSet{Latency: true}, LatencyDuration: 10 * time.Second, PingInterval: time.Millisecond}
@@ -121,10 +124,12 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 }
 
 func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
+	t.Parallel()
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
 	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}}} {
 		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
+			t.Parallel()
 			delivery, abandon := context.WithCancel(t.Context())
 			defer abandon()
 			// Exercise both ready select arms: cancellation must never compete
@@ -162,6 +167,7 @@ func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 }
 
 func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
+	t.Parallel()
 	entered, left := make(chan struct{}), make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)

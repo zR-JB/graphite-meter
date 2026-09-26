@@ -17,6 +17,7 @@ import (
 )
 
 func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
+	t.Parallel()
 	srv := newEchoPingServer(t)
 	defer srv.Close()
 
@@ -74,6 +75,7 @@ func newSilentPingServer(t *testing.T) *httptest.Server {
 }
 
 func TestMeasureLatencyRegistersTimeoutsWithoutResponse(t *testing.T) {
+	t.Parallel()
 	srv := newSilentPingServer(t)
 	defer srv.Close()
 
@@ -131,6 +133,7 @@ func newIntermittentTimeoutPingServer(t *testing.T, dropEvery uint32) *httptest.
 }
 
 func TestMeasureLatencyMixedTimeoutsComputeRatioAndRTT(t *testing.T) {
+	t.Parallel()
 	const dropEvery = 3 // every 3rd ping (by ID) goes unanswered
 	srv := newIntermittentTimeoutPingServer(t, dropEvery)
 	defer srv.Close()
@@ -194,6 +197,7 @@ func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atom
 }
 
 func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
+	t.Parallel()
 	const dropAfter = 3
 	srv, accepted := newDroppingPingServer(t, dropAfter)
 	defer srv.Close()
@@ -223,6 +227,7 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 }
 
 func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
+	t.Parallel()
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
@@ -263,6 +268,7 @@ func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
 }
 
 func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
+	t.Parallel()
 	var requests atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
@@ -284,6 +290,7 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 }
 
 func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	var stats latencyStats
 	stats.add(10*time.Millisecond, false, 0)
@@ -297,6 +304,7 @@ func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
 }
 
 func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty(t *testing.T) {
+	t.Parallel()
 	srv := newSilentPingServer(t)
 	defer srv.Close()
 	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
@@ -316,6 +324,7 @@ func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty
 }
 
 func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 		if err != nil {
@@ -360,9 +369,11 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 }
 
 func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []Stage{StageLatency, StageDownload} {
 		for _, reply := range []bool{false, true} {
 			t.Run(string(stage)+fmt.Sprint("/reply=", reply), func(t *testing.T) {
+				t.Parallel()
 				var accepts atomic.Int64
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					if req.URL.Path == "/download" {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
@@ -37,6 +38,7 @@ func webTransportCatalog() wire.Preflight {
 }
 
 func TestAutomaticSelectionPreference(t *testing.T) {
+	t.Parallel()
 	pf := webTransportCatalog()
 	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: "auto", LatencyTarget: "auto", LatencyTransport: "auto"}
 
@@ -59,6 +61,7 @@ func TestAutomaticSelectionPreference(t *testing.T) {
 
 // TestExplicitTransportSelectionIsHonoured keeps a named transport from silently resolving to another one.
 func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
+	t.Parallel()
 	pf := webTransportCatalog()
 	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: wire.TransportFetchStream, LatencyTarget: "auto", LatencyTransport: wire.TransportWebSocket}
 
@@ -85,8 +88,7 @@ func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
 	}
 }
 
-func TestRunWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
-	t.Parallel()
+func runWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	var dials atomic.Int64
 	host := &wtStageSession{
 		sess: deadWTSession(),
@@ -125,18 +127,7 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 		t.Fatalf("wtLaneMaxFastFailures = %d, want 5", wtLaneMaxFastFailures)
 	}
 	const slowFailure = wtRedialBackoff + 20*time.Millisecond
-	cases := []struct {
-		name string
-		// failures is how many lane entries fail before one blocks until the stage ends.
-		failures    int
-		pause       time.Duration
-		progress    bool
-		alive       bool
-		budget      time.Duration
-		wantErr     bool
-		wantEntries int64
-		wantDials   int64
-	}{
+	cases := []fastFailureCase{
 		{
 			name:     "one short of the ceiling is absorbed",
 			failures: wtLaneMaxFastFailures - 1, budget: 3 * time.Second,
@@ -171,56 +162,94 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			sess := deadWTSession()
-			if c.alive {
-				sess = liveWTSession(t)
-			}
-			var dials, entries atomic.Int64
-			host := &wtStageSession{
-				sess: sess,
-				dial: func(context.Context) (*wtSession, error) {
-					dials.Add(1)
-					if c.alive {
-						return liveWTSession(t), nil
-					}
-					return deadWTSession(), nil
-				},
-			}
-			ctx, cancel := context.WithTimeout(t.Context(), c.budget)
-			defer cancel()
-			err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
-				n := entries.Add(1)
-				if c.pause > 0 {
-					select {
-					case <-laneCtx.Done():
-						return false, laneCtx.Err()
-					case <-time.After(c.pause):
-					}
-				}
-				if n <= int64(c.failures) {
-					return c.progress, errors.New("stream reset")
-				}
-				<-laneCtx.Done()
-				return false, nil
-			})
-
-			if got := err != nil; got != c.wantErr {
-				t.Fatalf("runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)", err, c.wantErr, entries.Load(), dials.Load())
-			}
-			if c.wantErr && ctx.Err() != nil {
-				t.Fatalf("lane failed only when the stage deadline expired: %v", err)
-			}
-			if c.wantEntries >= 0 && entries.Load() != c.wantEntries {
-				t.Errorf("the lane ran %d times, want %d", entries.Load(), c.wantEntries)
-			}
-			if c.wantDials >= 0 && dials.Load() != c.wantDials {
-				t.Errorf("the shared session was re-dialled %d times, want %d: a lane error is not on its own a lost session, and every sibling lane transfers on the session a redial tears down", dials.Load(), c.wantDials)
-			}
+			synctest.Test(t, func(t *testing.T) { runFastFailureCase(t, c) })
 		})
 	}
 }
 
-func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
+type fastFailureCase struct {
+	name string
+	// failures is how many lane entries fail before one blocks until the stage ends.
+	failures    int
+	pause       time.Duration
+	progress    bool
+	alive       bool
+	budget      time.Duration
+	wantErr     bool
+	wantEntries int64
+	wantDials   int64
+}
+
+func runFastFailureCase(t *testing.T, c fastFailureCase) {
+	sess := deadWTSession()
+	if c.alive {
+		sess = liveWTSession(t)
+	}
+	var dials, entries atomic.Int64
+	host := &wtStageSession{
+		sess: sess,
+		dial: func(context.Context) (*wtSession, error) {
+			dials.Add(1)
+			if c.alive {
+				return liveWTSession(t), nil
+			}
+			return deadWTSession(), nil
+		},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), c.budget)
+	defer cancel()
+	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
+		n := entries.Add(1)
+		if c.pause > 0 {
+			select {
+			case <-laneCtx.Done():
+				return false, laneCtx.Err()
+			case <-time.After(c.pause):
+			}
+		}
+		if n <= int64(c.failures) {
+			return c.progress, errors.New("stream reset")
+		}
+		<-laneCtx.Done()
+		return false, nil
+	})
+
+	if got := err != nil; got != c.wantErr {
+		t.Fatalf("runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)", err, c.wantErr, entries.Load(), dials.Load())
+	}
+	if c.wantErr && ctx.Err() != nil {
+		t.Fatalf("lane failed only when the stage deadline expired: %v", err)
+	}
+	if c.wantEntries >= 0 && entries.Load() != c.wantEntries {
+		t.Errorf("the lane ran %d times, want %d", entries.Load(), c.wantEntries)
+	}
+	if c.wantDials >= 0 && dials.Load() != c.wantDials {
+		t.Errorf("the shared session was re-dialled %d times, want %d: a lane error is not on its own a lost session, and every sibling lane transfers on the session a redial tears down", dials.Load(), c.wantDials)
+	}
+}
+
+// Lane and session recovery use fake sessions, so their backoffs and windows run in virtual time.
+func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
+	t.Parallel()
+	for name, test := range map[string]func(*testing.T){
+		"persistent redial failure":            runWTLaneSurfacesAPersistentRedialFailure,
+		"concurrent redials dedupe":            wtStageSessionDedupesConcurrentRedials,
+		"close is final":                       wtStageSessionCloseIsFinal,
+		"failed establish closes its session":  wtStageSessionClosesASessionWhoseEstablishFailed,
+		"auth refusal is not retried":          wtStageSessionDoesNotRetryPermanentAuthenticationFailure,
+		"cancelled stage is a stop":            runWTLaneReportsACancelledStageAsAStop,
+		"slow zero-byte failures are bounded":  runWTLaneBoundsSlowZeroByteFailures,
+		"mixed zero-byte failures are bounded": runWTLaneBoundsMixedZeroByteFailures,
+		"real progress resets the bounds":      runWTLaneRealProgressResetsFailureBounds,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, test)
+		})
+	}
+}
+
+func wtStageSessionDedupesConcurrentRedials(t *testing.T) {
 	var dials atomic.Int64
 	host := &wtStageSession{
 		sess: deadWTSession(),
@@ -258,7 +287,7 @@ func TestWTStageSessionDedupesConcurrentRedials(t *testing.T) {
 	}
 }
 
-func TestWTStageSessionCloseIsFinal(t *testing.T) {
+func wtStageSessionCloseIsFinal(t *testing.T) {
 	sess := deadWTSession()
 	var dials atomic.Int64
 	host := &wtStageSession{
@@ -281,8 +310,7 @@ func TestWTStageSessionCloseIsFinal(t *testing.T) {
 	}
 }
 
-func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
-	t.Parallel()
+func wtStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	const failures = 2
 	var mu sync.Mutex
 	var dialed []*wtSession
@@ -332,7 +360,7 @@ func TestWTStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	}
 }
 
-func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
+func wtStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 	var dials atomic.Int64
 	host := &wtStageSession{
 		sess: deadWTSession(),
@@ -351,7 +379,7 @@ func TestWTStageSessionDoesNotRetryPermanentAuthenticationFailure(t *testing.T) 
 	}
 }
 
-func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
+func runWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 	host := &wtStageSession{
 		sess: liveWTSession(t),
 		dial: func(context.Context) (*wtSession, error) {
@@ -384,6 +412,7 @@ func TestRunWTLaneReportsACancelledStageAsAStop(t *testing.T) {
 const wtUnreachableOrigin = "https://127.0.0.1:1"
 
 func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T) {
+	t.Parallel()
 	wt := testTransfer("wt", wtUnreachableOrigin, "http3", true)
 	wt.Transport = wire.TransportWebTransport
 	mux := http.NewServeMux()
@@ -409,6 +438,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 }
 
 func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		cfg  func(Config) Config
@@ -419,6 +449,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			cfg := c.cfg(DefaultConfig())
 			// An unreachable base URL proves the check runs before discovery: a typo is answerable without a server.
 			cfg.BaseURL = wtUnreachableOrigin
@@ -430,8 +461,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 	}
 }
 
-func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
-	t.Parallel()
+func runWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 	host := &wtStageSession{sess: liveWTSession(t)}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*wtLaneProgressWindow+300*time.Millisecond)
 	defer cancel()
@@ -453,8 +483,7 @@ func TestRunWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 	}
 }
 
-func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
-	t.Parallel()
+func runWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 	host := &wtStageSession{sess: liveWTSession(t)}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -477,7 +506,7 @@ func TestRunWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 	}
 }
 
-func TestRunWTLaneRealProgressResetsFailureBounds(t *testing.T) {
+func runWTLaneRealProgressResetsFailureBounds(t *testing.T) {
 	host := &wtStageSession{sess: liveWTSession(t)}
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()

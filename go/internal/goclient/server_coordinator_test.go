@@ -163,6 +163,7 @@ func fixtureConfig(a *serverFixture) Config {
 	return cfg
 }
 func TestNativeCoordinatorRealBidirectional(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Bidirectional: true}
@@ -218,6 +219,7 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 }
 
 func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	a.checkpointDelayNanos.Store(int64(900 * time.Millisecond))
 	cfg := fixtureConfig(a)
@@ -267,6 +269,7 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	}
 }
 func TestNativeCoordinatorDropout(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name      string
 		at        time.Duration
@@ -274,6 +277,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 		available bool
 	}{{"survivor", 300 * time.Millisecond, false, true}, {"late", 950 * time.Millisecond, false, false}, {"all", 300 * time.Millisecond, true, false}} {
 		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 			cfg := fixtureConfig(a)
 			cfg.Stages = StageSet{Download: true}
@@ -318,6 +322,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 
 // A refused checkpoint at either stage boundary is retried within the capture deadline rather than voiding the stage.
 func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
+	t.Parallel()
 	a := coordinatedFixture(t, "a")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Upload: true}

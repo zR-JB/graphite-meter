@@ -14,6 +14,7 @@ func nativeReceiver(id string, bytes uint64, ms int) *ReceiverSnapshot {
 }
 
 func TestCoordinatedReceiverWindows(t *testing.T) {
+	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("upload", []string{"a", "b"}, 0, "stage-start")
 	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 100, 100), "b": nativeReceiver("b", 200, 100)}))
@@ -30,6 +31,7 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 	}
 }
 func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
+	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("download", []string{"a", "b"}, 0, "stage-start")
 	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, nil))
@@ -50,6 +52,7 @@ func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	}
 }
 func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
+	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("upload", []string{"a"}, 0, "stage-start")
 	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 100, 100)}))
@@ -70,6 +73,7 @@ func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 	}
 }
 func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
+	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("bidirectional", []string{"a", "b"}, 0, "stage-start")
 	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 0, 100), "b": nativeReceiver("b", 0, 100)}))
@@ -83,6 +87,7 @@ func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
 	}
 }
 func TestCoordinatedIntervalsStayBounded(t *testing.T) {
+	t.Parallel()
 	a := aggregateMeasurements{}
 	for i := range 140 {
 		a.begin("download", []string{"a"}, time.Duration(i)*time.Second, "stage-start")
@@ -95,6 +100,7 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 }
 
 func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
+	t.Parallel()
 	var measurements aggregateMeasurements
 	measurements.begin("upload", []string{"a"}, 0, "stage-start")
 	measurements.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)}))

@@ -13,6 +13,7 @@ import (
 )
 
 func TestSelectTarget(t *testing.T) {
+	t.Parallel()
 	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
 	webTransport.Transport = wire.TransportWebTransport
 	h1 := testTransfer("http1-clear", "http://meter:7246", "http1", false)
@@ -36,6 +37,7 @@ func TestSelectTarget(t *testing.T) {
 }
 
 func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
+	t.Parallel()
 	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 		testTransfer("native-h1", "https://meter.example:443", "http1", true),
 		testTransfer("native-h2", "https://meter.example:7248", "http2", true),
@@ -47,6 +49,7 @@ func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
 }
 
 func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
+	t.Parallel()
 	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
 		testTransfer("native-h1", "https://meter.example:443", "http1", true),
 	}}}
@@ -63,6 +66,7 @@ func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
 }
 
 func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
+	t.Parallel()
 	targets := []wire.LatencyTarget{
 		testChannel("ws-http1-clear", "http://meter:7246", false),
 		testChannel("ws-http1-tls", "https://meter:7247", true),
@@ -77,6 +81,7 @@ func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
 }
 
 func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
+	t.Parallel()
 	targets := []wire.LatencyTarget{
 		testChannel("ws-http1-clear", "http://meter.example:7246", false),
 		testChannel("ws-http1-tls", "https://meter.example:7247", true),
@@ -89,6 +94,7 @@ func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
 }
 
 func TestSelectLatencyTargetNormalizesDefaultPort(t *testing.T) {
+	t.Parallel()
 	targets := []wire.LatencyTarget{
 		testChannel("native-clear", "http://meter.example:7246", false),
 		testChannel("proxy", "https://meter.example:443", true),
@@ -113,6 +119,7 @@ func attachTestLatencyTarget(r *runner, origin string) {
 }
 
 func TestGetPreflight(t *testing.T) {
+	t.Parallel()
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
@@ -163,6 +170,7 @@ func TestGetPreflight(t *testing.T) {
 }
 
 func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
+	t.Parallel()
 	for _, matching := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unmatched", true: "matched"}[matching], func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
