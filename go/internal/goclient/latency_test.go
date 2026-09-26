@@ -58,31 +58,33 @@ func TestMeasureLatencyPopulations(t *testing.T) {
 func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	t.Parallel()
 	const dropAfter = 3
-	var accepted atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.CloseNow()
-		accepted.Add(1)
-		for range dropAfter {
-			_, msg, err := conn.Read(r.Context())
+	synctest.Test(t, func(t *testing.T) {
+		var accepted atomic.Int64
+		r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			disabled := &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled}
+			conn, err := websocket.Accept(w, r, disabled)
 			if err != nil {
 				return
 			}
-			if id, err := wire.DecodePing(string(msg)); err == nil {
-				_ = conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(id, 0)))
+			defer conn.CloseNow()
+			accepted.Add(1)
+			for range dropAfter {
+				_, msg, err := conn.Read(r.Context())
+				if err != nil {
+					return
+				}
+				if id, err := wire.DecodePing(string(msg)); err == nil {
+					time.Sleep(time.Millisecond)
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(id, 0)))
+				}
 			}
+		}))
+		r.cfg.PingInterval = 20 * time.Millisecond
+		stats, err := r.measureNow(t.Context(), time.Second)
+		if err != nil || accepted.Load() < 2 || stats.Count <= dropAfter {
+			t.Fatalf("redial: %d connections, %+v, %v", accepted.Load(), stats, err)
 		}
-	}))
-	defer srv.Close()
-	r := testRunner(srv)
-	r.cfg.PingInterval = 20 * time.Millisecond
-	stats, err := r.measureNow(t.Context(), time.Second)
-	if err != nil || accepted.Load() < 2 || stats.Count <= dropAfter {
-		t.Fatalf("redial: %d connections, %+v, %v", accepted.Load(), stats, err)
-	}
+	})
 }
 
 func TestMeasureLatencyFailsPromptlyOnAnUnprovenBus(t *testing.T) {
