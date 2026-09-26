@@ -101,7 +101,8 @@ def verify_skopeo_runtime() -> tuple[str, str]:
     return engine, image
 
 
-def verify(version: str, revision: str, archive: Path) -> None:
+def verify(version: str, revision: str, archive: Path) -> str:
+    """Verify the archive and return its manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         raise VerificationError(f"OCI archive is missing, empty, or not a regular file: {archive}")
     engine, image = verify_skopeo_runtime()
@@ -128,7 +129,11 @@ def verify(version: str, revision: str, archive: Path) -> None:
             if labels.get(key) != value:
                 raise VerificationError(
                     f"OCI label {key} for linux/{arch} is {labels.get(key)!r}; expected {value!r}")
-    print(f"OCI verification passed: {version} @ {revision}")
+    digest = skopeo(engine, image, "inspect", "--format", "{{.Digest}}", ARCHIVE, archive=archive)
+    if DIGEST_RE.fullmatch(digest) is None:
+        raise VerificationError(f"OCI archive digest is {digest!r}")
+    print(f"OCI verification passed: {version} @ {revision} as {digest}")
+    return digest
 
 
 def main() -> None:

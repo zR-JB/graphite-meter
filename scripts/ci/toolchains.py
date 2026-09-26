@@ -89,15 +89,12 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
         ],
     }
-    for name in ("ci", "release", "_publish-oci", "_promote-oci"):
+    for name in ("ci", "release"):
         replacements[f".github/workflows/{name}.yml"] = [
-            (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$", rf"\g<1>{pins['images']['skopeo']}"),
+            (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$",
+             rf"\g<1>{pins['images']['skopeo']}"),
+            (r"(?m)^(\s*SKOPEO_VERSION: )\d+\.\d+\.\d+$", rf"\g<1>{skopeo_version(root)}"),
         ]
-        if name in ("ci", "release"):
-            version = skopeo_version(root)
-            replacements[f".github/workflows/{name}.yml"].append(
-                (r"(?m)^(\s*SKOPEO_VERSION: )\d+\.\d+\.\d+$", rf"\g<1>{version}")
-            )
     # Mise must bootstrap before Python can read project metadata. Keep this
     # unavoidable literal checked and synced in every direct action invocation.
     for path in (root / ".github").rglob("*.yml"):

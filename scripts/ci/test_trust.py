@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +13,7 @@ from github_api import APICall, JsonValue
 from release import (
     Release,
     command_prepare,
+    command_recheck,
     parse_release,
     require_compatible_release_tag,
     require_publishable,
@@ -30,7 +31,6 @@ from trust import (
     require_main_codeql,
 )
 
-ROOT = Path(__file__).resolve().parents[2]
 REPO = "zR-JB/graphite-meter"
 MAIN, HEAD, OLD = "1" * 40, "2" * 40, "3" * 40
 APP = {"slug": "github-advanced-security"}
@@ -166,38 +166,28 @@ class GateTests(unittest.TestCase):
                         require_ci_gate(REPO, HEAD, event="pull_request", branch="fix/test",
                                         pr_number=101, api=api)
 
-    def test_python_and_workflow_select_the_same_codeql_check(self) -> None:
-        workflow = (ROOT / ".github/workflows/_publish-oci.yml").read_text(encoding="utf-8")
-        prefix = "latest_codeql=$(jq -c --argjson pr \"$PR_NUMBER\" '"
-        selector = workflow.split(prefix, 1)[1].split("' <<<\"$check_pages\")", 1)[0]
+    def test_newest_pr_codeql_check_decides(self) -> None:
         older = {"id": 41, "status": "completed", "conclusion": "success",
                  "started_at": "2026-09-05T10:00:00Z", "pull_requests": [{"number": 101}]}
-        for status, conclusion, started, pr, selected, allowed in (
-            ("in_progress", None, "2026-09-05T10:04:00Z", 101, 42, False),
-            ("queued", None, None, 101, 42, False),
-            ("completed", "failure", "2026-09-05T10:04:00Z", 101, 42, False),
-            ("completed", "success", "2026-09-05T10:04:00Z", 101, 42, True),
-            ("completed", "failure", "2026-09-05T10:04:00Z", 999, 41, True),
+        for status, conclusion, started, pr, allowed in (
+            ("in_progress", None, "2026-09-05T10:04:00Z", 101, None),
+            ("queued", None, None, 101, None),
+            ("completed", "failure", "2026-09-05T10:04:00Z", 101, None),
+            ("completed", "success", "2026-09-05T10:04:00Z", 101, 42),
+            ("completed", "failure", "2026-09-05T10:04:00Z", 999, 41),
         ):
             newer = {"id": 42, "status": status, "conclusion": conclusion, "started_at": started,
                      "pull_requests": [{"number": pr}]}
             checks = [{"name": "CodeQL", "app": APP, **item} for item in (older, newer)]
-            pages = [{"check_runs": checks}]
+            api = fake({"/check-runs?per_page=100&filter=all": [{"check_runs": checks}]})
             with self.subTest(status=status, conclusion=conclusion, pr=pr):
-                api = fake({"/check-runs?per_page=100&filter=all": pages})
-                if allowed:
-                    self.assertEqual(require_check_run(
-                        REPO, HEAD, name="CodeQL", app_slug=APP["slug"], pr_number=101, api=api,
-                    ), selected)
+                def check() -> int:
+                    return require_check_run(REPO, HEAD, name="CodeQL", app_slug=APP["slug"],
+                                             pr_number=101, api=api)
+                if allowed is None:
+                    self.assertRaises(TrustError, check)
                 else:
-                    with self.assertRaises(TrustError):
-                        require_check_run(REPO, HEAD, name="CodeQL", app_slug=APP["slug"],
-                                          pr_number=101, api=api)
-                result = subprocess.run(
-                    ["jq", "-c", "--argjson", "pr", "101", selector + " | .id"],
-                    input=json.dumps(pages), text=True, capture_output=True, check=True,
-                )
-                self.assertEqual(result.stdout.strip(), str(selected))
+                    self.assertEqual(check(), allowed)
 
 
 def trusted_main(stable: bool) -> dict[str, object]:
@@ -354,6 +344,23 @@ class RequestTests(unittest.TestCase):
                         with self.assertRaisesRegex(TrustError, error):
                             verify_request(root, api=api)
 
+
+    def test_recheck_refuses_a_handoff_other_than_the_verified_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "image").mkdir()
+            (Path(directory) / "image/graphite-meter.oci.tar").write_bytes(b"verified")
+            env = {"MAIN_SHA": MAIN, "PR": "", "TAG": "v1.2.3", "SOURCE_SHA": MAIN,
+                   "REPOSITORY": REPO, "HANDOFF_DIR": directory,
+                   "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}
+            for digest, ok in ((hashlib.sha256(b"verified").hexdigest(), True), ("0" * 64, False)):
+                with (self.subTest(ok=ok), patch.dict(os.environ, env | {"OCI_SHA256": digest}),
+                      patch("release.require_checkout"),
+                      patch("release.require_publishable", return_value=(MAIN, 1, ""))):
+                    if ok:
+                        command_recheck()
+                    else:
+                        with self.assertRaisesRegex(TrustError, "does not match"):
+                            command_recheck()
 
 if __name__ == "__main__":
     unittest.main()

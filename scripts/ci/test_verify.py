@@ -205,6 +205,8 @@ class OCITests(unittest.TestCase):
                 return "skopeo version 1.22.2"
             if "--raw" in args:
                 return json.dumps(index(*RUNNABLE, *ATTESTED))
+            if "{{.Digest}}" in args:
+                return AMD
             return json.dumps(labels) if "--format" in args else ""
 
         with tempfile.TemporaryDirectory() as directory:
@@ -216,7 +218,7 @@ class OCITests(unittest.TestCase):
             archive.write_bytes(b"placeholder")
             with (patch.dict(os.environ, env), patch("verify_oci.run", side_effect=run),
                   patch("verify_oci.select_engine", return_value="docker")):
-                verify_oci("1.2.3", "f" * 40, archive)
+                self.assertEqual(verify_oci("1.2.3", "f" * 40, archive), AMD)
                 with self.assertRaisesRegex(OCIError, "image.version"):
                     verify_oci("1.2.4", "f" * 40, archive)
         self.assertTrue(any("copy" in call and "--all" in call for call in calls))

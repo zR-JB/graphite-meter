@@ -47,10 +47,10 @@ class ToolchainBoundaryTests(unittest.TestCase):
 
     def test_publication_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()
-        path = root / ".github/workflows/_publish-oci.yml"
+        path = root / ".github/workflows/release.yml"
         image = load_pins(root)["images"]["skopeo"]
         path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
-        with self.assertRaisesRegex(ValueError, "_publish-oci.yml"):
+        with self.assertRaisesRegex(ValueError, "release.yml"):
             check(root)
 
     def test_skopeo_tags_require_an_immutable_digest(self) -> None:

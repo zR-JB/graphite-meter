@@ -18,22 +18,15 @@ ROOT = Path(__file__).resolve().parents[2]
 NAME = r"[A-Za-z0-9_.-]+"
 USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
 PINNED = re.compile(rf"{NAME}/{NAME}(?:/{NAME})*@[0-9a-f]{{40}}")
-WRITE = re.compile(r"(?m)^\s+([a-z-]+):\s*write\s*$")
+WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
+JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
+RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 
 TRIGGERS = {
     "ci.yml": {"pull_request", "push"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
-    "_publish-oci.yml": {"workflow_call"},
-    "_publish-release.yml": {"workflow_call"},
-    "_promote-oci.yml": {"workflow_call"},
-}
-WRITERS = {
-    "release.yml": {"contents", "packages"},
-    "_publish-oci.yml": {"packages"},
-    "_publish-release.yml": {"contents"},
-    "_promote-oci.yml": {"packages"},
 }
 ALLOWED_USES = {
     "release-request.yml": {
@@ -42,12 +35,8 @@ ALLOWED_USES = {
     },
     "release.yml": {
         "actions/checkout", "jdx/mise-action", "actions/download-artifact",
-        "actions/upload-artifact", "./.github/workflows/_publish-oci.yml",
-        "./.github/workflows/_publish-release.yml", "./.github/workflows/_promote-oci.yml",
+        "actions/upload-artifact", "actions/create-github-app-token",
     },
-    "_publish-oci.yml": {"actions/download-artifact"},
-    "_publish-release.yml": {"actions/download-artifact"},
-    "_promote-oci.yml": set(),
 }
 ORDERED = {
     "workflows/release-request.yml": (
@@ -57,22 +46,10 @@ ORDERED = {
         "source-sha: ${{ steps.request.outputs.remote_sha }}",
     ),
     "workflows/release.yml": (
-        "run: python3 scripts/ci/release.py verify", "approval:", "environment: ghcr-release",
-        "recheck:", "run: python3 scripts/ci/release.py recheck", "publish-image:",
-        "publish-release:", "target_sha: ${{ github.sha }}", "promote:",
-    ),
-    "workflows/_publish-oci.yml": (
-        "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}",
-        'gh api "repos/$REPOSITORY/commits/main"',
-        'gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID"',
-        "code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL",
-        'gh api "repos/$REPOSITORY/pulls/$PR_NUMBER"',
-        'gh api "repos/$REPOSITORY/compare/$TRUSTED_MAIN_SHA...$SOURCE_SHA"',
-        "commits/$SOURCE_SHA/check-runs?per_page=100",
-        "skopeo login",
-    ),
-    "workflows/_promote-oci.yml": (
-        "group: promote-stable-oci-${{ github.repository }}", "sort -V", "skopeo login",
+        "run: python3 scripts/ci/release.py verify", "environment: ghcr-release",
+        "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
+        "TARGET_SHA: ${{ github.sha }}", "run: scripts/ci/publish.sh release",
+        "run: scripts/ci/publish.sh aliases",
     ),
     "actions/build-oci/action.yml": (
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "no-cache: true", "provenance: mode=max",
@@ -80,12 +57,7 @@ ORDERED = {
     ),
 }
 FORBIDDEN = {
-    "workflows/release.yml": ("head_sha", "pull_request.head", "mise run"),
-    "workflows/_publish-oci.yml": ("environment:",),
-    "workflows/_publish-release.yml": (
-        "environment:", "--location", "gh release upload", "releases/tags/$TAG",
-    ),
-    "workflows/_promote-oci.yml": ("environment:",),
+    "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
     "actions/build-oci/action.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
     ),
@@ -137,7 +109,10 @@ def check_actions(root: Path) -> None:
         for ref in USES.findall(text):
             if not ref.startswith("./") and PINNED.fullmatch(ref) is None:
                 fail(f"{name}: external action must use a full 40-character commit SHA: {ref}")
-        for needle in ("secrets.", "secrets[", "pull_request_target", "write-all", "ubuntu-latest"):
+        needles = ["pull_request_target", "write-all", "ubuntu-latest"]
+        if name != "workflows/release.yml":
+            needles += ["secrets.", "secrets[", "environment:"]
+        for needle in needles:
             if needle in text:
                 fail(f"{name} must not use {needle}")
         if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun)@", text):
@@ -177,19 +152,23 @@ def check_workflows(root: Path) -> None:
         triggers = set(re.findall(r"(?m)^  ([a-z_]+):", block.group(1) if block else ""))
         if triggers != expected:
             fail(f"{name} must be triggered only by {sorted(expected)}")
-        if expected != {"workflow_call"} and not re.search(r"(?m)^permissions:", text):
+        if not re.search(r"(?m)^permissions:", text):
             fail(f"{name} must declare top-level permissions")
-        if extra := set(WRITE.findall(text)) - WRITERS.get(name, set()):
-            fail(f"{name} must not grant write permission: {sorted(extra)}")
+        if writes := WRITE.findall(text):
+            fail(f"{name} must not grant write permission: {sorted(set(writes))}")
         if name in ALLOWED_USES:
             actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
     release = (workflows / "release.yml").read_text(encoding="utf-8")
     publish = "needs.verify.outputs.publish == 'true'"
-    for job in re.split(r"(?m)^  (?=[a-z-]+:$)", release.split("\njobs:\n", 1)[1]):
-        if "uses: ./.github/workflows/" in job and publish not in job:
-            fail("release.yml: every publication job must require publish mode")
+    for job in JOB.split(release.split("\njobs:\n", 1)[1]):
+        secrets = set(re.findall(r"secrets\.(\w+)", job))
+        if (secrets or "environment:" in job) and (
+            publish not in job or "environment: ghcr-release\n" not in job
+            or secrets - RELEASE_SECRETS
+        ):
+            fail("release.yml: only the publish-mode ghcr-release job may read release secrets")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:

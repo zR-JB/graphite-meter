@@ -1,37 +1,41 @@
 #!/usr/bin/env python3
-"""Run the checkout-free publication shell against fake gh and Skopeo."""
+"""Run the publication shell against fake gh, Docker and Skopeo."""
 from __future__ import annotations
 
 import os
 import pathlib
 import subprocess
 import tempfile
-import textwrap
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "_publish-release.yml"
+SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
+VERIFIED = "sha256:" + "a" * 64
+MOVED = "sha256:" + "b" * 64
+SKOPEO = """#!/bin/sh
+echo "$*" >>"$SKOPEO_LOG"
+case "$1 $4" in
+  "copy "*) echo "VERSION_DIGEST=$DIGEST" >"$SKOPEO_LOG.state" ;;
+  "inspect docker://"*:1.2.3)
+    [ ! -f "$SKOPEO_LOG.state" ] || . "$SKOPEO_LOG.state"
+    [ -n "$VERSION_DIGEST" ] || { echo "manifest unknown" >&2; exit 1; }
+    echo "$VERSION_DIGEST" ;;
+  inspect*) echo "$DIGEST" ;;
+esac
+"""
+# Docker runs the in-container script on the host and records its argv.
+SHIM = """docker() {
+  echo "$*" >>"$DOCKER_LOG"
+  while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
+  sh -ec "$2"
+}
+gh() { printf '%s\\n' $RELEASES; }
+"""
 
 
 class ReleaseTransactionTests(unittest.TestCase):
-    def _helpers(self) -> str:
-        text = WORKFLOW.read_text(encoding="utf-8")
-        start = text.index("          resolve_tag_target() {")
-        end = text.index(
-            "          # A pre-existing tag is acceptable only when it already names the exact source SHA."
-        )
-        return textwrap.dedent(text[start:end])
-
     def _run_helpers(self, body: str) -> subprocess.CompletedProcess[str]:
-        script = "set -euo pipefail\n" + self._helpers() + "\n" + body
-        return subprocess.run(
-            ["bash"],
-            input=script,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        return subprocess.run(["bash"], input=f"source {SCRIPT}\n{body}", text=True,
+                              capture_output=True, check=False)
 
     def test_tag_creation_waits_for_read_after_write_visibility(self) -> None:
         sha = "a" * 40
@@ -198,47 +202,53 @@ published=$(wait_for_release_published "test convergence")
         self.assertIn("release publication visibility", result.stderr)
 
 
-class PromotionTests(unittest.TestCase):
-    def promote(self, version_digest: str, latest: str) -> tuple[int, str, str]:
-        text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
-        step = text.split("name: Promote verified stable image without rollback", 1)[1]
-        script = textwrap.dedent(step.split("run: |\n", 1)[1])
-        shim = ('docker() { while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done;'
-                ' sh -ec "$2"; }\n')
+class RegistryTests(unittest.TestCase):
+    def run_script(self, command: str, version_digest: str = "",
+                   releases: str = "v1.2.3") -> tuple[int, str, str]:
         with tempfile.TemporaryDirectory() as directory:
-            skopeo = pathlib.Path(directory) / "skopeo"
-            skopeo.write_text('#!/bin/sh\necho "$*" >>"$SKOPEO_LOG"\n[ "$1" = inspect ] &&'
-                              ' case "$4" in *:1.2.3) echo "$VERSION_DIGEST" ;;'
-                              ' *) echo "$DIGEST" ;; esac\nexit 0\n')
-            skopeo.chmod(0o755)
-            log = pathlib.Path(directory) / "skopeo.log"
+            root = pathlib.Path(directory)
+            (root / "skopeo").write_text(SKOPEO)
+            (root / "skopeo").chmod(0o755)
             env = os.environ | {
-                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "SKOPEO_LOG": str(log),
-                "DIGEST": "sha256:" + "a" * 64, "VERSION_DIGEST": version_digest,
-                "REGISTRY_TOKEN": "token", "REPOSITORY": "Owner/Repo", "REGISTRY_ACTOR": "owner",
-                "VERSION": "1.2.3", "SERIES": "1.2", "PROMOTE_SERIES": "true",
-                "PROMOTE_LATEST": latest, "SKOPEO_IMAGE": "skopeo",
+                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}",
+                "SKOPEO_LOG": str(root / "skopeo.log"), "DOCKER_LOG": str(root / "docker.log"),
+                "DIGEST": VERIFIED, "VERSION_DIGEST": version_digest,
+                "REGISTRY_TOKEN": "secret-token", "REPOSITORY": "Owner/Repo",
+                "REGISTRY_ACTOR": "owner", "VERSION": "1.2.3", "IMAGE_TAG": "1.2.3",
+                "ARCHIVE_DIR": directory, "SKOPEO_IMAGE": "skopeo", "RELEASES": releases,
             }
-            result = subprocess.run(["bash", "-c", shim + script], env=env, capture_output=True,
-                                    text=True)
-            return result.returncode, result.stdout + result.stderr, log.read_text()
+            result = subprocess.run(["bash", "-c", f"{SHIM}source {SCRIPT} {command}"], env=env,
+                                    capture_output=True, text=True)
+            self.assertNotIn("secret-token", (root / "docker.log").read_text())
+            log = (root / "skopeo.log").read_text()
+            return result.returncode, result.stdout + result.stderr, log
+
+    def test_image_publication_is_exact_and_idempotent(self) -> None:
+        status, output, log = self.run_script("image")
+        self.assertEqual(status, 0, output)
+        self.assertIn("copy --all --preserve-digests oci-archive:/work/graphite-meter.oci.tar "
+                      "docker://ghcr.io/owner/repo:1.2.3", log)
+        status, output, log = self.run_script("image", VERIFIED)
+        self.assertEqual((status, "copy" in log), (0, False), output)
+        status, output, _ = self.run_script("image", MOVED)
+        self.assertNotEqual(status, 0)
+        self.assertIn("already exists", output)
 
     def test_aliases_copy_only_the_verified_digest(self) -> None:
-        verified = "sha256:" + "a" * 64
-        status, output, log = self.promote(verified, "true")
+        status, output, log = self.run_script("aliases", VERIFIED, "v1.1.9 v1.2.3")
         self.assertEqual(status, 0, output)
         for alias in ("1.2", "latest"):
-            self.assertIn(f"copy --all --preserve-digests docker://ghcr.io/owner/repo@{verified} "
+            self.assertIn(f"copy --all --preserve-digests docker://ghcr.io/owner/repo@{VERIFIED} "
                           f"docker://ghcr.io/owner/repo:{alias}", log)
 
     def test_a_moved_version_tag_stops_promotion(self) -> None:
-        status, output, log = self.promote("sha256:" + "b" * 64, "true")
+        status, output, log = self.run_script("aliases", MOVED)
         self.assertNotEqual(status, 0)
         self.assertIn("not the verified", output)
         self.assertNotIn("copy", log)
 
     def test_an_older_series_is_promoted_without_latest(self) -> None:
-        status, output, log = self.promote("sha256:" + "a" * 64, "false")
+        status, output, log = self.run_script("aliases", VERIFIED, "v1.2.3 v1.10.0")
         self.assertEqual(status, 0, output)
         self.assertIn("promoted ghcr.io/owner/repo:1.2", output)
         self.assertNotIn(":latest", log)

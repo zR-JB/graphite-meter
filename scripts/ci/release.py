@@ -72,6 +72,11 @@ class Release:
         return self.tag[1:]
 
 
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
 def parse_release(tag: str, sha: str, pr: int) -> Release:
     match = TAG_RE.fullmatch(tag)
     if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
@@ -200,11 +205,10 @@ def command_verify() -> None:
     candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
     if (candidate / OCI).stat().st_size > OCI_LIMIT:
         refuse(f"OCI archive exceeds {OCI_LIMIT} bytes")
-    with (candidate / OCI).open("rb") as handle:
-        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    digest = file_sha256(candidate / OCI)
     if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
         refuse("OCI archive does not match the request checksum")
-    verify_oci.verify(release.version, release.sha, candidate / OCI)
+    manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
     assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
     if release.stable:
         verify_release_assets.verify_artifacts(release.version, assets)
@@ -217,9 +221,9 @@ def command_verify() -> None:
     if release.stable:
         shutil.copytree(assets, handoff / "assets")
     append_output(
-        tag=release.tag, version=release.version, series=release.version.rsplit(".", 1)[0],
-        stable=str(release.stable).lower(), publish=str(publish).lower(), sha=release.sha,
-        main_sha=main, pr=release.pr or "", oci_sha256=digest,
+        tag=release.tag, version=release.version, stable=str(release.stable).lower(),
+        publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
+        oci_sha256=digest, digest=manifest,
     )
     append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
@@ -235,13 +239,17 @@ def command_recheck() -> None:
     pr = env_int("PR") if os.environ.get("PR") else 0
     release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
     require_checkout(main)
+    handoff = Path(env("HANDOFF_DIR"))
+    exact_files(handoff / "image", {OCI})
+    if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
+        refuse("approved OCI handoff does not match the verified archive")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
         refuse("main moved after verification; start a fresh request")
-    append_output(ci_run_id=ci_run_id, codeql_check_id=codeql_id)
     append_summary(
         f"### Final release recheck passed\n\n`{release.tag}` from `{release.sha}` is still "
-        f"authorized on main `{main}` after approval, with CI run `{ci_run_id}`."
+        f"authorized on main `{main}` after approval: CI run `{ci_run_id}`, "
+        f"CodeQL {codeql_id or 'on main'}."
     )
 
 
