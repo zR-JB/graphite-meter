@@ -320,7 +320,7 @@ async fn deadline(at: Option<Instant>) {
     }
 }
 fn browser(url: &str) -> Result<Child, Error> {
-    if url::Url::parse(url)?.scheme() != "https" {
+    if graphite_meter_core::origin::split_url(url)?.0.scheme != "https" {
         return Err("approval browser URL must use HTTPS".into());
     }
     #[cfg(target_os = "windows")]

@@ -148,7 +148,7 @@ impl Transport {
             return true;
         }
         if !self.is_http3() {
-            let mut cause = error.source();
+            let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error.as_ref());
             while let Some(source) = cause {
                 if source
                     .downcast_ref::<std::io::Error>()
@@ -158,7 +158,7 @@ impl Transport {
                 }
                 cause = source.source();
             }
-            return error.is::<reqwest::Error>();
+            return error.is::<hyper::Error>() || error.is::<std::io::Error>();
         }
         if let Some(stream) = error.downcast_ref::<h3::error::StreamError>() {
             return match stream {
@@ -248,11 +248,16 @@ impl Transport {
     }
 
     pub fn url(&self, route: Route, query: &[(&str, &str)]) -> Result<String, Error> {
-        let mut url = url::Url::parse(&format!("{}{}", self.origin, route.path()))?;
+        let mut url = format!("{}{}", self.origin, route.path());
         if !query.is_empty() {
-            url.query_pairs_mut().extend_pairs(query.iter().copied());
+            url.push('?');
+            url.push_str(
+                &form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(query.iter().copied())
+                    .finish(),
+            );
         }
-        Ok(url.into())
+        Ok(url)
     }
 
     pub async fn receive(
@@ -358,16 +363,13 @@ impl Transport {
                     .check_status(&target, response.status(), response.headers())?;
                 request.recv_body().await?;
             } else {
-                let response = self
+                let request = self
                     .http
-                    .builder(Method::POST, &target, self.protocol)?
+                    .builder(Method::POST, &target)?
                     .header(http::header::CONTENT_TYPE, "application/octet-stream")
                     .header(http::header::CONTENT_LENGTH, length)
-                    .body(reqwest::Body::wrap_stream(body))
-                    .send()
-                    .await
-                    .map_err(reqwest::Error::without_url)?;
-                let response = self.http.check_response(response)?;
+                    .body(crate::net::streaming(body))?;
+                let response = self.http.send(request, self.protocol).await?;
                 crate::net::bounded_body(response).await?;
             }
             Ok(())
@@ -429,7 +431,7 @@ fn retryable_h3_code(code: u64) -> bool {
 }
 
 enum BodyInner {
-    Http(reqwest::Response),
+    Http(crate::net::Response),
     H3(Box<Http3Stream>),
 }
 
@@ -443,10 +445,16 @@ impl Body {
     pub async fn chunk(&mut self) -> Result<Option<Bytes>, Error> {
         let chunk = timeout_at(self.deadline, async {
             match &mut self.inner {
-                BodyInner::Http(response) => Ok(response
-                    .chunk()
-                    .await
-                    .map_err(reqwest::Error::without_url)?),
+                BodyInner::Http(response) => loop {
+                    match http_body_util::BodyExt::frame(response.body_mut()).await {
+                        None => break Ok(None),
+                        Some(frame) => {
+                            if let Ok(data) = frame?.into_data() {
+                                break Ok(Some(data));
+                            }
+                        }
+                    }
+                },
                 BodyInner::H3(stream) => stream.recv_data().await,
             }
         })

@@ -17,14 +17,12 @@ use tokio::{
     sync::{mpsc, watch},
     time::Instant,
 };
-use tokio_tungstenite::{
-    Connector, connect_async_tls_with_config,
-    tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig},
+use tokio_tungstenite::tungstenite::{
+    Message, client::IntoClientRequest, protocol::WebSocketConfig,
 };
 
 const MAX_PENDING: usize = 256;
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
 type Pending = Arc<Mutex<BTreeMap<u32, Instant>>>;
 
 #[derive(Clone, Copy, Debug)]
@@ -311,30 +309,78 @@ async fn connect_ws(
     }
     let mut tls = crate::tls::config(insecure)?;
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let tls = origin
+        .starts_with("https://")
+        .then(|| tokio_rustls::TlsConnector::from(Arc::new(tls)));
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
         .max_write_buffer_size(4096)
         .max_message_size(Some(1024))
         .max_frame_size(Some(1024));
-    let connection = connect_async_tls_with_config(
-        request,
-        Some(config),
-        true,
-        Some(Connector::Rustls(Arc::new(tls))),
-    );
-    let connected = tokio::select! {
-        biased;
-        () = cancelled(cancel) => return Ok(None),
-        result = tokio::time::timeout(Duration::from_secs(10), connection) => result?,
-    };
-    let (socket, _) = match connected {
-        Ok(connected) => connected,
-        Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+    let connection = async {
+        let connection = http.dial(&origin, tls.as_ref()).await?;
+        let key = tokio_tungstenite::tungstenite::handshake::derive_accept_key(
+            request.headers()["sec-websocket-key"].as_bytes(),
+        );
+        *request.uri_mut() = if connection.absolute_form {
+            target.parse()?
+        } else {
+            "/ws/ping".parse()?
+        };
+        if let Some(authorization) = connection.proxy_authorization {
+            request
+                .headers_mut()
+                .insert(http::header::PROXY_AUTHORIZATION, authorization);
+        }
+        let (mut sender, driver) =
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection.stream))
+                .await?;
+        tokio::spawn(driver.with_upgrades());
+        let response = sender
+            .send_request(request.map(|()| crate::net::empty()))
+            .await?;
+        if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
             http.check_status(&target, response.status(), response.headers())?;
             return Err("WebSocket upgrade was not accepted".into());
         }
-        Err(error) => return Err(error.into()),
+        let headers = response.headers();
+        let upgrade = headers
+            .get(http::header::UPGRADE)
+            .and_then(|value| value.to_str().ok());
+        let connection = headers
+            .get(http::header::CONNECTION)
+            .and_then(|value| value.to_str().ok());
+        if !upgrade.is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+            || !connection.is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|token| token.trim().eq_ignore_ascii_case("upgrade"))
+            })
+            || !headers
+                .get("sec-websocket-accept")
+                .is_some_and(|value| value == key.as_str())
+            || headers.contains_key("sec-websocket-protocol")
+            || headers.contains_key("sec-websocket-extensions")
+        {
+            return Err("invalid WebSocket upgrade response".into());
+        }
+        let upgraded = hyper::upgrade::on(response).await?;
+        let stream: Box<dyn graphite_meter_net::Stream> =
+            Box::new(hyper_util::rt::TokioIo::new(upgraded));
+        Ok::<_, Error>(
+            tokio_tungstenite::WebSocketStream::from_raw_socket(
+                stream,
+                tokio_tungstenite::tungstenite::protocol::Role::Client,
+                Some(config),
+            )
+            .await,
+        )
+    };
+    let socket = tokio::select! {
+        biased;
+        () = cancelled(cancel) => return Ok(None),
+        result = tokio::time::timeout(Duration::from_secs(10), connection) => result??,
     };
     Ok(Some(socket))
 }
@@ -541,6 +587,73 @@ async fn expire(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_proxy_uses_absolute_form_and_validates_upgrade() -> Result<(), Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _ = crate::crypto::provider().install_default();
+        for valid in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let peer = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    head.push(stream.read_u8().await.unwrap());
+                }
+                let head = String::from_utf8(head).unwrap();
+                assert!(
+                    head.starts_with("GET http://meter.test/ws/ping HTTP/1.1\r\n"),
+                    "{head}"
+                );
+                assert!(
+                    head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
+                    "{head}"
+                );
+                let key = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("sec-websocket-key: "))
+                    .unwrap();
+                let key = if valid {
+                    tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes())
+                } else {
+                    String::from("invalid")
+                };
+                stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {key}\r\n\r\n").as_bytes()).await.unwrap();
+                if valid {
+                    let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                        stream,
+                        tokio_tungstenite::tungstenite::protocol::Role::Server,
+                        None,
+                    )
+                    .await;
+                    socket.send(Message::Text("pong".into())).await.unwrap();
+                    let _ = socket.next().await;
+                }
+            });
+            let mut http = Http::new(false)?;
+            http.set_proxy(graphite_meter_net::Proxy::new(
+                &format!("http://user:secret@{address}"),
+                "",
+                "",
+            ));
+            let (_cancel, mut cancel) = watch::channel(false);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                let result = connect_ws(&http, "http://meter.test", false, &mut cancel).await;
+                if valid {
+                    let mut socket = result?.unwrap();
+                    assert_eq!(socket.next().await.unwrap()?, Message::Text("pong".into()));
+                    socket.close(None).await?;
+                } else {
+                    assert!(result.is_err());
+                }
+                peer.await?;
+                Ok::<_, Error>(())
+            })
+            .await??;
+        }
+        Ok(())
+    }
 
     #[test]
     fn settling_preserves_expired_vs_unresolved_and_reports_backpressure() {

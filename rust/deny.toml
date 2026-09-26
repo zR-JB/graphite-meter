@@ -22,8 +22,8 @@ wildcards = "warn"
 allow-wildcard-paths = true
 deny = [
   { crate = "openidconnect", wrappers = ["graphite-meter-server"] },
-  { crate = "reqwest", wrappers = ["graphite-meter-server", "graphite-meter-client"] },
-  { crate = "url", wrappers = ["graphite-meter-core", "graphite-meter-server", "graphite-meter-client", "reqwest", "tower-http", "oauth2", "openidconnect"] },
+  { crate = "reqwest", wrappers = ["graphite-meter-server"] },
+  { crate = "url", wrappers = ["graphite-meter-core", "graphite-meter-server", "reqwest", "tower-http", "oauth2", "openidconnect"] },
   { crate = "time", wrappers = ["graphite-meter-server"] },
   { crate = "x509-cert", wrappers = ["graphite-meter-server"] },
   { crate = "rsa", wrappers = ["openidconnect"] },

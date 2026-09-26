@@ -9,10 +9,25 @@ use rustls::{
 use rustls_platform_verifier::BuilderVerifierExt;
 use std::sync::Arc;
 pub(crate) fn config(insecure: bool) -> Result<rustls::ClientConfig, Error> {
+    let mut tls = build(insecure, &[&rustls::version::TLS13])?;
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    Ok(tls)
+}
+
+pub(crate) fn tcp_config(insecure: bool, alpn: &[&[u8]]) -> Result<rustls::ClientConfig, Error> {
+    let mut tls = build(insecure, rustls::DEFAULT_VERSIONS)?;
+    tls.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+    Ok(tls)
+}
+
+fn build(
+    insecure: bool,
+    versions: &[&'static rustls::SupportedProtocolVersion],
+) -> Result<rustls::ClientConfig, Error> {
     let provider = Arc::new(crate::crypto::provider());
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(&[&rustls::version::TLS13])?;
-    let mut tls = if insecure {
+        .with_protocol_versions(versions)?;
+    let tls = if insecure {
         builder
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(InsecureVerifier { provider }))
@@ -20,7 +35,6 @@ pub(crate) fn config(insecure: bool) -> Result<rustls::ClientConfig, Error> {
     } else {
         builder.with_platform_verifier()?.with_no_client_auth()
     };
-    tls.alpn_protocols = vec![b"h3".to_vec()];
     Ok(tls)
 }
 

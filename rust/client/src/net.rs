@@ -1,16 +1,25 @@
 //! Validated discovery and origin-scoped ephemeral credentials. Redirects never carry authority.
 use crate::Error;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
+use futures_util::{Stream, TryStreamExt};
 use graphite_meter_core::{
     catalog::{ServerCatalog, ServerEntry},
     discovery::{Preflight, Probe, Protocol, ProtocolNegotiated},
-    origin::{canonical_origin, target_origin},
+    origin::{canonical_origin, split_url, target_origin},
     wire::decode_json,
 };
-use reqwest::{
-    Method, Response, StatusCode,
-    header::{AUTHORIZATION, HeaderValue},
+use graphite_meter_net::{Proxy, connect};
+use http::{
+    Method, Request, StatusCode, Version,
+    header::{AUTHORIZATION, CONTENT_TYPE, HOST, HeaderValue},
 };
+use http_body_util::{BodyExt, Empty, Full, StreamBody, combinators::UnsyncBoxBody};
+use hyper::{
+    body::{Frame, Incoming},
+    client::conn::{http1, http2},
+};
+use hyper_util::rt::{TokioExecutor, TokioIo};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 use std::{
@@ -19,16 +28,173 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio_rustls::TlsConnector;
 
 type Result<T> = std::result::Result<T, Error>;
+pub type Body = UnsyncBoxBody<Bytes, Error>;
+pub type Response = http::Response<Incoming>;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_LIMIT: usize = 64 * 1024;
+const IDLE_PER_ORIGIN: usize = 32;
+
+pub fn empty() -> Body {
+    Empty::new().map_err(|never| match never {}).boxed_unsync()
+}
+pub fn full(bytes: impl Into<Bytes>) -> Body {
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
+pub fn streaming(body: impl Stream<Item = Result<Bytes>> + Send + 'static) -> Body {
+    StreamBody::new(body.map_ok(Frame::data)).boxed_unsync()
+}
+
+struct Connections {
+    proxy: Proxy,
+    tls: [TlsConnector; 3],
+    pools: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<Pool>>>>,
+}
+type Key = (String, Protocol);
+
+#[derive(Default)]
+struct Pool {
+    h1: Vec<(tokio::time::Instant, Http1)>,
+    h2: Option<http2::SendRequest<Body>>,
+}
+struct Http1 {
+    sender: http1::SendRequest<Body>,
+    absolute_form: bool,
+    proxy_authorization: Option<HeaderValue>,
+}
+enum Sender {
+    H1(Http1),
+    H2(http2::SendRequest<Body>),
+}
+
+impl Connections {
+    fn new(insecure: bool, proxy: Proxy) -> Result<Self> {
+        let tls = |alpn: &[&[u8]]| -> Result<TlsConnector> {
+            Ok(TlsConnector::from(Arc::new(crate::tls::tcp_config(
+                insecure, alpn,
+            )?)))
+        };
+        Ok(Self {
+            proxy,
+            tls: [
+                tls(&[b"http/1.1"])?,
+                tls(&[b"h2"])?,
+                tls(&[b"h2", b"http/1.1"])?,
+            ],
+            pools: Mutex::new(HashMap::new()),
+        })
+    }
+
+    async fn sender(&self, origin: &str, protocol: Protocol, pool: &mut Pool) -> Result<Sender> {
+        if let Some(sender) = &pool.h2
+            && !sender.is_closed()
+        {
+            return Ok(Sender::H2(sender.clone()));
+        }
+        pool.h1.retain(|(idle, connection)| {
+            !connection.sender.is_closed() && idle.elapsed() < Duration::from_secs(90)
+        });
+        if let Some(index) = pool
+            .h1
+            .iter()
+            .position(|(_, connection)| connection.sender.is_ready())
+        {
+            return Ok(Sender::H1(pool.h1.swap_remove(index).1));
+        }
+        let target = target_origin(origin)?.ok_or("missing origin")?;
+        let tls = (target.scheme == "https").then(|| match protocol {
+            Protocol::Http1 => &self.tls[0],
+            Protocol::Http2 => &self.tls[1],
+            _ => &self.tls[2],
+        });
+        let connection = connect(&self.proxy, &target, tls).await?;
+        let h2 = !connection.absolute_form
+            && match connection.alpn.as_deref() {
+                Some(alpn) => alpn == b"h2",
+                None => target.scheme == "http" && protocol == Protocol::Http2,
+            };
+        if protocol == Protocol::Http2 && !h2 {
+            return Err("server or proxy does not support HTTP/2".into());
+        }
+        let io = TokioIo::new(connection.stream);
+        if h2 {
+            let (sender, driver) = http2::handshake(TokioExecutor::new(), io).await?;
+            tokio::spawn(driver);
+            pool.h2 = Some(sender.clone());
+            Ok(Sender::H2(sender))
+        } else {
+            let (sender, driver) = http1::handshake(io).await?;
+            tokio::spawn(driver);
+            Ok(Sender::H1(Http1 {
+                sender,
+                absolute_form: connection.absolute_form,
+                proxy_authorization: connection.proxy_authorization,
+            }))
+        }
+    }
+
+    async fn send(&self, mut request: Request<Body>, protocol: Protocol) -> Result<Response> {
+        let (origin, _) = split_url(&request.uri().to_string())?;
+        let origin = origin.key();
+        let pool = self
+            .pools
+            .lock()
+            .expect("connections poisoned")
+            .entry((origin.clone(), protocol))
+            .or_default()
+            .clone();
+        let sender = tokio::time::timeout(CONTROL_TIMEOUT, async {
+            let mut pool = pool.lock().await;
+            self.sender(&origin, protocol, &mut pool).await
+        })
+        .await??;
+        match sender {
+            Sender::H2(mut sender) => {
+                sender.ready().await?;
+                Ok(sender.send_request(request).await?)
+            }
+            Sender::H1(mut connection) => {
+                let authority = request
+                    .uri()
+                    .authority()
+                    .ok_or("missing authority")?
+                    .clone();
+                request
+                    .headers_mut()
+                    .insert(HOST, HeaderValue::from_str(authority.as_str())?);
+                if connection.absolute_form {
+                    if let Some(authorization) = &connection.proxy_authorization {
+                        request
+                            .headers_mut()
+                            .insert(http::header::PROXY_AUTHORIZATION, authorization.clone());
+                    }
+                } else {
+                    let path = request
+                        .uri()
+                        .path_and_query()
+                        .map_or("/", |path| path.as_str())
+                        .parse()?;
+                    *request.uri_mut() = path;
+                }
+                *request.version_mut() = Version::HTTP_11;
+                let response = connection.sender.send_request(request).await?;
+                let mut pool = pool.lock().await;
+                if pool.h1.len() < IDLE_PER_ORIGIN {
+                    pool.h1.push((tokio::time::Instant::now(), connection));
+                }
+                Ok(response)
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Http {
-    h1: reqwest::Client,
-    h2: reqwest::Client,
-    negotiated: reqwest::Client,
+    connections: Arc<Connections>,
     insecure: bool,
     grants: Arc<Mutex<HashMap<String, Grant>>>,
     scope: Option<Arc<GrantScope>>,
@@ -82,20 +248,24 @@ impl Http {
         if rustls::crypto::CryptoProvider::get_default().is_none() {
             return Err("install a rustls crypto provider before constructing Http".into());
         }
-        let builder = || {
-            reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(CONTROL_TIMEOUT)
-                .tls_danger_accept_invalid_certs(insecure)
-        };
         Ok(Self {
-            h1: builder().http1_only().build()?,
-            h2: builder().http2_prior_knowledge().build()?,
-            negotiated: builder().build()?,
+            connections: Arc::new(Connections::new(insecure, Proxy::from_env())?),
             insecure,
             grants: Arc::new(Mutex::new(HashMap::new())),
             scope: None,
         })
+    }
+    pub async fn dial(
+        &self,
+        origin: &str,
+        tls: Option<&TlsConnector>,
+    ) -> Result<graphite_meter_net::Connection> {
+        let target = target_origin(origin)?.ok_or("missing origin")?;
+        Ok(connect(&self.connections.proxy, &target, tls).await?)
+    }
+    #[cfg(test)]
+    pub(crate) fn set_proxy(&mut self, proxy: Proxy) {
+        Arc::get_mut(&mut self.connections).unwrap().proxy = proxy;
     }
     pub fn authorization(&self, target: &str) -> Option<HeaderValue> {
         let origin = destination_origin(target).ok()?;
@@ -110,24 +280,25 @@ impl Http {
             .get(issuer)
             .map(|grant| grant.header.clone())
     }
-    pub fn builder(
-        &self,
-        method: Method,
-        target: &str,
-        protocol: Protocol,
-    ) -> Result<reqwest::RequestBuilder> {
+    pub fn builder(&self, method: Method, target: &str) -> Result<http::request::Builder> {
         destination_origin(target)?;
-        let client = match protocol {
-            Protocol::Http1 => &self.h1,
-            Protocol::Http2 => &self.h2,
-            Protocol::Negotiated => &self.negotiated,
-            Protocol::Http3 => return Err("HTTP/3 requires the native QUIC transport".into()),
-        };
-        let mut request = client.request(method, target);
+        let mut request = Request::builder()
+            .method(method)
+            .uri(target)
+            .header(http::header::ACCEPT, "*/*");
         if let Some(header) = self.authorization(target) {
             request = request.header(AUTHORIZATION, header);
         }
         Ok(request)
+    }
+    pub async fn send(&self, request: Request<Body>, protocol: Protocol) -> Result<Response> {
+        if protocol == Protocol::Http3 {
+            return Err("HTTP/3 requires the native QUIC transport".into());
+        }
+        let target = request.uri().to_string();
+        let response = self.connections.send(request, protocol).await?;
+        self.check_status(&target, response.status(), response.headers())?;
+        Ok(response)
     }
     pub async fn request(
         &self,
@@ -135,21 +306,8 @@ impl Http {
         target: &str,
         protocol: Protocol,
     ) -> Result<Response> {
-        let response = tokio::time::timeout(
-            CONTROL_TIMEOUT,
-            self.builder(method, target, protocol)?.send(),
-        )
-        .await?
-        .map_err(reqwest::Error::without_url)?;
-        self.check_response(response)
-    }
-    pub fn check_response(&self, response: Response) -> Result<Response> {
-        self.check_status(
-            response.url().as_str(),
-            response.status(),
-            response.headers(),
-        )?;
-        Ok(response)
+        let request = self.builder(method, target)?.body(empty())?;
+        tokio::time::timeout(CONTROL_TIMEOUT, self.send(request, protocol)).await?
     }
     pub fn check_status(
         &self,
@@ -252,8 +410,8 @@ impl Http {
         .await??;
         let probe = Probe::decode(&bytes)?;
         let actual = match version {
-            reqwest::Version::HTTP_11 => ProtocolNegotiated::Http1,
-            reqwest::Version::HTTP_2 => ProtocolNegotiated::Http2,
+            Version::HTTP_11 => ProtocolNegotiated::Http1,
+            Version::HTTP_2 => ProtocolNegotiated::Http2,
             _ => return Err("probe used an unsupported HTTP protocol".into()),
         };
         if probe.protocol_negotiated != actual {
@@ -325,15 +483,17 @@ impl Http {
     pub async fn poll_authorization(&self, pending: PendingAuthorization) -> Result<()> {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
+                let body = serde_json::to_vec(
+                    &serde_json::json!({"verifier": pending.verifier.as_str()}),
+                )?;
+                let request = Request::post(&pending.token_url)
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(full(body))?;
                 let response = tokio::time::timeout(
                     CONTROL_TIMEOUT,
-                    self.negotiated
-                        .post(&pending.token_url)
-                        .json(&serde_json::json!({"verifier":pending.verifier.as_str()}))
-                        .send(),
+                    self.connections.send(request, Protocol::Negotiated),
                 )
-                .await?
-                .map_err(reqwest::Error::without_url)?;
+                .await??;
                 let status = response.status();
                 let data = tokio::time::timeout(CONTROL_TIMEOUT, bounded_body(response)).await??;
                 if status == StatusCode::OK {
@@ -365,45 +525,29 @@ impl Http {
 pub async fn bounded_body(response: Response) -> Result<Vec<u8>> {
     tokio::time::timeout(CONTROL_TIMEOUT, read_bounded_body(response)).await?
 }
-async fn read_bounded_body(mut response: Response) -> Result<Vec<u8>> {
-    if response
-        .content_length()
+async fn read_bounded_body(response: Response) -> Result<Vec<u8>> {
+    let mut body = response.into_body();
+    if hyper::body::Body::size_hint(&body)
+        .exact()
         .is_some_and(|length| length > CONTROL_LIMIT as u64)
     {
         return Err("control response exceeds 64 KiB".into());
     }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(reqwest::Error::without_url)?
-    {
-        if chunk.len() > CONTROL_LIMIT - body.len() {
-            return Err("control response exceeds 64 KiB".into());
+    let mut bytes = Vec::new();
+    while let Some(frame) = body.frame().await {
+        if let Ok(chunk) = frame?.into_data() {
+            if chunk.len() > CONTROL_LIMIT - bytes.len() {
+                return Err("control response exceeds 64 KiB".into());
+            }
+            bytes.extend_from_slice(&chunk);
         }
-        body.extend_from_slice(&chunk);
     }
-    Ok(body)
+    Ok(bytes)
 }
 fn destination_origin(raw: &str) -> Result<String> {
-    if raw
-        .bytes()
-        .any(|byte| byte <= b' ' || byte == 127 || byte == b'\\')
-    {
-        return Err("invalid HTTP URL".into());
-    }
-    let (scheme, rest) = raw.split_once("://").ok_or("absolute HTTP URL required")?;
-    let authority = rest
-        .split(['/', '?', '#'])
-        .next()
-        .ok_or("missing URL authority")?;
-    let origin = canonical_origin(&format!("{scheme}://{authority}"))?;
-    let parsed = url::Url::parse(raw)?;
-    if parsed.fragment().is_some() || !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("HTTP URL cannot contain credentials or a fragment".into());
-    }
-    Ok(origin)
+    Ok(split_url(raw)?.0.key())
 }
+
 fn validated_login(source: &str, raw: &str) -> Result<String> {
     let source = target_origin(source)?.ok_or("missing source origin")?;
     let origin = destination_origin(raw)?;
@@ -440,6 +584,58 @@ mod tests {
         Http::new(insecure).unwrap()
     }
 
+    #[tokio::test]
+    async fn cleartext_proxy_requests_reuse_absolute_form_and_keep_credentials_on_proxy()
+    -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for proxied in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            let address = listener.local_addr()?;
+            let target = if proxied {
+                "http://meter.test/probe".to_owned()
+            } else {
+                format!("http://{address}/probe")
+            };
+            let peer = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                for _ in 0..2 {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        head.push(stream.read_u8().await.unwrap());
+                    }
+                    let head = String::from_utf8(head).unwrap();
+                    let expected = if proxied {
+                        "GET http://meter.test/probe HTTP/1.1\r\n"
+                    } else {
+                        "GET /probe HTTP/1.1\r\n"
+                    };
+                    assert!(head.starts_with(expected), "{head}");
+                    assert_eq!(
+                        head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
+                        proxied,
+                        "{head}"
+                    );
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                }
+            });
+            let mut http = http(false);
+            http.set_proxy(Proxy::new(&format!("http://user:secret@{address}"), "", ""));
+            tokio::time::timeout(Duration::from_secs(5), async {
+                for _ in 0..2 {
+                    let response = http.request(Method::GET, &target, Protocol::Http1).await?;
+                    assert_eq!(bounded_body(response).await?, b"ok");
+                }
+                peer.await?;
+                Ok::<_, Error>(())
+            })
+            .await??;
+        }
+        Ok(())
+    }
+
     #[test]
     fn request_destinations_preserve_validated_ascii_host_identity() {
         let http = http(false);
@@ -449,12 +645,12 @@ mod tests {
             "https://127.0.0.1",
         ] {
             let request = http
-                .builder(Method::GET, &format!("{origin}/probe"), Protocol::Http1)
+                .builder(Method::GET, &format!("{origin}/probe"))
                 .unwrap()
-                .build()
+                .body(())
                 .unwrap();
             assert_eq!(
-                request.url().host_str(),
+                request.uri().host(),
                 Some(target_origin(origin).unwrap().unwrap().host.as_str())
             );
         }
@@ -467,7 +663,7 @@ mod tests {
             "https://xn--a.example",
         ] {
             assert!(
-                http.builder(Method::GET, &format!("{origin}/probe"), Protocol::Http1)
+                http.builder(Method::GET, &format!("{origin}/probe"))
                     .is_err(),
                 "accepted {origin}"
             );
@@ -612,14 +808,14 @@ mod tests {
             "Bearer second"
         );
         let first_request = first_client
-            .builder(Method::POST, &target, Protocol::Http1)
+            .builder(Method::POST, &target)
             .unwrap()
-            .build()
+            .body(())
             .unwrap();
         let second_request = second_client
-            .builder(Method::POST, &target, Protocol::Http1)
+            .builder(Method::POST, &target)
             .unwrap()
-            .build()
+            .body(())
             .unwrap();
         assert_eq!(first_request.headers()[AUTHORIZATION], "Bearer first");
         assert_eq!(second_request.headers()[AUTHORIZATION], "Bearer second");

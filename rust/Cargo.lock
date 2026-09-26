@@ -940,9 +940,11 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "crossterm",
+ "form_urlencoded",
  "futures-util",
  "getrandom 0.4.3",
  "graphite-meter-core",
+ "graphite-meter-net",
  "h3",
  "h3-noq",
  "http",
@@ -952,7 +954,6 @@ dependencies = [
  "miniz_oxide",
  "noq",
  "ratatui",
- "reqwest",
  "rustls",
  "rustls-platform-verifier",
  "serde",
@@ -962,7 +963,6 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "unicode-width",
- "url",
  "zeroize",
 ]
 
@@ -2302,7 +2302,6 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "futures-core",
- "futures-util",
  "h2",
  "http",
  "http-body",
@@ -2317,20 +2316,15 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
- "serde",
- "serde_json",
- "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
  "web-sys",
 ]
 
@@ -2653,18 +2647,6 @@ version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ce1fc6db65a611022b23a0dec6975d63fb80a302cb3388835ff02c097258d50"
 dependencies = [
- "serde",
-]
-
-[[package]]
-name = "serde_urlencoded"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
-dependencies = [
- "form_urlencoded",
- "itoa",
- "ryu",
  "serde",
 ]
 
@@ -3073,11 +3055,7 @@ checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-native-certs",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
 ]
 
@@ -3177,8 +3155,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.10.2",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 2.0.20",
 ]
@@ -3343,19 +3319,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "wasm-streams"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
-dependencies = [
- "futures-util",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]
