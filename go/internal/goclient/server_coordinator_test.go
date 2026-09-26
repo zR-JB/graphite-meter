@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
@@ -384,6 +385,24 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	if err != nil || upload.Err != nil || upload.Unavailable || upload.MeanBps <= 0 {
 		t.Fatalf("transient checkpoint refusal voided the stage: %v %+v", err, upload)
 	}
+}
+
+func TestARemovedServersLatencyKeepsItsCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, pingHandler(answerAll, time.Millisecond))
+		r.cfg.PingInterval = 20 * time.Millisecond
+		ctx, remove := context.WithCancelCause(t.Context())
+		removed := errors.New("server removed")
+		time.AfterFunc(100*time.Millisecond, func() { remove(removed) })
+		stats, err := r.measureNow(ctx, time.Second)
+		s := &stageServer{participant: &participant{transport: r}}
+		result := Result{Stage: StageDownload, Latency: stats, Err: err}
+		(&coordinator{}).retainLatency(resourceOutcome{server: s, role: roleLatency, result: result, err: err}, true)
+		if stats.Count == 0 || len(s.results) != 1 || !errors.Is(s.results[0].Err, removed) {
+			t.Fatalf("a removed server's population was saved clean: %+v", s.results)
+		}
+	})
 }
 
 func TestLoadedLatencyKeepsTheIdleRTT(t *testing.T) {

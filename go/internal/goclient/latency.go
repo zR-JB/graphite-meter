@@ -217,7 +217,7 @@ func (r *runner) measureLatency(
 			defer timer.Stop()
 			drain = timer.C
 		case <-measureCtx.Done():
-			return finish(measureCtx.Err())
+			return finish(context.Cause(measureCtx))
 		case <-drain:
 			drain = nil
 			if probes.drained(time.Now()) {
@@ -226,7 +226,7 @@ func (r *runner) measureLatency(
 		case err := <-recvErr:
 			switch {
 			case measureCtx.Err() != nil:
-				return finish(measureCtx.Err())
+				return finish(context.Cause(measureCtx))
 			case !probes.interrupt(time.Now()):
 				return finish(fmt.Errorf("latency channel failed: %w", err))
 			case probes.ended(time.Now()):
@@ -236,7 +236,7 @@ func (r *runner) measureLatency(
 			fresh, err := r.redialPingBus(measureCtx, probes.bound(time.Now().Add(redialWindow)))
 			if err != nil {
 				if measureCtx.Err() != nil {
-					return finish(measureCtx.Err())
+					return finish(context.Cause(measureCtx))
 				}
 				return finish(fmt.Errorf("latency channel failed: %w", err))
 			}

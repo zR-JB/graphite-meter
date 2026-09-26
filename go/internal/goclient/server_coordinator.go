@@ -267,7 +267,8 @@ func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 		return
 	}
 	result := outcome.result
-	if normalEnd && errors.Is(outcome.err, context.Canceled) {
+	// Only the stage's own end is clean; a removed server's cause stays on its population.
+	if normalEnd && outcome.err == context.Canceled {
 		result.Err = nil
 	}
 	p := outcome.server.participant
