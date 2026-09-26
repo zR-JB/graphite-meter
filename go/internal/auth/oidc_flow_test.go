@@ -159,6 +159,13 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 
 func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...string) (state string, cookie *http.Cookie) {
 	t.Helper()
+	return startOIDCFrom(t, s, f, "", approvalChallenge...)
+}
+
+// startOIDCFrom starts a sign-in from a browser that may still hold a prior session cookie.
+func startOIDCFrom(t *testing.T, s *Service, f *fakeOIDC, prior string, approvalChallenge ...string) (string,
+	*http.Cookie) {
+	t.Helper()
 	csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
 	values := url.Values{"csrf": {csrf}}
 	if len(approvalChallenge) > 0 {
@@ -170,6 +177,9 @@ func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...strin
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
+	if prior != "" {
+		withSessionCookie(r, prior)
+	}
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	if rr.Code != http.StatusSeeOther {
@@ -262,6 +272,24 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 				t.Fatalf("loggedIn=%v, want %v", loggedIn, want)
 			}
 		})
+	}
+}
+
+// Signing in again replaces the browser's previous login and ends the grants it delegated.
+func TestOIDCLoginRevokesTheSessionItReplaces(t *testing.T) {
+	f := newFakeOIDC(t)
+	s := f.service(t)
+	prior, sess, err := s.createSession("local-operator", "Local operator", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant := grantFor(t, s, sess)
+	state, cookie := startOIDCFrom(t, s, f, prior)
+	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
+		t.Fatalf("callback status=%d, want 200", rr.Code)
+	}
+	if _, ok := s.authenticateGrant(grant); ok || s.sessions[sess.hash] != nil || len(s.sessions) != 1 {
+		t.Fatal("the new login kept the session it replaced or that session's grant")
 	}
 }
 

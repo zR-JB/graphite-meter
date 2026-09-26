@@ -64,6 +64,13 @@ func TestLogoutScope(t *testing.T) {
 			if rr.Code != http.StatusSeeOther || s.sessions[current.hash] != nil || s.sessions[other.hash] == nil {
 				t.Fatalf("logout code=%d revoked the wrong sessions", rr.Code)
 			}
+			cleared := map[string]bool{}
+			for _, c := range rr.Result().Cookies() {
+				cleared[c.Name] = c.Value == "" && c.MaxAge < 0
+			}
+			if !cleared[sessionCookie] || !cleared[csrfCookie] || !cleared[loginCookie] {
+				t.Fatalf("logout cleared cookies %v, want the session, CSRF and login cookies", cleared)
+			}
 			_, grantLive := s.authenticateGrant(grant)
 			if everywhere := scope == "all"; (s.sessions[sibling.hash] == nil) != everywhere ||
 				grantLive == everywhere {

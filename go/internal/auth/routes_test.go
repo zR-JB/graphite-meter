@@ -26,10 +26,27 @@ func TestCORSPreflight(t *testing.T) {
 		!strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "X-Graphite-Upload-Refusal") {
 		t.Fatalf("valid preflight code=%d headers=%v", rr.Code, rr.Header())
 	}
+	for _, rr := range []*httptest.ResponseRecorder{
+		preflight("/download", requestingUI, http.MethodGet, "authorization", true),
+		preflight("/auth/browser/token", requestingUI, http.MethodPost, "content-type", true),
+	} {
+		if rr.Code != http.StatusNoContent || rr.Header().Get("Access-Control-Allow-Origin") != requestingUI ||
+			rr.Header().Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("cookie-free preflight code=%d headers=%v", rr.Code, rr.Header())
+		}
+	}
 	for name, rr := range map[string]*httptest.ResponseRecorder{
-		"insecure":          preflight("/download", s.origin, http.MethodGet, "", false),
-		"wrong origin":      preflight("/download", "https://evil.example", http.MethodGet, "", true),
+		"insecure":                    preflight("/download", s.origin, http.MethodGet, "", false),
+		"cleartext origin":            preflight("/download", "http://meter.example", http.MethodGet, "", true),
+		"non-canonical origin":        preflight("/download", "https://meter.example:443", http.MethodGet, "", true),
+		"another origin's catalogue":  preflight("/servers", "https://evil.example", http.MethodGet, "", true),
+		"browser grant for catalogue": preflight("/servers", requestingUI, http.MethodGet, "authorization", true),
+		"bearer without authorization": preflight("/download", requestingUI, http.MethodGet, "content-type",
+			true),
 		"disallowed header": preflight("/download", s.origin, http.MethodGet, "x-evil", true),
+		"token exchange by GET": preflight("/auth/browser/token", requestingUI, http.MethodGet, "content-type",
+			true),
+		"token exchange by any verb": preflight("/auth/browser/token", requestingUI, "", "content-type", true),
 	} {
 		if rr.Code != http.StatusForbidden || rr.Header().Get("Access-Control-Allow-Origin") != "" {
 			t.Errorf("%s: code=%d exposes %q, want a bare 403", name, rr.Code,

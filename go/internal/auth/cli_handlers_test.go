@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -29,14 +30,55 @@ func cliPageRequest(challenge, cookie string) *http.Request {
 }
 
 func cliExchange(s *Service, body string) *httptest.ResponseRecorder {
-	rr := httptest.NewRecorder()
-	s.token(rr, secureRequest("POST", "/auth/cli/token", strings.NewReader(body)))
-	return rr
+	return serveMounted(s, secureRequest(http.MethodPost, "/auth/cli/token", strings.NewReader(body)))
 }
 
-func approveCLI(s *Service, sess *session, verifier string) {
-	s.approvals[challengeFor(verifier)] = &approval{session: sess, expires: time.Now().Add(time.Minute),
-		approved: true}
+func mountedAuth(s *Service) http.Handler {
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	return s.Enforce(mux, Listener{UI: true})
+}
+
+func serveMounted(s *Service, r *http.Request) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	mountedAuth(s).ServeHTTP(w, r)
+	return w
+}
+
+func approvalForm(path, challenge, cookie string, sess *session) *http.Request {
+	form := url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()
+	r := withSessionCookie(secureRequest(http.MethodPost, path, strings.NewReader(form)), cookie)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", "https://meter.example")
+	return r
+}
+
+// approveNative opens the terminal approval page and confirms it as the signed-in operator does.
+func approveNative(t *testing.T, s *Service, cookie string, sess *session, verifier string) {
+	t.Helper()
+	challenge := challengeFor(verifier)
+	if w := serveMounted(s, cliPageRequest(challenge, cookie)); w.Code != http.StatusOK {
+		t.Fatalf("approval page = %d, want 200", w.Code)
+	}
+	if w := cliExchange(s, `{"verifier":"`+verifier+`"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("exchange before the confirming click = %d, want 202", w.Code)
+	}
+	if w := serveMounted(s, approvalForm("/auth/cli/approve", challenge, cookie, sess)); w.Code != http.StatusOK {
+		t.Fatalf("approve = %d, want 200", w.Code)
+	}
+}
+
+func nativeGrant(t *testing.T, s *Service, cookie string, sess *session, verifier string) string {
+	t.Helper()
+	approveNative(t, s, cookie, sess, verifier)
+	w := cliExchange(s, `{"verifier":"`+verifier+`"}`)
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &out); w.Code != http.StatusOK || err != nil || out.Token == "" {
+		t.Fatalf("exchange = %d %s", w.Code, w.Body.String())
+	}
+	return out.Token
 }
 
 func TestCliPageRefusals(t *testing.T) {
@@ -136,16 +178,16 @@ func TestCliApprove(t *testing.T) {
 
 func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	s := testService(t)
-	_, sess, _ := s.createSession("subject", "Name", "local")
+	raw, sess, _ := s.createSession("subject", "Name", "local")
 	if rr := cliExchange(s, `{"verifier":"not-known"}`); rr.Code != http.StatusAccepted || len(s.approvals) != 0 {
 		t.Fatalf("unknown verifier code=%d approvals=%d, want 202 and no state", rr.Code, len(s.approvals))
 	}
-	approveCLI(s, sess, "strict-json-verifier")
+	approveNative(t, s, raw, sess, "strict-json-verifier")
 	dup := cliExchange(s, `{"verifier":"unknown","verifier":"strict-json-verifier"}`)
 	if dup.Code != http.StatusAccepted || len(sess.grants) != 0 {
 		t.Fatalf("duplicate-name request code=%d grants=%d, want 202 and no grant", dup.Code, len(sess.grants))
 	}
-	approveCLI(s, sess, "terminal-verifier")
+	approveNative(t, s, raw, sess, "terminal-verifier")
 	first := cliExchange(s, `{"verifier":"terminal-verifier"}`)
 	var out struct {
 		Token string `json:"token"`
@@ -170,7 +212,7 @@ func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 // A CLI login at the grant cap replaces the oldest CLI grant and never a browser grant whose run may be live.
 func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 	s := testService(t)
-	_, sess, _ := s.createSession("subject", "Name", "local")
+	raw, sess, _ := s.createSession("subject", "Name", "local")
 	var browser []*grant
 	addBrowserGrant := func() {
 		_, g := addGrant(s, sess, requestingUI)
@@ -178,7 +220,11 @@ func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 	}
 	exchange := func(i int) int {
 		verifier := fmt.Sprintf("verifier-%d", i)
-		approveCLI(s, sess, verifier)
+		before := maps.Clone(sess.grants)
+		approveNative(t, s, raw, sess, verifier)
+		if !maps.Equal(before, sess.grants) {
+			t.Fatalf("polling unapproved login %d changed the grant set", i)
+		}
 		return cliExchange(s, `{"verifier":"`+verifier+`"}`).Code
 	}
 	addBrowserGrant()
@@ -206,5 +252,74 @@ func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 		if g.ctx.Err() != nil {
 			t.Fatalf("browser grant %d was cancelled by a CLI login", i)
 		}
+	}
+}
+
+// Each approval is confirmed and redeemed only through the flow and audience that created it.
+func TestApprovalsStayOnTheirAudience(t *testing.T) {
+	s := testService(t)
+	raw, sess, _ := s.createSession("subject", "Name", "local")
+	native, browser := "native-audience-verifier", randomToken(32)
+	browserPage := func(origin string) *http.Request {
+		query := url.Values{"challenge": {challengeFor(browser)}, "client_origin": {origin}}.Encode()
+		return withSessionCookie(secureRequest(http.MethodGet, "/auth/browser?"+query, nil), raw)
+	}
+	if w := serveMounted(s, cliPageRequest(challengeFor(native), raw)); w.Code != http.StatusOK {
+		t.Fatalf("terminal page = %d", w.Code)
+	}
+	if w := serveMounted(s, browserPage(requestingUI)); w.Code != http.StatusOK {
+		t.Fatalf("browser page = %d", w.Code)
+	}
+	for name, r := range map[string]*http.Request{
+		"terminal approval confirmed as a browser": approvalForm("/auth/browser/approve", challengeFor(native), raw,
+			sess),
+		"browser approval confirmed as a terminal": approvalForm("/auth/cli/approve", challengeFor(browser), raw,
+			sess),
+		"browser approval shown for another origin": browserPage("https://other.example"),
+	} {
+		if w := serveMounted(s, r); w.Code != http.StatusForbidden {
+			t.Errorf("%s = %d, want 403", name, w.Code)
+		}
+	}
+	if s.approvals[challengeFor(native)].approved || s.approvals[challengeFor(browser)].approved {
+		t.Fatal("a cross-audience confirmation approved a request")
+	}
+	for path, challenge := range map[string]string{"/auth/cli/approve": challengeFor(native),
+		"/auth/browser/approve": challengeFor(browser)} {
+		if w := serveMounted(s, approvalForm(path, challenge, raw, sess)); w.Code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", path, w.Code)
+		}
+	}
+	if w := cliExchange(s, `{"verifier":"`+browser+`"}`); w.Code != http.StatusAccepted {
+		t.Fatalf("browser approval redeemed by a terminal = %d, want 202", w.Code)
+	}
+	if w := serveMounted(s, browserExchangeRequest(native, requestingUI)); w.Code == http.StatusOK {
+		t.Fatal("terminal approval redeemed by a browser")
+	}
+	if len(sess.grants) != 0 {
+		t.Fatalf("cross-audience exchanges issued %d grants", len(sess.grants))
+	}
+	if w := serveMounted(s, browserExchangeRequest(browser, requestingUI)); w.Code != http.StatusOK {
+		t.Fatalf("browser exchange on its audience = %d, want 200", w.Code)
+	}
+	if w := cliExchange(s, `{"verifier":"`+native+`"}`); w.Code != http.StatusOK {
+		t.Fatalf("terminal exchange = %d, want 200", w.Code)
+	}
+}
+
+// Signing out ends the login's pending approvals, so signing back in can confirm the same terminal request.
+func TestReloginConfirmsAPendingTerminalApproval(t *testing.T) {
+	s := testService(t)
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
+	const verifier = "relogin-terminal-verifier"
+	if w := serveMounted(s, cliPageRequest(challengeFor(verifier), raw)); w.Code != http.StatusOK {
+		t.Fatalf("terminal page = %d", w.Code)
+	}
+	if w := serveMounted(s, approvalForm("/auth/logout", "", raw, sess)); w.Code != http.StatusSeeOther {
+		t.Fatalf("logout = %d", w.Code)
+	}
+	raw, sess, _ = s.createSession("local-operator", "Local operator", "local")
+	if _, ok := s.authenticateGrant(nativeGrant(t, s, raw, sess, verifier)); !ok {
+		t.Fatal("the grant confirmed after signing back in was refused")
 	}
 }
