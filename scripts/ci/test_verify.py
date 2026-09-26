@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import os
 import stat
@@ -12,7 +11,19 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from github_api import JsonObject
+from fixtures import (
+    AMD,
+    ARM,
+    ATTESTED,
+    RUNNABLE,
+    descriptor,
+    engine,
+    index,
+    source_members,
+    write_checksums,
+    write_release_assets,
+    write_tar,
+)
 from verify_oci import (
     VerificationError as OCIError,
     parse_skopeo_version,
@@ -23,6 +34,7 @@ from verify_release_assets import (
     VerificationError,
     archive_names,
     tui_archives,
+    verify_artifacts,
     verify_checksums,
     verify_client_archives,
     verify_client_version,
@@ -31,35 +43,8 @@ from verify_release_assets import (
     verify_third_party_source_archive,
 )
 
-MANIFEST = "application/vnd.oci.image.manifest.v1+json"
-AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
-
-
-def write_tar(path: Path, members: dict[str, bytes]) -> None:
-    with tarfile.open(path, "w:gz") as archive:
-        for name, payload in members.items():
-            info = tarfile.TarInfo(name)
-            info.size = len(payload)
-            archive.addfile(info, io.BytesIO(payload))
-
-
-def descriptor(os_name: str, arch: str, digest: str, attests: str | None = None) -> JsonObject:
-    item: JsonObject = {"mediaType": MANIFEST, "digest": digest,
-                        "platform": {"os": os_name, "architecture": arch}}
-    if attests is not None:
-        item["annotations"] = {"vnd.docker.reference.type": "attestation-manifest",
-                               "vnd.docker.reference.digest": attests}
-    return item
-
-
-def index(*manifests: JsonObject) -> JsonObject:
-    return {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
-            "manifests": list(manifests)}
-
-
-RUNNABLE = (descriptor("linux", "amd64", AMD), descriptor("linux", "arm64", ARM))
-ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
-            descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
+SOURCE = "graphite-meter_1.2.3_third-party-source"
+LINUX = "graphite-meter-client_1.2.3_linux_amd64"
 
 
 class ReleaseAssetTests(unittest.TestCase):
@@ -77,8 +62,16 @@ class ReleaseAssetTests(unittest.TestCase):
         (self.dist / "extra.bin").write_bytes(b"not checksummed")
         with self.assertRaisesRegex(VerificationError, r"unexpected=\['extra.bin'\]"):
             verify_release_file_set(self.dist, {"artifact.bin"})
+        (self.dist / "extra.bin").unlink()
+        (self.dist / "link.bin").symlink_to(payload)
+        (self.dist / "directory").mkdir()
+        with self.assertRaisesRegex(VerificationError, r"non-regular entries: \['directory', 'l"):
+            verify_release_file_set(self.dist, {"artifact.bin", "link.bin", "directory"})
         for line, error in ((f"{digest}  ../artifact.bin", "unsafe"),
                             (f"{digest}  artifact\tname.bin", "unsafe"),
+                            (f"{digest}  artifact.bin\n{digest}  artifact.bin", "duplicate"),
+                            (f"{digest}  link.bin", "not a regular file: link.bin"),
+                            (f"{digest}  directory", "not a regular file: directory"),
                             ("0" * 64 + "  artifact.bin", "checksum mismatch"),
                             ("", "empty")):
             (self.dist / "checksums.txt").write_text(line + "\n" if line else "")
@@ -107,17 +100,9 @@ class ReleaseAssetTests(unittest.TestCase):
                 archive_names(path)
 
     def test_third_party_source_offer_excludes_project_source_and_manual_keys(self) -> None:
-        root = "graphite-meter_1.2.3_third-party-source"
-        readme = (b"Use Source code (tar.gz) or Source code (zip). This archive does not "
-                  b"duplicate Graphite Meter's own repository source.\n")
-        base = {
-            f"{root}/README.txt": readme,
-            f"{root}/LEGAL_INVENTORY.json": b'{"server":[],"tui":[],"container":[]}',
-            f"{root}/PROVENANCE.json": b"[]",
-            f"{root}/third_party/go/quic-go/internal/testdata/priv.key": b"upstream fixture",
-            f"{root}/third_party/npm/example/cert.pem": b"upstream fixture",
-            f"{root}/third_party/manual/sample/source.txt": b"manual source",
-        }
+        root = SOURCE
+        base = source_members("1.2.3") | {
+            f"{root}/third_party/npm/example/cert.pem": b"upstream fixture"}
         for extra, error in (
             ({}, None),
             ({f"{root}/third_party/manual/sample/private.key": b"x"}, "outside upstream"),
@@ -147,6 +132,46 @@ class ReleaseAssetTests(unittest.TestCase):
         with self.assertRaisesRegex(VerificationError, "graphite-meter-client"):
             verify_client_archives(self.dist, "1.2.3", targets)
 
+    def test_release_is_exactly_the_checksummed_source_offer_and_tui_archives(self) -> None:
+        def add_extra(dist: Path) -> None:
+            (dist / "extra.bin").write_text("x")
+
+        def checksum_extra(dist: Path) -> None:
+            add_extra(dist)
+            write_checksums(dist)
+
+        def key_in_tui(dist: Path) -> None:
+            members = {f"{LINUX}/{name}": b"x" for name in (
+                "graphite-meter-client", "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt",
+                "SOURCE.txt", "certs/server.key")}
+            write_tar(dist / f"{LINUX}.tar.gz", members)
+            write_checksums(dist)
+
+        def no_binary(dist: Path) -> None:
+            write_tar(dist / f"{LINUX}.tar.gz", {f"{LINUX}/LICENSE": b"x"})
+            write_checksums(dist)
+
+        def bad_offer(dist: Path) -> None:
+            write_tar(dist / f"{SOURCE}.tar.gz", source_members("1.2.3") | {
+                f"{SOURCE}/README.txt": b"source is elsewhere"})
+            write_checksums(dist)
+
+        for edit, error in ((None, None), (add_extra, r"release files: .*unexpected=\['extra"),
+                            (checksum_extra, r"checksummed release artifacts: .*'extra.bin'"),
+                            (key_in_tui, "certificate/key material"),
+                            (no_binary, "missing: .*graphite-meter-client'"),
+                            (bad_offer, "describe the source offer")):
+            dist = self.dist / (edit.__name__ if edit else "valid")
+            write_release_assets(dist, "1.2.3")
+            if edit is not None:
+                edit(dist)
+            with self.subTest(error=error):
+                if error is None:
+                    verify_artifacts("1.2.3", dist)
+                else:
+                    with self.assertRaisesRegex(VerificationError, error):
+                        verify_artifacts("1.2.3", dist)
+
     def test_built_client_and_server_report_the_release_version(self) -> None:
         previous = Path.cwd()
         self.addCleanup(os.chdir, previous)
@@ -172,15 +197,30 @@ class OCITests(unittest.TestCase):
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
                          {"amd64": AMD, "arm64": ARM})
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
+        mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
+        mistyped["annotations"] = {"vnd.docker.reference.type": "other",
+                                   "vnd.docker.reference.digest": ARM}
+        docker = descriptor("linux", "amd64", AMD)
+        docker["mediaType"] = "application/vnd.docker.distribution.manifest.v2+json"
         for manifests, error in (
             ((*RUNNABLE, ATTESTED[0]), "one provenance attestation"),
             ((*RUNNABLE, ATTESTED[0], stray), "one provenance attestation"),
+            ((*RUNNABLE, *ATTESTED, stray), "one provenance attestation"),
+            ((*RUNNABLE, *ATTESTED, ATTESTED[0]), "one provenance attestation"),
+            ((*RUNNABLE, ATTESTED[0], mistyped), "not a provenance attestation"),
+            ((descriptor("linux", "amd64", "sha256:abc"), RUNNABLE[1], *ATTESTED), "sha256 digest"),
+            ((docker, RUNNABLE[1], *ATTESTED), "must be an OCI manifest"),
             ((*RUNNABLE, *ATTESTED, descriptor("linux", "s390x", AMD)), "unexpected"),
             ((*RUNNABLE, *ATTESTED, RUNNABLE[0]), "duplicate"),
             ((RUNNABLE[0], ATTESTED[0]), "linux/amd64 and linux/arm64"),
         ):
             with self.subTest(error=error), self.assertRaisesRegex(OCIError, error):
                 validate_index_descriptors(index(*manifests))
+        for key, value in (("schemaVersion", 1), ("mediaType", "application/json")):
+            valid = index(*RUNNABLE, *ATTESTED)
+            valid[key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(OCIError, "schemaVersion 2"):
+                validate_index_descriptors(valid)
 
     def test_skopeo_version_output_shapes(self) -> None:
         for output, version in (("skopeo version 1.22.2", "1.22.2"),
@@ -191,42 +231,48 @@ class OCITests(unittest.TestCase):
             parse_skopeo_version("skopeo 1.22.2")
 
     def test_verification_runs_offline_with_only_the_archive_mounted_read_only(self) -> None:
-        env = {"SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.2@sha256:" + "a" * 64,
-               "SKOPEO_VERSION": "1.22.2", "REPOSITORY": "example/repo"}
-        labels = {"org.opencontainers.image.source": "https://github.com/example/repo",
-                  "org.opencontainers.image.revision": "f" * 40,
-                  "org.opencontainers.image.version": "1.2.3",
-                  "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}
-        calls: list[tuple[str, ...]] = []
+        wrong_revision = {"org.opencontainers.image.revision": "e" * 40}
+        for change, version, error in (
+            ({}, "1.2.3", None),
+            ({}, "1.2.4", "image.version"),
+            ({"FAKE_LABELS": wrong_revision}, "1.2.3", "image.revision"),
+            ({"FAKE_SKOPEO_VERSION": "1.22.2"}, "1.2.3", "Skopeo version is '1.22.2'"),
+            ({"FAKE_DIGEST": "sha256:abc"}, "1.2.3", "digest is 'sha256:abc'"),
+            ({"FAKE_INDEX": index(*RUNNABLE)}, "1.2.3", "one provenance attestation"),
+        ):
+            with (tempfile.TemporaryDirectory() as directory,
+                  self.subTest(change=change, version=version)):
+                root = Path(directory)
+                env = engine(root, "example/repo", "1.2.3", "f" * 40)
+                labels = json.loads(env["FAKE_LABELS"]) | change.pop("FAKE_LABELS", {})
+                env |= {"FAKE_LABELS": json.dumps(labels)} | {
+                    key: value if isinstance(value, str) else json.dumps(value)
+                    for key, value in change.items()}
+                archive = root / "image.oci.tar"
+                archive.write_bytes(b"placeholder")
+                with patch.dict(os.environ, env):
+                    if error is None:
+                        self.assertEqual(verify_oci(version, "f" * 40, archive), AMD)
+                    else:
+                        with self.assertRaisesRegex(OCIError, error):
+                            verify_oci(version, "f" * 40, archive)
+                log = (root / "engine.log").read_text()
+                for call in (line.split() for line in log.splitlines()):
+                    self.assertEqual(call[:5], ["run", "--rm", "--network", "none",
+                                                "--entrypoint"])
+                    mounts = [call[i + 1] for i, value in enumerate(call) if value == "-v"]
+                    self.assertIn(mounts, ([], [f"{archive}:/work/image.oci.tar:ro"]))
+                if error is None:
+                    self.assertIn(" copy --all oci-archive:/work/image.oci.tar ", log)
 
-        def run(*args: str) -> str:
-            calls.append(args)
-            if "--version" in args:
-                return "skopeo version 1.22.2"
-            if "--raw" in args:
-                return json.dumps(index(*RUNNABLE, *ATTESTED))
-            if "{{.Digest}}" in args:
-                return AMD
-            return json.dumps(labels) if "--format" in args else ""
-
+    def test_symlinked_or_empty_archive_is_refused_before_the_engine_runs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "image.oci.tar"
-            archive.symlink_to(directory)
-            with self.assertRaisesRegex(OCIError, "not a regular file"):
-                verify_oci("1.2.3", "f" * 40, archive)
-            archive.unlink()
-            archive.write_bytes(b"placeholder")
-            with (patch.dict(os.environ, env), patch("verify_oci.run", side_effect=run),
-                  patch("verify_oci.select_engine", return_value="docker")):
-                self.assertEqual(verify_oci("1.2.3", "f" * 40, archive), AMD)
-                with self.assertRaisesRegex(OCIError, "image.version"):
-                    verify_oci("1.2.4", "f" * 40, archive)
-        self.assertTrue(any("copy" in call and "--all" in call for call in calls))
-        for call in calls:
-            self.assertEqual(call[:5], ("docker", "run", "--rm", "--network", "none"))
-            mounts = [call[i + 1] for i, value in enumerate(call) if value == "-v"]
-            self.assertTrue(all(mount.endswith(":/work/image.oci.tar:ro") for mount in mounts))
-            self.assertLessEqual(len(mounts), 1)
+            for make in (lambda: archive.symlink_to(directory), archive.touch):
+                make()
+                with self.assertRaisesRegex(OCIError, "not a regular file"):
+                    verify_oci("1.2.3", "f" * 40, archive)
+                archive.unlink()
 
 
 if __name__ == "__main__":
