@@ -34,6 +34,8 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
+var ErrApprovalExpired = errors.New("browser approval timed out")
+
 type PendingAuthorization struct {
 	BrowserURL, Code   string
 	Origin             string
@@ -118,7 +120,9 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 		}
 		req.Header.Set("Content-Type", "application/json")
 		res, err := p.client.Do(req)
-		lastTransportErr = err
+		if ctx.Err() == nil {
+			lastTransportErr = err
+		}
 		if err == nil {
 			var out struct {
 				Token string `json:"token"`
@@ -146,7 +150,7 @@ func (p *PendingAuthorization) Poll(ctx context.Context) (string, error) {
 			if lastTransportErr != nil {
 				return "", fmt.Errorf("server unreachable while waiting for browser approval: %w", lastTransportErr)
 			}
-			return "", errors.New("browser approval timed out")
+			return "", ErrApprovalExpired
 		case <-ticker:
 		}
 	}

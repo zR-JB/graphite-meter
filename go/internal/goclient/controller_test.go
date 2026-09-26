@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -233,4 +234,20 @@ func TestLiveSamplesNeverBlockOnAFullView(t *testing.T) {
 	}
 	abandon()
 	<-delivered
+}
+
+func TestApprovalExpiryIsNotATransportFailure(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		pending := &PendingAuthorization{tokenURL: "https://meter.test/auth/cli/token", close: func() {},
+			client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			})}}
+		ctx, cancel := context.WithTimeout(t.Context(), AuthorizationTimeout)
+		defer cancel()
+		if _, err := pending.Poll(ctx); !errors.Is(err, ErrApprovalExpired) {
+			t.Fatalf("a poll cut by the approval deadline = %v, want expiry", err)
+		}
+	})
 }
