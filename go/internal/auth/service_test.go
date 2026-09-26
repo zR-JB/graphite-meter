@@ -256,6 +256,12 @@ func TestRequestEvidencePolicy(t *testing.T) {
 		{"user-initiated", "GET", "/probe", "", "", "none", "", false, 403},
 		{"cross-site", "GET", "/probe", "", "", "cross-site", "", false, 403},
 		{"same-origin", "GET", "/probe", "", "", "same-origin", "", false, 204},
+		{"cross-site page read", "GET", "/", "", "", "cross-site", "", false, 403},
+		{"sibling page read without origin", "GET", "/", "", "", "same-site", "", false, 403},
+		{"sibling page read with its origin", "GET", "/", "", "https://sibling.meter.example", "same-site", "", false,
+			403},
+		{"same-origin page read", "GET", "/", "", "", "same-origin", "", false, 204},
+		{"page read without fetch metadata", "GET", "/", "", "", "", "", false, 204},
 		{"account route on another port", "GET", "/auth/session", "meter.example:7443", "", "", "", false, 403},
 		{"account route with a grant", "GET", "/auth/session", "", "", "", "", true, 403},
 	} {
