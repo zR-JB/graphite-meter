@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { announce } from "../presentation/announcer.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import {
     describeTransferStreams,
@@ -112,7 +113,6 @@
     ),
   );
   const httpPaths = $derived(advertisedServerHttpPaths(discovery));
-  let copyError = $state(false);
 
   // Rows read the path cards' presentation, never stale verified evidence.
   const throughputTransport = $derived(
@@ -154,15 +154,18 @@
     );
   }
 
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(copiedTimer));
   async function copyReport() {
-    copyError = false;
+    clearTimeout(copiedTimer);
     try {
       await navigator.clipboard.writeText(diagnosticReport());
       copied = true;
-      window.setTimeout(() => (copied = false), 1500);
+      copiedTimer = setTimeout(() => (copied = false), 1500);
+      announce("Diagnostic report copied");
     } catch {
       copied = false;
-      copyError = true;
+      announce("Unable to copy diagnostic report");
     }
   }
 </script>
@@ -364,13 +367,6 @@
       </p>
       <button class="btn" type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button
-      >
-      <span class="sr-only" aria-live="polite"
-        >{copied
-          ? "Diagnostic report copied"
-          : copyError
-            ? "Unable to copy diagnostic report"
-            : ""}</span
       >
     </div>
   </details>
