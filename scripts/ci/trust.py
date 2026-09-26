@@ -28,6 +28,7 @@ SHA_RE = re.compile(r"[0-9a-f]{40}")
 SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
 CONTROL_PLANE = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
 DONE = ("completed", "success")
+ENVIRONMENT = "ghcr-release"
 
 
 class TrustError(ControlPlaneError):
@@ -259,3 +260,21 @@ def require_main_codeql(repository: str, sha: str, *, api: APICall = default_api
     for item in newest.values():
         if warning := _text(item.get("warning")):
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")
+
+
+def require_protected_environment(repository: str, *, api: APICall = default_api) -> None:
+    """Require reviewers and a main-only deployment policy on the publishing environment."""
+    path = f"repos/{repository}/environments/{ENVIRONMENT}"
+    environment = expect_object(api(path), ENVIRONMENT)
+    rules = [expect_object(rule, "protection rule")
+             for rule in expect_array(environment.get("protection_rules") or [], "rules")]
+    if not any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
+               for rule in rules):
+        refuse(f"{ENVIRONMENT} must require reviewers")
+    if _get(environment.get("deployment_branch_policy"), "custom_branch_policies") is not True:
+        refuse(f"{ENVIRONMENT} must limit deployments to main")
+    policies = expect_object(api(f"{path}/deployment-branch-policies"), "branch policies")
+    branches = [(_get(item, "name"), _get(item, "type"))
+                for item in expect_array(policies.get("branch_policies"), "branch policies")]
+    if branches != [("main", "branch")]:
+        refuse(f"{ENVIRONMENT} must limit deployments to main")

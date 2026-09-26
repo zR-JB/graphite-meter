@@ -44,6 +44,7 @@ from trust import (
     require_exact_current_main,
     require_main_codeql,
     require_pr,
+    require_protected_environment,
 )
 
 N = SEMVER_NUMBER
@@ -210,6 +211,8 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
 def command_verify() -> None:
     request_dir, handoff = Path(env("REQUEST_DIR")), Path(env("HANDOFF_DIR"))
     release, publish = verify_request(request_dir)
+    if publish:
+        require_protected_environment(env("REPOSITORY"))
     candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
     if (candidate / OCI).stat().st_size > OCI_LIMIT:
         refuse(f"OCI archive exceeds {OCI_LIMIT} bytes")

@@ -30,6 +30,7 @@ from trust import (
     require_dispatch_run,
     require_exact_current_main,
     require_main_codeql,
+    require_protected_environment,
 )
 
 REPO = "zR-JB/graphite-meter"
@@ -129,6 +130,29 @@ class MainBindingTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(TrustError, "stable tags"):
                         parse_release(tag, MAIN, pr)
+
+
+class EnvironmentTests(unittest.TestCase):
+    def test_publishing_environment_needs_reviewers_and_main_only_deployments(self) -> None:
+        reviewers = {"type": "required_reviewers", "reviewers": [{"type": "User"}]}
+        protected = {"protection_rules": [reviewers],
+                     "deployment_branch_policy": {"custom_branch_policies": True}}
+        main = {"branch_policies": [{"name": "main", "type": "branch"}]}
+        for environment, policies, error in (
+            (protected, main, None),
+            (protected | {"protection_rules": []}, main, "require reviewers"),
+            (protected | {"deployment_branch_policy": None}, main, "main"),
+            (protected, {"branch_policies": [{"name": "*", "type": "branch"}]}, "main"),
+            (protected, {"branch_policies": main["branch_policies"] * 2}, "main"),
+        ):
+            api = fake({"/deployment-branch-policies": policies,
+                        "/environments/ghcr-release": environment})
+            with self.subTest(error=error):
+                if error is None:
+                    require_protected_environment(REPO, api=api)
+                else:
+                    with self.assertRaisesRegex(TrustError, error):
+                        require_protected_environment(REPO, api=api)
 
 
 class GateTests(unittest.TestCase):
