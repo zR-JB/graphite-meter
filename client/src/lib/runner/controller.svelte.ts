@@ -25,9 +25,7 @@ import {
   ServerAuthenticationRequired,
   type ServerCredentials,
 } from "../servers/credentials";
-import { ServerCoordinator, type PreparedServer } from "../servers/coordinator";
 import { originLimiter } from "../servers/originLimiter";
-import { createServerRunner } from "../servers/runner";
 import { portableTransportSelection } from "../servers/transportOptions";
 import type {
   ConnectionRole,
@@ -40,7 +38,7 @@ import type {
   TransportDiscovery,
 } from "./contract";
 import { abortable, withinBudget } from "./abortable";
-import { RealBackend } from "./RealRunner";
+import { engineInfo, Run, type PreparedServer } from "./run";
 import {
   discoverServer,
   prepareConnections,
@@ -195,8 +193,10 @@ export function createApplicationController(
   const prepare = dependencies.prepare ?? prepareConnections;
   const fetchCatalog = dependencies.loadCatalog ?? loadServerCatalog;
   const discover = dependencies.discover ?? discoverServer;
-  const createRunner = dependencies.createRunner ?? createServerRunner;
-  const describe = dependencies.describe ?? RealBackend.describe;
+  const createRunner =
+    dependencies.createRunner ??
+    ((servers: PreparedServer[], focus: string) => new Run(servers, focus));
+  const describe = dependencies.describe ?? engineInfo;
 
   const servers = new Map<string, ServerState>();
   const limiter = originLimiter();
@@ -774,14 +774,24 @@ export function createApplicationController(
         if (role === "latency" && result.idle && state.server.id === "self") {
           const monitor = result.idle;
           slot.idle = monitor;
+          const id = state.server.id;
           monitor.onEvent = (event) => {
             if (
-              slot.idle === monitor &&
-              state.config &&
-              idleServer() === state.server.id &&
-              current(state)
+              slot.idle !== monitor ||
+              !state.config ||
+              idleServer() !== id ||
+              !current(state)
             )
-              ingest(event, state.server.id);
+              return;
+            if (event.type === "latency")
+              return store.ingest({
+                type: "serverLatency",
+                serverId: id,
+                sample: event.sample,
+              });
+            store.connectivity = event.state;
+            if (event.state === "offline") offline(id);
+            else onlineAgain(id);
           };
         } else result.idle?.stop();
       },
@@ -1095,23 +1105,11 @@ export function createApplicationController(
     store.focusLatencyServer(id);
   }
 
-  function ingest(event: RunnerEvent, serverId?: string) {
+  function ingest(event: RunnerEvent) {
     if (event.type === "serverFailure") {
       if (event.failure.reason === "sign-in-required")
         requireAuthentication(event.failure.serverId, event.failure.message);
       else invalidate([event.failure.scope], [event.failure.serverId]);
-    }
-    if (
-      event.type === "authenticationRequired" &&
-      store.selectedServers.length === 1
-    )
-      requireAuthentication(
-        store.selectedServers[0],
-        `Sign in again to measure ${event.role}`,
-      );
-    if (event.type === "connectivity") {
-      if (event.state === "offline") offline(serverId);
-      else onlineAgain(serverId);
     }
     if (
       event.type === "error" &&
@@ -1314,13 +1312,11 @@ export function createApplicationController(
         if (runner === owner) ingest(event);
       });
       store.activeConfig = structuredClone(config);
-      store.activePaths = focus.paths;
       store.activeServers = prepared.map(({ server, paths }) => ({
         server: { ...server },
         paths,
       }));
-      if (owner instanceof ServerCoordinator)
-        store.serverDetails = owner.details();
+      store.serverDetails = owner.details();
       owner.start(config, focus.paths.latency?.rttMs ?? 0);
     };
     void start()

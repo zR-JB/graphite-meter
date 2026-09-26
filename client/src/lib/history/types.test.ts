@@ -12,7 +12,6 @@ const throughput = {
   method: "full-average" as const,
   stabilityScore: 0.9,
   band: "high" as const,
-  probeTimeoutPct: 1,
   serverAuthoritative: true,
 };
 const latency = {
@@ -54,43 +53,54 @@ const result: RunResult = {
     },
   },
   bufferbloat: { grade: "B", idleMs: 12, loadedMs: 20, increaseMs: 8 },
-  stageFailures: {
-    upload: { stage: "upload", reason: "timeout", message: "raw secret" },
+  multiServer: {
+    selection: [{ id: "a", name: "edge", url: "https://a.example" }],
+    participants: ["a"],
+    latencyFocus: "a",
+    intervals: [],
+    omittedIntervals: 0,
+    failures: [
+      {
+        serverId: "a",
+        stage: "upload",
+        atMs: 5,
+        scope: "throughput",
+        reason: "timeout",
+        message: "HTTP 503",
+      },
+    ],
+    servers: [],
   },
+  outcome: "partial",
   startedAt: 100,
   durationMs: 80,
 };
 
+result.multiServer.servers = [
+  {
+    server: result.multiServer.selection[0],
+    throughput: {
+      origin: "https://a.example",
+      transport: "fetch-stream",
+      protocol: "http2",
+    },
+    latencyTarget: { origin: "https://a.example", transport: "websocket" },
+    latency: result.latency,
+    latencyByStage: result.latencyByStage,
+    bufferbloat: result.bufferbloat,
+    download: result.download,
+    upload: result.upload,
+    bidirectional: result.bidirectional,
+    totalBytes: { down: 800, up: 0 },
+  },
+];
+
 function serverHistoryRecord() {
-  const source = structuredClone(result);
-  const server = { id: "a", name: "A", url: "https://a.example" };
-  source.multiServer = {
-    selection: [server],
-    participants: [server.id],
-    latencyFocus: server.id,
-    intervals: [],
-    omittedIntervals: 0,
-    failures: [],
-    servers: [
-      {
-        server,
-        throughput: {
-          origin: server.url,
-          transport: "fetch-stream",
-          protocol: "http2",
-        },
-        latencyTarget: { origin: server.url, transport: "websocket" },
-        latency: source.latency,
-        latencyByStage: source.latencyByStage,
-        bufferbloat: source.bufferbloat,
-        download: source.download,
-        upload: source.upload,
-        bidirectional: source.bidirectional,
-        totalBytes: { down: 800, up: 0 },
-      },
-    ],
-  };
-  return buildHistoryRecord(source, { paths: null, clientBuild: "b" }, 200);
+  return buildHistoryRecord(
+    structuredClone(result),
+    { paths: null, clientBuild: "b" },
+    200,
+  );
 }
 
 test("builds an immutable sanitized partial snapshot", () => {
@@ -202,8 +212,10 @@ test("record construction bounds persisted display text without losing the run",
   ).protocolNegotiated = long;
   (paths.latency!.probe as { protocolNegotiated: string }).protocolNegotiated =
     "https://secret.invalid/raw";
+  const source = structuredClone(result);
+  source.multiServer.selection[0].name = long;
   const record = buildHistoryRecord(
-    result,
+    source,
     {
       paths,
       clientBuild: long,

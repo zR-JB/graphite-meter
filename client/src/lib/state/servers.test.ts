@@ -6,7 +6,7 @@ import {
   testPreparedPaths,
 } from "../runner/test-helpers.testutil";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
-import { LatencyAccumulator } from "../runner/latencySummary";
+import { LatencyPopulation } from "../runner/measure";
 import { parseCatalog } from "../servers/catalog";
 import {
   emptyConnectionValidation,
@@ -41,12 +41,12 @@ test("valid prototype-named servers retain isolated latency populations through 
     store.selectedServers = ids;
     const summaries = new Map<
       string,
-      ReturnType<LatencyAccumulator["snapshot"]>
+      ReturnType<LatencyPopulation["summary"]>
     >();
     for (const [index, id] of ids.entries()) {
-      const stats = new LatencyAccumulator();
-      stats.observe((index + 1) * 10, false, 0);
-      const summary = stats.snapshot();
+      const stats = new LatencyPopulation();
+      stats.observe({ rttMs: (index + 1) * 10, lost: false, observedAtMs: 0 });
+      const summary = stats.summary();
       summaries.set(id, summary);
       store.ingest({
         type: "serverLatency",

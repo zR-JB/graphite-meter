@@ -83,15 +83,10 @@
 
   $effect(() => {
     const details = store.serverDetails;
-    const failures = details?.failures.length
-      ? details.failures.map(
-          (failure) =>
-            `${serverName(details.selection, failure.serverId)}: ${STAGE[failure.stage].label} unavailable`,
-        )
-      : Object.values(store.stageFailures).map(
-          (failure) =>
-            `${STAGE[failure.stage].label} skipped — ${failureDetail(failure.message)}`,
-        );
+    const failures = (details?.failures ?? []).map(
+      (failure) =>
+        `${serverName(details!.selection, failure.serverId)}: ${STAGE[failure.stage].label} unavailable`,
+    );
     if (failures.length > prevFailCount) {
       skipMessage =
         failures.length > 1

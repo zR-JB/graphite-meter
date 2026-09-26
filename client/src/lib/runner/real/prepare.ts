@@ -34,7 +34,7 @@ import {
   latencyPathNeeded,
   type ConnectionValidation,
 } from "../connectionModel";
-import { median } from "../stats";
+import { median } from "../measure";
 import {
   automaticThroughputTargets,
   automaticLatencyTargets,

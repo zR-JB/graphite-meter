@@ -1,6 +1,6 @@
 import { stubGlobals } from "../../test-helpers.testutil";
 import { expect, test } from "bun:test";
-import { LatencyAccumulator } from "../latencySummary";
+import { LatencyPopulation } from "../measure";
 import type { PingSample } from "./pingSample";
 
 type Output =
@@ -308,17 +308,21 @@ for (const failure of ["failSends", "rejectSends"] as const) {
         "samples",
         "interrupted",
       ]);
-      const accumulator = new LatencyAccumulator();
+      const population = new LatencyPopulation();
       for (const outcome of outcomes) {
         if (outcome.type === "samples") {
           for (const sample of outcome.samples)
-            accumulator.observe(sample.rtt, sample.lost, 0);
+            population.observe({
+              rttMs: sample.rtt,
+              lost: sample.lost,
+              observedAtMs: 0,
+            });
         } else if (outcome.type === "interrupted")
-          accumulator.interrupt(outcome.sentAtEpochMs.length, "send-failed");
+          population.interrupt(outcome.sentAtEpochMs.length, "send-failed");
       }
       // A later reply must not form an RTT variation pair across the failed send.
-      accumulator.observe(99, false, 0);
-      expect(accumulator.snapshot()).toMatchObject({
+      population.observe({ rttMs: 99, lost: false, observedAtMs: 0 });
+      expect(population.summary()).toMatchObject({
         probeCount: 3,
         sendFailureCount: 1,
         jitterPairs: 1,

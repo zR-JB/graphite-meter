@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { AggregateMeasurements, type MultiServerResult } from "./measurement";
+import { ThroughputAggregate, type MultiServerResult } from "../runner/measure";
 import { serverWireEstimate } from "./wireEstimates";
 import { compensationTooltip, estimateCompensation } from "../compensation";
 
 function fixture(): MultiServerResult {
-  const aggregate = new AggregateMeasurements();
+  const aggregate = new ThroughputAggregate();
   aggregate.begin("download", ["a", "b"], 0);
   aggregate.observe({ atMs: 0, down: { a: 0, b: 0 }, up: {} });
   aggregate.observe({ atMs: 1000, down: { a: 1000, b: 3000 }, up: {} });
-  aggregate.result("download", "down", false);
+  aggregate.result("download", false);
   const selection = ["a", "b"].map((id) => ({
     id,
     url: `https://${id}.example`,

@@ -12,7 +12,7 @@
     historyRate,
   } from "../../history/format";
   import type { HistoryRecord } from "../../history/types";
-  import { latencyLanes } from "../../runner/latencySummary";
+  import { latencyLanes } from "../../runner/measure";
   import { store } from "../../state/store.svelte";
   import {
     OUTCOME,
@@ -98,24 +98,11 @@
   );
   const lanes = $derived.by(() => {
     const saved = latencyServer
-      ? latencyLanes(latencyServer.latency, latencyServer.latencyByStage)
+      ? latencyLanes(latencyServer.latencyByStage)
       : record.stages.latency.lanes;
     return LATENCY_LANES.flatMap((meta) => {
       const lane = saved[meta.key];
-      return lane
-        ? [
-            {
-              ...meta,
-              ...lane,
-              tone: meta.key,
-              // Lanes saved with p95 or server details carry medians; older ones means.
-              centerKind:
-                latencyServer || "p95" in lane || meta.key === "latency"
-                  ? ("result" as const)
-                  : ("average" as const),
-            },
-          ]
-        : [];
+      return lane ? [{ ...meta, ...lane, tone: meta.key }] : [];
     });
   });
   const profile = $derived(

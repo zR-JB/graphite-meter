@@ -28,7 +28,7 @@ import { emptyConnectionValidation } from "../connectionModel";
 import { DEFAULT_CONFIG } from "../../state/defaults";
 import {
   TEST_BUILD_TOKENS,
-  testHost,
+  testParticipantHost,
   testTransfer,
 } from "../test-helpers.testutil";
 type ThroughputAdvertisement = Parameters<
@@ -1172,7 +1172,7 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
   try {
     globalThis.Worker = PingBusWorker as unknown as typeof Worker;
     globals.WebTransport = class {};
-    const { RealBackend } = await import("../RealRunner");
+    const { ServerStage } = await import("../transport");
     const config = probeConfig(true);
     config.stages.download = false;
     config.transports.throughputTarget = "https://meter.test";
@@ -1208,12 +1208,16 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     const throughputRole = await preparation.check(config, ["throughput"]);
     expect(throughputRole.latency!.target.transport).toBe("websocket");
     preparation.stop();
-    const backend = new RealBackend(throughputRole);
-    backend.attach(testHost(config));
-    backend.onRunStart(config);
-    backend.onStageBegin(phaseActivity("latency"));
+    const stage = new ServerStage({
+      host: testParticipantHost(config),
+      paths: throughputRole,
+      activity: phaseActivity("latency"),
+      streams: { down: 1, up: 1 },
+      seed: "test",
+    });
+    void stage.prepare();
     expect(PingBusWorker.starts.at(-1)).toBe("websocket");
-    backend.dispose();
+    stage.discard();
   } finally {
     jest.useRealTimers();
     globalThis.Worker = realWorker;

@@ -1,5 +1,5 @@
 import type { LatencyBucket, Phase } from "./contract";
-import { median, percentile } from "./stats";
+import { median, percentile } from "./measure";
 import {
   compactLatencyHistory,
   PRESENTATION_POINT_LIMIT,
@@ -66,6 +66,13 @@ export class LatencyPresentationBuckets {
     this.#pending = this.#empty(phaseStartT);
     this.#closed = [];
     this.#sequence = 0;
+  }
+
+  /** A new presentation series from `t`, keeping the phase and bucket width. */
+  restart(t: number, continuityId: number): void {
+    this.#continuityId = continuityId;
+    this.#pending = this.#empty(t);
+    this.#closed = [];
   }
 
   widen(durationMs: number): void {

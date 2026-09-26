@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { RunResult, ThroughputResult } from "../runner/contract";
+import type { ThroughputResult } from "../runner/contract";
+import { testRunResult } from "../runner/test-helpers.testutil";
 import {
   primaryResultGaugeArc,
   resultGaugeArcs,
@@ -16,26 +17,9 @@ const throughput = (reportedBytesPerSec: number): ThroughputResult => ({
   method: "full-average",
   stabilityScore: 1,
   band: "high",
-  probeTimeoutPct: 0,
 });
 
-const result = (overrides: Partial<RunResult>): RunResult => ({
-  download: null,
-  upload: null,
-  bidirectional: null,
-  latency: null,
-  latencyByStage: {
-    latency: null,
-    download: null,
-    upload: null,
-    bidirectional: null,
-  },
-  bufferbloat: null,
-  stageFailures: {},
-  startedAt: 0,
-  durationMs: 0,
-  ...overrides,
-});
+const result = testRunResult;
 
 const arc = (
   phase: "download" | "upload" | "bidirectional",

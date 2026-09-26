@@ -16,7 +16,6 @@ import type {
   LatencyResult,
   StallInfo,
   TransportRole,
-  StageFailure,
   StageLatencySummary,
 } from "../runner/contract";
 import {
@@ -28,7 +27,6 @@ import {
 } from "../runner/connectionModel";
 import {
   combineCompensationEstimates,
-  estimateCompensation,
   type CompensationEstimate,
 } from "../compensation";
 import {
@@ -46,7 +44,9 @@ import { upsertLatencyBucket } from "../runner/latencyBuckets";
 import {
   latencyLanes,
   type LatencyLaneSnapshot,
-} from "../runner/latencySummary";
+  type MultiServerResult,
+  type ServerFailure,
+} from "../runner/measure";
 import {
   appendThroughputSample,
   compactThroughputHistory,
@@ -74,13 +74,12 @@ import {
 import { BUILD } from "../buildenv";
 import { buildHistoryRecord, type HistoryRecord } from "../history/types";
 import { serverWireEstimate } from "../servers/wireEstimates";
-import type { MultiServerResult } from "../servers/measurement";
 import {
   selectedInCatalogOrder,
   type ServerCatalog,
   type SavedSelection,
 } from "../servers/catalog";
-import type { PreparedServer } from "../servers/coordinator";
+import type { PreparedServer } from "../runner/run";
 
 type PreparationStatus =
   "idle" | "blocked" | "authenticating" | "checking" | "launching" | "failed";
@@ -130,8 +129,6 @@ export interface LatencyLane {
   p90: number | null;
   p95: number | null;
   center: number | null;
-  /** Live populations are centred on their median; only old history saved means. */
-  centerKind: "average" | "result";
   current: number | null;
   jitter: number | null;
   timeoutRatio: number | null;
@@ -274,7 +271,6 @@ class AppStore {
   /** Changes when existing points move, so incremental chart indexes rebuild. */
   throughputRevision = $state(0);
   liveThroughput = $state.raw<ThroughputSample[]>([]);
-  aggregateEvidence = $state(true);
   #scaleThroughput: { t: number; bytesPerSec: number }[] = [];
   #throughputTargetSpanMs = 0;
   #sustainedPeakBytesPerSec = $state(0);
@@ -342,13 +338,27 @@ class AppStore {
   stageResults = $state.raw<StageResults>(EMPTY_STAGE_RESULTS);
   completedStages = $state.raw<TransportRole[]>([]);
   error = $state.raw<RunnerError | null>(null);
-  stageFailures = $state.raw<Partial<Record<TransportRole, StageFailure>>>({});
+  /** The first server failure of each stage in that stage's own scope. */
+  stageFailures = $derived.by(() => {
+    const failures: Partial<Record<TransportRole, ServerFailure>> = {};
+    for (const failure of this.serverDetails?.failures ?? [])
+      if ((failure.scope === "latency") === (failure.stage === "latency"))
+        failures[failure.stage] ??= failure;
+    return failures;
+  });
   startEpoch = $state(0);
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   activeConfig = $state.raw<RunnerConfig | null>(null);
-  activePaths = $state.raw<PreparedPaths | null>(null);
   activeServers = $state.raw<PreparedServer[]>([]);
+  /** The headline latency server's paths, which history records describe. */
+  activePaths = $derived<PreparedPaths | null>(
+    this.activeServers.find(
+      (entry) => entry.server.id === this.serverDetails?.latencyFocus,
+    )?.paths ??
+      this.activeServers[0]?.paths ??
+      null,
+  );
   connections = $derived(
     presentConnections(
       this.config,
@@ -490,7 +500,9 @@ class AppStore {
               phaseFraction: this.phaseFraction,
               measuring: this.measuring,
               hasUsableResult,
-              finished: this.completedStages.includes(stage),
+              finished:
+                this.phase === "complete" ||
+                this.completedStages.includes(stage),
               hasFailure: failure,
             }),
           ];
@@ -513,42 +525,12 @@ class AppStore {
     this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
   );
 
-  #estimateWire(
-    bytesPerSec: number,
-    stage: "download" | "upload" | "bidirectional",
-    dir: "down" | "up",
-  ): CompensationEstimate | null {
-    const details = this.serverDetails;
-    if (details?.intervals.length)
-      return serverWireEstimate(details, stage, dir);
-    if ((details?.selection.length ?? this.selectedServers.length) > 1)
-      return null;
-    const path = this.activePaths?.throughput;
-    return path
-      ? estimateCompensation(
-          bytesPerSec,
-          path.browserProtocol,
-          path.target.tls,
-          path.probe.clientIpVersion,
-          path.target.transport,
-        )
-      : null;
-  }
-
   #bidirectionalWire(
-    result: RunResult["bidirectional"],
+    details: MultiServerResult | null,
   ): CompensationEstimate | null {
     const estimates = [
-      this.#estimateWire(
-        result?.down?.reportedBytesPerSec ?? 0,
-        "bidirectional",
-        "down",
-      ),
-      this.#estimateWire(
-        result?.up?.reportedBytesPerSec ?? 0,
-        "bidirectional",
-        "up",
-      ),
+      serverWireEstimate(details, "bidirectional", "down"),
+      serverWireEstimate(details, "bidirectional", "up"),
     ];
     return estimates.every(
       (value): value is CompensationEstimate => value !== null,
@@ -557,24 +539,20 @@ class AppStore {
       : null;
   }
 
-  downloadCompensation = $derived<CompensationEstimate | null>(
-    this.#estimateWire(
-      this.stageResults.download?.reportedBytesPerSec ?? 0,
-      "download",
-      "down",
-    ),
+  downloadCompensation = $derived(
+    this.stageResults.download &&
+      serverWireEstimate(this.serverDetails, "download", "down"),
   );
 
-  uploadCompensation = $derived<CompensationEstimate | null>(
-    this.#estimateWire(
-      this.stageResults.upload?.reportedBytesPerSec ?? 0,
-      "upload",
-      "up",
-    ),
+  uploadCompensation = $derived(
+    this.stageResults.upload &&
+      serverWireEstimate(this.serverDetails, "upload", "up"),
   );
 
-  bidirectionalCompensation = $derived<CompensationEstimate | null>(
-    this.#bidirectionalWire(this.result?.bidirectional ?? null),
+  bidirectionalCompensation = $derived(
+    this.result?.bidirectional
+      ? this.#bidirectionalWire(this.serverDetails)
+      : null,
   );
 
   #peakBytesPerSec = $state(0);
@@ -685,11 +663,6 @@ class AppStore {
   }
 
   #ingestLatency(sample: LatencyBucket): void {
-    if (sample.phase === "idle") {
-      upsertLatencyBucket(this.#idleLatency, sample, MAX_IDLE_SAMPLES);
-      this.#idleLatencyTail++;
-      return;
-    }
     if (
       upsertLatencyBucket(this.#latency, sample, PRESENTATION_POINT_LIMIT) ===
       "structural-change"
@@ -707,7 +680,7 @@ class AppStore {
       upload: result.upload,
       latency: result.latency,
     };
-    this.serverDetails = result.multiServer ?? null;
+    this.serverDetails = result.multiServer;
     this.latencySummaries = result.latencyByStage;
     this.historyCandidate = this.savingResults
       ? buildHistoryRecord(
@@ -716,20 +689,10 @@ class AppStore {
             paths: this.activePaths,
             clientBuild: BUILD.clientVersion,
             wireEstimates: historyWireEstimates(
-              result.download &&
-                this.#estimateWire(
-                  result.download.reportedBytesPerSec,
-                  "download",
-                  "down",
-                ),
-              result.upload &&
-                this.#estimateWire(
-                  result.upload.reportedBytesPerSec,
-                  "upload",
-                  "up",
-                ),
+              this.downloadCompensation,
+              this.uploadCompensation,
               result.bidirectional?.down && result.bidirectional.up
-                ? this.#bidirectionalWire(result.bidirectional)
+                ? this.bidirectionalCompensation
                 : null,
             ),
           },
@@ -741,14 +704,16 @@ class AppStore {
 
   ingest = (event: RunnerEvent) => {
     switch (event.type) {
-      case "aggregateEvidence":
-        this.aggregateEvidence = event.available;
-        if (!event.available) {
-          this.liveThroughput = [];
-          this.uploadPresentationBytesPerSec = null;
-        }
-        break;
       case "serverLatency": {
+        if (event.sample.phase === "idle") {
+          upsertLatencyBucket(
+            this.#idleLatency,
+            event.sample,
+            MAX_IDLE_SAMPLES,
+          );
+          this.#idleLatencyTail++;
+          break;
+        }
         let history = this.latencyByServer.get(event.serverId);
         if (!history) {
           history = [];
@@ -823,12 +788,6 @@ class AppStore {
         this.measuring = true;
         this.stallInfo = null;
         break;
-      case "stageSkipped":
-        this.stageFailures = {
-          ...this.stageFailures,
-          [event.failure.stage]: event.failure,
-        };
-        break;
       case "stageResult":
         this.stageResults =
           event.stage === "latency"
@@ -840,18 +799,6 @@ class AppStore {
         break;
       case "uploadPresentation":
         this.uploadPresentationBytesPerSec = event.bytesPerSec;
-        break;
-      case "latency":
-        this.#ingestLatency(event.sample);
-        break;
-      case "latencySummary":
-        this.latencySummaries = {
-          ...this.latencySummaries,
-          [event.stage]: event.summary,
-        };
-        break;
-      case "connectivity":
-        this.connectivity = event.state;
         break;
       case "complete":
         this.#complete(event.result);
@@ -884,7 +831,6 @@ class AppStore {
       throughput: [],
       throughputRevision: 0,
       liveThroughput: [],
-      aggregateEvidence: true,
       bytesTransferred: 0,
       latency: [],
       idleLatency: [],
@@ -900,11 +846,9 @@ class AppStore {
       stallInfo: null,
       stageResults: EMPTY_STAGE_RESULTS,
       completedStages: [],
-      stageFailures: {},
       result: null,
       error: null,
       activeConfig: null,
-      activePaths: null,
       activeServers: [],
       startEpoch: 0,
       historyCandidate: null,
@@ -940,10 +884,7 @@ class AppStore {
   }
 
   latencyLanes = $derived.by<LatencyLane[]>(() => {
-    const lanes = latencyLanes(
-      this.stageResults.latency,
-      this.latencySummaries,
-    );
+    const lanes = latencyLanes(this.latencySummaries);
     return STAGE_ORDER.map((key) => {
       const lane = lanes[key];
       return {
@@ -955,7 +896,6 @@ class AppStore {
         p90: lane?.p90 ?? null,
         p95: lane?.p95 ?? null,
         center: lane?.center ?? null,
-        centerKind: "result" as const,
         current:
           this.latency.findLast((sample) => sample.phase === key)
             ?.medianRttMs ?? null,

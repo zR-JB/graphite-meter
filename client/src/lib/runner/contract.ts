@@ -164,8 +164,8 @@ export interface PhaseTransition {
 
 /* ---------- Aggregate result (emitted on complete) ---------- */
 export interface RunResult {
-  multiServer?: import("../servers/measurement").MultiServerResult;
-  outcome?: "complete" | "partial" | "incomplete";
+  multiServer: import("./measure").MultiServerResult;
+  outcome: "complete" | "partial" | "incomplete";
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
   /** The bidirectional phase's concurrent lanes, or null when that stage is off. */
@@ -177,8 +177,6 @@ export interface RunResult {
   latencyByStage: Record<TransportRole, StageLatencySummary | null>;
   /** Unavailable unless both idle and loaded latency evidence exist. */
   bufferbloat: BufferbloatGrade | null;
-  /** A usable result plus an entry here is a partial stage. */
-  stageFailures: Partial<Record<TransportRole, StageFailure>>;
   startedAt: number; // epoch ms
   durationMs: number;
 }
@@ -198,8 +196,6 @@ export interface ThroughputResult {
   method: ResultMethod;
   stabilityScore: number; // stability (0..1) at the moment the phase ends
   band: StabilityBand;
-  /** Under-load ping timeout percentage; a quality signal, not TCP packet loss. */
-  probeTimeoutPct: number | null;
   /** True when bytes and time came from the server upload receiver. */
   serverAuthoritative?: boolean;
 }
@@ -250,7 +246,8 @@ export interface BufferbloatGrade {
   grade: "A" | "B" | "C" | "D" | "F";
   idleMs: number;
   loadedMs: number;
-  increaseMs: number; // loaded − idle
+  /** Signed: loaded − idle. */
+  increaseMs: number;
 }
 
 /* ---------- Structured termination ---------- */
@@ -274,15 +271,6 @@ export type TransportRole = Extract<
   Phase,
   "latency" | "download" | "upload" | "bidirectional"
 >;
-
-/** A failed stage retains any usable measurements and identifies the affected direction when known. */
-export interface StageFailure {
-  stage: TransportRole;
-  /** The affected lane when a bidirectional stage keeps its other result. */
-  direction?: FlowDirection;
-  reason: Exclude<TerminationReason, "user-abort">;
-  message: string;
-}
 
 /** Protocol evidence that determines how an upload stage may recover. */
 export type RecoveryCause =
@@ -360,11 +348,12 @@ export interface VerifiedLatencyPath {
   verifiedAt: number;
 }
 
+/** Receiver bytes and elapsed receiver time; a pushed feed record has no request time. */
 export interface ReceiverCheckpoint {
   id: string;
   bytes: number;
   nanos: number;
-  requestedAtMs: number;
+  requestedAtMs?: number;
   receivedAtMs: number;
 }
 
@@ -418,26 +407,14 @@ export type RunnerEvent =
     }
   | {
       type: "serverFailure";
-      failure: import("../servers/measurement").ServerFailure;
+      failure: import("./measure").ServerFailure;
       participants: string[];
     }
-  | {
-      type: "serverDetails";
-      details: import("../servers/measurement").MultiServerResult;
-    }
+  | { type: "serverDetails"; details: import("./measure").MultiServerResult }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "throughput"; sample: ThroughputSample }
-  | { type: "aggregateEvidence"; available: boolean }
   /* A short-lived upload-only visual target. */
   | { type: "uploadPresentation"; bytesPerSec: number | null }
-  | { type: "latency"; sample: LatencyBucket }
-  | {
-      type: "latencySummary";
-      stage: TransportRole;
-      summary: StageLatencySummary | null;
-    }
-  // Reserved seam: a backend MAY push an explicit connectivity state.
-  | { type: "connectivity"; state: ConnectivityState }
   // Progress within the active wall-time budget.
   | {
       type: "progress";
@@ -449,10 +426,6 @@ export type RunnerEvent =
     }
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
-  /* A single-server run's grant was refused; participants report serverFailure. */
-  | { type: "authenticationRequired"; role: ConnectionRole }
-  // Transport negotiation telemetry: which connection method a phase is trying, and whether it is negotiating /.
-  | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends, so a finished stage shows its real result.
   | {
       type: "stageResult";
@@ -478,6 +451,7 @@ export interface NetworkRunner {
   dispose(): void;
   on(handler: (e: RunnerEvent) => void): () => void;
   reconfigure(config: LiveRunConfig): void;
+  details(): import("./measure").MultiServerResult;
   readonly phase: Phase;
 }
 

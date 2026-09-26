@@ -1,19 +1,17 @@
 // Runs one benchmark cell against a real server, measuring production lanes after warmup.
 // Byte lanes and upload accounting use the production transport implementations.
 import {
-  fetchLane,
-  sessionLane,
-  type ByteLane,
-  type LaneEvents,
-} from "../src/lib/runner/real/byteLane";
+  laneWorker,
+  openLane,
+  uploadFeed,
+  type Lane,
+  type WorkerMsg,
+} from "../src/lib/runner/transport";
 import {
   laneUrl,
-  sessionDownloadUrl,
   PER_STREAM_BYTES,
   ROUTES,
-  type LaneUrlSpec,
 } from "../src/lib/runner/real/backendPure";
-import { startUploadFeed } from "../src/lib/runner/real/uploadFeed";
 
 /** Resolution of the within-cell rate series, which yields the stability figure. */
 const BUCKET_MS = 200;
@@ -98,7 +96,7 @@ function openProgressFeed(
   let resolveOpen!: (opened: boolean) => void;
   const open = new Promise<boolean>((resolve) => (resolveOpen = resolve));
   let opening = true;
-  const feed = startUploadFeed({
+  const feed = uploadFeed({
     url: `${origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`,
     csrf: {},
     credentials: "same-origin",
@@ -130,43 +128,33 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
   let measuring = false;
 
   const rides = spec.transport !== "fetch-stream";
-  const session = rides
-    ? {
-        origin: spec.origin,
-        uploadPath: ROUTES.wtUpload,
-        downloadPath: ROUTES.wtDownload,
-        datagrams: spec.transport === "webtransport-datagram",
-      }
-    : null;
-  const urls: LaneUrlSpec = {
+  const datagrams = spec.transport === "webtransport-datagram";
+  const urls = {
     dir: spec.dir,
     base: spec.origin,
     downloadPath: ROUTES.download,
     uploadPath: ROUTES.upload,
     cbSeed: `bench${Math.round(performance.now())}`,
     bytes: PER_STREAM_BYTES,
-    session,
   };
 
-  const events = (i: number): LaneEvents => ({
-    onProgress(bytes) {
-      if (!measuring) return;
-      clientBytes += bytes;
-      laneBytes[i] = (laneBytes[i] ?? 0) + bytes;
-    },
-    onAlive() {},
-    onError(_recoverable, detail) {
-      errors.push(`lane ${i}: ${detail}`);
-    },
-    // A session upload relays the server's feed over the same session.
-    onUploadProgress(msg) {
-      if (msg.type === "bytes" || msg.type === "complete") total.accept(msg.n);
-      else if (msg.type === "fatal") errors.push(`progress: ${msg.detail}`);
-    },
-    onAuthRequired() {
-      errors.push("authentication required");
-    },
-  });
+  const events =
+    (i: number) =>
+    (msg: WorkerMsg): void => {
+      if (msg.type === "progress" && measuring) {
+        clientBytes += msg.bytes;
+        laneBytes[i] = (laneBytes[i] ?? 0) + msg.bytes;
+      } else if (msg.type === "error") errors.push(`lane ${i}: ${msg.detail}`);
+      else if (msg.type === "auth-required")
+        errors.push("authentication required");
+      // A session upload relays the server's feed over the same session.
+      else if (msg.type === "upload-progress") {
+        if (msg.msg.type === "bytes" || msg.msg.type === "complete")
+          total.accept(msg.msg.n);
+        else if (msg.msg.type === "fatal")
+          errors.push(`progress: ${msg.msg.detail}`);
+      }
+    };
 
   // Bootstrap before minting so every cell request uses h3; otherwise it measures the TCP companion.
   if (spec.bootstrapH3 && !(await bootstrapH3(spec.origin)))
@@ -194,37 +182,39 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     };
   }
 
-  const lanes: ByteLane[] = [];
-  if (session) {
-    const opts = {
-      url:
-        spec.dir === "down"
-          ? sessionDownloadUrl(session, PER_STREAM_BYTES, spec.lanes)
-          : laneUrl(urls, 0, uploadId),
+  const lanes: Lane[] = [];
+  if (rides) {
+    const query =
+      spec.dir === "down"
+        ? `bytes=${PER_STREAM_BYTES}&${datagrams ? "datagrams=1" : `streams=${spec.lanes}`}`
+        : `id=${encodeURIComponent(uploadId)}${datagrams ? "&datagrams=1" : ""}`;
+    const path = spec.dir === "down" ? ROUTES.wtDownload : ROUTES.wtUpload;
+    const start = {
+      url: `${spec.origin}${path}?${query}`,
       dir: spec.dir,
       lanes: spec.lanes,
-      datagrams: session.datagrams,
+      datagrams,
       progressUrl:
         spec.dir === "up"
           ? `${spec.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(uploadId)}`
           : undefined,
     };
-    lanes.push(sessionLane(opts, events(0)));
+    lanes.push(openLane(laneWorker("wt"), start, true, events(0)));
   } else {
     for (let i = 0; i < spec.lanes; i++)
       lanes.push(
-        fetchLane(
+        openLane(
+          laneWorker(spec.dir === "down" ? "download" : "upload"),
           {
-            dir: spec.dir,
             url: laneUrl(urls, i, uploadId),
-            lanes: spec.lanes,
+            streams: spec.lanes,
             credentials: "same-origin",
           },
+          false,
           events(i),
         ),
       );
   }
-  for (const lane of lanes) lane.start();
 
   await sleep(spec.warmupMs);
 

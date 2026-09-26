@@ -156,7 +156,7 @@
     const values = [
       lane.center == null
         ? null
-        : `${metricLabel(lane, "center")} ${fmtMs(lane.center)} milliseconds`,
+        : `${metricLabel("center")} ${fmtMs(lane.center)} milliseconds`,
       lane.min == null || lane.max == null
         ? null
         : `range ${fmtMs(lane.min)} to ${fmtMs(lane.max)} milliseconds`,
@@ -202,9 +202,7 @@
             ? lane.accountingComplete === false || lane.count > 0
               ? "unavailable"
               : "waiting"
-            : lane.centerKind === "average"
-              ? `mean ${fmtMs(lane.center)} ms`
-              : `median ${fmtMs(lane.center)} ms`}</strong
+            : `median ${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
           <em class="term jit" use:tooltip={JARGON.jitter}
@@ -246,7 +244,7 @@
         aria-valuemax={Math.max(0, metrics.length - 1)}
         aria-valuenow={Math.max(0, selected)}
         aria-valuetext={selected >= 0 && hover && hoverValue != null
-          ? `${metricLabel(lane, hover.metric)} ${fmtMs(hoverValue)} milliseconds`
+          ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds`
           : undefined}
         onpointermove={(event) => onTrackMove(event, lane)}
         onpointerleave={() => {
@@ -313,7 +311,7 @@
             <span class="hover-head">
               <span>{lane.label}</span>
               <strong
-                >{metricLabel(lane, hover.metric)}
+                >{metricLabel(hover.metric)}
                 {fmtMs(hoverValue)}</strong
               >
             </span>

@@ -164,7 +164,6 @@
       preparation: store.preparation,
       startError: store.startError,
       error: store.error,
-      aggregateEvidence: store.aggregateEvidence,
       latencyTimeout: store.liveLatencyLost,
       latencyMs: gaugeLatency.rttMs,
       hasLatencyResult: !!store.result?.latency,

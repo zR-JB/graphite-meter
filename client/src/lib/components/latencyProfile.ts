@@ -46,7 +46,6 @@ type LatencyProfileLaneLike = {
   p95?: number | null;
   center: number | null;
   current?: number | null;
-  centerKind?: "average" | "result";
 };
 
 export type LatencyProfileTone =
@@ -118,19 +117,14 @@ export function metricValue(
   return lane[metric] ?? null;
 }
 
-export function metricLabel(
-  lane: LatencyProfileLaneLike,
-  metric: MetricKey,
-): string {
-  if (metric === "center")
-    return lane.centerKind === "result" ? "Median" : "Mean";
-  return METRIC_LABELS[metric];
+export function metricLabel(metric: MetricKey): string {
+  return metric === "center" ? "Median" : METRIC_LABELS[metric];
 }
 
 function centerLabel(lane: LatencyProfileLaneLike): string {
   return lane.center == null
     ? ""
-    : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
+    : `${metricLabel("center")} ${fmtMs(lane.center)}`;
 }
 
 // The present metrics in label order, dropping any the lane has not measured.

@@ -1,5 +1,5 @@
 import type { ConnectivityState, LatencyBucket } from "../runner/contract";
-import { median } from "../runner/stats";
+import { median } from "../runner/measure";
 
 type HealthBucket = Pick<
   LatencyBucket,

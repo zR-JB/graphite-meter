@@ -1,19 +1,19 @@
 import type { WireEstimates } from "./wire";
-import type { MultiServerResult } from "../servers/measurement";
 import type {
   PreparedPaths,
   RunResult,
-  StageFailure,
   ThroughputResult,
   LatencyResult,
-  TransportKind,
   TerminationReason,
+  TransportKind,
 } from "../runner/contract";
 import { createUuid } from "../uuid";
 import {
   latencyLanes,
   type LatencyLaneSnapshot,
-} from "../runner/latencySummary";
+  type MultiServerResult,
+  type ServerFailure,
+} from "../runner/measure";
 
 const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
@@ -38,7 +38,6 @@ export interface ThroughputSnapshot {
   method: "stable-window" | "full-average";
   totalBytes: number;
   stabilityPct: number;
-  probeTimeoutPct: number | null;
   stabilityScore: number;
   band: "low" | "medium" | "high";
   serverAuthoritative: boolean;
@@ -137,10 +136,7 @@ function latency(value: LatencyResult | null): LatencySnapshot | null {
   const { idleMs: _headline, ...snapshot } = value;
   return snapshot;
 }
-function status(
-  result: unknown,
-  failure: StageFailure | undefined,
-): StageStatus {
+function status(result: unknown, failure: unknown): StageStatus {
   return result
     ? failure
       ? "partial"
@@ -151,28 +147,22 @@ function status(
 }
 function bidirectionalStatus(
   result: RunResult["bidirectional"],
-  failure: StageFailure | undefined,
+  failure: unknown,
 ): StageStatus {
   const lanes = result ? [result.down, result.up].filter(Boolean).length : 0;
   if (lanes === 2 && !failure) return "complete";
   if (lanes > 0) return "partial";
   return failure ? "failed" : "not-run";
 }
-function failureSnapshots(
-  failures: Partial<Record<string, StageFailure>>,
-): FailureSnapshot[] {
-  return HISTORY_FAILURE_STAGES.flatMap((stage) => {
-    const failure = failures[stage];
-    return failure
-      ? [
-          {
-            stage: failure.stage,
-            direction: failure.direction ?? null,
-            reason: failure.reason,
-          },
-        ]
-      : [];
-  });
+/** The first failure of each stage in that stage's own scope. */
+function stageFailures(
+  failures: readonly ServerFailure[],
+): Partial<Record<FailureSnapshot["stage"], ServerFailure>> {
+  const byStage: Partial<Record<FailureSnapshot["stage"], ServerFailure>> = {};
+  for (const failure of failures)
+    if ((failure.scope === "latency") === (failure.stage === "latency"))
+      byStage[failure.stage] ??= failure;
+  return byStage;
 }
 function historyText(value: string): string {
   return value.slice(0, MAX_HISTORY_TEXT_LENGTH);
@@ -192,7 +182,7 @@ export function buildHistoryRecord(
   context: HistoryBuildContext,
   completedAt = Date.now(),
 ): HistoryRecord {
-  const failures = result.stageFailures;
+  const failures = stageFailures(result.multiServer.failures);
   const bidi = result.bidirectional;
   const down = throughput(result.download);
   const upload = throughput(result.upload);
@@ -200,12 +190,8 @@ export function buildHistoryRecord(
   const bidiUp = throughput(bidi?.up ?? null);
   return {
     schemaVersion: HISTORY_SCHEMA_VERSION,
-    ...(result.multiServer
-      ? {
-          multiServer: structuredClone(result.multiServer),
-          outcome: result.outcome ?? "complete",
-        }
-      : {}),
+    multiServer: structuredClone(result.multiServer),
+    outcome: result.outcome,
     id: createUuid(),
     startedAt: Math.trunc(result.startedAt),
     completedAt: Math.trunc(completedAt),
@@ -214,7 +200,7 @@ export function buildHistoryRecord(
       latency: {
         status: status(result.latency, failures.latency),
         result: latency(result.latency),
-        lanes: latencyLanes(result.latency, result.latencyByStage),
+        lanes: latencyLanes(result.latencyByStage),
       },
       download: {
         status: status(result.download, failures.download),
@@ -231,22 +217,13 @@ export function buildHistoryRecord(
       },
     },
     bufferbloat: result.bufferbloat && { ...result.bufferbloat },
-    totalBytes: result.multiServer
-      ? result.multiServer.servers.reduce(
-          (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
-          0,
-        )
-      : (result.download?.totalBytes ?? 0) +
-        (result.upload?.totalBytes ?? 0) +
-        (bidi?.down?.totalBytes ?? 0) +
-        (bidi?.up?.totalBytes ?? 0),
+    totalBytes: result.multiServer.servers.reduce(
+      (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
+      0,
+    ),
     server: {
       name: historyText(
-        result.multiServer?.selection
-          .map((server) => server.name)
-          .join(" + ") ??
-          context.paths?.discovery.server.name ??
-          "Unknown",
+        result.multiServer.selection.map((server) => server.name).join(" + "),
       ),
       location: context.paths?.discovery.server.location
         ? historyText(context.paths.discovery.server.location)
@@ -271,7 +248,11 @@ export function buildHistoryRecord(
     },
     ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
     client: { build: historyText(context.clientBuild) },
-    failures: failureSnapshots(failures),
+    failures: Object.values(failures).map((failure) => ({
+      stage: failure.stage,
+      direction: null,
+      reason: failure.reason as FailureSnapshot["reason"],
+    })),
     wireEstimates: context.wireEstimates
       ? structuredClone(context.wireEstimates)
       : null,

@@ -1,6 +1,6 @@
 import { stubGlobals } from "../../test-helpers.testutil";
 import { expect, test } from "bun:test";
-import { RunAccumulator } from "../evaluation";
+import { ServerLatency } from "../measure";
 import { DEFAULT_CONFIG } from "../../state/defaults";
 import type { PingSample } from "./pingSample";
 
@@ -73,10 +73,15 @@ test("reply-driven accounting retains nine replies and one timeout regardless of
   expect(samples.filter((sample) => !sample.lost)).toHaveLength(9);
   expect(samples.filter((sample) => sample.lost)).toHaveLength(1);
   expect(samples[0].observedAtEpochMs).toBe(51_002);
-  const accum = new RunAccumulator();
+  const latency = new ServerLatency();
   for (const sample of samples)
-    accum.pushLatency("latency", sample.rtt, sample.lost);
-  expect(accum.latencyResult(DEFAULT_CONFIG)!.probeTimeoutPct).toBe(10);
+    latency.observe(
+      "latency",
+      { rttMs: sample.rtt, lost: sample.lost, observedAtMs: 0 },
+      0,
+      0,
+    );
+  expect(latency.result(DEFAULT_CONFIG)!.probeTimeoutPct).toBe(10);
 });
 
 test("a fast reply burst produces bounded batches without discarding outcomes", async () => {

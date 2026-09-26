@@ -36,6 +36,7 @@ import {
   ROUTES,
 } from "./real/backendPure";
 import type { ConnectionPreparation } from "./real/prepare";
+import type { IdleEvent } from "./real/latencyChannel";
 import { PreflightUnavailableError } from "./real/transportError";
 import type { ServerEntry } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
@@ -44,6 +45,7 @@ import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
+  testRunResult,
   testServerDiscovery,
 } from "./test-helpers.testutil";
 
@@ -360,11 +362,10 @@ function preparation(
 function idleMonitors() {
   let active = false;
   let stops = 0;
-  let onEvent: (event: RunnerEvent) => void = () => {};
+  let onEvent: (event: IdleEvent) => void = () => {};
   return {
     active: () => active,
     stops: () => stops,
-    emit: (event: RunnerEvent) => onEvent(event),
     create: (): NonNullable<ConnectionPreparation["idle"]> => ({
       start() {
         active = true;
@@ -404,6 +405,9 @@ class TestRunner implements NetworkRunner {
   }
   dispose() {}
   reconfigure() {}
+  details() {
+    return testRunResult().multiServer;
+  }
   on(listener: (event: RunnerEvent) => void) {
     this.listener = listener;
     return () => {
@@ -976,8 +980,16 @@ test("returning to start releases the run so late events cannot reach the fresh 
     controller.returnToStart();
     expect(store.phase).toBe("idle");
     late({
-      type: "stageSkipped",
-      failure: { stage: "download", reason: "connection-lost", message: "" },
+      type: "serverFailure",
+      failure: {
+        serverId: "self",
+        stage: "download",
+        atMs: 0,
+        scope: "throughput",
+        reason: "connection-lost",
+        message: "",
+      },
+      participants: [],
     });
     expect(store.stageFailures).toEqual({});
   });

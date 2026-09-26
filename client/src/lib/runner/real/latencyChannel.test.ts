@@ -1,7 +1,11 @@
 // Its slot is shared: validateConnections aborts a probe and starts the next one without awaiting it, so two waits.
 import { test, expect, afterEach, beforeEach } from "bun:test";
-import { IdleKeepalive, LatencyChannel } from "./latencyChannel";
-import type { CoreHost } from "../core";
+import {
+  IdleKeepalive,
+  LatencyChannel,
+  type IdleEvent,
+} from "./latencyChannel";
+import type { ParticipantHost } from "../transport";
 import type { LatencyTarget } from "../../api/endpoints";
 import { TestWorker } from "./test-helpers.testutil";
 import { ServerAuthenticationRequired } from "../../servers/credentials";
@@ -14,6 +18,17 @@ const target: LatencyTarget = {
   tls: false,
   routes: { probe: "/probe", ping: "/ws/ping" },
 };
+
+type ChannelHost = ConstructorParameters<typeof LatencyChannel>[0]["host"];
+const host = (overrides: Partial<ParticipantHost>): ChannelHost => ({
+  latency() {},
+  latencyInterrupted() {},
+  latencyIncomplete() {},
+  stallLatency() {},
+  resumeLatency() {},
+  authenticationRequired() {},
+  ...overrides,
+});
 
 const realWorker = globalThis.Worker;
 const realSetTimeout = globalThis.setTimeout;
@@ -63,7 +78,7 @@ test("a superseded readiness wait does not silence the newer one", async () => {
 });
 
 test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   const keepalive = new IdleKeepalive(target);
   keepalive.onEvent = (event) => events.push(event);
   keepalive.start();
@@ -89,7 +104,7 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
 });
 
 test("idle latency buckets use each worker observation time", () => {
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   const keepalive = new IdleKeepalive(target, 10_000);
   keepalive.onEvent = (event) => events.push(event);
 
@@ -137,7 +152,7 @@ test("adoption replays a provisional stall but does not infer offline from readi
   const idle = new IdleKeepalive(target);
   idle.start();
   TestWorker.last!.emit({ type: "ready" });
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   idle.onEvent = (event) => events.push(event);
   expect(events).toEqual([]);
   idle.onEvent = () => {};
@@ -154,7 +169,7 @@ test("adopting a verified idle monitor replays its proven connectivity without r
     type: "samples",
     samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
   });
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   keepalive.onEvent = (event) => events.push(event);
   expect(events).toEqual([{ type: "connectivity", state: "connected" }]);
   TestWorker.last!.emit({
@@ -171,19 +186,12 @@ test("adopting a verified idle monitor replays its proven connectivity without r
 test("stage latency preserves distinct times from one worker batch", () => {
   const observations: number[] = [];
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
-      ingestLatency(observation: { observedAtMs: number }) {
-        observations.push(observation.observedAtMs);
-      },
-    } as unknown as CoreHost,
+    host: host({ latency: (sample) => observations.push(sample.observedAtMs) }),
     target,
-    stall() {},
-    resume() {},
     timeOriginMs: 10_000,
   });
 
-  channel.prime(true);
+  channel.prime("reply-driven", true);
   channel.measure();
   TestWorker.last!.emit({
     type: "samples",
@@ -200,18 +208,11 @@ test("stage latency preserves distinct times from one worker batch", () => {
 test("a stage latency socket reopening does not itself resume recovery", () => {
   let resumes = 0;
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      ingestLatency() {},
-    } as unknown as CoreHost,
+    host: host({ resumeLatency: () => resumes++ }),
     target,
-    stall() {},
-    resume() {
-      resumes++;
-    },
   });
 
-  channel.prime(true);
+  channel.prime("medium", true);
   channel.measure();
   TestWorker.last!.emit({ type: "resume" });
 
@@ -237,17 +238,11 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
   }) as typeof clearTimeout;
   const failures: string[] = [];
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      failStage: (_stage: string, _reason: string, detail: string) =>
-        failures.push(detail),
-    } as unknown as CoreHost,
+    host: host({ stallLatency: (detail) => failures.push(detail) }),
     target,
-    stall: (detail) => failures.push(detail),
-    resume() {},
   });
 
-  channel.prime(true);
+  channel.prime("medium", true);
   expect(channel.ready).toBe(false);
   TestWorker.last!.emit({ type: "open" });
   expect(channel.ready).toBe(false);
@@ -261,28 +256,21 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
 });
 
 function finalizingChannel() {
-  const observations: Parameters<CoreHost["ingestLatency"]>[0][] = [];
+  const observations: Parameters<ParticipantHost["latency"]>[0][] = [];
   const interruptions: { count: number; reason: string }[] = [];
   const stalls: string[] = [];
   let accountingComplete = true;
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      ingestLatency(observation: Parameters<CoreHost["ingestLatency"]>[0]) {
-        observations.push(observation);
-      },
-      ingestLatencyAccountingIncomplete() {
-        accountingComplete = false;
-      },
-      ingestLatencyInterruption(count: number, reason: string) {
-        interruptions.push({ count, reason });
-      },
-    } as unknown as CoreHost,
+    host: host({
+      latency: (sample) => observations.push(sample),
+      latencyIncomplete: () => (accountingComplete = false),
+      latencyInterrupted: (count, reason) =>
+        interruptions.push({ count, reason }),
+      stallLatency: (detail) => stalls.push(detail),
+    }),
     target,
-    stall: (detail) => stalls.push(detail),
-    resume() {},
   });
-  channel.prime(true);
+  channel.prime("medium", true);
   channel.measure();
   return {
     channel,
@@ -371,7 +359,7 @@ test("abort settles an in-flight drain and prevents its late worker messages rea
   const ending = channel.finish();
   channel.teardown();
   await ending;
-  channel.prime(true);
+  channel.prime("medium", true);
   worker.emit({
     type: "samples",
     samples: [{ rtt: 10, lost: false, observedAtEpochMs: 100 }],

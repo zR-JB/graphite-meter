@@ -20,7 +20,6 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     p90: 80,
     p95: null,
     center: 50,
-    centerKind: "average",
     current: 55,
     jitter: 5,
     timeoutRatio: 0,
@@ -69,11 +68,9 @@ test("nearestMetric: no measured metrics yields null", () => {
 test("center labels and hover context follow the lane's semantics", () => {
   const l = lane();
   expect(hoverContext(l, "p10")).toContain("P10–P90");
-  expect(metricLabel(l, "center")).toBe("Mean");
+  expect(metricLabel("center")).toBe("Median");
   expect(hoverContext(l, "center")).toContain("Range");
-  expect(hoverContext(l, "current")).toContain("Mean");
-  const result = lane({ center: 70, centerKind: "result" });
-  expect(metricLabel(result, "center")).toBe("Median");
+  const result = lane({ center: 70 });
   expect(hoverContext(result, "current")).toBe("Median 70.0");
   expect(hoverContext(result, "center")).toContain("Range");
   expect(hoverContext(lane({ p10: null }), "p90")).toBe("");

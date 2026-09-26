@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tooltip, JARGON } from "../actions/tooltip";
   import type { SummaryCard } from "../presentation/resultSummary";
-  import type { MultiServerResult } from "../servers/measurement";
+  import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
 
   let {

@@ -4,7 +4,7 @@ import {
 } from "../compensation";
 import { fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
-import type { MultiServerResult } from "../servers/measurement";
+import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import { MISSING, STAGE } from "./vocabulary";
 

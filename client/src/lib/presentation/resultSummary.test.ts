@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { MultiServerResult } from "../servers/measurement";
+import type { MultiServerResult } from "../runner/measure";
 import {
   liveWire,
   serverEvidence,

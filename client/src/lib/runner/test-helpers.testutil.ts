@@ -1,7 +1,7 @@
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
-import type { CoreHost } from "./core";
-import type { PreparedPaths, RunnerConfig } from "./contract";
+import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
+import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
 import type { ServerCatalog } from "../servers/catalog";
 
@@ -55,29 +55,30 @@ export const testLatency = (
   transport: "websocket",
   routes: { probe: ROUTES.probe, ping: ROUTES.ping },
 });
-export function testHost(
+/** A participant host that ignores every report unless overridden. */
+export function testParticipantHost(
   config: RunnerConfig,
-  overrides: Partial<CoreHost> = {},
-): CoreHost {
+  overrides: Partial<ParticipantHost> = {},
+): ParticipantHost {
+  const ignore = () => {};
   return {
     config,
-    phase: "idle",
-    elapsed: 0,
-    emit() {},
-    fail() {},
-    failStage() {},
-    ingestThroughput() {},
-    ingestLatency() {},
-    ingestLatencyInterruption() {},
-    ingestLatencyAccountingIncomplete() {},
-    recordRecoveryGap() {},
-    recordRecoveryBytes() {},
-    presentationRate: () => 0,
-    stall() {},
-    resume() {},
+    download: ignore,
+    receiver: ignore,
+    latency: ignore,
+    latencyInterrupted: ignore,
+    latencyIncomplete: ignore,
+    stall: ignore,
+    resume: ignore,
+    stallLatency: ignore,
+    resumeLatency: ignore,
+    fail: ignore,
+    authenticationRequired: ignore,
+    uploadHint: ignore,
     ...overrides,
   };
 }
+
 export const TEST_WT_ORIGIN = "https://meter.test";
 export const TEST_WT_PREFLIGHT = {
   server: { name: "test" },
@@ -172,6 +173,37 @@ export function testPreparedPaths(
       generation: discovery.generation,
       verifiedAt: Date.now(),
     },
+    ...overrides,
+  };
+}
+
+/** A completed single-server run result with no measurements. */
+export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
+  const server = { id: "self", name: "Test server", url: "http://meter.test" };
+  return {
+    download: null,
+    upload: null,
+    bidirectional: null,
+    latency: null,
+    latencyByStage: {
+      latency: null,
+      download: null,
+      upload: null,
+      bidirectional: null,
+    },
+    bufferbloat: null,
+    multiServer: {
+      selection: [server],
+      participants: [server.id],
+      latencyFocus: server.id,
+      servers: [],
+      intervals: [],
+      omittedIntervals: 0,
+      failures: [],
+    },
+    outcome: "complete",
+    startedAt: 0,
+    durationMs: 0,
     ...overrides,
   };
 }

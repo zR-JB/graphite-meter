@@ -3,9 +3,14 @@ import { expect, test } from "bun:test";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
+  testRunResult,
 } from "../runner/test-helpers.testutil";
 import type { RunResult, ThroughputResult } from "../runner/contract";
-import { LatencyAccumulator } from "../runner/latencySummary";
+import {
+  LatencyPopulation,
+  pathEvidence,
+  ThroughputAggregate,
+} from "../runner/measure";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
 
 const throughput: ThroughputResult = {
@@ -15,31 +20,60 @@ const throughput: ThroughputResult = {
   method: "full-average",
   totalBytes: 25_000_000,
   stabilityPct: 4,
-  probeTimeoutPct: 0,
   stabilityScore: 0.96,
   band: "high",
   serverAuthoritative: true,
 };
 
 function result(): RunResult {
-  return {
-    download: { ...throughput },
+  const aggregate = new ThroughputAggregate();
+  aggregate.begin("download", ["self"], 0);
+  aggregate.observe({ atMs: 0, down: { self: 0 }, up: {} });
+  aggregate.observe({ atMs: 2000, down: { self: 25_000_000 }, up: {} });
+  aggregate.result("download", false);
+  const server = { id: "self", name: "Measured server", url: "http://a.test" };
+  const empty = {
+    latency: null,
+    download: null,
     upload: null,
     bidirectional: null,
-    latency: null,
-    latencyByStage: {
-      latency: null,
-      download: null,
-      upload: null,
-      bidirectional: null,
+  };
+  return testRunResult({
+    download: { ...throughput },
+    multiServer: {
+      selection: [server],
+      participants: [server.id],
+      latencyFocus: server.id,
+      intervals: aggregate.intervals,
+      omittedIntervals: 0,
+      failures: [
+        {
+          serverId: server.id,
+          stage: "upload",
+          atMs: 5,
+          scope: "throughput",
+          reason: "timeout",
+          message: "HTTP 503",
+        },
+      ],
+      servers: [
+        {
+          server,
+          ...pathEvidence(testPreparedPaths()),
+          latency: null,
+          latencyByStage: empty,
+          bufferbloat: null,
+          download: { ...throughput },
+          upload: null,
+          bidirectional: null,
+          totalBytes: { down: 25_000_000, up: 0 },
+        },
+      ],
     },
-    bufferbloat: null,
-    stageFailures: {
-      upload: { stage: "upload", reason: "timeout", message: "private detail" },
-    },
+    outcome: "incomplete",
     startedAt: 100,
     durationMs: 2_500,
-  };
+  });
 }
 
 test("UI and history use the raw stage summary even when chart samples disagree", async () => {
@@ -49,26 +83,29 @@ test("UI and history use the raw stage summary even when chart samples disagree"
   try {
     store.reset();
     store.resultHistoryPreference = "enabled";
-    const raw = new LatencyAccumulator();
-    for (const rtt of [10, 100, 10, 100]) raw.observe(rtt, false, 0);
+    const raw = new LatencyPopulation();
+    for (const rttMs of [10, 100, 10, 100])
+      raw.observe({ rttMs, lost: false, observedAtMs: 0 });
     store.ingest({
-      type: "latency",
+      type: "serverLatency",
+      serverId: store.latencyFocus,
       sample: {
         ...singleLatencyBucket(100, 55, false, "download"),
         underLoad: true,
       },
     });
     store.ingest({
-      type: "latencySummary",
+      type: "serverLatencySummary",
+      serverId: store.latencyFocus,
       stage: "download",
-      summary: raw.snapshot(),
+      summary: raw.summary(),
     });
     const lane = store.latencyLanes.find((lane) => lane.key === "download")!;
     expect(lane.min).toBe(10);
     expect(lane.p90).toBe(100);
     expect(lane.jitter).toBe(90);
     const completed = result();
-    completed.latencyByStage.download = raw.snapshot();
+    completed.latencyByStage.download = raw.summary();
     store.ingest({ type: "complete", result: completed });
     expect(store.stageResults.download).toEqual(completed.download);
     expect(store.stageResults.upload).toBeNull();
@@ -91,8 +128,9 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.resultHistoryPreference = "enabled";
     const completed = result();
     const paths = testPreparedPaths();
-    paths.discovery.server.name = "Measured server";
-    store.activePaths = paths;
+    store.activeServers = [
+      { server: completed.multiServer.selection[0], paths },
+    ];
     store.ingest({ type: "complete", result: completed });
     const candidate = store.historyCandidate;
     expect(candidate?.stages.upload.status).toBe("failed");
@@ -102,7 +140,7 @@ test("only an enabled complete event creates an immutable history candidate", as
       reason: "timeout",
     });
     completed.download!.reportedBytesPerSec = 1;
-    paths.discovery.server.name = "Next server";
+    completed.multiServer.selection[0].name = "Next server";
     paths.throughput.probe.clientIp = "192.0.2.254";
     expect(candidate?.server.name).toBe("Measured server");
     expect(JSON.stringify(candidate)).not.toContain("192.0.2.254");
@@ -153,7 +191,6 @@ test("wire snapshots are independent of their display preference", async () => {
     store.reset();
     store.showWireEstimates = false;
     store.resultHistoryPreference = "enabled";
-    store.activePaths = testPreparedPaths();
     store.ingest({ type: "complete", result: result() });
     const hiddenWireCandidate = store.historyCandidate;
     expect(
@@ -174,8 +211,11 @@ test("wire snapshots are independent of their display preference", async () => {
     const loopback = testPreparedPaths();
     loopback.throughput.probe.clientIp = "127.0.0.1";
     loopback.latency!.probe.clientIp = "127.0.0.1";
-    store.activePaths = loopback;
-    store.ingest({ type: "complete", result: result() });
+    const completed = result();
+    store.activeServers = [
+      { server: completed.multiServer.selection[0], paths: loopback },
+    ];
+    store.ingest({ type: "complete", result: completed });
     expect(
       store.historyCandidate?.wireEstimates?.downloadBytesPerSec,
     ).toBeGreaterThan(throughput.reportedBytesPerSec);

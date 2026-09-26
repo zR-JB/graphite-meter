@@ -8,7 +8,6 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   preparation: { status: "idle", throughput: "ready", latency: "ready" },
   startError: "",
   error: null,
-  aggregateEvidence: true,
   latencyTimeout: false,
   latencyMs: 12,
   hasLatencyResult: false,
@@ -32,7 +31,6 @@ test("the display follows phase, evidence and missing data", () => {
   };
   for (const [overrides, value, unit] of [
     [{}, "100", "B/s"],
-    [{ aggregateEvidence: false }, "—", "awaiting server windows"],
     [{ unusable: true }, "—", ""],
     [{ phase: "warmup" }, "—", ""],
     [{ phase: "latency" }, "12.0", "ms"],

@@ -1,5 +1,5 @@
 import type { LatencyBucket } from "./contract";
-import { percentile } from "./stats";
+import { percentile } from "./measure";
 
 const LATENCY_SCALE_WINDOW_MS = 6_000;
 const LATENCY_SCALE_HEADROOM = 1.25;

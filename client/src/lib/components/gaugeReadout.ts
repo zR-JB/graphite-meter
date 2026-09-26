@@ -12,7 +12,6 @@ export interface GaugeReadoutInput {
   preparation: PreparationState;
   startError: string;
   error: RunnerError | null;
-  aggregateEvidence: boolean;
   latencyTimeout: boolean;
   latencyMs: number;
   hasLatencyResult: boolean;
@@ -27,7 +26,6 @@ export interface GaugeReadoutInput {
 }
 
 const EMPTY = { value: MISSING, unit: "" };
-const AWAITING = { value: MISSING, unit: "awaiting server windows" };
 const transfer = (phase: Phase) =>
   phase === "download" || phase === "upload" || phase === "bidirectional";
 
@@ -48,7 +46,6 @@ function displayed(input: GaugeReadoutInput) {
     return input.hasLatencyResult ? latency : EMPTY;
   }
   if (!transfer(phase)) return EMPTY;
-  if (!input.aggregateEvidence) return AWAITING;
   return { value: input.rate(input.animatedBytesPerSec), unit: input.unit };
 }
 
@@ -70,12 +67,9 @@ function terminalStatus({ phase, error }: GaugeReadoutInput) {
 export function gaugeReadout(input: GaugeReadoutInput) {
   const { phase, preparation } = input;
   const display = displayed(input);
-  const announced =
-    !input.aggregateEvidence && input.running
-      ? AWAITING
-      : transfer(phase)
-        ? { value: input.rate(input.measuredBytesPerSec), unit: input.unit }
-        : display;
+  const announced = transfer(phase)
+    ? { value: input.rate(input.measuredBytesPerSec), unit: input.unit }
+    : display;
   const arc = phase === "complete" ? input.headline : null;
   const terminal = arc && { ...arc, value: input.rate(arc.bytesPerSec) };
   const preparationLabel =

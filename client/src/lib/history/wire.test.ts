@@ -4,11 +4,12 @@ import {
   estimateCompensation,
 } from "../compensation";
 import type { RunResult } from "../runner/contract";
+import { testRunResult } from "../runner/test-helpers.testutil";
 import { buildHistoryRecord, isHistoryRecord } from "./types";
 import { historyWireEstimates, historyWirePresentation } from "./wire";
 
 function result(): RunResult {
-  return {
+  return testRunResult({
     download: {
       reportedBytesPerSec: 1_000_000,
       fullAverageBytesPerSec: 1_000_000,
@@ -18,23 +19,11 @@ function result(): RunResult {
       stabilityPct: 100,
       stabilityScore: 1,
       band: "high",
-      probeTimeoutPct: null,
       serverAuthoritative: true,
     },
-    upload: null,
-    latency: null,
-    bidirectional: null,
-    latencyByStage: {
-      latency: null,
-      download: null,
-      upload: null,
-      bidirectional: null,
-    },
-    bufferbloat: null,
-    stageFailures: {},
     startedAt: 100,
     durationMs: 1000,
-  };
+  });
 }
 
 test("saved wire models survive reload without using a later connection or mutable estimate", () => {
