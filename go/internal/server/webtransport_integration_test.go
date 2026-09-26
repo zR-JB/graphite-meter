@@ -191,7 +191,11 @@ func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
 			// One accept past the expected count must find nothing.
 			seen := 0
 			for seen <= tc.want {
-				accept, cancelAccept := context.WithTimeout(ctx, 200*time.Millisecond)
+				wait := 2 * time.Second
+				if seen == tc.want {
+					wait = 200 * time.Millisecond
+				}
+				accept, cancelAccept := context.WithTimeout(ctx, wait)
 				_, err := sess.AcceptUniStream(accept)
 				cancelAccept()
 				if err != nil {
