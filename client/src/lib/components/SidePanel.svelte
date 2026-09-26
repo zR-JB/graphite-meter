@@ -40,8 +40,6 @@
   }: Props = $props();
 
   let panelEl = $state<HTMLDivElement>();
-  // Keeps the body painted while a closing flyout slides out.
-  const linger = (_node: Element) => ({ duration: 180 });
 
   function setWidth(px: number) {
     onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
@@ -185,7 +183,7 @@
     </header>
 
     {#if open}
-      <div class="panel-body" out:linger>{@render children()}</div>
+      <div class="panel-body">{@render children()}</div>
     {/if}
   </div>
 </div>
