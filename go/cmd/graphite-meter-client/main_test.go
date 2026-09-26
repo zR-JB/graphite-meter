@@ -174,7 +174,7 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 		BytesPerSec float64
 		Out         string
 	}
-	var vectors struct{ Ms, Speed, Rate, Bytes []vector }
+	var vectors struct{ Ms, Speed, Rate, Bytes, Added []vector }
 	if err := json.Unmarshal(data, &vectors, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +194,9 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 	}
 	for _, v := range vectors.Bytes {
 		check("bytes", fmtBytes(uint64(v.In)), v.Out)
+	}
+	for _, v := range vectors.Added {
+		check("added", fmtAdded(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
 	}
 }
 

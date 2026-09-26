@@ -46,7 +46,7 @@ func fmtSpeed(value float64) string {
 func fmtBytes(n uint64) string {
 	units := []string{"B", "kB", "MB", "GB", "TB"}
 	value, tier := float64(n), 0
-	for value >= 1000 && tier < len(units)-1 {
+	for math.Round(value*10) >= 10_000 && tier < len(units)-1 {
 		value /= 1000
 		tier++
 	}

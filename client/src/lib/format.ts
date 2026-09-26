@@ -58,7 +58,7 @@ export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
       : ["B", "KiB", "MiB", "GiB", "TiB"];
   let tier = 0;
   let value = bytes;
-  while (value >= step && tier < units.length - 1) {
+  while (+value.toFixed(tier ? 1 : 0) >= step && tier < units.length - 1) {
     value /= step;
     tier++;
   }
