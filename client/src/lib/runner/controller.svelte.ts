@@ -604,8 +604,7 @@ export function createApplicationController(
     unsubscribe = owner.on((event) => {
       if (runner === owner) ingest(event);
     });
-    store.activeConfig = structuredClone(config);
-    store.activeServers = prepared;
+    store.run = { config: structuredClone(config), servers: prepared };
     store.serverDetails = owner.details();
     owner.start(config, focus.paths.latency?.rttMs ?? 0);
   }
@@ -652,10 +651,10 @@ export function createApplicationController(
     };
     const candidateTotal = buildSegments(config).totalMs;
     if (store.isRunning) {
-      const activeTotal = store.activeConfig
-        ? buildSegments(store.activeConfig).totalMs
+      const activeTotal = store.run
+        ? buildSegments(store.run.config).totalMs
         : 0;
-      const unsupported = store.activeServers.find(({ paths }) =>
+      const unsupported = store.run?.servers.find(({ paths }) =>
         uploadCapabilityFailure(config, paths.discovery),
       );
       try {
@@ -691,8 +690,8 @@ export function createApplicationController(
       return true;
     }
     store.compactThroughputForDuration(candidateTotal);
-    if (store.activeConfig)
-      store.activeConfig = { ...store.activeConfig, ...live };
+    if (store.run)
+      store.run = { ...store.run, config: { ...store.run.config, ...live } };
     return true;
   }
   function dispose() {

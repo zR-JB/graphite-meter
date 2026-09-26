@@ -128,9 +128,10 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.resultHistoryPreference = "enabled";
     const completed = result();
     const paths = testPreparedPaths();
-    store.activeServers = [
-      { server: completed.multiServer.selection[0], paths },
-    ];
+    store.run = {
+      config: store.config,
+      servers: [{ server: completed.multiServer.selection[0], paths }],
+    };
     store.ingest({ type: "complete", result: completed });
     const candidate = store.historyCandidate;
     expect(candidate?.stages.upload.status).toBe("failed");
@@ -212,9 +213,12 @@ test("wire snapshots are independent of their display preference", async () => {
     loopback.throughput.probe.clientIp = "127.0.0.1";
     loopback.latency!.probe.clientIp = "127.0.0.1";
     const completed = result();
-    store.activeServers = [
-      { server: completed.multiServer.selection[0], paths: loopback },
-    ];
+    store.run = {
+      config: store.config,
+      servers: [
+        { server: completed.multiServer.selection[0], paths: loopback },
+      ],
+    };
     store.ingest({ type: "complete", result: completed });
     expect(
       store.historyCandidate?.wireEstimates?.downloadBytesPerSec,

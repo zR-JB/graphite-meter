@@ -361,15 +361,17 @@ class AppStore {
   startEpoch = $state(0);
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
-  activeConfig = $state.raw<RunnerConfig | null>(null);
-  activeServers = $state.raw<PreparedServer[]>([]);
+  /** The current or last run's own inputs; live settings patch its config. */
+  run = $state.raw<{ config: RunnerConfig; servers: PreparedServer[] } | null>(
+    null,
+  );
   /** The headline latency server's paths, which history records describe. */
-  activePaths = $derived<PreparedPaths | null>(
-    this.activeServers.find(
-      (entry) => entry.server.id === this.serverDetails?.latencyFocus,
-    )?.paths ??
-      this.activeServers[0]?.paths ??
-      null,
+  #runPaths = $derived<PreparedPaths | null>(
+    (
+      this.run?.servers.find(
+        (entry) => entry.server.id === this.serverDetails?.latencyFocus,
+      ) ?? this.run?.servers[0]
+    )?.paths ?? null,
   );
   connections = $derived(
     presentConnections(
@@ -378,7 +380,7 @@ class AppStore {
       this.connectionValidation,
     ),
   );
-  runConfig = $derived(this.activeConfig ?? this.config);
+  runConfig = $derived(this.run?.config ?? this.config);
   unitBase = $state<"base10" | "base2">("base10");
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
@@ -685,7 +687,7 @@ class AppStore {
       ? buildHistoryRecord(
           result,
           {
-            paths: this.activePaths,
+            paths: this.#runPaths,
             clientBuild: BUILD.clientVersion,
             wireEstimates: historyWireEstimates(
               this.downloadCompensation,
@@ -842,8 +844,7 @@ class AppStore {
       completedStages: [],
       result: null,
       error: null,
-      activeConfig: null,
-      activeServers: [],
+      run: null,
       startEpoch: 0,
       historyCandidate: null,
     });

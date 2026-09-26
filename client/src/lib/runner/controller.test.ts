@@ -339,11 +339,11 @@ test("live configuration rejects invalid plans before changing draft or runner",
     expect(controller.configureRun({ duration: negative })).toBe(false);
     expect(controller.configureRun({ stages })).toBe(false);
     expect(store.config).toEqual(previous);
-    expect(store.activeConfig).toEqual(previous);
+    expect(store.run?.config).toEqual(previous);
     expect(reconfigured).toBe(0);
     const duration = { ...previous.duration, uploadMs: 11_000 };
     expect(controller.configureRun({ duration })).toBe(true);
-    expect(store.activeConfig?.duration).toEqual(duration);
+    expect(store.run?.config.duration).toEqual(duration);
     expect(reconfigured).toBe(1);
   });
 });

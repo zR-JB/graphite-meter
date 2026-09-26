@@ -33,21 +33,18 @@
     $props();
   let inspectedServer = $state("");
   const availableServers = $derived(
-    store.activeServers.length
-      ? store.activeServers.map((entry) => entry.server)
-      : catalogSelection(store.serverCatalog, store.selectedServers),
+    store.run?.servers.map((entry) => entry.server) ??
+      catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const selectedServer = $derived(
     availableServers.find((server) => server.id === inspectedServer) ??
       availableServers.find((server) => server.id === store.latencyFocus) ??
       availableServers[0],
   );
-  const captured = $derived(
-    store.activeServers.find((entry) => entry.server.id === selectedServer?.id),
-  );
   // Inspection never changes selection; completed runs keep their prepared paths.
   const activePaths = $derived(
-    captured?.paths ?? (store.activeServers.length ? null : store.activePaths),
+    store.run?.servers.find((entry) => entry.server.id === selectedServer?.id)
+      ?.paths ?? null,
   );
   const discovery = $derived(
     activePaths?.discovery ??
