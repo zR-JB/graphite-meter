@@ -24,7 +24,7 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 		s.timeouts++
 		return
 	}
-	if rtt <= 0 {
+	if rtt < 0 {
 		return
 	}
 	if s.hasPrevious {

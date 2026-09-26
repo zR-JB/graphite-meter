@@ -1,0 +1,44 @@
+[
+  {
+    "name": "replies and timeouts share the resolved population",
+    "outcomes": [{"rttMs": 10}, {"rttMs": 30}, {"timeout": true}, {"rttMs": 10}, {"timeout": true}, {"rttMs": 30}],
+    "expect": {"replies": 4, "timeouts": 2, "timeoutRatio": 0.3333333333333333,
+      "p50Ms": 20, "p95Ms": 30, "jitterMs": 20, "jitterPairs": 3}
+  },
+  {
+    "name": "a timeout keeps the replies around it adjacent",
+    "outcomes": [{"rttMs": 10}, {"timeout": true}, {"rttMs": 20}],
+    "expect": {"replies": 2, "timeouts": 1, "timeoutRatio": 0.3333333333333333,
+      "p50Ms": 15, "p95Ms": 20, "jitterMs": 10, "jitterPairs": 1}
+  },
+  {
+    "name": "a reconnect breaks adjacency",
+    "outcomes": [{"rttMs": 10}, {"rttMs": 20}, {"break": true}, {"rttMs": 100}, {"rttMs": 110}],
+    "expect": {"replies": 4, "timeouts": 0, "timeoutRatio": 0,
+      "p50Ms": 60, "p95Ms": 110, "jitterMs": 10, "jitterPairs": 2}
+  },
+  {
+    "name": "a zero round trip is a reply",
+    "outcomes": [{"rttMs": 0}, {"rttMs": 2}],
+    "expect": {"replies": 2, "timeouts": 0, "timeoutRatio": 0,
+      "p50Ms": 1, "p95Ms": 2, "jitterMs": 2, "jitterPairs": 1}
+  },
+  {
+    "name": "timeouts alone have no centre or variation",
+    "outcomes": [{"timeout": true}],
+    "expect": {"replies": 0, "timeouts": 1, "timeoutRatio": 1,
+      "p50Ms": null, "p95Ms": null, "jitterMs": null, "jitterPairs": 0}
+  },
+  {
+    "name": "one reply has no variation pair",
+    "outcomes": [{"rttMs": 5}],
+    "expect": {"replies": 1, "timeouts": 0, "timeoutRatio": 0,
+      "p50Ms": 5, "p95Ms": 5, "jitterMs": null, "jitterPairs": 0}
+  },
+  {
+    "name": "no resolved probe has no timeout ratio",
+    "outcomes": [],
+    "expect": {"replies": 0, "timeouts": 0, "timeoutRatio": null,
+      "p50Ms": null, "p95Ms": null, "jitterMs": null, "jitterPairs": 0}
+  }
+]

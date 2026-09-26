@@ -1,103 +1,78 @@
 package goclient
 
 import (
+	"encoding/json/v2"
+	"math"
+	"os"
 	"testing"
 	"time"
 )
 
-func TestPercentiles(t *testing.T) {
+func TestLatencyMatchesTheSharedVectors(t *testing.T) {
 	t.Parallel()
-	four := []time.Duration{10, 20, 30, 40}
-	for _, c := range []struct {
-		xs   []time.Duration
-		p    float64
-		want time.Duration
-	}{
-		{nil, 0.5, 0},
-		{[]time.Duration{42}, 0.95, 42},
-		{four, 0, 10}, {four, 0.1, 10}, {four, 0.9, 40}, {four, 0.95, 40}, {four, 1, 40},
-	} {
-		if got := percentile(c.xs, c.p); got != c.want {
-			t.Errorf("percentile(%v, %v) = %v, want %v", c.xs, c.p, got, c.want)
+	data, err := os.ReadFile("../../../api/latency.testvectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cases []struct {
+		Name     string
+		Outcomes []struct {
+			RTTMs          float64 `json:"rttMs"`
+			Timeout, Break bool
+		}
+		Expect struct {
+			Replies, Timeouts, JitterPairs int
+			TimeoutRatio, P50Ms, P95Ms     *float64
+			JitterMs                       *float64
 		}
 	}
-	if got := median(four); got != 25 {
-		t.Errorf("median(%v) = %v, want the midpoint 25", four, got)
+	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func timeoutRatio(t *testing.T, s LatencyStats) float64 {
-	t.Helper()
-	ratio, ok := s.TimeoutRatio()
-	if !ok {
-		t.Fatal("timeout ratio unavailable")
+	ms := func(d time.Duration, present bool) *float64 {
+		if !present {
+			return nil
+		}
+		return new(float64(d) / float64(time.Millisecond))
 	}
-	return ratio
-}
-
-func TestLatencyDefinitionFixtures(t *testing.T) {
-	t.Parallel()
-	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
-
-	var mixed latencyStats
-	for _, rtt := range []int{30, 10, 40, 20} {
-		mixed.add(ms(rtt), false, 0)
-	}
-	mixed.add(0, true, 0)
-	mixed.add(0, true, 0)
-	mixed.add(0, false, 0)
-	got := mixed.snapshot()
-	if got.Count != 4 ||
-		got.P50 != ms(25) ||
-		got.P95 != ms(40) ||
-		got.Jitter != ms(70)/3 ||
-		timeoutRatio(t, got) != 2.0/6.0 {
-		t.Fatalf("mixed fixture: %+v", got)
-	}
-
-	var alternating latencyStats
-	for _, rtt := range []int{10, 100, 10, 100} {
-		alternating.add(ms(rtt), false, 0)
-	}
-	got = alternating.snapshot()
-	if got.Jitter != ms(90) || got.JitterPairs != 3 || got.P50 != ms(55) || got.P95 != ms(100) {
-		t.Fatalf("alternating fixture: %+v", got)
-	}
-	alternating.add(ms(10), false, 0)
-	if alternating.snapshot().Jitter != ms(90) {
-		t.Fatal("snapshot changed receive order")
-	}
-
-	var gaps latencyStats
-	gaps.add(ms(10), false, 0)
-	gaps.add(0, true, 0)
-	gaps.add(ms(20), false, 0)
-	gaps.breakContinuity()
-	gaps.add(ms(100), false, 0)
-	gaps.add(ms(110), false, 0)
-	if got := gaps.snapshot(); got.Jitter != ms(10) || got.JitterPairs != 2 {
-		t.Fatalf("continuity fixture: %+v", got)
-	}
-
-	var timeouts latencyStats
-	timeouts.add(0, true, 0)
-	if got := timeouts.snapshot(); got.Count != 0 || got.P50 != 0 || timeoutRatio(t, got) != 1 {
-		t.Fatalf("timeout-only fixture: %+v", got)
-	}
-	if got := (&latencyStats{}).snapshot(); got != (LatencyStats{}) {
-		t.Fatalf("empty fixture: %+v", got)
+	for _, c := range cases {
+		var stats latencyStats
+		for _, o := range c.Outcomes {
+			if o.Break {
+				stats.breakContinuity()
+				continue
+			}
+			stats.add(time.Duration(o.RTTMs*float64(time.Millisecond)), o.Timeout, 0)
+		}
+		got := stats.snapshot()
+		ratio, resolved := got.TimeoutRatio()
+		for name, pair := range map[string][2]*float64{
+			"timeout ratio": {new(ratio), c.Expect.TimeoutRatio},
+			"p50":           {ms(got.P50, got.Count > 0), c.Expect.P50Ms},
+			"p95":           {ms(got.P95, got.Count > 0), c.Expect.P95Ms},
+			"jitter":        {ms(got.Jitter, got.JitterPairs > 0), c.Expect.JitterMs},
+		} {
+			if name == "timeout ratio" && !resolved {
+				pair[0] = nil
+			}
+			if (pair[0] == nil) != (pair[1] == nil) || pair[0] != nil && math.Abs(*pair[0]-*pair[1]) > 1e-9 {
+				t.Errorf("%s: %s = %v, want %v", c.Name, name, deref(pair[0]), deref(pair[1]))
+			}
+		}
+		want := c.Expect
+		if got.Count != want.Replies || got.Timeouts != want.Timeouts || got.JitterPairs != want.JitterPairs {
+			t.Errorf("%s: %d replies, %d timeouts, %d pairs; want %d, %d, %d", c.Name, got.Count, got.Timeouts,
+				got.JitterPairs, want.Replies, want.Timeouts, want.JitterPairs)
+		}
 	}
 	if _, ok := (LatencyStats{Unresolved: 3, SendFailures: 2}).TimeoutRatio(); ok {
 		t.Fatal("unresolved probes and local failures became resolved probes")
 	}
-	var single, steady latencyStats
-	single.add(ms(1), false, 0)
-	steady.add(ms(1), false, 0)
-	steady.add(ms(1), false, 0)
-	if single.snapshot().JitterPairs != 0 {
-		t.Fatal("one reply manufactured a variation pair")
+}
+
+func deref(v *float64) any {
+	if v == nil {
+		return nil
 	}
-	if got := steady.snapshot(); got.Jitter != 0 || got.JitterPairs != 1 {
-		t.Fatalf("identical replies must establish zero variation: %+v", got)
-	}
+	return *v
 }
