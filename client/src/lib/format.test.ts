@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   chartThroughputScale,
+  fixedMs,
   fmtBytes,
   fmtDuration,
   fmtMs,
@@ -13,6 +14,7 @@ import {
   rateValueAt,
   throughputUnitIndex,
 } from "./format";
+import { formatHistoryRate } from "./history/format";
 
 test("durations read in seconds below a minute, then minutes and hours", () => {
   const values = [999, 25_000, 59_900, 60_000, 65_000, 3_599_000, 3_690_000];
@@ -102,4 +104,23 @@ test("sub-resolution latency reads as below the browser timer resolution", () =>
     "250",
   ]);
   expect(fmtMsTick(0)).toBe("0");
+});
+
+const vectors: Record<
+  "ms" | "speed" | "bytes",
+  { in: number; out: string }[]
+> & { rate: { bytesPerSec: number; out: string }[] } = await Bun.file(
+  new URL("../../../api/format.testvectors.json", import.meta.url),
+).json();
+
+test("formatting matches the shared vectors", () => {
+  for (const { in: ms, out } of vectors.ms) expect(fixedMs(ms)).toBe(out);
+  for (const { in: value, out } of vectors.speed)
+    expect(fmtSpeed(value)).toBe(out);
+  for (const { in: bytes, out } of vectors.bytes)
+    expect(fmtBytes(bytes, "base10")).toBe(out);
+  for (const { bytesPerSec, out } of vectors.rate)
+    expect(
+      formatHistoryRate(bytesPerSec, { base: "base10", kind: "bits" }),
+    ).toBe(out);
 });
