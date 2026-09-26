@@ -258,30 +258,3 @@ export function singleLatencyBucket(
     continuityId: 0,
   };
 }
-
-/* Losses carry no RTT and are skipped; explicit phase/stall continuity breaks never create a synthetic. */
-export function latencyJitterMs(buckets: readonly LatencyBucket[]): number {
-  let previousRtt: number | null = null;
-  let previousBucket: LatencyBucket | null = null;
-  let deltaSumMs = 0;
-  let deltaCount = 0;
-  for (const bucket of buckets) {
-    if (
-      previousBucket &&
-      (bucket.continuityId !== previousBucket.continuityId ||
-        bucket.phase !== previousBucket.phase ||
-        bucket.underLoad !== previousBucket.underLoad)
-    )
-      previousRtt = null;
-    previousBucket = bucket;
-    if (bucket.firstRttMs == null) continue;
-    if (previousRtt != null) {
-      deltaSumMs += Math.abs(bucket.firstRttMs - previousRtt);
-      deltaCount++;
-    }
-    deltaSumMs += bucket.rttDeltaSumMs;
-    deltaCount += bucket.rttDeltaCount;
-    previousRtt = bucket.lastRttMs;
-  }
-  return deltaCount > 0 ? deltaSumMs / deltaCount : 0;
-}

@@ -8,7 +8,6 @@ import {
 import type { MultiServerResult } from "../servers/measurement";
 import type {
   PreparedPaths,
-  ReflectorTimingSummary,
   RunResult,
   StageFailure,
   ThroughputResult,
@@ -17,6 +16,10 @@ import type {
   TerminationReason,
 } from "../runner/contract";
 import { createUuid, isUuid } from "../uuid";
+import {
+  latencyLanes,
+  type LatencyLaneSnapshot,
+} from "../runner/latencySummary";
 
 const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
@@ -56,21 +59,6 @@ interface LatencySnapshot {
   method: "stable-window" | "full-average";
   stabilityScore: number;
   band: "low" | "medium" | "high";
-}
-export interface LatencyLaneSnapshot {
-  reflectorTiming?: ReflectorTimingSummary;
-  min: number | null;
-  max: number | null;
-  p10: number | null;
-  p90: number | null;
-  center: number | null;
-  jitter: number | null;
-  timeoutRatio: number | null;
-  accountingComplete: boolean;
-  timeoutCount: number;
-  unresolvedCount: number;
-  sendFailureCount: number;
-  count: number;
 }
 type ThroughputTransportKind = Extract<
   TransportKind,
@@ -222,41 +210,6 @@ interface HistoryBuildContext {
   clientBuild: string;
   wireEstimates?: WireEstimates | null;
 }
-export function historyLatencyLanes(
-  result: LatencyResult | null,
-  summaries: RunResult["latencyByStage"],
-): HistoryRecord["stages"]["latency"]["lanes"] {
-  return Object.fromEntries(
-    HISTORY_FAILURE_STAGES.map((stage) => {
-      const summary = summaries[stage];
-      return [
-        stage,
-        summary && {
-          min: summary.minMs,
-          max: summary.maxMs,
-          p10: summary.p10Ms,
-          p90: summary.p90Ms,
-          center:
-            stage === "latency"
-              ? (result?.reportedMs ?? summary.meanMs)
-              : summary.meanMs,
-          jitter: summary.jitterMs,
-          ...(summary.reflectorTiming
-            ? { reflectorTiming: { ...summary.reflectorTiming } }
-            : {}),
-          timeoutRatio: summary.probeCount
-            ? summary.timeoutCount / summary.probeCount
-            : null,
-          accountingComplete: summary.accountingComplete,
-          timeoutCount: summary.timeoutCount,
-          unresolvedCount: summary.unresolvedCount,
-          sendFailureCount: summary.sendFailureCount,
-          count: summary.probeCount,
-        },
-      ];
-    }),
-  ) as HistoryRecord["stages"]["latency"]["lanes"];
-}
 
 export function buildHistoryRecord(
   result: RunResult,
@@ -285,7 +238,7 @@ export function buildHistoryRecord(
       latency: {
         status: status(result.latency, failures.latency),
         result: latency(result.latency),
-        lanes: historyLatencyLanes(result.latency, result.latencyByStage),
+        lanes: latencyLanes(result.latency, result.latencyByStage),
       },
       download: {
         status: status(result.download, failures.download),

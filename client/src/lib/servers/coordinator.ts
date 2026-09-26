@@ -8,7 +8,6 @@ import { RealBackend } from "../runner/RealRunner";
 import { RunAccumulator } from "../runner/evaluation";
 import { LatencyPresentationBuckets } from "../runner/latencyBuckets";
 import { fixedPingIntervalMs } from "../runner/pingCadence";
-import { GrowingRateEstimator } from "../runner/rateEstimator";
 import type {
   FlowDirection,
   LatencyObservation,
@@ -51,7 +50,6 @@ interface Participant extends PreparedServer {
   backend: ParticipantTransport;
   accum: RunAccumulator;
   buckets: LatencyPresentationBuckets;
-  rates: Record<FlowDirection, GrowingRateEstimator>;
   removed: boolean;
   latencyFailed: boolean;
   down: number;
@@ -121,10 +119,6 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       ),
       accum: new RunAccumulator(),
       buckets: new LatencyPresentationBuckets(),
-      rates: {
-        down: new GrowingRateEstimator(),
-        up: new GrowingRateEstimator(),
-      },
       removed: false,
       latencyFailed: false,
       down: 0,
@@ -261,8 +255,6 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       server.accum.beginPhase();
       server.down = 0;
       server.checkpointMisses = 0;
-      server.rates.down.reset();
-      server.rates.up.reset();
     }
     const epoch = ++this.#epoch;
     const participants = this.#stageParticipants(activity);
@@ -640,7 +632,6 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
           authoritative,
           owner.#now(),
         );
-        server.rates[dir].observe({ bytes, durationMs: seconds * 1000 });
       },
       ingestReceiver(checkpoint) {
         if (owner.#measuring && !server.removed)
@@ -701,9 +692,8 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
           owner.#remove(server, "sign-in-required", message);
         else owner.#failure(server, "latency", "sign-in-required", message);
       },
-      presentationRate(dir) {
-        return server.rates[dir].snapshot().presentedBytesPerSec;
-      },
+      // Participants present only the combined rate.
+      presentationRate: () => 0,
     };
   }
   #latency(server: Participant, observation: LatencyObservation): void {

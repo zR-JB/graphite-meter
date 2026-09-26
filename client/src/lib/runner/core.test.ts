@@ -1007,9 +1007,6 @@ test("reply-driven latency bounds confidence work while retaining every measured
     advance(100);
     core.ingestLatency({ rttMs: 40, lost: false, observedAtMs: fakeNow });
     expect(confidence.mock.calls.length - initialCalls).toBe(2);
-    expect(typedEvents(events, "stability").at(-1)?.snapshot.sampleCount).toBe(
-      5_001,
-    );
     advance(890);
     expectComplete(events, (result) => {
       expect(result.latencyByStage.latency).toMatchObject({
@@ -1191,12 +1188,9 @@ test("adaptive enabled does not select a stable tail when the nominal phase wins
     core.ingestThroughput("down", 100, 0.1);
     advance(100);
   }
-  const stability = events.filter((event) => event.type === "stability").at(-1);
-  expect(stability?.type === "stability" && stability.snapshot.band).toBe(
-    "high",
-  );
   expectComplete(events, (complete) => {
     const result = complete.download!;
+    expect(result.band).toBe("high");
     expect(result.method).toBe("full-average");
     expect(result.reportedBytesPerSec).toBeCloseTo(640, 6);
     expect(result.reportedBytesPerSec).toBe(result.fullAverageBytesPerSec);
@@ -1367,4 +1361,37 @@ test("a suspended page enters every segment in order and restarts stability afte
   gap("up");
   expect(events.at(-1)?.type).toBe("complete");
   expect(typedEvents(events, "stall")).toEqual([]);
+});
+
+test("presentation bucket width cannot change saved latency results", async () => {
+  const run = async (latencyMs: number) => {
+    const { core, events } = await startCore({
+      stages: { latency: true, download: false },
+      duration: { latencyMs },
+    });
+    advance(1);
+    for (let i = 0; i < 60; i++) {
+      core.ingestLatency({
+        rttMs: 10 + ((i * 7) % 13),
+        lost: i % 17 === 0,
+        observedAtMs: fakeNow,
+      });
+      advance(10);
+    }
+    advance(latencyMs);
+    const complete = completeEvent(events);
+    return {
+      buckets: eventSamples(events, "latency").length,
+      result: complete?.type === "complete" ? complete.result : null,
+    };
+  };
+  const narrow = await run(1_000);
+  const wide = await run(3_000_000);
+  expect(narrow.buckets).toBeGreaterThan(wide.buckets);
+  expect(wide.result?.latencyByStage.latency).toEqual(
+    narrow.result!.latencyByStage.latency,
+  );
+  expect(wide.result?.latency?.reportedMs).toBe(
+    narrow.result!.latency!.reportedMs,
+  );
 });

@@ -1,5 +1,65 @@
-import type { StageLatencySummary } from "./contract";
+import type {
+  LatencyResult,
+  ReflectorTimingSummary,
+  StageLatencySummary,
+  TransportRole,
+} from "./contract";
 import { median } from "./stats";
+
+/** One presentation of a stage population, shared by live results and history. */
+export interface LatencyLaneSnapshot {
+  reflectorTiming?: ReflectorTimingSummary;
+  min: number | null;
+  max: number | null;
+  p10: number | null;
+  p90: number | null;
+  /** Median (p50) of every population; the idle headline may use its stable window. */
+  center: number | null;
+  jitter: number | null;
+  timeoutRatio: number | null;
+  accountingComplete: boolean;
+  timeoutCount: number;
+  unresolvedCount: number;
+  sendFailureCount: number;
+  count: number;
+}
+
+export function latencyLanes(
+  result: LatencyResult | null,
+  summaries: Partial<Record<TransportRole, StageLatencySummary | null>>,
+): Record<TransportRole, LatencyLaneSnapshot | null> {
+  const lane = (stage: TransportRole): LatencyLaneSnapshot | null => {
+    const summary = summaries[stage];
+    return summary
+      ? {
+          ...(summary.reflectorTiming
+            ? { reflectorTiming: { ...summary.reflectorTiming } }
+            : {}),
+          min: summary.minMs,
+          max: summary.maxMs,
+          p10: summary.p10Ms,
+          p90: summary.p90Ms,
+          center:
+            (stage === "latency" ? result?.reportedMs : null) ?? summary.p50Ms,
+          jitter: summary.jitterMs,
+          timeoutRatio: summary.probeCount
+            ? summary.timeoutCount / summary.probeCount
+            : null,
+          accountingComplete: summary.accountingComplete,
+          timeoutCount: summary.timeoutCount,
+          unresolvedCount: summary.unresolvedCount,
+          sendFailureCount: summary.sendFailureCount,
+          count: summary.probeCount,
+        }
+      : null;
+  };
+  return {
+    latency: lane("latency"),
+    download: lane("download"),
+    upload: lane("upload"),
+    bidirectional: lane("bidirectional"),
+  };
+}
 
 /** Raw outcomes own statistics; chart buckets never feed this accumulator. */
 export class LatencyAccumulator {

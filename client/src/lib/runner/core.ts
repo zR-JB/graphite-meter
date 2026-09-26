@@ -24,7 +24,6 @@ import type {
 } from "./contract";
 import {
   shouldExitPhase,
-  bandForState,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
@@ -50,6 +49,7 @@ import {
 const PRESENTATION_CADENCE_MS = 60;
 const RUNNER_DEADLINE_MS = PRESENTATION_CADENCE_MS;
 const STABILITY_CADENCE_MS = 100;
+const PROGRESS_CADENCE_MS = 250;
 
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
@@ -186,6 +186,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #stagePreparationId = 0;
   #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
+  #lastProgressAt = -Infinity;
+  #progressKey = "";
   #lastLatencySummaryAt = -Infinity;
   #lastThroughputDisplayAt: Record<FlowDirection, number> = {
     down: -Infinity,
@@ -307,7 +309,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #resetRunState() {
     this.#running = false;
     this.#activeSeg = null;
-    this.#lastStabilityAt = -Infinity;
+    this.#lastStabilityAt = this.#lastProgressAt = -Infinity;
+    this.#progressKey = "";
     this.#lastThroughputDisplayAt.down = -Infinity;
     this.#lastThroughputDisplayAt.up = -Infinity;
     this.#bytesCumulative = 0;
@@ -566,10 +569,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       enter();
     }
 
-    // Progress within the current phase: real coverage, never faked.
+    // Progress within the current phase: real coverage, never faked. Presentation
+    // interpolates between these coarse updates; changes are sent at once.
     const phaseElapsedMs = elapsed - seg.start;
     const phaseBudgetMs = seg.end - seg.start;
     const frac = phaseElapsedMs / phaseBudgetMs;
+    const progressKey = `${seg.phase}:${phaseBudgetMs}:${this.#measuring}`;
+    if (
+      progressKey === this.#progressKey &&
+      now - this.#lastProgressAt < PROGRESS_CADENCE_MS
+    )
+      return;
+    this.#progressKey = progressKey;
+    this.#lastProgressAt = now;
     this.emit({
       type: "progress",
       phase: seg.phase,
@@ -799,24 +811,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (!seg || seg.phase === "warmup") return false;
     const conf: ConfidenceScore | LatencyConfidenceScore =
       this.#source?.confidence(seg.phase) ?? this.#accum.confidence(seg.phase);
-    const stable = (this.#source ?? this.#accum).trackStableRun(
+    (this.#source ?? this.#accum).trackStableRun(
       seg.phase,
       conf.score,
       this.#cfg!.adaptive,
     );
-    const now = performance.now();
-    if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
-      this.#lastStabilityAt = now;
-      this.emit({
-        type: "stability",
-        snapshot: {
-          phase: seg.phase,
-          score: conf.score,
-          band: bandForState(stable, conf.score),
-          sampleCount: conf.sampleCount,
-        },
-      });
-    }
+    this.#lastStabilityAt = performance.now();
     return this.#updateEarlyCandidate(seg, this.#measuredElapsed, conf);
   }
 
@@ -1002,16 +1002,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   #hasRegimeCandidate(seg: Segment): boolean {
-    if (seg.phase === "download")
-      return this.#rateEstimator.down.snapshot().candidate !== null;
-    if (seg.phase === "upload")
-      return this.#rateEstimator.up.snapshot().candidate !== null;
-    if (seg.phase === "bidirectional")
-      return (
-        this.#rateEstimator.down.snapshot().candidate !== null ||
-        this.#rateEstimator.up.snapshot().candidate !== null
-      );
-    return false;
+    const { down, up } = this.#rateEstimator;
+    return seg.phase === "download"
+      ? down.hasCandidate
+      : seg.phase === "upload"
+        ? up.hasCandidate
+        : seg.phase === "bidirectional" &&
+          (down.hasCandidate || up.hasCandidate);
   }
 
   #cancelEarlyCandidate(): void {

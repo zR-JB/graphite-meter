@@ -153,6 +153,7 @@ test("wire snapshots are independent of their display preference", async () => {
     store.reset();
     store.showWireEstimates = false;
     store.resultHistoryPreference = "enabled";
+    store.activePaths = testPreparedPaths();
     store.ingest({ type: "complete", result: result() });
     const hiddenWireCandidate = store.historyCandidate;
     expect(
