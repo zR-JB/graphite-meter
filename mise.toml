@@ -279,10 +279,11 @@ dir = "rust"
 run = "cargo build --release --locked --bin graphite-meter-client"
 
 [tasks.rust-check]
-description = "Check experimental Rust formatting, lints, and tests"
+description = "Check experimental Rust formatting, dependencies, lints, and tests"
 dir = "rust"
 run = [
   "cargo fmt --all --check",
+  "python3 ../scripts/ci/rust_crate_budget.py",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo test --workspace --all-targets --locked",
 ]

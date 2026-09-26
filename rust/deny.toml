@@ -10,7 +10,7 @@ exclude-dev = true
 
 [advisories]
 yanked = "deny"
-ignore = [{ id = "RUSTSEC-2023-0071", reason = "rsa via openidconnect; verification only, see .cargo/audit.toml" }]
+ignore = []
 
 [licenses]
 allow = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause", "Zlib", "Unicode-3.0", "AGPL-3.0-or-later"]
@@ -21,14 +21,22 @@ multiple-versions = "warn"
 wildcards = "warn"
 allow-wildcard-paths = true
 deny = [
-  { crate = "openidconnect", wrappers = ["graphite-meter-server"] },
-  { crate = "reqwest", wrappers = ["graphite-meter-server"] },
-  { crate = "url", wrappers = ["graphite-meter-core", "graphite-meter-server", "reqwest", "tower-http", "oauth2", "openidconnect"] },
-  { crate = "time", wrappers = ["graphite-meter-server"] },
-  { crate = "x509-cert", wrappers = ["graphite-meter-server"] },
-  { crate = "rsa", wrappers = ["openidconnect"] },
-  { crate = "aws-lc-rs", reason = "rustls + ring only" },
-  { crate = "aws-lc-sys", reason = "rustls + ring only" },
+  { crate = "openidconnect", reason = "OIDC is auth/oidc.rs + auth/jwt.rs on ring" },
+  { crate = "oauth2", reason = "token exchange is auth/oidc.rs" },
+  { crate = "reqwest", reason = "HTTP clients are hyper::client::conn over graphite-meter-net" },
+  { crate = "hyper-rustls", reason = "TLS dialing is graphite-meter-net" },
+  { crate = "url", reason = "origins and URLs are core::origin" },
+  { crate = "idna", reason = "hosts are ASCII; punycode passes as text" },
+  { crate = "serde_urlencoded", reason = "form_urlencoded directly" },
+  { crate = "rsa", reason = "RUSTSEC-2023-0071; ring verifies RSA" },
+  { crate = "p256", reason = "ring verifies ECDSA" },
+  { crate = "p384", reason = "ring verifies ECDSA" },
+  { crate = "ed25519-dalek", reason = "ring verifies Ed25519" },
+  { crate = "time", reason = "one RFC 3339 formatter in auth/http.rs" },
+  { crate = "chrono", reason = "no calendar dependency" },
+  { crate = "x509-cert", reason = "tls.rs reads leaf validity; webpki parses the rest" },
+  { crate = "aws-lc-rs", reason = "D4: rustls + ring only" },
+  { crate = "aws-lc-sys", reason = "D4: rustls + ring only" },
   { crate = "openssl", reason = "rustls only" },
   { crate = "openssl-sys", reason = "rustls only" },
   { crate = "native-tls", reason = "rustls only" },

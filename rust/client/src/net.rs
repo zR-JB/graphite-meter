@@ -660,7 +660,7 @@ mod tests {
             "https://127.000.0.1",
             "https://127.0.0.1.",
             "https://BÜCHER.example",
-                "https://meter.example:0",
+            "https://meter.example:0",
             "https://meter.example:000",
         ] {
             assert!(

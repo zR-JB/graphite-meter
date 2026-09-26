@@ -51,11 +51,17 @@ including allowed and denied group membership. Other deployments remain untested
 Origins require ASCII hosts; use punycode for international names. Empty host
 labels, host punctuation other than hyphens and underscores, IPv4 shorthand,
 leading-zero IPv4 octets, and trailing-dot IPv4 addresses are rejected. Domain
-trailing dots remain supported. Existing HTTP URL validation still rejects
-malformed punycode until the HTTP stack replacement. OIDC issuer paths must be
-ASCII; percent-encode other characters.
-The planned proxy replacement will use absolute-form requests for cleartext HTTP
-and CONNECT tunnels for HTTPS.
+trailing dots remain supported. Punycode labels are passed to DNS as ASCII,
+without IDNA decoding. OIDC issuer paths must be ASCII; percent-encode other
+characters. HTTP and WebSocket clients use the Go proxy environment rules with
+an ALL_PROXY fallback: loopback bypasses proxies, NO_PROXY supports ports,
+and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
+requests; HTTPS uses CONNECT. SOCKS proxies are rejected.
+
+OIDC verifies RS/PS 256–512, ES256/384 and EdDSA with ring. HS*, none and ES512
+are rejected; RSA keys must be 2048–8192 bits. ID tokens require the configured
+issuer, one audience, expiry, issued-at and nonce. Present azp and at_hash claims
+must match. Unknown signing keys trigger one coordinated JWKS refresh.
 
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
@@ -72,6 +78,8 @@ python3 rust/tests/interop.py
 
 Ring is the TLS/QUIC crypto provider. Dependency policy is checked with
 `cargo deny --locked check` from `rust/` (cargo-deny 0.20.2).
+`rust-check` also limits the Linux production graph to 135 server crates and
+164 client crates, including each binary’s root crate.
 The first-party Rust crates forbid unsafe code. This does not make the full
 dependency graph free of unsafe code or native cryptography: ring contains
 C/assembly. Isolated probes of rustls-graviola 0.4.0 and rustls-rustcrypto
