@@ -230,17 +230,6 @@ export interface BufferbloatGrade {
   grade: "A" | "B" | "C" | "D" | "F";
 }
 
-/* ---------- Structured termination ---------- */
-/* `user-abort` is the `"aborted"` phase instead, a deliberate stop; every other reason rides the `error` event. */
-export type TerminationReason =
-  | "user-abort"
-  | "preflight-failed" // the handshake never reaches, or a server rejects it
-  | "connection-lost" // transport failed mid-run (server close or network loss)
-  | "timeout" // a request/stream stalled past its deadline
-  | "protocol-error" // malformed/unexpected response or close handshake
-  | "internal-error" // a bug in the engine itself
-  | "transport-unavailable"; // every negotiated transport failed to establish
-
 /* ---------- Transport negotiation ---------- */
 /* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =
@@ -252,31 +241,23 @@ export type TransportRole = Extract<
   "latency" | "download" | "upload" | "bidirectional"
 >;
 
-/** Protocol evidence that determines how an upload stage may recover. */
-export type RecoveryCause =
-  | "transient-connection"
-  | "unknown-upload-id"
-  | "owner-mismatch"
-  | "authentication-failure"
-  | "capacity-refusal"
-  | "protocol-refusal";
-
-/* ---------- Transient link health ---------- */
-/* A NON-terminal stall: the link is quiet mid-phase and the runner starts a bounded recovery lifecycle. */
-export interface StallInfo {
+/** A lane or feed ending: whether a reconnect may recover it, or a new upload id (`rotate`). */
+export interface LaneFailure {
   reason: FailureReason;
-  transport?: TransportKind; // the connection that dropped, when known
+  retry: boolean;
+  rotate?: boolean;
+}
+
+/* A NON-terminal stall: the link is quiet mid-phase and the runner starts a bounded recovery lifecycle. */
+export interface StallInfo extends Pick<LaneFailure, "reason" | "rotate"> {
   detail?: string;
-  /** Structural transport evidence; a generic disconnect stays transient. */
-  recoveryCause?: RecoveryCause;
   /** The lane that first established this stage-wide stall. */
   direction?: FlowDirection;
 }
 
-/** Terminal failure is distinct from user cancellation; finished stages keep their results. */
+/** Terminal failure; a user stop is the "aborted" phase and finished stages keep their results. */
 export interface RunnerError {
-  /** Failure category; `user-abort` is the `"aborted"` phase instead. */
-  reason: Exclude<TerminationReason, "user-abort">;
+  reason: FailureReason;
   message: string;
 }
 

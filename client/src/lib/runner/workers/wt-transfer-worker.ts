@@ -11,6 +11,7 @@ import {
 import { PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
+import type { LaneFailure } from "../contract";
 import {
   progressWindow,
   readBytes,
@@ -51,7 +52,7 @@ type OutMsg =
   | { type: "established" }
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "alive" }
-  | { type: "error"; recoverable: boolean; detail: string }
+  | ({ type: "error"; detail: string } & LaneFailure)
   | { type: "upload-progress"; msg: ProgressEvent }
   | { type: "auth-required" }
   | { type: "stopped" };
@@ -171,7 +172,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
       stopped = true;
       return;
     }
-    fail(true, "webtransport token mint failed");
+    fail("webtransport token mint failed");
     return;
   }
   const token = minted.token;
@@ -181,14 +182,14 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
       congestionControl: CONGESTION_CONTROL,
     });
   } catch (err) {
-    fail(true, String(err));
+    fail(String(err));
     return;
   }
   session = dialed;
   // `closed` resolves on a graceful close and rejects on an abrupt one: both end this session.
   const closed = (info?: WebTransportCloseInfo): void => {
     if (info?.closeCode !== SESSION_REVOKED)
-      return fail(true, "webtransport session closed");
+      return fail("webtransport session closed");
     stopped = true;
     post({ type: "auth-required" });
   };
@@ -202,7 +203,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     } catch {
       /* already closing */
     }
-    fail(true, String(err));
+    fail(String(err));
     return;
   }
   if (stopped || session !== dialed) return;
@@ -238,7 +239,7 @@ async function acceptDownloadStreams(): Promise<void> {
       void drainLane(value as ReadableStream<Uint8Array>);
     }
   } catch (err) {
-    if (!stopped) fail(true, String(err));
+    if (!stopped) fail(String(err));
   }
 }
 
@@ -248,7 +249,7 @@ async function drainLane(lane: ReadableStream<Uint8Array>): Promise<void> {
       if (!stopped) countDownload(n);
     });
   } catch (err) {
-    if (!stopped) fail(true, String(err));
+    if (!stopped) fail(String(err));
   }
 }
 
@@ -269,7 +270,7 @@ async function readDatagrams(): Promise<void> {
       lastYield = performance.now();
     }
   } catch (err) {
-    if (!stopped) fail(true, String(err));
+    if (!stopped) fail(String(err));
   }
 }
 
@@ -287,7 +288,7 @@ async function uploadDatagrams(): Promise<void> {
       const size = Math.min(payload.length, datagrams.maxDatagramSize);
       // Returning silently would leave the stage running to its full timer with zero bytes and no diagnostic.
       if (size === 0) {
-        fail(true, "webtransport datagram size collapsed");
+        fail("webtransport datagram size collapsed");
         return;
       }
       void writer.write(payload.subarray(0, size)).catch(() => {});
@@ -298,7 +299,7 @@ async function uploadDatagrams(): Promise<void> {
       lastYield = performance.now();
     }
   } catch (err) {
-    if (!stopped) fail(true, String(err));
+    if (!stopped) fail(String(err));
   }
 }
 
@@ -323,7 +324,7 @@ async function uploadLane(block: Uint8Array<ArrayBuffer>): Promise<void> {
     }
     await writer.close();
   } catch (err) {
-    if (!stopped) fail(true, String(err));
+    if (!stopped) fail(String(err));
   }
 }
 
@@ -334,7 +335,7 @@ function openProgress(
   credentials?: RequestCredentials,
 ): boolean {
   if (!session || !progressUrl) {
-    fail(false, "upload progress route missing");
+    fail("upload progress route missing", false);
     return false;
   }
   void readProgressStreams(session.incomingUnidirectionalStreams.getReader());
@@ -367,7 +368,7 @@ async function readProgressStreams(
     }
   } catch (err) {
     // A transport-level break is the session dying: recoverable, since a restarted session reopens the feed.
-    if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
+    if (!stopped) fail(`upload progress stream: ${String(err)}`);
   }
 }
 
@@ -385,7 +386,7 @@ async function readProgress(
     return;
   }
   // Recoverable for the same reason that one is: the owner restarts the session and the server re-opens the feed.
-  if (end === "eof") fail(true, "webtransport progress feed ended early");
+  if (end === "eof") fail("webtransport progress feed ended early");
 }
 
 /* Stop the lanes, finalize the upload, let the terminal progress record land, then ack. */
@@ -408,8 +409,9 @@ async function shutdown(): Promise<void> {
 }
 
 /* One session death reaches every lane reader, the accept loop and the session's close promise. */
-function fail(recoverable: boolean, detail: string): void {
+function fail(detail: string, retry = true): void {
   if (stopped || failed) return;
   failed = true;
-  post({ type: "error", recoverable, detail });
+  const reason = retry ? "connection-lost" : "protocol-error";
+  post({ type: "error", detail, reason, retry });
 }

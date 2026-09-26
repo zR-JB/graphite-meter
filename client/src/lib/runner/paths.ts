@@ -7,7 +7,6 @@ import type {
   PreparedPaths,
   ProtocolTarget,
   RunnerConfig,
-  RunnerError,
   TransferStreamPolicy,
   TransportDiscovery,
   TransportKind,
@@ -607,12 +606,6 @@ export const connectionFailureBackoff = (attempt: number): number =>
   [30_000, 60_000, 120_000, 240_000, 300_000][
     Math.max(0, Math.min(attempt - 1, 4))
   ];
-export const CONNECTION_FAILURE_REASONS = new Set<RunnerError["reason"]>([
-  "connection-lost",
-  "timeout",
-  "preflight-failed",
-  "transport-unavailable",
-]);
 
 export const connectionSelection = (
   config: RunnerConfig,

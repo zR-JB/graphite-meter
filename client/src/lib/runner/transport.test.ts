@@ -144,7 +144,7 @@ async function http(options: { checkpoint?: () => Response } = {}) {
     uploadHint: (_lane, bytes) => hints.push(bytes),
     receiver: (checkpoint) => receivers.push(checkpoint),
     fail: (_reason, message) => failures.push(message),
-    stall: (info) => stalls.push(info.recoveryCause ?? info.detail),
+    stall: (info) => stalls.push(info.rotate ? "rotate" : info.detail),
   });
   const stage = (phase: PhaseActivity) =>
     new ServerStage({
@@ -232,7 +232,7 @@ test("upload refusals fail the stage, an unknown id stalls, and one replacement 
     .get("first")!
     .write({ type: "error", code: "invalid", message: "unknown upload" });
   await until(() => h.stalls.length === 1);
-  expect(h.stalls).toEqual(["unknown-upload-id"]);
+  expect(h.stalls).toEqual(["rotate"]);
   const replacing = stage.replaceUpload(new AbortController().signal);
   expect(h.feeds.get("first")!.signal.aborted).toBe(true);
   await h.open(1, "second");
@@ -299,14 +299,20 @@ test("a lane error stalls once and restarts after backoff, a refusal fails the s
     lane.emit({ type: "progress", bytes: 100, elapsedMs: 50, seq: 0 });
     stage.measure();
     expect(lane.sent.at(-1)).toEqual({ type: "measure", seq: 1 });
-    lane.emit({ type: "error", recoverable: true, detail: "reset" });
-    lane.emit({ type: "error", recoverable: true, detail: "reset again" });
+    const lost = { type: "error", reason: "connection-lost", retry: true };
+    lane.emit({ ...lost, detail: "reset" });
+    lane.emit({ ...lost, detail: "reset again" });
     expect(lane.terminated).toBe(true);
     expect(h.stalls).toEqual(["reset"]);
     jest.advanceTimersByTime(300);
     const restarted = workers("download")[1];
     expect(restarted.sent.at(-1)).toEqual({ type: "measure", seq: 1 });
-    restarted.emit({ type: "error", recoverable: false, detail: "HTTP 429" });
+    restarted.emit({
+      type: "error",
+      reason: "server-busy",
+      retry: false,
+      detail: "HTTP 429",
+    });
     expect(h.failures).toEqual(["down stream 0 failed: HTTP 429"]);
     stage.discard();
 
@@ -435,9 +441,9 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
     [
       409,
       { "X-Graphite-Upload-Refusal": "ownerMismatch" },
-      { type: "fatal", cause: "owner-mismatch" },
+      { type: "fatal", reason: "protocol-error" },
     ],
-    [503, {}, { type: "fatal", cause: "capacity-refusal" }],
+    [503, {}, { type: "fatal", reason: "server-busy" }],
   ] as const) {
     let calls = 0;
     const seen: object[] = [];

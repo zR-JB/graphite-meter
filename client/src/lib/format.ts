@@ -1,8 +1,7 @@
 // Formatting and scale helpers for speeds, bytes, latency, and chart domains.
-import type { FailureReason, TerminationReason } from "./runner/contract";
+import type { FailureReason } from "./runner/contract";
 
-const REASON: Record<FailureReason | TerminationReason, string> = {
-  "preflight-failed": "Couldn't reach the server",
+const REASON: Record<FailureReason, string> = {
   "preparation-failed": "Couldn't prepare the connection",
   "connection-lost": "Connection lost",
   timeout: "Stopped delivering data",
@@ -10,12 +9,9 @@ const REASON: Record<FailureReason | TerminationReason, string> = {
   "server-busy": "Server at capacity",
   "protocol-error": "Unexpected server response",
   "insufficient-evidence": "Too little measured time",
-  "transport-unavailable": "Couldn't establish a connection",
-  "user-abort": "Stopped",
-  "internal-error": "Runner needs attention",
 };
 
-export const reasonLabel = (reason: FailureReason | TerminationReason) =>
+export const reasonLabel = (reason: FailureReason) =>
   REASON[reason] ?? "Measurement issue";
 
 export function fmtSpeed(value: number): string {

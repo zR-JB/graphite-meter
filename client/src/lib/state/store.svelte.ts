@@ -18,7 +18,6 @@ import type {
   StageLatencySummary,
 } from "../runner/contract";
 import {
-  CONNECTION_FAILURE_REASONS,
   emptyConnectionValidation,
   validateServerStreams,
   type ConnectionValidation,
@@ -830,8 +829,6 @@ class AppStore {
         this.error = event.error;
         this.measuring = true;
         this.stallInfo = null;
-        if (CONNECTION_FAILURE_REASONS.has(event.error.reason))
-          this.connectivity = "offline";
         this.phase = "error";
         break;
       }

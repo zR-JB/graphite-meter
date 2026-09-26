@@ -1,12 +1,12 @@
 // The server-authoritative upload feed, read the same way whichever transport carries it.
-import type { RecoveryCause } from "../contract";
+import type { LaneFailure } from "../contract";
 
 /** What one feed reports, normalised from the wire records. */
 export type ProgressEvent =
   | { type: "open" }
   | { type: "bytes"; n: number; t: number }
   | { type: "complete"; n: number; t: number }
-  | { type: "fatal"; detail: string; cause: RecoveryCause };
+  | ({ type: "fatal"; detail: string } & LaneFailure);
 
 /* Carried across reconnects by the caller: a replacement feed must not regress either receiver counter. */
 export interface ProgressFeedState {
@@ -22,24 +22,28 @@ type UploadProgressRecord =
 
 // UTF-16 code units: bound retained text and JSON parsing for tiny control records.
 const MAX_RECORD_LENGTH = 64 * 1024;
-const REFUSALS: Record<string, RecoveryCause> = {
-  invalid: "unknown-upload-id",
-  ownerMismatch: "owner-mismatch",
-  globalFull: "capacity-refusal",
-  clientFull: "capacity-refusal",
-  idle: "transient-connection",
-  revoked: "authentication-failure",
+const lost: LaneFailure = { reason: "connection-lost", retry: true };
+const busy: LaneFailure = { reason: "server-busy", retry: false };
+const signIn: LaneFailure = { reason: "sign-in-required", retry: false };
+const REFUSALS: Record<string, LaneFailure> = {
+  invalid: { reason: "connection-lost", retry: false, rotate: true },
+  ownerMismatch: { reason: "protocol-error", retry: false },
+  globalFull: busy,
+  clientFull: busy,
+  idle: lost,
+  revoked: signIn,
 };
 
-/** Only explicit protocol evidence classifies a refusal, carried alike by HTTP and WebTransport. */
+/** An explicit refusal code wins; otherwise a network or generic server failure reconnects the same id. */
 export function classifyUploadFailure(
   status?: number,
   code?: string | null,
-): RecoveryCause {
+): LaneFailure {
   if (code && Object.hasOwn(REFUSALS, code)) return REFUSALS[code];
-  if (status === 401) return "authentication-failure";
-  if (status === 429 || status === 503) return "capacity-refusal";
-  return "protocol-refusal";
+  if (status === 401) return signIn;
+  if (status === 429 || status === 503) return busy;
+  if (status === 0 || status === 408 || (status ?? 0) >= 500) return lost;
+  return { reason: "protocol-error", retry: false };
 }
 
 const oversized = () =>
@@ -102,7 +106,7 @@ export async function readProgressFeed(
           emit({
             type: "fatal",
             detail: record.message || "upload progress error",
-            cause: classifyUploadFailure(undefined, record.code),
+            ...classifyUploadFailure(undefined, record.code),
           });
           return "fatal";
         } else if (

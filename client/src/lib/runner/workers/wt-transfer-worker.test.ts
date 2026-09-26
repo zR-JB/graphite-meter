@@ -5,6 +5,7 @@ import {
   taskTurn,
   type WorkerRealm,
 } from "./test-helpers.testutil";
+import type { LaneFailure } from "../contract";
 
 const globals = globalThis as Record<string, unknown>;
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";
@@ -16,9 +17,10 @@ const DATAGRAM_BYTES = 1200;
 const DRAIN_BUDGET = 40;
 type Out = {
   type: string;
-  recoverable?: boolean;
+  retry?: boolean;
+  reason?: string;
   detail?: string;
-  msg?: { type: string; n?: number; detail?: string; cause?: string };
+  msg?: { type: string; n?: number; detail?: string } & Partial<LaneFailure>;
 };
 
 type In =
@@ -267,12 +269,13 @@ test("a progress feed that ends without a terminal record is reported", async ()
   expect(errors(realm)).toEqual([
     {
       type: "error",
-      recoverable: true,
+      reason: "connection-lost",
+      retry: true,
       detail: "webtransport progress feed ended early",
     },
   ]);
 });
-test("a later upload refusal stream preserves its structural cause", async () => {
+test("a later upload refusal stream preserves its disposition", async () => {
   const realm = await bootTransfer();
   await taskTurn();
   session().feed.push({ type: "ready" });
@@ -290,7 +293,9 @@ test("a later upload refusal stream preserves its structural cause", async () =>
     msg: {
       type: "fatal",
       detail: "unknown upload id",
-      cause: "unknown-upload-id",
+      reason: "connection-lost",
+      retry: false,
+      rotate: true,
     },
   });
   expect(errors(realm)).toEqual([]);
@@ -304,7 +309,8 @@ test("a datagram size that collapses to zero is reported", async () => {
   expect(errors(realm)).toEqual([
     {
       type: "error",
-      recoverable: true,
+      reason: "connection-lost",
+      retry: true,
       detail: "webtransport datagram size collapsed",
     },
   ]);

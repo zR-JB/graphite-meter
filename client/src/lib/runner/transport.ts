@@ -3,11 +3,11 @@ import type {
   ConnectionRole,
   FailureReason,
   FlowDirection,
+  LaneFailure,
   LatencyObservation,
   PhaseActivity,
   PreparedPaths,
   ReceiverCheckpoint,
-  RecoveryCause,
   RunnerConfig,
   StallInfo,
 } from "./contract";
@@ -104,12 +104,7 @@ export type WorkerMsg =
   | { type: "established" | "stopped" | "auth-required" }
   | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
   | { type: "alive"; bytes?: number; elapsedMs?: number }
-  | {
-      type: "error";
-      recoverable: boolean;
-      detail: string;
-      cause?: RecoveryCause;
-    }
+  | ({ type: "error"; detail: string } & LaneFailure)
   | { type: "upload-progress"; msg: ProgressEvent };
 
 export interface Lane {
@@ -131,6 +126,8 @@ export function openLane(
     if (!failed) on(msg);
     failed = true;
   };
+  const lost = (detail: string) =>
+    fail({ type: "error", detail, reason: "connection-lost", retry: true });
   const handle = (msg: WorkerMsg) => {
     if (msg.type === "established") clearTimeout(establish);
     if (msg.type === "stopped") stopped?.();
@@ -144,21 +141,11 @@ export function openLane(
     stopped?.();
   };
   worker.onmessage = (event: MessageEvent<WorkerMsg>) => handle(event.data);
-  worker.onerror = (event) =>
-    fail({
-      type: "error",
-      recoverable: true,
-      detail: event.message || "worker error",
-    });
+  worker.onerror = (event) => lost(event.message || "worker error");
   worker.postMessage({ type: "start", ...start });
   const establish = session
     ? setTimeout(
-        () =>
-          fail({
-            type: "error",
-            recoverable: true,
-            detail: "webtransport session did not establish",
-          }),
+        () => lost("webtransport session did not establish"),
         ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
       )
     : undefined;
@@ -246,12 +233,12 @@ class LaneSet {
   setStalled(
     stalled: boolean,
     detail?: string,
-    cause?: RecoveryCause,
     reason: FailureReason = "connection-lost",
+    rotate?: boolean,
   ): void {
     if (this.stalled === stalled) return;
     this.stalled = stalled;
-    this.stage.stallChanged(reason, detail, cause, this.dir);
+    this.stage.stallChanged({ reason, detail, rotate, direction: this.dir });
   }
 
   /** Measured progress re-arms one timer; silence past the window stalls this direction alone. */
@@ -273,7 +260,6 @@ class LaneSet {
         this.setStalled(
           true,
           `${this.dir} direction carried no data`,
-          undefined,
           "timeout",
         );
     }, delayMs);
@@ -302,26 +288,20 @@ class LaneSet {
       this.stage.receiver?.accept(msg.msg);
     else if (msg.type === "auth-required")
       this.stage.authenticationRequired("throughput");
-    else if (msg.type === "error")
-      this.#error(index, msg.recoverable, msg.detail, msg.cause);
+    else if (msg.type === "error") this.#error(index, msg);
   }
 
-  #error(
-    index: number,
-    recoverable: boolean,
-    detail: string,
-    cause?: RecoveryCause,
-  ): void {
+  #error(index: number, error: LaneFailure & { detail: string }): void {
     this.#ready.delete(index);
     // The run owns the one allowed upload-id rotation.
-    if (cause === "unknown-upload-id" && this.measuring)
-      return this.setStalled(true, detail, cause);
-    if (!recoverable)
-      return this.stage.host.fail(
-        /\bHTTP (429|503)\b/.test(detail) ? "server-busy" : "protocol-error",
-        `${this.dir} stream ${index} failed: ${detail}`,
+    if (error.rotate && this.measuring)
+      return this.setStalled(true, error.detail, error.reason, true);
+    if (!error.retry)
+      return this.stage.failed(
+        error.reason,
+        `${this.dir} stream ${index} failed: ${error.detail}`,
       );
-    if (this.measuring) this.setStalled(true, detail);
+    if (this.measuring) this.setStalled(true, error.detail);
     this.#lanes[index]?.discard();
     this.#lanes[index] = null;
     this.#schedule(index, LANE_RESTART_BACKOFF_MS);
@@ -468,24 +448,18 @@ export class ServerStage implements StageTransport {
     lanes.setStalled(true, "awaiting replacement upload progress");
   }
 
-  stallChanged(
-    reason: FailureReason,
-    detail?: string,
-    recoveryCause?: RecoveryCause,
-    direction?: FlowDirection,
-  ): void {
+  stallChanged(info: StallInfo): void {
     const stalled = Object.values(this.#lanes).some((lanes) => lanes.stalled);
     if (this.#abort.signal.aborted || stalled === this.#stalled) return;
     this.#stalled = stalled;
-    if (!stalled) return this.host.resume();
-    const transport = this.#paths.throughput.target.transport;
-    this.host.stall({
-      reason,
-      transport,
-      detail,
-      recoveryCause,
-      direction,
-    });
+    if (stalled) this.host.stall(info);
+    else this.host.resume();
+  }
+
+  failed(reason: FailureReason, message: string): void {
+    if (reason === "sign-in-required")
+      this.authenticationRequired("throughput");
+    else this.host.fail(reason, message);
   }
 
   authenticationRequired(role: ConnectionRole): void {
@@ -734,19 +708,9 @@ class UploadReceiver {
       this.stage.authenticationRequired("throughput");
     else if (event.type === "fatal") {
       this.#open(false);
-      if (event.cause === "authentication-failure")
-        this.stage.authenticationRequired("throughput");
-      else if (
-        !measuring ||
-        ["capacity-refusal", "owner-mismatch", "protocol-refusal"].includes(
-          event.cause,
-        )
-      )
-        this.stage.host.fail(
-          event.cause === "capacity-refusal" ? "server-busy" : "protocol-error",
-          event.detail,
-        );
-      else lanes!.setStalled(true, event.detail, event.cause);
+      if (measuring && (event.retry || event.rotate))
+        lanes!.setStalled(true, event.detail, event.reason, event.rotate);
+      else this.stage.failed(event.reason, event.detail);
     } else if (event.type === "stall") {
       if (measuring && performance.now() - this.#checkpointAt >= 500)
         lanes!.setStalled(true, event.detail);
@@ -885,18 +849,16 @@ export function uploadFeed(options: {
         if (signal.aborted) return;
         if (authenticationRequired(response))
           return emit({ type: "auth-required" });
-        const status = response.status;
-        if ((status >= 400 && status < 500) || status === 503)
-          return emit({
-            type: "fatal",
-            detail: `progress returned HTTP ${status}`,
-            cause: classifyUploadFailure(
-              status,
+        const detail = `progress returned HTTP ${response.status}`;
+        const refusal = response.ok
+          ? null
+          : classifyUploadFailure(
+              response.status,
               response.headers.get("X-Graphite-Upload-Refusal"),
-            ),
-          });
-        if (!response.ok || !response.body)
-          throw new Error(`progress returned HTTP ${status}`);
+            );
+        if (refusal && !refusal.retry)
+          return emit({ type: "fatal", detail, ...refusal });
+        if (!response.ok || !response.body) throw new Error(detail);
         await readProgressFeed(response.body, counters, (event) => {
           if (event.type === "open") backoff = 0;
           emit(event);

@@ -13,7 +13,7 @@ import {
 } from "./progressWindow";
 import { incompressibleBlock } from "./payload";
 import { classifyUploadFailure } from "./progressFeed";
-import type { FlowDirection, RecoveryCause } from "../contract";
+import type { FlowDirection, LaneFailure } from "../contract";
 import { MAX_STREAMS, ROUTES } from "../paths";
 import {
   HTTP_SCHEMES,
@@ -41,12 +41,7 @@ type InMsg =
 type OutMsg =
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "alive"; bytes: number; elapsedMs: number }
-  | {
-      type: "error";
-      recoverable: boolean;
-      detail: string;
-      cause?: RecoveryCause;
-    }
+  | ({ type: "error"; detail: string } & LaneFailure)
   | { type: "auth-required" };
 
 /** Pool floor keeps adaptive sizing useful on constrained devices. */
@@ -60,14 +55,13 @@ const TARGET_POST_MS = 500;
 /** Smallest POST, below which per-request overhead dominates. */
 const MIN_POST_BYTES = 128 * 1024;
 
-export function recoverableDownloadStatus(status: number): boolean {
-  return status !== 429 && status !== 503;
-}
+const LOST: LaneFailure = { reason: "connection-lost", retry: true };
 
-/* Explicit client/protocol refusals are terminal; a generic server failure remains a same-id reconnect. */
-export function recoverableStatus(status: number): boolean {
-  return status === 0 || status === 408 || (status >= 500 && status !== 503);
-}
+/** Admission refusals end a download lane; any other status reconnects it. */
+export const downloadFailure = (status: number): LaneFailure =>
+  status === 429 || status === 503
+    ? { reason: "server-busy", retry: false }
+    : LOST;
 
 export function fetchInit(
   credentials: RequestCredentials,
@@ -173,7 +167,7 @@ async function failed(error: unknown): Promise<void> {
     (await sessionAuthenticationRequired(self.location.origin))
   )
     post({ type: "auth-required" });
-  else post({ type: "error", recoverable: true, detail: String(error) });
+  else post({ type: "error", detail: String(error), ...LOST });
 }
 
 function postProgress(delta: ProgressDelta | null): void {
@@ -189,8 +183,8 @@ async function download(url: string): Promise<void> {
       if (!res.ok || !res.body)
         return post({
           type: "error",
-          recoverable: recoverableDownloadStatus(res.status),
           detail: `HTTP ${res.status}`,
+          ...downloadFailure(res.status),
         });
       await readBytes(res.body, (n) =>
         postProgress(progress.add(n, performance.now())),
@@ -222,8 +216,8 @@ async function upload(url: string, poolBytes: number): Promise<void> {
     // An unhandled rejection would not reach the owner's worker error handler.
     return post({
       type: "error",
-      recoverable: true,
       detail: `upload pool: ${String(err)}`,
+      ...LOST,
     });
   }
   let next = Math.min(MIN_POST_BYTES, poolBytes);
@@ -240,18 +234,15 @@ async function upload(url: string, poolBytes: number): Promise<void> {
       if (authenticationRequired(res)) return post({ type: "auth-required" });
       // An unread echo pins the keep-alive connection the next POST needs.
       await res.arrayBuffer().catch(() => undefined);
-      if (!res.ok) {
-        const recoverable = recoverableStatus(res.status);
-        const refusal = res.headers.get("X-Graphite-Upload-Refusal");
+      if (!res.ok)
         return post({
           type: "error",
-          recoverable,
           detail: `HTTP ${res.status}`,
-          cause: recoverable
-            ? undefined
-            : classifyUploadFailure(res.status, refusal),
+          ...classifyUploadFailure(
+            res.status,
+            res.headers.get("X-Graphite-Upload-Refusal"),
+          ),
         });
-      }
       // This is not an observation: the server progress feed owns byte/time accounting.
       const elapsedMs = performance.now() - postStart;
       post({ type: "alive", bytes: sent, elapsedMs });

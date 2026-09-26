@@ -879,11 +879,7 @@ export class Run {
     this.#resetStability();
     this.#updateStalled();
     // An unknown upload id grants one replacement receiver per server and run.
-    if (
-      info.recoveryCause === "unknown-upload-id" &&
-      info.direction === "up" &&
-      !server.rotated
-    ) {
+    if (info.rotate && info.direction === "up" && !server.rotated) {
       server.rotated = true;
       void server.stage?.replaceUpload?.(abort.signal);
     }
@@ -1021,11 +1017,7 @@ export class Run {
       return this.#servers.length === 1 ? this.#skipStage() : this.finish();
     if (!survivors.length)
       return this.#fail(
-        reason === "connection-lost" ||
-          reason === "timeout" ||
-          reason === "protocol-error"
-          ? reason
-          : "transport-unavailable",
+        reason,
         `All selected servers failed. ${server.server.name}: ${message}`,
       );
     // Survivors start a fresh fixed-membership interval.

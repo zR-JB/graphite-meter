@@ -1,11 +1,11 @@
 import { test, expect, afterEach } from "bun:test";
-import type { RecoveryCause } from "../contract";
 import {
   decodeUploadProgress,
   readProgressFeed,
   type ProgressEvent,
   type ProgressFeedState,
 } from "./progressFeed";
+import type { LaneFailure } from "../contract";
 
 const realParse = JSON.parse;
 const realDecode = TextDecoder.prototype.decode;
@@ -137,6 +137,15 @@ test("a complete record ends the feed with receiver totals", async () => {
   expect(complete.events.at(-1)).toEqual({ type: "complete", n: 42, t: 9 });
 });
 
+const DISPOSITION: Record<string, LaneFailure> = {
+  invalid: { reason: "connection-lost", retry: false, rotate: true },
+  globalFull: { reason: "server-busy", retry: false },
+  clientFull: { reason: "server-busy", retry: false },
+  ownerMismatch: { reason: "protocol-error", retry: false },
+  idle: { reason: "connection-lost", retry: true },
+  revoked: { reason: "sign-in-required", retry: false },
+};
+
 // Every refusal the server can send must reach the caller as a fatal carrying that exact text, not just the owner.
 test("every pinned upload refusal surfaces as a fatal", async () => {
   for (const [name, message] of Object.entries(refusals)) {
@@ -145,19 +154,7 @@ test("every pinned upload refusal surfaces as a fatal", async () => {
     );
     expect(end, name).toBe("fatal");
     expect(events, name).toEqual([
-      {
-        type: "fatal",
-        detail: message,
-        cause:
-          (
-            {
-              invalid: "unknown-upload-id",
-              ownerMismatch: "owner-mismatch",
-              idle: "transient-connection",
-              revoked: "authentication-failure",
-            } as Record<string, RecoveryCause>
-          )[name] ?? "capacity-refusal",
-      },
+      { type: "fatal", detail: message, ...DISPOSITION[name] },
     ]);
   }
 });

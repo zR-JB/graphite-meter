@@ -2,19 +2,18 @@ import { expect, test } from "bun:test";
 import {
   fetchInit,
   nextUploadBytes,
-  recoverableDownloadStatus,
-  recoverableStatus,
+  downloadFailure,
   uploadPoolBytes,
 } from "./fetch-worker";
 
 test("admission rejections are terminal for a download lane", () => {
-  for (const [status, recoverable] of [
+  for (const [status, retry] of [
     [429, false],
     [503, false],
     [500, true],
     [403, true], // A bare proxy refusal remains recoverable.
   ] as const)
-    expect(recoverableDownloadStatus(status)).toBe(recoverable);
+    expect(downloadFailure(status).retry).toBe(retry);
 });
 
 test("download requests retain bearer credentials", () => {
@@ -49,16 +48,6 @@ test("uploadPoolBytes: an unknown device gets a bounded reservoir", () => {
     64 * 1024 * 1024,
   );
   expect(uploadPoolBytes(128)).toBe(2 * 1024 * 1024);
-});
-
-test("recoverableStatus: explicit client and protocol refusals are terminal", () => {
-  for (const status of [400, 401, 403, 404, 429, 413, 503, 410])
-    expect(recoverableStatus(status)).toBe(false);
-});
-
-test("recoverableStatus: network, timeout, and generic server failures retry", () => {
-  for (const status of [0, 408, 500, 502])
-    expect(recoverableStatus(status)).toBe(true);
 });
 
 test("nextUploadBytes grows and shrinks by at most one step", () => {
