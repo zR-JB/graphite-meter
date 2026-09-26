@@ -4,6 +4,7 @@ import { stubGlobals } from "../test-helpers.testutil";
 import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.testutil";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type {
+  FlowDirection,
   PhaseActivity,
   ReceiverCheckpoint,
   RunResult,
@@ -46,7 +47,11 @@ interface Peer {
   /** Bytes per millisecond in each direction. */
   rate?: number;
   latency?: boolean;
-  silent?(activity: PhaseActivity, measuredMs: number): boolean;
+  silent?(
+    activity: PhaseActivity,
+    measuredMs: number,
+    dir: FlowDirection,
+  ): boolean;
   prepare?(
     activity: PhaseActivity,
     host: ParticipantHost,
@@ -119,13 +124,12 @@ async function harness(
           calls.push(`measure:${peer.id}`);
           if (activity.transfer.length)
             timer = setInterval(() => {
-              if (peer.silent?.(activity, performance.now() - started)) return;
-              if (activity.transfer.includes("down")) host.download(rate * 20);
-              if (
-                activity.transfer.includes("up") &&
-                peer.receives !== false &&
-                (performance.now() - started) % 100 < 20
-              )
+              const ms = performance.now() - started;
+              const moves = (dir: FlowDirection) =>
+                activity.transfer.includes(dir) &&
+                !peer.silent?.(activity, ms, dir);
+              if (moves("down")) host.download(rate * 20);
+              if (moves("up") && peer.receives !== false && ms % 100 < 20)
                 host.receiver(receiver());
             }, 20);
           peer.measure?.(host, activity);
@@ -952,4 +956,24 @@ test("a suspended page enters every segment in order and never folds the gap int
     "upload",
   ]);
   expect(result.outcome).toBe("complete");
+});
+
+test("a bidirectional stage whose download never moves fails however long upload flows", async () => {
+  for (const [bidirectionalMs, reason] of [
+    [1_000, "insufficient-evidence"],
+    [4_000, "timeout"],
+  ] as const) {
+    const h = await harness(
+      [{ id: "self", silent: (_activity, _ms, dir) => dir === "down" }],
+      { bidirectional: true },
+      { bidirectionalMs },
+    );
+    h.start();
+    const result = await h.result();
+    expect(result.stages.bidirectional).toBe("failed");
+    expect(result.bidirectional?.down).toBeNull();
+    expect(result.multiServer.failures).toMatchObject([
+      { stage: "bidirectional", reason },
+    ]);
+  }
 });
