@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"net"
@@ -92,7 +91,7 @@ var (
 				return
 			}
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
-			m.notice = "HTTP version: " + protocolChoiceLabel(m.cfg.ThroughputProtocol) + "."
+			m.notice = "HTTP version: " + protocolLabel(m.cfg.ThroughputProtocol) + "."
 		},
 	}
 	latencyServerRow = &setting{
@@ -109,10 +108,10 @@ var (
 	warmupRow = span("Warmup", "per stage, before the window opens", func(c *goclient.Config) *time.Duration {
 		return &c.Warmup
 	})
-	idleCadenceRow = cadenceSetting("Idle ping cadence", func(c *goclient.Config) *time.Duration {
+	idleCadenceRow = cadenceSetting("Idle latency cadence", func(c *goclient.Config) *time.Duration {
 		return &c.PingInterval
 	})
-	loadedCadenceRow = cadenceSetting("Loaded ping cadence", func(c *goclient.Config) *time.Duration {
+	loadedCadenceRow = cadenceSetting("Loaded latency cadence", func(c *goclient.Config) *time.Duration {
 		return &c.LoadedPingInterval
 	})
 	forceStreamsRow = &setting{
@@ -127,7 +126,7 @@ var (
 			} else {
 				streams.Forced = streams.AutomaticMax
 			}
-			m.notice = "Stream count: " + streams.Label("", "") + "."
+			m.notice = "Stream count: " + streamsLabel(*streams, "", "") + "."
 		},
 	}
 	streamsRow = &setting{
@@ -148,7 +147,7 @@ var (
 			} else {
 				m.cfg.TransferStreams.AutomaticMax = n
 			}
-			m.notice = "Stream count: " + m.cfg.TransferStreams.Label("http1", wire.TransportFetchStream) + "."
+			m.notice = "Stream count: " + streamsLabel(m.cfg.TransferStreams, "http1", wire.TransportFetchStream) + "."
 			return nil
 		},
 	}
@@ -207,10 +206,10 @@ func (m model) currentRow() *setting { return sections[m.section].rows[m.row] }
 
 func protocolView(m model) setupRow {
 	if t := m.selectedThroughputPath(); t != nil && t.Protocol != "negotiated" {
-		return setupRow{label: "HTTP version", value: protocolChoiceLabel(t.Protocol), note: "fixed by this path",
+		return setupRow{label: "HTTP version", value: protocolLabel(t.Protocol), note: "fixed by this path",
 			inert: true}
 	}
-	return setupRow{label: "HTTP version", value: protocolChoiceLabel(m.cfg.ThroughputProtocol),
+	return setupRow{label: "HTTP version", value: protocolLabel(m.cfg.ThroughputProtocol),
 		note: "where the path negotiates"}
 }
 
@@ -242,36 +241,7 @@ func (m model) activate(s *setting) (tea.Model, tea.Cmd) {
 	return m.recheckIfPathsChanged(before)
 }
 
-type cadence struct {
-	name     string
-	interval time.Duration
-}
-
 var streamRange = fmt.Sprintf("1 to %d", goclient.MaxTransferStreams)
-
-var cadences = []cadence{{"Reply-driven", goclient.PingReplyDriven}, {"Fast", goclient.PingFast},
-	{"Medium", goclient.PingMedium}, {"Slow", goclient.PingSlow}}
-
-func cadenceIndex(interval time.Duration) int {
-	return slices.IndexFunc(cadences, func(c cadence) bool { return c.interval == interval })
-}
-
-func cadenceLabel(interval time.Duration) string {
-	if interval == goclient.PingReplyDriven {
-		return "Reply-driven"
-	}
-	name := "Custom"
-	if i := cadenceIndex(interval); i >= 0 {
-		name = cadences[i].name
-	}
-	return name + " (" + fmtSetting(interval) + ")"
-}
-
-var mechanisms = map[string]string{
-	wire.TransportFetchStream:  "Fetch stream",
-	wire.TransportWebSocket:    "WebSocket",
-	wire.TransportWebTransport: "WebTransport",
-}
 
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
@@ -386,7 +356,7 @@ func pathSetting(label string, latency bool, field func(*goclient.Config) (*stri
 	return &setting{
 		view: func(m model) setupRow {
 			target, transport := field(&m.cfg)
-			return m.pathRow(label, *target, *transport, m.pathChoices(latency))
+			return m.pathRow(label, *target, *transport, latency)
 		},
 		act: func(m *model) {
 			target, transport := field(&m.cfg)
@@ -411,7 +381,8 @@ func (c pathChoice) selects(target, transport string) bool {
 	return origin.Key(c.target) == origin.Key(target) && c.transport == transport
 }
 
-func (m model) pathRow(label, target, transport string, choices []pathChoice) setupRow {
+func (m model) pathRow(label, target, transport string, latency bool) setupRow {
+	choices := m.pathChoices(latency)
 	for i, choice := range choices {
 		if choice.selects(target, transport) {
 			return setupRow{
@@ -421,7 +392,7 @@ func (m model) pathRow(label, target, transport string, choices []pathChoice) se
 			}
 		}
 	}
-	mechanism := cmp.Or(mechanisms[transport], transport)
+	mechanism := transportLabel(transport, latency)
 	value := mechanism + " · " + target
 	if target == "auto" {
 		value = mechanism + " · automatic origin"
@@ -502,7 +473,7 @@ func (m model) pathChoices(latency bool) []pathChoice {
 			choices = append(choices, pathChoice{
 				target:    p.origin,
 				transport: p.transport,
-				label:     goclient.ConnectionSummary(p.transport, p.protocol, p.tls),
+				label:     connectionSummary(p.transport, p.protocol, p.tls, latency),
 				note:      shortOrigin(m.cfg.BaseURL, p.origin),
 			})
 		}
@@ -530,7 +501,8 @@ func (m model) sharedPaths(latency bool) []pathChoice {
 		if len(unavailable) > 0 {
 			note = "unavailable on " + strings.Join(unavailable, ", ")
 		}
-		choices = append(choices, pathChoice{target: "auto", transport: kind, label: mechanisms[kind], note: note})
+		label := transportLabel(kind, latency)
+		choices = append(choices, pathChoice{target: "auto", transport: kind, label: label, note: note})
 	}
 	return choices
 }

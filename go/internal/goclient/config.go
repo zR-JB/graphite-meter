@@ -101,42 +101,22 @@ var multiplexedStreams = map[string]byDirection[int]{
 	"http3": {down: 1, up: 1},
 }
 
-func (p TransferStreamPolicy) lanes(protocol, transport string) byDirection[int] {
+// Lanes is the number of streams one server opens per direction on a path.
+func (p TransferStreamPolicy) Lanes(protocol, transport string) (down, up int) {
 	switch {
 	case transport == wire.TransportWebTransport:
 		n := 1
 		if p.Forced > 0 {
 			n = min(p.Forced, wire.WTMaxStreams)
 		}
-		return byDirection[int]{down: n, up: n}
+		return n, n
 	case p.Forced > 0:
-		return byDirection[int]{down: p.Forced, up: p.Forced}
+		return p.Forced, p.Forced
 	}
 	if lanes, ok := multiplexedStreams[protocol]; ok {
-		return lanes
+		return lanes.down, lanes.up
 	}
-	return byDirection[int]{down: p.AutomaticMax, up: p.AutomaticMax}
-}
-
-func (p TransferStreamPolicy) Label(protocol, transport string) string {
-	protocol = protocolFromEvidence(protocol)
-	webTransport := transport == wire.TransportWebTransport
-	if p.Forced > 0 {
-		if webTransport && p.Forced > wire.WTMaxStreams {
-			return fmt.Sprintf("Forced · %d per direction (capped from %d by the session)", wire.WTMaxStreams, p.Forced)
-		}
-		return fmt.Sprintf("Forced · %d per direction", p.Forced)
-	}
-	if webTransport {
-		return "Automatic · 1 continuous stream per direction"
-	}
-	if lanes, ok := multiplexedStreams[protocol]; ok {
-		return fmt.Sprintf("Automatic · %d download / %d upload", lanes.down, lanes.up)
-	}
-	if protocol == "http1" {
-		return fmt.Sprintf("Automatic · up to %d per direction", p.AutomaticMax)
-	}
-	return "Automatic"
+	return p.AutomaticMax, p.AutomaticMax
 }
 
 const MaxPingInterval = wire.WTIdleBound / 2
@@ -288,7 +268,8 @@ func planRunStreams(cfg Config, servers []PreparedServer) (map[string]byDirectio
 	var total byDirection[int]
 	for _, server := range servers {
 		target := server.Connection.ThroughputTarget
-		lanes := cfg.TransferStreams.lanes(target.Protocol, target.Transport)
+		down, up := cfg.TransferStreams.Lanes(target.Protocol, target.Transport)
+		lanes := byDirection[int]{down, up}
 		plan[server.Server.ID] = lanes
 		total.down += lanes.down
 		total.up += lanes.up

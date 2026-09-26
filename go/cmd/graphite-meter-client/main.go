@@ -187,7 +187,7 @@ func parseStages(raw string) goclient.StageSet {
 
 func parsePing(raw string) (time.Duration, error) {
 	name := strings.TrimSpace(raw)
-	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.EqualFold(c.name, name) }); i >= 0 {
+	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.EqualFold(c.key, name) }); i >= 0 {
 		return cadences[i].interval, nil
 	}
 	d, err := time.ParseDuration(name)

@@ -413,11 +413,3 @@ func (m model) statusLabel() string {
 	}
 	return "Ready"
 }
-
-var outcomeLabels = map[goclient.Outcome]string{
-	goclient.OutcomeComplete:   "Complete",
-	goclient.OutcomePartial:    "Partial",
-	goclient.OutcomeIncomplete: "Incomplete",
-	goclient.OutcomeStopped:    "Stopped",
-	goclient.OutcomeFailed:     "Failed",
-}

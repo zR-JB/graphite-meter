@@ -19,41 +19,18 @@ func TestTransferStreamPolicy(t *testing.T) {
 	for _, c := range []struct {
 		policy              TransferStreamPolicy
 		protocol, transport string
-		lanes               byDirection[int]
-		label               string
+		down, up            int
 	}{
-		{auto, "http1", wire.TransportFetchStream, byDirection[int]{6, 6}, "Automatic · up to 6 per direction"},
-		{auto, "http2", wire.TransportFetchStream, byDirection[int]{1, 4}, "Automatic · 1 download / 4 upload"},
-		{auto, "http3", wire.TransportFetchStream, byDirection[int]{1, 1}, "Automatic · 1 download / 1 upload"},
-		{
-			auto,
-			"h2",
-			wire.TransportFetchStream,
-			byDirection[int]{6, 6},
-			"Automatic · 1 download / 4 upload",
-		},
-		{
-			auto,
-			"http3",
-			wire.TransportWebTransport,
-			byDirection[int]{1, 1},
-			"Automatic · 1 continuous stream per direction",
-		},
-		{forced, "http2", wire.TransportFetchStream, byDirection[int]{9, 9}, "Forced · 9 per direction"},
-		{forced, "http3", wire.TransportWebTransport, byDirection[int]{9, 9}, "Forced · 9 per direction"},
-		{
-			TransferStreamPolicy{Forced: 99},
-			"http3",
-			wire.TransportWebTransport,
-			byDirection[int]{wire.WTMaxStreams, wire.WTMaxStreams},
-			"Forced · 16 per direction (capped from 99 by the session)",
-		},
+		{auto, "http1", wire.TransportFetchStream, 6, 6},
+		{auto, "http2", wire.TransportFetchStream, 1, 4},
+		{auto, "http3", wire.TransportFetchStream, 1, 1},
+		{auto, "http3", wire.TransportWebTransport, 1, 1},
+		{forced, "http2", wire.TransportFetchStream, 9, 9},
+		{forced, "http3", wire.TransportWebTransport, 9, 9},
+		{TransferStreamPolicy{Forced: 99}, "http3", wire.TransportWebTransport, wire.WTMaxStreams, wire.WTMaxStreams},
 	} {
-		if got := c.policy.lanes(c.protocol, c.transport); got != c.lanes {
-			t.Errorf("%+v lanes(%s, %s) = %+v, want %+v", c.policy, c.protocol, c.transport, got, c.lanes)
-		}
-		if got := c.policy.Label(c.protocol, c.transport); got != c.label {
-			t.Errorf("%+v Label(%s, %s) = %q, want %q", c.policy, c.protocol, c.transport, got, c.label)
+		if down, up := c.policy.Lanes(c.protocol, c.transport); down != c.down || up != c.up {
+			t.Errorf("%+v Lanes(%s, %s) = %d/%d, want %d/%d", c.policy, c.protocol, c.transport, down, up, c.down, c.up)
 		}
 	}
 }

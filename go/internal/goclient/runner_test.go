@@ -319,26 +319,6 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	}
 }
 
-func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		transport, protocol string
-		tls                 bool
-		want                string
-	}{
-		{wire.TransportFetchStream, "http1", true, "Fetch stream · HTTP/1.1 · TLS"},
-		{wire.TransportFetchStream, "http1", false, "Fetch stream · HTTP/1.1 · clear"},
-		{wire.TransportFetchStream, "negotiated", true, "Fetch stream · Negotiated · TLS"},
-		{wire.TransportWebSocket, "http1", true, "WebSocket · HTTP/1.1 · TLS"},
-		{wire.TransportWebTransport, "h3", true, "WebTransport · HTTP/3 · TLS"},
-		{wire.TransportWebTransportDatagram, "http3", true, "WebTransport datagrams · HTTP/3 · TLS"},
-	} {
-		if got := ConnectionSummary(c.transport, c.protocol, c.tls); got != c.want {
-			t.Errorf("ConnectionSummary(%q, %q, %t) = %q, want %q", c.transport, c.protocol, c.tls, got, c.want)
-		}
-	}
-}
-
 func TestLoadedLatencyDrainsSilentProbesToTimeouts(t *testing.T) {
 	t.Parallel()
 	var details *RunDetails

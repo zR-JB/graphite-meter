@@ -14,8 +14,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-const missing = "—"
-
 func errorText(err error) string {
 	text := wire.CleanText(err.Error(), 320)
 	if _, untrusted := errors.AsType[*tls.CertificateVerificationError](err); untrusted {
@@ -82,42 +80,6 @@ func fmtSetting(d time.Duration) string {
 
 func fmtClock(d time.Duration) string {
 	return fmt.Sprintf("%.1f s", max(d, 0).Seconds())
-}
-
-var stageLabels = map[goclient.Stage]string{
-	goclient.StageLatency:       "Latency",
-	goclient.StageDownload:      "Download",
-	goclient.StageUpload:        "Upload",
-	goclient.StageBidirectional: "Bidirectional",
-}
-
-func compactStage(stage goclient.Stage) string {
-	if stage == goclient.StageBidirectional {
-		return "Bi-dir"
-	}
-	return stageLabels[stage]
-}
-
-func populationLabel(stage goclient.Stage) string {
-	if stage == goclient.StageLatency {
-		return "Idle latency"
-	}
-	return "Loaded latency · " + stageLabels[stage]
-}
-
-func compactPopulation(stage goclient.Stage) string {
-	return map[goclient.Stage]string{goclient.StageLatency: "Idle", goclient.StageDownload: "Loaded down",
-		goclient.StageUpload: "Loaded up", goclient.StageBidirectional: "Loaded bi-dir"}[stage]
-}
-
-func directionLabel(r goclient.Result) string {
-	if r.Stage != goclient.StageBidirectional {
-		return stageLabels[r.Stage]
-	}
-	if r.Direction == goclient.Up {
-		return "Bi-dir ↑"
-	}
-	return "Bi-dir ↓"
 }
 
 func latencyCells(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
@@ -194,13 +156,6 @@ func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
 	label := fmt.Sprintf("Server timing (%d paired replies, means)", s.Count)
 	return label, []string{"raw " + fmtMs(s.MeanRawRTT), "handling " + fmtMs(s.MeanHandling),
 		"adjusted " + fmtMs(s.MeanAdjustedRTT) + " (handling removed)"}
-}
-
-func protocolChoiceLabel(protocol string) string {
-	if protocol == "auto" {
-		return "Automatic"
-	}
-	return goclient.ProtocolLabel(protocol)
 }
 
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}

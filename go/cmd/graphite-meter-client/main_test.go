@@ -142,23 +142,28 @@ func TestExitStatus(t *testing.T) {
 
 func TestFormatting(t *testing.T) {
 	t.Parallel()
+	capped, automatic := goclient.TransferStreamPolicy{Forced: 99}, goclient.TransferStreamPolicy{AutomaticMax: 6}
+	wt := wire.TransportWebTransport
 	for got, want := range map[string]string{
-		fmtRate(0):                          "0.00 bit/s",
-		fmtRate(1500):                       "12.00 kbit/s",
-		fmtRate(12_500_000):                 "100.0 Mbit/s",
-		fmtRate(137_500_000):                "1100 Mbit/s",
-		fmtRate(162_500_000):                "1.30 Gbit/s",
-		fmtBytes(999):                       "999 B",
-		fmtBytes(1_500):                     "1.5 kB",
-		fmtBytes(2_340_000_000):             "2.3 GB",
-		fmtMs(12345 * time.Microsecond):     "12.3 ms",
-		fmtMs(123456 * time.Microsecond):    "123 ms",
-		fmtMs(99960 * time.Microsecond):     "100 ms",
-		fmtAdded(-1200 * time.Microsecond):  "−1.2 ms",
-		fmtAdded(7800 * time.Microsecond):   "+7.8 ms",
-		fmtSetting(800 * time.Millisecond):  "800 ms",
-		fmtSetting(1500 * time.Millisecond): "1.5 s",
-		fmtSetting(10 * time.Second):        "10 s",
+		fmtRate(0):                                 "0.00 bit/s",
+		fmtRate(1500):                              "12.00 kbit/s",
+		fmtRate(12_500_000):                        "100.0 Mbit/s",
+		fmtRate(137_500_000):                       "1100 Mbit/s",
+		fmtRate(162_500_000):                       "1.30 Gbit/s",
+		fmtBytes(999):                              "999 B",
+		fmtBytes(1_500):                            "1.5 kB",
+		fmtBytes(2_340_000_000):                    "2.3 GB",
+		fmtMs(12345 * time.Microsecond):            "12.3 ms",
+		fmtMs(123456 * time.Microsecond):           "123 ms",
+		fmtMs(99960 * time.Microsecond):            "100 ms",
+		fmtAdded(-1200 * time.Microsecond):         "−1.2 ms",
+		fmtAdded(7800 * time.Microsecond):          "+7.8 ms",
+		fmtSetting(800 * time.Millisecond):         "800 ms",
+		fmtSetting(1500 * time.Millisecond):        "1.5 s",
+		fmtSetting(10 * time.Second):               "10 s",
+		streamsLabel(capped, "http3", wt):          "Forced · 16 per direction (capped from 99 by the session)",
+		streamsLabel(automatic, "http2", ""):       "Automatic · 1 download / 4 upload",
+		connectionSummary(wt, "http3", true, true): "WebTransport datagrams · HTTP/3 · TLS",
 	} {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)

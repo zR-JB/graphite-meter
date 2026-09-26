@@ -1,7 +1,6 @@
 package goclient
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -30,37 +29,6 @@ type PreparationError struct {
 func (e *PreparationError) Error() string { return e.Err.Error() }
 func (e *PreparationError) Unwrap() error { return e.Err }
 
-func ConnectionSummary(transport, protocol string, tls bool) string {
-	mechanism := map[string]string{
-		wire.TransportWebSocket:            "WebSocket",
-		wire.TransportWebTransport:         "WebTransport",
-		wire.TransportWebTransportDatagram: "WebTransport datagrams",
-	}[transport]
-	mechanism = cmp.Or(mechanism, "Fetch stream")
-	security := "clear"
-	if tls {
-		security = "TLS"
-	}
-	return fmt.Sprintf("%s · %s · %s", mechanism, ProtocolLabel(protocol), security)
-}
-
-func ProtocolLabel(protocol string) string {
-	switch protocolFromEvidence(protocol) {
-	case "http1":
-		return "HTTP/1.1"
-	case "http2":
-		return "HTTP/2"
-	case "http3":
-		return "HTTP/3"
-	case "negotiated":
-		return "Negotiated"
-	case "":
-		return "--"
-	}
-	return protocol
-}
-
-// prepare checks one server's paths; server, when known, limits the targets it may advertise.
 func prepare(ctx context.Context, cfg Config, server *wire.ServerEntry, cred *credential) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
 	if err := cfg.checkPaths(); err != nil {

@@ -310,9 +310,9 @@ func (m model) pathSummaries() (throughput, latency string) {
 		for _, s := range m.preparedRun.Servers {
 			if c := s.Connection; c != nil {
 				t := c.ThroughputTarget
-				throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
+				throughputs = appendUnique(throughputs, connectionSummary(t.Transport, t.Protocol, t.TLS(), false))
 				if l := c.LatencyTarget; l != nil {
-					latencies = appendUnique(latencies, goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS()))
+					latencies = appendUnique(latencies, connectionSummary(l.Transport, l.Protocol, l.TLS(), true))
 				}
 			}
 		}
@@ -413,10 +413,10 @@ func (m model) testView(w int, compact bool) string {
 		for _, server := range r.details.Servers {
 			names = append(names, server.Server.Name)
 			t := server.Throughput
-			throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
-			streams = m.cfg.TransferStreams.Label(t.Protocol, t.Transport)
+			throughputs = appendUnique(throughputs, connectionSummary(t.Transport, t.Protocol, t.TLS(), false))
+			streams = streamsLabel(m.cfg.TransferStreams, t.Protocol, t.Transport)
 			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
-				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS())
+				latency = connectionSummary(l.Transport, l.Protocol, l.TLS(), true)
 			}
 		}
 		servers := strings.Join(names, ", ")
@@ -428,8 +428,8 @@ func (m model) testView(w int, compact bool) string {
 		field("Throughput", m.st.value.Render(strings.Join(throughputs, " / ")))
 		field("Latency", m.st.value.Render(latency))
 		field("Streams", m.st.value.Render(streams))
-		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · ping " + cadenceLabel(m.cfg.PingInterval) +
-			" / loaded " + cadenceLabel(m.cfg.LoadedPingInterval)
+		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · latency cadence " + cadenceLabel(m.cfg.PingInterval) +
+			", loaded " + cadenceLabel(m.cfg.LoadedPingInterval)
 		field("Timing", m.st.value.Render(timing))
 	}
 	lines = append(lines, "")
