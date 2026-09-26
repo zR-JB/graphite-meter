@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"math"
 	"os"
+	"slices"
 	"testing"
 	"time"
 )
@@ -15,8 +16,9 @@ func TestLatencyMatchesTheSharedVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cases []struct {
-		Name     string
-		Outcomes []struct {
+		Name       string
+		DeadlineMs []float64
+		Outcomes   []struct {
 			RTTMs          float64 `json:"rttMs"`
 			Timeout, Break bool
 		}
@@ -37,12 +39,22 @@ func TestLatencyMatchesTheSharedVectors(t *testing.T) {
 	}
 	for _, c := range cases {
 		var stats latencyStats
+		var ledger probeLedger
+		deadlines := []float64{float64(ledger.timeout()) / float64(time.Millisecond)}
 		for _, o := range c.Outcomes {
 			if o.Break {
 				stats.breakContinuity()
 				continue
 			}
-			stats.add(time.Duration(o.RTTMs*float64(time.Millisecond)), o.Timeout, 0)
+			rtt := time.Duration(o.RTTMs * float64(time.Millisecond))
+			stats.add(rtt, o.Timeout, 0)
+			if !o.Timeout {
+				ledger.observe(rtt)
+				deadlines = append(deadlines, float64(ledger.timeout())/float64(time.Millisecond))
+			}
+		}
+		if c.DeadlineMs != nil && !slices.Equal(deadlines, c.DeadlineMs) {
+			t.Errorf("%s: deadlines %v, want %v", c.Name, deadlines, c.DeadlineMs)
 		}
 		got := stats.snapshot()
 		ratio, resolved := got.TimeoutRatio()
