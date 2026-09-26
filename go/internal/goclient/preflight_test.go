@@ -93,29 +93,6 @@ func TestTargetSelection(t *testing.T) {
 	}
 }
 
-func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
-	return wire.ThroughputTarget{
-		ID:        id,
-		Origin:    origin,
-		Transport: "fetch-stream",
-		Protocol:  protocol,
-	}
-}
-
-func testChannel(id, origin string, tls bool) wire.LatencyTarget {
-	return wire.LatencyTarget{
-		ID:        id,
-		Origin:    origin,
-		Transport: "websocket",
-		Protocol:  "http1",
-	}
-}
-
-func attachTestLatencyTarget(r *runner, origin string) {
-	c := testChannel("test-ws", origin, false)
-	r.latencyTarget = new(c)
-}
-
 func TestGetPreflight(t *testing.T) {
 	t.Parallel()
 	t.Run("decodes valid JSON", func(t *testing.T) {

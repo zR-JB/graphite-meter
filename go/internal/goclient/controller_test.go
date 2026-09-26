@@ -66,7 +66,7 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 	for _, operation := range []string{"cancel", "replace", "close"} {
 		t.Run(operation, func(t *testing.T) {
 			t.Parallel()
-			srv := newLatencyOnlyServer(t)
+			srv := newTransferServer(t)
 			defer srv.Close()
 			cfg := Config{
 				BaseURL:         srv.URL,

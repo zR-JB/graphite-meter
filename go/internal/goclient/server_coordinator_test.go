@@ -114,7 +114,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	}))
 	mux := http.NewServeMux()
 	registry.Mount(t.Context(), mux)
-	mux.Handle(route.Ping, echoPingHandler())
+	mux.Handle(route.Ping, pingHandler(answerAll, 0))
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.active.Add(1)
 		defer f.active.Add(-1)

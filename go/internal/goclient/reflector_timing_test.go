@@ -136,7 +136,7 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 				defer mu.Unlock()
 				samples = append(samples, event.Latency)
 			}}
-			attachTestLatencyTarget(r, srv.URL)
+			r.latencyTarget = new(testChannel("test-ws", srv.URL, false))
 			start := make(chan struct{})
 			close(start)
 			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)

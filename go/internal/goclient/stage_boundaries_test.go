@@ -2,7 +2,6 @@ package goclient
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,77 +16,6 @@ import (
 	"time"
 )
 
-func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if interrupt() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := r.Body.Read(buf)
-			received.Add(uint64(n))
-			if err != nil {
-				return
-			}
-			if interrupt() {
-				panic(http.ErrAbortHandler)
-			}
-		}
-	}
-}
-
-// The fixture preserves the upload receiver's counters and closes its feed on
-// DELETE so teardown timing cannot hide a delayed sibling cancellation.
-func mountStageUpload(mux *http.ServeMux, received *atomic.Uint64, upload http.HandlerFunc) {
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "stage-boundary"})
-	})
-	mux.HandleFunc("/upload", upload)
-	done := make(chan struct{})
-	var once sync.Once
-	started := time.Now()
-	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, struct {
-			Bytes uint64 `json:"bytes"`
-			Nanos uint64 `json:"nanos"`
-		}{received.Load(), uint64(time.Since(started))})
-	})
-	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodDelete {
-			once.Do(func() { close(done) })
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		flush := w.(http.Flusher)
-		send := func(kind string) {
-			_, _ = fmt.Fprintf(
-				w,
-				"{\"type\":%q,\"bytes\":%d,\"nanos\":%d}\n",
-				kind,
-				received.Load(),
-				time.Since(started),
-			)
-			flush.Flush()
-		}
-		send("ready")
-		ticker := time.Tick(10 * time.Millisecond)
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-done:
-				send("complete")
-				return
-			case <-ticker:
-				send("progress")
-			}
-		}
-	})
-}
-
 func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 	t.Parallel()
 	for _, delayed := range []string{"download lane", "upload session", "upload progress", "latency bus"} {
@@ -101,8 +29,8 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 				"/download",
 				func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(make([]byte, 32*1024)) },
 			)
-			mux.Handle("/ws/ping", echoPingHandler())
-			mountStageUpload(mux, &uploaded, receiveUpload(&uploaded, func() bool { return false }))
+			mux.Handle("/ws/ping", pingHandler(answerAll, 0))
+			mountUploadReceiver(mux, &uploaded, receiveUpload(&uploaded, nil))
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				delay := delayed == "download lane" && r.URL.Path == "/download" && r.URL.Query().Get("lane") == "1" ||
 					delayed == "upload session" && r.URL.Path == "/upload/session" ||
@@ -138,7 +66,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 					samples++
 				}
 			}}
-			attachTestLatencyTarget(r, srv.URL)
+			r.latencyTarget = new(testChannel("test-ws", srv.URL, false))
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			result := make(chan error, 1)
@@ -189,7 +117,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			var uploaded atomic.Uint64
 			var canInterrupt atomic.Bool
 			mux := http.NewServeMux()
-			mux.Handle("/ws/ping", echoPingHandler())
+			mux.Handle("/ws/ping", pingHandler(answerAll, 0))
 			mux.HandleFunc("/download", func(w http.ResponseWriter, _ *http.Request) {
 				if canInterrupt.Load() && interruption == "download failure" {
 					w.WriteHeader(http.StatusServiceUnavailable)
@@ -198,7 +126,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 				time.Sleep(time.Millisecond)
 				_, _ = w.Write(make([]byte, 32*1024))
 			})
-			mountStageUpload(
+			mountUploadReceiver(
 				mux,
 				&uploaded,
 				receiveUpload(
@@ -236,7 +164,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 					}
 				}
 			}}
-			attachTestLatencyTarget(r, srv.URL)
+			r.latencyTarget = new(testChannel("test-ws", srv.URL, false))
 			started := time.Now()
 			err := r.runTestStage(ctx, "bidirectional", 3*time.Second)
 			if err == nil {
@@ -297,7 +225,7 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 	var rejectProgress atomic.Bool
 	var uploaded atomic.Uint64
 	mux := http.NewServeMux()
-	mountStageUpload(mux, &uploaded, receiveUpload(&uploaded, func() bool { return false }))
+	mountUploadReceiver(mux, &uploaded, receiveUpload(&uploaded, nil))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/upload/progress" && r.Method == http.MethodGet {
 			if rejectProgress.Load() {
@@ -435,7 +363,9 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 						<-r.Context().Done()
 					}))
 				} else {
-					srv = newStalledUploadServer()
+					mux := http.NewServeMux()
+					mountUploadReceiver(mux, new(atomic.Uint64), discardUpload)
+					srv = httptest.NewServer(mux)
 				}
 				defer srv.Close()
 				var details *RunDetails

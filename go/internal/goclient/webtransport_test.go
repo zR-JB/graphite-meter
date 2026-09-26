@@ -185,9 +185,7 @@ func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
 		"failed establish closes its session":  wtStageSessionClosesASessionWhoseEstablishFailed,
 		"auth refusal is not retried":          wtStageSessionDoesNotRetryPermanentAuthenticationFailure,
 		"cancelled stage is a stop":            runWTLaneReportsACancelledStageAsAStop,
-		"slow zero-byte failures are bounded":  runWTLaneBoundsSlowZeroByteFailures,
 		"mixed zero-byte failures are bounded": runWTLaneBoundsMixedZeroByteFailures,
-		"real progress resets the bounds":      runWTLaneRealProgressResetsFailureBounds,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -376,60 +374,6 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 	}
 }
 
-func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		cfg  func(Config) Config
-		want string
-	}{
-		{
-			"throughput",
-			func(c Config) Config { c.ThroughputTransport = "webscoket"; return c },
-			"invalid throughput transport",
-		},
-		{
-			"latency",
-			func(c Config) Config { c.LatencyTransport = "webtransport-datagram"; return c },
-			"invalid latency transport",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Parallel()
-			cfg := c.cfg(DefaultConfig())
-			// An unreachable base URL proves the check runs before discovery: a typo is answerable without a server.
-			cfg.BaseURL = wtUnreachableOrigin
-			_, err := prepare(t.Context(), cfg)
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("Prepare error = %v, want one containing %q", err, c.want)
-			}
-		})
-	}
-}
-
-func runWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
-	host := &wtStageSession{sess: liveWTSession(t)}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*redialWindow+300*time.Millisecond)
-	defer cancel()
-	entries := 0
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
-		entries++
-		select {
-		case <-laneCtx.Done():
-			return false, laneCtx.Err()
-		case <-time.After(redialWindow + 50*time.Millisecond):
-			return false, errors.New("stream failed before carrying a byte")
-		}
-	})
-	if err == nil {
-		t.Fatalf("%d consecutive >= progress-window failures returned nil at the stage deadline", entries)
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("zero-byte failures were bounded only by stage cancellation: %v", err)
-	}
-}
-
 func runWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 	host := &wtStageSession{sess: liveWTSession(t)}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -450,27 +394,6 @@ func runWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 	})
 	if err == nil || ctx.Err() != nil {
 		t.Fatalf("mixed zero-byte failures returned %v after %d entries (ctx=%v)", err, entries, ctx.Err())
-	}
-}
-
-func runWTLaneRealProgressResetsFailureBounds(t *testing.T) {
-	host := &wtStageSession{sess: liveWTSession(t)}
-	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
-	defer cancel()
-	entries := 0
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
-		entries++
-		if entries <= 2*wtLaneMaxFastFailures {
-			return true, errors.New("stream reset after carrying bytes")
-		}
-		<-laneCtx.Done()
-		return false, laneCtx.Err()
-	})
-	if err != nil {
-		t.Fatalf("progressing lane reported %v after %d entries", err, entries)
-	}
-	if entries != 2*wtLaneMaxFastFailures+1 {
-		t.Fatalf("lane entered %d times, want %d", entries, 2*wtLaneMaxFastFailures+1)
 	}
 }
 

@@ -137,7 +137,7 @@ func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 		}})
 	})
 	mux.HandleFunc("/probe", writeProbe)
-	mux.Handle("/ws/ping", echoPingHandler())
+	mux.Handle("/ws/ping", pingHandler(answerAll, 0))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	cfg := DefaultConfig()

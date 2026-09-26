@@ -36,10 +36,6 @@ func TestAuthenticationLoginURLStaysOnTheServerHostname(t *testing.T) {
 	}
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func okResponse(r *http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: http.StatusOK,

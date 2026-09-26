@@ -16,12 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
-
-const captureWindow = 300 * time.Millisecond
 
 func TestAdaptiveWarmup(t *testing.T) {
 	t.Parallel()
@@ -38,82 +34,13 @@ func TestAdaptiveWarmup(t *testing.T) {
 	}
 }
 
-func testStageGate(start chan struct{}) *stageGate {
-	return &stageGate{start: start, reportReady: func() {}, cancel: func(error) {}}
-}
-
 func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 	t.Parallel()
-	srv := newEchoPingServer(t)
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-	if err := r.runTestStage(t.Context(), StageLatency, captureWindow); err != nil {
-		t.Fatalf("coordinated latency stage: %v", err)
+	r := testRunner(newPingServer(t, answerAll, 0))
+	r.cfg.PingInterval = 20 * time.Millisecond
+	if err := r.runTestStage(t.Context(), StageLatency, captureWindow); err != nil || r.idleRTT <= 0 {
+		t.Fatalf("latency stage = %v, idle RTT %v", err, r.idleRTT)
 	}
-	if r.idleRTT <= 0 {
-		t.Error("idleRTT was not captured from the unloaded latency stage")
-	}
-}
-
-func mountDiscovery(mux *http.ServeMux) {
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		origin := "http://" + r.Host
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{
-			Name: "test",
-		}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
-			UploadCheckpoint:  true,
-			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
-			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
-		}})
-	})
-	mux.HandleFunc(route.Servers, func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.SingletonCatalog())
-	})
-	mux.HandleFunc("/probe", writeProbe)
-}
-
-func writeDownload(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/octet-stream")
-	_, _ = w.Write(make([]byte, 64*1024))
-}
-
-func countUpload(received *atomic.Uint64) http.HandlerFunc {
-	return func(_ http.ResponseWriter, r *http.Request) {
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := r.Body.Read(buf)
-			received.Add(uint64(n))
-			if err != nil {
-				return
-			}
-		}
-	}
-}
-
-func newTransferServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	var uploaded atomic.Uint64
-	mux := http.NewServeMux()
-	mountDiscovery(mux)
-	mux.HandleFunc("/download", writeDownload)
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "transfer"})
-	})
-	mux.HandleFunc("/upload", countUpload(&uploaded))
-	mountFakeProgress(mux, &uploaded, time.Now())
-	mux.Handle("/ws/ping", echoPingHandler())
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func newLatencyOnlyServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mountDiscovery(mux)
-	mux.Handle("/ws/ping", echoPingHandler())
-	return httptest.NewServer(mux)
 }
 
 func TestRunStagesEndToEnd(t *testing.T) {
@@ -143,11 +70,11 @@ func TestRunStagesEndToEnd(t *testing.T) {
 			}
 			var mu sync.Mutex
 			var events []Event
-			if err := runDirect(
-				t.Context(),
-				cfg,
-				func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
-			); err != nil {
+			if err := runDirect(t.Context(), cfg, func(e Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				events = append(events, e)
+			}); err != nil {
 				t.Fatalf("run: %v", err)
 			}
 			mu.Lock()
@@ -229,12 +156,7 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		probeRequestProtocol.Store(r.Proto)
-		_ = json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
+		writeProbe(w, r)
 	})
 	mux.HandleFunc("/download", writeDownload)
 	srv := httptest.NewUnstartedServer(mux)
@@ -274,14 +196,9 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	})
 	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		backendProtocol.Store(r.Proto)
-		_ = json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
+		writeProbe(w, r)
 	})
-	backendMux.Handle("/ws/ping", echoPingHandler())
+	backendMux.Handle("/ws/ping", pingHandler(answerAll, 0))
 	backend := httptest.NewServer(backendMux)
 	defer backend.Close()
 	upstream, _ := url.Parse(backend.URL)
@@ -324,40 +241,27 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 
 func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	t.Parallel()
-	var uploaded atomic.Uint64
 	var mu sync.Mutex
-	lanes := map[Direction]map[string]bool{Down: {}, Up: {}}
-	note := func(dir Direction, next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			mu.Lock()
-			lanes[dir][r.URL.Query().Get("lane")] = true
-			mu.Unlock()
-			next(w, r)
+	lanes := map[string]map[string]bool{"/download": {}, "/upload": {}}
+	transfer := newTransferServer(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if seen, ok := lanes[r.URL.Path]; ok {
+			seen[r.URL.Query().Get("lane")] = true
 		}
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/download", note(Down, writeDownload))
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "lane-count"})
-	})
-	mux.HandleFunc("/upload", note(Up, countUpload(&uploaded)))
-	mountFakeProgress(mux, &uploaded, time.Now())
-	srv := httptest.NewServer(mux)
+		mu.Unlock()
+		transfer.Config.Handler.ServeHTTP(w, r)
+	}))
 	defer srv.Close()
-
-	r := &runner{
-		cfg:     Config{BaseURL: srv.URL}.normalized(),
-		streams: streamCounts{down: 1, up: 4},
-		http:    srv.Client(),
-		emit:    func(Event) {},
-	}
+	r := testRunner(srv)
+	r.streams = streamCounts{down: 1, up: 4}
 	if err := r.runTestStage(t.Context(), StageBidirectional, captureWindow); err != nil {
 		t.Fatalf("coordinated transfer stage: %v", err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(lanes[Down]) != 1 || len(lanes[Up]) != 4 {
-		t.Fatalf("opened %d download and %d upload lanes, want 1 and 4", len(lanes[Down]), len(lanes[Up]))
+	if len(lanes["/download"]) != 1 || len(lanes["/upload"]) != 4 {
+		t.Fatalf("opened %d download and %d upload lanes, want 1 and 4", len(lanes["/download"]), len(lanes["/upload"]))
 	}
 }
 
@@ -378,11 +282,11 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []Event
-	r := &runner{
-		cfg:     Config{BaseURL: srv.URL}.normalized(),
-		streams: streamCounts{down: 1, up: 1},
-		http:    srv.Client(),
-		emit:    func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
+	r := testRunner(srv)
+	r.emit = func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, e)
 	}
 	started := time.Now()
 	err := r.runTestStage(t.Context(), StageBidirectional, 3*time.Second)
@@ -405,37 +309,6 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	if downloadBytesServed.Load() == 0 {
 		t.Error("download made no progress before the upload failed; sibling cancellation was not exercised")
 	}
-}
-
-// echoPingHandler answers every PING with an immediate PONG, echoing the id.
-func echoPingHandler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		for {
-			_, msg, err := conn.Read(r.Context())
-			if err != nil {
-				return
-			}
-			if f, err := wire.DecodePing(string(msg)); err == nil {
-				if err := conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(f, 0))); err != nil {
-					return
-				}
-			}
-		}
-	})
-}
-
-func newEchoPingServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.Handle("/ws/ping", echoPingHandler())
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
 }
 
 func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
@@ -463,24 +336,19 @@ func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
 		t.Run(duration.String(), func(t *testing.T) {
 			t.Parallel()
-			transfer := newTransferServer(t)
-			ping := newSilentPingServer(t)
-			defer ping.Close()
 			var details *RunDetails
 			var transferResult *Result
-			r := &runner{cfg: Config{
-				BaseURL:       transfer.URL,
-				LoadedLatency: true,
-				PingInterval:  10 * time.Millisecond,
-			}.normalized(), streams: streamCounts{down: 1}, http: transfer.Client(), emit: func(e Event) {
+			r := testRunner(newTransferServer(t))
+			r.latencyTarget = new(testChannel("silent", newPingServer(t, answerNone, 0).URL, false))
+			r.cfg.LoadedLatency, r.cfg.PingInterval = true, 10*time.Millisecond
+			r.emit = func(e Event) {
 				if e.Kind == EventResult {
 					transferResult = e.Result
 				}
 				if e.Kind == EventDone {
 					details = e.Servers
 				}
-			}}
-			attachTestLatencyTarget(r, ping.URL)
+			}
 			if err := r.runTestStage(t.Context(), StageDownload, duration); err != nil {
 				t.Fatal(err)
 			}
