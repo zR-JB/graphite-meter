@@ -73,7 +73,7 @@ impl PendingReset {
     /// Deliver the remaining association prefix before issuing reliable reset.
     pub async fn complete(mut self) -> Result<(), TransportError> {
         self.stream.write_all(&self.remainder).await?;
-        self.stream.reset_at(self.reliable_size, self.cancel_code)?;
+        cancel(&mut self.stream, self.reliable_size, self.cancel_code);
         Ok(())
     }
 }
@@ -119,14 +119,8 @@ impl SendStream {
     }
 
     /// Abandon the payload while preserving the complete association prefix.
-    pub fn reset(mut self, error_code: quinn::VarInt) -> Result<(), quinn::ResetStreamAtError> {
+    pub fn reset(mut self, error_code: quinn::VarInt) {
         self.cancel_code = error_code;
-        self.stream.as_mut().unwrap().reset_at(
-            quinn::VarInt::from_u32(self.prefix.len() as u32),
-            error_code,
-        )?;
-        self.stream.take();
-        Ok(())
     }
 }
 
@@ -137,8 +131,7 @@ impl Drop for SendStream {
         };
         let reliable_size = quinn::VarInt::from_u32(self.prefix.len() as u32);
         if self.written == self.prefix.len() {
-            // Do not fall back to a plain reset, which could erase association.
-            let _ = stream.reset_at(reliable_size, self.cancel_code);
+            cancel(&mut stream, reliable_size, self.cancel_code);
             return;
         }
         let remainder = self.prefix[self.written..].to_vec();
@@ -150,6 +143,15 @@ impl Drop for SendStream {
             cancel_code,
             _slot: self.slot.take().unwrap(),
         });
+    }
+}
+
+fn cancel(stream: &mut quinn::SendStream, reliable_size: quinn::VarInt, code: quinn::VarInt) {
+    if matches!(
+        stream.reset_at(reliable_size, code),
+        Err(quinn::ResetStreamAtError::Unsupported)
+    ) {
+        let _ = stream.reset(code);
     }
 }
 

@@ -1,7 +1,7 @@
 //! A CONNECT task owns every application lane; dropping it cancels all session IO.
 //! The connection advertises no INITIAL_MAX_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
-use super::http_quic::Sessions;
+use super::http_quic::{Datagram, Sessions};
 use super::*;
 use crate::{
     webtransport::{ReceiveStream, TransportError},
@@ -16,13 +16,6 @@ use graphite_meter_core::{
 use tokio::{io::AsyncReadExt, time::Instant};
 
 pub(super) type H3RequestStream = h3::server::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
-pub(super) enum SessionEvent {
-    Datagram {
-        payload: Bytes,
-        _budget: tokio::sync::OwnedSemaphorePermit,
-    },
-    Stream(ReceiveStream),
-}
 const MAX_LANES: usize = 16;
 // A ready datagram send need not yield. Bound each burst so sibling sessions
 // still get executor time without paying a scheduler round-trip per packet.
@@ -266,38 +259,37 @@ impl HttpServer {
                         }
                     }
                     Some(_) = controls.next(), if !controls.is_empty() => {}
-                    event = events.recv() => match event {
-                        None => break,
-                        Some(SessionEvent::Datagram { payload, _budget }) => {
-                            match route {
-                                SessionRoute::Ping => {
+                    event = events.datagrams.recv() => {
+                        let Some(Datagram { payload, _budget }) = event else { break };
+                        match route {
+                            SessionRoute::Ping => {
+                                touch(&activity);
+                                if let Some(reply) = crate::ping::reply(&payload) {
+                                    let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?);
+                                }
+                            }
+                            SessionRoute::Download if datagrams => touch(&activity),
+                            SessionRoute::Upload => {
+                                if let Some(lane) = &mut datagram_lane {
+                                    lane.record(payload.len());
                                     touch(&activity);
-                                    if let Some(reply) = crate::ping::reply(&payload) {
-                                        let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?);
-                                    }
                                 }
-                                SessionRoute::Download if datagrams => touch(&activity),
-                                SessionRoute::Upload => {
-                                    if let Some(lane) = &mut datagram_lane {
-                                        lane.record(payload.len());
-                                        touch(&activity);
-                                    }
-                                }
-                                _ => {} // A route without a datagram lane gets no idle credit.
                             }
+                            _ => {} // A route without a datagram lane gets no idle credit.
                         }
-                        Some(SessionEvent::Stream(mut incoming)) => {
-                            if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
+                    }
+                    incoming = events.streams.recv() => {
+                        let Some(mut incoming) = incoming else { break };
+                        if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
+                            h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
+                            continue;
+                        }
+                        match self.uploads.begin(&upload_id, &owner) {
+                            Ok(lane) => lanes.push(Box::pin(upload_lane(incoming, lane, activity.clone()))),
+                            Err(error) => {
                                 h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
-                                continue;
-                            }
-                            match self.uploads.begin(&upload_id, &owner) {
-                                Ok(lane) => lanes.push(Box::pin(upload_lane(incoming, lane, activity.clone()))),
-                                Err(error) => {
-                                    h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
-                                    if controls.len() < 2 {
-                                        controls.push(Box::pin(progress(quic.clone(), resets.clone(), session_id, Err(error))));
-                                    }
+                                if controls.len() < 2 {
+                                    controls.push(Box::pin(progress(quic.clone(), resets.clone(), session_id, Err(error))));
                                 }
                             }
                         }

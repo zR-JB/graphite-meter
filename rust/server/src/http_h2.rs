@@ -20,6 +20,8 @@ impl HttpServer {
         // release admission. Header/codec/TLS buffers have separate bounds.
         let mut builder = h2::server::Builder::new();
         builder
+            .initial_window_size(8 * 1024 * 1024)
+            .initial_connection_window_size(16 * 1024 * 1024)
             .max_frame_size(FRAME_BYTES as u32)
             .max_header_list_size(MAX_HEADER_BYTES as u32)
             .max_concurrent_streams(MAX_STREAMS)

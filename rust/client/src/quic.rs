@@ -97,7 +97,12 @@ impl Http3Client {
                 "0.0.0.0:0"
             }
             .parse()?;
-            let endpoint = EndpointOwner(quinn::Endpoint::client(bind)?);
+            let endpoint = EndpointOwner(quinn::Endpoint::new(
+                quinn::EndpointConfig::default(),
+                None,
+                graphite_meter_core::socket::udp_socket(bind)?,
+                quinn::default_runtime().ok_or("no async runtime for QUIC")?,
+            )?);
             let connecting = endpoint
                 .0
                 .connect_with(config.clone(), address, &origin.host)?;

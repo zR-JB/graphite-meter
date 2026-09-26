@@ -138,13 +138,18 @@ impl Session {
             let mut connected = None;
             let mut last_error: Option<Error> = None;
             for address in addresses {
-                let endpoint = Endpoint(quinn::Endpoint::client(
-                    if address.is_ipv6() {
-                        "[::]:0"
-                    } else {
-                        "0.0.0.0:0"
-                    }
-                    .parse()?,
+                let endpoint = Endpoint(quinn::Endpoint::new(
+                    quinn::EndpointConfig::default(),
+                    None,
+                    graphite_meter_core::socket::udp_socket(
+                        if address.is_ipv6() {
+                            "[::]:0"
+                        } else {
+                            "0.0.0.0:0"
+                        }
+                        .parse()?,
+                    )?,
+                    quinn::default_runtime().ok_or("no async runtime for QUIC")?,
                 )?);
                 match timeout(
                     Duration::from_secs(3),

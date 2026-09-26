@@ -207,6 +207,9 @@ jobs:
         run: python3 rust/tests/client_interop.py
       - name: Unchanged and current-only Go reliable-reset interoperability
         run: python3 rust/tests/interop.py
+      - name: Delayed HTTP/3 and WebTransport downloads
+        working-directory: rust
+        run: cargo test --locked --release -p graphite-meter-server --test connection_faults quic_downloads_exceed_the_old_window_limit -- --ignored --nocapture
       - name: Keep only dependency builds in a new cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         working-directory: rust

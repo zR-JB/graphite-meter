@@ -1,6 +1,5 @@
 //! A QUIC connection owns its request futures, session registry, and reset work.
 
-use super::http_wt::SessionEvent;
 use super::*;
 use crate::{webtransport, webtransport_send::ResetQueue};
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -15,7 +14,9 @@ const SESSION_QUEUE: usize = 32;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 const WT_SESSION_GONE: u64 = 0x170d7b68;
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
-const MAX_SEND_WINDOW: u64 = 4 * 1024 * 1024;
+const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
+const SEND_WINDOW_STEP: u64 = 256 * 1024;
+pub(super) const SEND_WINDOW_BUDGET: usize = 256 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
@@ -55,17 +56,13 @@ impl HttpServer {
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
-                Some(done) = connections.join_next() => {
-                    if let Err(error) = done {
-                        break Err(error.into());
-                    }
-                }
+                Some(_) = connections.join_next() => {}
                 incoming = endpoint.accept() => {
                     let Some(incoming) = incoming else { break Ok(()); };
-                    // Validate address ownership before reserving scarce shared
-                    // connection capacity or performing a TLS handshake. Retry
-                    // is stateless and stays within QUIC's amplification bound.
-                    if !incoming.remote_address_validated() {
+                    // Retry spends a round trip to protect admission under load.
+                    if !incoming.remote_address_validated()
+                        && self.connections.stats().active >= self.config.max_connections / 4
+                    {
                         let _ = incoming.retry();
                         continue;
                     }
@@ -120,11 +117,15 @@ impl HttpServer {
         loop {
             tokio::select! {
                 _ = expiry.tick() => connection.sessions.expire(),
-                _ = tuning.tick(), if !connection.requests.is_empty() && window.current < MAX_SEND_WINDOW => {
-                    window.update(&connection.quic);
+                _ = tuning.tick(), if !connection.requests.is_empty() || window.extra.is_some() => {
+                    if connection.requests.is_empty() {
+                        window.release(&connection.quic);
+                    } else {
+                        window.update(&connection.quic, &self.quic_send_budget);
+                    }
                 }
                 Some(_) = connection.requests.next() => {},
-                Some(result) = connection.cleanup.next() => result?,
+                Some(_) = connection.cleanup.next() => {},
                 Some(reset) = pending_resets.recv() => {
                     let quic = connection.quic.clone();
                     connection.cleanup.push(Box::pin(async move {
@@ -174,31 +175,36 @@ impl HttpServer {
 
 struct SendWindow {
     last: Option<(tokio::time::Instant, u64)>,
-    current: u64,
+    extra: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl SendWindow {
     fn new() -> Self {
         Self {
             last: None,
-            current: MIN_SEND_WINDOW,
+            extra: None,
         }
     }
 
-    fn update(&mut self, connection: &quinn::Connection) {
+    fn current(&self) -> u64 {
+        MIN_SEND_WINDOW
+            + self
+                .extra
+                .as_ref()
+                .map_or(0, |extra| extra.num_permits() as u64)
+    }
+
+    fn update(&mut self, connection: &quinn::Connection, budget: &Arc<tokio::sync::Semaphore>) {
         // Read the aggregate first so a concurrent send on the initial path
         // cannot look like traffic on another path.
         let all_sent = connection.stats().udp_tx.bytes;
         let Some(path) = connection.path_stats(quinn::PathId::ZERO) else {
-            connection.set_send_window(MAX_SEND_WINDOW);
-            self.current = MAX_SEND_WINDOW;
+            self.last = None;
             return;
         };
-        // A second path invalidates this path's throughput estimate. Restore
-        // the original window rather than cap a migrated connection.
+        // A second path invalidates this path's throughput estimate.
         if all_sent > path.udp_tx.bytes {
-            connection.set_send_window(MAX_SEND_WINDOW);
-            self.current = MAX_SEND_WINDOW;
+            self.last = None;
             return;
         }
         let now = tokio::time::Instant::now();
@@ -211,12 +217,33 @@ impl SendWindow {
                 path.rtt,
                 now.duration_since(last),
             );
-            if target > self.current.saturating_add(256 * 1024) {
-                connection.set_send_window(target);
-                self.current = target;
+            if let Some(window) = self.grow(target, budget) {
+                connection.set_send_window(window);
             }
         }
         self.last = Some((now, sent));
+    }
+
+    fn grow(&mut self, target: u64, budget: &Arc<tokio::sync::Semaphore>) -> Option<u64> {
+        let wanted = target.min(MAX_SEND_WINDOW).saturating_sub(self.current());
+        let granted = wanted.min(budget.available_permits() as u64);
+        if granted < SEND_WINDOW_STEP {
+            return None;
+        }
+        let permit = budget.clone().try_acquire_many_owned(granted as u32).ok()?;
+        match &mut self.extra {
+            Some(extra) => extra.merge(permit),
+            None => self.extra = Some(permit),
+        }
+        Some(self.current())
+    }
+
+    fn release(&mut self, connection: &quinn::Connection) {
+        self.last = None;
+        if self.extra.is_some() {
+            connection.set_send_window(MIN_SEND_WINDOW);
+            self.extra = None;
+        }
     }
 }
 
@@ -257,9 +284,24 @@ impl Drop for OwnedConnection {
     }
 }
 
+pub(super) struct Datagram {
+    pub(super) payload: Bytes,
+    pub(super) _budget: tokio::sync::OwnedSemaphorePermit,
+}
+
+struct SessionSenders {
+    streams: mpsc::Sender<ReceiveStream>,
+    datagrams: mpsc::Sender<Datagram>,
+}
+
+pub(super) struct SessionReceivers {
+    pub(super) streams: mpsc::Receiver<ReceiveStream>,
+    pub(super) datagrams: mpsc::Receiver<Datagram>,
+}
+
 #[derive(Default)]
 struct Registry {
-    active: HashMap<u64, mpsc::Sender<SessionEvent>>,
+    active: HashMap<u64, SessionSenders>,
     pending: VecDeque<(tokio::time::Instant, u64, ReceiveStream)>,
 }
 
@@ -279,19 +321,26 @@ impl Default for Sessions {
 }
 
 impl Sessions {
-    pub(super) fn register(&self, id: u64) -> Option<(Registration, mpsc::Receiver<SessionEvent>)> {
-        let (sender, receiver) = mpsc::channel(SESSION_QUEUE);
+    pub(super) fn register(&self, id: u64) -> Option<(Registration, SessionReceivers)> {
+        let (streams, stream_receiver) = mpsc::channel(SESSION_QUEUE);
+        let (datagrams, datagram_receiver) = mpsc::channel(256);
         let mut registry = self.registry.lock().expect("session registry poisoned");
         // Multiple sessions require negotiated per-session flow control.
         // Reserve atomically after authorization but before sending success.
         if !registry.active.is_empty() {
             return None;
         }
-        registry.active.insert(id, sender.clone());
+        registry.active.insert(
+            id,
+            SessionSenders {
+                streams: streams.clone(),
+                datagrams,
+            },
+        );
         let mut remaining = VecDeque::new();
         while let Some((started, target, stream)) = registry.pending.pop_front() {
             if target == id {
-                deliver(&sender, SessionEvent::Stream(stream));
+                deliver(&streams, stream);
             } else {
                 remaining.push_back((started, target, stream));
             }
@@ -302,7 +351,10 @@ impl Sessions {
                 sessions: self.clone(),
                 id,
             },
-            receiver,
+            SessionReceivers {
+                streams: stream_receiver,
+                datagrams: datagram_receiver,
+            },
         ))
     }
 
@@ -316,20 +368,17 @@ impl Sessions {
         let registry = self.registry.lock().expect("session registry poisoned");
         if let Some(sender) = registry.active.get(&id) {
             // Loss is permitted; a slow session never blocks connection control.
-            deliver(
-                sender,
-                SessionEvent::Datagram {
-                    payload,
-                    _budget: budget,
-                },
-            );
+            let _ = sender.datagrams.try_send(Datagram {
+                payload,
+                _budget: budget,
+            });
         }
     }
 
     fn stream(&self, id: u64, stream: ReceiveStream) {
         let mut registry = self.registry.lock().expect("session registry poisoned");
         if let Some(sender) = registry.active.get(&id) {
-            deliver(sender, SessionEvent::Stream(stream));
+            deliver(&sender.streams, stream);
         } else if registry.pending.len() < MAX_PENDING_STREAMS {
             registry
                 .pending
@@ -371,11 +420,9 @@ impl Drop for Registration {
     }
 }
 
-fn deliver(sender: &mpsc::Sender<SessionEvent>, event: SessionEvent) {
-    if let Err(error) = sender.try_send(event)
-        && let SessionEvent::Stream(stream) = error.into_inner()
-    {
-        stop(stream);
+fn deliver(sender: &mpsc::Sender<ReceiveStream>, stream: ReceiveStream) {
+    if let Err(error) = sender.try_send(stream) {
+        stop(error.into_inner());
     }
 }
 
@@ -386,8 +433,23 @@ fn stop(mut stream: ReceiveStream) {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, Sessions, desired_send_window};
-    use std::time::Duration;
+    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, SendWindow, Sessions, desired_send_window};
+    use std::{sync::Arc, time::Duration};
+
+    #[test]
+    fn send_window_growth_shares_one_budget_and_returns_it_on_drop() {
+        let budget = Arc::new(tokio::sync::Semaphore::new(40 << 20));
+        let (mut first, mut second) = (SendWindow::new(), SendWindow::new());
+        assert_eq!(first.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
+        assert_eq!(
+            second.grow(MAX_SEND_WINDOW, &budget),
+            Some(MIN_SEND_WINDOW + (10 << 20))
+        );
+        assert_eq!(second.grow(MAX_SEND_WINDOW, &budget), None);
+        drop(first);
+        assert_eq!(second.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
+        assert_eq!(budget.available_permits(), 10 << 20);
+    }
 
     #[test]
     fn send_window_keeps_local_traffic_small_but_allows_high_rtt_paths_to_grow() {
@@ -399,12 +461,66 @@ mod tests {
         );
         assert_eq!(
             desired_send_window(sent, Duration::from_millis(100), elapsed),
+            2 * sent * 100 / 250
+        );
+        assert_eq!(
+            desired_send_window(sent, Duration::from_secs(1), elapsed),
             MAX_SEND_WINDOW
         );
         assert_eq!(
             desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
             MIN_SEND_WINDOW
         );
+    }
+
+    #[tokio::test]
+    async fn queued_datagrams_do_not_refuse_an_upload_stream() {
+        use super::Bytes;
+        use h3::quic::RecvStream as _;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        use std::{future::poll_fn, sync::Arc};
+
+        let (certificate, key) = crate::test_identity::generate_identity().unwrap();
+        let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+        let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
+        let config = quinn::ServerConfig::with_single_cert(vec![certificate.clone()], key).unwrap();
+        let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(
+            quinn::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap(),
+        );
+        let (sender, receiver) = tokio::join!(
+            client
+                .connect(server.local_addr().unwrap(), "localhost")
+                .unwrap(),
+            async { server.accept().await.unwrap().await.unwrap() },
+        );
+        let sender = sender.unwrap();
+        let sessions = Sessions::default();
+        let (_registration, mut events) = sessions.register(0).unwrap();
+        for _ in 0..1000 {
+            sessions.datagram(0, Bytes::from_static(b"ping"));
+        }
+        let mut send = sender.open_uni().await.unwrap();
+        send.write_all(b"upload").await.unwrap();
+        let mut adapter = h3_noq::Connection::new(receiver);
+        let recv = poll_fn(|cx| {
+            <h3_noq::Connection as h3::quic::Connection<Bytes>>::poll_accept_recv(&mut adapter, cx)
+        })
+        .await
+        .unwrap();
+        sessions.stream(0, h3::stream::BufRecvStream::new(recv));
+        let mut stream = events
+            .streams
+            .try_recv()
+            .expect("upload stream was refused behind datagrams");
+        assert_eq!(
+            poll_fn(|cx| stream.poll_data(cx)).await.unwrap().unwrap(),
+            b"upload"[..]
+        );
+        sender.close(0_u32.into(), b"done");
     }
 
     #[test]

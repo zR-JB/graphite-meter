@@ -50,7 +50,7 @@ async fn exercise(immediate: bool) -> Result<(), TestError> {
     let (factory, mut cleanup) = ResetQueue::new(1);
     let code = quinn::VarInt::from_u32(73);
     if immediate {
-        factory.open(&sender, 256, code).await?.reset(code)?;
+        factory.open(&sender, 256, code).await?.reset(code);
         let mut incoming = receiver.accept_uni().await?;
         let mut bytes = Vec::new();
         loop {

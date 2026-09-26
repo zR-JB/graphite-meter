@@ -96,3 +96,5 @@ browser compatibility remains untested.
   codec. `src/lib.rs` exports it and the manifest enables Tokio `sync` explicitly.
   The server module reexports this implementation. Cleanup owners must finish
   queued prefixes or close their connection before dropping cleanup futures.
+  Peers without reliable-reset support receive ordinary RESET_STREAM on
+  cancellation; truncated payloads never end with FIN.

@@ -27,7 +27,7 @@ base64 = "0.22.1"
 subtle = "2.6.1"
 http = "1"
 httpdate = "1.0.3"
-socket2 = "0.6.5"
+socket2 = { version = "0.6.5", features = ["all"] }
 time = { version = "0.3.55", default-features = false, features = ["formatting"] }
 h2 = "0.4.19"
 hyper = { version = "1.11.1", features = ["server", "http1", "http2"] }

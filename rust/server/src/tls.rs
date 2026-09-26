@@ -53,8 +53,8 @@ impl Certificates {
                     let certificates = self.clone();
                     let result = tokio::task::spawn_blocking(move || {
                         certificates.reload(SystemTime::now())
-                    }).await?;
-                    report(result);
+                    }).await;
+                    report(result.unwrap_or_else(|error| Err(error.into())));
                 }
             }
         }

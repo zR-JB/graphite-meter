@@ -15,8 +15,7 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 
-#[path = "../../../test_identity.rs"]
-mod test_identity;
+use crate::test_identity;
 
 #[derive(Default)]
 struct Claims {

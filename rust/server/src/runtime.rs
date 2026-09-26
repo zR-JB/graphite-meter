@@ -55,9 +55,11 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
                 .as_ref()
                 .expect("TLS identity loaded")
                 .config(vec![b"h3".to_vec()])?;
-            quic = Some(quinn::Endpoint::server(
-                server.quic_config(identity)?,
-                listener.local_addr()?,
+            quic = Some(quinn::Endpoint::new(
+                quinn::EndpointConfig::default(),
+                Some(server.quic_config(identity)?),
+                graphite_meter_core::socket::udp_socket(listener.local_addr()?)?,
+                quinn::default_runtime().ok_or("no async runtime for QUIC")?,
             )?);
         }
         listeners.push((kind, listener, identity));

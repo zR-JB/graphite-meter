@@ -246,10 +246,7 @@ async fn serve_request(
     if path == "/wt/reset" {
         // WT application error 7 mapped to the HTTP/3 error range.
         let reset_code = quinn::VarInt::from_u64(0x52e4a40fa8db + 7)?;
-        resets
-            .open(&quic, id, reset_code)
-            .await?
-            .reset(reset_code)?;
+        resets.open(&quic, id, reset_code).await?.reset(reset_code);
     }
     if path == "/wt/close" {
         stream

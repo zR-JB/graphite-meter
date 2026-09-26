@@ -1,6 +1,10 @@
 //! Experimental Graphite Meter server.
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+#[path = "../../test_identity.rs"]
+mod test_identity;
+
 pub mod admission;
 pub mod app_security;
 pub mod assets;

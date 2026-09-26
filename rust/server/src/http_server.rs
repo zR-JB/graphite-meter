@@ -68,6 +68,7 @@ pub struct HttpServer {
     discovery: Discovery,
     admission: Admission,
     connections: Connections,
+    quic_send_budget: Arc<tokio::sync::Semaphore>,
     download_block: Bytes,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
@@ -111,6 +112,7 @@ impl HttpServer {
             discovery,
             admission,
             connections,
+            quic_send_budget: Arc::new(tokio::sync::Semaphore::new(http_quic::SEND_WINDOW_BUDGET)),
             download_block: block.into(),
             uploads: UploadStore::new()?,
             auth,
@@ -210,24 +212,37 @@ impl HttpServer {
     ) -> Result<(), ConfigError> {
         tokio::pin!(shutdown);
         let mut tasks = JoinSet::new();
+        let mut accept_delay = Duration::ZERO;
+        let mut accept_at = tokio::time::Instant::now();
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
-                Some(result) = tasks.join_next() => {
-                    if let Err(error) = result {
-                        break Err(error.into());
+                Some(_) = tasks.join_next() => {}
+                accepted = async {
+                    if !accept_delay.is_zero() {
+                        tokio::time::sleep_until(accept_at).await;
                     }
-                }
-                accepted = listener.accept() => {
+                    listener.accept().await
+                } => {
                     let (socket, peer) = match accepted {
                         Ok(accepted) => accepted,
-                        Err(error) => break Err(error.into()),
+                        Err(_) => {
+                            accept_delay = (accept_delay * 2)
+                                .clamp(Duration::from_millis(5), Duration::from_secs(1));
+                            accept_at = tokio::time::Instant::now() + accept_delay;
+                            continue;
+                        }
                     };
+                    accept_delay = Duration::ZERO;
                     let Ok(permit) = self.connections.acquire(peer) else {
                         continue;
                     };
                     // Small control replies must not wait for Nagle buffering.
                     let _ = socket.set_nodelay(true);
+                    #[cfg(target_os = "linux")]
+                    if matches!(protocol, HttpProtocol::Http2) {
+                        let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(64 * 1024);
+                    }
                     let server = self.clone();
                     let tls = tls.clone();
                     tasks.spawn(async move {
