@@ -1,6 +1,41 @@
 import { expect, test } from "bun:test";
 import type { MultiServerResult } from "../servers/measurement";
-import { serverEvidence, summaryCards } from "./resultSummary";
+import {
+  liveWire,
+  serverEvidence,
+  summaryCards,
+  summaryEvidence,
+  wireOverhead,
+} from "./resultSummary";
+
+test("run evidence keeps only stages with a result and names no single source", () => {
+  const evidence = summaryEvidence(
+    {
+      latency: "not-run",
+      download: "complete",
+      upload: "failed",
+      bidirectional: "active",
+    },
+    {
+      download: null,
+      upload: null,
+      bidirectional: null,
+      latency: null,
+      wire: {},
+    },
+    null,
+    "",
+    "self",
+  );
+  expect(evidence.status).toEqual({ download: "complete", upload: "failed" });
+  expect(evidence.latencySource).toBeUndefined();
+});
+
+test("live wire overhead appears from half a percent", () => {
+  const estimate = { totalMultiplier: 1.004 } as Parameters<typeof liveWire>[0];
+  expect(liveWire(estimate)).toBeNull();
+  expect(wireOverhead(1.05)).toBe("+5.0%");
+});
 
 const lane = (reportedBytesPerSec: number) => ({
   reportedBytesPerSec,

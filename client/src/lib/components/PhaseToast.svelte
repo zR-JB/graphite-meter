@@ -8,6 +8,7 @@
   import { failureDetail } from "./failurePresentation";
   import { STAGE_ORDER } from "../state/stagePresentation";
   import { STAGE, phaseLabel } from "../presentation/vocabulary";
+  import { serverName } from "../presentation/serverAppearance";
 
   const LINGER_ALERT_MS = 3200;
   const LINGER_COMPLETE_MS = 2200;
@@ -86,7 +87,7 @@
     const failures = details?.failures.length
       ? details.failures.map(
           (failure) =>
-            `${details.selection.find((server) => server.id === failure.serverId)?.name ?? "Server"}: ${STAGE[failure.stage].label} unavailable`,
+            `${serverName(details.selection, failure.serverId)}: ${STAGE[failure.stage].label} unavailable`,
         )
       : Object.values(store.stageFailures).map(
           (failure) =>

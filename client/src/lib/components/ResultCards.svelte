@@ -6,14 +6,9 @@
   import { MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveRateValues } from "../presentation/liveRateAnimator";
   import {
-    compensationTooltip,
-    type CompensationEstimate,
-  } from "../compensation";
-  import {
-    serverEvidence,
+    liveWire,
     summaryCards,
-    type SummaryEvidence,
-    type SummaryStatus,
+    summaryEvidence,
   } from "../presentation/resultSummary";
 
   let {
@@ -38,29 +33,17 @@
     num: fmtSpeed(store.toUnit(bytesPerSec)),
     unit: store.unitLabel,
   });
-  const wire = (estimate: CompensationEstimate | null) =>
-    store.showWireEstimates && estimate && estimate.totalMultiplier >= 1.005
-      ? {
-          bytesPerSec: estimate.estimatedBytesPerSec,
-          pct: `+${((estimate.totalMultiplier - 1) * 100).toFixed(1)}%`,
-          tooltip: compensationTooltip(estimate),
-        }
-      : null;
+  const wire = (estimate: Parameters<typeof liveWire>[0]) =>
+    store.showWireEstimates ? liveWire(estimate) : null;
 
   const cards = $derived.by(() => {
     if (compact) return [];
-    const status: SummaryEvidence["status"] = Object.fromEntries(
-      ORDER.flatMap((key) => {
-        const value = store.stagePresentation[key].status;
-        return ["complete", "partial", "failed"].includes(value)
-          ? [[key, value as SummaryStatus]]
-          : [];
-      }),
-    );
-    const evidence =
-      (details && shown && serverEvidence(details, shown, status)) ||
-      ({
-        status,
+    const stages = Object.fromEntries(
+      ORDER.map((key) => [key, store.stagePresentation[key].status]),
+    ) as Record<(typeof ORDER)[number], string>;
+    const evidence = summaryEvidence(
+      stages,
+      {
         download: store.stageResults.download,
         upload: store.stageResults.upload,
         bidirectional:
@@ -68,17 +51,16 @@
           store.error?.partial?.bidirectional ??
           null,
         latency: store.stageResults.latency,
-        latencyMeasured: true,
-        latencySource:
-          details && details.selection.length > 1
-            ? details.selection.find((s) => s.id === store.latencyFocus)?.name
-            : undefined,
         wire: {
           download: wire(store.downloadCompensation),
           upload: wire(store.uploadCompensation),
           bidirectional: wire(store.bidirectionalCompensation),
         },
-      } satisfies SummaryEvidence);
+      },
+      details,
+      shown,
+      store.latencyFocus,
+    );
     return summaryCards(evidence, rate, store.unitBase);
   });
 

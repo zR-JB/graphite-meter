@@ -3,6 +3,7 @@ import {
   type CompensationBreakdown,
   type CompensationEstimate,
 } from "../compensation";
+import { wireOverhead } from "../presentation/resultSummary";
 import type { HistoryRecord } from "./types";
 
 type WireStage = "download" | "upload" | "bidirectional";
@@ -67,8 +68,7 @@ export function historyWirePresentation(
   if (measured == null) return null;
   const multiplier =
     measured && bytesPerSec >= measured ? bytesPerSec / measured : null;
-  const pct =
-    multiplier == null ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
+  const pct = multiplier == null ? null : wireOverhead(multiplier);
   const breakdown = wire?.breakdown[stage];
   return {
     bytesPerSec,

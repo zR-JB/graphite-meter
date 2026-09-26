@@ -1,3 +1,7 @@
+import {
+  compensationTooltip,
+  type CompensationEstimate,
+} from "../compensation";
 import { fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../servers/measurement";
@@ -48,6 +52,45 @@ export interface SummaryCard {
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
 const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
+const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
+
+export const wireOverhead = (multiplier: number) =>
+  `+${((multiplier - 1) * 100).toFixed(1)}%`;
+
+export function liveWire(
+  estimate: CompensationEstimate | null,
+): WireView | null {
+  if (!estimate || estimate.totalMultiplier < 1.005) return null;
+  return {
+    bytesPerSec: estimate.estimatedBytesPerSec,
+    pct: wireOverhead(estimate.totalMultiplier),
+    tooltip: compensationTooltip(estimate),
+  };
+}
+
+/** The shown server's evidence, else the run's own; stages without a result are left out. */
+export function summaryEvidence(
+  stages: Record<TransportRole, string>,
+  run: Omit<SummaryEvidence, "status" | "latencyMeasured" | "latencySource">,
+  details: MultiServerResult | null | undefined,
+  shown: string,
+  latencyFocus: string | null | undefined,
+): SummaryEvidence {
+  const status = Object.fromEntries(
+    Object.entries(stages).filter(([, value]) => SHOWN_STATUS.has(value)),
+  ) as SummaryEvidence["status"];
+  const multiple = details && details.selection.length > 1;
+  return (
+    (details && shown && serverEvidence(details, shown, status)) || {
+      ...run,
+      status,
+      latencyMeasured: true,
+      latencySource: multiple
+        ? details.selection.find((server) => server.id === latencyFocus)?.name
+        : undefined,
+    }
+  );
+}
 const inUnit = (rate: Rate, bytesPerSec: number, shown: string) => {
   const { num, unit } = rate(bytesPerSec);
   return unit === shown ? num : `${num} ${unit}`;

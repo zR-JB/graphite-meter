@@ -25,6 +25,13 @@ export function serverLabel(
     : server.name;
 }
 
+export function serverName(
+  selection: readonly { id: string; name: string }[],
+  id: string,
+): string {
+  return selection.find((server) => server.id === id)?.name ?? "Server";
+}
+
 export function catalogSelection(
   catalog: ServerCatalog | null,
   ids: readonly string[],

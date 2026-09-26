@@ -1,10 +1,10 @@
 <script lang="ts">
   import { historyWirePresentation } from "../../history/wire";
   import { httpProtocolLabel } from "../../runner/protocol";
-  import { serverLabel } from "../../presentation/serverAppearance";
+  import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
   import { ICON } from "../../constants";
-  import { fmtBytes, fmtDuration } from "../../format";
+  import { fmtBytes, fmtDuration, reasonLabel } from "../../format";
   import {
     formatHistoryRate,
     formatLatency,
@@ -23,9 +23,8 @@
   } from "../../presentation/vocabulary";
   import type { TransportKind } from "../../runner/contract";
   import {
-    serverEvidence,
     summaryCards,
-    type SummaryEvidence,
+    summaryEvidence,
   } from "../../presentation/resultSummary";
   import {
     LATENCY_LANES,
@@ -56,31 +55,31 @@
   const completed = $derived(new Date(record.completedAt));
 
   const cards = $derived.by(() => {
-    const status: SummaryEvidence["status"] = {};
-    for (const key of LATENCY_LANES.map((lane) => lane.key)) {
-      const value = record.stages[key].status;
-      if (value !== "not-run") status[key] = value;
-    }
     const wire = (key: "download" | "upload" | "bidirectional") =>
       store.showWireEstimates ? historyWirePresentation(record, key) : null;
-    const evidence =
-      (details && shown && serverEvidence(details, shown, status)) ||
-      ({
-        status,
-        download: record.stages.download.result,
-        upload: record.stages.upload.result,
-        bidirectional: record.stages.bidirectional,
-        latency: record.stages.latency.result,
-        latencyMeasured: true,
-        latencySource: details?.selection.find(
-          (server) => server.id === details.latencyFocus,
-        )?.name,
+    const { latency, download, upload, bidirectional } = record.stages;
+    const evidence = summaryEvidence(
+      {
+        latency: latency.status,
+        download: download.status,
+        upload: upload.status,
+        bidirectional: bidirectional.status,
+      },
+      {
+        download: download.result,
+        upload: upload.result,
+        bidirectional,
+        latency: latency.result,
         wire: {
           download: wire("download"),
           upload: wire("upload"),
           bidirectional: wire("bidirectional"),
         },
-      } satisfies SummaryEvidence);
+      },
+      details,
+      shown,
+      details?.latencyFocus,
+    );
     return summaryCards(
       evidence,
       (value) => historyRate(value, units),
@@ -219,11 +218,11 @@
   const issues = $derived([
     ...record.failures.map(
       (failure) =>
-        `${STAGE[failure.stage].label}${failure.direction ? ` ${failure.direction}` : ""} · ${failure.reason.replaceAll("-", " ")}`,
+        `${STAGE[failure.stage].label}${failure.direction ? ` ${failure.direction}` : ""} · ${reasonLabel(failure.reason)}`,
     ),
     ...(record.multiServer?.failures ?? []).map(
       (failure) =>
-        `${record.multiServer!.selection.find((server) => server.id === failure.serverId)?.name ?? "Server"} · ${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${failure.message}`,
+        `${serverName(record.multiServer!.selection, failure.serverId)} · ${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${failure.message}`,
     ),
   ]);
   const environment = $derived(
