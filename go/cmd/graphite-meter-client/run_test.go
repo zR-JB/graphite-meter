@@ -750,6 +750,9 @@ func TestScrollingRevealsTheWholeBody(t *testing.T) {
 	}
 	m.width, m.height = minWidth, minHeight
 	f := m.layout()
+	if footer := ansi.Strip(f.footer); !strings.Contains(footer, "pgdn more") || !strings.Contains(footer, "quit") {
+		t.Fatalf("the narrow key hints hide scrolling: %q", footer)
+	}
 	if len(f.body) <= f.bodyH {
 		t.Fatalf("a %d-line body in %d rows offers no scrolling: %q", len(f.body), f.bodyH, f.footer)
 	}

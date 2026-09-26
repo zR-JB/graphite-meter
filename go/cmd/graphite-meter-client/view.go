@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -170,8 +171,18 @@ func (m model) footer(w int, overflow bool) string {
 		bindings = slices.Insert(bindings, 1, keys.page)
 	}
 	line := m.help.ShortHelpView(bindings)
-	for len(bindings) > 2 && lipgloss.Width(line) > w {
-		bindings = slices.Delete(bindings, len(bindings)-3, len(bindings)-2)
+	for lipgloss.Width(line) > w {
+		drop := len(bindings) - 3
+		for drop > 0 && bindings[drop].Help() == keys.page.Help() {
+			drop--
+		}
+		if drop <= 0 {
+			drop = slices.IndexFunc(bindings, func(b key.Binding) bool { return b.Help() == keys.help.Help() })
+		}
+		if drop < 0 {
+			break
+		}
+		bindings = slices.Delete(bindings, drop, drop+1)
 		line = m.help.ShortHelpView(bindings)
 	}
 	return fit(notice+"\n"+line, w)
