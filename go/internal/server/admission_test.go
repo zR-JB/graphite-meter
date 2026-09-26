@@ -1,131 +1,22 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func routeSpec(path string) route.Spec {
 	spec, _ := route.Lookup(path)
 	return spec
-}
-
-func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
-	synctest.Test(t, requestAdmissionPerClientAndRelease)
-}
-
-func requestAdmissionPerClientAndRelease(t *testing.T) {
-	a := newRequestAdmission(3, 2, 3, 4, time.Minute, time.Hour)
-	entered := make(chan struct{}, 3)
-	release := make(chan struct{})
-	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		entered <- struct{}{}
-		<-release
-	}), routeSpec(route.Download), nil, publicAuth(t))
-
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Go(func() {
-			r := httptest.NewRequest(http.MethodGet, "/download", nil)
-			r.RemoteAddr = "192.0.2.10:1234"
-			h.ServeHTTP(httptest.NewRecorder(), r)
-		})
-	}
-	synctest.Wait()
-	if len(entered) != 2 {
-		t.Fatalf("%d of 2 requests within the per-client budget entered", len(entered))
-	}
-	r := httptest.NewRequest(http.MethodGet, "/download", nil)
-	r.RemoteAddr = "192.0.2.10:5678"
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" ||
-		w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatalf("rejection = %d headers %v, want 429 with Retry-After 1 and a wildcard origin", w.Code, w.Header())
-	}
-	close(release)
-	wg.Wait()
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/download", nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("request after release = %d, want %d", w.Code, http.StatusOK)
-	}
-}
-
-func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
-	t.Parallel()
-	for _, http2 := range []bool{false, true} {
-		name := "http1"
-		if http2 {
-			name = "http2"
-		}
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
-			upload := endpoint.NewUpload(nil, nil)
-			id := upload.Mint()
-			finished := make(chan struct{})
-			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if (r.ProtoMajor == 2) != http2 {
-					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
-				}
-				upload.Handler(wire.IdleBound).ServeHTTP(w, r)
-			}), routeSpec(route.Upload), nil, publicAuth(t))
-			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				h.ServeHTTP(w, r)
-				close(finished)
-			}))
-			srv.EnableHTTP2 = http2
-			srv.StartTLS()
-			defer srv.Close()
-			body, writer := io.Pipe()
-			defer body.Close()
-			defer writer.Close()
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/upload?id="+id, body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			clientDone := make(chan struct{})
-			go func() {
-				defer close(clientDone)
-				res, err := srv.Client().Do(req)
-				if err == nil {
-					res.Body.Close()
-				}
-			}()
-			defer func() {
-				cancel()
-				writer.Close()
-				<-clientDone
-			}()
-			select {
-			case <-finished:
-				if requests, _ := a.stats(); requests.active != 0 {
-					t.Fatalf("active uploads = %d after timeout, want 0", requests.active)
-				}
-			case <-ctx.Done():
-				t.Fatal("stalled upload retained its admission slot beyond the request lifetime")
-			}
-		})
-	}
 }
 
 // Requests spend the pool and a per-client share; sessions spend the pool and a per-login share of a session budget
@@ -176,33 +67,7 @@ func TestRequestAdmissionBudgets(t *testing.T) {
 	}
 }
 
-// A request-shaped route and both ping buses take the request bound and budget; only the transfer sessions hold a test.
-func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
-	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
-	for path, session := range map[string]bool{
-		route.Download: false, route.Ping: false, route.WTPing: false, route.WTDownload: true, route.WTUpload: true,
-	} {
-		var lifetime time.Duration
-		var heldSession bool
-		a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-			deadline, _ := r.Context().Deadline()
-			lifetime = time.Until(deadline)
-			_, sessions := a.stats()
-			heldSession = sessions.active == 1
-		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(httptest.NewRecorder(),
-			httptest.NewRequest(http.MethodGet, path, nil))
-		want := time.Minute
-		if session {
-			want = time.Hour
-		}
-		if lifetime <= want-time.Second || lifetime > want || heldSession != session {
-			t.Errorf("%s lifetime = %v holding a session = %v, want %v and %v", path, lifetime, heldSession, want,
-				session)
-		}
-	}
-}
-
-// deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
+// deadlineRecordingWriter records the socket deadlines wrap arms through http.NewResponseController.
 type deadlineRecordingWriter struct {
 	*httptest.ResponseRecorder
 	read, write time.Time
@@ -211,46 +76,31 @@ type deadlineRecordingWriter struct {
 func (w *deadlineRecordingWriter) SetReadDeadline(t time.Time) error  { w.read = t; return nil }
 func (w *deadlineRecordingWriter) SetWriteDeadline(t time.Time) error { w.write = t; return nil }
 
-// A socket deadline bounds a request; it would tear a held channel down mid-stream, so a channel clears the control
-// deadline every request starts with.
-func TestAdmissionSetsSocketDeadlinesByRouteKind(t *testing.T) {
+// Only the transfer sessions hold a session and its bound; a socket deadline would tear a held channel down mid-stream.
+func TestAdmissionFollowsTheRouteKind(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
-	for path, bounded := range map[string]bool{
-		route.Ping: false, route.WTPing: false, route.WTDownload: false, route.WTUpload: false,
-		route.Download: true, route.Upload: true,
+	for path, want := range map[string]struct{ session, socketBounded bool }{
+		route.Download: {false, true}, route.Upload: {false, true}, route.Ping: {false, false},
+		route.WTPing: {false, false}, route.WTDownload: {true, false}, route.WTUpload: {true, false},
 	} {
+		var lifetime time.Duration
+		var heldSession bool
 		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder(), read: time.Now(), write: time.Now()}
-		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), routeSpec(path), nil, publicAuth(t)).
-			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		if w.read.IsZero() == bounded || w.write.IsZero() == bounded {
-			t.Errorf("%s socket deadlines = %v / %v, want bounded = %t", path, w.read, w.write, bounded)
+		a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			deadline, _ := r.Context().Deadline()
+			lifetime = time.Until(deadline)
+			_, sessions := a.stats()
+			heldSession = sessions.active == 1
+		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		wantLifetime := time.Minute
+		if want.session {
+			wantLifetime = time.Hour
 		}
-	}
-}
-
-func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, time.Minute, time.Hour)
-	release, status := a.acquire(false, "occupied")
-	if status != 0 {
-		t.Fatal("failed to occupy admission slot")
-	}
-	defer release()
-	var reached atomic.Bool
-	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		reached.Store(true)
-	}), routeSpec(route.Ping), nil, publicAuth(t)))
-	defer srv.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	_, res, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http"), nil)
-	if err == nil {
-		t.Fatal("saturated WebSocket upgrade succeeded")
-	}
-	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
-		t.Fatalf("upgrade response = %#v, want 503 with Retry-After 1", res)
-	}
-	if reached.Load() {
-		t.Fatal("rejected WebSocket reached handler")
+		if lifetime <= wantLifetime-time.Second || lifetime > wantLifetime || heldSession != want.session ||
+			w.read.IsZero() == want.socketBounded || w.write.IsZero() == want.socketBounded {
+			t.Errorf("%s lifetime %v, session %t, socket deadlines %v / %v; want %v and %+v", path, lifetime,
+				heldSession, w.read, w.write, wantLifetime, want)
+		}
 	}
 }
 

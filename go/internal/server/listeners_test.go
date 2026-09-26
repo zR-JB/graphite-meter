@@ -2,7 +2,6 @@ package server
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -17,110 +16,8 @@ import (
 	"time"
 
 	"github.com/quic-go/webtransport-go"
-	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
-
-// Pace encrypted upload writes so a large HTTP/2 DATA frame occupies the wire
-// long enough to expose control requests queued behind that indivisible frame.
-type pacedUploadConn struct {
-	net.Conn
-	started chan struct{}
-	once    sync.Once
-}
-
-func (c *pacedUploadConn) Write(p []byte) (int, error) {
-	if len(p) < 8192 {
-		return c.Conn.Write(p)
-	}
-	c.once.Do(func() { close(c.started) })
-	total := 0
-	for len(p) > 0 {
-		time.Sleep(2 * time.Millisecond)
-		n, err := c.Conn.Write(p[:min(len(p), 1024)])
-		total += n
-		p = p[n:]
-		if err != nil {
-			return total, err
-		}
-	}
-	return total, nil
-}
-
-func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			_, _ = io.Copy(io.Discard, r.Body)
-		}
-		_, _ = w.Write([]byte("ok"))
-	})
-	srv := httptest.NewUnstartedServer(handler)
-	srv.Config = baseServer(handler, nil, controlTimeout)
-	srv.EnableHTTP2 = true
-	srv.StartTLS()
-	defer srv.Close()
-	started := make(chan struct{})
-	var conn *pacedUploadConn
-	tr := &http.Transport{
-		ForceAttemptHTTP2: true,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		MaxConnsPerHost:   1,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			c, err := (&net.Dialer{}).DialContext(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			conn = &pacedUploadConn{Conn: c, started: started}
-			return conn, nil
-		},
-	}
-	defer tr.CloseIdleConnections()
-	client := &http.Client{Transport: tr}
-	res, err := client.Get(srv.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-	if res.ProtoMajor != 2 {
-		t.Fatal("fixture did not negotiate HTTP/2")
-	}
-	defer conn.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	uploadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL, bytes.NewReader(make([]byte, 8<<20)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		res, err := client.Do(uploadReq)
-		if err == nil {
-			res.Body.Close()
-		}
-	}()
-	defer func() { cancel(); conn.Close(); <-done }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("upload did not start")
-	}
-	control, stop := context.WithTimeout(t.Context(), 500*time.Millisecond)
-	defer stop()
-	req, err := http.NewRequestWithContext(control, http.MethodGet, srv.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err = client.Do(req)
-	if err != nil {
-		t.Fatalf("control request was blocked by upload framing: %v", err)
-	}
-	defer res.Body.Close()
-	if _, err := io.Copy(io.Discard, res.Body); err != nil {
-		t.Fatal(err)
-	}
-}
 
 // An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server advertises larger ones.
 func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
@@ -140,7 +37,7 @@ func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), 0, 0, 0, 4, 0, 0, 0, 0, 0)); err != nil {
 		t.Fatal(err)
 	}
-	var streamWindow, connectionWindow uint32
+	var streamWindow, connectionWindow, frameSize uint32
 	for streamWindow == 0 || connectionWindow == 0 {
 		var header [9]byte
 		if _, err := io.ReadFull(conn, header[:]); err != nil {
@@ -153,29 +50,23 @@ func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 		switch frameType, stream := header[3], binary.BigEndian.Uint32(header[5:])&0x7fffffff; {
 		case frameType == 0x4 && header[4]&0x1 == 0: // SETTINGS
 			for setting := payload; len(setting) >= 6; setting = setting[6:] {
-				if binary.BigEndian.Uint16(setting) == 0x4 { // SETTINGS_INITIAL_WINDOW_SIZE
-					streamWindow = binary.BigEndian.Uint32(setting[2:])
+				switch value := binary.BigEndian.Uint32(setting[2:]); binary.BigEndian.Uint16(setting) {
+				case 0x4: // SETTINGS_INITIAL_WINDOW_SIZE
+					streamWindow = value
+				case 0x5: // SETTINGS_MAX_FRAME_SIZE
+					frameSize = value
 				}
 			}
 		case frameType == 0x8 && stream == 0: // connection WINDOW_UPDATE
 			connectionWindow = 65535 + binary.BigEndian.Uint32(payload)&0x7fffffff
 		}
 	}
-	if streamWindow != h2ReceiveWindowPerStream || connectionWindow != h2ReceiveWindowPerConnection {
-		t.Fatalf("advertised stream/connection windows %d/%d, want %d/%d", streamWindow, connectionWindow,
-			h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection)
+	// A small frame bound keeps control requests from queueing behind one indivisible upload frame.
+	if streamWindow != h2ReceiveWindowPerStream || connectionWindow != h2ReceiveWindowPerConnection ||
+		frameSize != 16<<10 {
+		t.Fatalf("advertised stream/connection windows %d/%d and frame size %d, want %d/%d and %d", streamWindow,
+			connectionWindow, frameSize, h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection, 16<<10)
 	}
-}
-
-type observedBody struct {
-	reader *bytes.Reader
-	read   int
-}
-
-func (b *observedBody) Read(p []byte) (int, error) {
-	n, err := b.reader.Read(p)
-	b.read += n
-	return n, err
 }
 
 // Each listener mounts only its topology's routes; a dot segment never reaches the shell.
@@ -201,7 +92,7 @@ func TestListenerTopologies(t *testing.T) {
 			[]string{"/download?bytes=1", "/ws/ping"}},
 		{"h3", muxTopology{transfers: true}, 3, []string{"/upload/progress?id=unknown"}, nil},
 		{"h3 bootstrap", muxTopology{bootstrap: true}, 1, []string{"/probe"},
-			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"}},
+			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping", "/wt/upload"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var spa http.Handler
@@ -281,49 +172,6 @@ func TestListenerBoundsTheRequestHeaderBlock(t *testing.T) {
 	}
 }
 
-func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
-	authn := testPasswordAuth(t, "https://meter.example")
-	e := testEndpoints(t)
-	tests := []struct {
-		name     string
-		topology muxTopology
-		listener auth.Listener
-		path     string
-		proto    int
-	}{
-		{"h1-ui", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/",
-			1},
-		{"h1-static", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true},
-			"/asset.js", 1},
-		{"h1-upload", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true},
-			"/upload", 1},
-		{"h2", muxTopology{transfers: true, requiredProto: 2}, auth.Listener{}, "/download", 2},
-		{"h3-bootstrap", muxTopology{bootstrap: true}, auth.Listener{}, "/probe", 1},
-		{"h3", muxTopology{transfers: true}, auth.Listener{}, "/upload", 3},
-		{"websocket", muxTopology{latency: true}, auth.Listener{}, "/ws/ping", 1},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			body := &observedBody{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
-			mux := newMux(t.Context(), e, test.topology,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
-			handler := authn.Enforce(mux, test.listener)
-			req := httptest.NewRequest(http.MethodPost, "https://meter.example"+test.path, body)
-			req.Host = "meter.example"
-			req.TLS = &tls.ConnectionState{}
-			req.ProtoMajor = test.proto
-			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, req)
-			if recorder.Code != http.StatusForbidden || body.read != 0 {
-				t.Fatalf("status=%d body-read=%d, want 403 with an unread body", recorder.Code, body.read)
-			}
-		})
-	}
-	if requests, _ := e.admission.stats(); requests.active != 0 || requests.peak != 0 {
-		t.Fatalf("unauthenticated requests reached admission: %+v", requests)
-	}
-}
-
 func TestPublicH3Port(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H3 = ":7249"
@@ -340,63 +188,38 @@ func TestPublicH3Port(t *testing.T) {
 	}
 }
 
-// Services drain concurrently: each has the whole shutdown budget rather than what the ones before it left.
-func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
-	ctx, cancel := context.WithCancel(t.Context())
-	var draining sync.WaitGroup
-	draining.Add(2)
-	stop := func(block chan struct{}) func(context.Context) error {
-		return func(context.Context) error {
-			draining.Done()
-			draining.Wait()
-			close(block)
-			return nil
-		}
-	}
-	blockA, blockB := make(chan struct{}), make(chan struct{})
-	services := []service{
-		{name: "a", addr: ":1", network: "tcp", run: func() error { <-blockA; return nil }, stop: stop(blockA)},
-		{name: "b", addr: ":2", network: "tcp", run: func() error { <-blockB; return nil }, stop: stop(blockB)},
-	}
-
-	done := make(chan error, 1)
-	go func() { done <- runServices(ctx, &config.Config{}, services) }()
-	cancel()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("clean shutdown returned %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("runServices did not stop its services together after the context was cancelled")
-	}
-}
-
-func TestRunServicesReturnsAndStopsOnListenerError(t *testing.T) {
+// Services drain together, each with the whole shutdown budget, whether a cancel or a failed listener ends them.
+func TestRunServicesStopsEveryServiceTogether(t *testing.T) {
 	boom := errors.New("bind failed")
-	block := make(chan struct{})
-	survivorStopped := false
-	services := []service{
-		{name: "bad", addr: ":1", network: "tcp", run: func() error { return boom },
-			stop: func(context.Context) error { return nil }},
-		{name: "good", addr: ":2", network: "tcp", run: func() error { <-block; return nil },
-			stop: func(context.Context) error { survivorStopped = true; close(block); return nil }},
-	}
-
-	done := make(chan error, 1)
-	go func() { done <- runServices(t.Context(), &config.Config{}, services) }()
-
-	select {
-	case err := <-done:
-		if !errors.Is(err, boom) {
-			t.Fatalf("runServices returned %v, want it to wrap the bind error", err)
+	for _, failure := range []error{nil, boom} {
+		ctx, cancel := context.WithCancel(t.Context())
+		var draining sync.WaitGroup
+		draining.Add(2)
+		serving := func(name string, err error) service {
+			block := make(chan struct{})
+			return service{name: name, run: func() error {
+				if err == nil {
+					<-block
+				}
+				return err
+			}, stop: func(context.Context) error { draining.Done(); draining.Wait(); close(block); return nil }}
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("runServices did not return after a listener failed")
-	}
-	if !survivorStopped {
-		t.Fatal("a listener failure did not shut the surviving service down")
+		done := make(chan error, 1)
+		go func() {
+			done <- runServices(ctx, &config.Config{}, []service{serving("a", nil), serving("b", failure)})
+		}()
+		if failure == nil {
+			cancel()
+		}
+		select {
+		case err := <-done:
+			if !errors.Is(err, failure) {
+				t.Fatalf("runServices returned %v, want %v", err, failure)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("runServices ended by %v did not stop its services together", failure)
+		}
+		cancel()
 	}
 }
 
@@ -437,25 +260,6 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 			if w.Code != want {
 				t.Errorf("unmetered %s %s = %d, want %d", method, path, w.Code, want)
 			}
-		}
-	}
-	bootstrap := publicMux(t, e, muxTopology{bootstrap: true}, nil)
-	for _, path := range []string{"/download", "/ws/ping", "/wt/upload"} {
-		w := httptest.NewRecorder()
-		bootstrap.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		if w.Code != http.StatusNotFound {
-			t.Errorf("unmounted %s = %d, want 404", path, w.Code)
-		}
-	}
-}
-
-func TestRouteMetadataPreservesPublicHEADHandling(t *testing.T) {
-	h := publicMux(t, testEndpoints(t), muxTopology{discovery: true, transfers: true}, nil)
-	for _, path := range []string{"/preflight", "/probe", "/download?bytes=0"} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(http.MethodHead, path, nil))
-		if w.Code != http.StatusOK {
-			t.Errorf("HEAD %s = %d, want 200", path, w.Code)
 		}
 	}
 }

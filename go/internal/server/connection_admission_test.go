@@ -53,36 +53,6 @@ func (l *scriptedListener) Accept() (net.Conn, error) {
 func (l *scriptedListener) Close() error   { return nil }
 func (l *scriptedListener) Addr() net.Addr { return testAddr("127.0.0.1:0") }
 
-func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
-	a := newConnectionAdmission(2, 1, nil)
-	releaseA, ok := a.acquire(testAddr("192.0.2.1:1"), false)
-	if !ok {
-		t.Fatal("first connection rejected")
-	}
-	if _, ok := a.acquire(testAddr("192.0.2.1:2"), false); ok {
-		t.Fatal("per-client overflow admitted")
-	}
-	releaseB, ok := a.acquire(testAddr("192.0.2.2:1"), false)
-	if !ok {
-		t.Fatal("second client rejected")
-	}
-	if _, ok := a.acquire(testAddr("192.0.2.3:1"), false); ok {
-		t.Fatal("global overflow admitted")
-	}
-	stats := a.stats()
-	if stats.active != 2 || stats.peak != 2 || stats.rejectedGlobal != 1 || stats.rejectedClient != 1 {
-		t.Fatalf("stats = %+v, want 2 active, 2 peak, 1 global and 1 client rejection", stats)
-	}
-	releaseA()
-	releaseA()
-	if release, ok := a.acquire(testAddr("192.0.2.1:3"), false); !ok {
-		t.Fatal("released capacity was not reusable")
-	} else {
-		release()
-	}
-	releaseB()
-}
-
 // An IPv6 client is bounded per /64, and its /56 and /48 hold only two and four clients' shares.
 func TestConnectionAdmissionBucketsIPv6Hierarchically(t *testing.T) {
 	a := newConnectionAdmission(100, 2, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
@@ -123,8 +93,8 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second accept: %v", err)
 	}
-	if !over.closed {
-		t.Fatal("the refused connection was not closed")
+	if stats := a.stats(); !over.closed || stats.peak != 2 || stats.rejectedClient != 1 {
+		t.Fatalf("refused connection closed = %t, stats %+v, want 2 peak and 1 client rejection", over.closed, stats)
 	}
 	if got := second.RemoteAddr().String(); got != "192.0.2.2:1" {
 		t.Fatalf("second admitted conn = %q, want the different client", got)
@@ -153,8 +123,8 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 		}
 		cancel()
 		synctest.Wait()
-		if a.stats().active != 0 {
-			t.Fatal("cancelled connection never released its slot")
+		if stats := a.stats(); stats.active != 0 || stats.rejectedGlobal != 1 {
+			t.Fatalf("stats after cancel %+v, want the slot released and 1 global rejection", stats)
 		}
 	})
 }

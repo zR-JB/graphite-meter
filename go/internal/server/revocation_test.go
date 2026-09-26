@@ -35,31 +35,42 @@ func TestPasswordLoginsShareTheOperatorSubjectBoundedly(t *testing.T) {
 	s.e.admission.mu.Lock()
 	s.e.admission.requests.clientLimit = 1
 	s.e.admission.mu.Unlock()
-	hold := func(session *http.Cookie) int {
+	hold := func(session *http.Cookie, origin string) *http.Response {
 		req, _ := http.NewRequest(http.MethodGet, s.origin+"/download?bytes=1073741824", nil)
-		req.Header.Set("Origin", s.origin)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
 		req.AddCookie(session)
 		res, err := s.uiClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { res.Body.Close() })
-		return res.StatusCode
+		return res
 	}
 	first := s.session
-	if status := hold(first); status != http.StatusOK {
-		t.Fatalf("first login = %d", status)
+	if res := hold(first, s.origin); res.StatusCode != http.StatusOK {
+		t.Fatalf("first login = %d", res.StatusCode)
 	}
-	if status := hold(first); status != http.StatusTooManyRequests {
-		t.Fatalf("a login past its share = %d, want 429", status)
+	// A refusal answers the page's own origin with credentials, and no other origin.
+	if res := hold(first, s.origin); res.StatusCode != http.StatusTooManyRequests ||
+		res.Header.Get("Access-Control-Allow-Origin") != s.origin ||
+		res.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("a login past its share = %d %v, want 429 readable by the page", res.StatusCode, res.Header)
+	}
+	for _, origin := range []string{"https://evil.example", ""} {
+		if res := hold(first, origin); res.Header.Get("Access-Control-Allow-Origin") != "" ||
+			res.Header.Get("Access-Control-Allow-Credentials") != "" {
+			t.Fatalf("origin %q exposed by %d %v", origin, res.StatusCode, res.Header)
+		}
 	}
 	s.signIn(t)
-	if status := hold(s.session); status != http.StatusOK {
-		t.Fatalf("a second tester behind the same subject = %d, want its own share", status)
+	if res := hold(s.session, s.origin); res.StatusCode != http.StatusOK {
+		t.Fatalf("a second tester behind the same subject = %d, want its own share", res.StatusCode)
 	}
 	s.signIn(t)
-	if status := hold(s.session); status != http.StatusTooManyRequests {
-		t.Fatalf("a third login past the subject's double share = %d, want 429", status)
+	if res := hold(s.session, s.origin); res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("a third login past the subject's double share = %d, want 429", res.StatusCode)
 	}
 }
 

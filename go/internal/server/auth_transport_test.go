@@ -8,9 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json/v2"
 	"io"
+	"maps"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -74,12 +74,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	if err := build.addH3(); err != nil {
 		t.Fatal(err)
 	}
-	for _, svc := range build.services {
-		run, stop := svc.run, svc.stop
-		go func() { _ = run() }()
-		// Service cleanup must still run after t.Context is canceled.
-		t.Cleanup(func() { _ = stop(context.Background()) })
-	}
+	startServices(t, build.services)
 
 	uiProtocols := &http.Protocols{}
 	uiProtocols.SetHTTP1(true)
@@ -217,51 +212,12 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	return out.Token
 }
 
-func authenticatedDownload(t *testing.T, client *http.Client, base, origin string, cookie *http.Cookie, bearer string) {
-	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, base+"/download?bytes=1", nil)
-	if cookie != nil {
-		req.AddCookie(cookie)
-	}
-	if bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+bearer)
-	}
-	if origin != "" {
-		req.Header.Set("Origin", origin)
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK || len(body) != 1 {
-		t.Fatalf("status=%d bytes=%d, want 200 and 1 byte", res.StatusCode, len(body))
-	}
-}
-
-func assertUnauthenticatedDownload(t *testing.T, client *http.Client, base string) {
-	t.Helper()
-	res, err := client.Get(base + "/download?bytes=1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusForbidden {
-		t.Fatalf("status=%d, want 403", res.StatusCode)
-	}
-	if res.Header.Get("Graphite-Meter-Auth") != "required" {
-		t.Fatalf("missing auth marker: %v", res.Header)
-	}
-}
-
-// The positive path over the real transports.
-func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
+// Every transport serves a measurement to a session cookie or a bearer grant and refuses one without either; the grant
+// reaches nothing past measurement.
+func TestAuthenticationOverEveryTransport(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
-
 	for _, tc := range []struct {
 		name   string
 		client *http.Client
@@ -271,52 +227,30 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 		{"http2", s.h2Client, s.h2URL},
 		{"http3", s.h3Client, s.h3URL},
 	} {
-		t.Run(tc.name+"/session-cookie", func(t *testing.T) {
-			authenticatedDownload(t, tc.client, tc.base, s.origin, s.session, "")
-		})
-
-		t.Run(tc.name+"/bearer-grant", func(t *testing.T) {
-			authenticatedDownload(t, tc.client, tc.base, "", nil, bearer)
-		})
-	}
-}
-
-func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
-	t.Parallel()
-	s := newAuthenticatedStack(t)
-	bearer := s.grant(t)
-	wsURL := "wss" + strings.TrimPrefix(s.origin, "https") + "/ws/ping"
-
-	for _, tc := range []struct {
-		name    string
-		headers http.Header
-	}{
-		{"session-cookie", http.Header{"Cookie": {s.session.String()}, "Origin": {s.origin}}},
-		{"bearer-grant", http.Header{"Authorization": {"Bearer " + bearer}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-			defer cancel()
-			options := &websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers}
-			conn, res, err := websocket.Dial(ctx, wsURL, options)
+		for _, credential := range []struct {
+			name string
+			hdr  http.Header
+			want int
+		}{
+			{"session cookie", http.Header{"Cookie": {s.session.String()}, "Origin": {s.origin}}, http.StatusOK},
+			{"bearer grant", http.Header{"Authorization": {"Bearer " + bearer}}, http.StatusOK},
+			{"no credential", nil, http.StatusForbidden},
+		} {
+			req, _ := http.NewRequest(http.MethodGet, tc.base+"/download?bytes=1", nil)
+			maps.Copy(req.Header, credential.hdr)
+			res, err := tc.client.Do(req)
 			if err != nil {
-				status := 0
-				if res != nil {
-					status = res.StatusCode
-					res.Body.Close()
-				}
-				t.Fatalf("authenticated WebSocket upgrade failed: %v (status=%d)", err, status)
+				t.Fatal(err)
 			}
-			conn.Close(websocket.StatusNormalClosure, "")
-		})
+			body, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			if res.StatusCode != credential.want || credential.want == http.StatusOK && len(body) != 1 ||
+				credential.want == http.StatusForbidden && res.Header.Get("Graphite-Meter-Auth") != "required" {
+				t.Errorf("%s with %s = %d, %d bytes, headers %v", tc.name, credential.name, res.StatusCode, len(body),
+					res.Header)
+			}
+		}
 	}
-}
-
-// A bearer grant authorizes measurement and nothing else: it must not reach the session surface or the approval routes.
-func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
-	t.Parallel()
-	s := newAuthenticatedStack(t)
-	bearer := s.grant(t)
 	challenge := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
 	for _, tc := range []struct {
 		path, location string
@@ -339,52 +273,6 @@ func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
 		if res.StatusCode != tc.want || res.Header.Get("Location") != tc.location {
 			t.Errorf("bearer %s = %d %q, want %d %q", tc.path, res.StatusCode, res.Header.Get("Location"), tc.want,
 				tc.location)
-		}
-	}
-}
-
-func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
-	t.Parallel()
-	s := newAuthenticatedStack(t)
-	for _, tc := range []struct {
-		name   string
-		client *http.Client
-		base   string
-	}{
-		{"http1-tls", s.uiClient, s.origin},
-		{"http2", s.h2Client, s.h2URL},
-		{"http3", s.h3Client, s.h3URL},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertUnauthenticatedDownload(t, tc.client, tc.base)
-		})
-	}
-}
-
-// CORS stays restricted when authenticated admission refuses a request before endpoint dispatch.
-func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
-	t.Parallel()
-	s := newAuthenticatedStack(t)
-	a := newRequestAdmission(1, 0, 1, 1, time.Minute, time.Hour)
-	download, _ := route.Lookup(route.Download)
-	h := s.authn.Enforce(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("admission dispatched despite zero client capacity")
-	}), download, nil, s.authn), auth.Listener{})
-	for _, origin := range []string{s.origin, "https://evil.example", ""} {
-		r := httptest.NewRequest(http.MethodGet, s.origin+"/download", nil)
-		r.TLS = &tls.ConnectionState{}
-		r.AddCookie(s.session)
-		r.Header.Set("Origin", origin)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		if origin == s.origin {
-			if w.Code != http.StatusTooManyRequests || w.Header().Get("Access-Control-Allow-Origin") != s.origin ||
-				w.Header().Get("Access-Control-Allow-Credentials") != "true" {
-				t.Fatalf("allowed origin admission: status=%d headers=%v", w.Code, w.Header())
-			}
-		} else if w.Header().Get("Access-Control-Allow-Origin") != "" ||
-			w.Header().Get("Access-Control-Allow-Credentials") != "" {
-			t.Fatalf("untrusted origin %q exposed by headers=%v", origin, w.Header())
 		}
 	}
 }
@@ -412,6 +300,7 @@ func TestWebSocketPingOriginIsBoundOnlyUnderAuthentication(t *testing.T) {
 	t.Run("password", func(t *testing.T) {
 		t.Parallel()
 		s := newAuthenticatedStack(t)
+		bearer := s.grant(t)
 		wsURL := "wss" + strings.TrimPrefix(s.origin, "https") + route.Ping
 		ticket := func(t *testing.T) string {
 			t.Helper()
@@ -434,22 +323,26 @@ func TestWebSocketPingOriginIsBoundOnlyUnderAuthentication(t *testing.T) {
 			return minted.Token
 		}
 		for _, tc := range []struct {
-			name, origin string
-			ticket       bool
-			want         int
+			name, origin, credential string
+			want                     int
 		}{
-			{"cookie from the UI origin", s.origin, false, http.StatusSwitchingProtocols},
-			{"cookie from a forged origin", forged, false, http.StatusForbidden},
-			{"cookie without an origin", "", false, http.StatusForbidden},
-			{"ticket from the UI origin", s.origin, true, http.StatusSwitchingProtocols},
-			{"UI origin's ticket from a forged origin", forged, true, http.StatusForbidden},
+			{"cookie from the UI origin", s.origin, "cookie", http.StatusSwitchingProtocols},
+			{"cookie from a forged origin", forged, "cookie", http.StatusForbidden},
+			{"cookie without an origin", "", "cookie", http.StatusForbidden},
+			{"ticket from the UI origin", s.origin, "ticket", http.StatusSwitchingProtocols},
+			{"UI origin's ticket from a forged origin", forged, "ticket", http.StatusForbidden},
+			{"bearer grant without an origin", "", "bearer", http.StatusSwitchingProtocols},
+			{"no credential from the UI origin", s.origin, "", http.StatusForbidden},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				target, headers := wsURL, http.Header{}
-				if tc.ticket {
-					target += "?token=" + url.QueryEscape(ticket(t))
-				} else {
+				switch tc.credential {
+				case "cookie":
 					headers.Set("Cookie", s.session.String())
+				case "ticket":
+					target += "?token=" + url.QueryEscape(ticket(t))
+				case "bearer":
+					headers.Set("Authorization", "Bearer "+bearer)
 				}
 				if tc.origin != "" {
 					headers.Set("Origin", tc.origin)

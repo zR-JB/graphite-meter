@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
@@ -90,29 +89,11 @@ func (pipeSockets) listenUDP(string) (net.PacketConn, error) {
 
 func pipeServer(t *testing.T, cfg *config.Config, shape func(*endpoints)) (*listenerBuild, pipeSockets) {
 	t.Helper()
-	cfg.TLSCert, cfg.TLSKey = writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
-		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	sockets := pipeSockets{}
 	for _, addr := range []string{cfg.Native.H1, cfg.Native.H1TLS, cfg.Native.H2} {
 		if addr != "" {
 			sockets[addr] = newPipeListener()
 		}
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	build, err := newListenerBuild(ctx, cfg, sockets)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if shape != nil {
-		shape(build.e)
-	}
-	if err := build.assemble(); err != nil {
-		t.Fatal(err)
-	}
-	for _, svc := range build.services {
-		go func() { _ = svc.run() }()
-		t.Cleanup(func() { _ = svc.stop(context.Background()) })
-	}
-	t.Cleanup(cancel)
-	return build, sockets
+	return serveBuild(t, cfg, sockets, shape), sockets
 }

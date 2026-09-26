@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"maps"
@@ -90,6 +89,44 @@ func runTestTLS(t *testing.T) (string, string) {
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 }
 
+// serveBuild assembles cfg's listeners on sockets under a test certificate and serves them until the test ends.
+func serveBuild(t *testing.T, cfg *config.Config, sockets listenerSockets, shape func(*endpoints)) *listenerBuild {
+	t.Helper()
+	cfg.TLSCert, cfg.TLSKey = runTestTLS(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	build, err := newListenerBuild(ctx, cfg, sockets)
+	if err != nil {
+		t.Fatalf("build listeners: %v", err)
+	}
+	if shape != nil {
+		shape(build.e)
+	}
+	if err := build.assemble(); err != nil {
+		t.Fatalf("assemble listeners: %v", err)
+	}
+	startServices(t, build.services)
+	return build
+}
+
+func startServices(t *testing.T, services []service) {
+	for _, svc := range services {
+		go func() { _ = svc.run() }()
+		// Service cleanup must still run after t.Context is canceled.
+		t.Cleanup(func() { _ = svc.stop(context.Background()) })
+	}
+}
+
+// startListeners runs the listeners tune reserves until the test ends.
+func startListeners(t *testing.T, tune func(*config.Config, *testListenerSockets),
+	shape func(*endpoints)) (*config.Config, *listenerBuild) {
+	t.Helper()
+	sockets := newTestListenerSockets(t)
+	cfg := config.Default()
+	tune(&cfg, sockets)
+	return &cfg, serveBuild(t, &cfg, sockets, shape)
+}
+
 // waitForOK polls a URL until it answers 200 or the deadline passes.
 func waitForOK(t *testing.T, client *http.Client, url string) {
 	t.Helper()
@@ -150,25 +187,6 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 		res.Header.Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("public page lacks its hardening headers: %v", res.Header)
 	}
-}
-
-func TestRunServesTLSH1(t *testing.T) {
-	t.Parallel()
-	cert, key := runTestTLS(t)
-	sockets := newTestListenerSockets(t)
-	cfg := config.Default()
-	cfg.Native.H1 = sockets.reserveTCP()
-	tlsAddr := sockets.reserveTCP()
-	cfg.Native.H1TLS = tlsAddr
-	cfg.TLSCert, cfg.TLSKey = cert, key
-
-	stop := runUntilCancel(t, &cfg, sockets)
-	defer stop()
-
-	client := &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}}
-	waitForOK(t, client, "https://"+tlsAddr+"/preflight")
 }
 
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {

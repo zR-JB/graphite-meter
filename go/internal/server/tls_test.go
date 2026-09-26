@@ -53,43 +53,38 @@ func tlsTestConfig(cert, key string) *config.Config {
 func TestCertificateValidation(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
-	day := 24 * time.Hour
-	validCert, validKey := writeCertificate(t, dir, "valid", "meter.example", now.Add(-time.Hour), now.Add(day))
-	if _, err := newCertificateManager(tlsTestConfig(validCert, validKey)); err != nil {
-		t.Fatalf("valid certificate: %v", err)
+	// Only native origins must match: an external page origin and a separately named H3 origin do not.
+	external := func(c *config.Config) {
+		c.Native.H2, c.NativePublic.H2 = "", ""
+		c.Native.H3, c.NativePublic.H3 = ":7249", "https://quic.example"
+		c.Public.Both = []string{"https://speed.example"}
 	}
 	for _, tc := range []struct {
 		name, host    string
 		before, after time.Time
+		tune          func(*config.Config)
+		valid         bool
 	}{
-		{"expired", "meter.example", now.Add(-2 * time.Hour), now.Add(-time.Hour)},
-		{"future", "meter.example", now.Add(time.Hour), now.Add(2 * time.Hour)},
-		{"hostname", "other.example", now.Add(-time.Hour), now.Add(time.Hour)},
+		{"valid", "meter.example", now.Add(-time.Hour), now.Add(24 * time.Hour), nil, true},
+		{"expired", "meter.example", now.Add(-2 * time.Hour), now.Add(-time.Hour), nil, false},
+		{"future", "meter.example", now.Add(time.Hour), now.Add(2 * time.Hour), nil, false},
+		{"hostname", "other.example", now.Add(-time.Hour), now.Add(time.Hour), nil, false},
+		{"external origins", "quic.example", now.Add(-time.Hour), now.Add(time.Hour), external, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cert, key := writeCertificate(t, dir, tc.name, tc.host, tc.before, tc.after)
-			if _, err := newCertificateManager(tlsTestConfig(cert, key)); err == nil {
-				t.Fatal("invalid certificate accepted")
+			cfg := tlsTestConfig(writeCertificate(t, dir, tc.name, tc.host, tc.before, tc.after))
+			if tc.tune != nil {
+				tc.tune(cfg)
+			}
+			if _, err := newCertificateManager(cfg); (err == nil) != tc.valid {
+				t.Fatalf("accepted = %t, want %t: %v", err == nil, tc.valid, err)
 			}
 		})
 	}
+	cert, _ := writeCertificate(t, dir, "cert", "meter.example", now.Add(-time.Hour), now.Add(time.Hour))
 	_, otherKey := writeCertificate(t, dir, "other", "meter.example", now.Add(-time.Hour), now.Add(time.Hour))
-	if _, err := newCertificateManager(tlsTestConfig(validCert, otherKey)); err == nil {
+	if _, err := newCertificateManager(tlsTestConfig(cert, otherKey)); err == nil {
 		t.Fatal("mismatched key accepted")
-	}
-}
-
-func TestCertificateValidationIgnoresExternalOrigins(t *testing.T) {
-	now := time.Now()
-	dir := t.TempDir()
-	cert, key := writeCertificate(t, dir, "quic", "quic.example", now.Add(-time.Hour), now.Add(time.Hour))
-	cfg := config.Default()
-	cfg.Native.H3 = ":7249"
-	cfg.TLSCert, cfg.TLSKey = cert, key
-	cfg.Public.Both = []string{"https://speed.example"}
-	cfg.NativePublic.H3 = "https://quic.example"
-	if _, err := newCertificateManager(&cfg); err != nil {
-		t.Fatalf("native H3 certificate rejected for external H2 origin: %v", err)
 	}
 }
 

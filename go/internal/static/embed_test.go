@@ -24,17 +24,23 @@ func serve(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	return rr
 }
 
+// Hashed bundle files never change under their name; the shell and unhashed files must revalidate.
 func TestHandlerRoutes(t *testing.T) {
+	const immutable = "public, max-age=31536000, immutable"
 	for _, test := range []struct {
-		name, path, wantBody string
-		fs                   fstest.MapFS
-		wantStatus           int
+		name, path, wantBody, wantCache string
+		fs                              fstest.MapFS
+		wantStatus                      int
 	}{
-		{name: "known asset", path: "/assets/app.js", wantStatus: http.StatusOK, wantBody: "console.log('app')"},
-		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page"},
+		{name: "known asset", path: "/assets/app.js", wantStatus: http.StatusOK, wantBody: "console.log('app')",
+			wantCache: immutable},
+		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page",
+			wantCache: "no-store"},
+		{name: "unhashed file", path: "/version.json", wantStatus: http.StatusOK, wantBody: "{}"},
 		{name: "no SPA fallback", path: "/results", wantStatus: http.StatusNotFound},
 		{name: "missing asset", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
-		{name: "nested asset", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "nested"},
+		{name: "nested asset", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "nested",
+			wantCache: immutable},
 		{name: "cleaned traversal", path: "/assets/../index.html", wantStatus: http.StatusNotFound},
 		{name: "dot segment", path: "/foo/..", wantStatus: http.StatusNotFound},
 		{name: "asset dot segment", path: "/assets/..", wantStatus: http.StatusNotFound},
@@ -54,25 +60,13 @@ func TestHandlerRoutes(t *testing.T) {
 			}
 			rr := serve(handler(files, false, false), http.MethodGet, test.path)
 			body := rr.Body.String()
+			cache := rr.Header().Get("Cache-Control")
 			if rr.Code != test.wantStatus || rr.Code == http.StatusNotFound && strings.Contains(body, "index page") ||
-				!strings.Contains(body, test.wantBody) {
-				t.Fatalf("status = %d body = %q, want %d %q", rr.Code, body, test.wantStatus, test.wantBody)
+				!strings.Contains(body, test.wantBody) || rr.Code == http.StatusOK && cache != test.wantCache {
+				t.Fatalf("status = %d body = %q cache %q, want %d %q %q", rr.Code, body, cache, test.wantStatus,
+					test.wantBody, test.wantCache)
 			}
 		})
-	}
-}
-
-// Hashed bundle files never change under their name; the shell and unhashed files must revalidate.
-func TestOnlyHashedAssetsAreImmutable(t *testing.T) {
-	for path, want := range map[string]string{
-		"/assets/app.js": "public, max-age=31536000, immutable",
-		"/version.json":  "",
-		"/":              "no-store",
-	} {
-		if rr := serve(handler(testFS(), false, false), http.MethodGet, path); rr.Code != http.StatusOK ||
-			rr.Header().Get("Cache-Control") != want {
-			t.Errorf("GET %s = %d Cache-Control %q, want 200 %q", path, rr.Code, rr.Header().Get("Cache-Control"), want)
-		}
 	}
 }
 

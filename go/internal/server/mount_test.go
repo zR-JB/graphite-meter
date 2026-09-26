@@ -40,21 +40,28 @@ func publicMux(t testing.TB, e *endpoints, topo muxTopology, spa http.Handler) h
 // A route answers only the methods it publishes: any other is refused before admission or its handler.
 func TestMeasurementRoutesDispatchOnlyTheirMethods(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{transfers: true}, nil)
-	for _, tc := range []struct{ method, path, allow string }{
-		{http.MethodPost, "/download?bytes=1048576", "GET, HEAD, OPTIONS"},
-		{http.MethodGet, "/upload?id=x", "OPTIONS, POST"},
-		{http.MethodPut, "/upload/progress?id=x", "DELETE, GET, HEAD, OPTIONS"},
+	mux := publicMux(t, e, muxTopology{discovery: true, transfers: true}, nil)
+	for _, tc := range []struct {
+		method, path string
+		want         int
+		allow        string
+	}{
+		{http.MethodPost, "/download?bytes=1048576", http.StatusMethodNotAllowed, "GET, HEAD, OPTIONS"},
+		{http.MethodGet, "/upload?id=x", http.StatusMethodNotAllowed, "OPTIONS, POST"},
+		{http.MethodPut, "/upload/progress?id=x", http.StatusMethodNotAllowed, "DELETE, GET, HEAD, OPTIONS"},
+		{http.MethodHead, "/preflight", http.StatusOK, ""},
+		{http.MethodHead, "/probe", http.StatusOK, ""},
+		{http.MethodHead, "/download?bytes=0", http.StatusOK, ""},
 	} {
+		before, _ := e.admission.stats()
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("not an upload")))
-		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != tc.allow {
-			t.Errorf("%s %s = %d Allow %q, want 405 Allow %q", tc.method, tc.path, rec.Code, rec.Header().Get("Allow"),
-				tc.allow)
+		after, _ := e.admission.stats()
+		if rec.Code != tc.want || rec.Header().Get("Allow") != tc.allow ||
+			tc.want == http.StatusMethodNotAllowed && after.peak != before.peak {
+			t.Errorf("%s %s = %d Allow %q admitted %t, want %d Allow %q", tc.method, tc.path, rec.Code,
+				rec.Header().Get("Allow"), after.peak != before.peak, tc.want, tc.allow)
 		}
-	}
-	if requests, _ := e.admission.stats(); requests.peak != 0 {
-		t.Fatalf("a refused method reached admission: peak %d", requests.peak)
 	}
 }
 
@@ -147,19 +154,8 @@ func TestWebSocketPingEchoesProbes(t *testing.T) {
 	if pong := recv(); pong.ID != 7 {
 		t.Fatalf("bus did not survive bad frames: PING,7 → %+v", pong)
 	}
-}
-
-// An oversized frame is a peer forcing the server to buffer.
-func TestWebSocketPingRefusesAnOversizedFrame(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(publicMux(t, testEndpoints(t), muxTopology{latency: true}, nil))
-	defer srv.Close()
-	conn := dialPing(t, srv)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if err := conn.Write(ctx, websocket.MessageText, make([]byte, 4096)); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	// An oversized frame is a peer forcing the server to buffer.
+	send(string(make([]byte, 4096)))
 	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusMessageTooBig {
 		t.Fatalf("close = %v, want StatusMessageTooBig: an oversized frame was buffered instead of refused", err)
 	}
