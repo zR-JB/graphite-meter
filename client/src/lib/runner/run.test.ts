@@ -218,6 +218,22 @@ test("warmup probes never enter a measured population", async () => {
   });
 });
 
+test("an aborted latency stage keeps its summary after the run releases its replies", async () => {
+  const h = await harness(
+    [{ id: "self", measure: probe(10, 4) }],
+    { latency: true },
+    { latencyMs: 1_000 },
+  );
+  h.start();
+  await advance(300);
+  h.run.abort();
+  expect(h.run.details().servers[0].latencyByStage.latency).toMatchObject({
+    probeCount: 4,
+    p50Ms: 10,
+  });
+  h.run.dispose();
+});
+
 test("one server runs every stage in order and its saved record describes the run", async () => {
   const h = await harness(
     [{ id: "self", rate: 2, measure: probe(10, 4) }],

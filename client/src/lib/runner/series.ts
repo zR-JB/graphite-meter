@@ -101,6 +101,7 @@ export class LatencyPresentationBuckets {
   flush(atT?: number): LatencyBucket | null {
     const pending = this.#pending;
     this.#pending = null;
+    this.#closed = [];
     if (!pending?.pings) return null;
     return this.#summarize(
       pending,

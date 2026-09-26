@@ -322,6 +322,7 @@ export class Run {
       server.latencyStall = null;
       server.stage?.discard();
       server.stage = null;
+      server.latency.close();
     }
   }
 
@@ -1238,7 +1239,6 @@ export class Run {
       durationMs,
     };
     this.#release();
-    for (const server of this.#servers) server.latency.close();
     this.#phase = "complete";
     this.#emit({ type: "complete", result });
   }
