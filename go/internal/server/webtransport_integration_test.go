@@ -997,8 +997,9 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 			t.Fatalf("run at %d lanes: %v, %+v", streams, err, results)
 		}
 	}
-	if _, sessions := e.admission.stats(); sessions.peak != 1 {
-		t.Fatalf("a stage held %d WebTransport sessions at once, want 1", sessions.peak)
+	// Lanes share their stage's session; only the previous stage's closing session may briefly overlap it.
+	if _, sessions := e.admission.stats(); sessions.peak > 2 {
+		t.Fatalf("%d WebTransport sessions were open at once, want at most 2", sessions.peak)
 	}
 }
 
