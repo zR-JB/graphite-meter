@@ -241,6 +241,7 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer conn.Close()
+			sent := time.Now()
 			_, _ = io.WriteString(conn, request+" HTTP/1.1\r\nHost: meter\r\nContent-Length: 200000\r\n\r\npartial")
 			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 			res, err := http.ReadResponse(bufio.NewReader(conn), nil)
@@ -248,8 +249,9 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _ = io.Copy(io.Discard, res.Body)
-			if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-				t.Fatalf("answered %d, then the connection stayed open: %v", res.StatusCode, err)
+			// The FIN precedes the server's lingering close, so it arrives with the drain deadline.
+			if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) || time.Since(sent) > 450*time.Millisecond {
+				t.Fatalf("answered %d, then the connection stayed open for %v: %v", res.StatusCode, time.Since(sent), err)
 			}
 		})
 	}

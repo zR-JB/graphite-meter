@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/netip"
@@ -280,3 +281,14 @@ func (c *admittedConn) Close() error {
 	c.release()
 	return err
 }
+
+// CloseWrite lets the HTTP/1 server send its FIN before an early refusal's lingering close.
+func (c *admittedConn) CloseWrite() error {
+	if tcp, ok := c.Conn.(*net.TCPConn); ok {
+		return tcp.CloseWrite()
+	}
+	return nil
+}
+
+// ReadFrom keeps the kernel's zero-copy path for bodies copied onto the connection.
+func (c *admittedConn) ReadFrom(r io.Reader) (int64, error) { return io.Copy(c.Conn, r) }
