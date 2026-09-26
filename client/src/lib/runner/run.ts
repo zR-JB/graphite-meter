@@ -21,13 +21,12 @@ import type {
 import { safeDetail } from "../api/decode";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
-import { planServerStreams, validateServerStreams } from "./paths";
+import { planServerStreams, validatePlan } from "./paths";
 import {
   EARLY_FINISH,
   pathEvidence,
   ServerLatency,
   shouldExitPhase,
-  STAGES,
   ThroughputAggregate,
   type Boundary,
   type ConfidenceScore,
@@ -37,8 +36,10 @@ import {
 } from "./measure";
 import {
   buildSegments,
+  planned,
   reconfigureTimeline,
   segmentAt,
+  STAGES,
   truncateSegmentAt,
   type Segment,
 } from "./schedule";
@@ -217,7 +218,7 @@ export class Run {
   }
 
   #validate(config: RunnerConfig, servers = this.#participants()): void {
-    validateServerStreams(
+    validatePlan(
       config,
       servers.map(({ server, paths }) => ({ id: server.id, paths })),
     );
@@ -1153,14 +1154,18 @@ export class Run {
   /** Each measured stage's result is reduced and emitted once, the moment it ends. */
   #finalize(phase: Phase): void {
     const cfg = this.#cfg!;
-    if (phase === "latency" && cfg.stages.latency && !this.#results.latency) {
+    if (
+      phase === "latency" &&
+      planned(cfg, "latency") &&
+      !this.#results.latency
+    ) {
       const result = this.#latencySource.latency.result();
       this.#results.latency = result;
       if (result) this.#emit({ type: "stageResult", stage: "latency", result });
     }
     if (
       (phase !== "download" && phase !== "upload") ||
-      !cfg.stages[phase] ||
+      !planned(cfg, phase) ||
       this.#results[phase]
     )
       return;
@@ -1174,8 +1179,7 @@ export class Run {
 
   #status(stage: TransportRole, lanes: unknown[]): StageStatus {
     const cfg = this.#cfg!;
-    if (!cfg.stages[stage] || !(cfg.duration[`${stage}Ms`] > 0))
-      return "not-run";
+    if (!planned(cfg, stage)) return "not-run";
     const scope = stage === "latency" ? "latency" : "throughput";
     const failed = () =>
       this.#failures.some(
@@ -1207,7 +1211,7 @@ export class Run {
     this.#finalize(this.#phase);
     const durationMs = this.#now();
     const source = this.#latencySource.latency;
-    const bidirectional = cfg.stages.bidirectional
+    const bidirectional = planned(cfg, "bidirectional")
       ? this.#aggregate.result(
           "bidirectional",
           this.#completedEarly.has("bidirectional"),
@@ -1274,12 +1278,13 @@ export class Run {
           bufferbloat: latency.bufferbloat(),
           download: result("download", "down"),
           upload: result("upload", "up"),
-          bidirectional: cfg?.stages.bidirectional
-            ? {
-                down: result("bidirectional", "down"),
-                up: result("bidirectional", "up"),
-              }
-            : null,
+          bidirectional:
+            cfg && planned(cfg, "bidirectional")
+              ? {
+                  down: result("bidirectional", "down"),
+                  up: result("bidirectional", "up"),
+                }
+              : null,
           totalBytes: aggregate.totals(server.id),
         };
       }),

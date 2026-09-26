@@ -6,12 +6,12 @@
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
   import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
-  import { STAGE_ORDER } from "../state/stagePresentation";
+  import { STAGES } from "../runner/schedule";
 
   const controller = getApplicationController();
 
   const segments = $derived(
-    STAGE_ORDER.filter((key) =>
+    STAGES.filter((key) =>
       stageShown(key, store.config.stages[key], store.stagePresentation[key]),
     ).map((key) => {
       const execution = store.stagePresentation[key];

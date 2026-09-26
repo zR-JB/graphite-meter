@@ -37,7 +37,7 @@ import type {
   StageKey,
 } from "../state/store.svelte";
 import { readStored, writeStored } from "../state/persistence";
-import { adaptWarmup, buildSegments } from "./schedule";
+import { adaptWarmup, buildSegments, planned, STAGES } from "./schedule";
 import { epochMs, pageMs } from "./clock";
 import {
   CONNECTION_ROLES,
@@ -636,11 +636,11 @@ export function createApplicationController(
       return false;
     const config = { ...$state.snapshot(store.config), ...patch };
     if (
-      !Object.values(config.stages).some(Boolean) ||
+      !STAGES.some((stage) => planned(config, stage)) ||
       Object.values(config.duration).some(
         (value) => !Number.isFinite(value) || value < 0,
       ) ||
-      (Object.keys(config.stages) as StageKey[]).some(
+      STAGES.some(
         (stage) =>
           config.stages[stage] !== store.config.stages[stage] &&
           !store.canToggleStage(stage),

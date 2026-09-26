@@ -11,11 +11,11 @@ import {
   type TransportRole,
 } from "../runner/contract";
 import { createUuid } from "../uuid";
+import { planned, STAGES } from "../runner/schedule";
 import {
   latencyLanes,
   EARLY_FINISH,
   MIN_EVIDENCE_MS,
-  STAGES,
   type LatencyLaneSnapshot,
   type MultiServerResult,
 } from "../runner/measure";
@@ -211,9 +211,9 @@ export function incoherence(
       (f) => f.stage === name && f.scope === scope,
     );
     const spans = intervals.filter((i) => i.stage === name);
-    const planned = !!config?.stages[name] && config.duration[`${name}Ms`] > 0;
-    if (config && planned === (status === "not-run"))
-      problems.push(`${name} is ${status} but planned ${planned}`);
+    const wanted = !!config && planned(config, name);
+    if (config && wanted === (status === "not-run"))
+      problems.push(`${name} is ${status} but planned ${wanted}`);
     if ((status === "failed" || status === "partial") && !explained)
       problems.push(`${name} is ${status} without a stated reason`);
     if (status === "complete" && (explained || !lanes.every(Boolean)))
@@ -241,6 +241,8 @@ export function incoherence(
     }
   }
   const statuses = STAGES.map((name) => record.stages[name].status);
+  if (statuses.every((status) => status === "not-run"))
+    problems.push("no stage ran");
   const expected = statuses.includes("failed")
     ? "incomplete"
     : failures.length

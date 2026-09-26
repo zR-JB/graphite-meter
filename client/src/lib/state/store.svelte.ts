@@ -20,7 +20,8 @@ import type {
 } from "../runner/contract";
 import {
   emptyConnectionValidation,
-  validateServerStreams,
+  latencyPathNeeded,
+  validatePlan,
   type ConnectionValidation,
   type ConnectionValidationState,
   type ServerView,
@@ -34,7 +35,12 @@ import { rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
-import { adaptWarmup, buildSegments } from "../runner/schedule";
+import {
+  adaptWarmup,
+  buildSegments,
+  planned,
+  STAGES,
+} from "../runner/schedule";
 import {
   latencyLanes,
   type MultiServerResult,
@@ -43,7 +49,6 @@ import {
 import { appendThroughputSample, upsertLatencyBucket } from "../runner/series";
 import {
   deriveStagePresentation,
-  STAGE_ORDER,
   type StagePresentation,
 } from "./stagePresentation";
 import { DEFAULT_CONFIG } from "./defaults";
@@ -101,7 +106,6 @@ const NO_LATENCY: LatencyBucket[] = [];
 const MAX_IDLE_SAMPLES = 60;
 
 export type StageKey = TransportRole;
-const MEASURED_STAGE_ORDER = ["latency", "download", "upload"] as const;
 const TERMINAL_PHASES: readonly Phase[] = [
   "idle",
   "complete",
@@ -236,7 +240,7 @@ class AppStore {
     });
     if (servers.length !== this.selectedServers.length) return "";
     try {
-      validateServerStreams(this.config, servers);
+      validatePlan(this.config, servers);
       return "";
     } catch (cause) {
       return cause instanceof Error ? cause.message : String(cause);
@@ -250,12 +254,11 @@ class AppStore {
       this.startBlocker
         ? "blocked"
         : this.preparationStatus,
-    throughput:
-      this.config.stages.download ||
-      this.config.stages.upload ||
-      this.config.stages.bidirectional
-        ? this.connectionValidation.throughput.state
-        : "disabled",
+    throughput: STAGES.some(
+      (stage) => stage !== "latency" && planned(this.config, stage),
+    )
+      ? this.connectionValidation.throughput.state
+      : "disabled",
     latency: this.latencyEnabled
       ? this.connectionValidation.latency.state
       : "disabled",
@@ -462,10 +465,10 @@ class AppStore {
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
     () =>
       Object.fromEntries(
-        STAGE_ORDER.map((stage) => [
+        STAGES.map((stage) => [
           stage,
           deriveStagePresentation(stage, {
-            configured: this.runConfig.stages[stage],
+            configured: planned(this.runConfig, stage),
             settled: this.result?.stages[stage],
             phase: this.phase,
             phaseStage: this.phaseStage,
@@ -484,15 +487,11 @@ class AppStore {
   canToggleStage(stage: StageKey): boolean {
     if (!this.isRunning) return true;
     if (stage === "bidirectional") return this.phaseStage !== "bidirectional";
-    const current = MEASURED_STAGE_ORDER.indexOf(
-      this.phaseStage as (typeof MEASURED_STAGE_ORDER)[number],
-    );
-    return current >= 0 && MEASURED_STAGE_ORDER.indexOf(stage) > current;
+    const current = this.phaseStage ? STAGES.indexOf(this.phaseStage) : -1;
+    return current >= 0 && STAGES.indexOf(stage) > current;
   }
 
-  latencyEnabled = $derived(
-    this.config.stages.latency || !this.config.skipLoadedLatencyWhenStageOff,
-  );
+  latencyEnabled = $derived(latencyPathNeeded(this.config));
 
   #bidirectionalWire(
     details: MultiServerResult | null,
@@ -644,7 +643,7 @@ class AppStore {
         const { to, stage, t } = event.transition;
         const from = this.phase;
         if (
-          STAGE_ORDER.some((key) => key === from) &&
+          STAGES.some((key) => key === from) &&
           to !== "aborted" &&
           to !== "error" &&
           from !== to &&
@@ -754,7 +753,7 @@ class AppStore {
 
   latencyLanes = $derived.by<LatencyLane[]>(() => {
     const lanes = latencyLanes(this.latencySummaries);
-    return STAGE_ORDER.map((key) => ({
+    return STAGES.map((key) => ({
       ...EMPTY_LANE,
       ...lanes[key],
       key,

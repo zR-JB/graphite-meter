@@ -7,6 +7,7 @@
   import { MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
+    CARD_ORDER,
     liveWire,
     summaryCards,
     summaryEvidence,
@@ -23,7 +24,6 @@
   const controller = getApplicationController();
   let shown = $state("");
   const details = $derived(store.result?.multiServer);
-  const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
 
   function selectScope(id: string) {
     shown = id;
@@ -40,8 +40,8 @@
   const cards = $derived.by(() => {
     if (compact) return [];
     const stages = Object.fromEntries(
-      ORDER.map((key) => [key, store.stagePresentation[key].status]),
-    ) as Record<(typeof ORDER)[number], string>;
+      CARD_ORDER.map((key) => [key, store.stagePresentation[key].status]),
+    ) as Record<(typeof CARD_ORDER)[number], string>;
     const evidence = summaryEvidence(
       stages,
       {
@@ -65,7 +65,7 @@
 
   // Animated rates are visual only; accessible values use receiver accounting.
   function chipValues(
-    key: (typeof ORDER)[number],
+    key: (typeof CARD_ORDER)[number],
     active: boolean,
   ): [shown: number | null, accessible: number | null] {
     if (key === "latency") {
@@ -97,7 +97,7 @@
 
   // Live chips hold a row for every stage from the start, so none appears later.
   const chips = $derived.by(() =>
-    ORDER.flatMap((key) => {
+    CARD_ORDER.flatMap((key) => {
       const { status } = store.stagePresentation[key];
       if (status === "disabled") return [];
       const active = status === "active" || status === "recovering";

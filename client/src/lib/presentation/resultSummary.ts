@@ -55,7 +55,12 @@ export interface SummaryCard {
 }
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
-const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
+export const CARD_ORDER = [
+  "download",
+  "upload",
+  "bidirectional",
+  "latency",
+] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
 
 export const wireOverhead = (multiplier: number) =>
@@ -114,7 +119,7 @@ export function summaryCards(
   rate: Rate,
   base: "base10" | "base2",
 ): SummaryCard[] {
-  return ORDER.flatMap((key): SummaryCard[] => {
+  return CARD_ORDER.flatMap((key): SummaryCard[] => {
     const status = evidence.status[key];
     if (!status) return [];
     const card: SummaryCard = {
@@ -235,7 +240,7 @@ export function serverEvidence(
   };
   return {
     status: Object.fromEntries(
-      ORDER.flatMap((key) => {
+      CARD_ORDER.flatMap((key) => {
         const base = status[key];
         return base ? [[key, scoped(key, base)]] : [];
       }),

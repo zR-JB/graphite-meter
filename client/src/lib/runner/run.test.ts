@@ -540,6 +540,27 @@ test("a stable feed completes early and each result arrives before the next stag
   expect(stageResult).toBeLessThan(upload);
 });
 
+test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {
+  const h = await harness(
+    [{ id: "self", rate: 2 }],
+    { latency: true, download: true, upload: true },
+    { downloadMs: 1_000 },
+  );
+  h.config.duration.downloadMs = 0;
+  expect(() => h.start()).toThrow("Give at least one stage a duration");
+  h.config.duration.downloadMs = 1_000;
+  h.start();
+  const result = await h.result();
+  expect(h.phases()).toEqual(["connecting", "download"]);
+  expect(result.stages).toEqual({
+    latency: "not-run",
+    download: "complete",
+    upload: "not-run",
+    bidirectional: "not-run",
+  });
+  expect(result.outcome).toBe("complete");
+});
+
 test("a conflicting live stream plan is rejected without changing the running schedule", async () => {
   const h = await harness(
     [{ id: "self", rate: 3, latency: false }],
@@ -553,7 +574,7 @@ test("a conflicting live stream plan is rejected without changing the running sc
   expect(() =>
     h.run.reconfigure({
       stages: { ...stages, upload: true },
-      duration,
+      duration: { ...duration, uploadMs: 1_200 },
       adaptive,
     }),
   ).toThrow("Forced streams");

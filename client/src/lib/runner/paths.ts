@@ -19,6 +19,7 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 import type { LatencyEndpoint, ThroughputEndpoint } from "../api/decode";
+import { planned, plannedActivities } from "./schedule";
 import {
   browserOriginRestriction,
   isLoopbackHostname,
@@ -513,30 +514,15 @@ export function planServerStreams(
   return plan;
 }
 
-/** The transfer activities a configuration's enabled stages run. */
-export function transferActivities(config: RunnerConfig): PhaseActivity[] {
-  const loadedLatency =
-    !config.skipLoadedLatencyWhenStageOff || config.stages.latency;
-  return (
-    [
-      ["download", ["down"]],
-      ["upload", ["up"]],
-      ["bidirectional", ["down", "up"]],
-    ] as const
-  ).flatMap(([stage, transfer]) =>
-    config.stages[stage]
-      ? [{ stage, transfer: [...transfer], loadedLatency }]
-      : [],
-  );
-}
-
-/** Rejects a configuration whose stream plan cannot fit before any connection opens. */
-export function validateServerStreams(
+/** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
+export function validatePlan(
   config: RunnerConfig,
   servers: readonly { id: string; paths: PreparedPaths }[],
 ) {
-  for (const activity of transferActivities(config))
-    planServerStreams(config, servers, activity);
+  const activities = plannedActivities(config);
+  if (!activities.length) throw new Error("Give at least one stage a duration");
+  for (const activity of activities)
+    if (activity.transfer.length) planServerStreams(config, servers, activity);
 }
 
 /** The lane policy in words; `activities` are the stages the run will execute. */
@@ -618,11 +604,10 @@ export const connectionSelection = (
     : config.transports.latencyTarget;
 
 export const latencyPathNeeded = (config: RunnerConfig): boolean =>
-  config.stages.latency ||
-  (!config.skipLoadedLatencyWhenStageOff &&
-    (config.stages.download ||
-      config.stages.upload ||
-      config.stages.bidirectional));
+  plannedActivities(config).some(needsPings);
+
+const checkpointNeeded = (config: RunnerConfig) =>
+  planned(config, "upload") || planned(config, "bidirectional");
 
 /** The part of a configuration that decides one role's verified path. */
 export function connectionDraftRoleKey(
@@ -633,7 +618,7 @@ export function connectionDraftRoleKey(
   return role === "throughput"
     ? JSON.stringify({
         selection,
-        checkpointNeeded: config.stages.upload || config.stages.bidirectional,
+        checkpointNeeded: checkpointNeeded(config),
       })
     : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
@@ -668,9 +653,7 @@ export function uploadCapabilityFailure(
   config: RunnerConfig,
   discovery: Pick<TransportDiscovery, "uploadCheckpoint"> | null | undefined,
 ): string | undefined {
-  return discovery &&
-    (config.stages.upload || config.stages.bidirectional) &&
-    !discovery.uploadCheckpoint
+  return discovery && checkpointNeeded(config) && !discovery.uploadCheckpoint
     ? "Receiver checkpoint support is required for uploads. Upgrade this measurement server."
     : undefined;
 }

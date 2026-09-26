@@ -4,7 +4,7 @@
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
-  import { STAGE_ORDER } from "../state/stagePresentation";
+  import { planned, STAGES } from "../runner/schedule";
   import { STAGE, phaseLabel, reasonLabel } from "../presentation/vocabulary";
   import { serverName } from "../presentation/serverAppearance";
   import { announceChanges } from "../presentation/announcer.svelte";
@@ -20,7 +20,7 @@
     }`,
   );
   const stages = $derived(
-    STAGE_ORDER.filter((stage) => store.runConfig.stages[stage]),
+    STAGES.filter((stage) => planned(store.runConfig, stage)),
   );
   const issues = $derived.by(() => {
     const details = store.serverDetails;

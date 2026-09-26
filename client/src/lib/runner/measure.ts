@@ -13,6 +13,7 @@ import type {
 } from "./contract";
 import type { ServerIdentity } from "../servers/catalog";
 import { fixedPingIntervalMs } from "./pingCadence";
+import { STAGES } from "./schedule";
 
 export const MIN_EVIDENCE_MS = 800;
 const MIN_PARTIAL_LATENCY_OUTCOMES = 3;
@@ -22,12 +23,6 @@ const WINDOW_BUCKETS = WINDOW_MS / BUCKET_MS;
 const INTERVAL_LIMIT = 128;
 const PEAK_WINDOW_MS = 500;
 const COMBINED = "";
-export const STAGES = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const;
 export type TransferStage = Exclude<TransportRole, "latency">;
 
 export function sortedMedian(sorted: ArrayLike<number>): number {

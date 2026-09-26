@@ -2,9 +2,9 @@
 import { fmtMs, niceDomain } from "../format";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION } from "../presentation/vocabulary";
-import { STAGE_ORDER } from "../state/stagePresentation";
+import { STAGES } from "../runner/schedule";
 
-export const LATENCY_LANES = STAGE_ORDER.map((key) => ({
+export const LATENCY_LANES = STAGES.map((key) => ({
   key,
   label: LATENCY_POPULATION[key].short,
 }));

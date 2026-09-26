@@ -1,12 +1,5 @@
 import type { Phase, StageStatus, TransportRole } from "../runner/contract";
 
-export const STAGE_ORDER = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const satisfies readonly TransportRole[];
-
 export type StagePresentationStatus =
   | "disabled"
   | "pending"
