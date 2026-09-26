@@ -12,8 +12,8 @@ permissions:
 
 env:
   MISE_AUTO_INSTALL: '0'
-  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4
-  SKOPEO_VERSION: 1.22.2
+  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00
+  SKOPEO_VERSION: 1.22.3
 
 concurrency:
   group: ci-${{ github.ref }}
