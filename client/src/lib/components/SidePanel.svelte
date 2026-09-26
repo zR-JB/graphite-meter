@@ -1,9 +1,9 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Docked column on wide layouts, focus-trapped flyout or sheet elsewhere.
+  // Docked column on wide layouts, modal flyout or sheet elsewhere.
+  import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
-  import { focusTrap } from "../actions/focusTrap";
   import { sheetDrag } from "../actions/sheetDrag";
   import { tooltip } from "../actions/tooltip";
 
@@ -12,9 +12,7 @@
     side?: "left" | "right";
     title: string;
     kicker?: string;
-    width?: string;
     docked?: boolean;
-    raised?: boolean;
     dockWidth?: number;
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
@@ -27,9 +25,7 @@
     side = "right",
     title,
     kicker,
-    width,
     docked = false,
-    raised = false,
     dockWidth,
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
@@ -38,7 +34,7 @@
     children,
   }: Props = $props();
 
-  let panelEl = $state<HTMLDivElement>();
+  let panelEl: HTMLElement | undefined;
 
   function setWidth(px: number) {
     onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
@@ -105,51 +101,25 @@
     else return;
     e.preventDefault();
   }
-
-  let backdropEl = $state<HTMLDivElement>();
 </script>
 
-<div
-  class="panel-layer"
-  class:open
-  class:docked
-  class:raised
-  aria-hidden={!open}
->
-  <div
-    class="backdrop"
-    bind:this={backdropEl}
-    aria-hidden="true"
-    onclick={onClose}
-  ></div>
-
-  <div
-    class="panel"
-    bind:this={panelEl}
-    use:sheetDrag={{
-      enabled: open && !docked,
-      backdrop: backdropEl,
-      onDismiss: onClose,
-    }}
-    data-side={side}
-    style={width ? `--panel-w: ${width}` : undefined}
-    role={docked ? "region" : "dialog"}
-    aria-modal={docked ? undefined : true}
-    aria-label={title}
-    inert={!open}
-    tabindex="-1"
-    use:focusTrap={open && !docked}
-    onkeydown={(e) => {
-      if (e.key === "Escape") {
-        if (document.querySelector(":popover-open:not(.tooltip)")) return;
-        e.stopPropagation();
-        onClose();
-      }
+<div class="panel-layer" class:docked>
+  <Dialog
+    {open}
+    modal={!docked}
+    onCancel={onClose}
+    lightDismiss
+    class="panel {side}"
+    label={title}
+    attach={(node) => {
+      panelEl = node;
+      if (open && !docked) return sheetDrag(onClose)(node);
     }}
   >
     {#if docked}
       <div
         class="resize-handle"
+        data-side={side}
         role="slider"
         aria-orientation="horizontal"
         aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
@@ -184,74 +154,81 @@
     {#if open}
       <div class="panel-body">{@render children()}</div>
     {/if}
-  </div>
+  </Dialog>
 </div>
 
 <style>
   .panel-layer {
     display: contents;
   }
-  .backdrop {
-    position: fixed;
-    inset: var(--topbar-h) 0 0 0;
-    z-index: var(--z-scrim);
-    background: var(--scrim);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--dur-slide) var(--ease-out);
-  }
-  .open .backdrop {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .docked .backdrop {
-    display: none;
-  }
-
-  .panel {
-    position: fixed;
-    top: var(--topbar-h);
-    bottom: var(--statusbar-h);
-    z-index: var(--z-panel);
-    display: flex;
+  .panel-layer > :global(dialog.panel) {
+    max-width: none;
+    max-height: none;
+    margin: 0;
     flex-direction: column;
     gap: var(--space-3);
-    width: var(--panel-w, min(480px, 92vw));
     padding: var(--space-4);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%);
-    box-shadow: var(--elev-float);
-    transition: transform var(--dur-slide) var(--ease-out);
-  }
-  .panel[data-side="right"] {
-    grid-area: rightdock;
-    right: 0;
     border-left: 1px solid var(--border-strong);
-    transform: translateX(100%);
+    background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%);
+    color: var(--text);
   }
-  .panel[data-side="left"] {
-    grid-area: leftdock;
-    left: 0;
+  .panel-layer > :global(dialog.panel.left) {
+    border-left: 0;
     border-right: 1px solid var(--border-strong);
-    transform: translateX(-100%);
   }
-  .open .panel {
-    transform: none;
+  .panel-layer > :global(dialog.panel[open]) {
+    display: flex;
   }
-  .raised:not(.docked) .panel {
-    z-index: var(--z-panel-top);
-  }
-  .docked .panel {
+  .docked > :global(dialog.panel) {
+    grid-area: rightdock;
     position: relative;
-    inset: auto;
-    z-index: auto;
     width: auto;
     height: 100%;
-    box-shadow: none;
-    transform: none;
-    transition: none;
   }
-  .docked:not(.open) .panel {
-    display: none;
+  .docked > :global(dialog.panel.left) {
+    grid-area: leftdock;
+  }
+  .panel-layer:not(.docked) > :global(dialog.panel) {
+    --closed: translateX(100%);
+    position: fixed;
+    inset: var(--topbar-h) 0 var(--statusbar-h) auto;
+    width: min(440px, 92vw);
+    height: auto;
+    box-shadow: var(--elev-float);
+    transform: var(--closed);
+    transition:
+      transform var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
+  }
+  .panel-layer:not(.docked) > :global(dialog.panel.left) {
+    --closed: translateX(-100%);
+    inset: var(--topbar-h) auto var(--statusbar-h) 0;
+    width: min(560px, 94vw);
+  }
+  .panel-layer:not(.docked) > :global(dialog.panel[open]) {
+    transform: none;
+  }
+  @starting-style {
+    .panel-layer:not(.docked) > :global(dialog.panel[open]) {
+      transform: var(--closed);
+    }
+  }
+  .panel-layer > :global(dialog.panel::backdrop) {
+    background: var(--scrim);
+    opacity: calc(1 - var(--sheet-drag, 0));
+    transition:
+      opacity var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
+  }
+  .panel-layer > :global(dialog.panel:not([open])::backdrop) {
+    opacity: 0;
+  }
+  @starting-style {
+    .panel-layer > :global(dialog.panel[open]::backdrop) {
+      opacity: 0;
+    }
   }
 
   .resize-handle {
@@ -262,10 +239,10 @@
     cursor: col-resize;
     touch-action: none;
   }
-  [data-side="left"] .resize-handle {
+  .resize-handle[data-side="left"] {
     right: -6px;
   }
-  [data-side="right"] .resize-handle {
+  .resize-handle[data-side="right"] {
     left: -6px;
   }
   .resize-handle::after {
@@ -299,16 +276,13 @@
   }
   /* Only portrait phones use a bottom sheet; landscape stays a side flyout. */
   @media (max-width: 759px) and (orientation: portrait) {
-    .panel-layer:not(.docked) .panel {
+    .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
+      --closed: translateY(100%);
       inset: auto 0 0;
       width: 100%;
       height: 88dvh;
       padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
       border-radius: var(--r-well) var(--r-well) 0 0;
-      transform: translateY(100%);
-    }
-    .open:not(.docked) .panel {
-      transform: none;
     }
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;

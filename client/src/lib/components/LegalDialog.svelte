@@ -33,15 +33,12 @@
   });
 </script>
 
-<!-- The History shortcut stays live so the archive can open over legal. -->
 <Dialog
   {open}
   onCancel={onClose}
+  class="float legal-dialog"
   labelledby="legal-dialog-title"
   lightDismiss
-  shortcuts={["h"]}
-  width="880px"
-  height="min(86svh, 760px)"
 >
   <header class="surface-head legal-head">
     <h2 id="legal-dialog-title">About &amp; legal</h2>
@@ -127,6 +124,10 @@
 </Dialog>
 
 <style>
+  :global(dialog.legal-dialog) {
+    --dialog-width: 880px;
+    --dialog-height: min(86svh, 760px);
+  }
   .legal-head {
     display: flex;
     align-items: center;

@@ -168,7 +168,6 @@
   const legalOpen = $derived(
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
   );
-  const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
 
@@ -444,8 +443,7 @@
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
       return;
     if (document.querySelector(":popover-open:not(.tooltip)")) return;
-    if (isEditable(e.target)) return;
-    if (resetConfirmOpen) return;
+    if (isEditable(e.target) || activeModal()) return;
 
     if (e.key === "Escape") {
       if (
@@ -462,19 +460,8 @@
         toggleRun();
       } else if (hasPendingStart()) {
         cancelPendingStart();
-      } else if (settingsOpen || telemetryOpen) {
-        const requested = dockQuery.current
-          ? lastOpened === "left"
-            ? "settings"
-            : "endpoint"
-          : currentRoute.kind === "app"
-            ? currentRoute.panels.at(-1)
-            : undefined;
-        if (requested === "settings" && settingsOpen) dismissPanel("settings");
-        else if (requested === "endpoint" && telemetryOpen)
-          dismissPanel("endpoint");
-        else if (settingsOpen) dismissPanel("settings");
-        else if (telemetryOpen) dismissPanel("endpoint");
+      } else if (lastPanel) {
+        dismissPanel(lastPanel);
       } else {
         return;
       }
@@ -719,7 +706,6 @@
   <SidePanel
     open={settingsOpen}
     docked={dockQuery.current}
-    raised={lastOpened === "left"}
     dockWidth={docks.left}
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
@@ -728,14 +714,12 @@
     side="left"
     title="Settings"
     kicker="Test & Display"
-    width="min(560px, 94vw)"
   >
     <TestSetupPanel onOpenHistory={(invoker) => historyRoute(null, invoker)} />
   </SidePanel>
   <SidePanel
     open={telemetryOpen}
     docked={dockQuery.current}
-    raised={lastOpened === "right"}
     dockWidth={docks.right}
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
@@ -743,7 +727,6 @@
     onClose={() => dismissPanel("endpoint")}
     title="Details"
     kicker="Server & connection"
-    width="min(440px, 92vw)"
   >
     <EndpointInfo onOpenLegal={openLegal} />
   </SidePanel>
