@@ -575,7 +575,7 @@ func waitForLoad(t *testing.T, httpBase string, want int) {
 	}
 }
 
-// wtOriginCheck is the ONLY origin policy a WebTransport CONNECT passes through.
+// Enforce is the only origin policy a WebTransport CONNECT passes through.
 func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)

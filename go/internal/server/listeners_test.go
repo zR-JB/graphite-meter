@@ -329,42 +329,6 @@ func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
 	}
 }
 
-// The unit half of TestWebTransportConnectRefusesAForeignOrigin.
-func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
-	authn := testPasswordAuth(t, "https://meter.example")
-	withOrigin := func(origin string) *http.Request {
-		r := httptest.NewRequest(http.MethodConnect, "/wt/ping", nil)
-		if origin != "" {
-			r.Header.Set("Origin", origin)
-		}
-		return r
-	}
-	check := wtOriginCheck(authn)
-	for _, tc := range []struct {
-		origin string
-		want   bool
-	}{
-		// No Origin at all is a native client, which no browser origin policy governs; the credential is what admits it.
-		{"", true},
-		{authn.PublicOrigin(), true},
-		{"https://attacker.example", false},
-		// Neither a suffix nor a prefix of the canonical origin is it.
-		{"https://meter.example.attacker.example", false},
-		{"https://meter.example.evil", false},
-		// The scheme is part of an origin.
-		{"http://meter.example", false},
-		{"null", false},
-	} {
-		if got := check(withOrigin(tc.origin)); got != tc.want {
-			t.Errorf("wtOriginCheck(Origin: %q) = %v, want %v", tc.origin, got, tc.want)
-		}
-	}
-	// Public mode holds no session state a forged origin could reach.
-	if open := wtOriginCheck(publicAuth(t)); !open(withOrigin("https://attacker.example")) {
-		t.Error("public mode refused a cross-origin CONNECT")
-	}
-}
-
 // Services drain concurrently: each has the whole shutdown budget rather than what the ones before it left.
 func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())

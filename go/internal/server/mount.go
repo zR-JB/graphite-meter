@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -114,23 +113,10 @@ const wsPingReadLimit = 2048
 
 func (m *mounter) webSocketPing() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		allowed := m.authn.PublicOrigin()
-		if approved := auth.BrowserOrigin(r); approved != "" {
-			allowed = approved
-		}
-		var patterns []string
-		if allowed != "" {
-			if origin := r.Header.Get("Origin"); origin != "" && origin != allowed {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			u, _ := url.Parse(allowed)
-			patterns = []string{u.Host}
-		}
+		// Under authentication Enforce has already bound the origin to the principal; public mode holds no
+		// session state a forged origin could abuse.
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-			// Public mode is auth-less and cookie-less, holding no session state a forged origin could abuse.
-			InsecureSkipVerify: allowed == "",
-			OriginPatterns:     patterns,
+			InsecureSkipVerify: true,
 			CompressionMode:    websocket.CompressionDisabled,
 		})
 		if err != nil {
@@ -215,19 +201,4 @@ func rejectDotSegments(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// wtOriginCheck admits, under authentication, the canonical origin, a grant's own origin,
-// or no Origin (a native client). It is the only origin policy a CONNECT passes.
-func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
-	return func(r *http.Request) bool {
-		if !authn.Enabled() {
-			return true
-		}
-		origin := r.Header.Get("Origin")
-		if approved := auth.BrowserOrigin(r); approved != "" {
-			return origin == approved
-		}
-		return origin == "" || origin == authn.PublicOrigin()
-	}
 }

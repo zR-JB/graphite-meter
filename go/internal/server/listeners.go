@@ -308,7 +308,8 @@ func h3QUICConfig() *quic.Config {
 func (b *listenerBuild) addH3() error {
 	quicConfig := h3QUICConfig()
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
-	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
+	// Enforce has already bound a CONNECT's origin to its principal.
+	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil, b.authn),
 		auth.Listener{WebTransport: true})
