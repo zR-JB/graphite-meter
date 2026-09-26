@@ -25,7 +25,7 @@ async fn immediate_full_prefix_reset_retains_all_association_bytes() {
 }
 
 async fn exercise(immediate: bool) -> Result<(), TestError> {
-    let identity = support::Identity::generate()?;
+    let identity = support::Identity::generate();
     let cert = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
     let mut server_config = quinn::ServerConfig::with_single_cert(vec![cert.clone()], key)?;

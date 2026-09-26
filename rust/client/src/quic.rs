@@ -304,6 +304,10 @@ impl Origin {
 }
 
 #[cfg(test)]
+#[path = "../../test_identity.rs"]
+mod test_identity;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use rustls::pki_types::CertificateDer;
@@ -347,53 +351,14 @@ mod tests {
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
         use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
-        struct Identity(std::path::PathBuf);
-        impl Drop for Identity {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
-        let mut nonce = [0; 16];
-        crate::crypto::provider()
-            .secure_random
-            .fill(&mut nonce)
-            .map_err(|_| "test randomness unavailable")?;
-        let name: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-        let identity = Identity(std::env::temp_dir().join(format!("gm-h3-client-{name}")));
-        std::fs::create_dir(&identity.0)?;
-        let cert_path = identity.0.join("cert.pem");
-        let key_path = identity.0.join("key.pem");
-        let output = std::process::Command::new("openssl")
-            .args([
-                "req",
-                "-x509",
-                "-newkey",
-                "ec",
-                "-pkeyopt",
-                "ec_paramgen_curve:P-256",
-                "-nodes",
-                "-days",
-                "1",
-                "-subj",
-                "/CN=localhost",
-                "-addext",
-                "subjectAltName=DNS:localhost",
-                "-keyout",
-            ])
-            .arg(&key_path)
-            .arg("-out")
-            .arg(&cert_path)
-            .output()?;
-        if !output.status.success() {
-            return Err("test certificate generation failed".into());
-        }
+        let (certificate, key) = super::test_identity::generate_identity()?;
         let provider = Arc::new(crate::crypto::provider());
         let mut tls = rustls::ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?
             .with_no_client_auth()
             .with_single_cert(
-                vec![CertificateDer::from_pem_file(cert_path)?],
-                PrivateKeyDer::from_pem_file(key_path)?,
+                vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+                PrivateKeyDer::from_pem_slice(key.as_bytes())?,
             )?;
         tls.alpn_protocols = vec![b"h3".to_vec()];
         let config = quinn::ServerConfig::with_crypto(Arc::new(

@@ -233,7 +233,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
     use tokio::net::{TcpListener, TcpStream};
     use tokio_rustls::TlsConnector;
 
-    let identity = support::Identity::generate()?;
+    let identity = support::Identity::generate();
     let config = Config {
         tls_cert: identity
             .directory()

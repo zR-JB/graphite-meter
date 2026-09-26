@@ -24,7 +24,7 @@ async fn h3_shared_upload_routes_and_stalled_stream_deadline_preserve_siblings()
 }
 
 async fn exercise() -> Result<(), TestError> {
-    let identity = support::Identity::generate()?;
+    let identity = support::Identity::generate();
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
     let provider = Arc::new(graphite_meter_server::crypto::provider());

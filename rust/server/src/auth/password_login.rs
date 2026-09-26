@@ -145,23 +145,29 @@ pub(super) fn read_secret(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AuthMode;
+    use crate::{auth::session::random_token, config::AuthMode, password::hash_password};
 
-    const GO_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0";
     const NONCE: &str = "a-valid-long-unpredictable-login-nonce";
 
-    fn verifier(store: SessionStore) -> PasswordLogin {
-        PasswordLogin::new(
+    fn random_password() -> String {
+        random_token::<18>().unwrap()
+    }
+
+    /// A login verifier for a fresh random password, returned alongside it.
+    fn verifier(store: SessionStore) -> (PasswordLogin, String) {
+        let password = random_password();
+        let login = PasswordLogin::new(
             &AuthConfig {
                 mode: AuthMode::Password,
                 public_url: "https://meter.example".into(),
-                password_hash: GO_HASH.into(),
+                password_hash: hash_password(&password).unwrap(),
                 ..AuthConfig::default()
             },
             store,
             Arc::new(AttemptLimiter::new()),
         )
-        .unwrap()
+        .unwrap();
+        (login, password)
     }
 
     fn attempt(password: &str) -> PasswordAttempt<'_> {
@@ -177,43 +183,42 @@ mod tests {
 
     #[tokio::test]
     async fn csrf_failures_do_not_spend_password_budget_or_issue_sessions() {
-        let login = verifier(SessionStore::new());
+        let (login, password) = verifier(SessionStore::new());
+        let wrong = random_password();
         for _ in 0..10 {
-            let mut request = attempt("wrong");
+            let mut request = attempt(&wrong);
             request.origin = "https://attacker.example";
             assert!(matches!(
                 login.attempt(request).await,
                 Err(LoginFailure::Failed)
             ));
         }
-        let mut request = attempt("wrong");
+        let mut request = attempt(&wrong);
         request.nonce_cookie = None;
         assert!(matches!(
             login.attempt(request).await,
             Err(LoginFailure::Stale)
         ));
-        let (token, _) = login
-            .attempt(attempt("correct horse battery staple"))
-            .await
-            .unwrap();
+        let (token, _) = login.attempt(attempt(&password)).await.unwrap();
         assert!(login.sessions.lookup(&token).is_some());
     }
 
     #[tokio::test]
     async fn capacity_and_address_checks_precede_expensive_verification() {
-        let login = verifier(SessionStore::new());
+        let (login, _) = verifier(SessionStore::new());
+        let wrong = random_password();
         let _occupied = login.slots.clone().acquire_many_owned(2).await.unwrap();
         for _ in 0..5 {
             assert!(matches!(
-                login.attempt(attempt("wrong")).await,
+                login.attempt(attempt(&wrong)).await,
                 Err(LoginFailure::Busy)
             ));
         }
         assert!(matches!(
-            login.attempt(attempt("wrong")).await,
+            login.attempt(attempt(&wrong)).await,
             Err(LoginFailure::Throttled)
         ));
-        let mut request = attempt("wrong");
+        let mut request = attempt(&wrong);
         request.client = None;
         assert!(matches!(
             login.attempt(request).await,
@@ -224,21 +229,22 @@ mod tests {
     #[tokio::test]
     async fn successful_password_login_rotates_only_the_supplied_session() {
         let store = SessionStore::new();
-        let login = verifier(store.clone());
+        let (login, password) = verifier(store.clone());
+        let wrong = random_password();
         let (prior, old) = store
             .create("local-operator", "Local operator", "local", None)
             .unwrap();
         let (_, sibling) = store
             .create("local-operator", "Local operator", "local", None)
             .unwrap();
-        let mut request = attempt("wrong");
+        let mut request = attempt(&wrong);
         request.prior_session = Some(&prior);
         assert!(matches!(
             login.attempt(request).await,
             Err(LoginFailure::Password)
         ));
         assert!(old.is_active());
-        let mut request = attempt("correct horse battery staple");
+        let mut request = attempt(&password);
         request.prior_session = Some(&prior);
         let (_, replacement) = login.attempt(request).await.unwrap();
         assert!(!old.is_active());

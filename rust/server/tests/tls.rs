@@ -70,8 +70,8 @@ async fn handshake(
 #[tokio::test]
 async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Result<(), TestError>
 {
-    let first = support::Identity::generate()?;
-    let second = support::Identity::generate()?;
+    let first = support::Identity::generate();
+    let second = support::Identity::generate();
     let config = config(&first);
     let original = CertificateDer::from_pem_file(&config.tls_cert)?;
     let replacement = CertificateDer::from_pem_file(second.directory().join("identity.pem"))?;
@@ -105,7 +105,7 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
 
 #[test]
 fn startup_requires_valid_time_and_all_enabled_public_hostnames() -> Result<(), TestError> {
-    let identity = support::Identity::generate()?;
+    let identity = support::Identity::generate();
     let mut config = config(&identity);
     assert!(Certificates::load(&config, SystemTime::UNIX_EPOCH).is_err());
     config.native[NativeKind::H2 as usize].address = ":8444".into();
@@ -118,8 +118,8 @@ fn startup_requires_valid_time_and_all_enabled_public_hostnames() -> Result<(), 
 
 #[tokio::test(start_paused = true)]
 async fn watcher_retries_invalid_replacement_and_stops_on_shutdown() -> Result<(), TestError> {
-    let first = support::Identity::generate()?;
-    let second = support::Identity::generate()?;
+    let first = support::Identity::generate();
+    let second = support::Identity::generate();
     let config = config(&first);
     let original = CertificateDer::from_pem_file(&config.tls_cert)?;
     let replacement = CertificateDer::from_pem_file(second.directory().join("identity.pem"))?;

@@ -17,7 +17,7 @@ async fn pending_receive_can_be_stopped_and_queried_without_losing_stream_owners
 }
 
 async fn exercise() -> Result<(), TestError> {
-    let identity = support::Identity::generate()?;
+    let identity = support::Identity::generate();
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
     let config = quinn::ServerConfig::with_single_cert(vec![certificate.clone()], key)?;

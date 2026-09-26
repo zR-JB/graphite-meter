@@ -15,9 +15,8 @@ use tokio::{
 };
 use tokio_rustls::TlsAcceptor;
 
-mod support {
-    include!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/support/mod.rs"));
-}
+#[path = "../../../test_identity.rs"]
+mod test_identity;
 
 #[derive(Default)]
 struct Claims {
@@ -31,7 +30,7 @@ struct Claims {
 
 #[tokio::test]
 async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
-    let identity = support::Identity::generate().unwrap();
+    let (certificate, key) = test_identity::generate_identity().unwrap();
     let generated = Command::new("openssl")
         .args(["genrsa", "-traditional", "2048"])
         .output()
@@ -42,11 +41,10 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
         Some(JsonWebKeyId::new("test-key".into())),
     )
     .unwrap();
-    let certificates = CertificateDer::pem_file_iter(identity.directory().join("identity.pem"))
-        .unwrap()
+    let certificates = CertificateDer::pem_slice_iter(certificate.as_bytes())
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
+    let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
     let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
         .with_safe_default_protocol_versions()
         .unwrap()

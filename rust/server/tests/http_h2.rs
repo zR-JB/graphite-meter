@@ -35,7 +35,7 @@ impl Harness {
     }
 
     async fn start_config(config: Config) -> Self {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let certificate =
             CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();

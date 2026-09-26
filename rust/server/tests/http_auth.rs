@@ -31,7 +31,7 @@ struct Harness {
 }
 impl Harness {
     async fn start() -> Self {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let cert =
             CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();

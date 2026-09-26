@@ -1,70 +1,33 @@
 use std::{
-    error::Error,
     fs,
     path::{Path, PathBuf},
-    process::Command,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
-/// Disposable identity: test keys are generated locally, never shipped in source.
+#[path = "../../../test_identity.rs"]
+mod test_identity;
+
+/// Disposable identity files in Cargo's scratch directory for integration tests.
 pub struct Identity(PathBuf);
 
 impl Identity {
-    pub fn generate() -> Result<Self, Box<dyn Error + Send + Sync>> {
-        let mut nonce = [0_u8; 16];
-        crypto_provider()
-            .secure_random
-            .fill(&mut nonce)
-            .map_err(|_| "test identity randomness unavailable")?;
-        let suffix: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-        let path = std::env::temp_dir().join(format!("graphite-meter-rust-test-{suffix}"));
-        fs::create_dir(&path)?;
-        let identity = Self(path);
-        let output = Command::new("openssl")
-            .args([
-                "req",
-                "-x509",
-                "-newkey",
-                "ec",
-                "-pkeyopt",
-                "ec_paramgen_curve:P-256",
-                "-nodes",
-                "-days",
-                "1",
-                "-subj",
-                "/CN=localhost",
-                "-addext",
-                "subjectAltName=DNS:localhost",
-                "-addext",
-                "basicConstraints=critical,CA:FALSE",
-                "-keyout",
-            ])
-            .arg(identity.0.join("identity.key"))
-            .arg("-out")
-            .arg(identity.0.join("identity.pem"))
-            .output()?;
-        if !output.status.success() {
-            return Err(format!(
-                "test identity generation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-            .into());
-        }
-        Ok(identity)
+    pub fn generate() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let (certificate, key) = test_identity::generate_identity().expect("test identity");
+        let identity = Self(Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+            "identity-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        )));
+        fs::create_dir_all(&identity.0).expect("test identity directory");
+        fs::write(identity.0.join("identity.pem"), certificate).expect("test certificate");
+        fs::write(identity.0.join("identity.key"), key).expect("test key");
+        identity
     }
 
     pub fn directory(&self) -> &Path {
         &self.0
     }
-}
-
-#[cfg(feature = "crypto-aws-lc")]
-fn crypto_provider() -> rustls::crypto::CryptoProvider {
-    rustls::crypto::aws_lc_rs::default_provider()
-}
-
-#[cfg(not(feature = "crypto-aws-lc"))]
-fn crypto_provider() -> rustls::crypto::CryptoProvider {
-    rustls::crypto::ring::default_provider()
 }
 
 impl Drop for Identity {

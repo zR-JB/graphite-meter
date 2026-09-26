@@ -85,7 +85,7 @@ async fn request(
 #[tokio::test]
 async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls12() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
@@ -167,7 +167,7 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
 #[tokio::test]
 async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
         let connector = connector(roots, &rustls::version::TLS13);
         let config = Config {
@@ -214,7 +214,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
 #[tokio::test]
 async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let (tls, _) = configs(&identity);
         let config = Config {
             max_connections: 1,
@@ -249,7 +249,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
 #[tokio::test]
 async fn h3_tcp_bootstrap_only_serves_probe_and_advertises_the_effective_public_port() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let identity = support::Identity::generate().unwrap();
+        let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
         let connector = connector(roots, &rustls::version::TLS13);
         for (origin, port) in [
