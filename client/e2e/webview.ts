@@ -1,4 +1,5 @@
-import { expect as bunExpect, test as bunTest } from "bun:test";
+import { afterAll, expect as bunExpect, test as bunTest } from "bun:test";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -269,6 +270,30 @@ export class Locator {
     return (await this.state())[0]?.attrs[name] ?? null;
   }
 }
+
+// Bun never removes the temp profile of the Chrome it spawns; this process's live Chrome names it (Linux /proc).
+function removeProfiles() {
+  const tasks = `/proc/${process.pid}/task`;
+  const profiles: string[] = [];
+  try {
+    for (const task of readdirSync(tasks))
+      for (const pid of readFileSync(`${tasks}/${task}/children`, "utf8")
+        .split(" ")
+        .filter(Boolean)) {
+        const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
+        const dir = /--user-data-dir=(\S+\.bun-chrome)(\s|\0|$)/.exec(cmdline);
+        if (dir) profiles.push(dir[1]);
+      }
+  } catch {}
+  Bun.WebView.closeAll();
+  for (const dir of profiles)
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+}
+process.on("exit", removeProfiles);
+// Parallel test workers end without an exit event; outside the test runner afterAll throws.
+try {
+  afterAll(removeProfiles);
+} catch {}
 
 export class Page {
   readonly raw: Bun.WebView;
