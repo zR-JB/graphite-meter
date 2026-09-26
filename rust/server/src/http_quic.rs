@@ -16,6 +16,7 @@ const WT_SESSION_GONE: u64 = 0x170d7b68;
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
+const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 pub(super) const SEND_WINDOW_BUDGET: usize = 256 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
@@ -175,6 +176,7 @@ impl HttpServer {
 
 struct SendWindow {
     last: Option<(tokio::time::Instant, u64)>,
+    low_demand_since: Option<tokio::time::Instant>,
     extra: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
@@ -182,6 +184,7 @@ impl SendWindow {
     fn new() -> Self {
         Self {
             last: None,
+            low_demand_since: None,
             extra: None,
         }
     }
@@ -200,11 +203,13 @@ impl SendWindow {
         let all_sent = connection.stats().udp_tx.bytes;
         let Some(path) = connection.path_stats(quinn::PathId::ZERO) else {
             self.last = None;
+            self.low_demand_since = None;
             return;
         };
         // A second path invalidates this path's throughput estimate.
         if all_sent > path.udp_tx.bytes {
             self.last = None;
+            self.low_demand_since = None;
             return;
         }
         let now = tokio::time::Instant::now();
@@ -217,8 +222,16 @@ impl SendWindow {
                 path.rtt,
                 now.duration_since(last),
             );
-            if let Some(window) = self.grow(target, budget) {
-                connection.set_send_window(window);
+            if target == MIN_SEND_WINDOW && self.extra.is_some() {
+                let since = self.low_demand_since.get_or_insert(now);
+                if now.duration_since(*since) >= SEND_WINDOW_SHRINK_DELAY {
+                    self.release(connection);
+                }
+            } else {
+                self.low_demand_since = None;
+                if let Some(window) = self.grow(target, budget) {
+                    connection.set_send_window(window);
+                }
             }
         }
         self.last = Some((now, sent));
@@ -240,6 +253,7 @@ impl SendWindow {
 
     fn release(&mut self, connection: &quinn::Connection) {
         self.last = None;
+        self.low_demand_since = None;
         if self.extra.is_some() {
             connection.set_send_window(MIN_SEND_WINDOW);
             self.extra = None;
@@ -471,6 +485,71 @@ mod tests {
             desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
             MIN_SEND_WINDOW
         );
+    }
+
+    #[tokio::test]
+    async fn idle_send_window_returns_budget_while_control_stream_stays_open() {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+
+        let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
+        let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+        let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
+        let config = quinn::ServerConfig::with_single_cert(vec![certificate.clone()], key).unwrap();
+        let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(
+            quinn::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap(),
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (client, server) = tokio::join!(
+                client
+                    .connect(server.local_addr().unwrap(), "localhost")
+                    .unwrap(),
+                async { server.accept().await.unwrap().await.unwrap() },
+            );
+            let client = client.unwrap();
+            let (mut request, mut response) = client.open_bi().await.unwrap();
+            request.write_all(b"ping").await.unwrap();
+            let (mut replies, mut requests) = server.accept_bi().await.unwrap();
+            let mut ping = [0; 4];
+            requests.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"ping");
+
+            let budget = Arc::new(tokio::sync::Semaphore::new(
+                (MAX_SEND_WINDOW - MIN_SEND_WINDOW) as usize,
+            ));
+            let mut window = SendWindow::new();
+            server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
+            assert_eq!(budget.available_permits(), 0);
+            window.update(&server, &budget);
+            for sample in 0..5 {
+                replies.write_all(b"pong").await.unwrap();
+                response.read_exact(&mut ping).await.unwrap();
+                assert_eq!(&ping, b"pong");
+                tokio::time::pause();
+                tokio::time::advance(Duration::from_millis(250)).await;
+                tokio::time::resume();
+                window.update(&server, &budget);
+                if sample < 3 {
+                    assert_eq!(
+                        budget.available_permits(),
+                        0,
+                        "one quiet sample must not shrink an active window"
+                    );
+                }
+            }
+            assert_eq!(window.current(), MIN_SEND_WINDOW);
+            let mut next = SendWindow::new();
+            assert_eq!(next.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
+            request.write_all(b"live").await.unwrap();
+            requests.read_exact(&mut ping).await.unwrap();
+            assert_eq!(&ping, b"live");
+            client.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

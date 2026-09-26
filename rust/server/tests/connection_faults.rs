@@ -257,7 +257,7 @@ async fn quic_server(
     Ok((address, task, stop))
 }
 
-fn quic_client(tls: &Tls) -> Result<quinn::Endpoint, TestError> {
+fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestError> {
     let provider = Arc::new(graphite_meter_server::crypto::provider());
     let mut roots = RootCertStore::empty();
     roots.add(tls.certificate.clone())?;
@@ -266,7 +266,14 @@ fn quic_client(tls: &Tls) -> Result<quinn::Endpoint, TestError> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
-    let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
+    let mut endpoint_config = quinn::EndpointConfig::default();
+    endpoint_config.reliable_stream_reset(reliable_reset);
+    let endpoint = quinn::Endpoint::new(
+        endpoint_config,
+        None,
+        graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?,
+        quinn::default_runtime().unwrap(),
+    )?;
     endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
         quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
     )));
@@ -287,7 +294,7 @@ async fn quic_retry_only_under_load() -> Result<(), TestError> {
     .await?;
     let one_way = Duration::from_millis(50);
     let rtt = 2.0 * one_way.as_secs_f64();
-    let client = quic_client(&tls)?;
+    let client = quic_client(&tls, true)?;
     let mut held = Vec::new();
     for load in 0..3 {
         let link = test_link::Link::udp(address, one_way).await?;
@@ -545,4 +552,84 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     stop.send(()).ok();
     server.await?;
     Ok(rates[rates.len() / 2])
+}
+
+#[tokio::test]
+async fn cancelled_download_without_reliable_reset_preserves_http3_connection()
+-> Result<(), TestError> {
+    use h3::ConnectionState;
+    use h3::quic::{RecvStream as _, StreamErrorIncoming};
+    use std::{future::poll_fn, task::Poll};
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let tls = Tls::new();
+        let (address, server, stop) = quic_server(&tls, Config::default()).await?;
+        let endpoint = quic_client(&tls, false)?;
+        let quic = endpoint.connect(address, "localhost")?.await?;
+        let (mut http, mut sender) = h3::client::builder()
+            .enable_extended_connect(true)
+            .enable_datagram(true)
+            .enable_webtransport(true)
+            .max_webtransport_sessions(1)
+            .build::<_, _, Bytes>(h3_noq::Connection::new(quic.clone()))
+            .await?;
+        let (ready, ready_rx) = oneshot::channel();
+        let (incoming, mut incoming_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut drivers = tokio::task::JoinSet::new();
+        drivers.spawn(async move {
+            let mut ready = Some(ready);
+            poll_fn(|cx| {
+                if let Poll::Ready(error) = http.poll_close(cx) {
+                    return Poll::Ready(error);
+                }
+                if http.settings().enable_webtransport()
+                    && let Some(ready) = ready.take()
+                {
+                    let _ = ready.send(());
+                }
+                while let Some((_, stream)) = http.inner.accepted_streams_mut().wt_uni_streams.pop()
+                {
+                    let _ = incoming.send(stream);
+                }
+                Poll::Pending
+            })
+            .await
+        });
+        ready_rx.await?;
+        for _ in 0..2 {
+            let mut request = Request::builder()
+                .method(http::Method::CONNECT)
+                .uri("https://localhost/wt/download?bytes=4294967296")
+                .body(())?;
+            request
+                .extensions_mut()
+                .insert(h3::ext::Protocol::WEB_TRANSPORT);
+            let mut control = sender.send_request(request).await?;
+            assert_eq!(control.recv_response().await?.status(), 200);
+            let mut stream = incoming_rx.recv().await.ok_or("missing download stream")?;
+            assert!(poll_fn(|cx| stream.poll_data(cx)).await?.is_some());
+            control
+                .send_data(Bytes::from(graphite_meter_core::capsule::encode_close(
+                    0, "",
+                )))
+                .await?;
+            control.finish().await?;
+            loop {
+                match poll_fn(|cx| stream.poll_data(cx)).await {
+                    Ok(Some(_)) => {}
+                    Err(StreamErrorIncoming::StreamTerminated { .. }) => break,
+                    outcome => panic!(
+                        "cancelled download must reset without closing the connection: {outcome:?}"
+                    ),
+                }
+            }
+            while control.recv_data().await?.is_some() {}
+            assert!(quic.close_reason().is_none());
+        }
+        quic.close(0_u32.into(), b"done");
+        stop.send(()).ok();
+        server.await?;
+        Ok::<_, TestError>(())
+    })
+    .await?
 }
