@@ -25,6 +25,7 @@ import { identity, type ServerIdentity } from "./catalog";
 import { ServerAuthenticationRequired } from "./credentials";
 import {
   AggregateMeasurements,
+  pathEvidence,
   weakestLatencyConfidence,
   type Boundary,
   type MultiServerResult,
@@ -812,21 +813,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       failures: [...this.#failures],
       servers: this.#servers.map((server) => ({
         server: server.server,
-        throughput: {
-          origin: server.paths.throughput.target.origin,
-          transport: server.paths.throughput.target.transport,
-          protocol: server.paths.throughput.fetch.protocol,
-          ...(server.paths.throughput.browserProtocol
-            ? { browserProtocol: server.paths.throughput.browserProtocol }
-            : {}),
-          clientIpVersion: server.paths.throughput.probe.clientIpVersion,
-        },
-        latencyTarget: server.paths.latency
-          ? {
-              origin: server.paths.latency.target.origin,
-              transport: server.paths.latency.target.transport,
-            }
-          : null,
+        ...pathEvidence(server.paths),
         latency: config ? server.accum.latencyResult(config) : null,
         latencyByStage: server.accum.latencySummaries(),
         bufferbloat: server.accum.bufferbloatGrade(),

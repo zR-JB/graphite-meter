@@ -12,7 +12,11 @@ import {
   type PreparedServer,
   type ParticipantTransport,
 } from "./coordinator";
-import type { MultiServerResult, ServerFailure } from "./measurement";
+import {
+  pathEvidence,
+  type MultiServerResult,
+  type ServerFailure,
+} from "./measurement";
 import { planServerStreams, validateServerStreams } from "./streamBudget";
 
 type BackendFactory = (
@@ -88,7 +92,6 @@ function singleServerDetails(
   failures: ServerFailure[],
 ): MultiServerResult {
   const server = identity(selected.server);
-  const { throughput, latency } = selected.paths;
   return {
     selection: [server],
     participants: [server.id],
@@ -99,21 +102,7 @@ function singleServerDetails(
     servers: [
       {
         server,
-        throughput: {
-          origin: throughput.target.origin,
-          transport: throughput.target.transport,
-          protocol: throughput.fetch.protocol,
-          ...(throughput.browserProtocol
-            ? { browserProtocol: throughput.browserProtocol }
-            : {}),
-          clientIpVersion: throughput.probe.clientIpVersion,
-        },
-        latencyTarget: latency
-          ? {
-              origin: latency.target.origin,
-              transport: latency.target.transport,
-            }
-          : null,
+        ...pathEvidence(selected.paths),
         latency: result.latency,
         latencyByStage: result.latencyByStage,
         bufferbloat: result.bufferbloat,

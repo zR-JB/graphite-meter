@@ -7,6 +7,7 @@ import type {
   StageLatencySummary,
   LatencyResult,
   BufferbloatGrade,
+  PreparedPaths,
 } from "../runner/contract";
 import type { ServerIdentity } from "./catalog";
 import {
@@ -18,11 +19,11 @@ import {
   isStillStable,
   stabilityPct,
   transferConfidence,
+  TRANSFER_CONFIDENCE_BUCKETS,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "../runner/adaptive";
 import { FixedRateBuckets } from "../runner/controlBuckets";
-import { TRANSFER_CONFIDENCE_BUCKETS } from "../runner/adaptive";
 
 export type TransferStage = Exclude<TransportRole, "latency">;
 export interface ComponentWindow {
@@ -96,6 +97,26 @@ export interface MultiServerResult {
   intervals: AggregationInterval[];
   omittedIntervals: number;
   failures: ServerFailure[];
+}
+/** The verified paths a server's results were measured on. */
+export function pathEvidence(
+  paths: PreparedPaths,
+): Pick<ServerMeasurementSummary, "throughput" | "latencyTarget"> {
+  const { throughput, latency } = paths;
+  return {
+    throughput: {
+      origin: throughput.target.origin,
+      transport: throughput.target.transport,
+      protocol: throughput.fetch.protocol,
+      ...(throughput.browserProtocol
+        ? { browserProtocol: throughput.browserProtocol }
+        : {}),
+      clientIpVersion: throughput.probe.clientIpVersion,
+    },
+    latencyTarget: latency
+      ? { origin: latency.target.origin, transport: latency.target.transport }
+      : null,
+  };
 }
 export interface Boundary {
   atMs: number;
@@ -214,9 +235,6 @@ export class AggregateMeasurements {
     const total = stage.get(id) ?? { down: 0, up: 0 };
     total[dir] += bytes;
     stage.set(id, total);
-  }
-  stageTotals(stage: TransferStage, id: string): Record<FlowDirection, number> {
-    return { ...(this.#stageTotals.get(stage)?.get(id) ?? { down: 0, up: 0 }) };
   }
   #total(id: string): Record<FlowDirection, number> {
     let total = this.#totals.get(id);

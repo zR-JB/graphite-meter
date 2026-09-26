@@ -190,7 +190,6 @@ test("progress and overlapping checkpoints cannot double count bytes across inte
   m.begin("bidirectional", ["a"], 2200);
   m.observe(boundary(2200, { a: 0 }, { a: receiver("b", 50000, 1) }));
   m.observe(boundary(3200, { a: 1000 }, { a: receiver("b", 50500, 1e9 + 1) }));
-  expect(m.stageTotals("upload", "a").up).toBe(2000);
   expect(m.result("upload", "up", false)?.totalBytes).toBe(2000);
   expect(m.result("bidirectional", "up", false)?.totalBytes).toBe(500);
 });
