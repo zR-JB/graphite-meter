@@ -57,8 +57,9 @@ const PHASE: Record<Phase, string> = {
   error: "Failed",
 };
 
+export const BLOCKED = "Test cannot start";
 export const READINESS: Record<
-  ConnectionValidationState | "sign-in",
+  ConnectionValidationState | "sign-in" | "blocked",
   { label: string; tone: "ok" | "brand" | "warn" | "err" }
 > = {
   verified: { label: "Ready", tone: "ok" },
@@ -66,9 +67,9 @@ export const READINESS: Record<
   stale: { label: "Recheck needed", tone: "warn" },
   failed: { label: "Failed", tone: "err" },
   "sign-in": { label: "Sign in", tone: "warn" },
+  blocked: { label: BLOCKED, tone: "warn" },
 };
 
-export const BLOCKED = "Test cannot start";
 export const START_FAILED = "Test could not start";
 
 export const CONNECTIVITY: Record<ConnectivityState | "checking", string> = {

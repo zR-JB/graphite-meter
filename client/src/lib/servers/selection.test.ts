@@ -104,7 +104,7 @@ test("server transport options name the browser's IPv6 configuration remedy", ()
 
 test("shared H1 origins preserve progress and checkpoint capacity", () => {
   const paths = servers.map((server) => ({
-    id: server.id,
+    server,
     paths: testPreparedPaths(),
   }));
   const config = {
@@ -125,11 +125,13 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     transferStreams: { mode: "forced" as const, count: 3 },
   };
   expect(() => planServerStreams(forced, paths, activity)).toThrow(
-    "control capacity",
+    "control capacity of A, B.",
   );
 });
 test("a direct H1 upload reserves progress and receiver checkpoint capacity", () => {
-  const paths = [{ id: "self", paths: testPreparedPaths() }];
+  const paths = [
+    { server: { id: "self", name: "Home" }, paths: testPreparedPaths() },
+  ];
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
     transferStreams: { mode: "forced" as const, count: 4 },
@@ -162,7 +164,7 @@ test("four participants share a run-wide 128 stream ceiling", () => {
   const paths = Array.from({ length: 4 }, (_, i) => {
     const paths = testPreparedPaths();
     paths.throughput.fetch.protocol = "http2";
-    return { id: String(i), paths };
+    return { server: { id: String(i), name: String(i) }, paths };
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
@@ -196,7 +198,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   const paths = catalog.servers.slice(1).map((server) => {
     const paths = testPreparedPaths();
     paths.throughput.fetch.protocol = "http2";
-    return { id: server.id, paths };
+    return { server, paths };
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),

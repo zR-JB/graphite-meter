@@ -437,19 +437,29 @@ function streamCount(
 }
 
 export type ServerStreamPlan = Record<string, Record<FlowDirection, number>>;
+type PlanServer = {
+  server: { id: string; name: string };
+  paths: PreparedPaths;
+};
+const names = (lanes: readonly { name: string }[]) =>
+  [...new Set(lanes.map(({ name }) => name))].join(", ");
 
 /** Lanes per server and direction; HTTP/1 servers sharing an origin share one browser connection pool. */
 export function planServerStreams(
   config: RunnerConfig,
-  servers: readonly { id: string; paths: PreparedPaths }[],
+  servers: readonly PlanServer[],
   activity: PhaseActivity,
 ): ServerStreamPlan {
   const plan: ServerStreamPlan = Object.create(null);
-  const h1 = new Map<string, { id: string; dir: FlowDirection }[]>();
+  const h1 = new Map<
+    string,
+    { id: string; name: string; dir: FlowDirection }[]
+  >();
   const control = new Map<string, number>();
   const occupy = (origin: string) =>
     control.set(origin, (control.get(origin) ?? 0) + 1);
-  for (const { id, paths } of servers) {
+  for (const { server, paths } of servers) {
+    const { id, name } = server;
     const { target, fetch } = paths.throughput;
     const wt = target.transport !== "fetch-stream";
     const pings = needsPings(activity) && paths.latency !== null;
@@ -464,7 +474,10 @@ export function planServerStreams(
         wt,
       );
       if (!wt && !MULTIPLEXED[fetch.protocol])
-        h1.set(fetch.origin, [...(h1.get(fetch.origin) ?? []), { id, dir }]);
+        h1.set(fetch.origin, [
+          ...(h1.get(fetch.origin) ?? []),
+          { id, name, dir },
+        ]);
     }
     if (activity.transfer.includes("up") && !wt) occupy(fetch.origin);
     if (needsPings(activity) && paths.latency?.target.transport === "websocket")
@@ -477,7 +490,7 @@ export function planServerStreams(
       Number(activity.transfer.includes("up"));
     if (available < lanes.length)
       throw new Error(
-        `The selected servers share ${origin}, which has insufficient HTTP/1 connection capacity for this stage`,
+        `${names(lanes)} share one HTTP/1 origin without enough connections for this stage`,
       );
     if (
       lanes.reduce((total, lane) => total + plan[lane.id][lane.dir], 0) <=
@@ -486,7 +499,7 @@ export function planServerStreams(
       continue;
     if (config.transferStreams.mode === "forced")
       throw new Error(
-        `Forced streams would occupy the progress and control capacity at ${origin}. Reduce streams or use Automatic`,
+        `Forced streams would occupy the progress and control capacity of ${names(lanes)}. Reduce streams or use Automatic`,
       );
     // Every lane keeps one stream; the rest is dealt round-robin up to each ceiling.
     const ceilings = lanes.map((lane) => plan[lane.id][lane.dir]);
@@ -517,7 +530,7 @@ export function planServerStreams(
 /** Rejects a plan with no stage, or whose streams cannot fit, before any connection opens. */
 export function validatePlan(
   config: RunnerConfig,
-  servers: readonly { id: string; paths: PreparedPaths }[],
+  servers: readonly PlanServer[],
 ) {
   const activities = plannedActivities(config);
   if (!activities.length) throw new Error("Give at least one stage a duration");

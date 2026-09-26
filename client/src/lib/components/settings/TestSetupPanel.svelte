@@ -208,7 +208,9 @@
     );
   }
 
-  const readiness = $derived(store.selectionValidation);
+  const readiness = $derived(
+    store.startBlocker ? "blocked" : store.selectionValidation,
+  );
   announceChanges(() => `Connection paths: ${READINESS[readiness].label}`);
 </script>
 

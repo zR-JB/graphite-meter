@@ -1,4 +1,5 @@
 import {
+  baseConfig,
   closeSettings,
   home,
   open,
@@ -20,16 +21,7 @@ const catalog = (...servers: Server[]) => ({
 
 const footer = (page: Page) => page.locator("footer.status .label");
 
-async function regainPage(page: Page) {
-  const { windowId } = await page.cdp("Browser.getWindowForTarget");
-  for (const windowState of ["minimized", "normal"])
-    await page.cdp("Browser.setWindowBounds", {
-      windowId,
-      bounds: { windowState },
-    });
-}
-
-test("a verified peer that dies fails its check when the page returns, and Start leaves it out", async (page) => {
+test("a verified peer that dies fails its idle recheck, and Start leaves it out", async (page) => {
   const oslo = await spawnPeer("Oslo");
   const bergen = await spawnPeer("Bergen", catalog(oslo.server));
   try {
@@ -38,7 +30,6 @@ test("a verified peer that dies fails its check when the page returns, and Start
     });
     await ready(page);
     oslo.kill("SIGKILL");
-    await regainPage(page);
     const settings = await openSettings(page);
     await expect(
       settings.locator(`.server-status[data-state="failed"]`),
@@ -59,14 +50,37 @@ test("a stream plan that cannot fit shows its reason before Start", async (page)
   await open(page, home.url, {
     config: { transferStreams: { mode: "forced", count: 12 } },
   });
-  await ready(page);
-  await expect(page.locator(".gauge-hint")).toContainText("Forced streams");
   const settings = await openSettings(page);
-  await expect(settings.locator(".notice")).toContainText("Forced streams");
+  await expect(settings.locator('[data-readiness="blocked"]')).toBeVisible({
+    timeout: 15_000,
+  });
+  const reason = `Forced streams would occupy the progress and control capacity of ${home.name}.`;
+  await expect(settings.locator(".notice")).toContainText(reason);
   await closeSettings(page);
+  await expect(page.locator(".gauge-hint")).toContainText(reason);
   await runButton(page, "Start test").click();
   await expect(footer(page)).toHaveText("Test cannot start");
   await expect(phase(page, "idle")).toHaveCount(1);
+});
+
+test("without idle latency the page settles Connected and never shows a blocker while loading", async (page) => {
+  await page.addInitScript(() => {
+    const seen: string[] = ((window as any).__labels = []);
+    new MutationObserver(() => {
+      const label = document.querySelector("footer.status .label");
+      if (label?.textContent && seen.at(-1) !== label.textContent)
+        seen.push(label.textContent);
+    }).observe(document, { subtree: true, childList: true });
+  });
+  await open(page, home.url, {
+    config: { stages: { ...baseConfig.stages, latency: false } },
+  });
+  await expect(page.locator('.pulse .dot[data-state="connected"]')).toBeVisible(
+    { timeout: 15_000 },
+  );
+  expect(await page.evaluate(() => (window as any).__labels)).toEqual([
+    "Not started",
+  ]);
 });
 
 test("cancelling a new start keeps the previous result", async (page) => {

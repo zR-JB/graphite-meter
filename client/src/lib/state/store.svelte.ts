@@ -229,8 +229,8 @@ class AppStore {
   /** Why the stream settings cannot fit the verified selection; Settings shows it by the setting. */
   streamPlanError = $derived.by((): string => {
     const servers = this.selectedServers.flatMap((id) => {
-      const paths = this.servers.get(id)?.paths;
-      return paths ? [{ id, paths }] : [];
+      const view = this.servers.get(id);
+      return view?.paths ? [{ server: view.server, paths: view.paths }] : [];
     });
     if (servers.length !== this.selectedServers.length) return "";
     try {

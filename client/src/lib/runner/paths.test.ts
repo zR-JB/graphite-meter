@@ -49,7 +49,11 @@ function plan(
     } as never;
   if (!pings) paths.latency = null;
   const config = { ...DEFAULT_CONFIG, transferStreams: policy };
-  return planServerStreams(config, [{ id: "s", paths }], activity(stage)).s;
+  return planServerStreams(
+    config,
+    [{ server: { id: "s", name: "s" }, paths }],
+    activity(stage),
+  ).s;
 }
 
 test("automatic streams follow the protocol table, and HTTP/1 reserves control connections", () => {

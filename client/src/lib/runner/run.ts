@@ -240,16 +240,9 @@ export class Run {
     );
   }
 
-  #validate(config: RunnerConfig, servers = this.#participants()): void {
-    validatePlan(
-      config,
-      servers.map(({ server, paths }) => ({ id: server.id, paths })),
-    );
-  }
-
   /** Connection selection, authentication and the RTT-adapted plan are settled before a run starts. */
   start(config: RunnerConfig): void {
-    this.#validate(config, this.#servers);
+    validatePlan(config, this.#servers);
     this.abort();
     this.#release();
     this.#active = this.#activity = null;
@@ -336,7 +329,7 @@ export class Run {
   reconfigure(config: LiveRunConfig): void {
     if (!this.#running || !this.#cfg) return;
     const next = { ...this.#cfg, ...config };
-    this.#validate(next);
+    validatePlan(next, this.#participants());
     const before = this.#active;
     this.#cfg = next;
     this.#segments = reconfigureTimeline(
@@ -510,10 +503,7 @@ export class Run {
     const participants = this.#stageParticipants(activity);
     this.#streams = planServerStreams(
       this.#cfg!,
-      this.#participants().map(({ server, paths }) => ({
-        id: server.id,
-        paths,
-      })),
+      this.#participants(),
       activity,
     );
     for (const server of this.#participants()) {
