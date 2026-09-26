@@ -77,7 +77,7 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 	defer func() {
 		emit(Event{Kind: EventDone, At: time.Now(), Err: err, Servers: c.details(c.outcome(ctx, err))})
 	}()
-	if prepared == nil || !prepared.Ready() {
+	if !prepared.Ready() {
 		return errors.New("resolve every selected server before starting")
 	}
 	streams, err := planRunStreams(c.cfg, prepared.Servers)
@@ -103,7 +103,10 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 			idleRTT:       connection.PreflightRTT,
 			teardown:      teardown,
 		}
-		r.emit = func(e Event) { e.ServerID = server.Server.ID; emit(e) }
+		r.emit = func(e Event) {
+			e.ServerID = server.Server.ID
+			emit(e)
+		}
 		c.servers = append(c.servers, &participant{prepared: server, transport: r})
 	}
 	return c.run(ctx)

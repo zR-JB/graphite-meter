@@ -226,11 +226,6 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	if len(window.Down) != 2 || len(window.Up) != 2 {
 		t.Fatalf("component windows lost: %+v", window)
 	}
-	for _, component := range window.Up {
-		if component.Clock != "receiver" || component.StartReceiver == nil || component.EndReceiver == nil {
-			t.Fatalf("receiver evidence lost: %+v", component)
-		}
-	}
 }
 
 func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *testing.T) {
@@ -276,10 +271,8 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	if details == nil || len(details.Intervals) != 1 || details.Intervals[0].Window == nil {
 		t.Fatalf("missing receiver window: %+v", details)
 	}
-	for _, component := range details.Intervals[0].Window.Up {
-		if component.StartReceiver == nil || component.Clock != "receiver" {
-			t.Fatalf("initial receiver snapshot missing: %+v", component)
-		}
+	if len(details.Intervals[0].Window.Up) != 2 {
+		t.Fatalf("receiver windows missing: %+v", details.Intervals[0].Window)
 	}
 	for _, server := range details.Servers {
 		if !slices.ContainsFunc(server.Results, func(r Result) bool {

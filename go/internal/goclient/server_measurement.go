@@ -14,14 +14,12 @@ type ReceiverSnapshot struct {
 	Bytes, Nanos uint64
 }
 
+// ComponentWindow is one server's share; upload durations come from the receiver clock.
 type ComponentWindow struct {
-	ServerID                   string
-	Bytes                      uint64
-	Duration                   time.Duration
-	BytesPerSec                float64
-	Clock                      string
-	StartBytes, EndBytes       uint64
-	StartReceiver, EndReceiver *ReceiverSnapshot
+	ServerID    string
+	Bytes       uint64
+	Duration    time.Duration
+	BytesPerSec float64
 }
 
 type AggregateWindow struct {
@@ -134,54 +132,42 @@ func (a *aggregateMeasurements) credit(id string, dir Direction, n uint64) {
 }
 func (a *aggregateMeasurements) ledger(boundary measurementBoundary) {
 	for id, count := range boundary.down {
-		previous, known := a.downSeen[id]
-		if known && count < previous {
-			continue
-		}
-		if known && count >= previous {
+		if previous, known := a.downSeen[id]; known {
+			if count < previous {
+				continue
+			}
 			a.credit(id, Down, count-previous)
 		}
 		a.downSeen[id] = count
 	}
-	for id, observation := range boundary.observedUp {
-		if snapshot := boundary.up[id]; snapshot != nil &&
-			snapshot.ID == observation.id &&
-			snapshot.Bytes >= observation.maximum {
-			continue
+	for id, observed := range boundary.observedUp {
+		snapshot := boundary.up[id]
+		if snapshot == nil || snapshot.ID != observed.id || snapshot.Bytes < observed.maximum {
+			a.creditUpload(id, observed)
 		}
-		previous, known := a.uploads[id]
-		if known && previous.id == observation.id && observation.maximum <= previous.maximum {
-			continue
-		}
-		if known {
-			if previous.id != observation.id {
-				previous.maximum = 0
-			}
-			if observation.maximum >= previous.maximum {
-				a.credit(id, Up, observation.maximum-previous.maximum)
-			}
-		}
-		a.uploads[id] = observation
 	}
 	for id, snapshot := range boundary.up {
-		if snapshot == nil {
-			continue
+		if snapshot != nil {
+			a.creditUpload(id, uploadLedger{snapshot.ID, snapshot.Bytes})
 		}
-		previous, known := a.uploads[id]
-		if known && previous.id == snapshot.ID && snapshot.Bytes <= previous.maximum {
-			continue
-		}
-		if known {
-			if previous.id != snapshot.ID {
-				previous.maximum = 0
-			}
-			if snapshot.Bytes >= previous.maximum {
-				a.credit(id, Up, snapshot.Bytes-previous.maximum)
-			}
-		}
-		a.uploads[id] = uploadLedger{snapshot.ID, snapshot.Bytes}
 	}
 }
+
+// creditUpload counts unique receiver bytes; a new upload identity restarts from zero.
+func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
+	previous, known := a.uploads[id]
+	if known && previous.id == next.id && next.maximum <= previous.maximum {
+		return
+	}
+	if known {
+		if previous.id != next.id {
+			previous.maximum = 0
+		}
+		a.credit(id, Up, next.maximum-previous.maximum)
+	}
+	a.uploads[id] = next
+}
+
 func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow {
 	interval := a.current()
 	if interval == nil {
@@ -248,15 +234,7 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 				return nil, fmt.Errorf("missing or regressing download counter")
 			}
 			rate := float64(end-start) / elapsed.Seconds()
-			window.Down = append(window.Down, ComponentWindow{
-				ServerID:    id,
-				Bytes:       end - start,
-				Duration:    elapsed,
-				BytesPerSec: rate,
-				Clock:       "client-monotonic",
-				StartBytes:  start,
-				EndBytes:    end,
-			})
+			window.Down = append(window.Down, ComponentWindow{id, end - start, elapsed, rate})
 			if window.DownBytesPerSec == nil {
 				window.DownBytesPerSec = new(float64)
 			}
@@ -268,21 +246,8 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 				return nil, fmt.Errorf("missing or regressing receiver counter")
 			}
 			duration := time.Duration(end.Nanos - start.Nanos)
-			if duration <= 0 {
-				return nil, fmt.Errorf("invalid receiver duration")
-			}
 			rate := float64(end.Bytes-start.Bytes) / duration.Seconds()
-			window.Up = append(window.Up, ComponentWindow{
-				ServerID:      id,
-				Bytes:         end.Bytes - start.Bytes,
-				Duration:      duration,
-				BytesPerSec:   rate,
-				Clock:         "receiver",
-				StartBytes:    start.Bytes,
-				EndBytes:      end.Bytes,
-				StartReceiver: start,
-				EndReceiver:   end,
-			})
+			window.Up = append(window.Up, ComponentWindow{id, end.Bytes - start.Bytes, duration, rate})
 			if window.UpBytesPerSec == nil {
 				window.UpBytesPerSec = new(float64)
 			}
