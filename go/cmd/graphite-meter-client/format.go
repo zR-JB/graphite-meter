@@ -1,15 +1,175 @@
 package main
 
 import (
-	"cmp"
 	"fmt"
-	"net/url"
+	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
+
+// Units and precision follow the browser's format.ts: decimal prefixes, speed precision by magnitude,
+// milliseconds with one decimal below 100, and "—" wherever a value is missing.
+const missing = "—"
+
+var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
+
+// fmtRate promotes the unit only past 1.2 of the next tier, so a rate near a boundary keeps a stable unit.
+func fmtRate(bytesPerSec float64) string {
+	bits := bytesPerSec * 8
+	tier := 0
+	for tier < len(rateUnits)-1 && bits >= 1.2*math.Pow(1000, float64(tier+1)) {
+		tier++
+	}
+	return fmtSpeed(bits/math.Pow(1000, float64(tier))) + " " + rateUnits[tier]
+}
+
+func fmtSpeed(value float64) string {
+	switch {
+	case value >= 1000:
+		return strconv.FormatFloat(value, 'f', 0, 64)
+	case value >= 100:
+		return strconv.FormatFloat(value, 'f', 1, 64)
+	}
+	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func fmtBytes(n uint64) string {
+	units := []string{"B", "kB", "MB", "GB", "TB"}
+	value, tier := float64(n), 0
+	for value >= 1000 && tier < len(units)-1 {
+		value /= 1000
+		tier++
+	}
+	if tier == 0 {
+		return fmt.Sprintf("%d B", n)
+	}
+	return fmt.Sprintf("%.1f %s", value, units[tier])
+}
+
+func fmtMs(d time.Duration) string {
+	ms := float64(d) / float64(time.Millisecond)
+	if math.Abs(ms) < 100 {
+		return fmt.Sprintf("%.1f ms", ms)
+	}
+	return fmt.Sprintf("%.0f ms", ms)
+}
+
+// fmtAdded keeps the sign: loaded latency below the idle median is a finding, not an error.
+func fmtAdded(d time.Duration) string {
+	if d < 0 {
+		return "−" + fmtMs(-d)
+	}
+	return "+" + fmtMs(d)
+}
+
+// fmtSetting renders a configured duration the way it was chosen: 800 ms, 4 s, 1.5 s.
+func fmtSetting(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%d ms", d.Milliseconds())
+	}
+	return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s"
+}
+
+// fmtClock renders a running or measured span in tenths of a second.
+func fmtClock(d time.Duration) string {
+	return fmt.Sprintf("%.1f s", max(d, 0).Seconds())
+}
+
+var stageLabels = map[goclient.Stage]string{
+	goclient.StageLatency:       "Latency",
+	goclient.StageDownload:      "Download",
+	goclient.StageUpload:        "Upload",
+	goclient.StageBidirectional: "Bidirectional",
+}
+
+// compactStage is the stage name where a column is narrow.
+func compactStage(stage goclient.Stage) string {
+	if stage == goclient.StageBidirectional {
+		return "Bi-dir"
+	}
+	return stageLabels[stage]
+}
+
+// populationLabel names a latency population by the load it was measured under.
+func populationLabel(stage goclient.Stage) string {
+	if stage == goclient.StageLatency {
+		return "Idle latency"
+	}
+	return "Loaded latency · " + compactStage(stage)
+}
+
+func directionLabel(r goclient.Result) string {
+	if r.Stage != goclient.StageBidirectional {
+		return stageLabels[r.Stage]
+	}
+	if r.Direction == goclient.Up {
+		return "Bi-dir ↑"
+	}
+	return "Bi-dir ↓"
+}
+
+// latencyParts reports a population with its median as the headline and never calls a probe timeout loss.
+func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
+	median := missing
+	if s.Count > 0 {
+		median = fmtMs(s.P50)
+	}
+	parts := []string{"median " + median}
+	if idle != nil && s.Count > 0 && idle.Count > 0 {
+		parts = append(parts, fmtAdded(s.P50-idle.P50)+" added")
+	}
+	p95, jitter := missing, missing
+	if s.Count > 0 {
+		p95 = fmtMs(s.P95)
+	}
+	if s.JitterPairs > 0 {
+		jitter = fmtMs(s.Jitter)
+	}
+	timeouts := missing
+	if ratio, ok := s.TimeoutRatio(); ok {
+		timeouts = fmt.Sprintf("%d/%d (%.1f%%)", s.Timeouts, s.Count+s.Timeouts, ratio*100)
+	}
+	parts = append(parts, "p95 "+p95, "jitter "+jitter, "probe timeouts "+timeouts, fmt.Sprintf("%d replies", s.Count))
+	if s.Elapsed > 0 {
+		parts = append(parts, fmtClock(s.Elapsed))
+	}
+	if s.Unresolved > 0 {
+		parts = append(parts, fmt.Sprintf("unfinished probes %d", s.Unresolved))
+	}
+	if s.SendFailures > 0 {
+		parts = append(parts, fmt.Sprintf("failed sends %d", s.SendFailures))
+	}
+	return parts
+}
+
+// wrapParts joins facts with " · " and breaks lines only between facts, never inside one.
+func wrapParts(parts []string, w int) []string {
+	var lines []string
+	line := ""
+	for _, part := range parts {
+		switch {
+		case line == "":
+			line = part
+		case len([]rune(line))+3+len([]rune(part)) <= w:
+			line += " · " + part
+		default:
+			lines = append(lines, line)
+			line = part
+		}
+	}
+	return append(lines, line)
+}
+
+func reflectorTimingSummary(s *goclient.ReflectorTimingStats) string {
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("Server timing (%d paired replies, means): raw %s · handling %s · adjusted %s. Only server handling is subtracted.",
+		s.Count, fmtMs(s.MeanRawRTT), fmtMs(s.MeanHandling), fmtMs(s.MeanAdjustedRTT))
+}
 
 func protocolChoiceLabel(protocol string) string {
 	if protocol == "auto" {
@@ -18,100 +178,25 @@ func protocolChoiceLabel(protocol string) string {
 	return goclient.ProtocolLabel(protocol)
 }
 
-func stageSummary(s goclient.StageSet) string {
-	var parts []string
-	for _, stage := range (goclient.Config{Stages: s}).Plan() {
-		parts = append(parts, string(stage.Name))
-	}
-	if len(parts) == 0 {
-		return "none"
-	}
-	return strings.Join(parts, ", ")
-}
+// eighths are the partial-cell fills between an empty and a full block, so a bar's tip moves in sub-cell steps.
+var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
-func runOrder(cfg goclient.Config) []string {
-	stages := plannedStages(cfg)
-	if len(stages) == 0 {
-		return []string{warnStyle.Render("No stages selected")}
+func renderBar(value, scale float64, width int) string {
+	cells := 0.0
+	if scale > 0 {
+		cells = min(max(value/scale*float64(width), 0), float64(width))
 	}
-	lines := make([]string, 0, len(stages))
-	for _, s := range stages {
-		lines = append(lines, fmt.Sprintf("%-14s %s", s.name, mutedStyle.Render(s.duration.String())))
+	full := int(cells)
+	part := eighths[int((cells-float64(full))*8)]
+	rest := width - full
+	if part != "" {
+		rest--
 	}
-	return lines
-}
-
-const (
-	labelColumn = 18
-	fieldColumn = 11
-)
-
-func field(label, value string) string {
-	return labelStyle.Render(pad(label, fieldColumn)) + value
-}
-
-func toggleLine(label string, on bool, note string) string {
-	return fmt.Sprintf("%s %-*s %s", checkbox(on), labelColumn-2, label, mutedStyle.Render(note))
-}
-
-func valueLine(label, value, note string) string {
-	return fmt.Sprintf("%-*s %s  %s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(note))
-}
-
-func inertValueLine(label, value, note string) string {
-	return fmt.Sprintf("%s %s  %s", mutedStyle.Render(pad(label, labelColumn)), mutedStyle.Render(value), mutedStyle.Render(note))
-}
-
-func pathRow(label, target, transport string, choices []pathChoice) string {
-	value, note, pos := unofferedPathLabel(target, transport), "", ""
-	for i, c := range choices {
-		if c.selects(target, transport) {
-			value, note = c.label, c.note
-			pos = fmt.Sprintf(" ‹%d/%d›", i+1, len(choices))
-			break
-		}
-	}
-	row := fmt.Sprintf("%-*s %s%s", labelColumn, label, valueStyle.Render(value), mutedStyle.Render(pos))
-	if note != "" {
-		row += mutedStyle.Render("  " + note)
-	}
-	return row
-}
-
-func unofferedPathLabel(target, transport string) string {
-	if target == "auto" && transport == "auto" {
-		return "Automatic"
-	}
-	mechanism := map[string]string{
-		"auto":                             "Automatic transport",
-		wire.TransportFetchStream:          "Fetch stream",
-		wire.TransportWebSocket:            "WebSocket",
-		wire.TransportWebTransport:         "WebTransport",
-		wire.TransportWebTransportDatagram: "WebTransport datagrams",
-	}[transport]
-	mechanism = cmp.Or(mechanism, emptyDash(transport))
-	if target == "auto" {
-		return mechanism + " · automatic origin"
-	}
-	return mechanism + " · " + target
-}
-
-func shortOrigin(base, target string) string {
-	u, err := url.Parse(target)
-	if err != nil || u.Host == "" {
-		return target
-	}
-	if b, err := url.Parse(base); err == nil && u.Port() != "" && strings.EqualFold(b.Hostname(), u.Hostname()) {
-		return ":" + u.Port()
-	}
-	return u.Host
+	return accentStyle.Render(strings.Repeat("█", full)+part) + mutedStyle.Render(strings.Repeat("░", rest))
 }
 
 func pad(s string, w int) string {
-	if len(s) >= w {
-		return s
-	}
-	return s + strings.Repeat(" ", w-len(s))
+	return s + strings.Repeat(" ", max(0, w-len([]rune(s))))
 }
 
 func checkbox(on bool) string {
@@ -119,147 +204,4 @@ func checkbox(on bool) string {
 		return accentStyle.Render("●")
 	}
 	return mutedStyle.Render("○")
-}
-
-// eighths are the partial-cell fills between an empty and a full block. A bar's tip moves in sub-cell steps.
-var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
-
-func renderBar(value, scale float64, width int, lead bool) string {
-	cells := 0.0
-	if scale > 0 {
-		cells = value / scale * float64(width)
-		cells = min(max(cells, 0), float64(width))
-	}
-	full := int(cells)
-	part := eighths[int((cells-float64(full))*8)]
-	if full == 0 && part == "" {
-		return mutedStyle.Render(strings.Repeat("░", width))
-	}
-	filled := accentStyle.Render(strings.Repeat("█", full))
-	if lead && full > 0 {
-		filled = accentStyle.Render(strings.Repeat("█", full-1)) + valueStyle.Render("█")
-	}
-	rest := width - full
-	if part != "" {
-		filled += accentStyle.Render(part)
-		rest--
-	}
-	return filled + mutedStyle.Render(strings.Repeat("░", rest))
-}
-
-func rateLine(name string, rate, scale float64, w int) string {
-	bar := renderBar(rate, scale, max(12, w-34), true)
-	return fmt.Sprintf("%s %s %12s", labelStyle.Render(name), bar, valueStyle.Render(fmtRate(rate)))
-}
-
-func latencyLine(s goclient.LatencySample, lostStreak int) string {
-	if s.RTT <= 0 {
-		if lostStreak > 0 {
-			return labelStyle.Render("latency ") + errorStyle.Render("probe timeout")
-		}
-		return labelStyle.Render("latency ") + mutedStyle.Render("waiting")
-	}
-	load := ""
-	if s.UnderLoad {
-		load = " loaded"
-	}
-	line := labelStyle.Render("latency ") + valueStyle.Render(fmtMs(s.RTT)) + mutedStyle.Render(load)
-	switch {
-	case lostStreak >= 3:
-		line += errorStyle.Render("  probe timeout ×" + fmt.Sprint(lostStreak))
-	case lostStreak > 0:
-		line += warnStyle.Render(fmt.Sprintf("  probe timeout ×%d", lostStreak))
-	}
-	return line
-}
-
-func emptyDash(s string) string {
-	if s == "" {
-		return "--"
-	}
-	return s
-}
-
-func fmtRate(bytesPerSec float64) string {
-	bits := bytesPerSec * 8
-	units := []string{"bit/s", "Kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
-	i := 0
-	for bits >= 1000 && i < len(units)-1 {
-		bits /= 1000
-		i++
-	}
-	if i == 0 {
-		return fmt.Sprintf("%.0f %s", bits, units[i])
-	}
-	return fmt.Sprintf("%.2f %s", bits, units[i])
-}
-
-func fmtBytes(n uint64) string {
-	v := float64(n)
-	units := []string{"B", "KB", "MB", "GB", "TB"}
-	i := 0
-	for v >= 1000 && i < len(units)-1 {
-		v /= 1000
-		i++
-	}
-	if i == 0 {
-		return fmt.Sprintf("%d %s", n, units[i])
-	}
-	return fmt.Sprintf("%.2f %s", v, units[i])
-}
-
-// fmtClock renders a running clock: tenths under a minute, whole seconds above, where tenths only flicker.
-func fmtClock(d time.Duration) string {
-	d = max(d, 0)
-	if d < time.Minute {
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	}
-	return d.Round(time.Second).String()
-}
-
-func fmtMs(d time.Duration) string {
-	if d <= 0 {
-		return "--"
-	}
-	return fmt.Sprintf("%.2f ms", float64(d.Microseconds())/1000)
-}
-
-func clamp(v, lo, hi int) int {
-	if hi < lo {
-		return lo
-	}
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-func latencyOutcomeSummary(s goclient.LatencyStats) string {
-	variation := "--"
-	if s.JitterPairs > 0 {
-		variation = fmt.Sprintf("%.2f ms", float64(s.Jitter)/float64(time.Millisecond))
-	}
-	timeouts := "-- (no resolved probes)"
-	if ratio, ok := s.TimeoutRatio(); ok {
-		timeouts = fmt.Sprintf("%.1f%% (%d/%d)", ratio*100, s.Timeouts, s.Count+s.Timeouts)
-	}
-	out := "RTT variation " + variation + "  probe timeouts " + timeouts
-	if s.Unresolved > 0 {
-		out += fmt.Sprintf("  unresolved %d", s.Unresolved)
-	}
-	if s.SendFailures > 0 {
-		out += fmt.Sprintf("  send failures %d", s.SendFailures)
-	}
-	return out
-}
-
-func reflectorTimingSummary(s *goclient.ReflectorTimingStats) string {
-	if s == nil {
-		return ""
-	}
-	return fmt.Sprintf("Server timing (%d paired replies, means): raw %.2f ms · handling %.2f ms · adjusted %.2f ms. Only server handling is subtracted.",
-		s.Count, float64(s.MeanRawRTT)/float64(time.Millisecond), float64(s.MeanHandling)/float64(time.Millisecond), float64(s.MeanAdjustedRTT)/float64(time.Millisecond))
 }

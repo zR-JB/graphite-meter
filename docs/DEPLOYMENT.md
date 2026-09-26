@@ -354,16 +354,23 @@ enabled.
 | `--download-duration`      | `10s`                     | Download duration.                                                    |
 | `--upload-duration`        | `10s`                     | Upload duration.                                                      |
 | `--bidirectional-duration` | `10s`                     | Bidirectional duration.                                               |
-| `--auto-streams`           | `6`                       | Maximum automatic HTTP/1 streams per direction.                       |
-| `--streams`                | `0`                       | Forced streams per active direction; zero keeps automatic policy.     |
-| `--ping`                   | `medium`                  | `instant` (80 ms), `medium` (250 ms), `slow` (600 ms), or a duration. |
+| `--auto-streams`           | `6`                       | Maximum H1 streams per direction.                                     |
+| `--streams`                | `0`                       | Force exact streams per server and direction; zero keeps automatic.   |
+| `--ping`                   | `medium`                  | `fast` (80 ms), `medium` (250 ms), `slow` (600 ms), or a duration.    |
 | `--loaded-latency`         | `true`                    | Measure latency while transfer stages run.                            |
 | `--insecure`               | `false`                   | Skip TLS verification for unauthenticated testing.                    |
 | `--version`                | `false`                   | Print the client version and exit.                                    |
 | `--legal`                  | `false`                   | Print licenses and notices and exit.                                  |
 
-WebTransport limits custom ping intervals to half the server session idle bound. Invalid stage
-tokens are ignored; at least one valid stage must remain for a useful run.
+WebTransport limits custom ping intervals to half the server session idle bound; any other
+`--ping` value is rejected. Invalid stage tokens are ignored; at least one valid stage must remain
+for a useful run.
+
+The client checks its paths on launch. Setup has the browser's three panels: **Connection
+paths**, **Duration & stages**, and **Advanced**. Press **r** to start a test, **v** to check the
+paths again, **s** for test servers, **u** to drop servers that are unavailable, and **a** for
+Automatic paths. During a test, **esc** asks before stopping it. When the program exits, the final
+report is printed as plain text.
 
 Releases attach native client archives for Linux amd64/arm64, macOS amd64/arm64, and Windows
 amd64. The server is distributed through the multi-architecture container image; a standalone

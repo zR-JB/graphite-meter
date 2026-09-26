@@ -202,8 +202,9 @@ remain interactive. Preparation locks run configuration until launch or cancella
 The TUI uses `--url` as the originating catalogue URL and repeatable `--server ID`
 arguments as the selected set. Without `--server`, operator defaults apply. Press
 **s** in setup, navigate with arrows, toggle with Space, apply with Enter or cancel
-with Escape. **a** applies Automatic paths. Selection is hidden when the catalogue contains
-only one server. For a multi-server run, **l** rotates latency focus and **d**
+with Escape. Setup lists each selected server as Ready, Sign in, or Unavailable with its
+error; **u** keeps only the available ones. **a** applies Automatic paths. Selection is hidden
+when the catalogue contains only one server. For a multi-server run, **l** rotates latency focus and **d**
 opens scrollable server details. Explicit origin overrides require a singleton
 selection. Protected peers each use their own explicit browser approval.
 

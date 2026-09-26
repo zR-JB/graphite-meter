@@ -15,14 +15,14 @@ import (
 )
 
 func main() {
+	// Neither informational flag touches the terminal: they print and exit before any rendering.
 	if slices.Contains(os.Args[1:], "--legal") {
 		fmt.Print(string(legal.TUIReport()))
 		return
 	}
 
 	cfg := goclient.DefaultConfig()
-	var stages string
-	var ping string
+	var stages, ping string
 	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
 	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)", func(id string) error {
@@ -43,9 +43,9 @@ func main() {
 	flag.DurationVar(&cfg.DownloadDuration, "download-duration", cfg.DownloadDuration, "download measurement duration")
 	flag.DurationVar(&cfg.UploadDuration, "upload-duration", cfg.UploadDuration, "upload measurement duration")
 	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
-	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum automatic HTTP/1 streams per direction")
-	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force streams per server and active direction (0 = automatic; 128 per direction across the run)")
-	flag.StringVar(&ping, "ping", "medium", "ping cadence: instant, medium, slow, or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency bus)")
+	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum H1 streams per direction")
+	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force exact streams per server and direction (0 = automatic; 128 per direction across the run)")
+	flag.StringVar(&ping, "ping", "medium", "ping cadence: fast (80 ms), medium (250 ms), slow (600 ms), or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency path)")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
@@ -55,32 +55,30 @@ func main() {
 		fmt.Println("graphite-meter-client " + goclient.Version)
 		return
 	}
-
 	cfg.Stages = parseStages(stages)
 	if err := transportFlags(cfg.ThroughputTransport, cfg.LatencyTransport); err != nil {
-		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
-		os.Exit(2)
+		fail(2, err)
 	}
 	interval, err := parsePing(ping, cfg.LatencyTransport)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "graphite-meter-client: -ping: %v\n", err)
-		os.Exit(2)
+		fail(2, fmt.Errorf("-ping: %w", err))
 	}
 	cfg.PingInterval = interval
 
 	m := newModel(cfg)
-	p := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen())
-	final, err := p.Run()
+	final, err := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen()).Run()
 	m.controller.Close()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
-		os.Exit(1)
+		fail(1, err)
 	}
-	if m, ok := final.(model); ok {
-		if report := m.finalReport(); report != "" {
-			fmt.Println(report)
-		}
+	if report := final.(model).finalReport(); report != "" {
+		fmt.Println(report)
 	}
+}
+
+func fail(code int, err error) {
+	fmt.Fprintf(os.Stderr, "graphite-meter-client: %v\n", err)
+	os.Exit(code)
 }
 
 func parseStages(raw string) goclient.StageSet {
@@ -110,24 +108,23 @@ func transportFlags(throughput, latency string) error {
 	return nil
 }
 
+// parsePing accepts the browser's cadence names or a positive duration; anything else is an error, not a default.
 func parsePing(raw, latencyTransport string) (time.Duration, error) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "instant":
-		return 80 * time.Millisecond, nil
-	case "slow":
-		return 600 * time.Millisecond, nil
-	case "medium", "":
-		return 250 * time.Millisecond, nil
-	default:
-		d, err := time.ParseDuration(raw)
-		if err != nil || d <= 0 {
-			return 250 * time.Millisecond, nil
-		}
-		if goclient.PingIntervalBoundApplies(latencyTransport) {
-			if err := goclient.ValidatePingInterval(d); err != nil {
-				return 0, err
-			}
-		}
-		return d, nil
+	name := strings.ToLower(strings.TrimSpace(raw))
+	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }); i >= 0 && name != "" {
+		return cadences[i].interval, nil
 	}
+	if name == "" {
+		return 250 * time.Millisecond, nil
+	}
+	d, err := time.ParseDuration(name)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("use fast, medium, slow, or a positive duration such as 400ms")
+	}
+	if goclient.PingIntervalBoundApplies(latencyTransport) {
+		if err := goclient.ValidatePingInterval(d); err != nil {
+			return 0, err
+		}
+	}
+	return d, nil
 }

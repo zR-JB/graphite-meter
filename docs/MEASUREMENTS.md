@@ -42,7 +42,8 @@ payload-byte deltas over a common client monotonic window. Uploads take fresh
 each server's byte/time pair, divide each byte delta by that receiver's elapsed
 seconds, then add the resulting bytes-per-second rates. This is a sum of coordinated
 receiver-window means. It is not an exactly synchronized global-clock sample:
-request/response timing and each actual receiver duration remain in the result.
+each actual receiver duration remains in the result, and the browser also retains each
+checkpoint's request/response timing.
 Receiver durations are never added.
 
 Browser stable-window boundaries are chosen centrally. A headline never adds
@@ -228,12 +229,18 @@ configured/adaptive warmup starts. Warmup data is excluded from every result.
 The shared gate opens the measured phase after fresh initial upload checkpoints.
 Download and latency use client monotonic time; uploads use each server's own
 receiver checkpoints, with each concurrent checkpoint batch bounded to 1.5 seconds.
+Within that bound a refused checkpoint is retried every 100 ms; each snapshot is the
+reply to its own request, so a late success never stands in for an earlier boundary.
+The native client runs one server through the same coordinator as several.
 The coordinator samples boundaries about every 250 ms. Full-window means follow
 the component rules above. A terminal direction failure stops that participant's
 resources and leaves survivors running; caller cancellation stops all resources.
 Setup-only bytes never become a partial result. Earlier measured bytes and windows
 remain in details when the final headline lacks evidence. Cleanup joins resources
-and checkpoint requests before the run's terminal outcome is emitted.
+and checkpoint requests before the run's terminal outcome is emitted. That outcome is
+Complete (every stage with every server), Partial (every stage finished after a server
+or latency population left), Incomplete (a stage ended without its result after
+measurement began), Stopped (cancelled), or Failed (nothing was measured).
 
 Native latency summaries use received application replies within each measured stage. P50 is the
 midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
