@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import os
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.legal.artifacts import manual_source_destination, safe_name, third_party_source_bundle
-from scripts.legal.model import Component, LegalError, LegalFile, Project, Provenance
+from scripts.legal.model import (
+    Component, LegalError, LegalFile, Project, Provenance, local_path,
+)
 
 
 class SourceArchiveTests(unittest.TestCase):
@@ -80,6 +84,19 @@ class SourceArchiveTests(unittest.TestCase):
         entry = Provenance(name='m', localPaths=['manual.txt'], correspondingSource='third_party/manual/m')
         with self.assertRaisesRegex(LegalError, 'links outside'):
             third_party_source_bundle(self.root, Project(), 'development', self.scopes, [entry], output)
+
+    def test_command_line_paths_stay_in_the_checkout_or_a_temporary_directory(self) -> None:
+        repo = self.root / 'repo'
+        (repo / 'go').mkdir(parents=True)
+        (repo / 'escape').symlink_to('/')
+        with patch.dict(os.environ, {'RUNNER_TEMP': str(repo / 'go')}):
+            self.assertEqual(local_path(repo / 'go/dist/x.tar.gz', repo),
+                             repo.resolve() / 'go/dist/x.tar.gz')
+            scan = self.root / 'scan.json'
+            self.assertEqual(local_path(scan, repo), self.root.resolve() / 'scan.json')
+            for outside in ('/etc/passwd', repo / 'go/../../../..' / 'etc', repo / 'escape/etc'):
+                with self.subTest(outside=outside):
+                    self.assertRaisesRegex(LegalError, 'is outside', local_path, outside, repo)
 
     def test_manual_archive_legal_files_and_relative_sources_are_required(self) -> None:
         self.write('manual/LICENSE', 'MIT License\n')

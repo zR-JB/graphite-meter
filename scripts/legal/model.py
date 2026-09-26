@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import NoReturn, TypeAlias, cast
@@ -12,6 +14,15 @@ Json: TypeAlias = str | int | float | bool | None | list['Json'] | dict[str, 'Js
 
 class LegalError(ValueError):
     pass
+
+
+def local_path(value: str | Path, repo: Path) -> Path:
+    """Resolve a command-line path, which must lie inside the checkout or a temporary directory."""
+    path = os.path.realpath(value)
+    roots = (repo, tempfile.gettempdir(), os.environ.get('RUNNER_TEMP') or repo)
+    if path.startswith(tuple(os.path.join(os.path.realpath(root), '') for root in roots)):
+        return Path(path)
+    raise LegalError(f'{value} is outside the checkout and the temporary directory')
 
 
 def read_json(path: Path) -> Json:
