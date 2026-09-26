@@ -32,17 +32,13 @@ import {
 import { rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
-import { buildSegments } from "../runner/schedule";
+import { adaptWarmup, buildSegments } from "../runner/schedule";
 import {
   latencyLanes,
   type MultiServerResult,
   type ServerFailure,
 } from "../runner/measure";
-import {
-  appendThroughputSample,
-  compactThroughputHistory,
-  upsertLatencyBucket,
-} from "../runner/series";
+import { appendThroughputSample, upsertLatencyBucket } from "../runner/series";
 import {
   deriveStagePresentation,
   STAGE_ORDER,
@@ -280,7 +276,6 @@ class AppStore {
   throughputRevision = $state(0);
   /** The current transfer stage's latest sample; null between stages. */
   live = $state.raw<LiveSample | null>(null);
-  #throughputTargetSpanMs = 0;
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
@@ -442,13 +437,22 @@ class AppStore {
     return connectionQuality(this.idleLatency);
   });
 
-  totalEtaMs = $derived(buildSegments(this.config).totalMs);
-
   phaseRemainingMs = $derived(
     Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs),
   );
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
+
+  /** The running plan; otherwise the next run's, adapted to the verified RTT. */
+  totalEtaMs = $derived(
+    buildSegments(
+      (this.isRunning && this.run?.config) ||
+        adaptWarmup(
+          this.config,
+          this.connectionValidation.latency.path?.rttMs ?? 0,
+        ),
+    ).totalMs,
+  );
 
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
     () => {
@@ -568,13 +572,7 @@ class AppStore {
         phase,
         continuityId,
       };
-      if (
-        appendThroughputSample(
-          this.#throughput,
-          sample,
-          this.#throughputTargetSpanMs,
-        )
-      )
+      if (appendThroughputSample(this.#throughput, sample, this.totalEtaMs))
         this.throughputRevision++;
     }
     this.#throughputTail++;
@@ -668,7 +666,7 @@ class AppStore {
         this.live = null;
         if (to === "connecting") {
           this.preparationStatus = "idle";
-          this.startEpoch = Date.now();
+          this.startEpoch = event.transition.startedAt ?? Date.now();
         }
         break;
       }
@@ -738,7 +736,6 @@ class AppStore {
       startEpoch: 0,
       historyCandidate: null,
     });
-    this.#throughputTargetSpanMs = buildSegments(this.config).totalMs;
     this.runSeq++;
   }
 
@@ -750,17 +747,6 @@ class AppStore {
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
     this.resultHistoryPreference = defaults.resultHistoryPreference;
-  }
-
-  compactThroughputForDuration(durationMs: number) {
-    if (durationMs <= this.#throughputTargetSpanMs) return;
-    this.#throughputTargetSpanMs = durationMs;
-    if (
-      compactThroughputHistory(this.#throughput, this.#throughputTargetSpanMs)
-    ) {
-      this.throughputRevision++;
-      this.#throughputTail++;
-    }
   }
 
   latencyLanes = $derived.by<LatencyLane[]>(() => {

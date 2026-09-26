@@ -3,6 +3,7 @@ import "../state/runes.testutil";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import type { RunnerConfig, RunnerEvent } from "./contract";
 import { CONNECTION_FRESH_MS, type ServerView } from "./paths";
+import { buildSegments } from "./schedule";
 import type {
   ApplicationController,
   createApplicationController,
@@ -310,13 +311,20 @@ test("returning to start releases the run so late events cannot reach the fresh 
   });
 });
 
-test("live configuration rejects invalid plans before changing draft or runner", async () => {
-  await withController({}, async ({ controller, store, runner }) => {
+test("a run keeps its RTT-adapted plan; live settings reject invalid plans", async () => {
+  const slow = evidence();
+  slow.latency!.rttMs = 300;
+  const prepare: Dependencies["prepare"] = async (config) =>
+    preparation(config, slow);
+  await withController({ prepare }, async ({ controller, store, runner }) => {
     const previous: RunnerConfig = JSON.parse(JSON.stringify(store.config));
+    const warmupMs = 3_000;
+    const plan = { ...previous, duration: { ...previous.duration, warmupMs } };
     let reconfigured = 0;
     runner.reconfigure = () => void reconfigured++;
     controller.toggleRun();
     await until(() => runner.starts === 1);
+    expect(store.totalEtaMs).toBe(buildSegments(plan).totalMs);
     const stages = { ...previous.stages };
     for (const stage of Object.keys(stages) as (keyof typeof stages)[])
       stages[stage] = false;
@@ -324,11 +332,11 @@ test("live configuration rejects invalid plans before changing draft or runner",
     expect(controller.configureRun({ duration: negative })).toBe(false);
     expect(controller.configureRun({ stages })).toBe(false);
     expect(store.config).toEqual(previous);
-    expect(store.run?.config).toEqual(previous);
+    expect(store.run?.config).toEqual(plan);
     expect(reconfigured).toBe(0);
     const duration = { ...previous.duration, uploadMs: 11_000 };
     expect(controller.configureRun({ duration })).toBe(true);
-    expect(store.run?.config.duration).toEqual(duration);
+    expect(store.run?.config.duration).toEqual({ ...duration, warmupMs });
     expect(reconfigured).toBe(1);
   });
 });

@@ -35,7 +35,6 @@ import {
   type TransferStage,
 } from "./measure";
 import {
-  adaptiveWarmupMs,
   buildSegments,
   reconfigureTimeline,
   segmentAt,
@@ -119,6 +118,7 @@ export class Run {
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running = false;
   #t0 = 0;
+  #startedAt = 0;
   #elapsed = 0;
   #lastRealNow = 0;
   /** Stage preparation or finalization holds the timeline. */
@@ -227,8 +227,8 @@ export class Run {
     );
   }
 
-  /** Connection selection and authentication complete before a run starts; RTT only adjusts warmup. */
-  start(config: RunnerConfig, preTestPingMs: number): void {
+  /** Connection selection, authentication and the RTT-adapted plan are settled before a run starts. */
+  start(config: RunnerConfig): void {
     this.#validate(config, this.#servers);
     this.abort();
     this.#release();
@@ -251,11 +251,11 @@ export class Run {
         rotated: false,
         gaps: 0,
       });
-    this.#transition("connecting", null, 0);
-    const warmupMs = adaptiveWarmupMs(config.duration.warmupMs, preTestPingMs);
-    this.#cfg = { ...config, duration: { ...config.duration, warmupMs } };
-    this.#segments = buildSegments(this.#cfg).segments;
     this.#t0 = this.#lastRealNow = performance.now();
+    this.#startedAt = Date.now();
+    this.#transition("connecting", null, 0, this.#startedAt);
+    this.#cfg = config;
+    this.#segments = buildSegments(config).segments;
     this.#running = true;
     this.#tick();
     this.#arm();
@@ -331,9 +331,14 @@ export class Run {
     }
   }
 
-  #transition(to: Phase, stage: TransportRole | null, t: number): void {
+  #transition(
+    to: Phase,
+    stage: TransportRole | null,
+    t: number,
+    startedAt?: number,
+  ): void {
     this.#phase = to;
-    this.#emit({ type: "phase", transition: { to, stage, t } });
+    this.#emit({ type: "phase", transition: { to, stage, t, startedAt } });
   }
 
   #arm(): void {
@@ -1215,7 +1220,7 @@ export class Run {
         : this.#failures.length
           ? "partial"
           : "complete",
-      startedAt: Date.now() - durationMs,
+      startedAt: this.#startedAt,
       durationMs,
     };
     this.#release();

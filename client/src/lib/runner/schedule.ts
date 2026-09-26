@@ -57,13 +57,14 @@ const SLOW_START_RTTS = 10;
 /** Ceiling, so a satellite-grade RTT cannot blow up the run length. */
 const WARMUP_CEIL_MS = 4000;
 
-/* Warmup scales with RTT to prime TCP slow-start; `baseMs` is the floor, and invalid RTT keeps it. */
-export function adaptiveWarmupMs(baseMs: number, rttMs: number): number {
-  const rtt = Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0;
-  return Math.min(
+/** The run's plan: warmup scales with RTT to prime TCP slow-start; an unknown RTT is Infinity. */
+export function adaptWarmup(config: RunnerConfig, rttMs: number): RunnerConfig {
+  const scaled = Math.round((rttMs > 0 ? rttMs : 0) * SLOW_START_RTTS);
+  const warmupMs = Math.min(
     WARMUP_CEIL_MS,
-    Math.max(baseMs, Math.round(rtt * SLOW_START_RTTS)),
+    Math.max(config.duration.warmupMs, scaled),
   );
+  return { ...config, duration: { ...config.duration, warmupMs } };
 }
 
 /* Every warmup is immediately followed by its stage's measurement, so two warmups never sit adjacent. */

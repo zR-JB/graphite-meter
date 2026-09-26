@@ -37,7 +37,7 @@ import type {
   StageKey,
 } from "../state/store.svelte";
 import { readStored, writeStored } from "../state/persistence";
-import { buildSegments } from "./schedule";
+import { adaptWarmup, buildSegments } from "./schedule";
 import {
   CONNECTION_ROLES,
   latencyPathNeeded,
@@ -96,6 +96,7 @@ export function createApplicationController(
   let catalogCheck: AbortController | null = null;
   let sessionBudget: SessionBudget | null = null;
   let approval: { id: string; abort: AbortController } | null = null;
+  let runRttMs = 0;
   let idleEvidenceKey = "";
 
   const hidden = () => document.visibilityState === "hidden";
@@ -521,7 +522,10 @@ export function createApplicationController(
     signal: AbortSignal,
     live: () => boolean,
   ) {
-    const plannedMs = buildSegments(config).totalMs + SESSION_RUN_MARGIN_MS;
+    // The RTT that adapts warmup is known after the checks, so coverage assumes the longest.
+    const plannedMs =
+      buildSegments(adaptWarmup(config, Infinity)).totalMs +
+      SESSION_RUN_MARGIN_MS;
     let budget = await requireSessionCoverage(plannedMs, signal);
     if (!live()) return;
     const servers = selected();
@@ -587,9 +591,11 @@ export function createApplicationController(
     unsubscribe = owner.on((event) => {
       if (runner === owner) ingest(event);
     });
-    store.run = { config: structuredClone(config), servers: prepared };
+    runRttMs = focus.paths.latency?.rttMs ?? 0;
+    const plan = adaptWarmup(config, runRttMs);
+    store.run = { config: structuredClone(plan), servers: prepared };
     store.serverDetails = owner.details();
-    owner.start(config, focus.paths.latency?.rttMs ?? 0);
+    owner.start(plan);
   }
   /** A superseded run can never deliver another event. */
   function releaseRunner() {
@@ -626,12 +632,13 @@ export function createApplicationController(
       )
     )
       return false;
+    const plan = adaptWarmup(config, runRttMs);
     const live: LiveRunConfig = {
-      stages: config.stages,
-      duration: config.duration,
-      adaptive: config.adaptive,
+      stages: plan.stages,
+      duration: plan.duration,
+      adaptive: plan.adaptive,
     };
-    const candidateTotal = buildSegments(config).totalMs;
+    const candidateTotal = buildSegments(plan).totalMs;
     if (store.isRunning) {
       const activeTotal = store.run
         ? buildSegments(store.run.config).totalMs
@@ -671,7 +678,6 @@ export function createApplicationController(
       selectIntent();
       return true;
     }
-    store.compactThroughputForDuration(candidateTotal);
     if (store.run)
       store.run = { ...store.run, config: { ...store.run.config, ...live } };
     return true;
