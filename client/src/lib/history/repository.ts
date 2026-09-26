@@ -20,14 +20,6 @@ export function announceHistoryChanged(source = ""): void {
   channel.close();
 }
 
-export function retainNewest(
-  records: readonly HistoryRecord[],
-): HistoryRecord[] {
-  return [...records]
-    .sort((a, b) => b.completedAt - a.completedAt || b.id.localeCompare(a.id))
-    .slice(0, HISTORY_LIMIT);
-}
-
 const clearCount = (row: unknown): number => {
   const value = (row as { value?: unknown } | undefined)?.value;
   return Number.isSafeInteger(value) && (value as number) > 0
@@ -147,7 +139,7 @@ export class HistoryRepository {
     const total = await request(store.count());
     const records = values.filter(isHistoryRecord);
     return {
-      records: retainNewest(records),
+      records: records.reverse().slice(0, HISTORY_LIMIT),
       malformedCount: total - records.length,
     };
   }
