@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import shutil
@@ -137,20 +136,11 @@ def verify(version: str, revision: str, archive: Path) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--check-skopeo", action="store_true")
-    parser.add_argument("release", nargs="*", metavar="VERSION REVISION ARCHIVE")
-    args = parser.parse_args()
-    if len(args.release) != (0 if args.check_skopeo else 3):
-        parser.error("pass --check-skopeo alone or VERSION REVISION ARCHIVE")
     try:
-        if args.check_skopeo:
-            verify_skopeo_runtime()
-            print("Skopeo runtime contract passed")
-        else:
-            verify(args.release[0], args.release[1], Path(args.release[2]))
+        verify_skopeo_runtime()
     except ControlPlaneError as exc:
-        raise SystemExit(f"OCI verification failed: {exc}") from exc
+        raise SystemExit(f"Skopeo runtime check failed: {exc}") from exc
+    print("Skopeo runtime contract passed")
 
 
 if __name__ == "__main__":

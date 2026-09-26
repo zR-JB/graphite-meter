@@ -69,7 +69,6 @@ PATH_FILTERS = {
     "release": (".dockerignore",),
     "security": ("client/package.json", "client/bun.lock", "client/bunfig.toml"),
 }
-CI_SUPERSETS = {"server-test": "server-race"}
 
 
 class PolicyError(RuntimeError):
@@ -182,9 +181,8 @@ def check_ci(root: Path) -> None:
     def steps(task: str) -> list[str]:
         return [step["task"] for step in tasks[task]["run"] if isinstance(step, dict)]
 
-    gate = [leaf for step in steps("ci") for leaf in (steps(step) if step == "check" else [step])]
-    for task in gate:
-        if not re.search(rf"mise run {re.escape(CI_SUPERSETS.get(task, task))}(?![\w-])", ci):
+    for task in steps("ci"):
+        if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
     sections = re.findall(r"(?ms)^([a-z]+):\n(.*?)(?=^\S|\Z)", read(root, ".github/ci-paths.yml"))
     filters = {section: set(re.findall(r"- '([^']+)'", body)) for section, body in sections}

@@ -76,7 +76,7 @@ jobs:
         with: {persist-credentials: false}
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
+        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
       - name: Check legal outputs for drift
         run: mise run legal-check
       - name: Run component checks
@@ -183,7 +183,7 @@ jobs:
       - name: Build and verify representative release packages
         run: mise run release-check
       - name: Verify pinned Skopeo runtime contract
-        run: python3 scripts/ci/verify_oci.py --check-skopeo
+        run: python3 scripts/ci/verify_oci.py
 
   security:
     name: Security scan

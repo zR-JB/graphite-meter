@@ -65,7 +65,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
     (W + "ci.yml", "mise run core-check", "mise run client-ci", "local gate step core-check"),
-    (W + "ci.yml", "mise run server-race", "mise run server-test", "local gate step server-test"),
+    (W + "ci.yml", "mise run server-race", "mise run server-test", "local gate step server-race"),
     (W + "ci.yml", "mise run legal-check", "mise run legal-generate",
      "local gate step legal-check"),
     (REQUEST, "VERSION= mise run legal-check\n", "", "committed legal outputs"),
@@ -107,7 +107,6 @@ class WorkflowPolicyTests(unittest.TestCase):
                 path.write_text(text)
                 with self.assertRaisesRegex(PolicyError, error):
                     check_repository(root)
-
 
     def test_pinned_linters_reject_unpinned_actions_and_unknown_outputs(self) -> None:
         zizmor = ("zizmor", "--offline", "--config", ".github/zizmor.yml", ".github")

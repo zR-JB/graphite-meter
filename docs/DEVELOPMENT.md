@@ -337,8 +337,7 @@ verification. Dependency updates use their native package commands and lockfiles
 
 Sync updates unavoidable literals: the Go module's language directive, Docker
 builder defaults, mise bootstrap versions, and immutable QEMU/Skopeo workflow
-references. No-checkout publication jobs retain trusted literal image references.
-`mise run toolchain-check` rejects drift, and `mise run doctor` checks runtimes.
+`mise run workflow-check` rejects drift, and `mise run doctor` checks runtimes.
 Direct `docker build -f container/Dockerfile .` remains supported.
 
 CI explicitly installs each job's required tools and disables automatic tool

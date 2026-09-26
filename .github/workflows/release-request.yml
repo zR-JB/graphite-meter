@@ -33,10 +33,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: release-request-${{ github.run_id }}
-  cancel-in-progress: false
-
 jobs:
   build:
     name: Build untrusted release candidate
