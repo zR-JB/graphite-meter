@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Visual only: GaugePanel announces phases, so only issues reach the status.
+  // Visual only: GaugePanel announces phases.
   import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -8,16 +8,11 @@
   import { STAGE_ORDER } from "../state/stagePresentation";
   import { STAGE, phaseLabel } from "../presentation/vocabulary";
   import { serverName } from "../presentation/serverAppearance";
+  import { announceChanges } from "../presentation/announcer.svelte";
 
   const LINGER_ALERT_MS = 3200;
   const LINGER_COMPLETE_MS = 2200;
   const LINGER_PHASE_MS = 1350;
-
-  let visible = $state(false);
-  let prevPhase = store.phase;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let skipMessage = $state<string | null>(null);
-  let prevFailCount = 0;
 
   const stalled = $derived(store.isRunning && !store.measuring);
   const stallMessage = $derived(
@@ -32,6 +27,18 @@
   );
   const stages = $derived(
     STAGE_ORDER.filter((stage) => store.runConfig.stages[stage]),
+  );
+  const issues = $derived.by(() => {
+    const details = store.serverDetails;
+    return (details?.failures ?? []).map(
+      (failure) =>
+        `${serverName(details!.selection, failure.serverId)}: ${STAGE[failure.stage].label} unavailable`,
+    );
+  });
+  const issue = $derived(
+    issues.length > 1
+      ? `${issues.length} measurement issues — details in results`
+      : (issues[0] ?? ""),
   );
   const notice = $derived.by(() => {
     const { phase, result, error, phaseStage } = store;
@@ -53,63 +60,50 @@
     return { kicker: "Preparing", message: label };
   });
 
-  function show(linger: number) {
-    visible = true;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      visible = false;
-      skipMessage = null;
-    }, linger);
+  // One timer: an issue holds the toast until it lapses; idle clears it.
+  let toast = $state<{ issue: boolean } | null>(null);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let seenPhase = store.phase;
+  let seenIssues = 0;
+  function show(next: typeof toast, linger = 0) {
+    clearTimeout(timer);
+    toast = next;
+    if (next) timer = setTimeout(() => (toast = null), linger);
   }
-
   $effect(() => {
-    const phase = store.phase;
-    if (phase === prevPhase) return;
-    prevPhase = phase;
-    if (phase === "idle") return void (visible = false);
-    show(
-      untrack(() => skipMessage) != null ||
-        phase === "aborted" ||
-        phase === "error"
-        ? LINGER_ALERT_MS
-        : phase === "complete"
-          ? LINGER_COMPLETE_MS
-          : LINGER_PHASE_MS,
-    );
-    return () => {
-      if (timer) clearTimeout(timer);
-    };
+    const { phase } = store;
+    const count = issues.length;
+    const phaseChanged = phase !== seenPhase;
+    const issueAdded = count > seenIssues;
+    seenPhase = phase;
+    seenIssues = count;
+    if (phase === "idle") show(null);
+    else if (issueAdded) show({ issue: true }, LINGER_ALERT_MS);
+    else if (phaseChanged && !untrack(() => toast?.issue))
+      show(
+        { issue: false },
+        phase === "aborted" || phase === "error"
+          ? LINGER_ALERT_MS
+          : phase === "complete"
+            ? LINGER_COMPLETE_MS
+            : LINGER_PHASE_MS,
+      );
   });
-
-  $effect(() => {
-    const details = store.serverDetails;
-    const failures = (details?.failures ?? []).map(
-      (failure) =>
-        `${serverName(details!.selection, failure.serverId)}: ${STAGE[failure.stage].label} unavailable`,
-    );
-    if (failures.length > prevFailCount) {
-      skipMessage =
-        failures.length > 1
-          ? `${failures.length} measurement issues — details in results`
-          : failures[failures.length - 1];
-      show(LINGER_ALERT_MS);
-    }
-    prevFailCount = failures.length;
-  });
+  $effect(() => () => clearTimeout(timer));
+  announceChanges(() => (stalled ? stallMessage : ""));
+  announceChanges(() => issue);
 </script>
 
 <div
   class="float phase-toast"
-  class:visible={visible || stalled}
+  class:visible={toast || stalled}
   class:alert={stalled ||
-    (visible &&
-      (skipMessage != null ||
-        store.phase === "error" ||
-        store.phase === "aborted"))}
+    toast?.issue ||
+    (toast && (store.phase === "error" || store.phase === "aborted"))}
   aria-hidden="true"
 >
   <span class="notice-icon">
-    {#if stalled || skipMessage || store.phase === "error"}
+    {#if stalled || toast?.issue || store.phase === "error"}
       {@html ICON.info}
     {:else if store.phase === "complete"}
       {@html ICON.check}
@@ -118,13 +112,12 @@
     {/if}
   </span>
   <span class="kicker"
-    >{stalled ? "Connection" : skipMessage ? "Issue" : notice.kicker}</span
+    >{stalled ? "Connection" : toast?.issue ? "Issue" : notice.kicker}</span
   >
-  <strong>{stalled ? stallMessage : (skipMessage ?? notice.message)}</strong>
+  <strong
+    >{stalled ? stallMessage : toast?.issue ? issue : notice.message}</strong
+  >
 </div>
-<p class="sr-only" role="status">
-  {stalled ? stallMessage : (skipMessage ?? "")}
-</p>
 
 <style>
   .phase-toast {
