@@ -247,3 +247,30 @@ func TestLoadedProbesKeepTwoInFlight(t *testing.T) {
 		t.Fatalf("loaded window sent %d unanswered probes: %+v, %v", attempts, stats, err)
 	}
 }
+
+func TestProbeLedgerMeasuresOnlyTheWindow(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
+	warm, _ := l.register(start)
+	l.open(start.Add(time.Second))
+	inside, _ := l.register(start.Add(900 * time.Millisecond))
+	late, _ := l.register(start.Add(950 * time.Millisecond))
+	if _, ok := l.register(start.Add(time.Second)); ok {
+		t.Fatal("a probe was sent after the window closed")
+	}
+	if _, _, counted := l.reply(warm, start.Add(200*time.Millisecond), 0); counted {
+		t.Fatal("a warmup probe that replied inside the window was measured")
+	}
+	if rtt, timedOut, counted := l.reply(inside, start.Add(1050*time.Millisecond), 0); !counted || timedOut ||
+		rtt != 150*time.Millisecond {
+		t.Fatalf("an in-window probe draining after the window = %v %v %v, want a reply", rtt, timedOut, counted)
+	}
+	if _, timedOut, counted := l.reply(late, start.Add(2*time.Second), 0); !counted || !timedOut {
+		t.Fatal("a reply after its deadline was not a timeout")
+	}
+	stats := l.finish(start.Add(3*time.Second), time.Second)
+	if stats.Count != 1 || stats.Timeouts != 1 || stats.Elapsed != time.Second {
+		t.Fatalf("window population = %+v", stats)
+	}
+}

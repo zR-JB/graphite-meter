@@ -223,3 +223,24 @@ func TestHandoverWaitsForTheReceiverToSettle(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadFeedOpenEndsWithItsRecoveryWindow(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+	recovery, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	opened := make(chan error, 1)
+	go func() {
+		_, err := testRunner(srv).openUploadFeed(t.Context(), recovery, srv.URL+"/upload/progress?id=x")
+		opened <- err
+	}()
+	select {
+	case err := <-opened:
+		if err == nil {
+			t.Fatal("a silent feed opened")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("opening a silent feed outlived its recovery window")
+	}
+}

@@ -212,3 +212,46 @@ func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
 		}
 	}
 }
+
+func TestReceiverWindowsNeedOneAdvancingReceiver(t *testing.T) {
+	t.Parallel()
+	interval := AggregationInterval{Stage: StageUpload, Participants: []string{"a"}}
+	first := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)})
+	for _, c := range []struct {
+		name  string
+		next  *ReceiverSnapshot
+		stale bool
+	}{
+		{"replaced receiver", nativeReceiver("new", 5000, 2000), false},
+		{"replaced receiver at the same clock", nativeReceiver("new", 5000, 1000), false},
+		{"bytes without receiver time", nativeReceiver("id", 5000, 1000), true},
+	} {
+		window, err := aggregateWindow(first, nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": c.next}),
+			interval)
+		if window != nil || err == nil || errors.Is(err, errStaleBoundary) != c.stale {
+			t.Errorf("%s: window=%+v err=%v, want stale=%v", c.name, window, err, c.stale)
+		}
+	}
+}
+
+func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name    string
+		moved   uint64
+		removed bool
+	}{{"silent", 0, true}, {"one byte", 1, false}} {
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}, Connection: &PreparedConnection{}}}
+		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
+		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
+		co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+		s := &sampler{c: co, stage: stage, results: make(chan sampledBoundary, 1)}
+		s.begin(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
+		server := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
+		sample := sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)}
+		s.observe(sample, []*stageServer{server})
+		if p.removed != c.removed {
+			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
+		}
+	}
+}

@@ -385,3 +385,23 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 		t.Fatalf("transient checkpoint refusal voided the stage: %v %+v", err, upload)
 	}
 }
+
+func TestLoadedLatencyKeepsTheIdleRTT(t *testing.T) {
+	t.Parallel()
+	c := &coordinator{}
+	s := &stageServer{participant: &participant{transport: &runner{idleRTT: 5 * time.Millisecond}}}
+	for _, step := range []struct {
+		stage     Stage
+		p50, want time.Duration
+	}{
+		{StageDownload, 40 * time.Millisecond, 5 * time.Millisecond},
+		{StageLatency, 7 * time.Millisecond, 7 * time.Millisecond},
+		{StageUpload, 40 * time.Millisecond, 7 * time.Millisecond},
+	} {
+		result := Result{Stage: step.stage, Latency: LatencyStats{P50: step.p50}}
+		c.retainLatency(resourceOutcome{server: s, role: roleLatency, result: result}, true)
+		if s.transport.idleRTT != step.want {
+			t.Fatalf("after %s latency the idle RTT is %v, want %v", step.stage, s.transport.idleRTT, step.want)
+		}
+	}
+}
