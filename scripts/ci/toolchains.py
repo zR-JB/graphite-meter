@@ -16,6 +16,8 @@ TOOL_KEYS = {
     "staticcheck": "aqua:dominikh/go-tools/staticcheck",
     "govulncheck": "go:golang.org/x/vuln/cmd/govulncheck",
     "ty": "aqua:astral-sh/ty",
+    "actionlint": "aqua:rhysd/actionlint",
+    "zizmor": "aqua:zizmorcore/zizmor",
 }
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},

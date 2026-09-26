@@ -15,9 +15,7 @@ from precommit import PEM, TLS_NAME
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
-NAME = r"[A-Za-z0-9_.-]+"
 USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
-PINNED = re.compile(rf"{NAME}/{NAME}(?:/{NAME})*@[0-9a-f]{{40}}")
 WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
@@ -109,10 +107,7 @@ def check_actions(root: Path) -> None:
     for path in files:
         name = str(path.relative_to(github))
         text = path.read_text(encoding="utf-8")
-        for ref in USES.findall(text):
-            if not ref.startswith("./") and PINNED.fullmatch(ref) is None:
-                fail(f"{name}: external action must use a full 40-character commit SHA: {ref}")
-        needles = ["pull_request_target", "write-all", "ubuntu-latest"]
+        needles = ["ubuntu-latest"]
         if name != "workflows/release.yml":
             needles += ["secrets.", "secrets[", "environment:"]
         for needle in needles:
@@ -124,8 +119,6 @@ def check_actions(root: Path) -> None:
             fail(f"{name}: run scripts must read expressions through env, not interpolate them")
         for step in STEP.split(text):
             if "uses: actions/checkout@" in step:
-                if "persist-credentials: false" not in step:
-                    fail(f"{name}: checkout must set persist-credentials: false")
                 if re.search(r"\bref: (?!\$\{\{ github\.sha \}\}$)", step, re.M):
                     fail(f"{name}: checkout may only select the triggering github.sha")
             if "uses: jdx/mise-action@" in step:

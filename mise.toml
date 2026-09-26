@@ -10,6 +10,8 @@ go = "1.27.1"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:dominikh/go-tools/staticcheck" = "2026.2.1"
 "aqua:astral-sh/ty" = "0.0.84"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:zizmorcore/zizmor" = "1.30.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
@@ -53,8 +55,12 @@ description = "Update required toolchain literals from mise.toml"
 run = "python3 scripts/ci/toolchains.py sync"
 
 [tasks.workflow-check]
-description = "Validate workflow structure and trust boundaries"
-run = "python3 scripts/ci/workflow_policy.py"
+description = "Lint workflows and validate trust boundaries"
+run = [
+  "actionlint -shellcheck= -pyflakes=",
+  "zizmor --offline --no-progress --config .github/zizmor.yml .github",
+  "python3 scripts/ci/workflow_policy.py",
+]
 
 [tasks.python-check]
 shell = "bash -e -o pipefail -c"

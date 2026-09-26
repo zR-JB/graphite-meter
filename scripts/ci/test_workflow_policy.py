@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,12 +11,10 @@ from workflow_policy import PolicyError, check_repository
 ROOT = Path(__file__).resolve().parents[2]
 W = ".github/workflows/"
 OCI = ".github/actions/build-oci/action.yml"
-CHECKOUT = "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-credentials: false}}\n"
 REQUEST = W + "release-request.yml"
 PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
-    (W + "ci.yml", CHECKOUT, "uses: actions/checkout@v7", "40-character commit SHA"),
     (OCI, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
     (W + "release.yml", "run: python3 scripts/ci/release.py recheck",
@@ -26,7 +25,6 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     ("container/Dockerfile", "# Graphite Meter", "#Syntax = example/frontend\n# Graphite Meter",
      "BuildKit frontend"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
-    (W + "ci.yml", "persist-credentials: false", "fetch-depth: 1", "persist-credentials"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
     (W + "release.yml", "cache: false", "cache: true", "cache: false"),
     (".github/actions/setup-project/action.yml", "install_args:", "args:", "install_args"),
@@ -109,6 +107,28 @@ class WorkflowPolicyTests(unittest.TestCase):
                 path.write_text(text)
                 with self.assertRaisesRegex(PolicyError, error):
                     check_repository(root)
+
+
+    def test_pinned_linters_reject_unpinned_actions_and_unknown_outputs(self) -> None:
+        zizmor = ("zizmor", "--offline", "--config", ".github/zizmor.yml", ".github")
+        for command, old, new, error in (
+            (zizmor, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+             "actions/checkout@v7", "unpinned-uses"),
+            (zizmor, "persist-credentials: false", "fetch-depth: 1", "artipacked"),
+            (zizmor, "on:\n", "on:\n  pull_request_target:\n", "dangerous-triggers"),
+            (("actionlint", "-shellcheck=", "-pyflakes=", W + "ci.yml"),
+             "needs.plan.outputs.core ==", "needs.plan.outputs.missing ==", "missing"),
+        ):
+            if shutil.which(command[0]) is None:
+                self.fail(f"{command[0]} must be on PATH; run through mise run pipeline-test")
+            with self.subTest(error=error):
+                root = self.tree()
+                path = root / W / "ci.yml"
+                self.assertIn(old, path.read_text())
+                path.write_text(path.read_text().replace(old, new, 1))
+                result = subprocess.run(command, cwd=root, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
