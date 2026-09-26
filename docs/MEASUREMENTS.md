@@ -61,8 +61,8 @@ native client measures the full window.
   stage. A latency-only failure keeps throughput.
 - **Final headline** needs at least 800 ms of client evidence in the latest interval and, for upload, 800 ms in
   every receiver clock, and a window that moved no bytes has none; otherwise the stage fails with a stated reason
-  and the run is Incomplete. Stages last 1 s to 5 min and early finish waits for that evidence. Earlier
-  intervals and failed servers' measurements remain in per-server results.
+  and the run is Incomplete. Stages last 1 s to 5 min (0 skips one), and early finish waits for that evidence.
+  Earlier intervals and failed servers' measurements remain in per-server results.
 - **Live duration changes** set the active stage's end: a shortened stage ends at once and keeps its evidence.
 - **Byte ledgers** count unique measured bytes once, independent of window selection.
 - **Wire-rate estimates** are computed per component from the chosen window's protocol and IP-family evidence;

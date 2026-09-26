@@ -275,7 +275,7 @@
             <span>{label} ms</span>
             <input
               type="number"
-              min={DURATION_LIMITS[key][0]}
+              min="0"
               max={DURATION_LIMITS[key][1]}
               step="500"
               disabled={store.preparing}
@@ -285,7 +285,7 @@
           </label>
         {/each}
       </div>
-      <p class="hint">Transfer stages run at least 1 s; 0 skips a stage.</p>
+      <p class="hint">Stages run 1 s to 5 min; 0 skips a stage.</p>
     {:else}
       <div class="dur-summary">
         {#each presetCells as cell}
