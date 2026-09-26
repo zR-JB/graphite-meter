@@ -25,4 +25,4 @@ for language in go javascript-typescript python actions; do
         "codeql/$pack-queries:codeql-suites/$pack-security-extended.qls" \
         "codeql/$pack-queries:codeql-suites/$pack-security-and-quality.qls"
 done
-python3 scripts/codeql_results.py "$out"/*.sarif
+python3 scripts/codeql_results.py "$out"
