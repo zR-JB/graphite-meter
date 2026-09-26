@@ -31,13 +31,13 @@ export const DEFAULT_CONFIG: RunnerConfig = {
 };
 
 type DurationKey = keyof RunnerConfig["duration"];
-/** Bounds in ms; a transfer stage leaves room for the 800 ms evidence floor. */
+/** Bounds in ms, as in the native client; a stage leaves room for the 800 ms evidence floor. */
 export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   warmupMs: [0, 4_000],
-  latencyMs: [500, 60_000],
-  downloadMs: [1_000, 120_000],
-  uploadMs: [1_000, 120_000],
-  bidirectionalMs: [1_000, 120_000],
+  latencyMs: [1_000, 300_000],
+  downloadMs: [1_000, 300_000],
+  uploadMs: [1_000, 300_000],
+  bidirectionalMs: [1_000, 300_000],
 };
 
 /** Zero skips a stage; any other value is bounded. */
