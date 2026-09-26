@@ -159,7 +159,7 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		return nil, err
 	}
 	var cm *certificateManager
-	if cfg.Native.H1TLS != "" || cfg.Native.H2 != "" || cfg.Native.H3 != "" {
+	if cfg.TLSEnabled() {
 		if cm, err = newCertificateManager(cfg); err != nil {
 			return nil, err
 		}

@@ -179,25 +179,17 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultLatencyRoutes()})
 	}
 	cfg := d.cfg
-	native := []struct {
-		name, public, scheme, addr, protocol string
-		latency, webTransport                bool
-	}{
-		{config.NativeH1Clear, cfg.NativePublic.H1, "http", cfg.Native.H1, "http1", true, false},
-		{config.NativeH1TLS, cfg.NativePublic.H1TLS, "https", cfg.Native.H1TLS, "http1", true, false},
-		{config.NativeH2, cfg.NativePublic.H2, "https", cfg.Native.H2, "http2", false, false},
-		{config.NativeH3, cfg.NativePublic.H3, "https", cfg.Native.H3, "http3", false, true},
-	}
-	for _, e := range native {
-		if cfg.NativeAdvertised(e.name) {
-			base := nativeOrigin(e.public, e.scheme, host, e.addr)
-			addThroughput(base, e.protocol)
-			if e.latency {
-				addLatency(base)
-			}
-			if e.webTransport {
-				addWebTransport(base)
-			}
+	for _, n := range cfg.Natives() {
+		if !cfg.NativeAdvertised(n.Name) {
+			continue
+		}
+		base := nativeOrigin(n.Public, n.Scheme, host, n.Addr)
+		addThroughput(base, n.Protocol)
+		switch n.Protocol {
+		case "http1":
+			addLatency(base)
+		case "http3":
+			addWebTransport(base)
 		}
 	}
 	for _, base := range cfg.Public.Both {
