@@ -22,8 +22,20 @@ func randomBlock(n int) []byte {
 
 func TestDownloadStreamsTheWrappedBlock(t *testing.T) {
 	block := randomBlock(256 * 1024)
-	srv := httptest.NewServer(NewDownload(block, nil).Handler(wire.IdleBound))
+	meter := NewMeter("test:download")
+	srv := httptest.NewServer(NewDownload(block, meter).Handler(wire.IdleBound))
 	defer srv.Close()
+	head, err := http.Head(srv.URL + "/download?bytes=" + strconv.FormatInt(maxBytes, 10))
+	if err != nil {
+		t.Fatalf("head: %v", err)
+	}
+	head.Body.Close()
+	// A HEAD that streamed the largest body would still be running and counting.
+	if head.StatusCode != http.StatusOK || head.ContentLength != maxBytes || meter.bytes.Load() != 0 ||
+		meter.conns.Load() != 0 {
+		t.Fatalf("HEAD = %d with length %d; meter bytes=%d conns=%d", head.StatusCode, head.ContentLength,
+			meter.bytes.Load(), meter.conns.Load())
+	}
 	const want = 300 << 10
 	get := func() []byte {
 		res, err := http.Get(srv.URL + "/download?bytes=" + strconv.Itoa(want))
@@ -55,33 +67,6 @@ func TestDownloadStreamsTheWrappedBlock(t *testing.T) {
 	defer res.Body.Close()
 	if _, err := io.ReadFull(res.Body, make([]byte, 1)); err != nil {
 		t.Fatalf("first byte of the largest download: %v", err)
-	}
-}
-
-func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
-	meter := NewMeter("test:download")
-	response := httptest.NewRecorder()
-	NewDownload(randomBlock(4096), meter).serve(response,
-		httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil), wire.IdleBound)
-	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
-		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
-	}
-	if response.Body.Len() != 0 || meter.bytes.Load() != 0 || meter.conns.Load() != 0 {
-		t.Fatalf("HEAD generated %d body bytes; meter bytes=%d conns=%d",
-			response.Body.Len(), meter.bytes.Load(), meter.conns.Load())
-	}
-}
-
-func TestDownloadSizeParsing(t *testing.T) {
-	for raw, want := range map[string]int64{
-		"": defaultBytes, "not-a-number": defaultBytes, "-5": defaultBytes,
-		strconv.FormatInt(maxBytes+1, 10): maxBytes,
-		// Every spelling of zero is a WebTransport verify session.
-		"0": 0, "00": 0, "+0": 0, "-0": 0,
-	} {
-		if got := parseBytes(raw); got != want {
-			t.Errorf("parseBytes(%q) = %d, want %d", raw, got, want)
-		}
 	}
 }
 

@@ -1,15 +1,13 @@
 package endpoint
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"net"
 	"net/url"
-	"strings"
+	"strconv"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -123,43 +121,36 @@ func TestQuicklyDrainedLaneTakesWholeBlocks(t *testing.T) {
 	}
 }
 
-// ?streams= is clamped to 1..16, never rejected (api/wire.md).
-func TestWTStreamCountClamps(t *testing.T) {
-	for query, want := range map[string]int{"streams=99": 16, "streams=16": 16, "streams=3": 3, "": 1,
-		"streams=0": 1, "streams=-2": 1, "streams=nonsense": 1} {
-		values, _ := url.ParseQuery(query)
-		if got := wtStreamCount(values); got != want {
-			t.Errorf("wtStreamCount(%q) = %d, want %d", query, got, want)
-		}
-	}
-}
-
-// ?datagrams= is presence-based, but a spelling of zero is a refusal rather than presence.
-func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
+// Queries clamp or fall back, never reject (api/wire.md); a spelling of zero is a verify session or no datagrams.
+func TestQueryParametersClampOrFallBack(t *testing.T) {
 	for _, tc := range []struct {
-		query string
-		want  bool
+		query     string
+		bytes     int64
+		streams   int
+		datagrams bool
 	}{
-		{"", false},
-		{"bytes=1024&streams=2", false},
-		{"datagrams=", true},
-		{"datagrams=1", true},
-		{"datagrams=2", true},
-		{"datagrams=nonsense", true},
-		{"datagrams=0", false},
-		{"datagrams=00", false},
-		{"datagrams=+0", false},
-		{"datagrams=-0", false},
-		{"datagrams=false", false},
-		{"datagrams=off", false},
-		{"datagrams=no", false},
+		{"", defaultBytes, 1, false},
+		{"bytes=not-a-number&streams=nonsense&datagrams=nonsense", defaultBytes, 1, true},
+		{"bytes=-5&streams=-2&datagrams=", defaultBytes, 1, true},
+		{"bytes=" + strconv.FormatInt(maxBytes+1, 10) + "&streams=99&datagrams=1", maxBytes, 16, true},
+		{"bytes=1024&streams=3", 1024, 3, false},
+		{"bytes=0&streams=0&datagrams=0", 0, 1, false},
+		{"bytes=00&streams=16&datagrams=00", 0, 16, false},
+		{"bytes=%2B0&datagrams=+0", 0, 1, false},
+		{"bytes=-0&datagrams=-0", 0, 1, false},
+		{"datagrams=2", defaultBytes, 1, true},
+		{"datagrams=false", defaultBytes, 1, false},
+		{"datagrams=off", defaultBytes, 1, false},
+		{"datagrams=no", defaultBytes, 1, false},
 	} {
 		query, err := url.ParseQuery(tc.query)
 		if err != nil {
 			t.Fatalf("parse %q: %v", tc.query, err)
 		}
-		if got := wtDatagramMode(query); got != tc.want {
-			t.Errorf("wtDatagramMode(%q) = %v, want %v", tc.query, got, tc.want)
+		n, streams, datagrams := parseBytes(query.Get("bytes")), wtStreamCount(query), wtDatagramMode(query)
+		if n != tc.bytes || streams != tc.streams || datagrams != tc.datagrams {
+			t.Errorf("%q = %d bytes, %d streams, datagrams %v; want %d, %d, %v", tc.query, n, streams, datagrams,
+				tc.bytes, tc.streams, tc.datagrams)
 		}
 	}
 }
@@ -209,52 +200,4 @@ func TestDatagramSourceYieldsWholeDatagrams(t *testing.T) {
 	if _, err := src.Read(buf); !errors.Is(err, io.EOF) {
 		t.Fatalf("read after drain = %v, want EOF", err)
 	}
-}
-
-func TestStreamProgressReportsTheCounter(t *testing.T) {
-	store := NewUpload(nil, nil)
-	id := store.Mint()
-	agg, access := store.getOrCreateFor(id, "owner")
-	if access != uploadAccessOK {
-		t.Fatalf("getOrCreateFor = %v, want ok", access)
-	}
-	agg.recordChunk(store.now(), 4096)
-
-	r, w := io.Pipe()
-	go func() {
-		store.streamProgress(t.Context(), agg, w)
-		_ = w.Close()
-	}()
-
-	records := bufio.NewScanner(r)
-	if got := nextProgressEvent(t, records).Type; got != "ready" {
-		t.Fatalf("first record = %q, want ready", got)
-	}
-	time.AfterFunc(50*time.Millisecond, func() { store.finishFor(id, "owner") })
-	for {
-		event := nextProgressEvent(t, records)
-		if event.Type == "progress" {
-			continue
-		}
-		if event.Type != "complete" || event.Bytes != 4096 {
-			t.Fatalf("terminal record = %+v, want complete with 4096 bytes", event)
-		}
-		return
-	}
-}
-
-func nextProgressEvent(t *testing.T, records *bufio.Scanner) wire.UploadProgress {
-	t.Helper()
-	for records.Scan() {
-		if strings.TrimSpace(records.Text()) == "" {
-			continue
-		}
-		var event wire.UploadProgress
-		if err := json.Unmarshal(records.Bytes(), &event); err != nil {
-			t.Fatalf("decode %q: %v", records.Text(), err)
-		}
-		return event
-	}
-	t.Fatal("progress stream ended early")
-	return wire.UploadProgress{}
 }

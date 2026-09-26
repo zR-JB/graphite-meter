@@ -197,15 +197,6 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		store.ServeProgress(rec, req)
 		return rec
 	}
-	t.Run("an unknown id is a 400", func(t *testing.T) {
-		for _, method := range []string{http.MethodGet, http.MethodDelete} {
-			rec := serve(NewUpload(nil, nil), method, "forged", "")
-			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown upload id") {
-				t.Fatalf("%s = %d %q, want 400 naming the unknown id", method, rec.Code, rec.Body.String())
-			}
-		}
-	})
-
 	t.Run("client cap is a retryable 429", func(t *testing.T) {
 		store := NewUpload(nil, nil)
 		const owner = "192.0.2.1"

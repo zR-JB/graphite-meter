@@ -13,84 +13,79 @@ import (
 )
 
 // A CONNECT authenticates with a minted ticket, so authentication does not hide the WebTransport targets.
-func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
-	cfg := config.Default()
-	cfg.Auth.Mode = "password"
-	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
-	cfg.NativePublic = config.NativeEndpoints{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247",
-		H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
-	pf := NewDiscovery(&cfg).preflightFor("internal")
-	throughput, latency := pf.Capabilities.ThroughputTargets, pf.Capabilities.LatencyTargets
-	if len(throughput) != 6 || len(latency) != 3 {
-		t.Fatalf("capabilities = %+v, want 6 throughput and 3 latency targets", pf.Capabilities)
+func TestPreflightTargetsAndConnectOrigins(t *testing.T) {
+	natives := func(cfg *config.Config) {
+		cfg.Auth.Mode = "password"
+		cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
+		cfg.NativePublic = config.NativeEndpoints{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247",
+			H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	}
-	for i, want := range []string{"http1", "http1", "http2", "http3"} {
-		if got := throughput[i].Protocol; got != want {
-			t.Fatalf("protocol[%d] = %q, want %q", i, got, want)
+	public := func(both, throughput, latency []string) func(*config.Config) {
+		return func(cfg *config.Config) {
+			cfg.AdvertisedNative = map[string]bool{}
+			cfg.Public = config.PublicOrigins{Both: both, Throughput: throughput, Latency: latency}
 		}
 	}
-	for _, target := range []wire.ThroughputTarget{throughput[4], throughput[5]} {
-		if target.Origin != cfg.NativePublic.H3 || !strings.HasPrefix(target.Transport, wire.TransportWebTransport) {
-			t.Fatalf("webtransport throughput = %+v, want the HTTP/3 origin", target)
-		}
-	}
-	if latency[2].Transport != wire.TransportWebTransport || latency[2].Origin != cfg.NativePublic.H3 {
-		t.Fatalf("webtransport latency = %+v, want the HTTP/3 origin", latency[2])
-	}
-}
-
-func TestPreflightPublicRoles(t *testing.T) {
 	for _, tc := range []struct {
-		name                   string
-		both, through, latency []string
-		wantThrough, wantLat   int
+		name                         string
+		configure                    func(*config.Config)
+		host                         string
+		throughput, latency, connect []string
 	}{
-		{"distinct roles", []string{"self", "https://meter.example"},
-			[]string{"https://download.example"}, []string{"https://ping.example"}, 3, 3},
-		{"duplicate self", []string{"self"}, []string{"self"}, []string{"self"}, 1, 1},
-		{"equivalent default port", []string{"https://meter.example"},
-			[]string{"https://meter.example:443"}, []string{"https://meter.example:443"}, 1, 1},
+		{"authenticated natives", natives, "internal", []string{
+			"http1 fetch-stream http://meter.example:7246", "http1 fetch-stream https://meter.example:7247",
+			"http2 fetch-stream https://meter.example:7248", "http3 fetch-stream https://meter.example:7249",
+			"http3 webtransport https://meter.example:7249", "http3 webtransport-datagram https://meter.example:7249",
+		}, []string{
+			"websocket http://meter.example:7246", "websocket https://meter.example:7247",
+			"webtransport https://meter.example:7249",
+		}, []string{
+			"http://meter.example:7246", "https://meter.example:7247", "https://meter.example:7248",
+			"https://meter.example:7249", "ws://meter.example:7246", "wss://meter.example:7247",
+			"wss://meter.example:7249",
+		}},
+		{"default native on an IPv6 page", func(*config.Config) {}, "[::1]",
+			[]string{"http1 fetch-stream http://[::1]:7246"}, []string{"websocket http://[::1]:7246"},
+			[]string{"http://[::1]:7246", "ws://[::1]:7246"}},
+		{"distinct roles", public([]string{"self", "https://meter.example"}, []string{"https://download.example"},
+			[]string{"https://ping.example"}), "meter.example", []string{
+			"negotiated fetch-stream .", "negotiated fetch-stream https://meter.example",
+			"negotiated fetch-stream https://download.example",
+		}, []string{"websocket .", "websocket https://meter.example", "websocket https://ping.example"}, []string{
+			"https://meter.example", "wss://meter.example", "https://download.example", "https://ping.example",
+			"wss://ping.example",
+		}},
+		{"duplicate self", public([]string{"self"}, []string{"self"}, []string{"self"}), "meter.example",
+			[]string{"negotiated fetch-stream ."}, []string{"websocket ."}, nil},
+		{"equivalent default port", public([]string{"https://meter.example"}, []string{"https://meter.example:443"},
+			[]string{"https://meter.example:443"}), "meter.example",
+			[]string{"negotiated fetch-stream https://meter.example"}, []string{"websocket https://meter.example"},
+			[]string{"https://meter.example", "wss://meter.example"}},
+		{"plain latency origin", public(nil, nil, []string{"http://plain.example:7246"}), "meter.example", nil,
+			[]string{"websocket http://plain.example:7246"},
+			[]string{"http://plain.example:7246", "ws://plain.example:7246"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := config.Default()
-			cfg.AdvertisedNative = map[string]bool{}
-			cfg.Public = config.PublicOrigins{Both: tc.both, Throughput: tc.through, Latency: tc.latency}
-			pf := NewDiscovery(&cfg).preflightFor("internal")
-			throughput := pf.Capabilities.ThroughputTargets
-			if len(throughput) != tc.wantThrough || len(pf.Capabilities.LatencyTargets) != tc.wantLat {
-				t.Fatalf("capabilities = %+v", pf.Capabilities)
+			tc.configure(&cfg)
+			d := NewDiscovery(&cfg)
+			host := RequestHost(httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/preflight", nil))
+			capabilities := d.preflightFor(host).Capabilities
+			var throughput, latency []string
+			for _, target := range capabilities.ThroughputTargets {
+				throughput = append(throughput, target.Protocol+" "+target.Transport+" "+target.Origin)
 			}
-			if throughput[0].Protocol != "negotiated" {
-				t.Fatalf("public throughput = %+v, want a negotiated protocol", throughput[0])
+			for _, target := range capabilities.LatencyTargets {
+				latency = append(latency, target.Transport+" "+target.Origin)
+			}
+			if !slices.Equal(throughput, tc.throughput) || !slices.Equal(latency, tc.latency) {
+				t.Fatalf("targets = %q and %q, want %q and %q", throughput, latency, tc.throughput, tc.latency)
+			}
+			connect := d.ConnectOrigins(host)
+			if !slices.Equal(slices.Sorted(slices.Values(connect)), slices.Sorted(slices.Values(tc.connect))) {
+				t.Fatalf("ConnectOrigins = %v, want %v", connect, tc.connect)
 			}
 		})
-	}
-	cfg := config.Default()
-	pf := NewDiscovery(&cfg).preflightFor(RequestHost(httptest.NewRequest("GET", "http://[::1]/preflight", nil)))
-	if got, want := pf.Capabilities.ThroughputTargets[0].Origin, "http://[::1]:7246"; got != want {
-		t.Fatalf("native origin = %q, want %q", got, want)
-	}
-}
-
-func TestConnectOriginsListCrossOriginTargets(t *testing.T) {
-	for _, tc := range []struct {
-		both, through, latency, want []string
-	}{
-		{[]string{"self", "https://meter.example"}, []string{"https://download.example"},
-			[]string{"https://ping.example"},
-			[]string{"https://meter.example", "wss://meter.example", "https://download.example",
-				"https://ping.example", "wss://ping.example"}},
-		{[]string{"self"}, nil, nil, nil},
-		{nil, nil, []string{"http://plain.example:7246"},
-			[]string{"http://plain.example:7246", "ws://plain.example:7246"}},
-	} {
-		cfg := config.Default()
-		cfg.AdvertisedNative = map[string]bool{}
-		cfg.Public = config.PublicOrigins{Both: tc.both, Throughput: tc.through, Latency: tc.latency}
-		got := NewDiscovery(&cfg).ConnectOrigins("meter.example")
-		if !slices.Equal(slices.Sorted(slices.Values(got)), slices.Sorted(slices.Values(tc.want))) {
-			t.Fatalf("ConnectOrigins = %v, want %v", got, tc.want)
-		}
 	}
 }
 

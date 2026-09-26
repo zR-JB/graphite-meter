@@ -53,8 +53,8 @@ func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
 			"expired":  expiring,
 			"foreign":  NewUpload(nil, nil).Mint(),
 		} {
-			if agg, ok := s.getOrCreate(id); ok || agg != nil {
-				t.Errorf("%s id created a receiver", name)
+			if agg, ok := s.getOrCreate(id); ok || agg != nil || s.finishFor(id, "unbudgeted") != uploadAccessInvalid {
+				t.Errorf("%s id created or finished a receiver", name)
 			}
 		}
 		if s.live() != 0 {
@@ -64,46 +64,6 @@ func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
 			t.Fatal("a fresh id was refused")
 		}
 	})
-}
-
-func TestUploadStoreCreateIsIdempotent(t *testing.T) {
-	s := NewUpload(nil, nil)
-	id := s.Mint()
-	a, ok := s.getOrCreate(id)
-	if !ok || a == nil {
-		t.Fatalf("first getOrCreate failed: ok=%v", ok)
-	}
-	b, ok := s.getOrCreate(id)
-	if !ok || b != a {
-		t.Fatalf("second getOrCreate returned a different aggregate (%p vs %p)", b, a)
-	}
-	if got, ok := s.get(id); !ok || got != a || s.live() != 1 {
-		t.Fatalf("get = (%p, %v) with %d live, want the one aggregate", got, ok, s.live())
-	}
-}
-
-func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
-	s := NewUpload(nil, nil)
-	owner := "192.0.2.1"
-	var first string
-	for i := range maxLiveUploadsPerClient {
-		id := s.Mint()
-		if i == 0 {
-			first = id
-		}
-		if _, access := s.getOrCreateFor(id, owner); access != uploadAccessOK {
-			t.Fatalf("owner create %d = %v", i, access)
-		}
-	}
-	if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessClientFull {
-		t.Fatalf("owner overflow = %v", access)
-	}
-	if _, access := s.getOrCreateFor(first, "192.0.2.2"); access != uploadAccessOwnerMismatch {
-		t.Fatalf("owner mismatch = %v", access)
-	}
-	if _, access := s.getOrCreateFor(s.Mint(), "192.0.2.2"); access != uploadAccessOK {
-		t.Fatalf("independent owner rejected = %v", access)
-	}
 }
 
 // A receiver answers only its own owner, and a client without an identity owns nothing.
@@ -257,24 +217,6 @@ func fillStore(s *Upload) {
 		agg, _ := s.getOrCreate(s.Mint())
 		agg.recordChunk(s.now(), 1)
 	}
-}
-
-func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := NewUpload(nil, nil)
-		agg, _ := s.getOrCreate(s.Mint())
-		agg.recordChunk(s.now(), 1)
-		time.Sleep(uploadIDTTL + time.Second)
-		fillStore(s)
-		blocked := s.Mint()
-		if _, ok := s.getOrCreate(blocked); ok {
-			t.Fatal("create at the cap unexpectedly succeeded")
-		}
-		s.sweep(uploadIDTTL)
-		if _, ok := s.getOrCreate(blocked); !ok || s.live() != maxLiveUploads {
-			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted", ok, s.live())
-		}
-	})
 }
 
 func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {

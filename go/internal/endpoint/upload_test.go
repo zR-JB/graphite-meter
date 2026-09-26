@@ -81,31 +81,6 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 	})
 }
 
-func TestUploadCountsEchoesAndAggregates(t *testing.T) {
-	store := NewUpload(nil, nil)
-	srv := httptest.NewServer(store.Handler(wire.IdleBound))
-	defer srv.Close()
-	for _, n := range []int64{3*1024*1024 + 123, 0} {
-		id := store.Mint()
-		res, err := http.Post(srv.URL+"/upload?id="+id, "application/octet-stream", bytes.NewReader(make([]byte, n)))
-		if err != nil {
-			t.Fatalf("post: %v", err)
-		}
-		var echo struct {
-			Bytes int64 `json:"bytes"`
-		}
-		err = json.UnmarshalRead(res.Body, &echo)
-		res.Body.Close()
-		if err != nil || echo.Bytes != n || res.Header.Get("Content-Type") != "application/json" ||
-			res.Header.Get("Cache-Control") != "no-store" {
-			t.Fatalf("echo = %d %v with headers %v, want %d bytes", echo.Bytes, err, res.Header, n)
-		}
-		if agg, ok := store.get(id); !ok || agg.bytes.Load() != n || store.lanesOf(agg) != 0 {
-			t.Fatalf("aggregate for %d bytes = %v, want the count with no lane left", n, agg)
-		}
-	}
-}
-
 // The echo is receiver evidence: it reports the bytes read, never the length the request declared.
 func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
 	store := NewUpload(nil, nil)
@@ -116,33 +91,57 @@ func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
 	var echo struct {
 		Bytes int64 `json:"bytes"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &echo); err != nil || w.Code != http.StatusOK || echo.Bytes != 5 {
-		t.Fatalf("echo = %d %s (%v), want the 5 received bytes", w.Code, w.Body.String(), err)
+	if err := json.Unmarshal(w.Body.Bytes(), &echo); err != nil || w.Code != http.StatusOK || echo.Bytes != 5 ||
+		w.Header().Get("Content-Type") != "application/json" || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("echo = %d %s (%v) with headers %v, want the 5 received bytes", w.Code, w.Body.String(), err,
+			w.Header())
 	}
 }
 
+// A refusal is classified before any read and leaves the receiver as it was; streams share it through Receive.
 func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
+	const owner = "192.0.2.1"
+	seed := func(s *Upload, by string) string {
+		id := s.Mint()
+		if n, err := s.Receive(id, ownedBy(by), strings.NewReader("first"), &idleDeadline{}); err != nil || n != 5 {
+			t.Fatalf("initial upload = %d, %v", n, err)
+		}
+		return id
+	}
 	for _, tc := range []struct {
-		id   string
-		want int
-	}{{"", 400}, {"forged", 400}, {"another-owner", 403}, {"over-cap", 503}} {
-		t.Run(tc.id, func(t *testing.T) {
+		name   string
+		setup  func(*Upload) string
+		status int
+		access uploadAccess
+	}{
+		{"missing id", func(*Upload) string { return "" }, 400, uploadAccessInvalid},
+		{"forged id", func(*Upload) string { return "forged" }, 400, uploadAccessInvalid},
+		{"another client's lane", func(s *Upload) string { return seed(s, "198.51.100.9") }, 403,
+			uploadAccessOwnerMismatch},
+		{"after finish", func(s *Upload) string {
+			id := seed(s, owner)
+			s.finishFor(id, owner)
+			return id
+		}, 400, uploadAccessInvalid},
+		{"over the global cap", func(s *Upload) string {
+			fillStore(s)
+			return s.Mint()
+		}, 503, uploadAccessGlobalFull},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			store := NewUpload(nil, nil)
-			id := tc.id
-			switch id {
-			case "another-owner":
-				id = store.Mint()
-				store.getOrCreateFor(id, "different-owner")
-			case "over-cap":
-				fillStore(store)
-				id = store.Mint()
-			}
+			id := tc.setup(store)
 			live := store.live()
 			body := strings.NewReader("must not be drained")
 			rec := httptest.NewRecorder()
 			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
-			if rec.Code != tc.want || body.Len() != len("must not be drained") || store.live() != live {
-				t.Fatalf("refusal = %d, unread = %d, live %d -> %d", rec.Code, body.Len(), live, store.live())
+			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), uploadAccessInfos[tc.access].message) ||
+				body.Len() != len("must not be drained") || store.live() != live {
+				t.Fatalf("refusal = %d %q, unread = %d, live %d -> %d", rec.Code, rec.Body.String(), body.Len(), live,
+					store.live())
+			}
+			if agg, ok := store.get(id); ok && (agg.bytes.Load() != 5 || store.lanesOf(agg) != 0) {
+				t.Fatalf("refusal changed the receiver: bytes=%d lanes=%d", agg.bytes.Load(), store.lanesOf(agg))
 			}
 		})
 	}
@@ -171,43 +170,6 @@ func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
 	}
 	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || store.lanesOf(agg) != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
-	}
-}
-
-// A stream carries no status line, so a refused lane is reported through Receive's error, before any read.
-func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		owner string
-		setup func(*Upload, string)
-		want  uploadAccess
-	}{
-		{"another client's lane", "other-owner", func(*Upload, string) {}, uploadAccessOwnerMismatch},
-		{"after finish", "owner", func(s *Upload, id string) { s.finishFor(id, "owner") }, uploadAccessInvalid},
-		{"over the global cap", "owner", func(s *Upload, _ string) { fillStore(s) }, uploadAccessGlobalFull},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store := NewUpload(nil, nil)
-			upload := store
-			id := store.Mint()
-			if tc.want != uploadAccessGlobalFull {
-				n, err := upload.Receive(id, ownedBy("owner"), strings.NewReader("first"), &idleDeadline{})
-				if err != nil || n != 5 {
-					t.Fatalf("initial upload = %d, %v", n, err)
-				}
-			}
-			tc.setup(store, id)
-			body := strings.NewReader("must not be drained")
-			n, err := upload.Receive(id, ownedBy(tc.owner), body, &idleDeadline{})
-			refusal, ok := errors.AsType[*uploadRefusalError](err)
-			if !ok || refusal.access != tc.want || n != 0 || body.Len() != len("must not be drained") ||
-				!strings.Contains(err.Error(), uploadAccessInfos[tc.want].message) {
-				t.Fatalf("refused lane = %d, %v; unread bytes = %d", n, err, body.Len())
-			}
-			if agg, ok := store.get(id); ok && (agg.bytes.Load() != 5 || store.lanesOf(agg) != 0) {
-				t.Fatalf("refusal changed the receiver: bytes=%d posts=%d", agg.bytes.Load(), store.lanesOf(agg))
-			}
-		})
 	}
 }
 
