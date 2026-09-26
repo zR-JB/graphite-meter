@@ -231,6 +231,14 @@ Download and latency use client monotonic time; uploads use each server's own
 receiver checkpoints, with each concurrent checkpoint batch bounded to 1.5 seconds.
 Within that bound a refused checkpoint is retried every 100 ms; each snapshot is the
 reply to its own request, so a late success never stands in for an earlier boundary.
+A boundary without every participant's evidence, or whose receiver clock did not
+advance, is skipped rather than read as zero; the next valid boundary spans the gap.
+A replaced or regressing receiver counter starts a new interval. Three consecutive
+missed checkpoints, or a refused grant, remove that server; a missed final
+boundary alone never does. A lane that moves no bytes for two seconds ends with
+its last error, and a server refusal ends it at once. A lost upload progress feed
+is reopened within two seconds or ends that server's upload; the feed only paces
+readiness and liveness, never the reported receiver bytes.
 The native client runs one server through the same coordinator as several.
 The coordinator samples boundaries about every 250 ms. Full-window means follow
 the component rules above. A terminal direction failure stops that participant's
@@ -248,12 +256,16 @@ consecutive successful replies in receive order, skipping timeout outcomes and s
 sequence after a reconnect. One reply cannot establish variation; repeated identical replies can
 establish zero variation.
 
-Native probe deadlines are `max(4 * PingInterval, 250ms)`, measured from the client send attempt.
-Replies after that deadline count as probe timeouts, even if the periodic timeout sweep has not
-run. Timeout ratios use only successful replies plus expired probes. At a stage cutoff or channel
-interruption, pending probes whose deadlines have not elapsed are reported as unresolved; local
-send failures are separate. This native cutoff does not add a post-stage drain interval. An empty
-resolved population has no timeout ratio, and timeout-only loaded stages still produce a result.
+Native probes use a fixed start-to-start cadence, 250 ms by default, for idle and loaded stages; the
+browser's reply-driven idle cadence is not offered natively. Probe deadlines follow an RFC 6298
+estimate, `SRTT + 4 * RTTVAR` clamped to 250 ms..10 s (250 ms before the first reply), measured
+from the client send attempt. Late replies still refine
+the estimate but count as probe timeouts. At most 16 probes are in flight idle and 2 under load; a
+full window skips that send opportunity rather than recording a timeout. After the measured window,
+in-window probes drain until they reply or reach their deadline. Timeout ratios use only successful
+replies plus expired probes. A channel interruption or cancellation reports the still-pending
+probes as unresolved; local send failures are separate. An empty resolved population has no
+timeout ratio, and timeout-only loaded stages still produce a result.
 Failed stages retain their measured latency population with an incomplete marker and the original
 failure; the elapsed window records only the measured portion. Failures before any probe was measured
 produce an error without a numeric summary. These are application probe observations over WebSocket
