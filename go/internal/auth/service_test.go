@@ -321,14 +321,14 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 			t.Fatalf("page policy missing %q or holding an IPv6 literal: %s", want, policy)
 		}
 	}
-	// A measurement answer is no page, so it carries transport hardening without the page's policy.
 	raw, _, _ := s.createSession("subject", "Name", "local")
 	r := withSessionCookie(secureRequest(http.MethodGet, "/download", nil), raw)
 	r.Header.Set("Origin", "https://meter.example")
 	rr := httptest.NewRecorder()
 	s.Enforce(statusHandler(http.StatusOK), Listener{UI: true}).ServeHTTP(rr, r)
-	if rr.Code != http.StatusOK || rr.Header().Get("Strict-Transport-Security") == "" || rr.Header().Get("Referrer-Policy") != "same-origin" ||
-		rr.Header().Get("Content-Security-Policy") != "" || rr.Header().Get("X-Frame-Options") != "" {
+	if h := rr.Header(); rr.Code != http.StatusOK || h.Get("Strict-Transport-Security") == "" ||
+		h.Get("Referrer-Policy") != "same-origin" || h.Get("Content-Security-Policy") != "" ||
+		h.Get("X-Frame-Options") != "" {
 		t.Fatalf("headers=%v", rr.Header())
 	}
 }

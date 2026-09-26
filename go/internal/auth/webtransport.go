@@ -51,7 +51,6 @@ func (s *Service) SocketTokenHandler(kind route.Kind) http.Handler {
 	})
 }
 
-// mintSocketToken answers 403 without a login, 400 for a foreign target and 429 at the login's ticket cap.
 func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, int) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.session == nil || p.Bearer && p.browserOrigin() == "" {

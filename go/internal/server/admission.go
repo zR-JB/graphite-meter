@@ -81,7 +81,6 @@ func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int,
 	}
 }
 
-// acquire spends a request slot and keys' share of it, or for a session a pool slot and keys' session share.
 func (a *requestAdmission) acquire(session bool, keys ...string) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -191,7 +190,6 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 		quic: newBudget(globalMax, min(clientMax, maxClientQUICConnections)), trusted: trusted}
 }
 
-// socketKeys buckets a direct peer by address, or an IPv6 peer by its /64, /56 and /48; a trusted proxy has none.
 func socketKeys(addr net.Addr, trusted []netip.Prefix) []string {
 	var ip netip.Addr
 	switch a := addr.(type) {

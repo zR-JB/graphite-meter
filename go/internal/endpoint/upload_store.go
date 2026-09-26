@@ -103,7 +103,6 @@ func (u *Upload) mono(t time.Time) int64 { return int64(t.Sub(u.epoch)) + 1 }
 
 func (u *Upload) now() int64 { return u.mono(time.Now()) }
 
-// Mint generates a URL-safe, authenticated upload id without storing per-id state.
 func (u *Upload) Mint() string {
 	var payload [8 + 16]byte
 	binary.BigEndian.PutUint64(payload[:8], uint64(u.now())) //nosec G115 -- a positive monotonic timestamp
@@ -209,8 +208,7 @@ func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, up
 	return agg, uploadAccessOK
 }
 
-// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish, so watchers hold no cap;
-// its id stays refused while its token could recreate it.
+// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish; its id stays refused.
 func (u *Upload) evictEmptyLocked() bool {
 	if len(u.evicted) >= maxLiveUploads {
 		return false

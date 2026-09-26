@@ -44,7 +44,6 @@ func EndOf(ctx, server context.Context) LaneEnd {
 	return endPeer
 }
 
-// Activity counts what the peer sent, so a quiet lane can be ended.
 type Activity struct{ n atomic.Uint64 }
 
 // WatchIdle ends ctx with errIdle once the peer is quiet for one to one and a half bounds.
@@ -83,8 +82,7 @@ func (a *Activity) watch(ctx context.Context, cancel context.CancelCauseFunc, bo
 	}
 }
 
-// idleDeadline re-arms a lane's socket deadline as it moves, so it ends idle for wire.WTIdleBound but never
-// past limit; each move is also its session's activity.
+// idleDeadline re-arms a lane's socket deadline, capped at limit, and counts each move as session activity.
 type idleDeadline struct {
 	set   func(time.Time) error
 	limit time.Time

@@ -63,8 +63,7 @@ func requestHostname(host string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 }
 
-// ClientKeys keys every per-client budget: a principal is one key, an address its transport.AddressKeys.
-// A trusted proxy's ambiguous evidence has no key.
+// ClientKeys keys every per-client budget by principal or address; ambiguous proxy evidence has no key.
 func ClientKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
 	if p, ok := PrincipalFromContext(r.Context()); ok {
 		return []string{"principal:" + p.Subject}, true

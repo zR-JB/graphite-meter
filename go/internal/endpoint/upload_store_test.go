@@ -30,7 +30,6 @@ func (s *Upload) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
 	return s.accessFor(id, ownedBy(owner), false)
 }
 
-// getOrCreate spends no client budget, so only the global cap applies.
 func (s *Upload) getOrCreate(id string) (*uploadAgg, bool) {
 	agg, access := s.accessFor(id, uploadClient{owner: "unbudgeted"}, false)
 	return agg, access == uploadAccessOK

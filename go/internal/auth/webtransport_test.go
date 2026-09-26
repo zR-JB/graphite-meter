@@ -258,7 +258,6 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 	}
 }
 
-// Public mode answers an empty ticket; a capped mint is retryable, and no refusal is an authentication challenge.
 func TestSocketTokenHandler(t *testing.T) {
 	public, err := New(t.Context(), config.AuthConfig{Mode: "off"}, nil, false)
 	if err != nil {

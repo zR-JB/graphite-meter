@@ -13,7 +13,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// laneServer serves the transfer routes over pipes and returns a client for them.
 func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cfg := config.Default()
@@ -73,8 +72,7 @@ func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
 	})
 }
 
-// A stalled upload lane is answered 408 once idle for the bound and keeps its bytes, as does one that reaches its
-// lifetime while moving.
+// An upload lane answered 408 when idle, or closed at its lifetime, keeps its bytes.
 func TestHTTPUploadLaneEndings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e, client := laneServer(t, 45*time.Second)

@@ -269,8 +269,7 @@ func TestAdmissionReleasesTheSlotOfAPanickingHandler(t *testing.T) {
 	}
 }
 
-// Behind a trusted proxy an IPv6 client's receivers spend its /64, /56 and /48 shares, and ambiguous evidence
-// is refused before any budget.
+// Behind a trusted proxy an IPv6 client spends its /64, /56 and /48 shares; ambiguous evidence is refused.
 func TestIPv6ClientsShareTheirAllocationsBudgets(t *testing.T) {
 	cfg := config.Default()
 	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
@@ -290,7 +289,6 @@ func TestIPv6ClientsShareTheirAllocationsBudgets(t *testing.T) {
 		res.Body.Close()
 		return res
 	}
-	// Four /64s in two /56s fill the /48's four shares; each finished upload keeps its receiver.
 	for i := range 128 {
 		subnet := i / 32
 		if res := upload(fmt.Sprintf("2001:db8:0:%x::1", subnet/2<<8|subnet%2)); res.StatusCode != http.StatusOK {

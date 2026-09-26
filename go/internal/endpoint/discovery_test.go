@@ -106,8 +106,7 @@ func TestPublicConnectionPolicyKeepsSelfAndDNSSourcesForIPv6Page(t *testing.T) {
 	}
 }
 
-// An invalid request host neither reaches the published targets nor the cache, and a flood of valid ones
-// cannot displace the configured hosts.
+// An invalid request host reaches neither targets nor cache, and a flood cannot displace configured hosts.
 func TestDiscoveryReadsAnInvalidHostAsLocalhost(t *testing.T) {
 	cfg := config.Default()
 	cfg.Public.Both = []string{"https://meter.example"}

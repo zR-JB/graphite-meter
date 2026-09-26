@@ -13,7 +13,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
-// muxTopology names the measurement surfaces one listener serves.
 type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
 	// requiredProto confines transfer routes to one HTTP major version; 0 accepts any.

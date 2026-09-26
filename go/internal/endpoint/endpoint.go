@@ -8,13 +8,12 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 )
 
-// uploadClient owns receivers as a browser grant, principal or IPv6 /64, and spends that client's budgets.
 type uploadClient struct {
 	owner string
 	keys  []string
 }
 
-// uploadClientOf is zero, owning nothing, when a trusted proxy's evidence is ambiguous.
+// uploadClientOf owns by browser grant, principal or IPv6 /64; ambiguous proxy evidence owns nothing.
 func uploadClientOf(r *http.Request, trusted []netip.Prefix) uploadClient {
 	keys, ok := auth.ClientKeys(r, trusted)
 	if !ok {

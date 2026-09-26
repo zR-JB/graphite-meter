@@ -247,7 +247,6 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 }
 
 // Watching is not upload activity: an untouched receiver is reaped at its TTL and its feed ends with it.
-// A watched receiver still expires, and its feed says so rather than ending bare.
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewUpload(nil, nil)

@@ -410,7 +410,6 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	}
 }
 
-// A session the server ends carries why in its close code, which clients may ignore.
 func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -489,7 +488,6 @@ func TestHTTP3BoundsClientConnectionsAndHeaders(t *testing.T) {
 		_ = conn.CloseWithError(0, "")
 		t.Fatalf("connection %d from one client was admitted", maxClientQUICConnections+1)
 	}
-	// Request streams past the client's admission shares and a little control would only pin header buffers.
 	cfg := config.Default()
 	shares := cfg.MaxActiveMeasurementsPerClient + cfg.MaxSessionsPerClient
 	opened := 0

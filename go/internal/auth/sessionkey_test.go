@@ -10,8 +10,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 )
 
-// A principal is one budget key and each of its logins one session key; an address falls back to its keys,
-// and a trusted proxy's ambiguous evidence has none.
+// A principal is one budget key and each login one session key; else the address keys, or none if ambiguous.
 func TestBudgetKeysFollowThePrincipalThenTheAddress(t *testing.T) {
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	anonymous := httptest.NewRequest(http.MethodGet, "/wt/download", nil)

@@ -296,7 +296,6 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 			slots(t, build, 0, released)
 		})
 	})
-	// QUIC needs real UDP, so this case alone polls.
 	t.Run("h3 idle", func(t *testing.T) {
 		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
 			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()

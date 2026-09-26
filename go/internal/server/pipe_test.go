@@ -21,7 +21,6 @@ type pipeListener struct {
 	closeOnce sync.Once
 }
 
-// pipeConn reports a client address, as a socket does.
 type pipeConn struct{ net.Conn }
 
 func (pipeConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 1} }
@@ -70,14 +69,12 @@ func (l *pipeListener) dialTLS(t *testing.T, alpn string) net.Conn {
 	return conn
 }
 
-// client dials l until the test ends.
 func (l *pipeListener) client(t *testing.T) *http.Client {
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return l.dial(ctx) }}
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr}
 }
 
-// pipeSockets serves each TCP address over its own pipe listener; a bubble has no UDP.
 type pipeSockets map[string]*pipeListener
 
 func (s pipeSockets) listenTCP(addr string) (net.Listener, error) {
@@ -91,7 +88,6 @@ func (pipeSockets) listenUDP(string) (net.PacketConn, error) {
 	return nil, errors.New("no UDP in a bubble")
 }
 
-// pipeServer runs cfg's TCP listeners over pipes, under a test certificate, until the test ends.
 func pipeServer(t *testing.T, cfg *config.Config, shape func(*endpoints)) (*listenerBuild, pipeSockets) {
 	t.Helper()
 	cfg.TLSCert, cfg.TLSKey = writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",

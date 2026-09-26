@@ -165,8 +165,7 @@ func TestWebSocketPingRefusesAnOversizedFrame(t *testing.T) {
 	}
 }
 
-// A hijacked bus outlives http.Server.Shutdown and its request, so the server's context, the request lifetime and
-// the idle bound each end it with their own close code.
+// A hijacked bus outlives http.Server.Shutdown, so each bound that ends it names itself in the close.
 func TestWebSocketPingReportsWhyItEnded(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

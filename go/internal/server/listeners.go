@@ -44,7 +44,6 @@ const (
 	controlTimeout = 15 * time.Second
 )
 
-// endpoints is the one measurement core every listener mounts.
 type endpoints struct {
 	discovery             *endpoint.Discovery
 	probe, bootstrapProbe *endpoint.Probe
@@ -210,7 +209,6 @@ type listenerBuild struct {
 	sockets     listenerSockets
 }
 
-// tcpListener is one native TCP listener: its mux topology and, under TLS, its one ALPN protocol.
 type tcpListener struct {
 	name, addr, alpn string
 	listener         auth.Listener
@@ -276,7 +274,6 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 	}
 	b.services = append(b.services, service{name: l.name, addr: l.addr, network: "tcp",
 		run: func() error { return serve(served, s) }, stop: func(ctx context.Context) error {
-			// Measurements still open when the drain ends are cut, not left to their own bounds.
 			err := s.Shutdown(ctx)
 			if err != nil {
 				_ = s.Close()
