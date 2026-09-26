@@ -68,6 +68,7 @@ type coordinator struct {
 	failures    []ServerFailure
 	started     time.Time
 	hasMeasured bool
+	unavailable bool
 	emit        func(Event)
 }
 
@@ -201,11 +202,6 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 
 func (c *coordinator) missingResults() bool {
 	for _, stage := range c.cfg.Plan() {
-		for _, dir := range stage.Directions {
-			if c.aggregate.result(stage.Name, dir).Unavailable {
-				return true
-			}
-		}
 		replied := func(r Result) bool { return r.Stage == stage.Name && r.Direction == "" && r.Latency.Count > 0 }
 		for _, p := range c.active() {
 			if len(stage.Directions) == 0 && !slices.ContainsFunc(p.results, replied) {
@@ -213,7 +209,7 @@ func (c *coordinator) missingResults() bool {
 			}
 		}
 	}
-	return false
+	return c.unavailable
 }
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
@@ -712,6 +708,7 @@ func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
 func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
 		result := c.aggregate.result(stage.Name, dir)
+		c.unavailable = c.unavailable || result.Unavailable
 		if stageErr != nil {
 			result.Err = stageErr
 		}

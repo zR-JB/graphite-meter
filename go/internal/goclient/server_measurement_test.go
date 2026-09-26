@@ -192,14 +192,20 @@ func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
 		{"no throughput window", 3, false, OutcomeIncomplete},
 	} {
 		cfg := DefaultConfig()
-		cfg.Stages = StageSet{Latency: true, Download: true}
+		cfg.Stages = StageSet{Latency: true, Download: true, Bidirectional: true}
 		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
 		p.results = []Result{{Stage: StageLatency, Latency: LatencyStats{Count: c.replies}}}
-		co := &coordinator{cfg: cfg, servers: []*participant{p}}
-		co.aggregate.begin(StageDownload, []string{"a"}, 0, "stage-start")
-		if c.window {
-			co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 0}, nil))
-			co.aggregate.observe(nativeBoundary(1000, map[string]uint64{"a": 1000}, nil))
+		co := &coordinator{cfg: cfg, servers: []*participant{p}, emit: func(Event) {}}
+		for _, stage := range []StagePlan{{StageDownload, time.Second, []Direction{Down}},
+			{StageBidirectional, time.Second, []Direction{Down, Up}}} {
+			co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+			if c.window {
+				co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 0},
+					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 0, 0)}))
+				co.aggregate.observe(nativeBoundary(1000, map[string]uint64{"a": 1000},
+					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 1000, 1000)}))
+			}
+			co.finishTransferStage(stage, nil)
 		}
 		if got := co.outcome(t.Context(), nil); got != c.want {
 			t.Errorf("%s: outcome %v, want %v", c.name, got, c.want)
