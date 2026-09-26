@@ -27,6 +27,7 @@ struct BrowserGrant {
 pub struct AuthLease {
     pub(super) session: SessionLease,
     bearer: bool,
+    issued: u64,
     provider: Option<&'static str>,
     browser: Option<Arc<BrowserGrant>>,
 }
@@ -36,6 +37,7 @@ impl AuthLease {
         Self {
             session,
             bearer: false,
+            issued: 0,
             provider: None,
             browser: None,
         }
@@ -182,15 +184,24 @@ impl State {
         if !self.contains(session) || !session.0.active_at(now) {
             return Err(GrantError::NoSession);
         }
-        let grants: Vec<_> = self
-            .grants
-            .iter()
-            .filter(|(_, grant)| grant.session.0.hash == session.0.hash)
-            .map(|(key, _)| *key)
-            .collect();
-        if origin.is_some() && grants.len() >= MAX_SESSION_GRANTS {
-            return Err(GrantError::Capacity);
-        }
+        let evict = if self.grant_count(session) >= MAX_SESSION_GRANTS {
+            if origin.is_some() {
+                return Err(GrantError::Capacity);
+            }
+            Some(
+                *self
+                    .grants
+                    .iter()
+                    .filter(|(_, grant)| {
+                        grant.session.0.hash == session.0.hash && grant.browser.is_none()
+                    })
+                    .min_by_key(|(_, grant)| grant.issued)
+                    .map(|(key, _)| key)
+                    .ok_or(GrantError::Capacity)?,
+            )
+        } else {
+            None
+        };
         // Generate before changing capacity, so RNG failure preserves current grants.
         let token = random_token::<32>().map_err(grant_random_error)?;
         let browser = if let Some(origin) = origin {
@@ -203,12 +214,14 @@ impl State {
         } else {
             None
         };
-        if grants.len() >= MAX_SESSION_GRANTS {
-            self.remove_grant(&grants[0]);
+        if let Some(key) = evict {
+            self.remove_grant(&key);
         }
+        self.grant_sequence += 1;
         let lease = AuthLease {
             session: session.clone(),
             bearer: true,
+            issued: self.grant_sequence,
             provider: Some(if origin.is_some() { "browser" } else { "cli" }),
             browser,
         };

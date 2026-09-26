@@ -51,8 +51,8 @@ fn browser_capacity_preserves_every_existing_grant() {
     }
 }
 
-#[tokio::test]
-async fn cli_capacity_evicts_a_browser_grant_and_cancels_only_its_child() {
+#[test]
+fn cli_capacity_preserves_browser_grants() {
     let store = SessionStore::new();
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     let browsers: Vec<_> = (0..8)
@@ -62,23 +62,38 @@ async fn cli_capacity_evicts_a_browser_grant_and_cancels_only_its_child() {
                 .unwrap()
         })
         .collect();
-    let (_, cli) = store.issue_cli_grant(&session).unwrap();
-    let evicted: Vec<_> = browsers
-        .iter()
-        .filter(|(token, _)| store.lookup_bearer(token).is_none())
+    assert!(matches!(
+        store.issue_cli_grant(&session),
+        Err(GrantError::Capacity)
+    ));
+    for (token, lease) in browsers {
+        assert!(store.lookup_bearer(&token).is_some());
+        assert!(lease.is_active());
+    }
+}
+
+#[test]
+fn cli_capacity_evicts_only_the_oldest_native_grant() {
+    let store = SessionStore::new();
+    let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+    let (first, lease) = store.issue_cli_grant(&session).unwrap();
+    let (second, _) = store.issue_cli_grant(&session).unwrap();
+    let browsers: Vec<_> = (0..6)
+        .map(|_| {
+            store
+                .issue_browser_grant(&session, "https://client.example")
+                .unwrap()
+        })
         .collect();
-    assert_eq!(evicted.len(), 1);
-    tokio::time::timeout(Duration::from_secs(1), evicted[0].1.ended())
-        .await
-        .unwrap();
-    assert_eq!(
-        browsers
-            .iter()
-            .filter(|(_, lease)| lease.is_active())
-            .count(),
-        7
-    );
-    assert!(session.is_active() && cli.is_active());
+    let (new, _) = store.issue_cli_grant(&session).unwrap();
+    assert!(store.lookup_bearer(&first).is_none());
+    assert!(lease.is_active());
+    assert!(store.lookup_bearer(&second).is_some());
+    assert!(store.lookup_bearer(&new).is_some());
+    for (token, lease) in browsers {
+        assert!(store.lookup_bearer(&token).is_some());
+        assert!(lease.is_active());
+    }
 }
 
 #[tokio::test]

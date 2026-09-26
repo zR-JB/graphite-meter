@@ -1,8 +1,9 @@
 //! Browser/CLI approval handshakes. HTTP origin, CSRF and rate checks precede these APIs.
 use super::{
     grant::{AuthLease, GrantError, MAX_SESSION_GRANTS, secure_browser_origin},
-    session::{SessionLease, SessionStore},
+    session::{SessionLease, SessionStore, State},
 };
+use crate::connections::subnet;
 use base64::{
     Engine as _, alphabet,
     engine::{
@@ -10,12 +11,13 @@ use base64::{
     },
 };
 use sha2::{Digest, Sha256};
-use std::time::Duration;
+use std::{net::IpAddr, time::Duration};
 use tokio::time::Instant;
 
 const APPROVAL_LIFETIME: Duration = Duration::from_secs(120);
 const MAX_APPROVALS: usize = 256;
 const MAX_SESSION_APPROVALS: usize = 8;
+const MAX_CLIENT_APPROVALS: usize = 8;
 const CHALLENGE_BASE64: GeneralPurpose = GeneralPurpose::new(
     &alphabet::URL_SAFE,
     GeneralPurposeConfig::new()
@@ -60,6 +62,7 @@ pub enum Exchange {
 }
 
 pub(super) struct Approval {
+    client: ipnet::IpNet,
     session: Option<SessionLease>,
     browser_origin: Option<String>,
     code: String,
@@ -89,11 +92,24 @@ impl Approval {
     }
 }
 
+impl State {
+    fn approval_capacity(&self, client: IpAddr) -> bool {
+        self.approvals.len() >= MAX_APPROVALS
+            || self
+                .approvals
+                .values()
+                .filter(|approval| approval.client == subnet(client))
+                .count()
+                >= MAX_CLIENT_APPROVALS
+    }
+}
+
 impl SessionStore {
     pub fn begin_cli_approval(
         &self,
         session: &SessionLease,
         challenge: &str,
+        client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
         let code = verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
         let mut state = self.0.lock().expect("session mutex poisoned");
@@ -109,7 +125,7 @@ impl SessionStore {
                 Err(ApprovalError::InvalidApproval)
             };
         }
-        if state.approvals.len() >= MAX_APPROVALS
+        if state.approval_capacity(client)
             || state
                 .approvals
                 .values()
@@ -120,6 +136,7 @@ impl SessionStore {
             return Err(ApprovalError::Capacity);
         }
         let approval = Approval {
+            client: subnet(client),
             session: Some(session.clone()),
             browser_origin: None,
             code,
@@ -138,6 +155,7 @@ impl SessionStore {
         challenge: &str,
         origin: &str,
         session: Option<&SessionLease>,
+        client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
         let code = verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
         if !secure_browser_origin(origin) {
@@ -152,12 +170,13 @@ impl SessionStore {
             return Err(ApprovalError::NoSession);
         }
         if !state.approvals.contains_key(challenge) {
-            if state.approvals.len() >= MAX_APPROVALS {
+            if state.approval_capacity(client) {
                 return Err(ApprovalError::Capacity);
             }
             state.approvals.insert(
                 challenge.into(),
                 Approval {
+                    client: subnet(client),
                     session: None,
                     browser_origin: Some(origin.into()),
                     code,
@@ -352,11 +371,21 @@ mod tests {
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"));
         store
-            .begin_browser_approval(&challenge, "https://client.example", None)
+            .begin_browser_approval(
+                &challenge,
+                "https://client.example",
+                None,
+                "192.0.2.1".parse().unwrap(),
+            )
             .unwrap();
         let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
         store
-            .begin_browser_approval(&challenge, "https://client.example", Some(&session))
+            .begin_browser_approval(
+                &challenge,
+                "https://client.example",
+                Some(&session),
+                "192.0.2.1".parse().unwrap(),
+            )
             .unwrap();
         assert_eq!(
             store.0.lock().unwrap().approvals[&challenge].deadline,
@@ -372,7 +401,9 @@ mod tests {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"));
-        store.begin_cli_approval(&session, &challenge).unwrap();
+        store
+            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .unwrap();
         store
             .0
             .lock()
@@ -393,7 +424,9 @@ mod tests {
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let verifier = "v".repeat(32);
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        store.begin_cli_approval(&session, &challenge).unwrap();
+        store
+            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .unwrap();
         store
             .approve(&session, &challenge, ApprovalKind::Cli)
             .unwrap();

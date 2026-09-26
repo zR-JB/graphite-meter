@@ -31,6 +31,9 @@ struct Harness {
 }
 impl Harness {
     async fn start() -> Self {
+        Self::start_with_proxies(Vec::new()).await
+    }
+    async fn start_with_proxies(trusted_proxies: Vec<ipnet::IpNet>) -> Self {
         let identity = support::Identity::generate();
         let cert =
             CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
@@ -55,6 +58,7 @@ impl Harness {
         client.alpn_protocols = vec![b"h2".to_vec()];
         let h2_connector = TlsConnector::from(Arc::new(client));
         let config = Config {
+            trusted_proxies,
             advertised_native: Some(Default::default()),
             public: graphite_meter_server::config::PublicOrigins {
                 both: vec!["self".into()],
@@ -321,5 +325,26 @@ async fn password_flow() {
     assert!(denied.starts_with("HTTP/1.1 403"));
     driver.abort();
     let _ = driver.await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+
+    let h = Harness::start_with_proxies(vec!["127.0.0.0/8".parse().unwrap()]).await;
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"approval verifier"));
+    for path in [
+        format!("/auth/cli?challenge={challenge}"),
+        format!("/auth/browser?challenge={challenge}&client_origin=https://client.example"),
+    ] {
+        let (denied, _) = h.request("GET", &path, "", "").await;
+        assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
+        let (allowed, _) = h
+            .request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "")
+            .await;
+        assert!(allowed.starts_with("HTTP/1.1 303"), "{allowed}");
+    }
     h.stop().await;
 }

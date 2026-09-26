@@ -407,6 +407,12 @@ impl Service {
         if !valid_challenge(challenge) {
             return response(StatusCode::FORBIDDEN);
         }
+        let Some(client) = self
+            .policy
+            .client_address(request.headers(), authorized.connection().peer)
+        else {
+            return response(StatusCode::FORBIDDEN);
+        };
         if !browser && let Some(destination) = self.sessions.browser_approval_redirect(challenge) {
             return redirect(&destination);
         }
@@ -428,20 +434,17 @@ impl Service {
                 return response(StatusCode::FORBIDDEN);
             }
             if self.sessions.browser_approval_redirect(challenge).is_none()
-                && !self
-                    .policy
-                    .client_address(request.headers(), authorized.connection().peer)
-                    .is_some_and(|address| self.attempts.allow(Budget::BrowserApproval, address))
+                && !self.attempts.allow(Budget::BrowserApproval, client)
             {
                 return response(StatusCode::FORBIDDEN);
             }
             self.sessions
-                .begin_browser_approval(challenge, origin, session.as_ref())
+                .begin_browser_approval(challenge, origin, session.as_ref(), client)
         } else {
             let Some(session) = &session else {
                 return redirect(&query_url("/login", &[("challenge", challenge)]));
             };
-            self.sessions.begin_cli_approval(session, challenge)
+            self.sessions.begin_cli_approval(session, challenge, client)
         };
         match approval {
             Ok(view) => {

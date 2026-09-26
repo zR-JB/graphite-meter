@@ -16,11 +16,16 @@ fn cli_exchange_requires_approval_is_single_use_and_keeps_parent_identity() {
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
-    let view = store.begin_cli_approval(&session, &challenge).unwrap();
+    let view = store
+        .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+        .unwrap();
     assert_eq!(view.code, "24NPFPCT");
     assert!(view.attached && view.browser_origin.is_none());
     assert_eq!(
-        store.begin_cli_approval(&session, &challenge).unwrap().code,
+        store
+            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .unwrap()
+            .code,
         view.code
     );
     assert!(matches!(
@@ -55,7 +60,7 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
     let pending = store
-        .begin_browser_approval(&challenge, AUDIENCE, None)
+        .begin_browser_approval(&challenge, AUDIENCE, None, "192.0.2.1".parse().unwrap())
         .unwrap();
     assert!(!pending.attached);
     assert!(
@@ -69,17 +74,32 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
         Exchange::Pending
     ));
     assert!(matches!(
-        store.begin_browser_approval(&challenge, "https://wrong.example", Some(&session)),
+        store.begin_browser_approval(
+            &challenge,
+            "https://wrong.example",
+            Some(&session),
+            "192.0.2.1".parse().unwrap()
+        ),
         Err(ApprovalError::InvalidApproval)
     ));
     assert!(
         store
-            .begin_browser_approval(&challenge, AUDIENCE, Some(&session))
+            .begin_browser_approval(
+                &challenge,
+                AUDIENCE,
+                Some(&session),
+                "192.0.2.1".parse().unwrap()
+            )
             .unwrap()
             .attached
     );
     assert!(matches!(
-        store.begin_browser_approval(&challenge, AUDIENCE, Some(&other)),
+        store.begin_browser_approval(
+            &challenge,
+            AUDIENCE,
+            Some(&other),
+            "192.0.2.1".parse().unwrap()
+        ),
         Err(ApprovalError::InvalidApproval)
     ));
     assert!(matches!(
@@ -114,13 +134,23 @@ fn browser_capacity_is_reported_without_revoking_or_approving_existing_clients()
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
     store
-        .begin_browser_approval(&challenge, AUDIENCE, Some(&session))
+        .begin_browser_approval(
+            &challenge,
+            AUDIENCE,
+            Some(&session),
+            "192.0.2.1".parse().unwrap(),
+        )
         .unwrap();
     let grants: Vec<_> = (0..8)
         .map(|_| store.issue_browser_grant(&session, AUDIENCE).unwrap().0)
         .collect();
     assert!(matches!(
-        store.begin_browser_approval(&challenge, AUDIENCE, Some(&session)),
+        store.begin_browser_approval(
+            &challenge,
+            AUDIENCE,
+            Some(&session),
+            "192.0.2.1".parse().unwrap()
+        ),
         Err(ApprovalError::GrantCapacity)
     ));
     assert!(matches!(
@@ -160,11 +190,15 @@ fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     for i in 0..8 {
         store
-            .begin_cli_approval(&session, &challenge(&format!("cli-{i}")))
+            .begin_cli_approval(
+                &session,
+                &challenge(&format!("cli-{i}")),
+                "192.0.2.1".parse().unwrap(),
+            )
             .unwrap();
     }
     assert!(matches!(
-        store.begin_cli_approval(&session, &challenge("ninth")),
+        store.begin_cli_approval(&session, &challenge("ninth"), "192.0.2.1".parse().unwrap()),
         Err(ApprovalError::Capacity)
     ));
     store.revoke(&session);
@@ -174,16 +208,31 @@ fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     ));
     for i in 0..256 {
         store
-            .begin_browser_approval(&challenge(&format!("browser-{i}")), AUDIENCE, None)
+            .begin_browser_approval(
+                &challenge(&format!("browser-{i}")),
+                AUDIENCE,
+                None,
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, (i / 8) as u8)),
+            )
             .unwrap();
     }
     assert!(matches!(
-        store.begin_browser_approval(&challenge("overflow"), AUDIENCE, None),
+        store.begin_browser_approval(
+            &challenge("overflow"),
+            AUDIENCE,
+            None,
+            "192.0.2.1".parse().unwrap()
+        ),
         Err(ApprovalError::Capacity)
     ));
     assert!(
         store
-            .begin_browser_approval(&challenge("browser-0"), AUDIENCE, None)
+            .begin_browser_approval(
+                &challenge("browser-0"),
+                AUDIENCE,
+                None,
+                "192.0.2.1".parse().unwrap()
+            )
             .is_ok()
     );
 }
@@ -196,7 +245,9 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
     assert!(valid_challenge(&URL_SAFE_NO_PAD.encode([255; 32])));
     assert!(!valid_challenge(&(challenge("v") + "=")));
     let challenge = challenge("");
-    store.begin_cli_approval(&session, &challenge).unwrap();
+    store
+        .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+        .unwrap();
     store
         .approve(&session, &challenge, ApprovalKind::Cli)
         .unwrap();
@@ -217,7 +268,7 @@ fn validation_preserves_cli_and_browser_verifier_differences() {
         Err(ExchangeError::InvalidOrigin)
     ));
     assert!(matches!(
-        SessionStore::new().begin_cli_approval(&session, &challenge),
+        SessionStore::new().begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap()),
         Err(ApprovalError::NoSession)
     ));
 }
@@ -229,7 +280,12 @@ fn concurrent_exchange_issues_exactly_one_grant() {
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
     store
-        .begin_browser_approval(&challenge, AUDIENCE, Some(&session))
+        .begin_browser_approval(
+            &challenge,
+            AUDIENCE,
+            Some(&session),
+            "192.0.2.1".parse().unwrap(),
+        )
         .unwrap();
     store
         .approve(&session, &challenge, ApprovalKind::Browser)
@@ -265,7 +321,9 @@ fn logout_and_exchange_are_serializable_and_cannot_leave_a_valid_credential() {
         let (_, session) = store.create("subject", "Name", "local", None).unwrap();
         let verifier = "v".repeat(32);
         let challenge = challenge(&verifier);
-        store.begin_cli_approval(&session, &challenge).unwrap();
+        store
+            .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
+            .unwrap();
         store
             .approve(&session, &challenge, ApprovalKind::Cli)
             .unwrap();
@@ -288,4 +346,39 @@ fn logout_and_exchange_are_serializable_and_cannot_leave_a_valid_credential() {
             Exchange::Pending
         ));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn pending_approvals_share_client_subnet_capacity_and_expire() {
+    let store = SessionStore::new();
+    let first = "2001:db8::1".parse().unwrap();
+    let same = "2001:db8::2".parse().unwrap();
+    let other = "2001:db8:0:1::1".parse().unwrap();
+    let (_, session) = store.create("subject", "Name", "local", None).unwrap();
+    for i in 0..8 {
+        store
+            .begin_browser_approval(&challenge(&format!("pending-{i}")), AUDIENCE, None, first)
+            .unwrap();
+    }
+    store
+        .begin_browser_approval(&challenge("pending-0"), AUDIENCE, Some(&session), same)
+        .unwrap();
+    assert!(matches!(
+        store.begin_browser_approval(&challenge("ninth"), AUDIENCE, None, same),
+        Err(ApprovalError::Capacity)
+    ));
+    assert!(matches!(
+        store.begin_cli_approval(&session, &challenge("cli"), same),
+        Err(ApprovalError::Capacity)
+    ));
+    store
+        .begin_browser_approval(&challenge("other"), AUDIENCE, None, other)
+        .unwrap();
+    tokio::time::advance(std::time::Duration::from_secs(120)).await;
+    store
+        .begin_cli_approval(&session, &challenge("cli"), same)
+        .unwrap();
+    store
+        .begin_browser_approval(&challenge("ninth"), AUDIENCE, None, first)
+        .unwrap();
 }

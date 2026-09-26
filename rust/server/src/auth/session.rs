@@ -97,6 +97,7 @@ impl SessionLease {
 
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) grant_sequence: u64,
     pub(super) sessions: HashMap<TokenHash, Arc<Session>>,
     pub(super) grants: HashMap<TokenHash, AuthLease>,
     pub(super) tickets: HashMap<TokenHash, StoredTicket>,
