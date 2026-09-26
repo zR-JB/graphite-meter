@@ -71,7 +71,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
                 path.write_text(original.replace(f'bun = "{version}"', f'bun = "{value}"'))
                 with self.assertRaisesRegex(ValueError, "tools.bun"):
                     load_pins(root)
-        path.write_text(original.replace('[tools]', '[tools]\nunexpected="1.2.3"'))
+        path.write_text(original.replace("[tools]", '[tools]\nunexpected="1.2.3"'))
         with self.assertRaisesRegex(ValueError, "exactly"):
             load_pins(root)
 
