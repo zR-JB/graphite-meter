@@ -478,19 +478,6 @@ test("burst flushes cannot raise the peak above the fastest 500 ms", () => {
   expect(m.serverResult("download", "down", "a")!.peakBytesPerSec).toBe(2_000);
 });
 
-test("a peak window needs 500 ms on every clock and windows never overlap", () => {
-  const m = new ThroughputAggregate();
-  m.begin("upload", ["a"], 0);
-  m.observe(boundary(0, {}, { a: receiver("a", 0, 1) }));
-  // 600 ms of client time holds only 400 ms of receiver time: no peak window closes yet.
-  m.observe(boundary(600, {}, { a: receiver("a", 400, 400e6 + 1) }));
-  m.observe(boundary(1_200, {}, { a: receiver("a", 2_000, 1_000e6 + 1) }));
-  expect(m.result("upload", false).up).toMatchObject({
-    reportedBytesPerSec: 2_000,
-    peakBytesPerSec: 2_000,
-  });
-});
-
 test("overlapping evidence never double counts bytes across intervals or stages", () => {
   const m = new ThroughputAggregate();
   m.begin("upload", ["a"], 0);
@@ -528,6 +515,7 @@ type Vector = {
       upBytesPerSec: number | null;
     } | null;
   }[];
+  peak: { downBytesPerSec: number | null; upBytesPerSec: number | null };
 };
 const vectors: Vector[] = await Bun.file(
   new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
@@ -559,6 +547,10 @@ for (const vector of vectors)
       },
     }));
     expect(intervals).toEqual(vector.intervals);
+    expect({
+      downBytesPerSec: m.peak(vector.stage, "down"),
+      upBytesPerSec: m.peak(vector.stage, "up"),
+    }).toEqual(vector.peak);
   });
 
 const latencyVectors: {

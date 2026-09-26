@@ -862,11 +862,17 @@ export class ThroughputAggregate {
       return {
         reportedBytesPerSec: rate,
         totalBytes: this.#stageTotal(stage, dir),
-        peakBytesPerSec: open.peaks.get("")?.[dir] ?? null,
+        peakBytesPerSec: this.peak(stage, dir),
         stabilityPct: stabilityPct(open.total[dir].rates),
       };
     };
     return { down: reduce("down"), up: reduce("up") };
+  }
+
+  /** The latest interval's combined peak; null without a 500 ms window on every clock. */
+  peak(stage: TransferStage, dir: FlowDirection): number | null {
+    const record = this.intervals.findLast((i) => i.stage === stage);
+    return (record && this.#interval(record)?.peaks.get("")?.[dir]) ?? null;
   }
 
   /** One server's share from the latest interval it took part in, including before a dropout. */
