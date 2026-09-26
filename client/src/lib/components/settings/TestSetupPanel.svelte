@@ -37,7 +37,7 @@
   });
   function resetSettings() {
     resetConfirmOpen = false;
-    store.restoreTestDisplayDefaults();
+    controller.restoreDefaults();
     customDuration = false;
   }
 

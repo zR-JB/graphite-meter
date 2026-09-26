@@ -639,10 +639,6 @@ export function connectionDraftRoleKey(
       })
     : JSON.stringify({ selection, needed: latencyPathNeeded(config) });
 }
-export const connectionDraftKey = (config: RunnerConfig): string =>
-  JSON.stringify(
-    CONNECTION_ROLES.map((role) => connectionDraftRoleKey(config, role)),
-  );
 
 export function roleNeedsValidation(
   config: RunnerConfig,

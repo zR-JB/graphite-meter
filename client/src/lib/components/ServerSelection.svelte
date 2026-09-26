@@ -17,7 +17,7 @@
     if (locked || retrying.includes(serverId)) return;
     retrying = [...retrying, serverId];
     try {
-      await controller.retryServer(serverId);
+      await controller.retry({ id: serverId });
     } finally {
       if (
         store.servers.get(serverId)?.readiness === "ready" &&

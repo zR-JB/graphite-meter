@@ -1,4 +1,4 @@
-// Its slot is shared: validateConnections aborts a probe and starts the next one without awaiting it, so two waits.
+// Its slot is shared: a forced retry aborts a probe and starts the next one without awaiting it, so two waits.
 import { test, expect, afterEach, beforeEach } from "bun:test";
 import {
   IdleKeepalive,
