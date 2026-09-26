@@ -345,7 +345,8 @@ func TestSequentialWebTransportSessionsDoNotHoldConnectionSlots(t *testing.T) {
 		case <-conn.Context().Done():
 			closed, ok := errors.AsType[*quic.ApplicationError](context.Cause(conn.Context()))
 			if !ok || !closed.Remote || closed.ErrorCode != quic.ApplicationErrorCode(http3.ErrCodeNoError) {
-				t.Fatalf("connection %d closed with %v, want the server's H3_NO_ERROR", i, context.Cause(conn.Context()))
+				t.Fatalf("connection %d closed with %v, want the server's H3_NO_ERROR",
+					i, context.Cause(conn.Context()))
 			}
 		case <-ctx.Done():
 			t.Fatalf("the server kept connection %d open after its only session ended", i)

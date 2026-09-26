@@ -14,7 +14,8 @@ type keymap struct {
 }
 
 var keys = keymap{
-	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j", "tab", "shift+tab"), key.WithHelp("↑/↓", "move")),
+	rows: key.NewBinding(key.WithKeys("up", "down", "k", "j", "tab", "shift+tab"),
+		key.WithHelp("↑/↓", "move")),
 	adjust:        key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change")),
 	change:        key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "open")),
 	toggle:        key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "on/off")),

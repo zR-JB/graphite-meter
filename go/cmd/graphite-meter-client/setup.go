@@ -186,7 +186,8 @@ var setupGroups = []struct {
 	{"Stages", []*setting{
 		{label: "Latency", note: "idle round trips", flag: func(c *goclient.Config) *bool { return &c.Stages.Latency },
 			span: func(c *goclient.Config) *time.Duration { return &c.LatencyDuration }},
-		{label: "Download", note: "server to client", flag: func(c *goclient.Config) *bool { return &c.Stages.Download },
+		{label: "Download", note: "server to client",
+			flag: func(c *goclient.Config) *bool { return &c.Stages.Download },
 			span: func(c *goclient.Config) *time.Duration { return &c.DownloadDuration }},
 		{label: "Upload", note: "client to server, receiver-timed",
 			flag: func(c *goclient.Config) *bool { return &c.Stages.Upload },
