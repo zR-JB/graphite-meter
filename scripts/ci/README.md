@@ -23,7 +23,7 @@ narrow PR runs only; every push to main runs every job.
 
 | Job | mise task |
 | --- | --- |
-| `plan` | `workflow-check`, `pipeline-test` |
+| `tooling` | `workflow-check`, `pipeline-test` |
 | `core` | `legal-check`, `core-check` |
 | `go` | `server-race` |
 | `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |

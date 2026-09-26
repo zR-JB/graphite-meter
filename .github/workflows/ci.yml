@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   plan:
-    name: Plan and repository safety
+    name: Plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -35,16 +35,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python verification tools
-        uses: ./.github/actions/setup-project
-        with: {python: 'true'}
-
-      - name: Enforce repository and workflow security policy
-        run: mise run workflow-check
-
-      - name: Type-check and test tooling, pipeline and legal boundaries
-        run: mise run pipeline-test
-
       - id: filter
         name: Determine affected CI areas
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -55,8 +45,24 @@ jobs:
         env:
           CHANGES: ${{ github.event_name == 'push' && 'every area on main' || steps.filter.outputs.changes }}
         run: |
-          printf '### CI plan for `%s`\n\nSelected: `%s`; secret scan always runs.\n' \
+          printf '### CI plan for `%s`\n\nSelected: `%s`; tooling and the secret scan always run.\n' \
             "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
+
+  tooling:
+    name: Workflow policy and pipeline tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Python verification tools
+        uses: ./.github/actions/setup-project
+        with: {python: 'true'}
+      - name: Enforce repository and workflow security policy
+        run: mise run workflow-check
+      - name: Type-check and test tooling, pipeline and legal boundaries
+        run: mise run pipeline-test
 
   core:
     name: Core checks
@@ -197,7 +203,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, e2e, smoke, release, security, secret-scan]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan]
     steps:
       - name: Require every selected job
         env:
