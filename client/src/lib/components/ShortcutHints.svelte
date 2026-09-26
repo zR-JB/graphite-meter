@@ -1,11 +1,11 @@
 <script lang="ts">
   /* Contextual keyboard-shortcut strip: a tokenized row of keycaps mirroring
      the global keyboard map in <Console>, which owns the real handler. The
-     primary hint flips with run state (Space = Start test or Abort), and the
+     primary hint flips with run state (Space = Start test or Stop test), and the
      "R · Run again" cap appears once a run resolves. */
   import { store } from "../state/store.svelte";
 
-  // Mirror RunButton's label exactly (Start test → Abort → Run again) so the hint
+  // Mirror RunButton's label exactly (Start test → Stop test → Run again) so the hint
   // never names an action the button doesn't show.
   const resolved = $derived(
     store.phase === "complete" ||
@@ -16,7 +16,7 @@
     store.preparing
       ? "Cancel start"
       : store.isRunning
-        ? "Abort"
+        ? "Stop test"
         : resolved
           ? "Run again"
           : "Start test",

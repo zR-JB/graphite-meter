@@ -1,5 +1,6 @@
 <script lang="ts">
-  // Primary start/abort action.
+  // Primary start/stop action. The visible text is its accessible name
+  // (WCAG 2.5.3); capitals are presentation only.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
@@ -18,10 +19,10 @@
     pending
       ? "Cancel"
       : store.isRunning
-        ? "Abort test"
+        ? "Stop test"
         : resolved
-          ? "Run the test again"
-          : "Start the speed test",
+          ? "Run again"
+          : "Start test",
   );
 </script>
 
@@ -29,7 +30,6 @@
   class="run-button"
   class:running={store.isRunning}
   class:pending
-  aria-label={label}
   aria-busy={pending}
   aria-describedby={!store.isRunning && !pending ? "run-duration" : undefined}
   onclick={controller.toggleRun}
@@ -43,15 +43,12 @@
 >
   {#key label}
     <span class="run-button-content enter">
-      {#if pending}
-        CANCEL
-      {:else if store.isRunning}
-        <span class="stop-sq"></span> ABORT
-      {:else if resolved}
-        <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
-      {:else}
-        <span class="ico">{@html ICON.bolt}</span> START TEST
+      {#if store.isRunning}
+        <span class="stop-sq" aria-hidden="true"></span>
+      {:else if !pending}
+        <span class="ico" aria-hidden="true">{@html ICON.bolt}</span>
       {/if}
+      {label}
     </span>
   {/key}
   {#if !store.isRunning && !pending}
@@ -90,6 +87,7 @@
     font-family: var(--font-display);
     font-weight: 600;
     letter-spacing: var(--track-wide);
+    text-transform: uppercase;
     transition:
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);

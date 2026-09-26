@@ -56,7 +56,7 @@
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
-<span class="label" role="status" aria-live="polite"
+<span class="label"
   >{store.phase === "complete"
     ? completionLabel(store.result?.outcome)
     : PHASE_LABEL[store.phase]}</span

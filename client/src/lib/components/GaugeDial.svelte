@@ -401,22 +401,8 @@
     z-index: 1;
     width: 24px;
     height: 24px;
-    padding: 0;
-    border: 0;
-    background: transparent;
     transform: translate(-50%, -50%);
     cursor: help;
-  }
-  .result-head-target:focus-visible {
-    outline: none;
-  }
-  .result-head-target:focus-visible::after {
-    content: "";
-    position: absolute;
-    inset-inline: 4px;
-    bottom: -2px;
-    height: 2px;
-    background: var(--brand-strong);
   }
 
   .gauge-dial,

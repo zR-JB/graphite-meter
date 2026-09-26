@@ -50,7 +50,7 @@
     {#if tooltipText}
       <!-- The tooltip action is wired only when there is text: it makes its
            node focusable, and a plain switch needs no extra tab stop. -->
-      <span class="label" use:tooltip={tooltipText}>{label}</span>
+      <span class="label term" use:tooltip={tooltipText}>{label}</span>
     {:else}
       <span class="label">{label}</span>
     {/if}

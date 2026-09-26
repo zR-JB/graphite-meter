@@ -1,8 +1,8 @@
 <script lang="ts">
-  /* Transient phase-change announcer, pinned bottom-right: one message per
-     `store.phase` change, then auto-dismiss. role="status" with
-     aria-live="polite" gives screen readers one calm announcement per
-     transition. GaugePanel's mirror carries the per-value detail. */
+  /* Transient phase-change toast, pinned bottom-right: one message per
+     `store.phase` change, then auto-dismiss. It is visual only: GaugePanel
+     is the single phase and value announcer, and only link and skipped-stage
+     issues, which nothing else voices, reach the status region below. */
   import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -113,10 +113,9 @@
       (skipMessage != null ||
         store.phase === "error" ||
         store.phase === "aborted"))}
-  role="status"
-  aria-live="polite"
+  aria-hidden="true"
 >
-  <span class="notice-icon" aria-hidden="true"
+  <span class="notice-icon"
     >{#if stalled || skipMessage || store.phase === "error"}{@html ICON.info}{:else if store.phase === "complete"}{@html ICON.check}{:else}{@html ICON.ping}{/if}</span
   >
   <span class="kicker"
@@ -130,6 +129,9 @@
     >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong
   >
 </div>
+<p class="sr-only" role="status">
+  {stalled ? stallMessage : (skipMessage ?? "")}
+</p>
 
 <style>
   .phase-toast {

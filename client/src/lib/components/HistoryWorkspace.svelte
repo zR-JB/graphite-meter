@@ -953,6 +953,9 @@
       background: var(--brand-soft);
       color: var(--text);
     }
+    .column-head button:hover i::after {
+      opacity: 0.35;
+    }
   }
   .column-head [aria-sort]:not([aria-sort="none"]) button {
     color: var(--brand-strong);
@@ -976,9 +979,6 @@
     opacity: 0;
     rotate: 45deg;
     transition: opacity var(--dur-hover) var(--ease-out);
-  }
-  .column-head button:hover i::after {
-    opacity: 0.35;
   }
   .column-head [aria-sort="descending"] i::after,
   .column-head [aria-sort="ascending"] i::after {

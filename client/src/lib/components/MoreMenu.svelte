@@ -91,8 +91,13 @@
   .archive .more-menu :global(button) {
     color: var(--err);
   }
-  .archive .more-menu :global(button:is(:hover, :focus-visible)) {
+  .archive .more-menu :global(button:focus-visible) {
     background: var(--err-soft);
+  }
+  @media (hover: hover) {
+    .archive .more-menu :global(button:hover) {
+      background: var(--err-soft);
+    }
   }
   .archive .more-menu :global(button > span:first-child) {
     color: inherit;

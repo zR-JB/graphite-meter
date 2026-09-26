@@ -56,8 +56,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     anchor: DOMRect;
     viewport: ReturnType<typeof floatingViewport>;
   } | null = null;
-  // Non-interactive jargon terms still need keyboard focus for aria-describedby.
-  if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
+  // Definitions (.term) and notes stay reachable by keyboard; other inert
+  // anchors already carry their text in an accessible name, so they do not
+  // add a tab stop per value.
+  if (
+    !node.hasAttribute("tabindex") &&
+    node.tabIndex < 0 &&
+    node.matches(".term, [role='note']")
+  ) {
     node.tabIndex = 0;
   }
   // Centred on the anchor, flipped to the opposite side when the requested one overflows the viewport, then clamped.

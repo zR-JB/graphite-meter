@@ -61,7 +61,9 @@
 
 <fieldset class="stage-track" class:quad={bidi !== null}>
   <legend class="caps"
-    >Test stages<span class="sr-only"> — tap to enable or disable</span></legend
+    >Test stages<span class="sr-only">
+      — toggle to include or skip</span
+    ></legend
   >
   <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
        `{@html s.icon}` sink by its exact expression text. -->
@@ -81,11 +83,11 @@
         ? `${s.label} — ${failureDetail(s.failure.message)}`
         : s.reason
           ? s.reason === "skipped" && !s.locked
-            ? `${s.label} — skipped, tap to include`
+            ? `${s.label} — skipped, toggle to include`
             : `${s.label} — ${s.reason}`
           : s.selected
-            ? `${s.label} — tap to skip`
-            : `${s.label} — tap to include`}
+            ? `${s.label} — toggle to skip`
+            : `${s.label} — toggle to include`}
       disabled={s.locked}
       onclick={() => onToggle(s.key)}
     >
@@ -124,12 +126,12 @@
       role="switch"
       aria-checked="true"
       aria-label="Bidirectional stage{store.canToggleStage('bidirectional')
-        ? ' — tap to exclude'
+        ? ' — toggle to exclude'
         : ' (running)'}"
       use:tooltip={bidiPresentation.failure
         ? `Bi-dir — ${failureDetail(store.stageFailures.bidirectional?.message)}`
         : store.canToggleStage("bidirectional")
-          ? "Bidirectional — concurrent down + up. Tap to exclude (re-enable in Settings)."
+          ? "Bidirectional — concurrent down + up. Toggle to exclude (re-enable in Settings)."
           : "Bidirectional — running."}
       disabled={!store.canToggleStage("bidirectional")}
       onclick={() => {
