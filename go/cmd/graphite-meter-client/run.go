@@ -397,6 +397,21 @@ func (r *runState) nextFocus() {
 	r.focus = r.details.Servers[(i+1)%len(r.details.Servers)].Server.ID
 }
 
+func (r *runState) meanRates(stage goclient.Stage) string {
+	var parts []string
+	for _, result := range r.results {
+		if result.Stage == stage {
+			rate := missing
+			if !result.Unavailable {
+				rate = fmtRate(result.MeanBps)
+			}
+			arrow := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[result.Direction]
+			parts = append(parts, arrow+rate)
+		}
+	}
+	return strings.Join(parts, "  ")
+}
+
 func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 	out := map[goclient.Stage]goclient.Result{}
 	if r.details == nil {

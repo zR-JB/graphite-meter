@@ -401,7 +401,7 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	for _, want := range []string{
 		"Graphite Meter · Complete", "Median", "Probe timeouts",
 		"Idle latency", "10.0 ms", "12.0 ms", "0.4 ms", "Idle latency: 16 replies · 4.0 s",
-		"Server timing (2 paired replies, means): raw 10.0 ms · handling 0.0 ms",
+		"Server timing (2 paired replies, means): raw 10.0 ms · handling < 0.1 ms",
 		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
 		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
 		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Bi-dir",

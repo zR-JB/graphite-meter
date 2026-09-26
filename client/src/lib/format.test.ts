@@ -96,19 +96,8 @@ test("chart axes snap to a 1-2-5 ladder without collapsing a flat range", () => 
   ]);
 });
 
-test("sub-resolution latency reads as below the browser timer resolution", () => {
-  expect([0, 0.04, 0.1, 12.34, 250].map(fmtMs)).toEqual([
-    "< 0.1",
-    "< 0.1",
-    "0.1",
-    "12.3",
-    "250",
-  ]);
-  expect(fmtMsTick(0)).toBe("0");
-});
-
 const vectors: Record<
-  "ms" | "speed" | "bytes" | "added",
+  "ms" | "latency" | "speed" | "bytes" | "added",
   { in: number; out: string }[]
 > & { rate: { bytesPerSec: number; out: string }[] } = await Bun.file(
   new URL("../../../api/format.testvectors.json", import.meta.url),
@@ -116,6 +105,8 @@ const vectors: Record<
 
 test("formatting matches the shared vectors", () => {
   for (const { in: ms, out } of vectors.ms) expect(fixedMs(ms)).toBe(out);
+  for (const { in: ms, out } of vectors.latency) expect(fmtMs(ms)).toBe(out);
+  expect(fmtMsTick(0)).toBe("0");
   for (const { in: value, out } of vectors.speed)
     expect(fmtSpeed(value)).toBe(out);
   for (const { in: bytes, out } of vectors.bytes)

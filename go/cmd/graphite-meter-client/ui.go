@@ -74,7 +74,7 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 		var facts []string
 		for i, cell := range row[1:] {
 			if cell != "" {
-				facts = append(facts, headers[i+1]+" "+cell)
+				facts = append(facts, strings.TrimSpace(headers[i+1]+" "+cell))
 			}
 		}
 		lines = append(lines, s.text.Render(row[0]))

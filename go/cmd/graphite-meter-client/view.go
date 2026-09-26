@@ -520,11 +520,8 @@ func (m model) stageTrack(w int) []string {
 
 func (m model) headline(stage goclient.Stage) string {
 	var parts []string
-	for _, result := range m.run.results {
-		if result.Stage == stage && !result.Unavailable {
-			arrow := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[result.Direction]
-			parts = append(parts, m.st.value.Render(arrow+fmtRate(result.MeanBps)))
-		}
+	if rates := m.run.meanRates(stage); rates != "" {
+		parts = append(parts, m.st.value.Render(rates))
 	}
 	if p, ok := m.run.latencyPopulations()[stage]; ok && stage == goclient.StageLatency && p.HasMedian() {
 		parts = append(parts, m.st.value.Render(fmtMs(p.Latency.P50))+m.st.muted.Render(" median"))
@@ -653,26 +650,19 @@ func (m model) resultsView(w int) (string, string) {
 	added, measured := false, false
 	for i, stage := range r.plan {
 		if len(stage.Directions) > 0 {
-			row, found := []string{compactStage(stage.Name), "", ""}, false
 			for _, result := range r.results {
-				if result.Stage != stage.Name {
-					continue
+				if result.Stage == stage.Name {
+					note(directionLabel(result), throughputFacts(result))
+					failed(directionLabel(result), result.Err)
 				}
-				found = true
-				rate := missing
-				if !result.Unavailable {
-					rate = fmtRate(result.MeanBps)
-				}
-				row[map[goclient.Direction]int{goclient.Down: 1, goclient.Up: 2}[result.Direction]] = rate
-				note(directionLabel(result), throughputFacts(result))
-				failed(directionLabel(result), result.Err)
 			}
-			measured = measured || found
-			if !found && !r.live() {
-				row[1], found = unmeasured(i), true
+			rates := r.meanRates(stage.Name)
+			measured = measured || rates != ""
+			if rates == "" && !r.live() {
+				rates = unmeasured(i)
 			}
-			if found {
-				throughput = append(throughput, row)
+			if rates != "" {
+				throughput = append(throughput, []string{compactStage(stage.Name), rates})
 			}
 		}
 		population, ok := latency[stage.Name]
@@ -704,7 +694,7 @@ func (m model) resultsView(w int) (string, string) {
 	}
 	var parts []string
 	if len(throughput) > 0 {
-		parts = append(parts, m.st.grid([]string{"Throughput", "Download", "Upload"}, throughput, w))
+		parts = append(parts, m.st.grid([]string{"Throughput", ""}, throughput, w))
 	}
 	if len(latencyRows) > 0 {
 		headers := []string{"Latency", "Median", "Added", "p95", "Jitter", "Probe timeouts"}

@@ -150,8 +150,6 @@ func TestFormatting(t *testing.T) {
 	forced, automatic := goclient.TransferStreamPolicy{Forced: 9}, goclient.TransferStreamPolicy{AutomaticMax: 6}
 	wt := wire.TransportWebTransport
 	for got, want := range map[string]string{
-		fmtAdded(-1200 * time.Microsecond):         "−1.2 ms",
-		fmtAdded(7800 * time.Microsecond):          "+7.8 ms",
 		fmtSetting(800 * time.Millisecond):         "800 ms",
 		fmtSetting(1500 * time.Millisecond):        "1.5 s",
 		fmtSetting(10 * time.Second):               "10 s",
@@ -176,7 +174,7 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 		BytesPerSec float64
 		Out         string
 	}
-	var vectors struct{ Ms, Speed, Rate, Bytes, Added []vector }
+	var vectors struct{ Ms, Latency, Speed, Rate, Bytes, Added []vector }
 	if err := json.Unmarshal(data, &vectors, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +184,10 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 		}
 	}
 	for _, v := range vectors.Ms {
-		check("ms", fmtMs(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
+		check("ms", fixedMs(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
+	}
+	for _, v := range vectors.Latency {
+		check("latency", fmtMs(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
 	}
 	for _, v := range vectors.Speed {
 		check("speed", fmtSpeed(v.In), v.Out)
@@ -215,7 +216,7 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 		{goclient.LatencyStats{}, nil, "— |  | — | — | — | 0 replies", nil},
 		{goclient.LatencyStats{Timeouts: 3}, nil, "— |  | — | — | 3/3 (100.0%) | 0 replies", nil},
 		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
-			&idle, "12.0 ms | +2.0 ms | 20.0 ms | 0.0 ms | 0/2 (0.0%) | 2 replies", nil},
+			&idle, "12.0 ms | +2.0 ms | 20.0 ms | < 0.1 ms | 0/2 (0.0%) | 2 replies", nil},
 		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", nil},
 		{goclient.LatencyStats{Count: 1, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "— |  | — |", lost},
 		{goclient.LatencyStats{Count: 2, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", lost},

@@ -60,7 +60,7 @@ func fmtBytes(n uint64) string {
 	return fmt.Sprintf("%.1f %s", value, units[tier])
 }
 
-func fmtMs(d time.Duration) string {
+func fixedMs(d time.Duration) string {
 	ms := float64(d) / float64(time.Millisecond)
 	if math.Abs(math.Round(ms*10)) < 1000 {
 		return fmt.Sprintf("%.1f ms", ms)
@@ -68,11 +68,18 @@ func fmtMs(d time.Duration) string {
 	return fmt.Sprintf("%.0f ms", ms)
 }
 
-func fmtAdded(d time.Duration) string {
-	if d < 0 {
-		return "−" + fmtMs(-d)
+func fmtMs(d time.Duration) string {
+	if d >= 0 && d < 100*time.Microsecond {
+		return "< 0.1 ms"
 	}
-	return "+" + fmtMs(d)
+	return fixedMs(d)
+}
+
+func fmtAdded(d time.Duration) string {
+	if math.Round(float64(d)/float64(time.Millisecond)*10) < 0 {
+		return "−" + fixedMs(-d)
+	}
+	return "+" + fixedMs(d.Abs())
 }
 
 func fmtSetting(d time.Duration) string {
