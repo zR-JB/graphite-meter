@@ -228,7 +228,7 @@ func runFastFailureCase(t *testing.T, c fastFailureCase) {
 	}
 }
 
-// Lane and session recovery use fake sessions, so their backoffs and windows run in virtual time.
+// Lane and session recovery run in virtual time.
 func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]func(*testing.T){
@@ -527,7 +527,7 @@ func runWTLaneRealProgressResetsFailureBounds(t *testing.T) {
 	}
 }
 
-// A refused WebTransport upgrade carries the same challenge as an HTTP refusal, so every redial path stops on it.
+// A refused WebTransport upgrade yields AuthRequiredError.
 func TestWebTransportDialClassifiesAuthenticationRequired(t *testing.T) {
 	t.Parallel()
 	certificates := httptest.NewTLSServer(http.NotFoundHandler())

@@ -58,7 +58,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 		if err != nil {
 			return err
 		}
-		// Each session replacement accepts a fresh progress stream; that is WebTransport's only feed recovery.
+		// Session re-establish is WebTransport's only feed recovery.
 		defer host.close()
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
@@ -505,10 +505,10 @@ func (p *uploadProgress) close() {
 	})
 }
 
-// teardownTimeout bounds releasing server state after a stage; the measured window is already closed.
+// teardownTimeout bounds releasing server state after a stage.
 const teardownTimeout = time.Second
 
-// bye releases the receiver within the run's teardown scope, which ends at once when the client closes.
+// bye releases the receiver within the run's teardown scope.
 func (p *uploadProgress) bye(teardown context.Context) {
 	ctx, cancel := context.WithTimeout(teardown, teardownTimeout)
 	defer cancel()

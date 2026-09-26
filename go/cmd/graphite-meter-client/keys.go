@@ -48,7 +48,7 @@ func reverse(msg tea.KeyMsg) bool {
 	return false
 }
 
-// ShortHelp is the footer for the screen on show: exactly the bindings its key router accepts.
+// ShortHelp lists exactly the bindings the current screen accepts.
 func (m model) ShortHelp() []key.Binding {
 	switch {
 	case m.detailsOpen:
@@ -69,7 +69,7 @@ func (m model) ShortHelp() []key.Binding {
 		}
 		return append(bindings, keys.help, keys.quit)
 	case m.auth != nil:
-		// Enter belongs to the sign-in page while approval is pending, so no row is offered for it.
+		// Enter opens the sign-in page, not a row.
 		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.sections, keys.rows, keys.help, keys.quit}
 	}
 	bindings := []key.Binding{keys.sections, keys.rows, keys.change, keys.start, keys.recheck}

@@ -145,7 +145,7 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", stats.ReflectorTiming)
 				}
 			} else {
-				// Every in-window reply carried a valid zero handling time, so every one pairs.
+				// Every reply carried a valid zero handling time.
 				paired := stats.Count
 				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired {
 					t.Fatalf("paired summary=%+v replies=%d", stats.ReflectorTiming, paired)

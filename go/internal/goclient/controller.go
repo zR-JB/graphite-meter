@@ -19,8 +19,7 @@ const (
 // AuthorizationTimeout bounds approval polling and its displayed countdown.
 const AuthorizationTimeout = 2 * time.Minute
 
-// Controller owns preparation, approval polling, grants, and measurement lifetimes for one client.
-// UI sequence guards still decide whether an already queued reply belongs to the current view.
+// Controller owns preparation, sign-in polling, grants, and run lifetimes.
 type Controller struct {
 	mu          sync.Mutex
 	catalog     *wire.ServerCatalog
@@ -85,7 +84,7 @@ func (p *Preparation) begin(timeout time.Duration) (context.Context, func(), err
 	}, nil
 }
 
-// PrepareRun loads the catalogue and checks every selected server's paths with the controller's grants.
+// PrepareRun checks the selection with the controller's grants.
 func (p *Preparation) PrepareRun() (*PreparedRun, error) {
 	ctx, done, err := p.begin(preparationTimeout)
 	if err != nil {
@@ -114,8 +113,7 @@ func (c *Controller) snapshot() ([]wire.ServerEntry, map[string]string) {
 	return slices.Clone(c.selection), maps.Clone(c.grants)
 }
 
-// BeginAuthorization starts approval with the server that issued the challenge: the catalogue origin
-// when serverID is empty, otherwise that catalogue entry.
+// BeginAuthorization signs in to serverID, or to the catalogue origin when it is empty.
 func (p *Preparation) BeginAuthorization(serverID, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
@@ -146,7 +144,7 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 	return pending.Poll(ctx)
 }
 
-// AcceptAuthorization keeps a native grant in memory, indexed by its exact issuer origin.
+// AcceptAuthorization keeps a grant in memory by its issuer origin.
 func (c *Controller) AcceptAuthorization(origin, token string) error {
 	canonical, err := wire.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
@@ -164,7 +162,7 @@ func (c *Controller) AcceptAuthorization(origin, token string) error {
 	return nil
 }
 
-// SelectServers acknowledges the identities displayed by the most recently loaded catalogue.
+// SelectServers acknowledges identities from the latest catalogue.
 func (c *Controller) SelectServers(ids []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -183,8 +181,8 @@ func (c *Controller) SelectServers(ids []string) error {
 	return nil
 }
 
-// Start abandons a replaced run's delivery, then runs the selection with one bounded event stream.
-// A stale preparation is repeated first; the stream always ends with one EventDone.
+// Start replaces any run and runs the selection, re-preparing a stale one.
+// The stream ends with one EventDone.
 func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 	previous, grants := c.snapshot()
 	c.mu.Lock()
@@ -198,7 +196,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 		close(events)
 		return events
 	}
-	// Delivery outlives measurement, so a cancelled run still reports its results and teardown still ends on Close.
+	// Delivery outlives measurement: a stopped run still reports its results.
 	delivery, abandon := context.WithCancel(c.ctx)
 	measurement, cancel := context.WithCancel(delivery)
 	c.run = &activeRun{cancel: cancel, abandon: abandon}
@@ -222,8 +220,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 	return events
 }
 
-// Run is Start for callers without a view: it prepares the selection, measures it to completion, and
-// delivers every event to emit on the calling goroutine. It returns the terminal event's error.
+// Run is Start for callers without a view; emit runs on the calling goroutine.
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	controller := NewController(ctx)
 	defer controller.Close()
@@ -257,14 +254,14 @@ func (c *Controller) Close() {
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
 	switch event.Kind {
 	case EventThroughput, EventLatency:
-		// A live sample never delays the reader or timer that produced it; a slow view drops it.
+		// Live samples never block their producer; a slow view drops them.
 		select {
 		case events <- event:
 		default:
 		}
 		return
 	case EventResult, EventDone:
-		// Outcomes survive cancelled measurement and wait until delivery is abandoned.
+		// Outcomes wait for delivery even after measurement stops.
 		measurement = delivery
 	}
 	select {

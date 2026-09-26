@@ -40,7 +40,7 @@ func TestTransferStreamPolicy(t *testing.T) {
 	}
 }
 
-// Normalization fills only what is unset or out of range; configured values pass through.
+// Normalization fills only unset or out-of-range values.
 func TestConfigNormalizedInvariants(t *testing.T) {
 	t.Parallel()
 	d := DefaultConfig()
@@ -104,7 +104,7 @@ func newWTLatencyServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// The WebTransport idle bound applies only to the datagram bus a preparation actually selects.
+// The WebTransport idle bound applies only when that bus is selected.
 func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()

@@ -45,7 +45,7 @@ func preparationKey(cfg Config) string {
 	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.ThroughputTransport, cfg.LatencyTarget, cfg.LatencyTransport, cfg.PingInterval, cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.grant != "")
 }
 
-// authTransport sends a grant only to its issuer's HTTPS hostname, on any port that hostname serves.
+// authTransport sends a grant only to its issuer's HTTPS hostname.
 type authTransport struct {
 	token, hostname string
 	base            http.RoundTripper
@@ -55,7 +55,7 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if t.token == "" {
 		return t.base.RoundTrip(r)
 	}
-	// Additional catalogue origins constrain discovery only; a grant stays on its issuer's HTTPS hostname.
+	// Additional catalogue origins never receive the grant.
 	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
 		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 	}
@@ -146,10 +146,9 @@ func baseTransport(cfg Config) *http.Transport {
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		WriteBufferSize:       256 * 1024,
 		ReadBufferSize:        256 * 1024,
-		// Measured bytes are wire payload; transparent decompression would change what a download counts.
+		// Measured bytes are wire payload.
 		DisableCompression: true,
-		// The 4 MiB default stream window caps an HTTP/2 download at one window per round trip; the
-		// connection bound replaces the 1 GiB default so buffered unread data stays bounded.
+		// The 4 MiB default stream window caps H2 downloads per RTT; 64 MiB bounds unread data.
 		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 32 << 20, MaxReceiveBufferPerConnection: 64 << 20},
 	}
 }
@@ -195,7 +194,7 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 			return nil, &PreparationError{Preflight: pf, Err: err}
 		}
 	}
-	// The throughput and latency paths are independent, so a blocked UDP path delays readiness once, not twice.
+	// Both paths are checked concurrently, so a blocked UDP path costs one timeout.
 	branches, cancel := context.WithCancel(ctx)
 	defer cancel()
 	prepared := &PreparedConnection{Preflight: pf, configKey: preparationKey(cfg)}
@@ -214,7 +213,7 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		})
 	}
 	work.Wait()
-	// A branch stopped by its sibling's failure reports that failure instead.
+	// Report the failure, not the sibling it cancelled.
 	if err := throughputErr; err != nil || latencyErr != nil {
 		if err == nil || errors.Is(err, context.Canceled) && latencyErr != nil && ctx.Err() == nil {
 			err = latencyErr
@@ -306,7 +305,7 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 	return nil
 }
 
-// runner owns one server's connections within a run; the coordinator owns its stage schedule and windows.
+// runner owns one server's connections within a run.
 type runner struct {
 	coordinated   *participantCounters
 	cfg           Config

@@ -9,8 +9,7 @@ import (
 const minimumSurvivorEvidence = 800 * time.Millisecond
 const maximumIntervals = 128
 
-// ReceiverSnapshot is one upload receiver's counter on its own clock. Only snapshots of the same
-// upload ID share a clock domain.
+// ReceiverSnapshot is a receiver counter on that upload's clock.
 type ReceiverSnapshot struct {
 	ID           string
 	Bytes, Nanos uint64
@@ -32,7 +31,7 @@ type AggregateWindow struct {
 	DownBytesPerSec, UpBytesPerSec *float64
 }
 
-// AggregationInterval is a span with constant membership. A rate spans only one interval.
+// AggregationInterval is a span with constant membership.
 type AggregationInterval struct {
 	ID           int
 	Stage        Stage
@@ -43,7 +42,7 @@ type AggregationInterval struct {
 	Window       *AggregateWindow
 }
 
-// ServerFailure records a server, or only its latency population (Scope "latency"), leaving the run.
+// ServerFailure records a server, or only its latency population, leaving the run.
 type ServerFailure struct {
 	ServerID               string
 	Stage                  Stage

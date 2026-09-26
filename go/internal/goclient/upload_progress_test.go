@@ -29,8 +29,7 @@ func newWaitNextProgress(t *testing.T) (*uploadProgress, context.CancelFunc) {
 	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1), errs: make(chan error, 1)}, cancel
 }
 
-// The receiver's (bytes, nanos) pair only moves forward: regressions, malformed records, superseded feeds,
-// and racing feeds can never walk it back or tear it.
+// The receiver pair only moves forward.
 func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 	t.Parallel()
 	t.Run("records", func(t *testing.T) {
@@ -178,7 +177,7 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		}
 		cancel()
 	}
-	// A waiter wakes on a progress edge and survives one feed replacing another; a final update beats the feed's end.
+	// Progress wakes a waiter across a feed replacement and at the feed's end.
 	synctest.Test(t, func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
@@ -211,7 +210,7 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 }
 
-// One progress response is bounded by its request; the reattach resumes the same aggregate at a paced rate.
+// A paced reattach resumes the same aggregate.
 func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	t.Parallel()
 	const recordsPerFeed = 3
@@ -307,7 +306,7 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-// Closing progress joins every reader it ever adopted and any recovery in flight, and adopts nothing afterwards.
+// Close joins every reader and recovery, and adopts nothing afterwards.
 func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 	t.Parallel()
 	t.Run("reader owns its body", func(t *testing.T) {

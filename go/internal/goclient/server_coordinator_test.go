@@ -320,7 +320,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 	}
 }
 
-// A refused checkpoint at either stage boundary is retried within the capture deadline rather than voiding the stage.
+// A refused checkpoint at a stage boundary is retried, not fatal.
 func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	t.Parallel()
 	a := coordinatedFixture(t, "a")

@@ -13,7 +13,7 @@ import (
 const (
 	// shellMargin is shellStyle's horizontal margin.
 	shellMargin = 2
-	// panelBorderWidth is the column pair a panel's rounded border draws outside its lipgloss width.
+	// panelBorderWidth is the border's two columns.
 	panelBorderWidth = 2
 	// gutterWidth separates two side-by-side panels.
 	gutterWidth  = 2
@@ -87,7 +87,7 @@ func (m model) setupView(w int) string {
 	var b strings.Builder
 	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
-	// A pending approval is what the screen waits on, so it goes above the settings it blocks.
+	// A pending sign-in goes above the settings it blocks.
 	if auth := m.signInView(); auth != "" {
 		b.WriteString(panelStyle.Width(w - panelBorderWidth).Render(fitBlock(auth, w-6)))
 		b.WriteString("\n\n")
@@ -112,7 +112,7 @@ func (m model) tabBar(w int) string {
 	if lipgloss.Width(line) < w {
 		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
 	}
-	// Clipping the trailing tabs holds the block at w; a longer line pads every other line past the terminal.
+	// Clip so the block never exceeds w.
 	return fitLine(line, w)
 }
 
@@ -146,7 +146,7 @@ func (m model) sectionView(w int) string {
 	return strings.Join(lines, "\n")
 }
 
-// planView is the setup's readiness: one row per selected server, the resolved paths, and the stage order.
+// planView lists server readiness, resolved paths, and stages.
 func (m model) planView(w int) string {
 	lines := []string{accentStyle.Render("Test plan")}
 	if m.prepare == prepareChecking && m.preparedRun == nil {
@@ -196,7 +196,7 @@ func serverLabel(name, location string) string {
 	return name + " · " + location
 }
 
-// pathSummaries names the checked paths; servers that resolved differently are listed together.
+// pathSummaries names the checked paths.
 func (m model) pathSummaries() (throughput, latency string) {
 	var throughputs, latencies []string
 	if m.preparedRun != nil {
@@ -271,7 +271,7 @@ func (m model) runView(w int) string {
 	return b.String()
 }
 
-// testView names what is being measured over which paths, then the stage track.
+// testView names the servers and paths, then the stage track.
 func (m model) testView(w int) string {
 	r := m.run
 	lines := []string{accentStyle.Render("Test")}
@@ -332,7 +332,7 @@ func (m model) stageTrack(w int) []string {
 	return lines
 }
 
-// liveView draws only what the current stage measures: its directions' rates and its latency population.
+// liveView draws only what the current stage measures.
 func (m model) liveView(w int) string {
 	r := m.run
 	lines := []string{accentStyle.Render("Live")}
@@ -374,8 +374,7 @@ func (m model) liveView(w int) string {
 	return strings.Join(lines, "\n")
 }
 
-// resultLines lists each stage's populations in run order. Throughput is Combined across servers;
-// latency belongs to the focused server, with added latency measured against its own idle median.
+// resultLines lists populations in run order: combined throughput, focused-server latency.
 func (m model) resultLines(w int) []string {
 	r := m.run
 	latency := r.latencyPopulations()
@@ -463,7 +462,7 @@ func latencyLines(result goclient.Result, idle *goclient.LatencyStats, w int) []
 	return lines
 }
 
-// finalReport is the plain-text record printed after the program leaves the alternate screen.
+// finalReport is the plain-text report printed on exit.
 func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
@@ -480,7 +479,7 @@ func (m model) finalReport() string {
 	return ansi.Strip(strings.Join(lines, "\n"))
 }
 
-// helpView is the footer. The model is the key map it renders, so the listing follows the screen on show.
+// helpView renders the footer for the current screen.
 func (m model) helpView() string {
 	m.help.Width = m.innerWidth()
 	return fitBlock(m.help.View(m), m.innerWidth())

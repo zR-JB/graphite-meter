@@ -45,7 +45,7 @@ const (
 	rowReset
 )
 
-// The setup mirrors the browser's panels: connection paths, duration and stages, then advanced settings.
+// Setup panels, as in the browser.
 var sections = []struct {
 	label string
 	rows  []rowID
@@ -95,7 +95,7 @@ type cadence struct {
 	interval time.Duration
 }
 
-// Ping cadences share the browser's names; a fixed interval from the command line shows as Custom.
+// Browser cadence names; other intervals show as Custom.
 var cadences = []cadence{
 	{"Fast (80 ms)", 80 * time.Millisecond},
 	{"Medium (250 ms)", 250 * time.Millisecond},
@@ -119,7 +119,7 @@ var mechanisms = map[string]string{
 	wire.TransportWebTransport: "WebTransport",
 }
 
-// shortOrigin names a path's origin by port alone when it shares the catalogue's host.
+// shortOrigin names an origin by port when it shares the catalogue host.
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
@@ -184,7 +184,7 @@ func (m model) setupRow(id rowID) setupRow {
 	return setupRow{}
 }
 
-// activate changes one row. A change to what preparation checked starts a fresh check.
+// activate changes one row, rechecking paths when needed.
 func (m model) activate(id rowID) (tea.Model, tea.Cmd) {
 	before := m.cfg
 	if toggle, label, _ := stageToggle(&m.cfg, id); toggle != nil {
@@ -251,13 +251,13 @@ func (m model) activate(id rowID) (tea.Model, tea.Cmd) {
 	return m.recheckIfPathsChanged(before)
 }
 
-// preparationInputs is everything a path check depends on; durations and warmup are not.
+// preparationInputs is what a path check depends on.
 func preparationInputs(c goclient.Config) string {
 	return fmt.Sprint(c.BaseURL, c.ServerIDs, c.ThroughputTarget, c.ThroughputProtocol, c.ThroughputTransport, c.LatencyTarget, c.LatencyTransport,
 		c.Stages, c.LoadedLatency, c.PingInterval, c.TransferStreams, c.InsecureSkipTLSVerify)
 }
 
-// recheckIfPathsChanged repeats preparation only when the change could alter a prepared path or its credentials.
+// recheckIfPathsChanged rechecks only when a path input changed.
 func (m model) recheckIfPathsChanged(before goclient.Config) (tea.Model, tea.Cmd) {
 	if preparationInputs(before) == preparationInputs(m.cfg) {
 		return m, nil
@@ -294,7 +294,7 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.apply):
 		before := m.cfg
 		if err := m.commitEdit(); err != nil {
-			// The field stays open so the offending text stays editable.
+			// Keep the field open for correction.
 			m.edit.err, m.notice = err.Error(), err.Error()
 			return m, nil
 		}
@@ -336,7 +336,7 @@ func (m *model) commitEdit() error {
 			return errors.New("use an http:// or https:// origin, for example https://meter.example")
 		}
 		if canonical != m.cfg.BaseURL {
-			// Catalogue IDs belong to the catalogue that published them.
+			// Catalogue IDs belong to their catalogue.
 			m.cfg.ServerIDs, m.latencyChoice = nil, ""
 		}
 		m.cfg.BaseURL = canonical
@@ -374,7 +374,7 @@ func (m model) pathRow(label, target, transport string, choices []pathChoice) se
 			return setupRow{label: label, value: choice.label, note: strings.TrimSpace(fmt.Sprintf("%d/%d  %s", i+1, len(choices), choice.note))}
 		}
 	}
-	// A path from the command line the server does not offer stays visible as asked for.
+	// Show an unoffered path as requested.
 	mechanism := cmp.Or(mechanisms[transport], transport)
 	value := mechanism + " · " + target
 	if target == "auto" {
@@ -396,7 +396,7 @@ func nextChoice(current string, choices []string) string {
 	return choices[(slices.Index(choices, current)+1)%len(choices)]
 }
 
-// singleDiscovery is the one checked server's discovery, including one whose paths then failed.
+// singleDiscovery is the checked server's discovery, even when its paths failed.
 func (m model) singleDiscovery() *wire.Preflight {
 	if m.preparedRun == nil || len(m.preparedRun.Servers) != 1 {
 		return nil
@@ -449,7 +449,7 @@ func (m model) latencyPaths() []pathChoice {
 	return choices
 }
 
-// sharedPaths offers mechanisms rather than origins: each selected server resolves its own origin.
+// sharedPaths offers mechanisms; each server resolves its own origin.
 func (m model) sharedPaths(latency bool) []pathChoice {
 	kinds := []string{wire.TransportFetchStream, wire.TransportWebTransport}
 	if latency {

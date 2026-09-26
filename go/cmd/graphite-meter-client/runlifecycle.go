@@ -27,7 +27,7 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg { return prepareDueMsg{seq: seq} })
 }
 
-// invalidatePreparation cancels the check and approval in flight; their replies no longer match.
+// invalidatePreparation cancels the check and sign-in in flight.
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil
@@ -50,7 +50,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		m.cfg.ServerIDs = msg.run.SelectedIDs()
 	}
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
-		// A catalogue challenge has no server entry; a server's challenge names its own issuer.
+		// A catalogue challenge has no server entry.
 		m.authServerID = ""
 		if msg.run != nil {
 			if i := slices.IndexFunc(msg.run.Servers, func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) }); i >= 0 {
@@ -67,7 +67,7 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case msg.err != nil && (msg.run == nil || len(msg.run.Servers) == 0):
-		// No per-server row can carry a catalogue failure, so it becomes the setup's error.
+		// A catalogue failure has no server row to carry it.
 		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
 	case msg.err != nil:
 		m.prepare, m.prepareErr = prepareFailed, ""
@@ -116,7 +116,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
 		return m, nil
 	}
-	// The grant must come from the issuer that challenged the current selection.
+	// The grant must come from the challenging issuer.
 	expected := m.cfg.BaseURL
 	if server, ok := m.catalogServer(m.authServerID); ok {
 		expected = server.URL
@@ -133,8 +133,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	return m.reprepare()
 }
 
-// runState is one run's view. Combined transfer results come from EventResult; everything per server comes
-// from the run's details.
+// runState is one run's view: combined results from EventResult, per-server data from RunDetails.
 type runState struct {
 	plan          []goclient.StagePlan
 	stages        []stageProgress
@@ -258,7 +257,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	}
 	m.notice = ""
 	if isAuthRequired(done.Err) {
-		// Check the selection again to recover the challenging server's identity before sign-in.
+		// Recheck the selection to find the challenging server.
 		m.run = nil
 		m.notice = "Sign-in expired. Checking the selected servers…"
 		return m.reprepare()
@@ -302,7 +301,7 @@ func (r *runState) adopt(details *goclient.RunDetails) {
 		return
 	}
 	r.details = details
-	// The run's own preparation chooses the default latency server, even when it replaced a stale one.
+	// Default to the run's own latency focus.
 	if !slices.ContainsFunc(details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus }) {
 		r.focus = details.LatencyFocus
 	}
@@ -344,7 +343,7 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 	return out
 }
 
-// statusLabel is the header's lifecycle word, in the browser's vocabulary.
+// statusLabel is the header's lifecycle word.
 func (m model) statusLabel() string {
 	if r := m.run; r != nil {
 		switch {

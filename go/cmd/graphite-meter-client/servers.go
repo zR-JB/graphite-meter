@@ -78,7 +78,7 @@ func (m model) readyServers() []string {
 	return ids
 }
 
-// canUseAvailable offers the browser's "Use available servers" once a check left some servers behind.
+// canUseAvailable reports whether some, not all, selected servers are ready.
 func (m model) canUseAvailable() bool {
 	ready := len(m.readyServers())
 	return m.prepare != prepareChecking && ready > 0 && ready < len(m.readiness())
@@ -237,7 +237,7 @@ func (m model) detailsOverlay(w int) string {
 	return strings.Join(lines[start:min(len(lines), start+m.detailsCapacity())], "\n") + "\n\n" + mutedStyle.Render("↑/↓ scroll · esc closes details")
 }
 
-// detailsView leads with the Combined and per-server result table; raw aggregation intervals follow as debug detail.
+// detailsView leads with the result table; aggregation intervals follow as debug detail.
 func (m model) detailsView(w int) string {
 	r := m.run
 	if r == nil || r.details == nil {
@@ -311,7 +311,7 @@ func (m model) detailsView(w int) string {
 	return fitBlock(strings.Join(lines, "\n"), w)
 }
 
-// outcomeNotice summarizes membership in the words of the browser's result context.
+// outcomeNotice summarizes run membership.
 func (m model) outcomeNotice() string {
 	details := m.run.details
 	if details == nil {

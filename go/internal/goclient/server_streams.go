@@ -2,8 +2,8 @@ package goclient
 
 import "fmt"
 
-// planRunStreams gives each server its policy's lanes; the run owns only the shared per-direction ceiling.
-// Native transports have no browser-style six-connection origin limit, so HTTP/1 lanes are not rationed.
+// planRunStreams gives each server its policy's lanes under one per-direction ceiling.
+// Native transports have no six-connection origin limit to ration.
 func planRunStreams(cfg Config, servers []PreparedServer) (map[string]streamCounts, error) {
 	plan := map[string]streamCounts{}
 	var total streamCounts

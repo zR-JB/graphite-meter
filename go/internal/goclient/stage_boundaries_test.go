@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-// receiveUpload counts a body as it arrives. Once interrupt reports true it drops the connection, then refuses new lanes.
+// receiveUpload counts a body as it arrives; interrupt drops the connection and refuses new lanes.
 func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if interrupt() {

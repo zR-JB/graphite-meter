@@ -10,13 +10,12 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-// Units and precision follow the browser's format.ts: decimal prefixes, speed precision by magnitude,
-// milliseconds with one decimal below 100, and "—" wherever a value is missing.
+// Units and precision follow the browser's format.ts; "—" marks missing data.
 const missing = "—"
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
 
-// fmtRate promotes the unit only past 1.2 of the next tier, so a rate near a boundary keeps a stable unit.
+// fmtRate promotes the unit only past 1.2× the next tier.
 func fmtRate(bytesPerSec float64) string {
 	bits := bytesPerSec * 8
 	tier := 0
@@ -57,7 +56,7 @@ func fmtMs(d time.Duration) string {
 	return fmt.Sprintf("%.0f ms", ms)
 }
 
-// fmtAdded keeps the sign: loaded latency below the idle median is a finding, not an error.
+// fmtAdded keeps the sign.
 func fmtAdded(d time.Duration) string {
 	if d < 0 {
 		return "−" + fmtMs(-d)
@@ -65,7 +64,7 @@ func fmtAdded(d time.Duration) string {
 	return "+" + fmtMs(d)
 }
 
-// fmtSetting renders a configured duration the way it was chosen: 800 ms, 4 s, 1.5 s.
+// fmtSetting renders a configured duration: 800 ms, 4 s, 1.5 s.
 func fmtSetting(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%d ms", d.Milliseconds())
@@ -111,7 +110,7 @@ func directionLabel(r goclient.Result) string {
 	return "Bi-dir ↓"
 }
 
-// latencyParts reports a population with its median as the headline and never calls a probe timeout loss.
+// latencyParts reports a population, median first.
 func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
 	median := missing
 	if s.Count > 0 {
@@ -145,7 +144,7 @@ func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string
 	return parts
 }
 
-// wrapParts joins facts with " · " and breaks lines only between facts, never inside one.
+// wrapParts joins facts with " · ", breaking only between facts.
 func wrapParts(parts []string, w int) []string {
 	var lines []string
 	line := ""
@@ -178,7 +177,7 @@ func protocolChoiceLabel(protocol string) string {
 	return goclient.ProtocolLabel(protocol)
 }
 
-// eighths are the partial-cell fills between an empty and a full block, so a bar's tip moves in sub-cell steps.
+// eighths are partial-cell fills, so a bar grows in sub-cell steps.
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
 func renderBar(value, scale float64, width int) string {

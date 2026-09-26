@@ -62,7 +62,7 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
-	// A refused upgrade still returns its response, which carries the authentication challenge.
+	// A refused upgrade returns its response, which carries any auth challenge.
 	response, sess, err := wtTransport.Dial(ctx, u, hdr)
 	if err != nil {
 		_ = wtTransport.Close()

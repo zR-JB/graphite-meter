@@ -58,11 +58,10 @@ func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan er
 	}
 }
 
-// checkpointRetry paces repeated checkpoint requests within one capture deadline.
+// checkpointRetry paces retries within one capture deadline.
 const checkpointRetry = 100 * time.Millisecond
 
-// receiverCheckpoint retries transient failures until ctx ends. Each snapshot is the reply to its own request,
-// so a late success never stands in for an earlier boundary.
+// receiverCheckpoint retries transient failures until ctx ends.
 func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {
 	for {
 		snapshot, err := r.receiverCheckpointOnce(ctx)

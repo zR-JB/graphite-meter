@@ -203,7 +203,7 @@ func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
 	}
 }
 
-// A full view drops live samples instead of delaying the reader that timed them; outcomes still wait for delivery.
+// A full view drops live samples; outcomes still wait for delivery.
 func TestLiveSamplesNeverBlockOnAFullView(t *testing.T) {
 	t.Parallel()
 	events := make(chan Event, 1)

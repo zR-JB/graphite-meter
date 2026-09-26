@@ -36,8 +36,7 @@ func timeoutRatio(t *testing.T, s LatencyStats) float64 {
 	return ratio
 }
 
-// Definition fixtures: receive-order jitter, sorted quantiles, timeouts outside the RTT population,
-// continuity breaks, and populations too small to define a value.
+// Jitter, quantiles, timeouts, continuity, and undefined populations.
 func TestLatencyDefinitionFixtures(t *testing.T) {
 	t.Parallel()
 	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }

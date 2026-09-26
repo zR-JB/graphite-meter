@@ -23,7 +23,7 @@ const (
 	StageBidirectional Stage = "bidirectional"
 )
 
-// Phase is a stage's position in its schedule: transports connect, warm up, then one measured window runs.
+// Phase is a stage's position: connect, warm up, measure.
 type Phase int
 
 const (
@@ -33,7 +33,7 @@ const (
 	PhaseFinished
 )
 
-// Outcome classifies a run. Every terminal value is final; only OutcomeRunning changes.
+// Outcome classifies a run; every value but OutcomeRunning is final.
 type Outcome string
 
 const (
@@ -57,7 +57,7 @@ const (
 	EventDone
 )
 
-// Event is one message from a run. A slow reader may miss live samples; every other kind is delivered.
+// Event is one run message. Live samples may be dropped; other kinds are delivered.
 type Event struct {
 	Kind       EventKind
 	At         time.Time
@@ -73,7 +73,7 @@ type Event struct {
 	Err        error          // EventDone: why the run did not complete.
 }
 
-// Outcome classifies a terminal event, including runs that failed before any server detail existed.
+// Outcome classifies a terminal event, including one without server details.
 func (e Event) Outcome() Outcome {
 	switch {
 	case e.Servers != nil:
@@ -86,7 +86,7 @@ func (e Event) Outcome() Outcome {
 	return OutcomeComplete
 }
 
-// ThroughputSample is the combined rate of the latest window across the current participants.
+// ThroughputSample is the latest combined window rate.
 type ThroughputSample struct {
 	Unavailable bool // No window covers every participant, for example right after a dropout.
 	BytesPerSec float64
@@ -100,7 +100,7 @@ type LatencySample struct {
 	TimedOut  bool
 }
 
-// Result is one stage population. Transfer results have a direction; latency populations have none.
+// Result is one stage population; latency populations have no direction.
 type Result struct {
 	Stage       Stage
 	Direction   Direction
@@ -114,7 +114,7 @@ type Result struct {
 	Err         error         // Non-nil marks an incomplete stage summary and preserves its failure.
 }
 
-// ReceiverTimed reports whether the rate comes from the receiving server's clock.
+// ReceiverTimed reports whether the rate uses the receiver's clock.
 func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.

@@ -19,7 +19,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A request body cycles one random block: exactly its limit, then EOF; a cancelled request stops reading.
+// A request body cycles its block up to its limit and stops on cancellation.
 func TestCyclingBody(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

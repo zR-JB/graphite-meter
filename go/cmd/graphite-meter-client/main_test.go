@@ -151,7 +151,7 @@ func TestFormatting(t *testing.T) {
 	}
 }
 
-// Latency summaries lead with the median, keep missing values visible, and never call a timeout loss.
+// Latency summaries lead with the median and never say loss.
 func TestLatencySummaryVocabulary(t *testing.T) {
 	t.Parallel()
 	idle := goclient.LatencyStats{Count: 4, P50: 10 * time.Millisecond}
@@ -193,7 +193,7 @@ func TestNavigationWrapsSectionsAndClampsRows(t *testing.T) {
 	}
 }
 
-// Enter changes the row under the cursor; only a change a path check depends on starts one.
+// Enter changes the row; only path inputs trigger a recheck.
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -284,7 +284,7 @@ func TestEditKeysDiscardAndQuit(t *testing.T) {
 	}
 }
 
-// While sign-in is pending, enter only opens the approval page; it never activates the row beneath.
+// While sign-in is pending, enter only opens the sign-in page.
 func TestSignInKeysOwnEnter(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)

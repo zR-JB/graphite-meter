@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	// Neither informational flag touches the terminal: they print and exit before any rendering.
+	// Informational flags exit before any rendering.
 	if slices.Contains(os.Args[1:], "--legal") {
 		fmt.Print(string(legal.TUIReport()))
 		return
@@ -108,7 +108,7 @@ func transportFlags(throughput, latency string) error {
 	return nil
 }
 
-// parsePing accepts the browser's cadence names or a positive duration; anything else is an error, not a default.
+// parsePing accepts cadence names or a positive duration.
 func parsePing(raw, latencyTransport string) (time.Duration, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
 	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }); i >= 0 && name != "" {

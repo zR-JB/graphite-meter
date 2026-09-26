@@ -61,7 +61,7 @@ func TestReprepareCancelsActiveRequestAndDiscardsItsReply(t *testing.T) {
 	}
 }
 
-// Every way of leaving cancels the controller's work, including work created by a later model copy.
+// Leaving cancels owned work, including work from later model copies.
 func TestQuitAndShutdownCancelOwnedWork(t *testing.T) {
 	t.Parallel()
 	for _, editing := range []bool{false, true} {
@@ -220,7 +220,7 @@ func withPopulation(details *goclient.RunDetails, id string, results ...goclient
 	}
 }
 
-// The header speaks the browser's lifecycle words, never the engine's phase names.
+// The header uses lifecycle words, never engine phases.
 func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -261,7 +261,7 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	}
 }
 
-// Results buffered before the terminal event survive it; stages that were running stop.
+// Buffered results survive the terminal event; running stages stop.
 func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -284,7 +284,7 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	}
 }
 
-// Results name each population in the browser's words: idle and loaded latency, added latency, receiver timing.
+// Results use the shared vocabulary.
 func TestResultsNameEveryPopulation(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -366,7 +366,7 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	}
 }
 
-// Multi-server runs name servers, switch the latency population as a whole, and lead details with the result table.
+// Multi-server runs name servers, switch latency focus, and lead details with the table.
 func TestMultiServerRunViews(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a", "b")
@@ -396,7 +396,7 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 }
 
-// One readiness row per selected server; a failed peer stays listed and can be dropped like in the browser.
+// One readiness row per selected server; failed peers stay listed.
 func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
@@ -411,14 +411,14 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	if !m.canUseAvailable() || !strings.Contains(m.setupRow(rowServers).note, "1 of 3 ready") {
 		t.Fatalf("available servers not offered: %q", m.setupRow(rowServers).note)
 	}
-	// The controller refuses a selection from a catalogue it has not loaded, so the fallback keeps the old one.
+	// Without a loaded catalogue the selection is refused.
 	m, _ = modelAndCmd(m.Update(press("u")))
 	if m.notice == "" {
 		t.Fatal("use available servers gave no feedback")
 	}
 }
 
-// s during a check says when the chooser will open instead of silently deferring it.
+// s during a check says when the chooser opens.
 func TestServerChooserFlow(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)

@@ -34,7 +34,7 @@ func okResponse(r *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
 }
 
-// A grant reaches its issuer's HTTPS hostname on any port and nowhere else, including approved additional origins.
+// A grant reaches only its issuer's HTTPS hostname, never additional origins.
 func TestAuthenticatedClientAddsBearerOnlyOnTheIssuerHTTPSHostname(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
@@ -102,7 +102,7 @@ func TestPollNamesWhyApprovalEnded(t *testing.T) {
 		transport roundTripFunc
 		want      string
 	}{
-		// A deadline names the last transport error rather than a bare "context deadline exceeded".
+		// A deadline names the last transport error.
 		{refused, "connection refused"},
 		{pending, "browser approval timed out"},
 	} {

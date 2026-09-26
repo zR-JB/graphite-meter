@@ -100,7 +100,7 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	}
 }
 
-// Cancelling a download stage stops it well inside its window and reports the cancellation, not a result.
+// A cancelled download stage stops promptly and reports the cancellation.
 func TestDownloadStageCancellation(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {

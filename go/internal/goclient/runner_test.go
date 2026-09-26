@@ -106,7 +106,7 @@ func countUpload(received *atomic.Uint64) http.HandlerFunc {
 	}
 }
 
-// newTransferServer serves discovery, a catalogue, downloads, uploads with receiver progress, and latency replies.
+// newTransferServer serves every route a run uses.
 func newTransferServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var uploaded atomic.Uint64
@@ -132,7 +132,7 @@ func newLatencyOnlyServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// Each stage publishes exactly its populations, then one terminal event that carries the final details.
+// Each stage publishes its populations; one terminal event carries the details.
 func TestRunStagesEndToEnd(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -419,7 +419,7 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	}
 }
 
-// A silent latency bus still reports its loaded population: timeouts once the deadline passes, unresolved before.
+// A silent latency bus still reports timeouts and unfinished probes.
 func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 	t.Parallel()
 	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {

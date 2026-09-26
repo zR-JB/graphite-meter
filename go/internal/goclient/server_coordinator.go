@@ -21,7 +21,7 @@ type ServerRunSummary struct {
 	TotalDownload, TotalUpload uint64
 }
 
-// RunDetails is the run's membership and per-server evidence, in selection order.
+// RunDetails is the run's membership and per-server evidence.
 type RunDetails struct {
 	Servers          []ServerRunSummary
 	Participants     []string // Servers still measuring throughput.
@@ -32,7 +32,7 @@ type RunDetails struct {
 	Outcome          Outcome
 }
 
-// Stage resources: one per active transfer direction, plus the latency population.
+// Stage resources: each active direction plus latency.
 const roleLatency = "latency"
 
 type participant struct {
@@ -76,8 +76,7 @@ type coordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-// runSelection has one stage schedule. Its participants own connections and credentials, never independent
-// runs. Server state is released within teardown, which the controller ends when delivery is abandoned.
+// runSelection runs one stage schedule over every prepared server.
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
 	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
 	defer func() {
@@ -131,7 +130,7 @@ func (c *coordinator) details(outcome Outcome) *RunDetails {
 	return details
 }
 
-// publish shares membership and per-server results; it runs on membership changes and stage ends, not per sample.
+// publish shares membership and per-server results on membership changes and stage ends.
 func (c *coordinator) publish() {
 	c.emit(Event{Kind: EventServers, At: time.Now(), Servers: c.details(OutcomeRunning)})
 }
@@ -162,7 +161,7 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 	return OutcomeFailed
 }
 
-// failure removes a server from the run, or only its latency population when that alone failed.
+// failure removes a server, or only its latency population.
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
 	scope := "throughput"
 	if role == roleLatency {
@@ -189,7 +188,7 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 	c.publish()
 }
 
-// retainLatency keeps one final population per server and stage, even when cleanup follows a failure.
+// retainLatency keeps one final population per server and stage.
 func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 	if outcome.role != roleLatency {
 		return
@@ -230,9 +229,8 @@ const (
 	phaseMeasure
 )
 
-// stage runs one schedule over an expected-resource set: every resource prepares within stageReadyTimeout,
-// the run warms up, then one measured window starts for every population at once. A server that fails after
-// the first measured window leaves the run; before it, the run cannot start.
+// stage prepares every resource, warms up, then opens one measured window for all populations.
+// A failure before the first window fails the run; after it, the server leaves.
 func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	transfer := len(stage.Directions) > 0
@@ -243,7 +241,7 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	if !transfer || c.cfg.LoadedLatency {
 		roles = append(roles, roleLatency)
 	}
-	// Every resource reports readiness and its outcome at most once, so neither send can block.
+	// Each resource sends readiness and its outcome once, so neither send blocks.
 	ready := make(chan readyResource, len(c.active())*len(roles))
 	outcomes := make(chan resourceOutcome, cap(ready))
 	start := make(chan struct{})
@@ -397,8 +395,7 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	}
 }
 
-// openWindow captures the baseline for every population, then starts the measured window. Receiver
-// checkpoints finish preparation; the client populations begin only once they reply.
+// openWindow takes the baselines, then opens the measured window.
 func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers []*stageServer, outcomes <-chan resourceOutcome, handle func(resourceOutcome) error) (time.Time, measurementBoundary, error) {
 	initial := c.capture(ctx, stage, c.active())
 	if stage.Name == StageUpload || stage.Name == StageBidirectional {
@@ -415,7 +412,7 @@ func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers [
 			return time.Time{}, initial, errNoSurvivors
 		}
 	}
-	// A failure reported while the baselines were taken belongs before the window.
+	// Failures reported during the baseline belong before the window.
 	for drained := false; !drained; {
 		select {
 		case outcome := <-outcomes:
@@ -438,8 +435,7 @@ func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers [
 	return started, initial, nil
 }
 
-// sampler owns a transfer stage's periodic boundaries. One capture is in flight at a time; a membership
-// change starts a new epoch, so a boundary taken across it is discarded and retaken.
+// sampler takes one boundary at a time; a membership change discards the one in flight.
 type sampler struct {
 	c            *coordinator
 	stage        StagePlan
@@ -480,7 +476,7 @@ func (s *sampler) capture(final bool) {
 	})
 }
 
-// reset follows a membership change: the survivors start a new interval and their rate is unknown until it has two boundaries.
+// reset starts a new interval for the survivors after a membership change.
 func (s *sampler) reset() {
 	s.epoch++
 	if s.cancel != nil {
@@ -498,8 +494,7 @@ func (s *sampler) stop() {
 	s.work.Wait()
 }
 
-// observe folds one boundary into the aggregate and applies the fetch-stream liveness rule.
-// It reports done when the stage ends, with the error that ends it.
+// observe folds a boundary into the aggregate; done ends the stage.
 func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool, error) {
 	c := s.c
 	s.inFlight = false
@@ -549,8 +544,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	return false, nil
 }
 
-// capture reads every participant's counters, then its receiver checkpoint. A checkpoint that keeps failing
-// for the capture deadline leaves that receiver without a boundary.
+// capture reads counters, then receiver checkpoints; one that keeps failing leaves a gap.
 func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*participant) measurementBoundary {
 	boundary := measurementBoundary{at: time.Since(c.started), down: map[string]uint64{}, up: map[string]*ReceiverSnapshot{}, observedUp: map[string]uploadLedger{}}
 	for _, server := range servers {
@@ -598,7 +592,7 @@ func (c *coordinator) emitUnavailable(stage StagePlan) {
 	}
 }
 
-// finishTransferStage publishes the combined result and gives each server its component of the latest window.
+// finishTransferStage publishes the combined result and each server's component.
 func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
 		result := c.aggregate.result(stage.Name, dir)

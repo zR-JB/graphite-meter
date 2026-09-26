@@ -75,7 +75,7 @@ type latencyStats struct {
 
 func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
 
-// add records one resolved probe. A reply's server handling time pairs with it only when it fits within the RTT.
+// add records one resolved probe; handling time pairs only when it fits within the RTT.
 func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) {
 	if timeout {
 		s.timeouts++

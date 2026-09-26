@@ -21,7 +21,7 @@ type PreparedServer struct {
 	config     Config
 }
 
-// PreparedRun is one catalogue selection. Failed servers stay listed with their errors.
+// PreparedRun is one catalogue selection; failed servers stay listed.
 type PreparedRun struct {
 	Err          error
 	Catalog      wire.ServerCatalog
@@ -81,7 +81,7 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 	return catalog, catalog.Validate()
 }
 
-// prepareRun checks every selected server concurrently. Each server receives only the grant its own origin issued.
+// prepareRun checks every selected server concurrently, each with its own origin's grant.
 func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, grants map[string]string) (result *PreparedRun, resultErr error) {
 	defer func() {
 		if result != nil {

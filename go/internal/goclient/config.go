@@ -87,7 +87,7 @@ func (p TransferStreamPolicy) lanes(protocol, transport string) streamCounts {
 	return streamCounts{down: p.AutomaticMax, up: p.AutomaticMax}
 }
 
-// Label describes the lanes a path would use, in the words of the stream settings.
+// Label describes the lanes a path would use.
 func (p TransferStreamPolicy) Label(protocol, transport string) string {
 	protocol = protocolFromEvidence(protocol)
 	webTransport := transport == wire.TransportWebTransport
@@ -160,7 +160,7 @@ type Config struct {
 	LoadedLatency         bool
 	InsecureSkipTLSVerify bool
 
-	// A prepared server's own configuration: its catalogue identity and the grant issued by its origin.
+	// Per server: its catalogue identity and the grant its origin issued.
 	server *wire.ServerEntry
 	grant  string
 }

@@ -34,7 +34,7 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
-// PendingAuthorization is one browser approval. Origin names the issuer whose grant it yields.
+// PendingAuthorization is one browser sign-in; Origin is the grant's issuer.
 type PendingAuthorization struct {
 	BrowserURL, Code   string
 	Origin             string

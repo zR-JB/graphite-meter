@@ -7,7 +7,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// runDirect prepares one server without a catalogue and runs it through the production coordinator.
+// runDirect runs one server without a catalogue.
 func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 	cfg = cfg.normalized()
 	connection, err := prepare(ctx, cfg)
@@ -19,8 +19,7 @@ func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 	return runSelection(ctx, nil, cfg, &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}, emit)
 }
 
-// runTestStage injects concrete transports into the production coordinator. Stage readiness,
-// warmup, measurement, result retention, and cleanup all use its ownership path.
+// runTestStage runs one stage through the production coordinator with injected transports.
 func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Duration) error {
 	cfg := r.cfg
 	cfg.Stages = StageSet{
