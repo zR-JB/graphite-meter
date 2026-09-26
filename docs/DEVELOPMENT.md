@@ -67,9 +67,8 @@ mise run ci                 # everything CI runs, job by job
 
 | Build | Command |
 | --- | --- |
-| Production server | `mise run server-build-prod` |
+| Production server | `mise run server-build-prod` (release stamp: `VERSION=0.9.0 mise run server-build-prod`) |
 | Native client | `mise run goclient-build` (all targets: `mise run tui-cross-build`) |
-| Release-profile server | `mise run release-build 0.9.0` |
 
 Untagged builds identify as `GM_CLIENT_REVISION` (default: the short Git revision); `GM_CLIENT_BUILD_PROFILE` is
 `dev` or `prod`; release automation sets `VERSION` for the server and both clients.

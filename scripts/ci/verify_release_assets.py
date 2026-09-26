@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import platform
 import re
 import stat
 import subprocess
@@ -110,10 +111,10 @@ def archive_names(path: Path) -> set[str]:
     return names
 
 
-def member_text(archive: tarfile.TarFile, name: str) -> str:
+def member(archive: tarfile.TarFile, name: str) -> bytes:
     if (handle := archive.extractfile(name)) is None:
         raise VerificationError(f"cannot read {name}")
-    return handle.read().decode("utf-8")
+    return handle.read()
 
 
 def verify_third_party_source_archive(dist: Path, version: str) -> None:
@@ -140,9 +141,9 @@ def verify_third_party_source_archive(dist: Path, version: str) -> None:
             f"{keys[:5]}")
     try:
         with tarfile.open(source, mode="r:gz") as archive:
-            inventory = decode_json(member_text(archive, f"{root}/LEGAL_INVENTORY.json"), root)
-            provenance = decode_json(member_text(archive, f"{root}/PROVENANCE.json"), root)
-            readme = member_text(archive, f"{root}/README.txt")
+            inventory = decode_json(member(archive, f"{root}/LEGAL_INVENTORY.json").decode(), root)
+            provenance = decode_json(member(archive, f"{root}/PROVENANCE.json").decode(), root)
+            readme = member(archive, f"{root}/README.txt").decode()
     except (OSError, UnicodeDecodeError, tarfile.TarError) as exc:
         raise VerificationError(f"cannot read {source.name} metadata: {exc}") from exc
     components = ("server", "tui", "container")
@@ -166,27 +167,29 @@ def verify_client_archives(dist: Path, version: str, targets: Path) -> None:
             raise VerificationError(f"{name} contains certificate/key material: {keys[:5]}")
 
 
-def verify_client_version(version: str) -> None:
-    path = Path("client/dist/version.json")
-    if path.is_symlink() or not path.is_file():
-        raise VerificationError(f"production client version metadata is missing: {path}")
-    value = decode_json(path.read_text(encoding="utf-8"), str(path))
-    fields = (value.get("version"), value.get("label")) if isinstance(value, dict) else ()
-    revision = value.get("revision") if isinstance(value, dict) else None
-    if fields != (version, "prod") or not isinstance(revision, str) or not revision:
-        raise VerificationError(f"{path} must contain version={version}, label=prod and a revision")
-
-
-def verify_server_version(version: str) -> None:
-    binary = Path("go/graphite-meter")
-    if binary.is_symlink() or not binary.is_file():
-        raise VerificationError(f"production server binary is missing: {binary}")
-    result = subprocess.run([str(binary.resolve()), "--version"], capture_output=True, text=True,
-                            check=False)
-    if result.returncode != 0 or result.stdout.strip() != version:
-        raise VerificationError(
-            f"server --version returned {result.stdout.strip()!r}; expected {version!r} "
-            f"{result.stderr.strip()}")
+def verify_tui_version(version: str, dist: Path) -> None:
+    """Run the archived TUI built for this host; the trusted consumer never executes candidates."""
+    machine = platform.machine().lower()
+    goarch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
+    host = f"graphite-meter-client_{version}_{platform.system().lower()}_{goarch}"
+    archives = [(name, binary) for name, (base, binary) in tui_archives(version, TARGETS).items()
+                if base == host]
+    if not archives:
+        raise VerificationError(f"no TUI archive runs on this host: {host}")
+    name, binary = archives[0]
+    with tempfile.TemporaryDirectory() as directory:
+        executable = Path(directory) / binary
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(dist / name) as archive:
+                executable.write_bytes(archive.read(f"{host}/{binary}"))
+        else:
+            with tarfile.open(dist / name, mode="r:gz") as tar:
+                executable.write_bytes(member(tar, f"{host}/{binary}"))
+        executable.chmod(0o755)
+        result = subprocess.run([executable, "--version"], capture_output=True, text=True,
+                                check=False)
+    if result.stdout.strip() != f"graphite-meter-client {version}":
+        raise VerificationError(f"{name} reports {result.stdout.strip()!r} {result.stderr.strip()}")
 
 
 def verify_artifacts(version: str, dist: Path) -> None:
@@ -201,8 +204,7 @@ def verify_artifacts(version: str, dist: Path) -> None:
 
 def verify(version: str, dist: Path) -> None:
     verify_artifacts(version, dist)
-    verify_client_version(version)
-    verify_server_version(version)
+    verify_tui_version(version, dist)
     print(f"release asset verification passed: {version}")
 
 

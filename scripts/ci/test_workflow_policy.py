@@ -63,7 +63,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "release.yml", "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),
     (W + "release.yml", "        run: python3 scripts/ci/release.py verify\n",
-     "        run: python3 scripts/ci/release.py verify\n      - run: mise run release-build\n",
+     "        run: python3 scripts/ci/release.py verify\n      - run: mise run release-check\n",
      "mise run"),
     (REQUEST, "    steps:\n", "    steps:" + PINNED_STEP.format("actions/cache"),
      "repository code"),

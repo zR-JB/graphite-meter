@@ -78,16 +78,6 @@ with open(os.environ["GM_TASK_TRACE"], "a") as output:
         self.assertEqual(result.returncode, status, result.stdout + result.stderr)
         return [json.loads(line) for line in self.trace.read_text().splitlines()] if self.trace.exists() else []
 
-    def test_release_version_reaches_ordered_build_embed_and_go(self) -> None:
-        calls = self.run_task("release-build", "0.7.0-rc.1", env={"VERSION": "outer-version"})
-        self.assertEqual([call["tool"] for call in calls], ["bun", "bun", "go"])
-        self.assertEqual(calls[0]["args"], ["run", "build"])
-        self.assertEqual(calls[0]["env"]["GM_CLIENT_BUILD_PROFILE"], "prod")
-        self.assertEqual(calls[0]["env"]["VERSION"], "0.7.0-rc.1")
-        self.assertEqual(calls[1]["args"][0], "-e")
-        self.assertIn("fs.cpSync('client/dist'", calls[1]["args"][1])
-        self.assertIn("EngineVersion=0.7.0-rc.1", " ".join(calls[2]["args"]))
-
     def test_development_clears_release_version_and_preserves_revision(self) -> None:
         calls = self.run_task("server-build-dev", env={"VERSION": "must-not-release", "GM_CLIENT_REVISION": "revision"})
         self.assertEqual([call["tool"] for call in calls], ["bun", "bun", "go"])

@@ -40,10 +40,9 @@ from verify_release_assets import (
     verify_artifacts,
     verify_checksums,
     verify_client_archives,
-    verify_client_version,
     verify_release_file_set,
-    verify_server_version,
     verify_third_party_source_archive,
+    verify as verify_release,
 )
 
 SOURCE = "graphite-meter_1.2.3_third-party-source"
@@ -175,24 +174,12 @@ class ReleaseAssetTests(unittest.TestCase):
                     with self.assertRaisesRegex(VerificationError, error):
                         verify_artifacts("1.2.3", dist)
 
-    def test_built_client_and_server_report_the_release_version(self) -> None:
-        previous = Path.cwd()
-        self.addCleanup(os.chdir, previous)
-        os.chdir(self.dist)
-        (self.dist / "client/dist").mkdir(parents=True)
-        with self.assertRaisesRegex(VerificationError, "client version metadata is missing"):
-            verify_client_version("1.2.3")
-        (self.dist / "client/dist/version.json").write_text(
-            json.dumps({"version": "1.2.3", "label": "prod", "revision": "abc1234"}))
-        verify_client_version("1.2.3")
-        with self.assertRaisesRegex(VerificationError, "server binary is missing"):
-            verify_server_version("1.2.3")
-        (self.dist / "go").mkdir()
-        (self.dist / "go/graphite-meter").write_text("#!/bin/sh\necho 1.2.3\n")
-        (self.dist / "go/graphite-meter").chmod(0o755)
-        verify_server_version("1.2.3")
-        with self.assertRaisesRegex(VerificationError, "expected '1.2.4'"):
-            verify_server_version("1.2.4")
+    def test_the_host_tui_archive_reports_the_release_version(self) -> None:
+        write_release_assets(self.dist / "valid", "1.2.3")
+        verify_release("1.2.3", self.dist / "valid")
+        write_release_assets(self.dist / "stale", "1.2.3", reported="1.2.2")
+        with self.assertRaisesRegex(VerificationError, "reports 'graphite-meter-client 1.2.2'"):
+            verify_release("1.2.3", self.dist / "stale")
 
     def test_release_dist_stays_in_the_checkout_or_a_temporary_directory(self) -> None:
         with patch.dict(os.environ, {"RELEASE_DIST": str(self.dist / "dist")}):

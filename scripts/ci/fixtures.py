@@ -172,13 +172,14 @@ def write_checksums(dist: Path) -> None:
     (dist / "checksums.txt").write_text("".join(lines))
 
 
-def write_release_assets(dist: Path, version: str) -> None:
-    """Write the complete native release a stable request uploads."""
+def write_release_assets(dist: Path, version: str, reported: str = "") -> None:
+    """Write the native release a stable request uploads; each TUI prints `reported`."""
     dist.mkdir(parents=True, exist_ok=True)
     write_tar(dist / f"graphite-meter_{version}_third-party-source.tar.gz",
               source_members(version))
+    script = f"#!/bin/sh\necho graphite-meter-client {reported or version}\n".encode()
     for name, (base, binary) in tui_archives(version, TARGETS).items():
-        members = {f"{base}/{file}": b"x" for file in (binary, *TUI_FILES)}
+        members = {f"{base}/{file}": b"x" for file in TUI_FILES} | {f"{base}/{binary}": script}
         if name.endswith(".zip"):
             with zipfile.ZipFile(dist / name, "w") as archive:
                 for member, payload in members.items():

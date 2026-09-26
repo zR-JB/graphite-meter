@@ -385,17 +385,11 @@ set -eu
 VERSION=$usage_version
 export VERSION
 mise run legal-check
-mise run release-build "$VERSION"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 RELEASE_DIST="$tmp/dist" mise run release-artifacts "$VERSION"
 RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "$VERSION"
 '''
-
-[tasks.release-build]
-description = "Build exact production client and server release artifacts"
-usage = 'arg "[version]" default="development"'
-run = [{ task = "server-build-prod", env = { VERSION = "{{usage.version}}" } }]
 
 [tasks.release-artifacts]
 description = "Build distributable native archives and checksums without publishing"

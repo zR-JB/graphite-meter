@@ -94,7 +94,6 @@ jobs:
         run: |
           VERSION= mise run legal-check
           mise run legal-generate
-          mise run release-build "$VERSION"
           mise run release-artifacts "$VERSION"
           python3 scripts/ci/verify_release_assets.py "$VERSION"
 
