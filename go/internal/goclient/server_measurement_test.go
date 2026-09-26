@@ -1,8 +1,11 @@
 package goclient
 
 import (
+	"encoding/json/v2"
 	"errors"
 	"math"
+	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -253,6 +256,68 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		s.observe(sample, []*stageServer{own})
 		if p.removed != c.removed {
 			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
+		}
+	}
+}
+
+func TestAggregationMatchesTheSharedVectors(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../../api/aggregation.testvectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type window struct {
+		StartMs, EndMs                 int64
+		DownBytesPerSec, UpBytesPerSec *float64
+	}
+	var cases []struct {
+		Name         string
+		Stage        Stage
+		Participants []string
+		Boundaries   []struct {
+			AtMs int64
+			Down map[string]uint64
+			Up   map[string]*struct {
+				ID           string
+				Bytes, Nanos uint64
+			}
+		}
+		Intervals []struct {
+			Reason   string
+			Complete bool
+			Window   *window
+		}
+	}
+	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		var a aggregateMeasurements
+		a.begin(c.Stage, c.Participants, time.Duration(c.Boundaries[0].AtMs)*time.Millisecond, "stage-start")
+		for _, b := range c.Boundaries {
+			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
+			for id, r := range b.Up {
+				if r != nil {
+					boundary.up[id] = &ReceiverSnapshot{ID: r.ID, Bytes: r.Bytes, Nanos: r.Nanos}
+				}
+			}
+			a.observe(boundary)
+		}
+		if len(a.intervals) != len(c.Intervals) {
+			t.Errorf("%s: %d intervals, want %d", c.Name, len(a.intervals), len(c.Intervals))
+			continue
+		}
+		for i, want := range c.Intervals {
+			got := a.intervals[i]
+			var w *window
+			if got.Window != nil {
+				w = &window{got.Window.Start.Milliseconds(), got.Window.End.Milliseconds(),
+					got.Window.DownBytesPerSec, got.Window.UpBytesPerSec}
+			}
+			if got.Reason != want.Reason || got.Complete != want.Complete || !reflect.DeepEqual(w, want.Window) {
+				t.Errorf("%s interval %d: %s complete=%v window=%+v, want %+v", c.Name, i, got.Reason, got.Complete,
+					w, want)
+			}
 		}
 	}
 }

@@ -1,0 +1,76 @@
+[
+  {
+    "name": "download sums client windows across servers",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 1500}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 4000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a missed checkpoint is skipped and the next one spans the gap",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": null}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 3000000000}}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1000}}
+    ]
+  },
+  {
+    "name": "a replaced receiver closes the interval and resumes from its first checkpoint",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 2000000000}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r2", "bytes": 500, "nanos": 500000000}}},
+      {"atMs": 3000, "down": {}, "up": {"a": {"id": "r2", "bytes": 1500, "nanos": 1500000000}}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": false,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}},
+      {"reason": "evidence-resumed", "complete": true,
+       "window": {"startMs": 2000, "endMs": 3000, "downBytesPerSec": null, "upBytesPerSec": 1000}}
+    ]
+  },
+  {
+    "name": "a zero-duration boundary adds no window",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {}},
+      {"atMs": 1000, "down": {"a": 2000}, "up": {}},
+      {"atMs": 1000, "down": {"a": 2500}, "up": {}},
+      {"atMs": 2000, "down": {"a": 4000}, "up": {}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 2000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a final checkpoint with unchanged receiver time keeps the last window",
+    "stage": "bidirectional",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {"a": 3000}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}},
+      {"atMs": 1100, "down": {"a": 3300}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 2000}}
+    ]
+  }
+]

@@ -231,3 +231,55 @@ test("an unchanged receiver checkpoint adds no window and does not erase prior e
   m.observe(boundary(2000, {}, { ...up, a: receiver("restarted", 0, 1) }));
   expect(m.result("upload", "up", false)).toBeNull();
 });
+
+type Vector = {
+  name: string;
+  stage: "download" | "upload" | "bidirectional";
+  participants: string[];
+  boundaries: {
+    atMs: number;
+    down: Record<string, number>;
+    up: Record<string, { id: string; bytes: number; nanos: number } | null>;
+  }[];
+  intervals: {
+    reason: string;
+    complete: boolean;
+    window: {
+      startMs: number;
+      endMs: number;
+      downBytesPerSec: number | null;
+      upBytesPerSec: number | null;
+    } | null;
+  }[];
+};
+const vectors: Vector[] = await Bun.file(
+  new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
+).json();
+
+for (const vector of vectors)
+  test(`aggregation conformance: ${vector.name}`, () => {
+    const m = new AggregateMeasurements();
+    m.begin(vector.stage, vector.participants, vector.boundaries[0].atMs);
+    for (const b of vector.boundaries)
+      m.observe({
+        atMs: b.atMs,
+        down: b.down,
+        up: Object.fromEntries(
+          Object.entries(b.up).map(([id, r]) => [
+            id,
+            r && receiver(r.id, r.bytes, r.nanos),
+          ]),
+        ),
+      });
+    const intervals: Vector["intervals"] = m.intervals.map((interval) => ({
+      reason: interval.reason,
+      complete: interval.complete,
+      window: interval.full && {
+        startMs: interval.full.startMs,
+        endMs: interval.full.endMs,
+        downBytesPerSec: interval.full.downBytesPerSec,
+        upBytesPerSec: interval.full.upBytesPerSec,
+      },
+    }));
+    expect(intervals).toEqual(vector.intervals);
+  });
