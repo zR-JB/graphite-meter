@@ -161,18 +161,12 @@ test("only an enabled complete event creates an immutable history candidate", as
       error: {
         reason: "connection-lost",
         message: "failed run",
-        phase: "download",
       },
     });
     expect(store.historyCandidate).toBeNull();
     store.ingest({
       type: "phase",
-      transition: {
-        from: "connecting",
-        to: "aborted",
-        stage: null,
-        t: 0,
-      },
+      transition: { to: "aborted", stage: null, t: 0 },
     });
     expect(store.historyCandidate).toBeNull();
   } finally {

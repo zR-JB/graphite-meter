@@ -6,7 +6,6 @@ import type {
   Phase,
   ConnectivityState,
   PreparedPaths,
-  EngineInfo,
   RunResult,
   RunnerConfig,
   RunnerError,
@@ -374,7 +373,6 @@ class AppStore {
   connectionValidation = $derived(
     this.#representative?.validation ?? UNCHECKED,
   );
-  engineInfo = $state.raw<EngineInfo | null>(null);
   result = $state.raw<RunResult | null>(null);
   stageResults = $state.raw<StageResults>(EMPTY_STAGE_RESULTS);
   completedStages = $state.raw<TransportRole[]>([]);
@@ -528,8 +526,7 @@ class AppStore {
 
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
     () => {
-      const bidi =
-        this.result?.bidirectional ?? this.error?.partial?.bidirectional;
+      const bidi = this.result?.bidirectional;
       return Object.fromEntries(
         STAGE_ORDER.map((stage) => {
           const failure = this.stageFailures[stage] != null;
@@ -771,7 +768,8 @@ class AppStore {
           };
         break;
       case "phase": {
-        const { from, to, stage, t } = event.transition;
+        const { to, stage, t } = event.transition;
+        const from = this.phase;
         if (
           STAGE_ORDER.some((key) => key === from) &&
           to !== "aborted" &&
@@ -834,12 +832,6 @@ class AppStore {
         this.stallInfo = null;
         if (CONNECTION_FAILURE_REASONS.has(event.error.reason))
           this.connectivity = "offline";
-        const partial = event.error.partial;
-        this.stageResults = {
-          download: partial?.download ?? this.stageResults.download,
-          upload: partial?.upload ?? this.stageResults.upload,
-          latency: partial?.latency ?? this.stageResults.latency,
-        };
         this.phase = "error";
         break;
       }

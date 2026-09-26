@@ -26,13 +26,11 @@ import {
 import { originLimiter } from "../servers/originLimiter";
 import type {
   ConnectionRole,
-  EngineInfo,
   LiveRunConfig,
-  NetworkRunner,
   RunnerConfig,
   RunnerEvent,
 } from "./contract";
-import { engineInfo, Run, type PreparedServer } from "./run";
+import { Run, type PreparedServer } from "./run";
 import { discoverServer, prepareConnections } from "./real/prepare";
 import type {
   store as applicationStore,
@@ -56,9 +54,12 @@ interface ApplicationDependencies {
   loadCatalog: (signal: AbortSignal) => Promise<ServerCatalog>;
   discover: ConnectionHost["discover"];
   prepare: ConnectionHost["prepare"];
-  createRunner: (servers: PreparedServer[], focus: string) => NetworkRunner;
-  describe: () => EngineInfo;
+  createRunner: (servers: PreparedServer[], focus: string) => Runner;
 }
+export type Runner = Pick<
+  Run,
+  "start" | "abort" | "dispose" | "on" | "reconfigure" | "details"
+>;
 
 const SESSION_RUN_MARGIN_MS = 60_000;
 const SAVED_SELECTION_KEY = "graphite-meter:server-selection:v1";
@@ -84,11 +85,10 @@ export function createApplicationController(
   const createRunner =
     dependencies.createRunner ??
     ((servers: PreparedServer[], focus: string) => new Run(servers, focus));
-  const describe = dependencies.describe ?? engineInfo;
 
   const connections = new Map<string, ServerConnection>();
   let metadataWanted = false;
-  let runner: NetworkRunner | null = null;
+  let runner: Runner | null = null;
   let unsubscribe: (() => void) | undefined;
   let pendingStart: AbortController | null = null;
   let booted = false;
@@ -465,7 +465,6 @@ export function createApplicationController(
       AUTHENTICATION_REQUIRED_EVENT,
       onAuthenticationRequired,
     );
-    store.engineInfo = describe();
     await loadCatalog().catch((cause) => {
       if (signal.aborted) return;
       store.startError =

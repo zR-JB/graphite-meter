@@ -47,10 +47,7 @@
       {
         download: store.stageResults.download,
         upload: store.stageResults.upload,
-        bidirectional:
-          store.result?.bidirectional ??
-          store.error?.partial?.bidirectional ??
-          null,
+        bidirectional: store.result?.bidirectional ?? null,
         latency: store.stageResults.latency,
         added: store.result?.bufferbloat ?? null,
         wire: {
@@ -82,8 +79,7 @@
         authoritative = value;
       } else if (key === "bidirectional") {
         const live = liveRates ?? store.visualBidirectional;
-        const bidi =
-          store.result?.bidirectional ?? store.error?.partial?.bidirectional;
+        const bidi = store.result?.bidirectional;
         value = active
           ? (live?.down ?? 0) + (live?.up ?? 0)
           : bidi?.down && bidi.up

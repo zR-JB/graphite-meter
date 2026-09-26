@@ -137,7 +137,6 @@ export interface LatencyBucket {
 }
 
 interface PhaseTransition {
-  from: Phase;
   to: Phase;
   stage: TransportRole | null;
   t: number; // exact boundary on the run's measured timeline
@@ -274,38 +273,11 @@ export interface StallInfo {
   direction?: FlowDirection;
 }
 
-/** Terminal failure is distinct from user cancellation and may retain usable partial measurements. */
+/** Terminal failure is distinct from user cancellation; finished stages keep their results. */
 export interface RunnerError {
   /** Failure category; `user-abort` is the `"aborted"` phase instead. */
   reason: Exclude<TerminationReason, "user-abort">;
-  /** Human-readable detail for logs / the toast. */
   message: string;
-  /** The phase the run is in at the failure. */
-  phase: Phase;
-  /** Best-effort results from stages that already finished, so the UI can still show measured work. */
-  partial?: {
-    download: ThroughputResult | null;
-    upload: ThroughputResult | null;
-    bidirectional: {
-      down: ThroughputResult | null;
-      up: ThroughputResult | null;
-    } | null;
-    latency: LatencyResult | null;
-  };
-  /** The original thrown value, for logging (not for display). */
-  cause?: unknown;
-}
-
-/* Engine identity & capabilities ---------- Static self-description of a runner backend. */
-export interface EngineInfo {
-  /** Engine id, e.g. "real". */
-  name: string;
-  /* Per-engine version. */
-  version: string;
-  /* Transports this engine can drive for latency probing, preference order. */
-  latencyTransports: TransportKind[];
-  /* Transports this engine can drive for throughput transfer, preference order. */
-  throughputTransports: TransportKind[];
 }
 
 /** Verified connection values are immutable inputs to one run, separate from live sockets. */
@@ -423,17 +395,5 @@ export type LiveRunConfig = Pick<
   RunnerConfig,
   "stages" | "duration" | "adaptive"
 >;
-
-/* ---------- The contract ---------- */
-export interface NetworkRunner {
-  /** Connection preparation belongs to the application; RTT only adjusts warmup. */
-  start(config: RunnerConfig, preTestPingMs: number): void;
-  abort(): void;
-  dispose(): void;
-  on(handler: (e: RunnerEvent) => void): () => void;
-  reconfigure(config: LiveRunConfig): void;
-  details(): import("./measure").MultiServerResult;
-  readonly phase: Phase;
-}
 
 /* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

@@ -67,7 +67,6 @@
       (failure) => failure.serverId === selectedServer?.id,
     ) ?? [],
   );
-  const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
   const pathMode = $derived(
@@ -316,10 +315,6 @@
         <div>
           <dt>Server version</dt>
           <dd>{discovery?.engineVersion ?? MISSING}</dd>
-        </div>
-        <div>
-          <dt>Runner</dt>
-          <dd>{engine?.name ?? MISSING}</dd>
         </div>
         <div>
           <dt>Client version</dt>

@@ -1,11 +1,12 @@
 // Application controller contracts: selection, approval, run start/stop and the store it writes.
 import "../state/runes.testutil";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import type { NetworkRunner, RunnerConfig, RunnerEvent } from "./contract";
+import type { RunnerConfig, RunnerEvent } from "./contract";
 import { CONNECTION_FRESH_MS, type ServerView } from "./paths";
 import type {
   ApplicationController,
   createApplicationController,
+  Runner,
 } from "./controller.svelte";
 import type { ConnectionPreparation } from "./real/prepare";
 import type { ServerEntry } from "../servers/catalog";
@@ -39,24 +40,20 @@ interface Harness {
   view: (id?: string) => ServerView;
 }
 
-class TestRunner implements NetworkRunner {
-  phase: NetworkRunner["phase"] = "idle";
+class TestRunner implements Runner {
   listener: (event: RunnerEvent) => void = () => {};
   starts = 0;
   start() {
     this.starts++;
-    this.phase = "download";
     this.listener({
       type: "phase",
-      transition: { from: "idle", to: "download", stage: "download", t: 0 },
+      transition: { to: "download", stage: "download", t: 0 },
     });
   }
   abort() {
-    const from = this.phase;
-    this.phase = "aborted";
     this.listener({
       type: "phase",
-      transition: { from, to: "aborted", stage: null, t: 0 },
+      transition: { to: "aborted", stage: null, t: 0 },
     });
   }
   dispose() {}

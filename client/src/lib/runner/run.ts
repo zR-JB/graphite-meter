@@ -1,12 +1,10 @@
 // One schedule drives every selected server; one server is the same run with one participant.
 import type {
-  EngineInfo,
   FailureReason,
   FlowDirection,
   LatencyObservation,
   LatencyResult,
   LiveRunConfig,
-  NetworkRunner,
   Phase,
   PhaseActivity,
   PreparedPaths,
@@ -22,12 +20,7 @@ import type {
 } from "./contract";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
-import {
-  planServerStreams,
-  validateServerStreams,
-  transportRunnable,
-} from "./paths";
-import { BUILD } from "../buildenv";
+import { planServerStreams, validateServerStreams } from "./paths";
 import {
   EARLY_FINISH,
   pathEvidence,
@@ -113,19 +106,7 @@ const classify = <T>(cause: unknown, fallback: T) =>
       ? "timeout"
       : fallback;
 
-export function engineInfo(): EngineInfo {
-  const wt = transportRunnable("webtransport");
-  return {
-    name: "real",
-    version: BUILD.clientVersion,
-    latencyTransports: wt ? ["webtransport", "websocket"] : ["websocket"],
-    throughputTransports: wt
-      ? ["fetch-stream", "webtransport", "webtransport-datagram"]
-      : ["fetch-stream"],
-  };
-}
-
-export class Run implements NetworkRunner {
+export class Run {
   readonly #servers: Participant[];
   readonly #latencySource: Participant;
   readonly #create: (options: StageOptions) => StageTransport;
@@ -356,9 +337,8 @@ export class Run implements NetworkRunner {
   }
 
   #transition(to: Phase, stage: TransportRole | null, t: number): void {
-    const from = this.#phase;
     this.#phase = to;
-    this.#emit({ type: "phase", transition: { from, to, stage, t } });
+    this.#emit({ type: "phase", transition: { to, stage, t } });
   }
 
   #arm(): void {
@@ -474,7 +454,6 @@ export class Run implements NetworkRunner {
           this.#fail(
             classify(cause, "protocol-error"),
             cause instanceof Error ? cause.message : "Stage preparation failed",
-            cause,
           );
         },
       );
@@ -1284,21 +1263,13 @@ export class Run implements NetworkRunner {
     this.#emit({ type: "complete", result });
   }
 
-  #fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
+  #fail(reason: RunnerError["reason"], message: string): void {
     if (this.#phase === "error") return;
     this.#running = false;
     this.#flushLatency();
     this.#release();
-    const partial = { ...this.#results, bidirectional: null };
-    const error: RunnerError = {
-      reason,
-      message,
-      phase: this.#phase,
-      partial,
-      cause,
-    };
     this.#phase = "error";
-    this.#emit({ type: "error", error });
+    this.#emit({ type: "error", error: { reason, message } });
   }
 
   details(): MultiServerResult {
