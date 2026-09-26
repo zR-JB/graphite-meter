@@ -17,7 +17,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// credential is one server's grant, the origins it may reach and whether TLS is verified on the way.
 type credential struct {
 	token    string
 	origins  []string
@@ -40,7 +39,6 @@ func (c credential) authorize(u *url.URL) (http.Header, error) {
 	return http.Header{"Authorization": {"Bearer " + c.token}}, nil
 }
 
-// reach extends the grant to advertised targets on the server's own hostname.
 func (c *credential) reach(base string, pf wire.Preflight) {
 	b, err := url.Parse(base)
 	if err != nil {

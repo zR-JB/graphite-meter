@@ -45,7 +45,6 @@ type Preparation struct {
 	previous *PreparedRun
 }
 
-// NewPreparation replaces any pending one; previous is the run whose server origins were last reviewed.
 func (c *Controller) NewPreparation(cfg Config, previous *PreparedRun) *Preparation {
 	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
@@ -94,7 +93,6 @@ func (c *Controller) snapshot() map[string]string {
 	return maps.Clone(c.grants)
 }
 
-// BeginAuthorization starts sign-in at the origin that asked for it: the catalogue or one of its servers.
 func (p *Preparation) BeginAuthorization(origin, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err

@@ -41,7 +41,6 @@ func (c Config) Plan() []StagePlan {
 
 func (c Config) needsCheckpoint() bool { return c.Stages.Upload || c.Stages.Bidirectional }
 
-// PreparationKey holds every setting a prepared run depends on; durations do not.
 type PreparationKey struct {
 	base, servers, throughputTarget, throughputProtocol, throughputTransport string
 	latencyTarget, latencyTransport                                          string
@@ -101,7 +100,6 @@ var multiplexedStreams = map[string]byDirection[int]{
 	"http3": {down: 1, up: 1},
 }
 
-// Lanes is the number of streams one server opens per direction on a path.
 func (p TransferStreamPolicy) Lanes(protocol, transport string) (down, up int) {
 	switch {
 	case transport == wire.TransportWebTransport:
@@ -145,7 +143,6 @@ func (b DurationBound) Check(d time.Duration) error {
 	return nil
 }
 
-// Validate checks every user setting before a run; Run itself only needs checkPaths.
 func (c Config) Validate() error {
 	if len(c.Plan()) == 0 {
 		return errors.New("select at least one stage: latency, download, upload or bidirectional")

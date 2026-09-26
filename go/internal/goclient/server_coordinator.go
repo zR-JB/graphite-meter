@@ -186,7 +186,6 @@ func (c *coordinator) missingResults() bool {
 	return c.unavailable
 }
 
-// noSurvivors names the last server failure so the run error keeps its cause.
 func (c *coordinator) noSurvivors() error {
 	if len(c.failures) == 0 {
 		return errNoSurvivors
@@ -228,7 +227,6 @@ func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 		return
 	}
 	result := outcome.result
-	// Only the stage's own end is clean; a removed server's cause stays on its population.
 	if normalEnd && outcome.err == context.Canceled {
 		result.Err = nil
 	}

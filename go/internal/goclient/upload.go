@@ -155,7 +155,6 @@ func withUploadID(base, id string) string {
 	return u
 }
 
-// uploadProgress follows one session's receiver feeds; the receiver's pair only moves forward.
 type uploadProgress struct {
 	id     string
 	ctx    context.Context

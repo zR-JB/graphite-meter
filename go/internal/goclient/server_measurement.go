@@ -63,7 +63,6 @@ const (
 	ScopeLatency    FailureScope = "latency"
 )
 
-// ServerFailure records a server leaving the run; a throughput failure removes it, a latency one keeps it.
 type ServerFailure struct {
 	ServerID string
 	Stage    Stage
@@ -84,7 +83,6 @@ type uploadLedger struct {
 	maximum uint64
 }
 
-// serverLedger is one server's share of the current stage.
 type serverLedger struct {
 	down    *uint64
 	upload  *uploadLedger
@@ -94,7 +92,6 @@ type serverLedger struct {
 	samples int
 }
 
-// aggregateMeasurements combines the current stage's servers into intervals of fixed membership.
 type aggregateMeasurements struct {
 	intervals             []AggregationInterval
 	omitted               int
@@ -114,7 +111,6 @@ func (a *aggregateMeasurements) beginStage(stage Stage, ids []string, at time.Du
 	a.restart(ids, at, ReasonStageStart)
 }
 
-// restart opens a new interval; byte ledgers carry over, peaks and samples do not.
 func (a *aggregateMeasurements) restart(ids []string, at time.Duration, reason IntervalReason) {
 	if len(a.intervals) == maximumIntervals {
 		a.intervals = a.intervals[1:]
@@ -150,7 +146,6 @@ func (a *aggregateMeasurements) total(dir Direction) uint64 {
 	return total
 }
 
-// credit counts each server's unique bytes once, whichever windows are chosen.
 func (a *aggregateMeasurements) credit(b measurementBoundary) {
 	for id, count := range b.down {
 		server := a.servers[id]
@@ -191,7 +186,6 @@ func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
 	server.upload = &next
 }
 
-// observe returns the boundary's sample window, and whether the boundary restarted the interval.
 func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow, bool) {
 	interval := a.current()
 	if interval == nil {
@@ -240,7 +234,6 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 	return sample, false
 }
 
-// shortest is the least span any clock covered; checkpoint retries can shrink a receiver's span.
 func (w *AggregateWindow) shortest() time.Duration {
 	span := w.End - w.Start
 	for _, c := range w.Up {
@@ -313,7 +306,6 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 	return window, nil
 }
 
-// result is the combined headline: the latest interval's window, if every clock holds enough evidence.
 func (a *aggregateMeasurements) result(dir Direction) Result {
 	result := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	result.TotalBytes = a.total(dir)
@@ -338,7 +330,6 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 	return result
 }
 
-// serverResult is one server's latest component window; peaks and samples cover only the latest interval.
 func (a *aggregateMeasurements) serverResult(id string, dir Direction) Result {
 	own := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	server := a.servers[id]

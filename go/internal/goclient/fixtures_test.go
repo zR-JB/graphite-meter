@@ -24,7 +24,6 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// prepareOne prepares cfg.BaseURL alone, outside any catalogue and without a grant.
 func prepareOne(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	return prepare(ctx, cfg, nil, &credential{insecure: cfg.InsecureSkipTLSVerify})
 }

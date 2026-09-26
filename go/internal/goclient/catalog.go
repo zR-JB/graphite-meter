@@ -44,7 +44,6 @@ func (p *PreparedRun) SelectedIDs() []string {
 	return ids
 }
 
-// FreshFor reports whether a ready run was prepared for these settings recently enough to start.
 func (p *PreparedRun) FreshFor(cfg Config) bool {
 	return p.Ready() && p.key == cfg.PreparationKey() && time.Since(p.VerifiedAt) <= PreparationFreshness
 }

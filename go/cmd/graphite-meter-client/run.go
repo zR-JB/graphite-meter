@@ -90,7 +90,6 @@ func (m model) challengedServer() string {
 	return m.preparedRun.Servers[i].Server.ID
 }
 
-// challengedOrigin is the server that asked for sign-in, or the catalogue itself.
 func (m model) challengedOrigin() string {
 	if server, ok := m.catalogServer(m.challengedServer()); ok {
 		return server.URL

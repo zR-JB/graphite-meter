@@ -271,7 +271,6 @@ type probe struct {
 	measured       bool
 }
 
-// probeLedger owns probes and the measured population; until is zero until the window opens.
 type probeLedger struct {
 	mu           sync.Mutex
 	pending      map[uint32]probe

@@ -13,7 +13,6 @@ const (
 	Up   Direction = "up"
 )
 
-// byDirection holds one value per transfer direction.
 type byDirection[T any] struct{ down, up T }
 
 func (b byDirection[T]) of(dir Direction) T { return *b.at(dir) }
@@ -119,7 +118,6 @@ type Result struct {
 
 func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
-// LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
 type LatencyStats struct {
 	ReflectorTiming *ReflectorTimingStats // Nil when no valid timing pairs were observed.
 	P50, P95        time.Duration
@@ -132,7 +130,6 @@ type LatencyStats struct {
 	Elapsed         time.Duration
 }
 
-// ReflectorTimingStats contains means over one paired population of successful in-window replies.
 type ReflectorTimingStats struct {
 	Count                                     int
 	MeanRawRTT, MeanHandling, MeanAdjustedRTT time.Duration

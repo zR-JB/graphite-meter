@@ -34,7 +34,6 @@ type sampledBoundary struct {
 	final    bool
 }
 
-// stageRun owns one stage: its resources, the phases they pass through and the window's boundary sampling.
 type stageRun struct {
 	c         *coordinator
 	plan      StagePlan
@@ -50,7 +49,6 @@ type stageRun struct {
 	seen      map[readyResource]bool
 	measuring bool
 
-	// One boundary is collected at a time; epoch discards one collected before a restart.
 	samples      chan sampledBoundary
 	sampling     sync.WaitGroup
 	stopSample   context.CancelFunc
@@ -116,7 +114,6 @@ func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
 
 func (s *stageRun) transfer() bool { return len(s.plan.Directions) > 0 }
 
-// close ends every resource, keeps its latency population and reports the stage's throughput.
 func (s *stageRun) close(err error, handover bool) {
 	if s.stopSample != nil {
 		s.stopSample()
@@ -158,7 +155,6 @@ func (s *stageRun) fail(server *stageServer, role string, err error, at time.Tim
 	s.c.failure(server, s.plan, role, err, at)
 }
 
-// handle keeps a resource's result; a failure removes its server, or aborts a stage nothing was measured in.
 func (s *stageRun) handle(outcome resourceOutcome) error {
 	c := s.c
 	c.retainLatency(outcome, false)
@@ -186,7 +182,6 @@ func (s *stageRun) handle(outcome resourceOutcome) error {
 	return nil
 }
 
-// ready waits, at most stageReadyTimeout, until every server's resources can measure.
 func (s *stageRun) ready() error {
 	timer := time.NewTimer(stageReadyTimeout)
 	defer timer.Stop()
@@ -244,7 +239,6 @@ func (s *stageRun) warmup() error {
 	}
 }
 
-// window opens the measured window on fresh checkpoints and samples it until the planned end.
 func (s *stageRun) window() error {
 	started, initial, err := s.open()
 	if err != nil {
@@ -285,7 +279,6 @@ func (s *stageRun) window() error {
 	}
 }
 
-// final collects one last boundary on a short checkpoint budget.
 func (s *stageRun) final() error {
 	s.ending = true
 	s.sample(true)
@@ -305,7 +298,6 @@ func (s *stageRun) final() error {
 	}
 }
 
-// open takes the initial boundary once every upload receiver answers and starts the stage's aggregate.
 func (s *stageRun) open() (time.Time, measurementBoundary, error) {
 	c := s.c
 	initial, _ := s.collect(s.ctx, c.active(), checkpointBudget)
@@ -377,7 +369,6 @@ func (s *stageRun) sample(final bool) {
 	})
 }
 
-// reset starts a new interval for the survivors and discards the boundary in flight.
 func (s *stageRun) reset() {
 	s.epoch++
 	if s.stopSample != nil {
@@ -398,7 +389,6 @@ func (s *stageRun) dropsServer(id string, err error, final bool) bool {
 	return auth || s.misses[id] >= 3 && !final
 }
 
-// observe applies one sampled boundary; it reports done once the final boundary or the last server is gone.
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	c := s.c
 	s.inFlight = false
@@ -457,7 +447,6 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	return false, nil
 }
 
-// collect reads every server's download counter and, for upload stages, a receiver checkpoint within budget.
 func (s *stageRun) collect(
 	ctx context.Context,
 	servers []*participant,
@@ -511,7 +500,6 @@ func (s *stageRun) emitRates(window *AggregateWindow) {
 	}
 }
 
-// finish emits the combined result per direction and keeps each server's own.
 func (s *stageRun) finish(stageErr error) {
 	c := s.c
 	for _, dir := range s.plan.Directions {

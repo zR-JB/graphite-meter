@@ -10,8 +10,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// User-facing names, matching client/src/lib/presentation/vocabulary.ts.
-
 const missing = "—"
 
 var stageLabels = map[goclient.Stage]string{
@@ -65,7 +63,6 @@ var transportLabels = map[string]string{
 	wire.TransportWebTransportDatagram: "WebTransport datagrams",
 }
 
-// transportLabel names a path; a WebTransport session carries latency as datagrams.
 func transportLabel(kind string, latency bool) string {
 	if kind == wire.TransportWebTransport && latency {
 		kind = wire.TransportWebTransportDatagram
