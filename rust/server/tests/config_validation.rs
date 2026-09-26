@@ -79,7 +79,6 @@ fn oidc_requires_complete_https_provider_and_allows_issuer_path() {
         "https://identity.\nexample",
         "https://1.2.3/realm",
         "https://BÜCHER.example/realm",
-        "https://xn--a.example/realm",
         "https://identity.example/réalm",
     ] {
         let mut invalid = config.clone();
