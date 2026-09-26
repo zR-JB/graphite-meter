@@ -159,11 +159,6 @@
       stages: { ...store.config.stages, bidirectional: enabled },
     });
   }
-  function setAdaptiveEnabled(enabled: boolean) {
-    controller.configureRun({
-      adaptive: { ...store.config.adaptive, enabled },
-    });
-  }
   const activeDurationFields = $derived(
     store.config.stages.bidirectional
       ? DURATION_FIELDS
@@ -408,8 +403,8 @@
   <section class="surface-inset panel">
     <h3 class="caps">Early finish</h3>
     <Switch
-      checked={store.config.adaptive.enabled}
-      onToggle={setAdaptiveEnabled}
+      checked={store.config.adaptive}
+      onToggle={(adaptive) => controller.configureRun({ adaptive })}
       disabled={store.preparing}
       label="Finish stable stages early"
     />

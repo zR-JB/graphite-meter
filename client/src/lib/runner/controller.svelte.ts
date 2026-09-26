@@ -38,7 +38,6 @@ import type {
   store as applicationStore,
   StageKey,
 } from "../state/store.svelte";
-import { canonicalAdaptiveConfig } from "../state/defaults";
 import { readStored, writeStored } from "../state/persistence";
 import { buildSegments } from "./schedule";
 import {
@@ -498,7 +497,6 @@ export function createApplicationController(
       return;
     }
     const config = $state.snapshot(store.config);
-    config.adaptive = canonicalAdaptiveConfig(config.adaptive);
     const task = new AbortController();
     pendingStart = task;
     store.startError = "";
@@ -620,7 +618,6 @@ export function createApplicationController(
     )
       return false;
     const config = { ...$state.snapshot(store.config), ...patch };
-    config.adaptive = canonicalAdaptiveConfig(config.adaptive);
     if (
       !Object.values(config.stages).some(Boolean) ||
       Object.values(config.duration).some(

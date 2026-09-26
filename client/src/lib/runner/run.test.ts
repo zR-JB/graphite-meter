@@ -156,7 +156,7 @@ async function harness(
       bidirectionalMs: 0,
       ...duration,
     },
-    adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: !!options.adaptive },
+    adaptive: !!options.adaptive,
   };
   const terminal = () =>
     events.find((event) => event.type === "complete" || event.type === "error");

@@ -95,45 +95,14 @@ test("an explicit wire-estimate opt-out survives hydration", () => {
   expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
-test("stored adaptive tuning cannot override internal policy", () => {
-  const adaptive = loaded({
-    config: {
-      adaptive: {
-        enabled: false,
-        minCoverageRatio: 0.01,
-        stabilityThreshold: 0.01,
-        maxPhaseReductionRatio: 0.99,
-        minLatencySamples: 1,
-        minTransferSamples: 1,
-        confirmationMs: 1,
-        glideMs: 725,
-      },
-    },
-  }).config.adaptive;
-  expect(adaptive).toEqual({ ...DEFAULT_CONFIG.adaptive, enabled: false });
-  expect(adaptive).not.toHaveProperty("glideMs");
-});
-
-test("saving adaptive settings persists only enabled and restores canonical policy", () => {
-  const snapshot = defaultPersisted();
-  snapshot.config.adaptive = {
-    ...snapshot.config.adaptive,
-    enabled: false,
-    minCoverageRatio: 0.2,
-    stabilityThreshold: 0.5,
-    maxPhaseReductionRatio: 0.9,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 10,
-  };
-  savePersisted(snapshot);
-  expect(
-    JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).config.adaptive,
-  ).toEqual({ enabled: false });
-  expect(loadPersisted().config.adaptive).toEqual({
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: false,
-  });
+test("the early-finish switch loads from both saved shapes", () => {
+  for (const [adaptive, expected] of [
+    [{ enabled: false, minCoverageRatio: 0.01 }, false],
+    [false, false],
+    [true, true],
+    ["yes", DEFAULT_CONFIG.adaptive],
+  ] as const)
+    expect(loaded({ config: { adaptive } }).config.adaptive).toBe(expected);
 });
 
 test("new installations use reply-driven unloaded and medium loaded cadence", () => {

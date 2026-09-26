@@ -1,11 +1,6 @@
 import type { RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/paths";
-import {
-  canonicalAdaptiveConfig,
-  clampDuration,
-  DEFAULT_CONFIG,
-  DURATION_LIMITS,
-} from "./defaults";
+import { clampDuration, DEFAULT_CONFIG, DURATION_LIMITS } from "./defaults";
 
 type DurationKey = keyof RunnerConfig["duration"];
 
@@ -190,8 +185,11 @@ export function loadPersisted(): PersistedState {
           base.transports.latencyTarget,
         ),
       },
-      // Adaptive tuning is internal policy; only its switch is saved.
-      adaptive: canonicalAdaptiveConfig(config.adaptive),
+      // Earlier versions saved { enabled }.
+      adaptive: flag(
+        record(config.adaptive).enabled ?? config.adaptive,
+        base.adaptive,
+      ),
       visualization: {
         throughputMaxBytesPerSec: positive(gaugeMax, "auto" as const),
       },
@@ -213,10 +211,5 @@ export function loadPersisted(): PersistedState {
   };
 }
 
-export function savePersisted(snapshot: PersistedState): boolean {
-  const { enabled } = canonicalAdaptiveConfig(snapshot.config.adaptive);
-  return writeStored(STORAGE_KEY, {
-    ...snapshot,
-    config: { ...snapshot.config, adaptive: { enabled } },
-  });
-}
+export const savePersisted = (snapshot: PersistedState): boolean =>
+  writeStored(STORAGE_KEY, snapshot);

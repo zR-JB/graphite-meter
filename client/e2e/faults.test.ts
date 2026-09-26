@@ -9,7 +9,6 @@ import {
   spawnPeer,
 } from "./fleet";
 import { incoherence } from "../src/lib/history/types";
-import { DEFAULT_CONFIG } from "../src/lib/state/defaults";
 import type { Server } from "./servers";
 import { expect, test, type Page } from "./webview";
 
@@ -120,8 +119,7 @@ for (const fault of faults)
         config.duration.downloadMs = fault.editDownloadMs;
       }
       const saved = await savedResult(page, startedAt, 30_000);
-      const adaptive = { ...DEFAULT_CONFIG.adaptive, enabled: false };
-      expect(incoherence(saved, { ...config, adaptive })).toEqual([]);
+      expect(incoherence(saved, { ...config, adaptive: false })).toEqual([]);
       expect(saved.outcome).toBe(fault.outcome);
       const failures = saved
         .multiServer!.failures.filter(

@@ -998,16 +998,7 @@ const probeConfig = (latency: boolean): RunnerConfig => ({
     uploadMs: 0,
     bidirectionalMs: 0,
   },
-  adaptive: {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: false,
-    minCoverageRatio: 1,
-    stabilityThreshold: 1,
-    maxPhaseReductionRatio: 0,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 0,
-  },
+  adaptive: false,
 });
 test("a WebTransport-less browser is refused by mechanism, not by availability", async () => {
   const catalog = discovery(

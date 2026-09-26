@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   confidenceSampleFloor,
+  EARLY_FINISH,
   LatencyPopulation,
   RateBuckets,
   ServerLatency,
@@ -10,7 +11,7 @@ import {
   transferConfidence,
   type Boundary,
 } from "./measure";
-import { DEFAULT_CONFIG, DURATION_PRESETS } from "../state/defaults";
+import { DURATION_PRESETS } from "../state/defaults";
 import { fixedPingIntervalMs } from "./pingCadence";
 
 const reply = (
@@ -184,7 +185,7 @@ test("the idle headline is the full median; stability only labels its band", () 
   const latency = new ServerLatency();
   for (const rtt of [90, 80, 70, 20, 20])
     latency.observe("latency", reply(rtt), 0, 0);
-  latency.trackStable(1, DEFAULT_CONFIG.adaptive);
+  latency.trackStable(1);
   expect(latency.result()).toMatchObject({ reportedMs: 70, band: "high" });
 });
 
@@ -228,31 +229,25 @@ test("confidence scores punish variance, drift, jitter and timeouts", () => {
 });
 
 test("an early exit needs coverage, a stable score and a feasible evidence floor", () => {
-  const cfg = { ...DEFAULT_CONFIG.adaptive, enabled: true };
   const exit = (overrides: Partial<Parameters<typeof shouldExitPhase>[0]>) =>
     shouldExitPhase({
       kind: "transfer",
       elapsedMs: 8_000,
       durationMs: 10_000,
       confidence: { score: 0.95, sampleCount: 30 },
-      cfg,
       ...overrides,
     });
   expect(exit({})).toBe(true);
-  expect(exit({ cfg: { ...cfg, enabled: false } })).toBe(false);
   expect(exit({ durationMs: 0 })).toBe(false);
   expect(exit({ elapsedMs: 4_000 })).toBe(false);
   expect(exit({ confidence: { score: 0.5, sampleCount: 30 } })).toBe(false);
   expect(exit({ confidence: { score: 0.95, sampleCount: 5 } })).toBe(false);
-  const strict = { ...cfg, minCoverageRatio: 0, maxPhaseReductionRatio: 0.3 };
-  expect(exit({ cfg: strict, elapsedMs: 6_500 })).toBe(false);
-  expect(exit({ cfg: strict, elapsedMs: 7_500 })).toBe(true);
-  expect(confidenceSampleFloor("transfer", 500, cfg)).toBe(4);
-  expect(confidenceSampleFloor("latency", 500, cfg, "slow")).toBe(3);
-  expect(confidenceSampleFloor("latency", 5_000, cfg, "reply-driven")).toBe(
-    cfg.minLatencySamples,
+  expect(confidenceSampleFloor("transfer", 500)).toBe(4);
+  expect(confidenceSampleFloor("latency", 500, "slow")).toBe(3);
+  expect(confidenceSampleFloor("latency", 5_000, "reply-driven")).toBe(
+    EARLY_FINISH.latencySamples,
   );
-  expect(confidenceSampleFloor("transfer", 4_000, cfg)).toBe(11);
+  expect(confidenceSampleFloor("transfer", 4_000)).toBe(11);
   const expected = {
     short: { fast: 8, medium: 6, slow: 3 },
     long: { fast: 8, medium: 8, slow: 7 },
@@ -260,7 +255,7 @@ test("an early exit needs coverage, a stable score and a feasible evidence floor
   for (const preset of ["short", "long"] as const)
     for (const cadence of ["fast", "medium", "slow"] as const) {
       const durationMs = DURATION_PRESETS[preset].latencyMs;
-      const floor = confidenceSampleFloor("latency", durationMs, cfg, cadence);
+      const floor = confidenceSampleFloor("latency", durationMs, cadence);
       expect(floor).toBe(expected[preset][cadence]);
       const intervalMs = fixedPingIntervalMs(cadence)!;
       const confidence = latencyConfidence(
@@ -269,11 +264,10 @@ test("an early exit needs coverage, a stable score and a feasible evidence floor
           rtt: 20,
         })),
       );
-      const coverage = Math.max(
-        cfg.minCoverageRatio,
-        1 - cfg.maxPhaseReductionRatio,
+      const armAt = Math.max(
+        (floor - 1) * intervalMs,
+        durationMs * EARLY_FINISH.minCoverage,
       );
-      const armAt = Math.max((floor - 1) * intervalMs, durationMs * coverage);
       expect(
         shouldExitPhase({
           kind: "latency",
@@ -281,10 +275,9 @@ test("an early exit needs coverage, a stable score and a feasible evidence floor
           elapsedMs: armAt,
           durationMs,
           confidence,
-          cfg,
         }),
       ).toBe(true);
-      expect(armAt + cfg.confirmationMs).toBeLessThan(durationMs);
+      expect(armAt + EARLY_FINISH.confirmationMs).toBeLessThan(durationMs);
     }
 });
 
@@ -415,7 +408,7 @@ test("every headline needs 800 ms in every clock and moved bytes", () => {
   stable.begin("upload", ["a"], 0);
   stable.observe(boundary(0, {}, { a: receiver("a", 0, 1) }));
   stable.observe(boundary(2_000, {}, { a: receiver("a", 2_000, 2e9 + 1) }));
-  stable.trackStable(1, DEFAULT_CONFIG.adaptive);
+  stable.trackStable(1);
   // The stable window spans 900 ms of client time but only 500 ms of receiver time.
   stable.observe(boundary(2_900, {}, { a: receiver("a", 3_000, 2.5e9 + 1) }));
   expect(stable.result("upload", true).up).toMatchObject({
@@ -441,7 +434,7 @@ test("opposite fluctuations use aggregate stability, simultaneous peaks and one 
         { a: receiver("a", a, nanos), b: receiver("b", b, nanos) },
       ),
     );
-    m.trackStable(m.confidence().score, DEFAULT_CONFIG.adaptive);
+    m.trackStable(m.confidence().score);
   }
   expect(m.confidence().score).toBe(1);
   expect(m.result("upload", true).up).toMatchObject({

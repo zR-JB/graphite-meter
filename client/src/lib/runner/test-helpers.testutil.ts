@@ -106,16 +106,7 @@ export function testWtConfig(
     uploadMs: 1,
     bidirectionalMs: 1,
   };
-  config.adaptive = {
-    ...config.adaptive,
-    enabled: false,
-    minCoverageRatio: 1,
-    stabilityThreshold: 1,
-    maxPhaseReductionRatio: 0,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 0,
-  };
+  config.adaptive = false;
   return config;
 }
 

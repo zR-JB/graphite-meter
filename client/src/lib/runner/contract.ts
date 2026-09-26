@@ -53,18 +53,6 @@ export type CompensationTransport =
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
-/* ---------- Adaptive duration ---------- */
-/** Confidence-based early exit; disabled adaptive mode runs each phase for its full configured duration. */
-export interface AdaptiveDurationConfig {
-  enabled: boolean;
-  minCoverageRatio: number; // require ≥ this fraction of nominal duration first
-  stabilityThreshold: number; // stability-score gate (0..1) to exit early
-  maxPhaseReductionRatio: number; // never cut a phase by more than this fraction
-  minLatencySamples: number; // sample floor for a latency phase's early exit
-  minTransferSamples: number; // sample floor for a transfer phase's early exit
-  confirmationMs: number; // stability must remain eligible for this real interval
-}
-
 /* ---------- Live measurement stability ---------- */
 /** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
 export type StabilityBand = "low" | "medium" | "high";
@@ -106,8 +94,8 @@ export interface RunnerConfig {
     throughputTarget: "auto" | string;
     latencyTarget: "auto" | string;
   };
-  /** Confidence-based early exit. */
-  adaptive: AdaptiveDurationConfig;
+  /** Confidence-based early exit; off runs each stage for its full duration. */
+  adaptive: boolean;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */
   visualization: { throughputMaxBytesPerSec: number | "auto" };
 }

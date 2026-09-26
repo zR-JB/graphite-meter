@@ -1,5 +1,4 @@
 import type {
-  AdaptiveDurationConfig,
   BufferbloatGrade,
   FailureReason,
   FlowDirection,
@@ -144,14 +143,18 @@ function selectMedian(values: Float64Array, n: number): number {
 
 let scratch = new Float64Array(1024);
 
+/** Early finish: coverage fraction, stability gate, sample floors and how long eligibility must hold. */
+export const EARLY_FINISH = {
+  minCoverage: 0.52,
+  stability: 0.86,
+  latencySamples: 8,
+  transferSamples: 12,
+  confirmationMs: 1100,
+} as const;
+
 /** Schmitt trigger: enter at the threshold, leave 0.08 below it. */
-export function isStillStable(
-  wasStable: boolean,
-  score: number,
-  cfg: AdaptiveDurationConfig,
-): boolean {
-  return score >= cfg.stabilityThreshold - (wasStable ? 0.08 : 0);
-}
+const isStillStable = (wasStable: boolean, score: number): boolean =>
+  score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
 
 export function bandForState(stable: boolean, score: number): StabilityBand {
   return stable ? "high" : score >= 0.6 ? "medium" : "low";
@@ -161,16 +164,17 @@ export function bandForState(stable: boolean, score: number): StabilityBand {
 export function confidenceSampleFloor(
   kind: "latency" | "transfer",
   durationMs: number,
-  cfg: AdaptiveDurationConfig,
   cadence?: PingCadence,
 ): number {
-  const finite = (value: number) =>
-    Number.isFinite(value) ? Math.max(0, value) : 0;
-  const requested = Math.floor(
-    finite(kind === "latency" ? cfg.minLatencySamples : cfg.minTransferSamples),
+  const requested =
+    kind === "latency"
+      ? EARLY_FINISH.latencySamples
+      : EARLY_FINISH.transferSamples;
+  const budgetMs = Math.max(
+    0,
+    (Number.isFinite(durationMs) ? durationMs : 0) -
+      EARLY_FINISH.confirmationMs,
   );
-  if (!requested) return 0;
-  const budgetMs = Math.max(0, finite(durationMs) - finite(cfg.confirmationMs));
   const intervalMs =
     kind === "latency" ? cadence && fixedPingIntervalMs(cadence) : BUCKET_MS;
   if (!intervalMs) return requested;
@@ -192,17 +196,14 @@ export function shouldExitPhase(input: {
   elapsedMs: number;
   durationMs: number;
   confidence: ConfidenceScore;
-  cfg: AdaptiveDurationConfig;
 }): boolean {
-  const { cfg, durationMs, confidence } = input;
+  const { durationMs, confidence } = input;
   return (
-    cfg.enabled &&
     durationMs > 0 &&
-    input.elapsedMs / durationMs >=
-      Math.max(cfg.minCoverageRatio, 1 - cfg.maxPhaseReductionRatio) &&
-    confidence.score >= cfg.stabilityThreshold &&
+    input.elapsedMs / durationMs >= EARLY_FINISH.minCoverage &&
+    confidence.score >= EARLY_FINISH.stability &&
     confidence.sampleCount >=
-      confidenceSampleFloor(input.kind, durationMs, cfg, input.cadence)
+      confidenceSampleFloor(input.kind, durationMs, input.cadence)
   );
 }
 
@@ -408,8 +409,8 @@ export class ServerLatency {
     this.#stable = false;
   }
 
-  trackStable(score: number, cfg: AdaptiveDurationConfig): void {
-    this.#stable = isStillStable(this.#stable, score, cfg);
+  trackStable(score: number): void {
+    this.#stable = isStillStable(this.#stable, score);
     this.#score = score;
   }
 
@@ -845,10 +846,10 @@ export class ThroughputAggregate {
     open.stable = null;
   }
 
-  trackStable(score: number, cfg: AdaptiveDurationConfig): boolean {
+  trackStable(score: number): boolean {
     const open = this.#open;
     if (!open || !open.record.complete) return false;
-    const stable = isStillStable(open.wasStable, score, cfg);
+    const stable = isStillStable(open.wasStable, score);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     open.wasStable = stable;
     return stable;

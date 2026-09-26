@@ -13,6 +13,7 @@ import {
 import { createUuid } from "../uuid";
 import {
   latencyLanes,
+  EARLY_FINISH,
   MIN_EVIDENCE_MS,
   STAGES,
   type LatencyLaneSnapshot,
@@ -232,12 +233,7 @@ export function incoherence(
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
       const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);
-      const floor = config?.adaptive.enabled
-        ? Math.max(
-            config.adaptive.minCoverageRatio,
-            1 - config.adaptive.maxPhaseReductionRatio,
-          )
-        : 0.75;
+      const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
       if (config && covered < plannedMs * floor)
         problems.push(
           `${name} covers ${Math.round(covered)} of ${plannedMs} ms`,

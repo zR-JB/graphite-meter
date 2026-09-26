@@ -18,15 +18,7 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     throughputTarget: "auto",
     latencyTarget: "auto",
   },
-  adaptive: {
-    enabled: true,
-    minCoverageRatio: 0.52,
-    stabilityThreshold: 0.86,
-    maxPhaseReductionRatio: 0.5,
-    minLatencySamples: 8,
-    minTransferSamples: 12,
-    confirmationMs: 1100,
-  },
+  adaptive: true,
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
@@ -45,25 +37,6 @@ export function clampDuration(key: DurationKey, value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value))
     return DEFAULT_CONFIG.duration[key];
   return value <= 0 ? 0 : Math.min(max, Math.max(min, Math.round(value)));
-}
-
-/** Adaptive thresholds are runner policy; persistence owns only the switch. */
-export function canonicalAdaptiveConfig(
-  value: unknown = DEFAULT_CONFIG.adaptive.enabled,
-): RunnerConfig["adaptive"] {
-  const enabled =
-    value == null
-      ? undefined
-      : typeof value === "object" && "enabled" in value
-        ? value.enabled
-        : value;
-  return {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled:
-      enabled === undefined
-        ? DEFAULT_CONFIG.adaptive.enabled
-        : enabled === true,
-  };
 }
 
 export const DURATION_PRESETS = {

@@ -33,7 +33,7 @@ export const baseConfig = {
     uploadMs: 1000,
     bidirectionalMs: 1000,
   },
-  adaptive: { enabled: false },
+  adaptive: false,
   transferStreams: { mode: "forced", count: 1 },
 };
 export interface Seed {

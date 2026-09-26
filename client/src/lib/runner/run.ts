@@ -29,6 +29,7 @@ import {
 } from "./paths";
 import { BUILD } from "../buildenv";
 import {
+  EARLY_FINISH,
   pathEvidence,
   ServerLatency,
   shouldExitPhase,
@@ -1125,12 +1126,11 @@ export class Run implements NetworkRunner {
   #updateStability(): boolean {
     const segment = this.#active;
     if (!segment || segment.phase === "warmup") return false;
-    const cfg = this.#cfg!.adaptive;
     const confidence = this.#confidence(segment.phase);
     if (segment.phase === "latency")
       for (const server of this.#latencyParticipants())
-        server.latency.trackStable(confidence.score, cfg);
-    else this.#aggregate.trackStable(confidence.score, cfg);
+        server.latency.trackStable(confidence.score);
+    else this.#aggregate.trackStable(confidence.score);
     this.#stabilityAt = performance.now();
     return this.#updateEarly(segment, segment.phase, confidence);
   }
@@ -1159,6 +1159,7 @@ export class Run implements NetworkRunner {
   ): boolean {
     const cfg = this.#cfg!;
     const eligible =
+      cfg.adaptive &&
       !this.#stalled &&
       this.#canComplete(phase) &&
       shouldExitPhase({
@@ -1167,7 +1168,6 @@ export class Run implements NetworkRunner {
         elapsedMs: this.#elapsed - segment.start,
         durationMs: segment.end - segment.start,
         confidence,
-        cfg: cfg.adaptive,
       });
     if (!eligible) {
       this.#cancelEarly();
@@ -1175,7 +1175,7 @@ export class Run implements NetworkRunner {
     }
     const index = this.#segments.indexOf(segment);
     if (this.#early.index !== index) this.#early = { index, at: this.#elapsed };
-    if (this.#elapsed - this.#early.at < cfg.adaptive.confirmationMs)
+    if (this.#elapsed - this.#early.at < EARLY_FINISH.confirmationMs)
       return false;
     const total = this.#segments.at(-1)?.end ?? 0;
     this.#segments = truncateSegmentAt(
