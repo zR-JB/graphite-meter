@@ -241,15 +241,16 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		moved   uint64
 		removed bool
 	}{{"silent", 0, true}, {"one byte", 1, false}} {
-		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}, Connection: &PreparedConnection{}}}
+		server := PreparedServer{Server: wire.ServerEntry{ID: "a"}, Connection: &PreparedConnection{}}
+		p := &participant{prepared: server}
 		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
 		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
 		co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
 		s := &sampler{c: co, stage: stage, results: make(chan sampledBoundary, 1)}
 		s.begin(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
-		server := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
+		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
 		sample := sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)}
-		s.observe(sample, []*stageServer{server})
+		s.observe(sample, []*stageServer{own})
 		if p.removed != c.removed {
 			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
 		}

@@ -99,14 +99,15 @@ func TestParseStages(t *testing.T) {
 func TestParsePing(t *testing.T) {
 	t.Parallel()
 	for raw, want := range map[string]time.Duration{
-		"fast":    80 * time.Millisecond,
-		"Slow":    600 * time.Millisecond,
-		"medium":  goclient.PingMedium,
-		"1500ms":  1500 * time.Millisecond,
-		"80ms":    goclient.PingFast,
-		"79ms":    0,
-		"instant": 0,
-		"0s":      0,
+		"fast":         80 * time.Millisecond,
+		"Slow":         600 * time.Millisecond,
+		"medium":       goclient.PingMedium,
+		"1500ms":       1500 * time.Millisecond,
+		"80ms":         goclient.PingFast,
+		"Reply-driven": goclient.PingReplyDriven,
+		"79ms":         0,
+		"instant":      0,
+		"0s":           0,
 	} {
 		got, err := parsePing(raw)
 		if got != want || (err != nil) != (want == 0) {

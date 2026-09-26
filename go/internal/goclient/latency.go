@@ -122,9 +122,21 @@ func (r *runner) measureLatency(
 		return LatencyStats{}, err
 	}
 	measureCtx, cancel := context.WithCancel(ctx)
+	replyDriven := r.cfg.PingInterval == PingReplyDriven
 	probes := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
-	if underLoad {
+	switch {
+	case underLoad:
 		probes.window = 2
+	case replyDriven:
+		probes.window = 4
+	}
+	var replied chan struct{}
+	pace := time.NewTicker(max(r.cfg.PingInterval, probeTimeoutFloor))
+	defer pace.Stop()
+	if replyDriven {
+		replied = make(chan struct{}, 1)
+	} else {
+		pace.Reset(r.cfg.PingInterval)
 	}
 	recvErr := make(chan error, 1)
 	var readers sync.WaitGroup
@@ -159,6 +171,10 @@ func (r *runner) measureLatency(
 				if rtt, timedOut, ok := probes.reply(f.ID, now, f.HandlingNanos); ok {
 					emit(now, LatencySample{RTT: rtt, TimedOut: timedOut})
 				}
+				select {
+				case replied <- struct{}{}:
+				default:
+				}
 			}
 		})
 	}
@@ -166,6 +182,9 @@ func (r *runner) measureLatency(
 		id, ok := probes.register(time.Now())
 		if !ok {
 			return nil
+		}
+		if replyDriven {
+			pace.Reset(probes.backup())
 		}
 		err := conn.Send(measureCtx, wire.EncodePing(id))
 		if err != nil {
@@ -180,7 +199,6 @@ func (r *runner) measureLatency(
 	gate.reportReady()
 	start := gate.start
 	var drain <-chan time.Time
-	ticker := time.Tick(r.cfg.PingInterval)
 	expiry := time.Tick(50 * time.Millisecond)
 	for {
 		select {
@@ -220,7 +238,9 @@ func (r *runner) measureLatency(
 			}
 			conn = fresh
 			startReader(conn)
-		case <-ticker:
+		case <-pace.C:
+			_ = send()
+		case <-replied:
 			_ = send()
 		case now := <-expiry:
 			for _, at := range probes.expire(now) {
@@ -261,6 +281,12 @@ func (l *probeLedger) timeout() time.Duration {
 		return probeTimeoutFloor
 	}
 	return min(max(l.srtt+4*max(l.rttvar, time.Millisecond), probeTimeoutFloor), probeTimeoutCeil)
+}
+
+func (l *probeLedger) backup() time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.timeout()
 }
 
 func (l *probeLedger) observe(rtt time.Duration) {

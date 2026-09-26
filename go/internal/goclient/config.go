@@ -45,6 +45,8 @@ type TransferStreamPolicy struct {
 	Forced       int
 }
 
+const PingReplyDriven time.Duration = -1
+
 const (
 	PingFast   = 80 * time.Millisecond
 	PingMedium = 250 * time.Millisecond
@@ -200,7 +202,9 @@ func (c Config) normalized() Config {
 		MaxTransferStreams,
 	)
 	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), MaxTransferStreams)
-	c.PingInterval = positive(c.PingInterval, d.PingInterval)
+	if c.PingInterval != PingReplyDriven {
+		c.PingInterval = positive(c.PingInterval, d.PingInterval)
+	}
 	return c
 }
 

@@ -59,7 +59,7 @@ func main() {
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
 		fmt.Sprintf("force exact streams per server and direction (0 = automatic; %d per direction across the run)",
 			goclient.MaxTransferStreams))
-	flag.StringVar(&ping, "ping", "", "ping cadence: fast, medium (default), slow, "+
+	flag.StringVar(&ping, "ping", "", "ping cadence: reply-driven, fast, medium (default), slow, "+
 		"or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency path)")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,
 		"measure latency while transfer stages are loaded")
@@ -188,7 +188,8 @@ func parsePing(raw string) (time.Duration, error) {
 	}
 	d, err := time.ParseDuration(name)
 	if err != nil || d < goclient.PingFast {
-		return 0, fmt.Errorf("use fast, medium, slow, or a duration of at least %v such as 400ms", goclient.PingFast)
+		return 0, fmt.Errorf("use reply-driven, fast, medium, slow, or a duration of at least %v such as 400ms",
+			goclient.PingFast)
 	}
 	return d, nil
 }

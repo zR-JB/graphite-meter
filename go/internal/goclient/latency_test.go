@@ -274,3 +274,22 @@ func TestProbeLedgerMeasuresOnlyTheWindow(t *testing.T) {
 		t.Fatalf("window population = %+v", stats)
 	}
 }
+
+func TestReplyDrivenProbesFollowRepliesAndTheirDeadline(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		answer func(uint32) bool
+		check  func(LatencyStats) bool
+	}{
+		{"answered", answerAll, func(s LatencyStats) bool { return s.Count >= 20 }},
+		{"silent", answerNone, func(s LatencyStats) bool { return s.Timeouts+s.Unresolved <= 5 }},
+	} {
+		r := testRunner(newPingServer(t, c.answer, 5*time.Millisecond))
+		r.cfg.PingInterval = PingReplyDriven
+		stats, err := r.measureNow(t.Context(), time.Second)
+		if err != nil || !c.check(stats) {
+			t.Errorf("%s: reply-driven window = %+v, %v", c.name, stats, err)
+		}
+	}
+}

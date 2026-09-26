@@ -252,13 +252,17 @@ type cadence struct {
 
 var streamRange = fmt.Sprintf("1 to %d", goclient.MaxTransferStreams)
 
-var cadences = []cadence{{"Fast", goclient.PingFast}, {"Medium", goclient.PingMedium}, {"Slow", goclient.PingSlow}}
+var cadences = []cadence{{"Reply-driven", goclient.PingReplyDriven}, {"Fast", goclient.PingFast},
+	{"Medium", goclient.PingMedium}, {"Slow", goclient.PingSlow}}
 
 func cadenceIndex(interval time.Duration) int {
 	return slices.IndexFunc(cadences, func(c cadence) bool { return c.interval == interval })
 }
 
 func cadenceLabel(interval time.Duration) string {
+	if interval == goclient.PingReplyDriven {
+		return "Reply-driven"
+	}
 	name := "Custom"
 	if i := cadenceIndex(interval); i >= 0 {
 		name = cadences[i].name
