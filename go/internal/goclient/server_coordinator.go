@@ -73,7 +73,12 @@ type coordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-const checkpointBudget = 1500 * time.Millisecond
+const (
+	checkpointBudget      = 1500 * time.Millisecond
+	finalCheckpointBudget = 500 * time.Millisecond
+)
+
+var errHandover = errors.New("stage handed over")
 
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) {
 	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
@@ -96,13 +101,17 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 		connection := server.Connection
 		own.grantOrigins = connection.grantOrigins
 		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol)
+		// Upload lanes get their own connection so control requests and download reads never queue behind them.
+		up, closeUp := protocolClient(own, connection.ThroughputTarget.Protocol)
 		ws, closeWS := websocketClient(own)
 		defer closeHTTP()
+		defer closeUp()
 		defer closeWS()
 		r := &runner{
 			cfg:           own,
 			streams:       streams[server.Server.ID],
 			http:          hc,
+			uploadHTTP:    up,
 			websocketHTTP: ws,
 			target:        new(connection.ThroughputTarget),
 			latencyTarget: connection.LatencyTarget,
@@ -163,8 +172,9 @@ func (c *coordinator) publish() {
 
 func (c *coordinator) run(ctx context.Context) error {
 	c.publish()
-	for _, stage := range c.cfg.Plan() {
-		if err := c.stage(ctx, stage); err != nil {
+	plan := c.cfg.Plan()
+	for i, stage := range plan {
+		if err := c.stage(ctx, stage, i < len(plan)-1); err != nil {
 			return err
 		}
 		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseFinished})
@@ -269,7 +279,7 @@ const (
 	phaseMeasure
 )
 
-func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
+func (c *coordinator) stage(ctx context.Context, stage StagePlan, handover bool) (stageErr error) {
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	transfer := len(stage.Directions) > 0
 	var roles []string
@@ -312,9 +322,12 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	defer func() {
 		sampling.stop()
 		if normalEnd {
-			// Loaded probes sent inside the window may still reply; transfers stop first.
+			end := context.Canceled
+			if handover {
+				end = errHandover
+			}
 			for _, s := range servers {
-				s.cancelTransfer(context.Canceled)
+				s.cancelTransfer(end)
 			}
 			work.Wait()
 		}
@@ -455,7 +468,7 @@ func (c *coordinator) openWindow(
 	outcomes <-chan resourceOutcome,
 	handle func(resourceOutcome) error,
 ) (time.Time, measurementBoundary, error) {
-	initial, _ := c.capture(ctx, stage, c.active())
+	initial, _ := c.capture(ctx, stage, c.active(), checkpointBudget)
 	if stage.Name == StageUpload || stage.Name == StageBidirectional {
 		for _, s := range servers {
 			if !s.removed && initial.up[s.id()] == nil {
@@ -528,9 +541,13 @@ func (s *sampler) capture(final bool) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	s.cancel = cancel
 	participants, epoch := s.c.active(), s.epoch
+	budget := checkpointBudget
+	if final {
+		budget = finalCheckpointBudget
+	}
 	s.work.Go(func() {
 		defer cancel()
-		boundary, misses := s.c.capture(ctx, s.stage, participants)
+		boundary, misses := s.c.capture(ctx, s.stage, participants, budget)
 		s.results <- sampledBoundary{boundary, misses, epoch, final}
 	})
 }
@@ -617,6 +634,7 @@ func (c *coordinator) capture(
 	ctx context.Context,
 	stage StagePlan,
 	servers []*participant,
+	budget time.Duration,
 ) (measurementBoundary, map[string]error) {
 	boundary := measurementBoundary{
 		at:         time.Since(c.started),
@@ -633,7 +651,7 @@ func (c *coordinator) capture(
 	if stage.Name != StageUpload && stage.Name != StageBidirectional {
 		return boundary, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, checkpointBudget)
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	snapshots := make([]*ReceiverSnapshot, len(servers))
 	errs := make([]error, len(servers))
@@ -695,6 +713,8 @@ func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 				if i := slices.IndexFunc(components, mine); i >= 0 {
 					own.MeanBps, own.Elapsed = components[i].BytesPerSec, components[i].Duration
 					own.Unavailable = components[i].Duration < minimumSurvivorEvidence
+					own.PeakBps = c.aggregate.serverPeaks[componentKey{server.id(), dir}]
+					own.Samples = c.aggregate.serverSamples[server.id()]
 					break
 				}
 			}

@@ -231,6 +231,11 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 		if !slices.ContainsFunc(server.Results, measured) {
 			t.Fatalf("no independent loaded latency: %+v", server)
 		}
+		for _, own := range server.Results {
+			if own.Direction != "" && (own.PeakBps < own.MeanBps || own.Samples == 0) {
+				t.Fatalf("per-server result lost its peak or samples: %+v", own)
+			}
+		}
 	}
 	window := details.Intervals[len(details.Intervals)-1].Window
 	if len(window.Down) != 2 || len(window.Up) != 2 {

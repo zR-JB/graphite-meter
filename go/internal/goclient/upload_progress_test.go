@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -192,4 +193,33 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestHandoverWaitsForTheReceiverToSettle(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		moving int
+		want   time.Duration
+	}{
+		{"settles", 3, 3 * uploadSettleQuiet},
+		{"bounded", 1 << 20, uploadSettleBound},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			polls := 0
+			r := &runner{target: fetchTarget("http://receiver.test"), coordinated: &participantCounters{},
+				teardown: t.Context()}
+			r.coordinated.upload.Store(newUploadProgress(t.Context(), "id"))
+			r.http = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				polls++
+				body := fmt.Sprintf(`{"bytes":%d,"nanos":%d}`, min(polls, c.moving)*1000, polls)
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			start := time.Now()
+			r.settleUpload()
+			if got := time.Since(start); got != c.want {
+				t.Errorf("%s: settled after %v, want %v", c.name, got, c.want)
+			}
+		})
+	}
 }

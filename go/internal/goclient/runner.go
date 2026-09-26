@@ -288,6 +288,7 @@ type runner struct {
 	streams       streamCounts
 	http          *http.Client
 	websocketHTTP *http.Client
+	uploadHTTP    *http.Client
 	target        *wire.ThroughputTarget
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)

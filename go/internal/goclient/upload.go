@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -36,7 +37,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	}
 	progressURL = withUploadID(progressURL, id)
 	progress := newUploadProgress(ctx, id)
-	defer r.endUpload(progress, progressURL)
+	defer func() { r.endUpload(progress, progressURL, errors.Is(context.Cause(ctx), errHandover)) }()
 
 	lane := func(ctx context.Context, i int, ready func()) error {
 		return r.uploadLane(ctx, id, i, block, ready)
@@ -107,7 +108,7 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = transferBytesPerStream
-		res, err := r.http.Do(req)
+		res, err := cmp.Or(r.uploadHTTP, r.http).Do(req)
 		if err != nil {
 			return body.moved.Load(), err
 		}
@@ -317,8 +318,29 @@ func (r *runner) openUploadFeed(lifetime, recovery context.Context, target strin
 	return progressFeed{res.Body, func() { _ = res.Body.Close(); cancel() }}, nil
 }
 
-func (r *runner) endUpload(p *uploadProgress, target string) {
+const (
+	uploadSettleQuiet = 250 * time.Millisecond
+	uploadSettleBound = 4 * time.Second
+)
+
+func (r *runner) settleUpload() {
+	ctx, cancel := context.WithTimeout(r.teardown, uploadSettleBound)
+	defer cancel()
+	var last *ReceiverSnapshot
+	for {
+		snapshot, err := r.receiverCheckpointOnce(ctx)
+		if err != nil || last != nil && snapshot.Bytes == last.Bytes || !pause(ctx, uploadSettleQuiet) {
+			return
+		}
+		last = snapshot
+	}
+}
+
+func (r *runner) endUpload(p *uploadProgress, target string, settle bool) {
 	defer p.close()
+	if settle {
+		r.settleUpload()
+	}
 	ctx, cancel := context.WithTimeout(r.teardown, time.Second)
 	defer cancel()
 	if req, err := http.NewRequestWithContext(ctx, http.MethodDelete, target, nil); err == nil {
