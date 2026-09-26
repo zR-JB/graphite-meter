@@ -240,16 +240,15 @@
     });
     const { outcome } = record.result;
     const metrics = columns.map((column) => metric(record, column));
+    const time = new Date(record.completedAt).toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
     return {
       record,
       exact,
-      primary: recent ?? dateLabel(record.completedAt),
-      secondary: recent
-        ? dateLabel(record.completedAt)
-        : new Date(record.completedAt).toLocaleTimeString(undefined, {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
+      primary: byDay ? time : `${dateLabel(record.completedAt)}, ${time}`,
+      secondary: recent,
       outcome,
       metrics,
       label: [
@@ -272,6 +271,20 @@
       return;
     event.preventDefault();
     onNavigate(selectedId === id ? null : id);
+  }
+
+  // Sorted by date, rows group under their day and show only the time.
+  const byDay = $derived(sort === "date");
+  function dayHeading(value: number): string {
+    const day = (time: number) => new Date(time).toDateString();
+    if (day(value) === day(renderedAt)) return "Today";
+    if (day(value) === day(renderedAt - 86_400_000)) return "Yesterday";
+    return new Date(value).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
   }
 
   function dateLabel(value: number): string {
@@ -468,7 +481,11 @@
             {/each}
           </div>
           <ol aria-label="Saved results">
-            {#each visible as record (record.id)}
+            {#each visible as record, index (record.id)}
+              {@const day = byDay ? dayHeading(record.completedAt) : ""}
+              {#if day && (index === 0 || day !== dayHeading(visible[index - 1].completedAt))}
+                <li class="day caps" aria-hidden="true">{day}</li>
+              {/if}
               <li>
                 <svelte:boundary>
                   {@const row = historyRow(record)}
@@ -486,7 +503,7 @@
                         title={row.exact}
                       >
                         <strong>{row.primary}</strong>
-                        <small>{row.secondary}</small>
+                        {#if row.secondary}<small>{row.secondary}</small>{/if}
                       </time>
                       {#if row.outcome !== "complete"}<span
                           class="badge"
@@ -760,8 +777,12 @@
   li {
     border-bottom: 1px solid var(--border-subtle);
   }
+  li.day {
+    display: block;
+    padding: var(--space-4) 10px var(--space-1);
+  }
   .result-row {
-    min-height: 54px;
+    min-height: 40px;
     border-radius: var(--r-well);
     transition: var(--transition-control);
   }
@@ -785,20 +806,19 @@
     gap: var(--space-2);
   }
   time {
+    display: flex;
     flex: 1;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-2);
     min-width: 0;
-  }
-  time :is(strong, small) {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
   time strong {
-    font-size: var(--type-xs);
+    font: var(--w-strong) var(--type-xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
   time small {
-    margin-top: 2px;
     color: var(--text-muted);
     font: var(--type-2xs) var(--font-mono);
   }
@@ -836,21 +856,20 @@
     ol {
       gap: 6px;
     }
-    li {
+    li:not(.day) {
       border: 1px solid var(--border);
       border-radius: var(--r-chrome);
       background: var(--sheen), var(--surface-1);
       box-shadow: var(--elev-tile);
     }
+    li.day {
+      border: 0;
+      padding: var(--space-3) var(--space-1) 0;
+    }
     .date-cell {
       grid-column: 1 / -1;
       padding-block: 6px 5px;
       border-bottom: 1px solid var(--border-subtle);
-    }
-    time {
-      display: flex;
-      align-items: baseline;
-      gap: var(--space-2);
     }
     .metric-cell {
       gap: 3px;
