@@ -219,7 +219,7 @@ func TestNavigationWrapsSectionsAndClampsRows(t *testing.T) {
 	}{
 		{"shift+tab", 2, 0}, {"tab", 0, 0}, {"up", 0, 0},
 		{"down", 0, 1}, {"j", 0, 2}, {"right", 1, 2}, {"left", 0, 2},
-		{"tab", 1, 2}, {"tab", 2, 2}, {"down", 2, 3}, {"down", 2, 4}, {"down", 2, 4},
+		{"tab", 1, 2}, {"tab", 2, 2}, {"down", 2, 3}, {"down", 2, 4}, {"down", 2, 5}, {"down", 2, 5},
 	} {
 		m, _ = modelAndCmd(m.Update(press(step.key)))
 		if m.section != step.section || m.row != step.row {
@@ -238,9 +238,10 @@ func TestRowActivation(t *testing.T) {
 		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, true},
 		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, true},
 		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == sections[1].rows[7] }, false},
-		{2, 0, func(m model) bool { return m.cfg.PingInterval == 600*time.Millisecond }, true},
-		{2, 1, func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
-		{2, 3, func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
+		{2, 0, func(m model) bool { return m.cfg.PingInterval == goclient.PingFast }, true},
+		{2, 1, func(m model) bool { return m.cfg.LoadedPingInterval == goclient.PingSlow }, true},
+		{2, 2, func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
+		{2, 4, func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
 		{0, 0, func(m model) bool { return m.edit != nil && m.edit.row == catalogueRow }, false},
 	} {
 		m := testModel(t)

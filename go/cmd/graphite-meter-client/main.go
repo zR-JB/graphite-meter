@@ -26,7 +26,7 @@ func main() {
 	}
 
 	cfg := goclient.DefaultConfig()
-	var stages, ping string
+	var stages, ping, loadedPing string
 	var showVersion, report bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
 	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)",
@@ -59,8 +59,10 @@ func main() {
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
 		fmt.Sprintf("force exact streams per server and direction (0 = automatic; %d per direction across the run)",
 			goclient.MaxTransferStreams))
-	flag.StringVar(&ping, "ping", "", "ping cadence: reply-driven, fast, medium (default), slow, "+
-		"or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency path)")
+	cadence := "reply-driven, fast, medium, slow, or a duration (up to " + goclient.MaxPingInterval.String() +
+		" over the WebTransport latency path)"
+	flag.StringVar(&ping, "ping", "", "idle ping cadence (default reply-driven): "+cadence)
+	flag.StringVar(&loadedPing, "loaded-ping", "", "loaded ping cadence (default medium): "+cadence)
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,
 		"measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
@@ -77,12 +79,17 @@ func main() {
 		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
 	}
 	cfg.Stages = parseStages(stages)
-	if ping != "" {
-		interval, err := parsePing(ping)
-		if err != nil {
-			fail(2, fmt.Errorf("-ping: %w", err))
+	for name, raw := range map[string]string{"-ping": ping, "-loaded-ping": loadedPing} {
+		interval, err := parsePing(raw)
+		switch {
+		case raw == "":
+		case err != nil:
+			fail(2, fmt.Errorf("%s: %w", name, err))
+		case name == "-ping":
+			cfg.PingInterval = interval
+		default:
+			cfg.LoadedPingInterval = interval
 		}
-		cfg.PingInterval = interval
 	}
 	if err := checkSettings(cfg); err != nil {
 		fail(2, err)

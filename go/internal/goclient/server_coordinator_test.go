@@ -192,7 +192,7 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Bidirectional: true}
 	cfg.LoadedLatency = true
-	cfg.PingInterval = 25 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var mu sync.Mutex
 	var phases []Phase
@@ -251,7 +251,7 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	cfg.Stages = StageSet{Bidirectional: true}
 	cfg.BidirectionalDuration = time.Second
 	cfg.LoadedLatency = true
-	cfg.PingInterval = 25 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var measuredAt, finishedAt time.Time
 	var measureEventLag time.Duration

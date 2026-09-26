@@ -773,7 +773,7 @@ func TestScrollingRevealsTheWholeBody(t *testing.T) {
 func TestResetAsksFirst(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.cfg.Warmup, m.section, m.row = time.Second, 2, 4
+	m.cfg.Warmup, m.section, m.row = time.Second, 2, 5
 	m, _ = modelAndCmd(m.Update(press("enter")))
 	if m.cfg.Warmup != time.Second || !m.resetPrompt {
 		t.Fatal("reset did not ask first")

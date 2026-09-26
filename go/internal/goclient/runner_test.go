@@ -66,6 +66,7 @@ func TestRunStagesEndToEnd(t *testing.T) {
 				DownloadDuration:      time.Second,
 				BidirectionalDuration: time.Second,
 				PingInterval:          20 * time.Millisecond,
+				LoadedPingInterval:    20 * time.Millisecond,
 				TransferStreams:       TransferStreamPolicy{Forced: c.streams},
 			}
 			var mu sync.Mutex
@@ -343,7 +344,7 @@ func TestLoadedLatencyDrainsSilentProbesToTimeouts(t *testing.T) {
 	var transferResult *Result
 	r := testRunner(newTransferServer(t))
 	r.latencyTarget = new(testChannel("silent", newPingServer(t, answerNone, 0).URL, false))
-	r.cfg.LoadedLatency, r.cfg.PingInterval = true, 10*time.Millisecond
+	r.cfg.LoadedLatency, r.cfg.LoadedPingInterval = true, 10*time.Millisecond
 	r.emit = func(e Event) {
 		if e.Kind == EventResult {
 			transferResult = e.Result

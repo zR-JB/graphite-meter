@@ -122,7 +122,11 @@ func (r *runner) measureLatency(
 		return LatencyStats{}, err
 	}
 	measureCtx, cancel := context.WithCancel(ctx)
-	replyDriven := r.cfg.PingInterval == PingReplyDriven
+	interval := r.cfg.PingInterval
+	if underLoad {
+		interval = r.cfg.LoadedPingInterval
+	}
+	replyDriven := interval == PingReplyDriven
 	probes := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
 	switch {
 	case underLoad:
@@ -131,12 +135,12 @@ func (r *runner) measureLatency(
 		probes.window = 4
 	}
 	var replied chan struct{}
-	pace := time.NewTicker(max(r.cfg.PingInterval, probeTimeoutFloor))
+	pace := time.NewTicker(max(interval, probeTimeoutFloor))
 	defer pace.Stop()
 	if replyDriven {
 		replied = make(chan struct{}, 1)
 	} else {
-		pace.Reset(r.cfg.PingInterval)
+		pace.Reset(interval)
 	}
 	recvErr := make(chan error, 1)
 	var readers sync.WaitGroup

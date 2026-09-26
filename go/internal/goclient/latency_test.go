@@ -198,6 +198,7 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				var details *RunDetails
 				r := testRunner(srv)
 				r.cfg.PingInterval, r.cfg.LoadedLatency = 20*time.Millisecond, stage == StageDownload
+				r.cfg.LoadedPingInterval = r.cfg.PingInterval
 				r.emit = func(e Event) {
 					if e.Kind == EventResult {
 						throughput = e.Result
@@ -239,7 +240,7 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 func TestLoadedProbesKeepTwoInFlight(t *testing.T) {
 	t.Parallel()
 	r := testRunner(newPingServer(t, answerNone, 0))
-	r.cfg.PingInterval = 10 * time.Millisecond
+	r.cfg.LoadedPingInterval = 10 * time.Millisecond
 	start := make(chan struct{})
 	close(start)
 	stats, err := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
@@ -291,5 +292,18 @@ func TestReplyDrivenProbesFollowRepliesAndTheirDeadline(t *testing.T) {
 		if err != nil || !c.check(stats) {
 			t.Errorf("%s: reply-driven window = %+v, %v", c.name, stats, err)
 		}
+	}
+}
+
+func TestIdleAndLoadedStagesKeepTheirOwnCadence(t *testing.T) {
+	t.Parallel()
+	r := testRunner(newPingServer(t, answerAll, 0))
+	r.cfg.PingInterval, r.cfg.LoadedPingInterval = PingSlow, 10*time.Millisecond
+	start := make(chan struct{})
+	close(start)
+	idle, err := r.measureLatency(t.Context(), StageLatency, false, captureWindow, testStageGate(start))
+	loaded, loadedErr := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
+	if err != nil || loadedErr != nil || idle.Count > 2 || loaded.Count < 10 {
+		t.Fatalf("idle %d replies (%v), loaded %d replies (%v)", idle.Count, err, loaded.Count, loadedErr)
 	}
 }

@@ -109,15 +109,12 @@ var (
 	warmupRow = span("Warmup", "per stage, before the window opens", func(c *goclient.Config) *time.Duration {
 		return &c.Warmup
 	})
-	cadenceRow = &setting{
-		view: func(m model) setupRow {
-			return setupRow{label: "Ping cadence", value: cadenceLabel(m.cfg.PingInterval), note: "probe interval"}
-		},
-		act: func(m *model) {
-			m.cfg.PingInterval = cadences[(cadenceIndex(m.cfg.PingInterval)+1)%len(cadences)].interval
-			m.notice = "Ping cadence: " + cadenceLabel(m.cfg.PingInterval) + "."
-		},
-	}
+	idleCadenceRow = cadenceSetting("Idle ping cadence", func(c *goclient.Config) *time.Duration {
+		return &c.PingInterval
+	})
+	loadedCadenceRow = cadenceSetting("Loaded ping cadence", func(c *goclient.Config) *time.Duration {
+		return &c.LoadedPingInterval
+	})
 	forceStreamsRow = &setting{
 		view: func(m model) setupRow {
 			return setupRow{label: "Force exact stream count", value: m.st.checkbox(m.cfg.TransferStreams.Forced > 0),
@@ -200,7 +197,7 @@ var sections = []struct {
 			return &c.BidirectionalDuration
 		}),
 	}},
-	{"Advanced", []*setting{cadenceRow, forceStreamsRow, streamsRow,
+	{"Advanced", []*setting{idleCadenceRow, loadedCadenceRow, forceStreamsRow, streamsRow,
 		toggle("Skip TLS verify", "unsafe; refuses sign-in", func(c *goclient.Config) *bool {
 			return &c.InsecureSkipTLSVerify
 		}), resetRow}},
@@ -289,8 +286,8 @@ func shortOrigin(base, target string) string {
 
 func preparationInputs(c goclient.Config) string {
 	return fmt.Sprint(c.BaseURL, c.ServerIDs, c.ThroughputTarget, c.ThroughputProtocol, c.ThroughputTransport,
-		c.LatencyTarget, c.LatencyTransport, c.Stages, c.LoadedLatency, c.PingInterval, c.TransferStreams,
-		c.InsecureSkipTLSVerify)
+		c.LatencyTarget, c.LatencyTransport, c.Stages, c.LoadedLatency, c.PingInterval, c.LoadedPingInterval,
+		c.TransferStreams, c.InsecureSkipTLSVerify)
 }
 
 func (m model) recheckIfPathsChanged(before goclient.Config) (tea.Model, tea.Cmd) {
@@ -398,6 +395,19 @@ func checkSettings(cfg goclient.Config) error {
 		}
 	}
 	return nil
+}
+
+func cadenceSetting(label string, field func(*goclient.Config) *time.Duration) *setting {
+	return &setting{
+		view: func(m model) setupRow {
+			return setupRow{label: label, value: cadenceLabel(*field(&m.cfg)), note: "probe spacing"}
+		},
+		act: func(m *model) {
+			interval := field(&m.cfg)
+			*interval = cadences[(cadenceIndex(*interval)+1)%len(cadences)].interval
+			m.notice = label + ": " + cadenceLabel(*interval) + "."
+		},
+	}
 }
 
 func pathSetting(label string, latency bool, field func(*goclient.Config) (*string, *string)) *setting {

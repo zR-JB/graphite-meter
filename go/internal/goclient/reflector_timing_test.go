@@ -126,8 +126,9 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 			}))
 			defer srv.Close()
 			r := &runner{cfg: Config{
-				BaseURL:      srv.URL,
-				PingInterval: 10 * time.Millisecond,
+				BaseURL:            srv.URL,
+				PingInterval:       10 * time.Millisecond,
+				LoadedPingInterval: 10 * time.Millisecond,
 			}.normalized(), http: srv.Client(), emit: func(event Event) {
 				if event.Kind != EventLatency || event.Latency.TimedOut {
 					return

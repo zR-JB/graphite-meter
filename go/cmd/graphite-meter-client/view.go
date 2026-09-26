@@ -417,7 +417,8 @@ func (m model) testView(w int, compact bool) string {
 		field("Throughput", m.st.value.Render(strings.Join(throughputs, " / ")))
 		field("Latency", m.st.value.Render(latency))
 		field("Streams", m.st.value.Render(streams))
-		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · ping " + cadenceLabel(m.cfg.PingInterval)
+		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · ping " + cadenceLabel(m.cfg.PingInterval) +
+			" / loaded " + cadenceLabel(m.cfg.LoadedPingInterval)
 		field("Timing", m.st.value.Render(timing))
 	}
 	lines = append(lines, "")

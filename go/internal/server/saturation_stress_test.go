@@ -146,7 +146,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	cfg.Stages = goclient.StageSet{Latency: true}
 	cfg.Warmup = 200 * time.Millisecond
 	cfg.LatencyDuration = 6 * time.Second
-	cfg.PingInterval = 20 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 20*time.Millisecond, 20*time.Millisecond
 	var rtts []time.Duration
 	var lost, total int
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

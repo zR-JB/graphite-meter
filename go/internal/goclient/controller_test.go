@@ -70,10 +70,11 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 			srv := newTransferServer(t)
 			defer srv.Close()
 			cfg := Config{
-				BaseURL:         srv.URL,
-				Stages:          StageSet{Latency: true},
-				LatencyDuration: 10 * time.Second,
-				PingInterval:    time.Millisecond,
+				BaseURL:            srv.URL,
+				Stages:             StageSet{Latency: true},
+				LatencyDuration:    10 * time.Second,
+				PingInterval:       time.Millisecond,
+				LoadedPingInterval: time.Millisecond,
 			}
 			owner := NewController(t.Context())
 			defer owner.Close()

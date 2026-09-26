@@ -48,10 +48,11 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			}))
 			defer srv.Close()
 			cfg := Config{
-				BaseURL:       srv.URL,
-				Warmup:        80 * time.Millisecond,
-				LoadedLatency: true,
-				PingInterval:  10 * time.Millisecond,
+				BaseURL:            srv.URL,
+				Warmup:             80 * time.Millisecond,
+				LoadedLatency:      true,
+				PingInterval:       10 * time.Millisecond,
+				LoadedPingInterval: 10 * time.Millisecond,
 			}.normalized()
 			var mu sync.Mutex
 			var phases []Event
@@ -136,7 +137,8 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			)
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
-			cfg := Config{BaseURL: srv.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond}.normalized()
+			cfg := Config{BaseURL: srv.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond,
+				LoadedPingInterval: 10 * time.Millisecond}.normalized()
 			var mu sync.Mutex
 			seen := map[Direction]bool{}
 			var results []Result

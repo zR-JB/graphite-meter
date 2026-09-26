@@ -116,8 +116,8 @@ func (p TransferStreamPolicy) Label(protocol, transport string) string {
 
 const MaxPingInterval = wire.WTIdleBound / 2
 
-func validatePingInterval(d time.Duration) error {
-	if d > MaxPingInterval {
+func validatePingInterval(c Config) error {
+	if max(c.PingInterval, c.LoadedPingInterval) > MaxPingInterval {
 		return fmt.Errorf("ping interval must be at most %v, half the server's %v WebTransport idle bound",
 			MaxPingInterval, wire.WTIdleBound)
 	}
@@ -135,7 +135,7 @@ func (c Config) Validate() error {
 	case !slices.Contains([]string{"auto", ws, wt}, c.LatencyTransport):
 		return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", c.LatencyTransport, ws, wt)
 	case c.LatencyTransport == wire.TransportWebTransport:
-		return validatePingInterval(c.PingInterval)
+		return validatePingInterval(c)
 	}
 	return nil
 }
@@ -156,6 +156,7 @@ type Config struct {
 	BidirectionalDuration time.Duration
 	TransferStreams       TransferStreamPolicy
 	PingInterval          time.Duration
+	LoadedPingInterval    time.Duration
 	LoadedLatency         bool
 	InsecureSkipTLSVerify bool
 
@@ -179,7 +180,8 @@ func DefaultConfig() Config {
 		UploadDuration:        10 * time.Second,
 		BidirectionalDuration: 10 * time.Second,
 		TransferStreams:       TransferStreamPolicy{AutomaticMax: 6},
-		PingInterval:          PingMedium,
+		PingInterval:          PingReplyDriven,
+		LoadedPingInterval:    PingMedium,
 		LoadedLatency:         true,
 	}
 }
@@ -203,7 +205,10 @@ func (c Config) normalized() Config {
 	)
 	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), MaxTransferStreams)
 	if c.PingInterval != PingReplyDriven {
-		c.PingInterval = positive(c.PingInterval, d.PingInterval)
+		c.PingInterval = positive(c.PingInterval, PingMedium)
+	}
+	if c.LoadedPingInterval != PingReplyDriven {
+		c.LoadedPingInterval = positive(c.LoadedPingInterval, d.LoadedPingInterval)
 	}
 	return c
 }

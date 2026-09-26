@@ -62,7 +62,7 @@ func TestConfigNormalizedInvariants(t *testing.T) {
 	d := DefaultConfig()
 	if got := (Config{}).normalized(); got.BaseURL != d.BaseURL ||
 		got.LatencyDuration != d.LatencyDuration ||
-		got.PingInterval != d.PingInterval ||
+		got.PingInterval != PingMedium || got.LoadedPingInterval != d.LoadedPingInterval ||
 		got.TransferStreams != d.TransferStreams ||
 		got.Warmup != 0 {
 		t.Fatalf("empty config normalized to %+v", got)
