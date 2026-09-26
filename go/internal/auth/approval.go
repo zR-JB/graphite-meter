@@ -360,10 +360,3 @@ func (p Principal) measurementContext() context.Context {
 	}
 	return p.session.ctx
 }
-
-func (p Principal) MeasurementOwner() string {
-	if p.browserOrigin() == "" {
-		return ""
-	}
-	return "browser-grant:" + p.grant.id
-}

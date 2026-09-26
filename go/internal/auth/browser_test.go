@@ -212,7 +212,7 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	second, _ := approveBrowser(t, s, raw, sess)
 	p, _ := s.authenticateGrant(grant)
 	q, _ := s.authenticateGrant(second)
-	if p.MeasurementOwner() == q.MeasurementOwner() || p.session != q.session {
+	if p.grant.id == q.grant.id || p.session != q.session {
 		t.Fatal("upload access or parent budget is not correctly scoped")
 	}
 }

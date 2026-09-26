@@ -331,8 +331,9 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
   handlers, and session duration ≥ operation duration.
-- A client identity is the signed-in subject (each login for sessions), otherwise an IPv4 address or IPv6 /64 whose
-  /56 and /48 share two and four times its limit; connections and upload receivers are counted the same way.
+- A client identity is a login or measurement grant, whose subject shares twice its limit (every password login is
+  the one operator subject); otherwise an IPv4 address or IPv6 /64 whose /56 and /48 share two and four times its
+  limit. Upload receivers are counted the same way, and connections by address.
 - A direct client address holds at most 8 QUIC connections and a browser opens one per WebTransport session, so a
   larger per-client session share only helps a login that spans addresses.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at a

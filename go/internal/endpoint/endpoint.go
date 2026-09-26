@@ -19,11 +19,7 @@ func uploadClientOf(r *http.Request, trusted []netip.Prefix) uploadClient {
 	if !ok {
 		return uploadClient{}
 	}
-	c := uploadClient{owner: keys[0], keys: keys}
-	if p, _ := auth.PrincipalFromContext(r.Context()); p.MeasurementOwner() != "" {
-		c.owner = p.MeasurementOwner()
-	}
-	return c
+	return uploadClient{owner: keys[0], keys: keys}
 }
 
 func noStoreJSON(w http.ResponseWriter) {

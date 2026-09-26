@@ -28,6 +28,41 @@ func (s *authenticatedStack) signOut(t *testing.T) {
 	res.Body.Close()
 }
 
+// Every password login is the one operator subject, so each login holds its own share and the subject twice one.
+func TestPasswordLoginsShareTheOperatorSubjectBoundedly(t *testing.T) {
+	t.Parallel()
+	s := newAuthenticatedStack(t)
+	s.e.admission.mu.Lock()
+	s.e.admission.requests.clientLimit = 1
+	s.e.admission.mu.Unlock()
+	hold := func(session *http.Cookie) int {
+		req, _ := http.NewRequest(http.MethodGet, s.origin+"/download?bytes=1073741824", nil)
+		req.Header.Set("Origin", s.origin)
+		req.AddCookie(session)
+		res, err := s.uiClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res.StatusCode
+	}
+	first := s.session
+	if status := hold(first); status != http.StatusOK {
+		t.Fatalf("first login = %d", status)
+	}
+	if status := hold(first); status != http.StatusTooManyRequests {
+		t.Fatalf("a login past its share = %d, want 429", status)
+	}
+	s.signIn(t)
+	if status := hold(s.session); status != http.StatusOK {
+		t.Fatalf("a second tester behind the same subject = %d, want its own share", status)
+	}
+	s.signIn(t)
+	if status := hold(s.session); status != http.StatusTooManyRequests {
+		t.Fatalf("a third login past the subject's double share = %d, want 429", status)
+	}
+}
+
 func (s *authenticatedStack) mintUpload(t *testing.T, bearer string) string {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, s.origin+"/upload/session", nil)

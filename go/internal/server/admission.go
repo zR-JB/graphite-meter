@@ -128,9 +128,6 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 	request := spec.Kind == route.HTTP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		keys, ok := auth.ClientKeys(r, trusted)
-		if session {
-			keys, ok = auth.SessionKeys(r, trusted)
-		}
 		if !ok {
 			authn.MeasurementCORS(w.Header(), r)
 			http.Error(w, "ambiguous client address", http.StatusBadRequest)

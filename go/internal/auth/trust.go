@@ -63,24 +63,21 @@ func requestHostname(host string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 }
 
-// ClientKeys keys every per-client budget by principal or address; ambiguous proxy evidence has no key.
+// ClientKeys keys every per-client budget: a grant or login, then its subject at twice the share, else the
+// address keys. Password logins share one subject, so each login needs its own share; ambiguous evidence has none.
 func ClientKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
 	if p, ok := PrincipalFromContext(r.Context()); ok {
-		return []string{"principal:" + p.Subject}, true
+		first := "login:" + p.session.id
+		if p.grant != nil {
+			first = "grant:" + p.grant.id
+		}
+		return []string{first, "principal:" + p.Subject}, true
 	}
 	client, ok := transport.ResolveClientAddress(r, trusted)
 	if !ok {
 		return nil, false
 	}
 	return transport.AddressKeys(client.Addr), true
-}
-
-// SessionKeys keys a session budget by login, so each login of a subject holds its own share.
-func SessionKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
-	if p, _ := PrincipalFromContext(r.Context()); p.session != nil {
-		return []string{"login:" + p.session.id}, true
-	}
-	return ClientKeys(r, trusted)
 }
 
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {

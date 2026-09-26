@@ -26,6 +26,7 @@ import (
 // authenticatedStack brings up the three real transports behind one auth service, the way Run wires them.
 type authenticatedStack struct {
 	authn                        *auth.Service
+	e                            *endpoints
 	origin, h2URL, h3URL         string
 	session, csrf                *http.Cookie
 	uiClient, h2Client, h3Client *http.Client
@@ -98,7 +99,7 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 
 	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	s := &authenticatedStack{
-		authn: authn, origin: origin,
+		authn: authn, e: e, origin: origin,
 		h2URL:    "https://" + h2Ln.Addr().String(),
 		h3URL:    "https://" + cfg.Native.H3,
 		uiClient: &http.Client{Transport: uiTransport, CheckRedirect: noRedirect},
