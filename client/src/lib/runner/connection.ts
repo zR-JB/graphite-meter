@@ -511,7 +511,7 @@ export class ServerConnection {
           ? "failed"
           : discovering || roles.some((role) => this.#roles[role].task)
             ? "checking"
-            : this.paths()
+            : this.paths(Infinity)
               ? "ready"
               : "unchecked",
       ...(message ? { message } : {}),

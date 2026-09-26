@@ -5,7 +5,7 @@
   import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import { panelReadiness, pathOptions } from "../../presentation/paths";
+  import { pathOptions } from "../../presentation/paths";
   import { normalizeStreamCount } from "../../runner/paths";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
@@ -193,11 +193,7 @@
     );
   }
 
-  const readiness = $derived(
-    store.selectedServers.length > 1 || store.unresolvedServers.length
-      ? store.selectionValidation
-      : panelReadiness(store.connections, store.latencyEnabled),
-  );
+  const readiness = $derived(store.selectionValidation);
   const READINESS_LABEL = {
     verified: "Ready",
     checking: "Checking paths",

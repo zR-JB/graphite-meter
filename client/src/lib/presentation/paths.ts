@@ -330,18 +330,3 @@ export function presentConnections(
   };
   return { throughput: make("throughput"), latency: make("latency") };
 }
-
-export function panelReadiness(
-  connections: Record<ConnectionRole, ConnectionPresentation>,
-  latencyEnabled: boolean,
-): ConnectionValidationState {
-  const states = [
-    connections.throughput.validation,
-    ...(latencyEnabled ? [connections.latency.validation] : []),
-  ];
-  return (
-    (["failed", "checking", "stale"] as const).find((state) =>
-      states.includes(state),
-    ) ?? "verified"
-  );
-}

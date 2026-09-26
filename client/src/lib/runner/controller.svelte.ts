@@ -137,12 +137,7 @@ export function createApplicationController(
       if (entry && entry.location !== view.server.location)
         entry.location = view.server.location;
       // A verified selection clears an offline verdict.
-      if (
-        view.readiness === "ready" &&
-        !store.unresolvedServers.length &&
-        selected().length === store.selectedServers.length &&
-        selected().every((connection) => connection.paths(Infinity))
-      )
+      if (store.selectionValidation === "verified")
         store.connectivity = "connected";
     },
     idleEvent(id, event) {
