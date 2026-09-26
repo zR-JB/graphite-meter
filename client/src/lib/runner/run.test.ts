@@ -673,6 +673,29 @@ test("a stage cut to 0 ms while it runs is settled by what it measured", async (
   near(result.download?.reportedBytesPerSec, 2_000);
 });
 
+test("ending for sign-in keeps what was measured and names the reason for each unfinished stage", async () => {
+  const h = await harness(
+    [{ id: "self", rate: 2 }],
+    { download: true, upload: true },
+    { downloadMs: 2_000, uploadMs: 1_000 },
+  );
+  h.start();
+  await advance(1_300);
+  h.run.end("sign-in-required", "Signed out");
+  const result = await h.result();
+  near(result.download?.reportedBytesPerSec, 2_000);
+  expect(result.stages).toMatchObject({
+    download: "partial",
+    upload: "failed",
+  });
+  expect(
+    result.multiServer.failures.map(({ stage, reason }) => [stage, reason]),
+  ).toEqual([
+    ["download", "sign-in-required"],
+    ["upload", "sign-in-required"],
+  ]);
+});
+
 test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {
   const h = await harness(
     [{ id: "self", rate: 2 }],

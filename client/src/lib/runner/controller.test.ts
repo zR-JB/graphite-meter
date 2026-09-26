@@ -1,7 +1,8 @@
 // Application controller contracts: selection, approval, run start/stop and the store it writes.
 import "../state/runes.testutil";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import type { RunnerConfig, RunnerEvent } from "./contract";
+import type { FailureReason, RunnerConfig, RunnerEvent } from "./contract";
+import { AUTHENTICATION_REQUIRED_EVENT } from "../auth";
 import { CONNECTION_FRESH_MS, type ServerView } from "./paths";
 import { buildSegments } from "./schedule";
 import type {
@@ -14,6 +15,7 @@ import type { ServerEntry } from "../servers/catalog";
 import { stubGlobals } from "../test-helpers.testutil";
 import {
   deferred,
+  NOT_RUN,
   settle,
   TEST_BUILD_TOKENS,
   testEvidence as evidence,
@@ -39,6 +41,8 @@ interface Harness {
   idle: () => boolean;
   setVisibility: (state: "hidden" | "visible") => void;
   view: (id?: string) => ServerView;
+  emit: (type: string) => void;
+  navigated: string[];
 }
 
 class TestRunner implements Runner {
@@ -56,6 +60,24 @@ class TestRunner implements Runner {
       type: "phase",
       transition: { to: "aborted", stage: null, t: 0 },
     });
+  }
+  ended: string[] = [];
+  end(reason: FailureReason) {
+    this.ended.push(reason);
+    const failure = {
+      serverId: "self",
+      stage: "download" as const,
+      atMs: 0,
+      scope: "throughput" as const,
+      reason,
+      message: "",
+    };
+    const result = testRunResult({
+      outcome: "incomplete",
+      stages: { ...NOT_RUN, download: "failed" },
+    });
+    result.multiServer.failures = [failure];
+    this.listener({ type: "complete", result });
   }
   dispose() {}
   reconfigure() {}
@@ -91,8 +113,15 @@ async function withController(
   },
   run: (harness: Harness) => Promise<void>,
 ): Promise<void> {
-  const origin = new URL(options.origin ?? "http://meter.test/");
+  const navigated: string[] = [];
+  const origin = Object.assign(
+    new URL(options.origin ?? "http://meter.test/"),
+    {
+      replace: (url: string) => navigated.push(url),
+    },
+  );
   const documentEvents = listeners();
+  const windowEvents = listeners();
   const document = {
     ...documentEvents,
     visibilityState: options.hidden ? "hidden" : "visible",
@@ -100,7 +129,7 @@ async function withController(
   };
   const restore = stubGlobals({
     location: origin,
-    window: { ...listeners(), location: origin, open: () => null },
+    window: { ...windowEvents, location: origin, open: () => null },
     document,
     navigator: { onLine: true },
     fetch: () => Promise.reject(new Error("no network")),
@@ -146,6 +175,8 @@ async function withController(
         documentEvents.emit("visibilitychange");
       },
       view: (id = "self") => store.servers.get(id)!,
+      emit: windowEvents.emit,
+      navigated,
     });
   } finally {
     controller.dispose();
@@ -260,6 +291,23 @@ test("a server that fails its start check is left out while another survives", a
       ]);
     },
   );
+});
+
+test("signing out mid-run saves the run before leaving for sign-in", async () => {
+  await withController({}, async ({ controller, store, runner, ...page }) => {
+    store.resultHistoryPreference = "enabled";
+    controller.toggleRun();
+    await until(() => runner.starts === 1);
+    page.emit(AUTHENTICATION_REQUIRED_EVENT);
+    page.emit(AUTHENTICATION_REQUIRED_EVENT);
+    expect(runner.ended).toEqual(["sign-in-required"]);
+    expect(store.historyCandidate?.result.outcome).toBe("incomplete");
+    await settle();
+    expect(page.navigated).toEqual([]);
+    store.historyCandidate = null;
+    await until(() => page.navigated.length > 0);
+    expect(page.navigated).toEqual(["/login?reason=expired"]);
+  });
 });
 
 test("idle latency stops before the run starts and resumes after abort", async () => {

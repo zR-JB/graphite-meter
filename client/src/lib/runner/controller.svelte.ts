@@ -64,10 +64,11 @@ interface ApplicationDependencies {
 }
 export type Runner = Pick<
   Run,
-  "start" | "abort" | "dispose" | "on" | "reconfigure" | "details"
+  "start" | "abort" | "end" | "dispose" | "on" | "reconfigure" | "details"
 >;
 
 const SESSION_RUN_MARGIN_MS = 60_000;
+const SIGN_OUT_SAVE_MS = 3_000;
 const SAVED_SELECTION_KEY = "graphite-meter:server-selection:v1";
 const TARGET_KEY = {
   throughput: "throughputTarget",
@@ -106,6 +107,7 @@ export function createApplicationController(
   /** Selection validation when a Start was refused; the refusal lapses once that selection verifies. */
   let refusedUnder: string | null = null;
   let idleEvidenceKey = "";
+  let signingOut = false;
 
   const hidden = () => document.visibilityState === "hidden";
   const active = () =>
@@ -456,12 +458,22 @@ export function createApplicationController(
     store.preparationStatus = "idle";
     wake();
   }
-  function onAuthenticationRequired(event: Event) {
-    if (!booted) return;
+  async function onAuthenticationRequired(event: Event) {
+    if (!booted || signingOut) return;
+    signingOut = true;
     const reason =
       event instanceof CustomEvent && event.detail === "renew"
         ? "renew"
         : "expired";
+    // The run in progress is saved before the page leaves for sign-in.
+    runner?.end("sign-in-required", "Signed out during the test");
+    for (
+      let waitedMs = 0;
+      (store.isRunning || store.historyCandidate) &&
+      waitedMs < SIGN_OUT_SAVE_MS;
+      waitedMs += 50
+    )
+      await new Promise((resolve) => setTimeout(resolve, 50));
     dispose();
     location.replace(`/login?reason=${reason}`);
   }
@@ -469,6 +481,7 @@ export function createApplicationController(
   async function boot() {
     if (booted) return;
     booted = true;
+    signingOut = false;
     lifetime = new AbortController();
     const { signal } = lifetime;
     window.addEventListener(

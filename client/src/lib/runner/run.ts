@@ -306,6 +306,22 @@ export class Run {
     this.#handlers.clear();
   }
 
+  /** Ends now with every retained result; each stage left unfinished fails for `reason`. */
+  end(reason: FailureReason, message: string): void {
+    if (!this.#running) return;
+    for (const stage of STAGES)
+      if (planned(this.#cfg!, stage) && !this.#settled[stage])
+        for (const { server } of this.#participants())
+          this.#record(
+            server.id,
+            stage === "latency" ? "latency" : "throughput",
+            reason,
+            message,
+            stage,
+          );
+    this.finish();
+  }
+
   /** End after the active stage with every retained result; later stages do not run. */
   finish(): void {
     if (!this.#running) return;
