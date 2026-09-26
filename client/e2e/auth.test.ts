@@ -1,5 +1,6 @@
 import {
   amsterdam,
+  baseConfig,
   closeSettings,
   frankfurt,
   home,
@@ -7,10 +8,13 @@ import {
   open,
   openSettings,
   password,
+  phase,
   ready,
   run,
+  runButton,
+  savedResult,
 } from "./fleet";
-import { Page, expect, test } from "./webview";
+import { Locator, Page, expect, test } from "./webview";
 
 async function signIn(page: Page) {
   await page.getByRole("textbox", { name: "Operator password" }).fill(password);
@@ -160,6 +164,26 @@ test("peer sign-in opens an isolated popup from the user click", async (page) =>
   }
 });
 
+/* The approving browser keeps the login session that owns the grant. */
+async function approve(row: Locator): Promise<Page> {
+  const link = row.getByRole("link", { name: "Open sign-in page" });
+  await expect(link).toBeVisible();
+  const code = await row.locator(".approval-code strong").textContent();
+  expect(code).toMatch(/^[A-Z2-7]{8}$/);
+  const approval = new Page();
+  try {
+    await approval.goto((await link.getAttribute("href"))!);
+    await signIn(approval);
+    await expect(approval.locator("main")).toContainText(home.url);
+    await expect(approval.locator("main")).toContainText(code!);
+    await approval.getByRole("button", { name: "Approve this client" }).click();
+    return approval;
+  } catch (error) {
+    approval.close();
+    throw error;
+  }
+}
+
 test("a protected WebSocket peer approved through the sign-in link joins a run", async (page) => {
   await page.addInitScript(() => (window.open = () => null));
   await open(page, home.url, {
@@ -181,8 +205,6 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
   await signInButton.click();
   await expect(link).toBeVisible();
   expect(await link.getAttribute("href")).not.toBe(cancelled);
-  const code = await row.locator(".approval-code strong").textContent();
-  expect(code).toMatch(/^[A-Z2-7]{8}$/);
   await page.evaluate((origin) => {
     const original = window.fetch.bind(window);
     let outage = true;
@@ -195,17 +217,7 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, locked.url);
-
-  const approval = new Page();
-  try {
-    await approval.goto((await link.getAttribute("href"))!);
-    await signIn(approval);
-    await expect(approval.locator("main")).toContainText(home.url);
-    await expect(approval.locator("main")).toContainText(code!);
-    await approval.getByRole("button", { name: "Approve this client" }).click();
-  } finally {
-    approval.close();
-  }
+  (await approve(row)).close();
   const retry = row.getByRole("button", { name: "Retry Private" });
   await expect(retry).toBeVisible({ timeout: 10_000 });
   await expect(signInButton).toHaveCount(0);
@@ -217,4 +229,46 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
   expect(saved.multiServer?.participants).toEqual(["self", "server-4"]);
   expect(saved.multiServer?.failures).toEqual([]);
   expect(JSON.stringify(saved)).not.toContain("Bearer");
+});
+
+test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
+  await page.addInitScript(() => (window.open = () => null));
+  await open(page, home.url, {
+    servers: [home, locked],
+    latency: { mode: "all", serverId: "self" },
+    config: {
+      duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
+    },
+  });
+  await openSettings(page);
+  const row = feedback(page, "Private");
+  const signInButton = row.getByRole("button", { name: "Sign in to Private" });
+  await signInButton.click();
+  const approval = await approve(row);
+  let startedAt = 0;
+  try {
+    await ready(page);
+    startedAt = Date.now();
+    await runButton(page, "Start test").click();
+    await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+    await approval.evaluate(async () => {
+      const { csrf } = await (await fetch("/auth/session")).json();
+      const body = new URLSearchParams({ csrf, scope: "all" });
+      await fetch("/auth/logout", { method: "POST", body });
+    });
+  } finally {
+    approval.close();
+  }
+  const saved = await savedResult(page, startedAt, 20_000);
+  expect(saved.outcome).toBe("partial");
+  const revoked = saved.multiServer!.failures.find(
+    (failure) => failure.scope === "throughput",
+  );
+  expect(revoked).toMatchObject({
+    serverId: "server-4",
+    reason: "sign-in-required",
+  });
+  await expect(phase(page, "complete")).toHaveCount(1);
+  await openSettings(page);
+  await expect(signInButton).toBeVisible();
 });
