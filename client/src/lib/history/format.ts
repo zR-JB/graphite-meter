@@ -2,9 +2,9 @@ import { MISSING, type Outcome } from "../presentation/vocabulary";
 import {
   fmtMs,
   fmtSpeed,
-  rateScaleIndex,
   rateUnit,
   rateValueAt,
+  throughputUnitIndex,
 } from "../format";
 import type { HistoryRecord, StageStatus } from "./types";
 
@@ -13,10 +13,9 @@ interface HistoryUnits {
   kind: "bits" | "bytes";
 }
 
-/** Saved rates choose their own unit tier; a live run's tier never applies. */
+/** Saved rates choose their own unit tier by the live rule; a live run's tier never applies. */
 export function historyRate(bytesPerSec: number, units: HistoryUnits) {
-  const baseUnits = units.kind === "bits" ? bytesPerSec * 8 : bytesPerSec;
-  const tier = rateScaleIndex(baseUnits, units.base);
+  const tier = throughputUnitIndex(bytesPerSec, units.base, units.kind);
   return {
     num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
     unit: rateUnit(units.base, units.kind, tier),

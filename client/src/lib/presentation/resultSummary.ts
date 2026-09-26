@@ -2,7 +2,7 @@ import {
   compensationTooltip,
   type CompensationEstimate,
 } from "../compensation";
-import { fmtBytes, fmtMs } from "../format";
+import { fixedMs, fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
@@ -64,7 +64,7 @@ const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
 
 const signedMs = (ms: number) =>
-  `${ms < 0 ? "−" : "+"}${Math.abs(ms).toFixed(Math.abs(ms) < 100 ? 1 : 0)}`;
+  `${ms < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`;
 
 /** Live and saved estimates share one rule: an overhead under 0.5% is not shown. */
 export const wireOverhead = (multiplier: number) =>

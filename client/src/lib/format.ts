@@ -25,10 +25,16 @@ export function fmtSpeed(value: number): string {
   return value.toFixed(2);
 }
 
+/** One decimal below 100 ms, decided after rounding so 99.96 reads 100. */
+export function fixedMs(ms: number): string {
+  return Math.abs(Math.round(ms * 10) / 10) < 100
+    ? ms.toFixed(1)
+    : ms.toFixed(0);
+}
+
 /** Browser timers resolve 0.1 ms, so a smaller measured value is shown as below it. */
 export function fmtMs(ms: number): string {
-  if (ms >= 0 && ms < 0.1) return "< 0.1";
-  return ms < 100 ? ms.toFixed(1) : ms.toFixed(0);
+  return ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms);
 }
 
 export const fmtMsTick = (ms: number) => (ms <= 0 ? "0" : fmtMs(ms));
