@@ -34,6 +34,7 @@ jobs:
       version: ${{ steps.guard.outputs.version }}
       series: ${{ steps.guard.outputs.series }}
       publish: ${{ steps.guard.outputs.publish }}
+      rust_artifacts: ${{ steps.guard.outputs.rust_artifacts }}
     steps:
       - name: Checkout trusted default-branch release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,12 +75,14 @@ jobs:
   build:
     name: Build and verify exact release payload
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Optional Rust server/source and TUI builds run before the existing Go OCI build.
+    timeout-minutes: 90
     needs: guard
     permissions:
       contents: read
     outputs:
       oci_sha256: ${{ steps.oci-digest.outputs.sha256 }}
+      rust_oci_sha256: ${{ steps.rust-oci-digest.outputs.sha256 }}
     steps:
       - name: Checkout guarded release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,16 +110,48 @@ jobs:
           VERSION: ${{ needs.guard.outputs.version }}
         run: mise run release-build "$VERSION"
 
+      - name: Build optional Rust server and dependency source
+        if: needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both'
+        uses: ./.github/actions/build-oci
+        with:
+          implementation: rust
+          version: ${{ needs.guard.outputs.version }}
+          revision: ${{ github.sha }}
+          output: ${{ runner.temp }}/release-rust-image/graphite-meter.oci.tar
+          source-output: ${{ runner.temp }}/release-rust-source
+          client-validate: '0'
+
+      - name: Verify Rust OCI platform and provenance labels
+        if: needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both'
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
+          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/verify_oci.py "${VERSION}-rust" "$SOURCE_SHA" "$RUNNER_TEMP/release-rust-image/graphite-meter.oci.tar" --implementation rust
+
+      - id: rust-oci-digest
+        name: Record Rust OCI archive SHA-256
+        if: needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both'
+        run: |
+          set -euo pipefail
+          digest=$(sha256sum "$RUNNER_TEMP/release-rust-image/graphite-meter.oci.tar" | awk '{print $1}')
+          echo "sha256=$digest" >>"$GITHUB_OUTPUT"
+
       - name: Build native artifacts and third-party source
         env:
           VERSION: ${{ needs.guard.outputs.version }}
-        run: mise run release-artifacts "$VERSION"
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
+          RUST_SERVER_SOURCE: ${{ runner.temp }}/release-rust-source/THIRD_PARTY_SOURCE.tar.gz
+        run: mise run release-artifacts "$VERSION" --rust-artifacts "$RUST_ARTIFACTS"
 
       - name: Verify exact native artifacts and embedded versions
         env:
           RELEASE_DIST: go/dist
           VERSION: ${{ needs.guard.outputs.version }}
-        run: python3 scripts/ci/verify_release_assets.py "$VERSION"
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
+        run: python3 scripts/ci/verify_release_assets.py "$VERSION" --rust-artifacts "$RUST_ARTIFACTS"
 
       - name: Build linux/amd64 + linux/arm64 OCI archive
         uses: ./.github/actions/build-oci
@@ -149,6 +184,17 @@ jobs:
         with:
           name: release-image
           path: ${{ runner.temp }}/release-image/graphite-meter.oci.tar
+          if-no-files-found: error
+          retention-days: 35
+          compression-level: 0
+          overwrite: true
+
+      - name: Upload verified Rust release image handoff
+        if: needs.guard.outputs.publish == 'true' && (needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rust-image
+          path: ${{ runner.temp }}/release-rust-image/graphite-meter.oci.tar
           if-no-files-found: error
           retention-days: 35
           compression-level: 0
@@ -212,6 +258,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
           REQUESTED_VERSION: ${{ needs.guard.outputs.tag }}
+          RUST_ARTIFACTS: ${{ needs.guard.outputs.rust_artifacts }}
         run: python3 scripts/ci/release.py recheck
 
   publish-image:
@@ -234,10 +281,31 @@ jobs:
       trusted_main_sha: ${{ github.sha }}
       expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}
 
+  publish-rust-image:
+    name: Publish optional exact Rust version image
+    if: needs.guard.outputs.publish == 'true' && (needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both')
+    needs: [guard, build, recheck]
+    uses: ./.github/workflows/_publish-oci.yml
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      checks: read
+      security-events: read
+      packages: write
+    with:
+      implementation: rust
+      artifact: release-rust-image
+      tag: ${{ needs.guard.outputs.version }}-rust
+      expected_sha256: ${{ needs.build.outputs.rust_oci_sha256 }}
+      source_sha: ${{ github.sha }}
+      trusted_main_sha: ${{ github.sha }}
+      expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}
+
   publish-release:
     name: Publish verified stable GitHub Release
-    if: needs.guard.outputs.publish == 'true'
-    needs: [guard, build, publish-image]
+    if: always() && needs.guard.outputs.publish == 'true' && needs.build.result == 'success' && needs.publish-image.result == 'success' && (needs.publish-rust-image.result == 'success' || (needs.publish-rust-image.result == 'skipped' && needs.guard.outputs.rust_artifacts != 'server' && needs.guard.outputs.rust_artifacts != 'both'))
+    needs: [guard, build, publish-image, publish-rust-image]
     uses: ./.github/workflows/_publish-release.yml
     permissions:
       actions: read

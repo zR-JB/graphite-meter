@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    {% include "auth-head.html" %}
+    <title>Sign in · Graphite Meter</title>
+    {% include "auth-theme.html" %}
+  </head>
+  <body>
+    <main class="card">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.1" fill="currentColor"/></svg>
+      <h1>Private Graphite Meter</h1>
+      <p>Sign in to use this measurement server.</p>
+      {% if status == "signed_out" %}<p class="ok" role="status">You're signed out.</p>{% endif %}
+      {% if status == "expired" %}<p class="notice" role="status">Your session ended. Sign in again.</p>{% endif %}
+      {% if status == "renew" %}<p class="notice" role="status">Sign in again before starting this long test.</p>{% endif %}
+      {% if notice == "password" %}
+        <p class="message" role="alert">Incorrect password. Check it and try again.</p>
+      {% elif notice == "throttled" %}
+        <p class="warn" role="alert">Too many attempts. Wait a minute and try again.</p>
+      {% elif notice == "provider" %}
+        <p class="notice" role="alert">{{ provider }} is unreachable right now.{% if password %} Sign in with the operator password.{% endif %}</p>
+      {% elif notice == "busy" %}
+        <p class="notice" role="alert">The server is busy. Try again in a moment.</p>
+      {% elif notice == "stale" %}
+        <p class="notice" role="alert">This sign-in form expired. Reload and try again.</p>
+      {% elif !notice.is_empty() %}
+        <p class="message" role="alert">Sign-in failed. Please try again.</p>
+      {% endif %}
+      {% if oidc %}
+        <form method="post" action="/auth/oidc/start">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="challenge" value="{{ challenge }}">
+          <button type="submit" {% if !oidc_ready %}disabled{% endif %}>Continue with {{ provider }}</button>
+        </form>
+        {% if !oidc_ready %}<p class="notice">{{ provider }} is temporarily unavailable.</p>{% endif %}
+      {% endif %}
+      {% if oidc && password %}<div class="separator">or</div>{% endif %}
+      {% if password %}
+        <form method="post" action="/auth/password">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="challenge" value="{{ challenge }}">
+          <!-- There is one account. The field exists so a password manager can
+               associate the stored credential with a username; it is not read
+               by the server. -->
+          <label class="offscreen" for="username">Account</label>
+          <input class="offscreen" id="username" name="username" type="text" value="operator" autocomplete="username" readonly>
+          <label for="password">Operator password</label>
+          <input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" autofocus required>
+          <button type="submit">Sign in with operator password</button>
+        </form>
+      {% endif %}
+    </main>
+    {% include "auth-pending.html" %}
+  </body>
+</html>

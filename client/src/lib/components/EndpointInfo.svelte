@@ -357,6 +357,16 @@
           <dd>{discovery?.engineVersion ?? "—"}</dd>
         </div>
         <div>
+          <dt>Server implementation</dt>
+          <dd>
+            {discovery?.implementation === "rust"
+              ? "Rust"
+              : discovery?.implementation === "go"
+                ? "Go"
+                : "—"}
+          </dd>
+        </div>
+        <div>
           <dt>Runner</dt>
           <dd>{engine?.name ?? "—"}</dd>
         </div>

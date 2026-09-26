@@ -1,0 +1,69 @@
+# Experimental only; container/Dockerfile remains the default Go build.
+ARG BUN_VERSION=1.4.2
+ARG VERSION=0.0.0-dev
+
+FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS python
+FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS rust-build
+ARG TARGETARCH
+RUN test "$TARGETARCH" = amd64
+COPY --from=python /usr/local /usr/local
+ENV LD_LIBRARY_PATH=/usr/local/lib
+WORKDIR /src
+COPY LICENSE COPYRIGHT ./
+COPY scripts/ scripts/
+COPY legal/ legal/
+COPY rust/ rust/
+RUN python3 --version && cargo +1.98.1 --version
+
+FROM rust-build AS tui-build
+ARG VERSION
+RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist \
+    --supplement legal/rust-platform-debian-bookworm.json
+
+FROM scratch AS tui-artifacts
+COPY --from=tui-build /src/dist/ /
+
+FROM docker.io/oven/bun:${BUN_VERSION} AS browser
+ARG VERSION
+ARG GM_CLIENT_REVISION=source
+ARG GM_CLIENT_VALIDATE=1
+ENV VERSION=$VERSION \
+    GM_CLIENT_BUILD_PROFILE=prod \
+    GM_CLIENT_ALLOW_DUMMY=0 \
+    GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
+    GM_LEGAL_SCAN_OUT=/src/browser-modules.json
+WORKDIR /src/client
+COPY client/package.json client/bun.lock client/bunfig.toml ./
+RUN bun --bun install --frozen-lockfile
+COPY client/ ./
+RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
+
+FROM rust-build AS server-build
+ARG VERSION
+ENV GM_ENGINE_VERSION=${VERSION}-rust \
+    GM_RUST_ASSET_DIR=/src/client/dist
+COPY --from=browser /src/client/ /src/client/
+# Bun's isolated linker resolves module source through its installation cache.
+# Keep the same paths so the legal scan reads the exact bundled packages.
+COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
+COPY --from=browser /src/browser-modules.json /src/browser-modules.json
+RUN python3 -m scripts.legal.rust --package graphite-meter-server \
+    --target x86_64-unknown-linux-gnu --profile release --out /src/rust/target/server-notices \
+    --reviews legal/rust-reviewed-components.json \
+    --supplement legal/rust-platform-debian-bookworm.json \
+    --browser-scan /src/browser-modules.json
+RUN cp rust/target/x86_64-unknown-linux-gnu/release/graphite-meter-server /graphite-meter \
+    && /graphite-meter --legal > /tmp/embedded-notices.txt \
+    && cmp /tmp/embedded-notices.txt rust/target/server-notices/LEGAL.txt
+
+# Export matching source separately for the GitHub release; it is not runtime data.
+FROM scratch AS server-artifacts
+COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz /
+COPY --from=server-build /src/rust/target/server-notices/inventory.json /
+
+# The GNU build needs libc and libgcc; the standard Rust runtime includes CA roots.
+FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97 AS server
+COPY --from=server-build /graphite-meter /graphite-meter
+COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
+EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
+ENTRYPOINT ["/graphite-meter"]

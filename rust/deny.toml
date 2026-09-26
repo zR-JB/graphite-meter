@@ -1,0 +1,57 @@
+[graph]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+exclude-dev = true
+
+[advisories]
+yanked = "deny"
+ignore = []
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause", "Zlib", "Unicode-3.0", "AGPL-3.0-or-later"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+allow-wildcard-paths = true
+deny = [
+  { crate = "openidconnect", reason = "OIDC is auth/oidc.rs + auth/jwt.rs on ring" },
+  { crate = "oauth2", reason = "token exchange is auth/oidc.rs" },
+  { crate = "reqwest", reason = "HTTP clients are hyper::client::conn over graphite-meter-net" },
+  { crate = "hyper-rustls", reason = "TLS dialing is graphite-meter-net" },
+  { crate = "url", reason = "origins and URLs are core::origin" },
+  { crate = "idna", reason = "hosts are ASCII; punycode passes as text" },
+  { crate = "serde_urlencoded", reason = "form_urlencoded directly" },
+  { crate = "rsa", reason = "RUSTSEC-2023-0071; ring verifies RSA" },
+  { crate = "p256", reason = "ring verifies ECDSA" },
+  { crate = "p384", reason = "ring verifies ECDSA" },
+  { crate = "ed25519-dalek", reason = "ring verifies Ed25519" },
+  { crate = "time", reason = "one RFC 3339 formatter in auth/http.rs" },
+  { crate = "chrono", reason = "no calendar dependency" },
+  { crate = "x509-cert", reason = "tls.rs reads leaf validity; webpki parses the rest" },
+  { crate = "aws-lc-rs", reason = "D4: rustls + ring only" },
+  { crate = "aws-lc-sys", reason = "D4: rustls + ring only" },
+  { crate = "openssl", reason = "rustls only" },
+  { crate = "openssl-sys", reason = "rustls only" },
+  { crate = "native-tls", reason = "rustls only" },
+]
+
+[[bans.features]]
+crate = "rustls"
+deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
+
+[[bans.features]]
+crate = "tokio-rustls"
+deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/n0-computer/noq"]

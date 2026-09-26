@@ -114,6 +114,7 @@ export async function discoverServer(
       uploadCheckpoint: pf.capabilities.uploadCheckpoint,
       generation: pf.generation,
       engineVersion: pf.engineVersion,
+      implementation: pf.implementation,
       server: pf.server,
       fetchedAt: Date.now(),
       preflightMs,

@@ -77,6 +77,7 @@ jobs:
       tag: ${{ steps.validate.outputs.tag }}
       oci_sha256: ${{ steps.validate.outputs.oci_sha256 }}
       main_sha: ${{ steps.validate.outputs.main_sha }}
+      rust_artifacts: ${{ steps.validate.outputs.rust_artifacts }}
       validated_artifact: ${{ steps.artifact-name.outputs.name }}
     steps:
       - name: Download low-trust request/candidate artifact
@@ -192,6 +193,7 @@ jobs:
           PR_NUMBER: ${{ needs.validate.outputs.pr }}
           EXPECTED_SHA: ${{ needs.validate.outputs.sha }}
           EXPECTED_MAIN_SHA: ${{ needs.validate.outputs.main_sha }}
+          RUST_ARTIFACTS: ${{ needs.validate.outputs.rust_artifacts }}
         run: python3 scripts/ci/prerelease.py publish-recheck
 
   publish:

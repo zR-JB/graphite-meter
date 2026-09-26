@@ -1,6 +1,14 @@
 name: Build Graphite Meter OCI archive
 description: Build the production multi-platform OCI archive from trusted local source or an exact remote Git commit
 inputs:
+  implementation:
+    description: Server implementation; Go remains the default
+    required: false
+    default: go
+  source-output:
+    description: Optional directory for the Rust server dependency-source export
+    required: false
+    default: ''
   version:
     description: Image/application version without the leading v
     required: true
@@ -27,6 +35,9 @@ runs:
       env:
         REPOSITORY: ${{ github.repository }}
         SOURCE_SHA: ${{ inputs.source-sha }}
+        IMPLEMENTATION: ${{ inputs.implementation }}
+        VERSION: ${{ inputs.version }}
+        SOURCE_OUTPUT: ${{ inputs.source-output }}
       run: |
         set -euo pipefail
         if [[ -z "$SOURCE_SHA" ]]; then
@@ -38,7 +49,24 @@ runs:
           }
           context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"
         fi
+        case "$IMPLEMENTATION" in
+          go)
+            [[ -z "$SOURCE_OUTPUT" ]] || { echo "source-output is Rust-only" >&2; exit 2; }
+            dockerfile=container/Dockerfile
+            platforms=linux/amd64,linux/arm64
+            image_version="$VERSION"
+            ;;
+          rust)
+            dockerfile=container/Dockerfile.rust
+            platforms=linux/amd64
+            image_version="${VERSION}-rust"
+            ;;
+          *) echo "unknown server implementation" >&2; exit 2 ;;
+        esac
         echo "context=$context" >>"$GITHUB_OUTPUT"
+        echo "dockerfile=$dockerfile" >>"$GITHUB_OUTPUT"
+        echo "platforms=$platforms" >>"$GITHUB_OUTPUT"
+        echo "image_version=$image_version" >>"$GITHUB_OUTPUT"
 
     - id: versions
       name: Read trusted repository Bun version
@@ -56,6 +84,7 @@ runs:
       run: mkdir -p "$(dirname "$OCI_OUTPUT")"
 
     - name: Set up QEMU
+      if: inputs.implementation == 'go'
       uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       with:
         # setup-qemu runs this image privileged to register binfmt. Pin the
@@ -74,15 +103,15 @@ runs:
         # security.insecure/network.host entitlements. This build needs neither.
         buildkitd-flags: --log-level=info
 
-    - name: Build linux/amd64 + linux/arm64 OCI archive
+    - name: Build selected implementation OCI archive
       uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
       env:
         # Avoid an extra build-record artifact from this untrusted/verification build.
         DOCKER_BUILD_RECORD_UPLOAD: 'false'
       with:
         context: ${{ steps.source.outputs.context }}
-        file: container/Dockerfile
-        platforms: linux/amd64,linux/arm64
+        file: ${{ steps.source.outputs.dockerfile }}
+        platforms: ${{ steps.source.outputs.platforms }}
         outputs: type=oci,dest=${{ inputs.output }}
         no-cache: true
         provenance: mode=max
@@ -92,8 +121,29 @@ runs:
         labels: |
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
           org.opencontainers.image.revision=${{ inputs.revision }}
-          org.opencontainers.image.version=${{ inputs.version }}
+          org.opencontainers.image.version=${{ steps.source.outputs.image_version }}
+          io.graphite-meter.implementation=${{ inputs.implementation }}
           org.opencontainers.image.licenses=AGPL-3.0-or-later
+        build-args: |
+          VERSION=${{ inputs.version }}
+          CLIENT_VERSION=${{ inputs.version }}
+          GM_CLIENT_BUILD_PROFILE=prod
+          GM_CLIENT_REVISION=${{ inputs.revision }}
+          GM_CLIENT_VALIDATE=${{ inputs.client-validate }}
+          BUN_VERSION=${{ steps.versions.outputs.bun }}
+
+    - name: Export Rust server dependency source from the same build graph
+      if: inputs.implementation == 'rust' && inputs.source-output != ''
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      env:
+        DOCKER_BUILD_RECORD_UPLOAD: 'false'
+      with:
+        context: ${{ steps.source.outputs.context }}
+        file: container/Dockerfile.rust
+        target: server-artifacts
+        platforms: linux/amd64
+        outputs: type=local,dest=${{ inputs.source-output }}
+        github-token: ''
         build-args: |
           VERSION=${{ inputs.version }}
           CLIENT_VERSION=${{ inputs.version }}

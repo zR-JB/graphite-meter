@@ -204,6 +204,8 @@ def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
         expected_images = [pin("images.skopeo", root)]
         if verifier:
             expected_images.append("${{ env.SKOPEO_IMAGE }}")
+        if name == "release.yml":
+            expected_images.append("${{ env.SKOPEO_IMAGE }}")
         if images != expected_images:
             fail(f"{name} has a non-exact SKOPEO_IMAGE assignment")
         if verifier and ("SKOPEO_VERSION: " + skopeo_version(root)) not in text:
@@ -259,8 +261,15 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
     if not path.is_file():
         fail("missing .github/actions/build-oci/action.yml")
     text = path.read_text(encoding="utf-8")
+    # Source export must not satisfy invariants missing from the image build.
+    image_build = text.split("\n    - name: Export Rust server dependency source", 1)[0]
     for required in (
-        "platforms: linux/amd64,linux/arm64",
+        "default: go",
+        'case "$IMPLEMENTATION" in',
+        "dockerfile=container/Dockerfile\n            platforms=linux/amd64,linux/arm64",
+        "dockerfile=container/Dockerfile.rust\n            platforms=linux/amd64",
+        '*) echo "unknown server implementation" >&2; exit 2 ;;',
+        "platforms: ${{ steps.source.outputs.platforms }}",
         "outputs: type=oci,dest=${{ inputs.output }}",
         "provenance: mode=max",
         "cache-image: 'false'",
@@ -272,7 +281,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
         'context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"',
         "context: ${{ steps.source.outputs.context }}",
-        "file: container/Dockerfile",
+        "file: ${{ steps.source.outputs.dockerfile }}",
         "CLIENT_VERSION=${{ inputs.version }}",
         "GM_CLIENT_BUILD_PROFILE=prod",
         "GM_CLIENT_REVISION=${{ inputs.revision }}",
@@ -280,7 +289,7 @@ def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
         "DOCKER_BUILD_RECORD_UPLOAD: 'false'",
         "bun=$(python3 scripts/ci/toolchains.py get runtime.bun)",
     ):
-        if required not in text:
+        if required not in image_build:
             fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
     if re.search(
         r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*$",
@@ -500,19 +509,46 @@ def check_release_workflow(root: pathlib.Path = ROOT) -> None:
         if required not in release:
             fail(f"release.yml missing trusted-consumer invariant: {required}")
 
+    for required in (
+        "implementation: rust",
+        "source-output: ${{ runner.temp }}/release-rust-source",
+        "RUST_SERVER_SOURCE: ${{ runner.temp }}/release-rust-source/THIRD_PARTY_SOURCE.tar.gz",
+        '"$RUNNER_TEMP/release-rust-image/graphite-meter.oci.tar" --implementation rust',
+        "rust_oci_sha256: ${{ steps.rust-oci-digest.outputs.sha256 }}",
+        "tag: ${{ needs.guard.outputs.version }}-rust",
+        "expected_sha256: ${{ needs.build.outputs.rust_oci_sha256 }}",
+        "needs: [guard, build, publish-image, publish-rust-image]",
+        "needs.publish-rust-image.result == 'success'",
+        "needs.publish-rust-image.result == 'skipped' && needs.guard.outputs.rust_artifacts != 'server' && needs.guard.outputs.rust_artifacts != 'both'",
+    ):
+        if required not in release:
+            fail(f"stable Rust publication missing isolation or verification: {required}")
+    rust_publish = release.split("  publish-rust-image:", 1)[1].split("  publish-release:", 1)[0]
+    for required in (
+        "needs.guard.outputs.publish == 'true'",
+        "needs.guard.outputs.rust_artifacts == 'server' || needs.guard.outputs.rust_artifacts == 'both'",
+        "needs: [guard, build, recheck]",
+        "source_sha: ${{ github.sha }}",
+        "trusted_main_sha: ${{ github.sha }}",
+        "expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}",
+    ):
+        if required not in rust_publish:
+            fail(f"stable Rust publisher bypasses approval or source binding: {required}")
+
     if "mise run release-check" in release:
         fail(
             "stable release build must verify the exact built payload, not rebuild a second "
             "representative release-check payload"
         )
     native_verify = release.find("python3 scripts/ci/verify_release_assets.py")
-    oci_build = release.find("uses: ./.github/actions/build-oci")
+    oci_build = release.find("- name: Build linux/amd64 + linux/arm64 OCI archive")
     if native_verify < 0 or oci_build < 0 or native_verify > oci_build:
         fail("stable release must fail-fast on exact native artifact verification before OCI build")
 
     for step_name in (
         "Upload verified release image handoff",
         "Upload verified release asset handoff",
+        "Upload verified Rust release image handoff",
     ):
         start = release.find(f"- name: {step_name}")
         if start < 0:

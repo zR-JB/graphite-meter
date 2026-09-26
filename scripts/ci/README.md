@@ -158,6 +158,20 @@ not boot a fixed-port HTTP server merely to read `/preflight`. The stable workfl
 also does not rebuild a second representative `release-check` payload after the
 exact artifacts already exist.
 
+Stable requests may opt into `server`, `tui`, or `both` Rust artifacts; `none`
+remains the default. The server option builds a separate linux/amd64 OCI image
+with version tag `VERSION-rust`, exports its Cargo source offer from the same
+Dockerfile server-build stage and locked source in a second BuildKit invocation,
+and adds that offer to the exact checksummed release asset set.
+Local `release-artifacts --rust-artifacts server|both` requires
+`RUST_SERVER_SOURCE` to name that exported `THIRD_PARTY_SOURCE.tar.gz`; it does
+not build or publish an image itself. The source verifier checks package, target,
+lockfile identity, notices, and component payload presence without executing
+archive contents. Both OCI handoffs require the protected approval and source/CI/
+CodeQL recheck. The GitHub Release waits for the selected images; only the Go
+image is promoted to the existing stable aliases. Rust prerelease requests
+remain rejected until their producer and consumer support the additional payload.
+
 ## Policy and tests
 
 `mise run workflow-check` runs `workflow_policy.py`. It deliberately does **not**

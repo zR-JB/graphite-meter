@@ -30,6 +30,7 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       go: ${{ steps.filter.outputs.go }}
+      rust: ${{ steps.filter.outputs.rust }}
       browser: ${{ steps.filter.outputs.browser }}
       tui: ${{ steps.filter.outputs.tui }}
       integration: ${{ steps.filter.outputs.integration }}
@@ -62,6 +63,7 @@ jobs:
         env:
           CORE: ${{ steps.filter.outputs.core }}
           GO: ${{ steps.filter.outputs.go }}
+          RUST: ${{ steps.filter.outputs.rust }}
           BROWSER: ${{ steps.filter.outputs.browser }}
           TUI: ${{ steps.filter.outputs.tui }}
           INTEGRATION: ${{ steps.filter.outputs.integration }}
@@ -78,6 +80,8 @@ jobs:
           |---|---|
           | Core | \`$CORE\` |
           | Go race/coverage | \`$GO\` |
+          | Experimental Rust | \`$RUST\` |
+          | Experimental Rust interoperability | \`$RUST_INTEROP\` |
           | Browser | \`$BROWSER\` |
           | TUI cross-build | \`$TUI\` |
           | Integration | \`$INTEGRATION\` |
@@ -120,6 +124,94 @@ jobs:
         with: {go: 'true'}
       - name: Run race detector and coverage floor
         run: mise run server-race
+
+  rust:
+    name: Experimental Rust checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Python tools
+        uses: ./.github/actions/setup-project
+      - name: Install pinned experimental Rust toolchain
+        run: |
+          version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+          rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+      - id: cargo-cache
+        name: Cache Cargo downloads, dependency policy tool and build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            rust/target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
+      - name: Check experimental Rust implementation
+        run: mise run rust-check
+      - name: Check Rust dependency policy
+        working-directory: rust
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --locked check
+      - name: Keep only dependency builds in a new cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        working-directory: rust
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
+
+  rust-interop:
+    name: Experimental Rust interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go and Python interoperability tools
+        uses: ./.github/actions/setup-project
+        with: {go: 'true'}
+      - name: Install pinned experimental Rust toolchain
+        run: |
+          version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+          rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+      - id: cargo-cache
+        name: Cache Cargo downloads and build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
+      - name: Rust server with unchanged Go clients
+        run: python3 rust/tests/server_interop.py
+      - name: Rust client with unchanged Go server
+        run: python3 rust/tests/client_interop.py
+      - name: Unchanged and current-only Go reliable-reset interoperability
+        run: python3 rust/tests/interop.py
+      - name: Delayed HTTP/3 and WebTransport downloads
+        working-directory: rust
+        run: cargo test --locked --release -p graphite-meter-server --test connection_faults quic_downloads_exceed_the_old_window_limit -- --ignored --nocapture
+      - name: Keep only dependency builds in a new cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        working-directory: rust
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
 
   browser:
     name: Browser (Chromium WebView)
@@ -297,13 +389,15 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
+    needs: [plan, core, go, rust, rust-interop, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
       - name: Summarize and require all selected jobs
         env:
           PLAN: ${{ needs.plan.result }}
           CORE: ${{ needs.core.result }}
           GO: ${{ needs.go.result }}
+          RUST: ${{ needs.rust.result }}
+          RUST_INTEROP: ${{ needs.rust-interop.result }}
           BROWSER: ${{ needs.browser.result }}
           TUI: ${{ needs.tui.result }}
           INTEGRATION: ${{ needs.integration.result }}
@@ -321,6 +415,8 @@ jobs:
           | Plan | \`$PLAN\` |
           | Core | \`$CORE\` |
           | Go | \`$GO\` |
+          | Experimental Rust | \`$RUST\` |
+          | Experimental Rust interoperability | \`$RUST_INTEROP\` |
           | Browser | \`$BROWSER\` |
           | TUI | \`$TUI\` |
           | Integration | \`$INTEGRATION\` |
@@ -330,7 +426,7 @@ jobs:
           | Secret scan | \`$SECRET_SCAN\` |
           EOF_SUMMARY
           failed=0
-          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
+          for result in "$PLAN" "$CORE" "$GO" "$RUST" "$RUST_INTEROP" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
             case "$result" in success|skipped) ;; *) failed=1 ;; esac
           done
           if [ "$failed" -ne 0 ]; then

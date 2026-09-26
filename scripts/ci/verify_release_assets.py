@@ -145,6 +145,149 @@ def expected_release_artifacts(version: str, targets_file: Path) -> set[str]:
     return expected
 
 
+
+def expected_rust_artifacts(version: str, selection: str) -> set[str]:
+    if selection not in {"none", "server", "tui", "both"}:
+        raise VerificationError("invalid Rust artifact selection")
+    expected: set[str] = set()
+    if selection in {"tui", "both"}:
+        base = f"graphite-meter-client_{version}_linux_amd64_rust"
+        expected.update({f"{base}.tar.gz", f"{base}_third-party-source.tar.gz"})
+    if selection in {"server", "both"}:
+        expected.add(f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz")
+    return expected
+
+
+def verify_rust_server_source(dist: Path, version: str) -> None:
+    source = dist / f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz"
+    names = archive_names(source)
+    if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= names:
+        raise VerificationError("Rust server source offer lacks inventory, notices, or patch provenance")
+    if not read_tar_text(source, "LEGAL.txt").strip():
+        raise VerificationError("Rust server source offer has empty notices")
+    inventory = decode_json(
+        read_tar_text(source, "inventory.json", limit=8 * 1024 * 1024),
+        "Rust server inventory",
+    )
+    if not isinstance(inventory, dict):
+        raise VerificationError("Rust server source inventory must be an object")
+    if type(inventory.get("schemaVersion")) is not int or inventory["schemaVersion"] != 1:
+        raise VerificationError("Rust server source inventory schema is unsupported")
+    expected_identity = {
+        "package": "graphite-meter-server",
+        "target": "x86_64-unknown-linux-gnu",
+        "profile": "release",
+        "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
+    }
+    for field, expected_value in expected_identity.items():
+        if inventory.get(field) != expected_value:
+            raise VerificationError(f"Rust server source inventory {field} mismatch")
+    components = inventory.get("components")
+    if not isinstance(components, list) or not 1 <= len(components) <= 4096:
+        raise VerificationError("Rust server source inventory has no components")
+    package_directories: set[str] = set()
+    for item in components:
+        component = item.get("component") if isinstance(item, dict) else None
+        if not isinstance(component, dict):
+            raise VerificationError("invalid Rust server source component")
+        name, component_version = component.get("name"), component.get("version")
+        if (
+            not isinstance(name, str)
+            or SAFE_RELEASE_NAME.fullmatch(name) is None
+            or not isinstance(component_version, str)
+            or SAFE_RELEASE_NAME.fullmatch(component_version) is None
+        ):
+            raise VerificationError("invalid Rust server source component identity")
+        directory = f"{name}-{component_version}"
+        package_directories.add(directory)
+        prefix = f"third_party/cargo/{directory}/"
+        if not any(path.startswith(prefix) for path in names):
+            raise VerificationError(f"Rust server source omits {name} {component_version}")
+    for path in names:
+        if not path.startswith("third_party/cargo/"):
+            continue
+        parts = path.split("/", 3)
+        if len(parts) != 4 or parts[2] not in package_directories:
+            raise VerificationError(f"Rust server source contains undeclared Cargo tree: {path}")
+    # Published crate sources include public certificate and key test vectors.
+    # Preserve the checked Cargo source, while rejecting any such material in
+    # repository-owned files and other release content.
+    first_party_and_other_sources = {
+        path for path in names if not path.startswith("third_party/cargo/")
+    }
+    verify_no_certificate_material(source, first_party_and_other_sources)
+
+
+def verify_rust_client_archive(dist: Path, version: str) -> None:
+    """Inspect untrusted archive data; never extract or execute its contents."""
+    base = f"graphite-meter-client_{version}_linux_amd64_rust"
+    archive_path = dist / f"{base}.tar.gz"
+    names = archive_names(archive_path)
+    files = {"graphite-meter-client", "LICENSE", "COPYRIGHT", "LEGAL.txt", "SOURCE.txt", "BUILD.json"}
+    if names != {base, *(f"{base}/{name}" for name in files)}:
+        raise VerificationError("Rust TUI archive contains unexpected or missing members")
+    verify_no_certificate_material(archive_path, names)
+    metadata = decode_json(read_tar_text(archive_path, f"{base}/BUILD.json", limit=16 * 1024), "Rust build metadata")
+    if not isinstance(metadata, dict) or set(metadata) != {
+        "schemaVersion", "implementation", "version", "target", "minimumGlibc", "neededLibraries", "rustc"
+    }:
+        raise VerificationError("invalid Rust build metadata")
+    if (type(metadata["schemaVersion"]) is not int or metadata["schemaVersion"] != 1 or metadata["implementation"] != "rust"
+        or metadata["version"] != f"{version}-rust"
+        or metadata["target"] != "x86_64-unknown-linux-gnu"
+        or not isinstance(metadata["minimumGlibc"], str)
+        or re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", metadata["minimumGlibc"]) is None
+        or not isinstance(metadata["neededLibraries"], list)
+        or not 1 <= len(metadata["neededLibraries"]) <= 32
+        or not all(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.+-]{1,128}", name) for name in metadata["neededLibraries"])
+        or not isinstance(metadata["rustc"], str) or not metadata["rustc"].startswith("rustc ")):
+        raise VerificationError("Rust build metadata does not match release/target")
+    report = read_tar_text(archive_path, f"{base}/LEGAL.txt")
+    if not report.strip():
+        raise VerificationError("Rust package has no legal report")
+    source = dist / f"{base}_third-party-source.tar.gz"
+    source_names = archive_names(source)
+    if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= source_names:
+        raise VerificationError("Rust source archive is missing inventory, notices, or patch provenance")
+    if not any(name.startswith("third_party/cargo/") for name in source_names):
+        raise VerificationError("Rust source archive contains no Cargo sources")
+    if read_tar_text(source, "LEGAL.txt") != report:
+        raise VerificationError("Rust source notices differ from binary package notices")
+    inventory = decode_json(read_tar_text(source, "inventory.json", limit=8 * 1024 * 1024), "Rust source inventory")
+    if (not isinstance(inventory, dict)
+        or type(inventory.get("schemaVersion")) is not int
+        or inventory.get("schemaVersion") != 1
+        or inventory.get("target") != metadata["target"]
+        or inventory.get("package") != "graphite-meter-client"
+        or inventory.get("profile") != "release"
+        or inventory.get("rustc") != metadata["rustc"]
+        or inventory.get("cargoLockSha256") != sha256_file(Path("rust/Cargo.lock"))):
+        raise VerificationError("Rust source inventory build identity mismatch")
+    components = inventory.get("components")
+    if not isinstance(components, list) or not 1 <= len(components) <= 4096:
+        raise VerificationError("Rust source inventory has no components")
+    for item in components:
+        component = item.get("component") if isinstance(item, dict) else None
+        if not isinstance(component, dict):
+            raise VerificationError("invalid Rust source inventory component")
+        name, component_version = component.get("name"), component.get("version")
+        if not isinstance(name, str) or not isinstance(component_version, str):
+            raise VerificationError("invalid Rust source component identity")
+        prefix = f"third_party/cargo/{name}-{component_version}/"
+        if not any(path.startswith(prefix) for path in source_names):
+            raise VerificationError(f"Rust source archive omits {name} {component_version}")
+    for filename in ("LICENSE", "COPYRIGHT"):
+        if read_tar_text(archive_path, f"{base}/{filename}") != Path(filename).read_text():
+            raise VerificationError(f"Rust package {filename} does not match repository")
+    source_offer = read_tar_text(archive_path, f"{base}/SOURCE.txt")
+    if source.name not in source_offer or metadata["minimumGlibc"] not in source_offer:
+        raise VerificationError("Rust package source/platform offer is incomplete")
+    with tarfile.open(archive_path, "r:gz") as archive:
+        member = archive.getmember(f"{base}/graphite-meter-client")
+        if not member.isfile() or not 0 < member.size <= 128 * 1024 * 1024 or not member.mode & 0o111:
+            raise VerificationError("Rust executable size/mode is invalid")
+
+
 def require_safe_archive_name(archive: Path, name: str) -> None:
     pure = PurePosixPath(name)
     if (
@@ -161,7 +304,13 @@ def archive_names(path: Path) -> set[str]:
     if path.name.endswith(".tar.gz"):
         try:
             with tarfile.open(path, mode="r:gz") as archive:
-                for member in archive.getmembers():
+                total_size = 0
+                for member in archive:
+                    if member.size < 0:
+                        raise VerificationError(f"{path.name} contains a negative member size")
+                    total_size += member.size
+                    if len(names) >= 100_000 or total_size > 2 * 1024 * 1024 * 1024:
+                        raise VerificationError(f"{path.name} exceeds archive entry/size limits")
                     require_safe_archive_name(path, member.name)
                     if not (member.isfile() or member.isdir()):
                         raise VerificationError(
@@ -207,14 +356,16 @@ def verify_no_certificate_material(path: Path, names: set[str]) -> None:
         )
 
 
-def read_tar_text(path: Path, member_name: str) -> str:
+def read_tar_text(path: Path, member_name: str, *, limit: int = 16 * 1024 * 1024) -> str:
     try:
         with tarfile.open(path, mode="r:gz") as archive:
             member = archive.getmember(member_name)
+            if not member.isfile() or not 0 <= member.size <= limit:
+                raise VerificationError(f"{path.name} metadata exceeds limit or is not regular: {member_name}")
             handle = archive.extractfile(member)
             if handle is None:
                 raise VerificationError(f"{path.name} cannot read metadata member: {member_name}")
-            return handle.read().decode("utf-8")
+            return handle.read(limit + 1).decode("utf-8")
     except (KeyError, OSError, UnicodeDecodeError, tarfile.TarError) as exc:
         raise VerificationError(f"cannot read {member_name} from {path.name}: {exc}") from exc
 
@@ -377,12 +528,12 @@ def verify_server_version(version: str) -> None:
         raise VerificationError(f"server version is {actual!r}; expected {version!r}")
 
 
-def verify(version: str, dist: Path) -> None:
+def verify(version: str, dist: Path, rust_artifacts: str = "none") -> None:
     if not dist.is_dir():
         raise VerificationError(f"release directory does not exist: {dist}")
     targets_file = Path("scripts/tui-targets.txt")
     checksummed = verify_checksums(dist)
-    expected = expected_release_artifacts(version, targets_file)
+    expected = expected_release_artifacts(version, targets_file) | expected_rust_artifacts(version, rust_artifacts)
     if checksummed != expected:
         missing = sorted(expected - checksummed)
         extra = sorted(checksummed - expected)
@@ -395,6 +546,10 @@ def verify(version: str, dist: Path) -> None:
     verify_release_file_set(dist, checksummed)
     verify_third_party_source_archive(dist, version)
     verify_client_archives(dist, version, targets_file)
+    if rust_artifacts in {"tui", "both"}:
+        verify_rust_client_archive(dist, version)
+    if rust_artifacts in {"server", "both"}:
+        verify_rust_server_source(dist, version)
     verify_client_version(version)
     verify_server_version(version)
     print(f"release asset verification passed: {version}")
@@ -403,11 +558,12 @@ def verify(version: str, dist: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
+    parser.add_argument("--rust-artifacts", choices=("none", "server", "tui", "both"), default="none")
     args = parser.parse_args()
     dist = Path(os.environ.get("RELEASE_DIST", "go/dist"))
     try:
-        verify(args.version, dist)
-    except VerificationError as exc:
+        verify(args.version, dist, args.rust_artifacts)
+    except (VerificationError, JsonShapeError, subprocess.SubprocessError, OSError) as exc:
         raise SystemExit(f"release verification failed: {exc}") from exc
 
 

@@ -335,6 +335,28 @@ func TestUploadStreamOwnerCannotReadAnotherClientsLane(t *testing.T) {
 	}
 }
 
+func TestUploadFinishRejectsLateLaneWithoutChangingReceiverTotal(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	upload := NewUpload(nil, store)
+	if n, err := upload.HandleUpload(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
+		t.Fatalf("initial upload = %d, %v", n, err)
+	}
+	if access := store.finishFor(id, "owner"); access != uploadAccessOK {
+		t.Fatal(access)
+	}
+	body := strings.NewReader("must not be drained")
+	n, err := upload.HandleUpload(t.Context(), id, "owner", body)
+	refusal, ok := errors.AsType[*uploadRefusalError](err)
+	if !ok || refusal.access != uploadAccessInvalid || n != 0 || body.Len() != len("must not be drained") {
+		t.Fatalf("late lane = %d, %v; unread bytes = %d", n, err, body.Len())
+	}
+	agg, _ := store.get(id)
+	if agg.bytes.Load() != 5 || agg.posts.Load() != 0 {
+		t.Fatalf("finished total changed: bytes=%d posts=%d", agg.bytes.Load(), agg.posts.Load())
+	}
+}
+
 func TestUploadHTTPAbortDoesNotPublishCompleteBytes(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()

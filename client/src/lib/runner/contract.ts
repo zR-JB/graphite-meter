@@ -404,6 +404,7 @@ export interface TransportDiscovery {
   uploadCheckpoint?: boolean;
   generation: string;
   engineVersion: string;
+  implementation?: "go" | "rust";
   server: { name: string; location?: string };
   fetchedAt: number;
   /** One HTTP preflight request through body completion, including connection setup; not probe RTT. */

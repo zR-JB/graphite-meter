@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    {% include "auth-head.html" %}
+    <title>Approve client · Graphite Meter</title>
+    {% include "auth-theme.html" %}
+  </head>
+  <body>
+    <main class="card">
+      {% if browser_capacity %}
+        <h1>Browser client limit reached</h1>
+        <p>This server login already has {{ client_limit }} measurement clients.
+          It cannot approve another client yet.</p>
+        <p>Renewing this login revokes its existing client grants and ends
+          their active measurements.</p>
+        <p><a href="/login">Renew this server's login</a>, then return to
+          the requesting Graphite Meter interface and choose Sign in again.</p>
+      {% else %}
+        {% if !browser_origin.is_empty() %}
+          <h1>Approve browser client</h1>
+          <p>Allow this site to run measurements using your sign-in?</p>
+          <p><strong>{{ browser_origin }}</strong></p>
+          <p>Confirm that this code matches the code in the requesting Graphite Meter interface.</p>
+        {% else %}
+          <h1>Approve terminal client</h1>
+          <p>Only approve a client you started yourself. This grants a terminal
+            access to run measurements as you until you sign out.</p>
+          <p>Confirm that this code matches the code in your terminal.</p>
+        {% endif %}
+        <code class="code">{{ code }}</code>
+        <form method="post" action="{% if !browser_origin.is_empty() %}/auth/browser/approve{% else %}/auth/cli/approve{% endif %}">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="challenge" value="{{ challenge }}">
+          <button type="submit">Approve this client</button>
+        </form>
+        <p class="notice">If you did not request access for this client, close
+          this page and do not approve.</p>
+      {% endif %}
+    </main>
+    {% include "auth-pending.html" %}
+  </body>
+</html>

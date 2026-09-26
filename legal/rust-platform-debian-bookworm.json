@@ -1,0 +1,224 @@
+{
+  "target": "x86_64-unknown-linux-gnu",
+  "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+  "nativeCompiler": "cc (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+  "reviewDecision": "approved",
+  "reviewNotes": "Reviewed exact library/compiler package attribution in the pinned official amd64 builder. Debian package versions verified with dpkg-query: libc6-dev 2.36-9+deb12u14; gcc-12/libgcc-s1 12.2.0-14+deb12u1. The glibc copyright file retains an older descriptive version header; package identity comes from dpkg and object fingerprints, not that header. Preserve full Rust standard-library aggregate, GNU package attribution, GPLv3 plus included GCC Runtime Library Exception 3.1, and LGPL2.1. Dynamic glibc and libgcc are system dependencies and are not distributed inside the TUI archive. CRT objects and Rust rlibs are fingerprinted; GNU runtime attribution is a conservative package-text superset. Other builder revisions or targets require review.",
+  "description": "Rust 1.98.1 standard-library notices and Debian Bookworm GNU runtime/startup attribution. Rust compiler implementation dependencies are excluded. The GCC package copyright is retained as a conservative notice superset; its compiler implementation is not part of the released binary. Dynamic glibc/libgcc libraries are system supplied and are not bundled in the TUI archive. Startup CRT objects are linked into the executable. This record is limited to the fingerprinted amd64 inputs in the official rust:1.98.1-bookworm image.",
+  "builderImage": "docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e",
+  "inputs": [
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/COPYRIGHT-library.html",
+      "sha256": "68129500b616d5838629e68f55ff3aed5e096dacf60ce9eb41bbe599a563afa6",
+      "noticeName": "rust-standard-library/COPYRIGHT-library.html"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/Apache-2.0.txt",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+      "noticeName": "rust-standard-library/Apache-2.0.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/BSD-2-Clause.txt",
+      "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+      "noticeName": "rust-standard-library/BSD-2-Clause.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/CC-BY-SA-4.0.txt",
+      "sha256": "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2",
+      "noticeName": "rust-standard-library/CC-BY-SA-4.0.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/GCC-exception-3.1.txt",
+      "sha256": "a3966c9410ef94a1efbfa9ec04e9c1994026a70623fbf0885ce36737bfba3b54",
+      "noticeName": "rust-standard-library/GCC-exception-3.1.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-2.0-only.txt",
+      "sha256": "54b212ba1f97f6948fa5486239ab505dd820b02e50cbfd296b4062c8609a70af",
+      "noticeName": "rust-standard-library/GPL-2.0-only.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-3.0-or-later.txt",
+      "sha256": "05315fce6c35f79b8a35454828995fa26336f235895ac64557abc028f4ffcea2",
+      "noticeName": "rust-standard-library/GPL-3.0-or-later.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/ISC.txt",
+      "sha256": "0ff61769b238634e042ab759dddfd104a8e69d091e3600ae3410e401a6164381",
+      "noticeName": "rust-standard-library/ISC.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/LLVM-exception.txt",
+      "sha256": "e34c58338bd89d43e709e226610d8f32b3e3c47f4ad9a99a8dc1d4ac7842488e",
+      "noticeName": "rust-standard-library/LLVM-exception.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/MIT.txt",
+      "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0",
+      "noticeName": "rust-standard-library/MIT.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/NCSA.txt",
+      "sha256": "39cb0234065c92b9e6cee3830cbb52b1aa289aa8fe9ba2e66730fec5cf05c630",
+      "noticeName": "rust-standard-library/NCSA.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/OFL-1.1.txt",
+      "sha256": "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd",
+      "noticeName": "rust-standard-library/OFL-1.1.txt"
+    },
+    {
+      "path": "$RUST_SYSROOT/share/doc/rust/licenses/Unicode-3.0.txt",
+      "sha256": "f5062c9a188d81dfe66b56db4182dcf9e4b17c0d9b0d311a8e20b3a1b075c443",
+      "noticeName": "rust-standard-library/Unicode-3.0.txt"
+    },
+    {
+      "path": "/usr/share/doc/libc6/copyright",
+      "sha256": "40c7e1f2118531f038ca22999bd976901254e1bc5cd1b0f0211bdd064c599987",
+      "noticeName": "glibc/copyright"
+    },
+    {
+      "path": "/usr/share/doc/gcc-12-base/copyright",
+      "sha256": "da8191658b3452ce9caf31638ba61dab31a38c619fa39df119812e050f592fd3",
+      "noticeName": "gcc-runtime/copyright"
+    },
+    {
+      "path": "/usr/share/common-licenses/LGPL-2.1",
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551",
+      "noticeName": "gcc-runtime/LGPL-2.1"
+    },
+    {
+      "path": "/usr/share/common-licenses/GPL-3",
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+      "noticeName": "gcc-runtime/GPL-3"
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/Scrt1.o",
+      "sha256": "476c1939cbc572be9ca35ac2592e24a57c636003dd6c2d2ed4138cecde2a2ff9"
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/crti.o",
+      "sha256": "78acef26a7007f5320c98633376f2903e33895e694fbc2b91d189b38addbca8a"
+    },
+    {
+      "path": "/usr/lib/gcc/x86_64-linux-gnu/12/crtbeginS.o",
+      "sha256": "6f1e9caa8a8978de40860539fc62d839351d9c73d046859c20aa4540ff1df004"
+    },
+    {
+      "path": "/usr/lib/gcc/x86_64-linux-gnu/12/crtendS.o",
+      "sha256": "96d81f92f663e0cf892cf0c83c4cf8ddfbbc1b32996d39c20843583cf91a26cc"
+    },
+    {
+      "path": "/usr/lib/x86_64-linux-gnu/crtn.o",
+      "sha256": "121f2a5f12b13471dd8c7dabe3ff334df08540c270564d1a2b3c47ecbd8d3101"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libaddr2line-09755979c57b7e64.rlib",
+      "sha256": "b7b2ddc6169ad7bb67cb085e770da3d71ecfa94d40fe532801bb993710fc2a0d"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libadler2-dca52f01a59c33e7.rlib",
+      "sha256": "75baa52c1f030187625786027ac4030b27ff82c5a324dc31e064528185f3b737"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/liballoc-1ad4f876c768bda9.rlib",
+      "sha256": "ea6eea65e99c8c64c146175a2e8eb0b5fdd0cadfb9cb13ade7d3d03fdd7a1e61"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcfg_if-360da4ba13154744.rlib",
+      "sha256": "3056ab9b675fa0f293f4998b62bcd324923002a3f3638e40a30ae2d1681eb910"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcompiler_builtins-2d2ab9fb0fe1def5.rlib",
+      "sha256": "1c262a8222305bf9e5925183fe14f20144ddfb84cefee76ff6eff945f0dfaa05"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcore-df1bddb45adbe94b.rlib",
+      "sha256": "c040da93caf73df2afaa5ea20ed90b0071e7ef71b53d6aed535c68d3e5fbdffd"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libgetopts-3faf21cb4217a5c4.rlib",
+      "sha256": "571e9b27e76900c9be94977540553c77379396156aa966715897facce50df1b8"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libgimli-9a1fede77fbbf2f0.rlib",
+      "sha256": "2a28d6b3b3ad2fb5c88ad53053846c51cbce7218f52289ab58256f8769982116"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libhashbrown-143c77bb957d9940.rlib",
+      "sha256": "19cee31621ce0c4037472d286f45832ac7fa9bf62b5a7a7222392c71a42a2009"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/liblibc-06449a08aaab5e30.rlib",
+      "sha256": "f0d2145c01473567f0c0235768352fe373c49c80b47e8fcf0c695f0281aeb6db"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libmemchr-0e3477fb2664a277.rlib",
+      "sha256": "b98c5cee91b2f30c87caf42d9fe975a0407fb0f9996d8c762d1738a826a892ef"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libminiz_oxide-e44eaef1807e5fc0.rlib",
+      "sha256": "68eb2a85c688cb8d910be4222ec37ca366bd7cdfbb05d9ff923b09a06aa57a3a"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libobject-7ff85ea729a864ff.rlib",
+      "sha256": "0dbdcbf63016c82b39a198bff4a7ba83eea5d328e02160c3da0f2a912007083f"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libpanic_abort-c4dfdaf0b4399055.rlib",
+      "sha256": "ee3ef25a4507609475833ba95359daa74828fee265b6bbaa51e9de4e75a6a794"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libpanic_unwind-549498e8b2e4d924.rlib",
+      "sha256": "afccbbad6e2b80c3134f0e018a2629f3f08c0c8a9457df774f83ab7e6d73916f"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libproc_macro-90f1d29c414141c0.rlib",
+      "sha256": "0c732a6a7773a1dc84de4b110ff75d72b327c82597e08d0cc8106e85d03164eb"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libprofiler_builtins-c32d328e982fa0b5.rlib",
+      "sha256": "d45f3cda78a7c97c30d725291aa19bed5c6b685956c6893090455c926b232160"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_demangle-cfd0ab54bb33760e.rlib",
+      "sha256": "40a11efa12c9adba45094d6ff63f19d786ba54141392f06c0bc8716a070ab3f4"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_literal_escaper-092f9360013d9ea8.rlib",
+      "sha256": "6282ff8e4f12520674b9ad5c57adc233ae380531ec1a9aa2dc2662c76a572a70"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_std_workspace_alloc-145a318e0772276c.rlib",
+      "sha256": "ab8c10edf4f723c54915357ad7b41cd1269b5f8d49ef304bbd8a0cf21b030258"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_std_workspace_core-cb0d4d77988d81b5.rlib",
+      "sha256": "b4d99e606c6f45654c397c2754ef5e06b514085ffd9a8afec7bf3cd3ba5078aa"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_std_workspace_std-04ecf85ec5d31aba.rlib",
+      "sha256": "66a8125b7c18a57d0ca69b422e7b3019e060a9a32c5ef6c5aa5ae0c195391dd1"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-64f5f36fb0927694.rlib",
+      "sha256": "bf156342c5f849f27d8f53003131bc7c0e675143389d84dd549b2ebbaccfaa2f"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd_detect-f99feda5ce9e492a.rlib",
+      "sha256": "cf0b708f1240644c0f5d0d672913a9998e9e8320184bc6073a4fbb8c07d55f3e"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libsysroot-002faa2f1d166f98.rlib",
+      "sha256": "0c06de8c1ce571a587568d60b73cd599c483ddb66b0cdadf0873ee9def2f4442"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libtest-4052f37fcd02ccef.rlib",
+      "sha256": "18285161e0c3e2bf8bc9b74d609a49ff27d0676b0c00a40b3730110e1df942bc"
+    },
+    {
+      "path": "$RUST_SYSROOT/lib/rustlib/x86_64-unknown-linux-gnu/lib/libunwind-3ec41d3a5a80a4a4.rlib",
+      "sha256": "9bcb7ac2880f01055170c5c4d7f383a1174cd5e97e6c4f440a103fec521b6561"
+    }
+  ]
+}

@@ -25,6 +25,17 @@ on:
         required: true
         type: string
 
+      rust_artifacts:
+        description: Additional experimental Rust artifacts (Go artifacts are always retained)
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - server
+          - tui
+          - both
+
 permissions:
   contents: read
 
@@ -76,6 +87,7 @@ jobs:
           PR_NUMBER: ${{ inputs.pr }}
           REQUESTED_SHA: ${{ inputs.sha }}
           REQUESTED_TAG: ${{ inputs.tag }}
+          RUST_ARTIFACTS: ${{ inputs.rust_artifacts }}
         run: python3 scripts/ci/prerelease.py request-prepare
 
       # The raw dispatch SHA reaches only the trusted validator above. PR files never
@@ -101,6 +113,7 @@ jobs:
           REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
           OUT_DIR: ${{ runner.temp }}/prerelease-candidate
           OCI_ARCHIVE: ${{ runner.temp }}/prerelease-candidate/graphite-meter.oci.tar
+          RUST_ARTIFACTS: ${{ steps.request.outputs.rust_artifacts }}
         run: python3 scripts/ci/prerelease.py request-finalize
 
       - name: Upload untrusted candidate handoff

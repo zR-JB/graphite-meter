@@ -87,6 +87,11 @@ export function parsePreflight(value: unknown): Preflight {
         : { location: string(server.location, 256, true) }),
     },
     engineVersion: string(input.engineVersion, 256, true),
+    ...(input.implementation === undefined
+      ? {}
+      : {
+          implementation: member(input.implementation, ["go", "rust"] as const),
+        }),
     generation: string(input.generation, 256),
     capabilities: {
       ...(capabilities.uploadCheckpoint === undefined

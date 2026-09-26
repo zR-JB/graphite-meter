@@ -1,0 +1,15 @@
+[package]
+name = "graphite-meter-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+socket2 = "0.6.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

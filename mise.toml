@@ -253,6 +253,41 @@ description = "Run all Go tests, including loopback integration"
 dir = "go"
 run = "go test ./..."
 
+[tasks.rust-format]
+description = "Format the experimental Rust workspace"
+dir = "rust"
+run = "cargo fmt --all"
+
+[tasks.rust-server-build]
+description = "Build the experimental Rust server"
+run = "python3 scripts/run-rust-server.py --profile release --version \"${VERSION:-development}\" --build-only"
+
+[tasks.rust-server-run]
+description = "Run the experimental Rust server with GM_* configuration"
+raw = true
+run = "python3 scripts/run-rust-server.py --profile dev"
+
+[tasks.rust-client-run]
+description = "Run the experimental Rust TUI against a server"
+dir = "rust"
+raw = true
+run = "cargo run --locked --bin graphite-meter-client --"
+
+[tasks.rust-client-build]
+description = "Build the experimental Rust TUI without browser assets"
+dir = "rust"
+run = "cargo build --release --locked --bin graphite-meter-client"
+
+[tasks.rust-check]
+description = "Check experimental Rust formatting, dependencies, lints, and tests"
+dir = "rust"
+run = [
+  "cargo fmt --all --check",
+  "python3 ../scripts/ci/rust_crate_budget.py",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "cargo test --workspace --all-targets --locked",
+]
+
 [tasks.check-generated]
 shell = "bash -e -o pipefail -c"
 description = "Check embedded authentication asset drift"
@@ -373,14 +408,31 @@ description = "Build exact production client and server release artifacts"
 usage = 'arg "[version]" default="development"'
 run = [{ task = "server-build-prod", env = { VERSION = "{{usage.version}}" } }]
 
-[tasks.release-artifacts]
-description = "Build distributable native archives and checksums without publishing"
+[tasks.rust-client-package]
+description = "Package the experimental native Linux x86_64 Rust TUI with reviewed source and notices"
 usage = 'arg "[version]" default="development"'
 run = '''
 #!/usr/bin/env sh
 set -eu
+python3 scripts/package-rust.py "$usage_version" --output "${RELEASE_DIST:-go/dist}" --supplement "${GM_RUST_PLATFORM_SUPPLEMENT:-legal/rust-platform-linux-gnu.json}"
+'''
+
+[tasks.release-artifacts]
+description = "Build distributable native archives and checksums without publishing"
+usage = '''
+arg "[version]" default="development"
+flag "--rust-artifacts <selection>" default="none" { choices "none" "server" "tui" "both" }
+'''
+run = '''
+#!/usr/bin/env sh
+set -eu
+python3 scripts/ci/release.py rust-artifacts --selection "$usage_rust_artifacts"
 VERSION=$usage_version
 export VERSION
+if [ "$usage_rust_artifacts" = server ] || [ "$usage_rust_artifacts" = both ]; then
+  : "${RUST_SERVER_SOURCE:?RUST_SERVER_SOURCE must name the source archive exported with the Rust OCI build}"
+  [ -f "$RUST_SERVER_SOURCE" ] && [ ! -L "$RUST_SERVER_SOURCE" ] || { echo "Rust server source archive is not a regular file" >&2; exit 2; }
+fi
 dist=${RELEASE_DIST:-go/dist}
 case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
 mkdir -p "$dist"
@@ -390,6 +442,12 @@ while IFS= read -r target; do
   [ -n "$target" ] || continue
   scripts/package-tui.sh "$VERSION" "${target%/*}" "${target#*/}" "$dist"
 done < scripts/tui-targets.txt
+if [ "$usage_rust_artifacts" = tui ] || [ "$usage_rust_artifacts" = both ]; then
+  python3 scripts/package-rust.py "$VERSION" --container --output "$dist"
+fi
+if [ "$usage_rust_artifacts" = server ] || [ "$usage_rust_artifacts" = both ]; then
+  cp "$RUST_SERVER_SOURCE" "$dist/graphite-meter-server_${VERSION}_linux_amd64_rust_third-party-source.tar.gz"
+fi
 (cd "$dist" && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt)
 '''
 
@@ -435,28 +493,44 @@ dir = "go"
 raw = true
 run = "go run ./cmd/graphite-meter-client"
 
+[tasks.tui]
+description = "Run the native TUI; select Rust with GM_IMPLEMENTATION=rust"
+raw = true
+raw_args = true
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+case "${GM_IMPLEMENTATION:-go}" in
+  go) cd go && go run ./cmd/graphite-meter-client "$@" ;;
+  rust) cd rust && cargo run --locked --bin graphite-meter-client -- "$@" ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+'''
+
 [tasks.dev]
 description = "Build the development client and run the embedded server"
 raw = true
-run = [
-  { task = "client-build-dev" },
-  { task = "_embed-client" },
-  "cd go && go run ./cmd/graphite-meter",
-]
+run = '''
+case "${GM_IMPLEMENTATION:-go}" in
+  go) mise run client-build-dev && mise run _embed-client && cd go && go run ./cmd/graphite-meter ;;
+  rust) python3 scripts/run-rust-server.py --profile dev ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+'''
 
 [tasks.prod]
 shell = "bash -e -o pipefail -c"
 description = "Build the production client and run the stamped server"
 raw = true
-run = [
-  { task = "client-build-prod" },
-  { task = "_embed-client" },
-  '''
+run = '''
 version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
 case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
-''',
-]
+case "${GM_IMPLEMENTATION:-go}" in
+  go) mise run client-build-prod && mise run _embed-client && cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter ;;
+  rust) python3 scripts/run-rust-server.py --profile release --version "$version" ;;
+  *) echo "GM_IMPLEMENTATION must be go or rust" >&2; exit 2 ;;
+esac
+'''
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"

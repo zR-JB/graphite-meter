@@ -63,10 +63,41 @@ class ReleaseContext:
     ci_run_id: int
     publish: bool
     request_run_id: int
+    rust_artifacts: str = "none"
 
 
 def die(message: str) -> NoReturn:
     raise SystemExit(f"Release refused: {message}")
+
+
+RUST_ARTIFACT_CHOICES = ("none", "server", "tui", "both")
+
+
+def rust_artifact_selection(value: str) -> str:
+    if value not in RUST_ARTIFACT_CHOICES:
+        die("Rust artifacts must be none, server, tui, or both")
+    return value
+
+
+def request_rust_artifacts(request: JsonObject, keys: set[str], label: str) -> str:
+    version = int_field(request, "schemaVersion", label)
+    if version not in (1, 2):
+        die(f"unsupported {label} schema")
+    expected = keys | {"rustArtifacts"} if version == 2 else keys
+    if set(request) != expected:
+        die(f"{label} keys are {sorted(request)}; expected {sorted(expected)}")
+    if version == 1:
+        return "none"
+    return rust_artifact_selection(str_field(request, "rustArtifacts", label))
+
+
+def require_rust_packaging(selection: str, *, prerelease: bool = False) -> None:
+    rust_artifact_selection(selection)
+    if prerelease and selection != "none":
+        die(
+            f"Rust {selection} packaging is not available yet; "
+            "use none until verified Rust release artifacts are supported"
+        )
 
 
 def env(name: str) -> str:
@@ -164,10 +195,7 @@ def read_request(path: Path) -> JsonObject:
         request = expect_object(decode_json(text, "stable release request"), "stable release request")
     except JsonShapeError as exc:
         die(str(exc))
-    if set(request) != REQUEST_KEYS:
-        die(
-            f"stable release request keys are {sorted(request)}; expected {sorted(REQUEST_KEYS)}"
-        )
+    request_rust_artifacts(request, REQUEST_KEYS, "stable release request")
     return request
 
 
@@ -237,7 +265,6 @@ def validate_request_context(*, api: APICall = default_api) -> ReleaseContext:
     )
     request = read_request(exact_request_file(request_dir))
     try:
-        schema_version = int_field(request, "schemaVersion", "stable release request")
         request_repository = str_field(request, "repository", "stable release request")
         request_sha = str_field(request, "sourceSha", "stable release request")
         tag = str_field(request, "version", "stable release request")
@@ -247,8 +274,8 @@ def validate_request_context(*, api: APICall = default_api) -> ReleaseContext:
     except JsonShapeError as exc:
         die(str(exc))
 
-    if schema_version != 1:
-        die("unsupported stable release request schema")
+    rust_artifacts = request_rust_artifacts(request, REQUEST_KEYS, "stable release request")
+    require_rust_packaging(rust_artifacts)
     if request_repository != repository:
         die("stable release request repository mismatch")
     if request_sha != publisher_sha:
@@ -270,6 +297,7 @@ def validate_request_context(*, api: APICall = default_api) -> ReleaseContext:
         ci_run_id=ci_run_id,
         publish=mode == "publish",
         request_run_id=request_run_id,
+        rust_artifacts=rust_artifacts,
     )
 
 
@@ -282,6 +310,7 @@ def command_guard() -> None:
         version=version,
         series=f"{major}.{minor}",
         publish=str(context.publish).lower(),
+        rust_artifacts=context.rust_artifacts,
     )
     append_summary(
         f"""### Stable release request accepted
@@ -293,6 +322,7 @@ def command_guard() -> None:
 | Source | `{context.sha}` |
 | Version | `{context.tag}` |
 | Mode | `{'publish' if context.publish else 'validate'}` |
+| Additional Rust artifacts | `{context.rust_artifacts}` |
 | Main CI run | `{context.ci_run_id}` |
 
 The manual request was bound to **current `main`**, then revalidated by the trusted default-branch `workflow_run` consumer. Main CI Gate + current CodeQL analyses are valid.
@@ -306,6 +336,7 @@ The manual request was bound to **current `main`**, then revalidated by the trus
 
 
 def command_recheck() -> None:
+    require_rust_packaging(os.environ.get("RUST_ARTIFACTS", "none"))
     repository = env("REPOSITORY")
     source_sha = env("SOURCE_SHA")
     tag = env("REQUESTED_VERSION")
@@ -333,8 +364,13 @@ Main CI run `{ci_run_id}` and the latest exact-SHA CodeQL analyses remain valid.
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("guard", "recheck"))
-    command = parser.parse_args().command
+    parser.add_argument("command", choices=("guard", "recheck", "rust-artifacts"))
+    parser.add_argument("--selection", choices=RUST_ARTIFACT_CHOICES, default="none")
+    args = parser.parse_args()
+    command = args.command
+    if command == "rust-artifacts":
+        require_rust_packaging(args.selection)
+        return
     try:
         {"guard": command_guard, "recheck": command_recheck}[command]()
     except (TrustError, GitHubAPIError, JsonShapeError) as exc:

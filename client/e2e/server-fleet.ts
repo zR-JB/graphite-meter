@@ -34,14 +34,19 @@ export async function createServerFleet({
     h3: `https://${host}:${base + i * 4 + 3}`,
   }));
   const binary = process.env.GM_E2E_SERVER_BIN!;
-  const hash = Bun.spawnSync([binary, "hash-password"], {
-    stdin: Buffer.from(`${fixturePassword}\n${fixturePassword}\n`),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  if (hash.exitCode !== 0)
-    throw new Error("could not generate fixture password hash");
-  const passwordHash = hash.stdout.toString().trim();
+  // Alternate server implementations can supply the same fixture password's PHC
+  // hash while their interactive password command is still under development.
+  let passwordHash = process.env.GM_E2E_PASSWORD_HASH;
+  if (!passwordHash) {
+    const hash = Bun.spawnSync([binary, "hash-password"], {
+      stdin: Buffer.from(`${fixturePassword}\n${fixturePassword}\n`),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (hash.exitCode !== 0)
+      throw new Error("could not generate fixture password hash");
+    passwordHash = hash.stdout.toString().trim();
+  }
   process.env.BUN_CHROME_ARGS = [
     process.env.BUN_CHROME_ARGS,
     // Self-signed QUIC fixtures require forcing; cold Alt-Svc startup needs separate coverage.

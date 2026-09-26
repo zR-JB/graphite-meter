@@ -31,7 +31,18 @@ SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ATTESTATION_TYPE = "attestation-manifest"
 ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
 ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
-EXPECTED_PLATFORMS = {("linux", "amd64"), ("linux", "arm64")}
+IMPLEMENTATION_PLATFORMS = {
+    "go": {("linux", "amd64"), ("linux", "arm64")},
+    "rust": {("linux", "amd64")},
+}
+
+
+def expected_platforms(implementation: str) -> set[tuple[str, str]]:
+    try:
+        return IMPLEMENTATION_PLATFORMS[implementation]
+    except KeyError as exc:
+        raise VerificationError(f"unsupported implementation: {implementation!r}") from exc
+
 OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SKOPEO_VERSION_OUTPUT_RE = re.compile(
@@ -47,14 +58,15 @@ def parse_skopeo_version(output: str) -> str:
         raise VerificationError(f"unexpected Skopeo --version output: {output!r}")
     return match.group("version")
 
-def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
-    """Validate the two runnable images and their BuildKit provenance manifests.
+def validate_index_descriptors(index: JsonObject, implementation: str = "go") -> dict[str, str]:
+    """Validate the implementation-specific images and their BuildKit provenance.
 
     Explicit `provenance: mode=max` creates one provenance attestation manifest
     for each runnable platform in the OCI index. Attestation descriptors use
     platform unknown/unknown and bind back to the runnable manifest digest via
     the BuildKit reference annotations. No other index descriptors are allowed.
     """
+    platforms = expected_platforms(implementation)
     try:
         if int_field(index, "schemaVersion", "OCI index") != 2:
             raise VerificationError("OCI index.schemaVersion must be 2")
@@ -86,7 +98,7 @@ def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
             raise VerificationError(f"{context}.mediaType must be {OCI_MANIFEST_MEDIA_TYPE}")
 
         platform_key = (os_name, architecture)
-        if platform_key in EXPECTED_PLATFORMS:
+        if platform_key in platforms:
             if platform_key in runnable:
                 raise VerificationError(
                     f"OCI index contains duplicate runnable platform {os_name}/{architecture}"
@@ -118,10 +130,10 @@ def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
             )
         attestations.append(reference_digest)
 
-    if set(runnable) != EXPECTED_PLATFORMS:
+    if set(runnable) != platforms:
         actual = ", ".join(f"{os_name}/{arch}" for os_name, arch in sorted(runnable)) or "none"
         raise VerificationError(
-            "OCI archive must contain exactly one runnable linux/amd64 and linux/arm64 "
+            f"OCI {implementation} archive must contain exactly these runnable platforms: {sorted(platforms)}; "
             f"manifest; got {actual}"
         )
 
@@ -237,7 +249,7 @@ def verify_archive_blobs(engine: str, image: str, archive: Path) -> None:
     )
 
 
-def verify(version: str, revision: str, archive: Path) -> None:
+def verify(version: str, revision: str, archive: Path, implementation: str = "go") -> None:
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         raise VerificationError(f"OCI archive is missing, empty, or not a regular file: {archive}")
 
@@ -248,7 +260,7 @@ def verify(version: str, revision: str, archive: Path) -> None:
         skopeo(engine, image, archive, "inspect", "--raw", "oci-archive:/work/image.oci.tar"),
         "OCI index",
     )
-    validate_index_descriptors(index)
+    validate_index_descriptors(index, implementation)
 
     # Inspecting manifests/configs alone does not prove that every referenced
     # layer blob is readable. A full local copy forces Skopeo to consume the
@@ -261,7 +273,9 @@ def verify(version: str, revision: str, archive: Path) -> None:
         "org.opencontainers.image.version": version,
         "org.opencontainers.image.licenses": "AGPL-3.0-or-later",
     }
-    for architecture in ("amd64", "arm64"):
+    if implementation == "rust":
+        expected_labels["io.graphite-meter.implementation"] = "rust"
+    for _os, architecture in sorted(expected_platforms(implementation)):
         labels = parse_object_json(
             skopeo(
                 engine,
@@ -291,6 +305,7 @@ def verify(version: str, revision: str, archive: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-skopeo", action="store_true")
+    parser.add_argument("--implementation", choices=("go", "rust"), default="go")
     parser.add_argument("version", nargs="?")
     parser.add_argument("revision", nargs="?")
     parser.add_argument("archive", nargs="?", type=Path)
@@ -304,7 +319,7 @@ def main() -> None:
             return
         if args.version is None or args.revision is None or args.archive is None:
             parser.error("version, revision, and archive are required")
-        verify(args.version, args.revision, args.archive)
+        verify(args.version, args.revision, args.archive, args.implementation)
     except VerificationError as exc:
         raise SystemExit(f"OCI verification failed: {exc}") from exc
 

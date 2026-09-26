@@ -55,6 +55,8 @@ from release import (
     SEMVER_RE,
     STABLE_SEMVER_RE,
     require_compatible_release_tag,
+    request_rust_artifacts,
+    require_rust_packaging,
     validate_request_context,
 )
 from trust import (
@@ -86,6 +88,34 @@ from workflow_policy import (
 MAIN = "1" * 40
 HEAD = "2" * 40
 OLD_MAIN = "3" * 40
+
+
+class RustReleaseSelectionTests(unittest.TestCase):
+    def test_legacy_requests_cannot_smuggle_rust_selection(self) -> None:
+        keys = {"schemaVersion"}
+        self.assertEqual(request_rust_artifacts({"schemaVersion": 1}, keys, "request"), "none")
+        with self.assertRaisesRegex(SystemExit, "keys"):
+            request_rust_artifacts({"schemaVersion": 1, "rustArtifacts": "both"}, keys, "request")
+        with self.assertRaisesRegex(SystemExit, "keys"):
+            request_rust_artifacts({"schemaVersion": 2}, keys, "request")
+
+    def test_explicit_selection_is_closed_and_unavailable_payloads_fail(self) -> None:
+        keys = {"schemaVersion"}
+        for selection in ("none", "server", "tui", "both"):
+            request: JsonObject = {"schemaVersion": 2, "rustArtifacts": selection}
+            self.assertEqual(request_rust_artifacts(request, keys, "request"), selection)
+        require_rust_packaging("none")
+        require_rust_packaging("tui")
+        with self.assertRaisesRegex(SystemExit, "packaging is not available"):
+            require_rust_packaging("tui", prerelease=True)
+        for selection in ("server", "both"):
+            require_rust_packaging(selection)
+            with self.assertRaisesRegex(SystemExit, "packaging is not available"):
+                require_rust_packaging(selection, prerelease=True)
+        with self.assertRaisesRegex(SystemExit, "must be none"):
+            request_rust_artifacts(
+                {"schemaVersion": 2, "rustArtifacts": "server --publish"}, keys, "request"
+            )
 
 
 class PipelineTests(unittest.TestCase):

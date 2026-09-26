@@ -73,11 +73,10 @@ func (u *Upload) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
 
 // HandleUpload joins the owner's aggregate before reading, and records receiver-side chunks and timing.
 func (u *Upload) HandleUpload(_ context.Context, id, owner string, src io.Reader) (int64, error) {
-	agg, access := u.store.getOrCreateFor(id, owner)
+	agg, access := u.store.joinPostFor(id, owner)
 	if access != uploadAccessOK {
 		return 0, &uploadRefusalError{access: access}
 	}
-	agg.changePosts(1)
 	defer agg.changePosts(-1)
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
