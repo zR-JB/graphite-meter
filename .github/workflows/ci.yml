@@ -145,27 +145,25 @@ jobs:
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
       - id: cargo-cache
-        name: Cache Cargo downloads, audit tool and build output
+        name: Cache Cargo downloads, dependency policy tool and build output
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/bin/cargo-audit
+            ~/.cargo/bin/cargo-deny
             ~/.cargo/.crates.toml
             ~/.cargo/.crates2.json
             rust/target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
       - name: Check experimental Rust implementation
         run: mise run rust-check
-      - name: Check optional Rust AWS-LC provider
-        run: mise run rust-crypto-check
-      - name: Audit Rust dependencies
+      - name: Check Rust dependency policy
         working-directory: rust
         run: |
-          cargo install cargo-audit --version 0.22.2 --locked
-          cargo audit --deny warnings
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --locked check
       - name: Keep only dependency builds in a new cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         working-directory: rust

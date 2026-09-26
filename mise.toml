@@ -287,14 +287,6 @@ run = [
   "cargo test --workspace --all-targets --locked",
 ]
 
-[tasks.rust-crypto-check]
-description = "Check the optional Rust AWS-LC provider for both binaries"
-dir = "rust"
-run = [
-  "cargo check --locked --all-targets -p graphite-meter-server --no-default-features --features crypto-aws-lc",
-  "cargo check --locked --all-targets -p graphite-meter-client --no-default-features --features crypto-aws-lc",
-]
-
 [tasks.check-generated]
 shell = "bash -e -o pipefail -c"
 description = "Check embedded authentication asset drift"

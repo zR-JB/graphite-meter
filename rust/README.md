@@ -55,16 +55,14 @@ The workspace pins Rust 1.98.1. From the repository root:
 
 ```sh
 mise run rust-check
-mise run rust-crypto-check
 mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py
 python3 rust/tests/interop.py
 ```
 
-Ring remains the default TLS/QUIC crypto provider. `mise run rust-crypto-check`
-checks the alternative AWS-LC build for both binaries. Build one binary at a
-time for provider comparisons; combining both provider features is rejected.
+Ring is the TLS/QUIC crypto provider. Dependency policy is checked with
+`cargo deny --locked check` from `rust/` (cargo-deny 0.20.2).
 The first-party Rust crates forbid unsafe code. This does not make the full
 dependency graph free of unsafe code or native cryptography: ring contains
 C/assembly. Isolated probes of rustls-graviola 0.4.0 and rustls-rustcrypto

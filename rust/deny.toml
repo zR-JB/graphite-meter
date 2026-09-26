@@ -1,0 +1,49 @@
+[graph]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-musl",
+  "aarch64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
+exclude-dev = true
+
+[advisories]
+yanked = "deny"
+ignore = [{ id = "RUSTSEC-2023-0071", reason = "rsa via openidconnect; verification only, see .cargo/audit.toml" }]
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause", "Zlib", "Unicode-3.0", "AGPL-3.0-or-later"]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "warn"
+allow-wildcard-paths = true
+deny = [
+  { crate = "openidconnect", wrappers = ["graphite-meter-server"] },
+  { crate = "reqwest", wrappers = ["graphite-meter-server", "graphite-meter-client"] },
+  { crate = "url", wrappers = ["graphite-meter-core", "graphite-meter-server", "graphite-meter-client", "reqwest", "tower-http", "oauth2", "openidconnect"] },
+  { crate = "time", wrappers = ["graphite-meter-server"] },
+  { crate = "x509-cert", wrappers = ["graphite-meter-server"] },
+  { crate = "rsa", wrappers = ["openidconnect"] },
+  { crate = "aws-lc-rs", reason = "rustls + ring only" },
+  { crate = "aws-lc-sys", reason = "rustls + ring only" },
+  { crate = "openssl", reason = "rustls only" },
+  { crate = "openssl-sys", reason = "rustls only" },
+  { crate = "native-tls", reason = "rustls only" },
+]
+
+[[bans.features]]
+crate = "rustls"
+deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
+
+[[bans.features]]
+crate = "tokio-rustls"
+deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/n0-computer/noq"]
