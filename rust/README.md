@@ -48,6 +48,34 @@ Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,
 including allowed and denied group membership. Other deployments remain untested.
 
+The server shares one 8 GiB reservation budget across QUIC and HTTP/2 listeners.
+It reserves 88 MiB before each QUIC handshake and 36 MiB before each HTTP/2 TLS
+handshake. Once a quarter of either connection capacity or the shared budget is reserved,
+unvalidated QUIC handshakes require Retry. Exhaustion refuses new connections
+while established connections continue. QUIC reserves its 16 MiB receive window for its entire transport
+lifetime, including handshake cancellation, draining, and retained local streams.
+Transmit windows grow from 2 MiB to 32 MiB using the same budget; shrinking them
+retains at least the actual unacknowledged payload until acknowledgements or
+transport destruction release it. HTTP/2 reservations outlive their connection,
+local stream futures, and buffers.
+
+The QUIC reservation covers the 16 MiB packet queue, receive and transmit floors,
+257 framed-stream buffers (64 KiB frame cap, 16 KiB ingress, 32 KiB slab edges),
+260 short unidirectional classifiers, 256 request field sections of 32 KiB,
+retained DATA chunks, WebTransport upload scratch, and datagram queues. HTTP/2
+covers its 16 MiB receive window, 256 send queues of 16 KiB, request field sections,
+retained DATA, and codec buffer allowance. The shared 256 KiB download block is
+allocated and charged once. With 64 live or draining QUIC connections, 16 HTTP/2 connections,
+and 32 maximum additional transmit reservations, the charged envelope uses
+7 GiB plus the shared block, leaving 1 GiB minus 256 KiB available.
+
+This is a charged transport/application buffer ceiling, not a resident-memory
+bound. Allocator overhead, header-map metadata, QUIC reassembly bookkeeping,
+TLS state, and other server resources require separate accounting. Existing
+connection and stream limits also constrain their counts. Worst-case bookkeeping
+analysis, measured RSS under sustained load, and the many-client performance
+matrix remain prerequisites for the experimental merge.
+
 Origins require ASCII hosts; use punycode for international names. Empty host
 labels, host punctuation other than hyphens and underscores, IPv4 shorthand,
 leading-zero IPv4 octets, and trailing-dot IPv4 addresses are rejected. Domain

@@ -4,6 +4,9 @@
 #[cfg(test)]
 #[path = "../../test_identity.rs"]
 mod test_identity;
+#[cfg(test)]
+#[path = "../../test_link.rs"]
+mod test_link;
 
 pub mod admission;
 pub mod app_security;

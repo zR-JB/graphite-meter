@@ -3,6 +3,7 @@ use super::*;
 use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
 
+pub(super) const BUFFER_BYTES: u32 = 36 * 1024 * 1024;
 const MAX_STREAMS: u32 = 256;
 const FRAME_BYTES: usize = 16 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);

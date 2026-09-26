@@ -22,4 +22,4 @@ strip = "symbols"
 
 [patch.crates-io]
 h3 = { git = "https://github.com/zR-JB/h3", rev = "dc10d4813114da2c200c86322ed18753fa45055d" }
-noq = { git = "https://github.com/zR-JB/noq", rev = "0ae9fe96258162ed58a6405a7affc745fcd22acb" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "ae24107f60ae728db7d057301d968eca607a4967" }

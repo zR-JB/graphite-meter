@@ -68,11 +68,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "0ae9fe96258162ed58a6405a7affc745fcd22acb",
+    "rev": "ae24107f60ae728db7d057301d968eca607a4967",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "658025b1842112d9e128163b79ae97e6583e0b2568e4b66df237761443ec214a",
+    "diffSha256": "a4f86508a6814f0625d79384780d92b1ffbce260adfea1f71fbc01a5836dffa6",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -124,6 +124,10 @@
       },
       {
         "subject": "Bound queued incoming packet storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Expose connection lifetime and buffered stream payload",
         "origin": "graphite-meter"
       }
     ],

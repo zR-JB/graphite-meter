@@ -60,6 +60,7 @@ enum HttpProtocol {
 }
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
+const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
@@ -68,8 +69,9 @@ pub struct HttpServer {
     discovery: Discovery,
     admission: Admission,
     connections: Connections,
-    quic_send_budget: Arc<tokio::sync::Semaphore>,
+    memory: http_quic::MemoryBudget,
     download_block: Bytes,
+    _download_memory: tokio::sync::OwnedSemaphorePermit,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
@@ -85,6 +87,10 @@ impl HttpServer {
     }
 
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
+        Self::with_memory(config, 8 * 1024 * 1024 * 1024)
+    }
+
+    fn with_memory(config: Arc<Config>, bytes: usize) -> Result<Self, ConfigError> {
         config.validate()?;
         let auth = if config.auth.mode == AuthMode::Off {
             None
@@ -108,15 +114,20 @@ impl HttpServer {
             config.max_connections_per_client,
             config.trusted_proxies.clone(),
         );
-        let mut block = vec![0; 256 * 1024];
+        let memory = http_quic::MemoryBudget::new(bytes);
+        let download_memory = memory
+            .acquire(DOWNLOAD_BLOCK_BYTES as u32)
+            .ok_or("server memory budget cannot cover the download block")?;
+        let mut block = vec![0; DOWNLOAD_BLOCK_BYTES];
         getrandom::fill(&mut block).map_err(|_| "download payload randomness unavailable")?;
         Ok(Self {
             config,
             discovery,
             admission,
             connections,
-            quic_send_budget: Arc::new(tokio::sync::Semaphore::new(http_quic::SEND_WINDOW_BUDGET)),
+            memory,
             download_block: block.into(),
+            _download_memory: download_memory,
             uploads: UploadStore::new()?,
             auth,
             assets,
@@ -246,10 +257,15 @@ impl HttpServer {
                     if matches!(protocol, HttpProtocol::Http2) {
                         let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(64 * 1024);
                     }
+                    let memory = if matches!(protocol, HttpProtocol::Http2) {
+                        let Some(lease) = self.memory.acquire(http_h2::BUFFER_BYTES) else { continue; };
+                        Some(lease)
+                    } else { None };
                     let server = self.clone();
                     let tls = tls.clone();
                     tasks.spawn(async move {
                         let _permit = permit;
+                        let _memory = memory;
                         if let Some(tls) = tls {
                             if let Ok(Ok(stream)) = tokio::time::timeout(
                                 Duration::from_secs(10), tls.accept(socket),
