@@ -46,7 +46,7 @@ type PendingAuthorization struct {
 
 func beginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
-		return nil, errors.New("authenticated operation refuses -insecure")
+		return nil, errors.New("sign-in refuses skipped TLS verification (Skip TLS verify, -insecure)")
 	}
 	base, err := url.Parse(cfg.BaseURL)
 	if err != nil || base.Scheme != "https" {
