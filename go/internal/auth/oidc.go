@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -336,12 +337,12 @@ func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, why r
 }
 
 func validSubject(v string) bool {
-	return len(v) > 0 && len(v) <= 256 && !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
+	return len(v) > 0 && len(v) <= 256 && !strings.ContainsFunc(v, unicode.IsControl)
 }
 
 func safeDisplayName(v string) string {
 	v = strings.Map(func(r rune) rune {
-		if r < ' ' || r == 0x7f {
+		if unicode.IsControl(r) {
 			return -1
 		}
 		return r
