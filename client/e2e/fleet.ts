@@ -1,5 +1,5 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import type { HistoryRecord } from "../src/lib/history/types";
+import { incoherence, type HistoryRecord } from "../src/lib/history/types";
 import type { RunnerConfig } from "../src/lib/runner/contract";
 import { describe, launch, type Server } from "./servers";
 import { expect, type Page } from "./webview";
@@ -123,6 +123,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
       { timeout },
     )
     .toBe(true);
+  expect(incoherence(record!)).toEqual([]);
   return record!;
 }
 
