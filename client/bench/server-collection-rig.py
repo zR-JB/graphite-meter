@@ -11,7 +11,6 @@ from pathlib import Path
 import queue
 import threading
 import subprocess
-import sys
 import tempfile
 import time
 
@@ -63,7 +62,7 @@ def browser_processes(parent):
             fields = raw[end + 2:].split()
             processes[int(path.parent.name)] = (int(fields[1]), raw[raw.find("(") + 1:end], int(fields[11]) + int(fields[12]), int(fields[21]) * os.sysconf("SC_PAGE_SIZE"))
         except (OSError, ValueError, IndexError):
-            pass
+            continue  # The process exited while its stat line was read.
     descendants = {parent}
     while True:
         found = {pid for pid, (ppid, *_rest) in processes.items() if ppid in descendants}

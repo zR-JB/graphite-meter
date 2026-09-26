@@ -86,9 +86,10 @@ def review_audit(scopes: dict[str, list[Component]], reviews: list[Review]) -> b
                 value['review'] = matched.json()
                 try:
                     validate_review(component, [matched])
-                    state = 'fingerprint-matches'
                 except LegalError:
-                    pass
+                    state = 'review-required'
+                else:
+                    state = 'fingerprint-matches'
             value['reviewState'] = state
             result.append(value)
     return marshal(result)

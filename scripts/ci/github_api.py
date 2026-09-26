@@ -30,7 +30,8 @@ class JsonShapeError(ControlPlaneError):
 
 
 class APICall(Protocol):
-    def __call__(self, path: str, *, paginate: bool = False) -> JsonValue: ...
+    def __call__(self, path: str, *, paginate: bool = False) -> JsonValue:
+        """Return the decoded JSON at `path`, every page of it when `paginate` is set."""
 
 
 def api(path: str, *, paginate: bool = False) -> JsonValue:
