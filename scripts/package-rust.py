@@ -43,18 +43,17 @@ def build(version: str, output: Path, supplement: Path) -> None:
         package = stage / base
         package.mkdir()
         shutil.copy2(binary, package / binary.name)
-        packaged_binary = package / binary.name
-        actual = subprocess.check_output([str(packaged_binary), "--version"], text=True).strip()
+        actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
         if actual != f"{version}-rust":
             raise ValueError(f"Rust executable version mismatch: {actual!r}")
-        report = subprocess.check_output([str(packaged_binary), "--legal"])
+        report = subprocess.check_output([str(binary), "--legal"])
         if report != (legal / "LEGAL.txt").read_bytes():
             raise ValueError("Rust executable legal report does not match packaged notices")
-        version_info = subprocess.check_output(["readelf", "--version-info", str(packaged_binary)], text=True)
+        version_info = subprocess.check_output(["readelf", "--version-info", str(binary)], text=True)
         glibc = sorted(set(re.findall(r"\bGLIBC_(\d+(?:\.\d+)+)\b", version_info)), key=lambda item: tuple(map(int, item.split("."))))
         if not glibc:
             raise ValueError("could not determine GNU/Linux glibc requirement")
-        dependencies = subprocess.check_output(["readelf", "--dynamic", str(packaged_binary)], text=True)
+        dependencies = subprocess.check_output(["readelf", "--dynamic", str(binary)], text=True)
         needed = sorted(set(re.findall(r"\(NEEDED\).*\[([^]]+)\]", dependencies)))
         compiler = subprocess.check_output(["rustc", f"+{channel}", "-vV"], text=True)
         metadata = {"schemaVersion": 1, "implementation": "rust", "version": actual,
