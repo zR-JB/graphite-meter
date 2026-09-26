@@ -103,7 +103,10 @@ one aggregate per id, so the counters carry across.
 Every lane shares one **30-second** idle bound: WebTransport sessions and the WebSocket bus close
 after about that long without peer traffic, an HTTP upload that stops sending is answered `408`, and
 an HTTP download the peer stops draining is closed. A server-ended bus or session names its cause;
-clients may ignore it and treat any close as a reconnect.
+clients may ignore it and treat any close as a reconnect. A QUIC connection that carried only
+WebTransport sessions closes with `H3_NO_ERROR` once its last session ends (a second later when the
+server ended it, so the session's code arrives first), so it does not hold one of the client's
+connection slots.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |
