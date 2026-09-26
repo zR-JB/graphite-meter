@@ -29,6 +29,8 @@ required even for a clear HTTP/1.1 cell.
 | `GM_BENCH_WARMUP_MS` / `GM_BENCH_MEASURE_MS` | `3000` / `8000` | Discarded warmup and measured window. |
 | `GM_BENCH_SEED` | `1` | Cell-order seed. |
 
+The optional cell argument selects cells whose id contains any of its comma-separated literal terms.
+
 ```sh
 GM_BENCH_SPKI='<pin>' mise run bench-throughput 'h1-clear/down/lanes=2'                  # one cell
 GM_BENCH_SPKI='<pin>' GM_BENCH_ORIGINS=h1-clear,h1-tls,h2,h3 GM_BENCH_REPS=5 mise run bench-throughput  # full matrix

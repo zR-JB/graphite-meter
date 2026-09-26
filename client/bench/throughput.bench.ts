@@ -23,24 +23,13 @@ const active = Object.fromEntries(
 
 const cells = buildCells(active);
 const DIR = "bench/results";
-const filterSource = process.env.GM_BENCH_FILTER;
-let cellFilter: RegExp | undefined;
-if (filterSource) {
-  try {
-    cellFilter = new RegExp(filterSource);
-  } catch (error) {
-    throw new Error(
-      `invalid GM_BENCH_FILTER regex ${JSON.stringify(filterSource)}`,
-      {
-        cause: error,
-      },
-    );
-  }
-}
-const selectedCells = cellFilter
-  ? cells.filter((cell) => cellFilter.test(cell.id))
+// GM_BENCH_FILTER selects cells whose id contains any comma-separated literal term.
+const filterSource = process.env.GM_BENCH_FILTER ?? "";
+const terms = filterSource.split(",").filter(Boolean);
+const selectedCells = terms.length
+  ? cells.filter((cell) => terms.some((term) => cell.id.includes(term)))
   : cells;
-if (cellFilter && selectedCells.length === 0)
+if (terms.length && selectedCells.length === 0)
   throw new Error(
     `GM_BENCH_FILTER ${JSON.stringify(filterSource)} matched no benchmark cells`,
   );
