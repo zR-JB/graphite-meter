@@ -171,12 +171,12 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
 	var spa http.Handler
 	if authn.Enabled() {
-		spa = static.AuthenticatedHandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
+		spa = static.Handler(true, cfg.ResultHistoryDefault)
 		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
 			cfg.ServerCatalog.ConnectSources()))
 	} else {
 		// Public pages use the same configured destination boundary as authenticated pages.
-		page := static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
+		page := static.Handler(false, cfg.ResultHistoryDefault)
 		spa = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Security-Policy", e.discovery.PagePolicy(endpoint.RequestHost(r)))
 			w.Header().Set("X-Frame-Options", "DENY")

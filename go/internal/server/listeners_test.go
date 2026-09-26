@@ -180,7 +180,7 @@ func (b *observedBody) Read(p []byte) (int, error) {
 
 func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{bootstrap: true}, static.Handler())
+	mux := publicMux(t, e, muxTopology{bootstrap: true}, static.Handler(false, false))
 	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -192,7 +192,7 @@ func TestH3BootstrapCannotServeTransfers(t *testing.T) {
 
 func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler())
+	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(false, false))
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
 	mux.ServeHTTP(rec, req)
@@ -208,7 +208,7 @@ func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
 
 func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler())
+	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(false, false))
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -312,13 +312,13 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
 	e := testEndpoints(t)
 	h1 := publicMux(t, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1},
-		static.Handler())
+		static.Handler(false, false))
 	rec := httptest.NewRecorder()
 	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code == http.StatusNotFound {
 		t.Fatal("H1 latency websocket is not mounted")
 	}
-	h3 := publicMux(t, e, muxTopology{transfers: true}, static.Handler())
+	h3 := publicMux(t, e, muxTopology{transfers: true}, static.Handler(false, false))
 	rec = httptest.NewRecorder()
 	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
 	if rec.Code == http.StatusNotFound {

@@ -176,7 +176,7 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := baseServer(publicMux(t, e, topology, static.Handler()), p)
+	srv := baseServer(publicMux(t, e, topology, static.Handler(false, false)), p)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
