@@ -161,11 +161,7 @@ func (m model) handleServerChooserKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.popup = popupNone
 		m.notice = "Server selection unchanged."
 	case key.Matches(msg, keys.rows):
-		step := 1
-		if reverse(msg) {
-			step = -1
-		}
-		m.serverRow = min(max(m.serverRow+step, 0), len(servers)-1)
+		m.serverRow = min(max(m.serverRow+delta(msg), 0), len(servers)-1)
 	case key.Matches(msg, keys.toggleServer):
 		id := servers[m.serverRow].ID
 		switch {

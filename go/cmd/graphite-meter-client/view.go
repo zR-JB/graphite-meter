@@ -56,12 +56,6 @@ func (m model) layout() frame {
 	if gap {
 		top += "\n"
 	}
-	if m.run == nil {
-		top += "\n" + m.tabBar(inner)
-		if gap {
-			top += "\n"
-		}
-	}
 	f := frame{top: top}
 	f.bodyH = max(h-lipgloss.Height(top)-lipgloss.Height(m.footer(inner, false)), 1)
 	if m.run != nil {
@@ -215,52 +209,82 @@ func join(left, right string, side bool) string {
 
 func (m model) setupView(w int) string {
 	lw, rw, side := columns(w)
-	rows, plan := m.sectionView(lw-4), m.planView(rw-4)
+	rows, _ := m.setupList(lw - 4)
+	plan := m.planView(rw - 4)
 	panelH := 0
 	if side {
 		panelH = max(lipgloss.Height(rows), lipgloss.Height(plan)) + 2
 	}
-	sections := m.st.panel(sections[m.section].label, rows, lw, panelH)
-	return join(sections, m.st.panel("Test plan", plan, rw, panelH), side)
+	return join(m.st.panel("Setup", rows, lw, panelH), m.st.panel("Servers", plan, rw, panelH), side)
 }
 
-func (m model) tabBar(w int) string {
-	parts := make([]string, len(sections))
-	for i, s := range sections {
-		style := m.st.tab
-		if i == m.section {
-			style = m.st.activeTab
-		}
-		parts[i] = style.Render(s.label)
-	}
-	line := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
-	return fit(line+m.st.border.Render(strings.Repeat("─", max(w-lipgloss.Width(line), 0))), w)
-}
-
-func (m model) sectionView(w int) string {
-	rows := sections[m.section].rows
+func (m model) setupList(w int) (string, int) {
+	rows := m.rows()
 	labelWidth := 0
 	for _, s := range rows {
-		labelWidth = max(labelWidth, len(s.row(m).label))
+		labelWidth = max(labelWidth, lipgloss.Width(s.row(m).label))
 	}
 	labelWidth = min(labelWidth, max(w/2, 12))
 	var lines []string
-	for i, s := range rows {
+	selected, i := 0, 0
+	for g, group := range setupGroups {
+		if g > 0 {
+			lines = append(lines, "")
+		}
+		if group.label != "" {
+			lines = append(lines, m.st.heading.Render(group.label))
+		}
+		for _, s := range group.rows {
+			if i == len(rows) || rows[i] != s {
+				break
+			}
+			if i == m.row {
+				selected = len(lines)
+			}
+			lines = append(lines, m.settingLine(s, i == m.row, labelWidth, w))
+			i++
+		}
+	}
+	return strings.Join(lines, "\n"), selected
+}
+
+func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
+	var line string
+	if s == startRow {
+		line = m.st.button(s.label, focused) + "  " + m.startNote()
+	} else {
 		row := s.row(m)
 		value := m.st.value.Render(row.value)
 		if row.inert {
 			value = m.st.muted.Render(row.value)
 		}
 		label := pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)
-		line := m.st.text.Render(label) + "  " + value + "  " + m.st.muted.Render(row.note)
-		if i == m.row {
-			line = "› " + m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
-		} else {
-			line = "  " + line
+		line = m.st.text.Render(label) + "  " + value + "  " + m.st.muted.Render(row.note)
+		if focused {
+			line = m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
 		}
-		lines = append(lines, line)
 	}
-	return strings.Join(lines, "\n")
+	if focused {
+		return "› " + line
+	}
+	return "  " + line
+}
+
+func (m model) startNote() string {
+	plan := m.cfg.Plan()
+	total := time.Duration(len(plan)) * m.cfg.Warmup
+	for _, stage := range plan {
+		total += stage.Duration
+	}
+	switch err := m.cfg.Validate(); {
+	case err != nil:
+		return m.st.warn.Render(err.Error())
+	case m.prepare == prepareSignIn:
+		return m.st.warn.Render("sign in first; v requests a new code")
+	case m.prepare == prepareChecking:
+		return m.spin.View() + m.st.muted.Render(" checking paths")
+	}
+	return m.st.muted.Render(fmt.Sprintf("%d stages · about %s", len(plan), fmtSetting(total.Round(time.Second))))
 }
 
 func (m model) planView(w int) string {
@@ -290,13 +314,7 @@ func (m model) planView(w int) string {
 	}
 	throughput, latency := m.pathSummaries()
 	lines = append(lines, "", m.st.text.Render(pad("Throughput", 11))+throughput,
-		m.st.text.Render(pad("Latency", 11))+latency, "", m.st.text.Render("Stages"))
-	for _, stage := range m.cfg.Plan() {
-		lines = append(lines, "  "+pad(stageLabels[stage.Name], 14)+m.st.muted.Render(fmtSetting(stage.Duration)))
-	}
-	if len(m.cfg.Plan()) == 0 {
-		lines = append(lines, "  "+m.st.warn.Render("No stages selected"))
-	}
+		m.st.text.Render(pad("Latency", 11))+latency)
 	return strings.Join(lines, "\n")
 }
 

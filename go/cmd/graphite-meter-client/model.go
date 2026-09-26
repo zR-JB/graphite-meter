@@ -70,8 +70,8 @@ type model struct {
 	help       help.Model
 	notice     string
 
-	section       int
 	row           int
+	advanced      bool
 	edit          *editState
 	latencyChoice string
 	popup         popup
@@ -215,7 +215,7 @@ func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.stopPrompt = true
 		m.notice = "Stop the test? esc confirms, any other key continues."
 	case m.finished() && key.Matches(msg, keys.setup):
-		m.run = nil
+		m.run, m.row = nil, 0
 		m.notice = ""
 		m.body.SetYOffset(0)
 		return m.reprepare()
@@ -249,11 +249,18 @@ func (m model) handleSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Settings kept."
 		return m, nil
 	}
+	row := m.currentRow()
 	switch {
-	case key.Matches(msg, keys.sections), key.Matches(msg, keys.rows):
+	case key.Matches(msg, keys.rows):
 		m.navigate(msg)
+	case key.Matches(msg, keys.adjust):
+		return m.adjust(row, delta(msg))
+	case key.Matches(msg, keys.toggle) && row.flag != nil:
+		before := m.cfg
+		m.setFlag(row, !*row.flag(&m.cfg))
+		return m.recheckIfPathsChanged(before)
 	case key.Matches(msg, keys.change):
-		return m.activate(m.currentRow())
+		return m.activate(row)
 	case key.Matches(msg, keys.start):
 		return m.startRun()
 	case key.Matches(msg, keys.recheck):
@@ -271,19 +278,18 @@ func (m model) handleSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) navigate(msg tea.KeyPressMsg) {
-	step := 1
+func delta(msg tea.KeyPressMsg) int {
 	if reverse(msg) {
-		step = -1
+		return -1
 	}
-	if key.Matches(msg, keys.sections) {
-		m.section = (m.section + step + len(sections)) % len(sections)
-	} else {
-		m.row += step
-	}
-	m.row = min(max(m.row, 0), len(sections[m.section].rows)-1)
+	return 1
+}
+
+func (m *model) navigate(msg tea.KeyPressMsg) {
+	m.row = min(max(m.row+delta(msg), 0), len(m.rows())-1)
+	_, line := m.setupList(m.width)
 	m.body = m.bodyViewport(m.layout())
-	m.body.EnsureVisible(1+m.row, 0, 0)
+	m.body.EnsureVisible(1+line, 0, 0)
 }
 
 func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {

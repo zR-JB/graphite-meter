@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -229,53 +231,82 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 	}
 }
 
-func TestNavigationWrapsSectionsAndClampsRows(t *testing.T) {
+func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	for _, step := range []struct {
-		key          string
-		section, row int
-	}{
-		{"shift+tab", 2, 0}, {"tab", 0, 0}, {"up", 0, 0},
-		{"down", 0, 1}, {"j", 0, 2}, {"right", 1, 2}, {"left", 0, 2},
-		{"tab", 1, 2}, {"tab", 2, 2}, {"down", 2, 3}, {"down", 2, 4}, {"down", 2, 5}, {"down", 2, 5},
-	} {
-		m, _ = modelAndCmd(m.Update(press(step.key)))
-		if m.section != step.section || m.row != step.row {
-			t.Fatalf("after %s: section=%d row=%d, want %d/%d", step.key, m.section, m.row, step.section, step.row)
+	defaults := goclient.DefaultConfig()
+	keys := func(names ...string) {
+		for _, name := range names {
+			m, _ = modelAndCmd(m.Update(press(name)))
 		}
+	}
+	at := func(s *setting) { m.row = slices.Index(m.rows(), s) }
+	for _, c := range []struct {
+		key  string
+		want *setting
+	}{
+		{"up", startRow}, {"down", catalogueRow}, {"tab", serversRow}, {"shift+tab", catalogueRow},
+	} {
+		if keys(c.key); m.currentRow() != c.want {
+			t.Fatalf("after %s: row %q, want %q", c.key, m.currentRow().row(m).label, c.want.row(m).label)
+		}
+	}
+	keys(slices.Repeat([]string{"down"}, 20)...)
+	if m.currentRow() != advancedRow {
+		t.Fatalf("collapsed list ended at %q", m.currentRow().row(m).label)
+	}
+	if keys("right", "down", "right"); !m.advanced || m.cfg.Warmup != defaults.Warmup+100*time.Millisecond {
+		t.Fatalf("advanced=%v warmup=%v", m.advanced, m.cfg.Warmup)
+	}
+	download := setupGroups[2].rows[1]
+	at(download)
+	if keys("right", "space"); m.cfg.DownloadDuration != defaults.DownloadDuration+time.Second || m.cfg.Stages.Download {
+		t.Fatalf("download stage %v for %v", m.cfg.Stages.Download, m.cfg.DownloadDuration)
+	}
+	at(idleCadenceRow)
+	if keys("left"); m.cfg.PingInterval != goclient.PingSlow {
+		t.Fatalf("left from reply-driven gave %v", m.cfg.PingInterval)
+	}
+	at(download)
+	if keys("enter"); m.edit == nil || m.edit.row != download {
+		t.Fatal("enter on a stage did not open its duration")
+	}
+	m.edit = nil
+	if at(startRow); !strings.Contains(ansi.Strip(view(m)), "enter start test") {
+		t.Fatal("the start row does not offer enter")
+	}
+	if keys("enter"); m.next == nil {
+		t.Fatal("enter on Start test did not start")
 	}
 }
 
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
+	stages, advanced := setupGroups[2].rows, setupGroups[3].rows
 	for _, c := range []struct {
-		section, row int
-		check        func(model) bool
-		recheck      bool
+		row     *setting
+		key     string
+		check   func(model) bool
+		recheck bool
 	}{
-		{1, 2, func(m model) bool { return !m.cfg.Stages.Upload }, true},
-		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, false},
-		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, false},
-		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == sections[1].rows[7] }, false},
-		{2, 0, func(m model) bool { return m.cfg.PingInterval == goclient.PingFast }, true},
-		{2, 1, func(m model) bool { return m.cfg.LoadedPingInterval == goclient.PingSlow }, true},
-		{2, 2, func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
-		{2, 4, func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
-		{0, 0, func(m model) bool { return m.edit != nil && m.edit.row == catalogueRow }, false},
+		{stages[2], "space", func(m model) bool { return !m.cfg.Stages.Upload }, true},
+		{stages[3], "space", func(m model) bool { return m.cfg.Stages.Bidirectional }, false},
+		{stages[4], "enter", func(m model) bool { return !m.cfg.LoadedLatency }, false},
+		{stages[1], "enter", func(m model) bool { return m.edit != nil && m.edit.row == stages[1] }, false},
+		{idleCadenceRow, "enter", func(m model) bool { return m.cfg.PingInterval == goclient.PingFast }, true},
+		{loadedCadenceRow, "enter", func(m model) bool { return m.cfg.LoadedPingInterval == goclient.PingSlow }, true},
+		{forceStreamsRow, "enter", func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
+		{advanced[6], "enter", func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
+		{catalogueRow, "enter", func(m model) bool { return m.edit != nil && m.edit.row == catalogueRow }, false},
+		{advancedRow, "enter", func(m model) bool { return !m.advanced }, false},
 	} {
 		m := testModel(t)
-		m.section, m.row = c.section, c.row
+		m.advanced = true
+		m.row = slices.Index(m.rows(), c.row)
 		seq := m.prepareSeq
-		m, cmd := modelAndCmd(m.Update(press("enter")))
+		m, cmd := modelAndCmd(m.Update(press(c.key)))
 		if !c.check(m) || (m.prepareSeq != seq) != c.recheck || c.recheck && cmd == nil {
-			t.Errorf(
-				"%s: config=%+v edit=%v rechecked=%v",
-				sections[c.section].rows[c.row].row(m).label,
-				m.cfg,
-				m.edit != nil,
-				m.prepareSeq != seq,
-			)
+			t.Errorf("%s: config=%+v edit=%v rechecked=%v", c.row.row(m).label, m.cfg, m.edit != nil, m.prepareSeq != seq)
 		}
 	}
 }
@@ -313,23 +344,23 @@ func TestCommitEdit(t *testing.T) {
 		{catalogueRow, false, "ftp://meter.example", nil, "http:// or https://"},
 		{warmupRow, false, "0", func(c goclient.Config) bool { return c.Warmup == 0 }, ""},
 		{
-			sections[1].rows[7],
+			setupGroups[2].rows[1],
 			false,
 			"12",
 			func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second },
 			"",
 		},
 		{
-			sections[1].rows[7],
+			setupGroups[2].rows[1],
 			false,
 			"1.5m",
 			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
 			"",
 		},
-		{sections[1].rows[8], false, "0", nil, "from 1 s to 300 s"},
-		{sections[1].rows[8], false, "6m", nil, "from 1 s to 300 s"},
+		{setupGroups[2].rows[2], false, "0", nil, "from 1 s to 300 s"},
+		{setupGroups[2].rows[2], false, "6m", nil, "from 1 s to 300 s"},
 		{warmupRow, false, "5s", nil, "from 0 s to 4 s"},
-		{sections[1].rows[8], false, "soon", nil, "duration like"},
+		{setupGroups[2].rows[2], false, "soon", nil, "duration like"},
 		{streamsRow, false, "8", func(c goclient.Config) bool {
 			return c.TransferStreams == goclient.TransferStreamPolicy{AutomaticMax: 8}
 		}, ""},

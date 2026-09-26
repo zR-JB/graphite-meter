@@ -248,13 +248,13 @@ progress to stderr and the plain report to stdout; an interactive run prints the
 | 2 | Invalid flags or arguments. |
 | 130 / 143 | Stopped by SIGINT (or ctrl+c) / SIGTERM. |
 
-Setup has the browser's Settings sections: **Connection paths**, **Duration & stages** and **Advanced**. `?` shows
-the keys for the current screen.
+Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
+group. The footer names what enter does on the focused row; `?` shows every key for the current screen.
 
 | Key | Where | Action |
 | --- | --- | --- |
-| tab ←/→, ↑/↓, enter | setup | Section, row, change. |
-| r | setup / finished | Start test / Run again. |
+| ↑/↓ (tab), ←/→, enter, space | setup | Move, change the value, start or open, stage on/off. |
+| r | setup / finished | Start test / Run again (enter also runs again). |
 | v, s, u, a | setup | Recheck paths, choose servers, keep available servers, Automatic paths. |
 | space, enter, esc | server chooser | Toggle, apply, cancel. |
 | esc | running / finished | Stop test (asks to confirm) / back to setup. |

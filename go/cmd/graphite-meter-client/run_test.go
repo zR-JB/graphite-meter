@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -687,11 +688,10 @@ func TestViewFitsTheTerminal(t *testing.T) {
 		run.run.results = []goclient.Result{
 			{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9},
 		}
-		frames := map[string]string{"run": view(run)}
-		for section := range sections {
-			setup.section = section
-			frames[sections[section].label] = view(setup)
-		}
+		frames := map[string]string{"run": view(run), "setup": view(setup)}
+		setup.advanced = true
+		setup.row = len(setup.rows()) - 1
+		frames["advanced"] = view(setup)
 		run.popup = popupDetails
 		frames["details"] = view(run)
 		setup.beginEdit(catalogueRow, setup.cfg.BaseURL)
@@ -824,7 +824,8 @@ func TestScrollingRevealsTheWholeBody(t *testing.T) {
 func TestResetAsksFirst(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.cfg.Warmup, m.section, m.row = time.Second, 2, 5
+	m.cfg.Warmup, m.advanced = time.Second, true
+	m.row = slices.Index(m.rows(), resetRow)
 	m, _ = modelAndCmd(m.Update(press("enter")))
 	if m.cfg.Warmup != time.Second || !m.resetPrompt {
 		t.Fatal("reset did not ask first")

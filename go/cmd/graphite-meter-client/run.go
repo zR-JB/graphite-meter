@@ -234,7 +234,7 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 func (m model) startRun() (tea.Model, tea.Cmd) {
 	if err := m.cfg.Validate(); err != nil {
 		m.notice = blocked + ": " + err.Error() + "."
-		m.run, m.section, m.row = nil, 1, 0
+		m.run, m.row = nil, slices.Index(m.rows(), setupGroups[2].rows[0])
 		return m, nil
 	}
 	m.invalidatePreparation()

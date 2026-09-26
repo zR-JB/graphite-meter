@@ -6,20 +6,18 @@ import (
 )
 
 type keymap struct {
-	sections, rows, change, start, recheck, servers, automatic, available key.Binding
-	openSignIn, cancelSignIn                                              key.Binding
-	stop, confirmStop, setup, runAgain, latencyServer, details, scroll    key.Binding
-	page, close                                                           key.Binding
-	toggleServer, apply, discard, cursor, help, quit, abort               key.Binding
+	rows, adjust, change, toggle, start, recheck, servers, automatic, available key.Binding
+	openSignIn, cancelSignIn                                                    key.Binding
+	stop, confirmStop, setup, runAgain, latencyServer, details, scroll          key.Binding
+	page, close                                                                 key.Binding
+	toggleServer, apply, discard, cursor, help, quit, abort                     key.Binding
 }
 
 var keys = keymap{
-	sections: key.NewBinding(
-		key.WithKeys("tab", "shift+tab", "right", "left"),
-		key.WithHelp("tab/←/→", "section"),
-	),
-	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "row")),
-	change:        key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "change")),
+	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j", "tab", "shift+tab"), key.WithHelp("↑/↓", "move")),
+	adjust:        key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "change")),
+	change:        key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "open")),
+	toggle:        key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "on/off")),
 	start:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start test")),
 	recheck:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "recheck paths")),
 	servers:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "test servers")),
@@ -76,13 +74,30 @@ func (m model) ShortHelp() []key.Binding {
 	case m.auth != nil:
 		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.quit}
 	}
-	return []key.Binding{keys.sections, keys.rows, keys.change, keys.start, keys.help, keys.quit}
+	row := m.currentRow()
+	if row == startRow {
+		return []key.Binding{hint(keys.change, "start test"), keys.rows, keys.help, keys.quit}
+	}
+	bindings := []key.Binding{keys.start, keys.rows}
+	if row.cycle != nil || row.span != nil || row.flag != nil {
+		bindings = append(bindings, keys.adjust)
+	}
+	if row.flag != nil && row.span != nil {
+		bindings = append(bindings, keys.toggle)
+	}
+	return append(bindings, hint(keys.change, enterVerb(row)), keys.help, keys.quit)
+}
+
+func hint(b key.Binding, desc string) key.Binding {
+	b.SetHelp(b.Help().Key, desc)
+	return b
 }
 
 func (m model) FullHelp() [][]key.Binding {
 	all := m.ShortHelp()
 	if m.run == nil && m.auth == nil && m.edit == nil && m.popup == popupNone {
-		all = append(all[:len(all)-2], keys.recheck)
+		all = []key.Binding{keys.start, keys.rows, keys.adjust, keys.toggle, hint(keys.change, "start or open"),
+			keys.recheck}
 		if m.canChooseServers() {
 			all = append(all, keys.servers)
 		}

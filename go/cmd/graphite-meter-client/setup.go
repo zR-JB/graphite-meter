@@ -28,6 +28,7 @@ type setting struct {
 	span        func(*goclient.Config) *time.Duration
 	view        func(model) setupRow
 	act         func(*model)
+	cycle       func(m *model, step int)
 	parse       func(*model, string) error
 }
 
@@ -35,6 +36,10 @@ func (s *setting) row(m model) setupRow {
 	switch {
 	case s.view != nil:
 		return s.view(m)
+	case s.flag != nil && s.span != nil:
+		on := *s.flag(&m.cfg)
+		return setupRow{label: s.label, value: m.st.checkbox(on) + " " + fmtSetting(*s.span(&m.cfg)), note: s.note,
+			inert: !on}
 	case s.flag != nil:
 		return setupRow{label: s.label, value: m.st.checkbox(*s.flag(&m.cfg)), note: s.note}
 	case s.span != nil:
@@ -43,15 +48,15 @@ func (s *setting) row(m model) setupRow {
 	return setupRow{label: s.label, note: s.note}
 }
 
-func toggle(label, note string, field func(*goclient.Config) *bool) *setting {
-	return &setting{label: label, note: note, flag: field}
-}
-
-func span(label, note string, field func(*goclient.Config) *time.Duration) *setting {
-	return &setting{label: label, note: note, span: field}
-}
-
 var (
+	startRow    = &setting{label: "Start test"}
+	advancedRow = &setting{
+		view: func(m model) setupRow {
+			value := map[bool]string{false: "▸ hidden", true: "▾ shown"}[m.advanced]
+			return setupRow{label: "Advanced", value: value, note: "warmup, cadence, streams, TLS"}
+		},
+		cycle: func(m *model, _ int) { m.advanced = !m.advanced },
+	}
 	catalogueRow = &setting{
 		view: func(m model) setupRow {
 			return setupRow{label: "Catalogue URL", value: m.cfg.BaseURL, note: "server list origin"}
@@ -84,29 +89,29 @@ var (
 	})
 	protocolRow = &setting{
 		view: protocolView,
-		act: func(m *model) {
+		cycle: func(m *model, step int) {
 			if row := protocolView(*m); row.inert {
 				m.notice = "This path serves " + row.value + " only."
 				return
 			}
-			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, []string{"auto", "http1", "http2", "http3"})
+			protocols := []string{"auto", "http1", "http2", "http3"}
+			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, protocols, step)
 			m.notice = "HTTP version: " + protocolLabel(m.cfg.ThroughputProtocol) + "."
 		},
 	}
 	latencyServerRow = &setting{
 		view: latencyServerView,
-		act: func(m *model) {
+		cycle: func(m *model, step int) {
 			if latencyServerView(*m).inert {
 				m.notice = "Select two ready servers to choose which latency is shown first."
 				return
 			}
-			m.latencyChoice = nextChoice(m.latencyChoice, append([]string{""}, m.readyServers()...))
+			m.latencyChoice = nextChoice(m.latencyChoice, append([]string{""}, m.readyServers()...), step)
 			m.notice = "Latency server: " + latencyServerView(*m).value + "."
 		},
 	}
-	warmupRow = span("Warmup", "per stage, before the window opens", func(c *goclient.Config) *time.Duration {
-		return &c.Warmup
-	})
+	warmupRow = &setting{label: "Warmup", note: "per stage, before the window opens",
+		span: func(c *goclient.Config) *time.Duration { return &c.Warmup }}
 	idleCadenceRow = cadenceSetting("Idle latency cadence", func(c *goclient.Config) *time.Duration {
 		return &c.PingInterval
 	})
@@ -118,7 +123,7 @@ var (
 			return setupRow{label: "Force exact stream count", value: m.st.checkbox(m.cfg.TransferStreams.Forced > 0),
 				note: "per server and direction"}
 		},
-		act: func(m *model) {
+		cycle: func(m *model, _ int) {
 			streams := &m.cfg.TransferStreams
 			if streams.Forced > 0 {
 				streams.Forced = 0
@@ -135,6 +140,14 @@ var (
 			}
 			return setupRow{label: "Maximum H1 streams per direction",
 				value: strconv.Itoa(m.cfg.TransferStreams.AutomaticMax), note: "HTTP/1.1 paths only"}
+		},
+		cycle: func(m *model, step int) {
+			n := &m.cfg.TransferStreams.AutomaticMax
+			if m.cfg.TransferStreams.Forced > 0 {
+				n = &m.cfg.TransferStreams.Forced
+			}
+			*n = min(max(*n+step, 1), goclient.MaxStreams)
+			m.notice = "Stream count: " + streamsLabel(m.cfg.TransferStreams, "http1", wire.TransportFetchStream) + "."
 		},
 		parse: func(m *model, raw string) error {
 			n, err := strconv.Atoi(raw)
@@ -163,45 +176,46 @@ var (
 	}}
 )
 
-var sections = []struct {
+var setupGroups = []struct {
 	label string
 	rows  []*setting
 }{
-	{"Connection paths", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow,
+	{"", []*setting{startRow}},
+	{"Connection", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow,
 		latencyServerRow}},
-	{"Duration & stages", []*setting{
-		toggle("Latency", "idle round trips", func(c *goclient.Config) *bool { return &c.Stages.Latency }),
-		toggle("Download", "server to client", func(c *goclient.Config) *bool { return &c.Stages.Download }),
-		toggle("Upload", "client to server, receiver-timed", func(c *goclient.Config) *bool {
-			return &c.Stages.Upload
-		}),
-		toggle("Bidirectional", "download and upload at once", func(c *goclient.Config) *bool {
-			return &c.Stages.Bidirectional
-		}),
-		toggle("Loaded latency", "round trips during transfers", func(c *goclient.Config) *bool {
-			return &c.LoadedLatency
-		}),
-		warmupRow,
-		span("Latency duration", "measured window", func(c *goclient.Config) *time.Duration {
-			return &c.LatencyDuration
-		}),
-		span("Download duration", "measured window", func(c *goclient.Config) *time.Duration {
-			return &c.DownloadDuration
-		}),
-		span("Upload duration", "measured window", func(c *goclient.Config) *time.Duration {
-			return &c.UploadDuration
-		}),
-		span("Bidirectional duration", "measured window", func(c *goclient.Config) *time.Duration {
-			return &c.BidirectionalDuration
-		}),
+	{"Stages", []*setting{
+		{label: "Latency", note: "idle round trips", flag: func(c *goclient.Config) *bool { return &c.Stages.Latency },
+			span: func(c *goclient.Config) *time.Duration { return &c.LatencyDuration }},
+		{label: "Download", note: "server to client", flag: func(c *goclient.Config) *bool { return &c.Stages.Download },
+			span: func(c *goclient.Config) *time.Duration { return &c.DownloadDuration }},
+		{label: "Upload", note: "client to server, receiver-timed",
+			flag: func(c *goclient.Config) *bool { return &c.Stages.Upload },
+			span: func(c *goclient.Config) *time.Duration { return &c.UploadDuration }},
+		{label: "Bidirectional", note: "download and upload at once",
+			flag: func(c *goclient.Config) *bool { return &c.Stages.Bidirectional },
+			span: func(c *goclient.Config) *time.Duration { return &c.BidirectionalDuration }},
+		{label: "Loaded latency", note: "round trips during transfers",
+			flag: func(c *goclient.Config) *bool { return &c.LoadedLatency }},
 	}},
-	{"Advanced", []*setting{idleCadenceRow, loadedCadenceRow, forceStreamsRow, streamsRow,
-		toggle("Skip TLS verify", "unsafe; refuses sign-in", func(c *goclient.Config) *bool {
-			return &c.InsecureSkipTLSVerify
-		}), resetRow}},
+	{"", []*setting{advancedRow, warmupRow, idleCadenceRow, loadedCadenceRow, forceStreamsRow, streamsRow,
+		{label: "Skip TLS verify", note: "unsafe; refuses sign-in",
+			flag: func(c *goclient.Config) *bool { return &c.InsecureSkipTLSVerify }}, resetRow}},
 }
 
-func (m model) currentRow() *setting { return sections[m.section].rows[m.row] }
+func (m model) rows() []*setting {
+	var rows []*setting
+	for _, g := range setupGroups {
+		for _, s := range g.rows {
+			rows = append(rows, s)
+			if s == advancedRow && !m.advanced {
+				break
+			}
+		}
+	}
+	return rows
+}
+
+func (m model) currentRow() *setting { return m.rows()[m.row] }
 
 func protocolView(m model) setupRow {
 	if t := m.selectedThroughputPath(); t != nil && t.Protocol != "negotiated" {
@@ -224,20 +238,57 @@ func latencyServerView(m model) setupRow {
 func (m model) activate(s *setting) (tea.Model, tea.Cmd) {
 	before := m.cfg
 	switch {
+	case s == startRow:
+		return m.startRun()
 	case s == serversRow:
 		return m.openServerChooser()
-	case s.flag != nil:
-		on := s.flag(&m.cfg)
-		*on = !*on
-		m.notice = s.label + map[bool]string{true: " on.", false: " off."}[*on]
+	case s.act != nil:
+		s.act(&m)
 	case s.span != nil:
 		m.beginEdit(s, s.span(&m.cfg).String())
 	case s.parse != nil:
 		m.beginEdit(s, s.row(m).value)
-	case s.act != nil:
-		s.act(&m)
+	case s.flag != nil:
+		m.setFlag(s, !*s.flag(&m.cfg))
+	case s.cycle != nil:
+		s.cycle(&m, 1)
 	}
 	return m.recheckIfPathsChanged(before)
+}
+
+func (m model) adjust(s *setting, step int) (tea.Model, tea.Cmd) {
+	before := m.cfg
+	switch {
+	case s.cycle != nil:
+		s.cycle(&m, step)
+	case s.span != nil:
+		bound, unit := s.bound()
+		d := s.span(&m.cfg)
+		*d = min(max(*d+time.Duration(step)*unit, bound.Min), bound.Max)
+		m.notice = s.label + " " + fmtSetting(*d) + "."
+	case s.flag != nil:
+		m.setFlag(s, step > 0)
+	}
+	return m.recheckIfPathsChanged(before)
+}
+
+func (m *model) setFlag(s *setting, on bool) {
+	*s.flag(&m.cfg) = on
+	m.notice = s.label + map[bool]string{true: " on.", false: " off."}[on]
+}
+
+func enterVerb(s *setting) string {
+	switch {
+	case s == serversRow || s == advancedRow:
+		return "open"
+	case s == resetRow:
+		return "reset"
+	case s.span != nil || s.parse != nil:
+		return "edit"
+	case s.flag != nil:
+		return "on/off"
+	}
+	return "next"
 }
 
 var streamRange = fmt.Sprintf("1 to %d", goclient.MaxStreams)
@@ -327,11 +378,15 @@ func (m *model) commitEdit() error {
 	return nil
 }
 
-func (s *setting) inBounds(d time.Duration) error {
-	bound := goclient.StageBound
+func (s *setting) bound() (goclient.DurationBound, time.Duration) {
 	if s == warmupRow {
-		bound = goclient.WarmupBound
+		return goclient.WarmupBound, 100 * time.Millisecond
 	}
+	return goclient.StageBound, time.Second
+}
+
+func (s *setting) inBounds(d time.Duration) error {
+	bound, _ := s.bound()
 	if err := bound.Check(d); err != nil {
 		return fmt.Errorf("%s %w", s.label, err)
 	}
@@ -343,9 +398,9 @@ func cadenceSetting(label string, field func(*goclient.Config) *time.Duration) *
 		view: func(m model) setupRow {
 			return setupRow{label: label, value: cadenceLabel(*field(&m.cfg)), note: "probe spacing"}
 		},
-		act: func(m *model) {
+		cycle: func(m *model, step int) {
 			interval := field(&m.cfg)
-			*interval = cadences[(cadenceIndex(*interval)+1)%len(cadences)].interval
+			*interval = cadences[(cadenceIndex(*interval)+step+len(cadences))%len(cadences)].interval
 			m.notice = label + ": " + cadenceLabel(*interval) + "."
 		},
 	}
@@ -357,9 +412,9 @@ func pathSetting(label string, latency bool, field func(*goclient.Config) (*stri
 			target, transport := field(&m.cfg)
 			return m.pathRow(label, *target, *transport, latency)
 		},
-		act: func(m *model) {
+		cycle: func(m *model, step int) {
 			target, transport := field(&m.cfg)
-			next := nextPath(*target, *transport, m.pathChoices(latency))
+			next := nextPath(*target, *transport, m.pathChoices(latency), step)
 			*target, *transport = next.target, next.transport
 			if t := m.selectedThroughputPath(); !latency && t != nil && t.Protocol != "negotiated" {
 				m.cfg.ThroughputProtocol = "auto"
@@ -399,17 +454,17 @@ func (m model) pathRow(label, target, transport string, latency bool) setupRow {
 	return setupRow{label: label, value: value, note: "not offered by the checked server"}
 }
 
-func nextPath(target, transport string, choices []pathChoice) pathChoice {
+func nextPath(target, transport string, choices []pathChoice, step int) pathChoice {
 	for i, choice := range choices {
 		if choice.selects(target, transport) {
-			return choices[(i+1)%len(choices)]
+			return choices[(i+step+len(choices))%len(choices)]
 		}
 	}
 	return choices[0]
 }
 
-func nextChoice(current string, choices []string) string {
-	return choices[(slices.Index(choices, current)+1)%len(choices)]
+func nextChoice(current string, choices []string, step int) string {
+	return choices[(slices.Index(choices, current)+step+len(choices))%len(choices)]
 }
 
 func discovery(server goclient.PreparedServer) *wire.Preflight {
