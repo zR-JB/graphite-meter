@@ -35,6 +35,10 @@ afterEach(() => {
   for (const connection of open.splice(0)) connection.close();
 });
 
+const flush = async () => {
+  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+};
+
 const monitor = (stopped = () => {}) => ({
   start() {},
   stop: stopped,
@@ -163,14 +167,14 @@ test("a new server generation cancels an in-flight role before accepting replace
   await connection.check();
   block = true;
   const old = connection.check({ force: true, role: "latency" });
-  await settle();
+  await flush();
   expect(heldSignal?.aborted).toBe(false);
   [generation, block] = ["gen-b", false];
   await connection.check({ force: true, role: "throughput" });
   await old;
   expect(heldSignal?.aborted).toBe(true);
   held.resolve(preparation());
-  await settle();
+  await flush();
   expect(connection.view.readiness).toBe("ready");
   expect(connection.view.validation.latency.path!.generation).toBe("gen-b");
 });

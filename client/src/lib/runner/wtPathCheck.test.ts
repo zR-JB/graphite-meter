@@ -1,6 +1,8 @@
 import { stubGlobals } from "../test-helpers.testutil";
-import { test, expect } from "bun:test";
+import { afterEach, expect, jest, test } from "bun:test";
 import type { RunnerConfig } from "./contract";
+
+afterEach(() => jest.useRealTimers());
 import type { ConnectionPreparation } from "./real/prepare";
 import { emptyConnectionValidation } from "./paths";
 import {
@@ -207,6 +209,7 @@ async function untilDialled(dials: number): Promise<void> {
   expect(HeldWebTransport.live).toHaveLength(dials);
 }
 test("an aborted WebTransport check aborts the probe, it does not degrade it", async () => {
+  jest.useFakeTimers();
   await withHeldSessions(async (check) => {
     const abort = new AbortController();
     const probe = check(autoConfig, abort.signal);

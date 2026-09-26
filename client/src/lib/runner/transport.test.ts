@@ -28,6 +28,13 @@ async function until(predicate: () => boolean, ms = 200): Promise<void> {
   for (let i = 0; i < ms && !predicate(); i++) await Bun.sleep(1);
   expect(predicate()).toBe(true);
 }
+async function settle(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 200 && !predicate(); i++) {
+    jest.advanceTimersByTime(10);
+    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+  }
+  expect(predicate()).toBe(true);
+}
 
 class FakeWorker {
   static all: FakeWorker[] = [];
@@ -66,7 +73,10 @@ interface Feed {
   terminal: { bytes: number; nanos: number };
 }
 let restore = () => {};
-afterEach(() => restore());
+afterEach(() => {
+  jest.useRealTimers();
+  restore();
+});
 
 /** An HTTP server: minted upload ids, NDJSON progress feeds and checkpoints. */
 async function http(options: { checkpoint?: () => Response } = {}) {
@@ -380,6 +390,7 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
 });
 
 test("the HTTP receiver feed reconnects without regressing counters and classifies refusals once", async () => {
+  jest.useFakeTimers();
   const { uploadFeed } = await import("./transport");
   const events: Parameters<Parameters<typeof uploadFeed>[0]["onEvent"]>[0][] =
     [];
@@ -402,7 +413,7 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
     credentials: "same-origin",
     onEvent: (event) => events.push(event),
   });
-  await until(() => events.some((event) => event.type === "complete"));
+  await settle(() => events.some((event) => event.type === "complete"));
   expect(events.filter((event) => "n" in event)).toEqual([
     { type: "bytes", n: 800, t: 4 },
     { type: "complete", n: 900, t: 6 },
@@ -433,8 +444,8 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
       credentials: "omit",
       onEvent: (e) => seen.push(e),
     });
-    await until(() => seen.length > 0);
-    await Bun.sleep(5);
+    await settle(() => seen.length > 0);
+    jest.advanceTimersByTime(5_000);
     expect(seen).toEqual([expect.objectContaining(expected)]);
     expect(calls).toBe(1);
     refused.dispose();
