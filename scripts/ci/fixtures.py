@@ -126,8 +126,9 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 
 
 def engine(directory: Path, repository: str, version: str, revision: str) -> dict[str, str]:
-    """Serve a valid two-platform image with provenance from a fake container engine."""
-    script = directory / "engine"
+    """Serve a valid two-platform image with provenance from a fake `docker` on PATH."""
+    script = directory / "bin" / "docker"
+    script.parent.mkdir(exist_ok=True)
     script.write_text(ENGINE)
     script.chmod(0o755)
     labels = {"org.opencontainers.image.source": f"https://github.com/{repository}",
@@ -135,7 +136,8 @@ def engine(directory: Path, repository: str, version: str, revision: str) -> dic
               "org.opencontainers.image.version": version,
               "org.opencontainers.image.licenses": "AGPL-3.0-or-later"}
     return {
-        "CONTAINER_ENGINE": str(script), "FAKE_ENGINE_LOG": str(directory / "engine.log"),
+        "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
+        "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
         "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
         "SKOPEO_VERSION": SKOPEO_VERSION, "FAKE_SKOPEO_VERSION": SKOPEO_VERSION,
         "FAKE_INDEX": json.dumps(index(*RUNNABLE, *ATTESTED)), "FAKE_LABELS": json.dumps(labels),

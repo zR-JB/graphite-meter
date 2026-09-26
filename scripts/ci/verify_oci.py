@@ -26,6 +26,7 @@ INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SKOPEO_VERSION_RE = re.compile(r"skopeo version (\S+)(?: commit: [0-9a-fA-F]+)?")
 ARCHIVE = "oci-archive:/work/image.oci.tar"
+ENGINES = ("docker", "podman")
 
 
 class VerificationError(ControlPlaneError):
@@ -70,9 +71,12 @@ def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
 
 
 def select_engine() -> str:
+    """Return the configured engine name, or the first installed one; never a path."""
     configured = os.environ.get("CONTAINER_ENGINE")
-    for candidate in [configured] if configured else ["docker", "podman"]:
-        if shutil.which(candidate):
+    if configured and configured not in ENGINES:
+        raise VerificationError(f"CONTAINER_ENGINE must be one of {', '.join(ENGINES)}")
+    for candidate in ENGINES:
+        if configured in (None, "", candidate) and shutil.which(candidate):
             return candidate
     raise VerificationError("OCI verification requires Docker or Podman")
 

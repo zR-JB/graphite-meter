@@ -27,6 +27,7 @@ from fixtures import (
 from verify_oci import (
     VerificationError as OCIError,
     parse_skopeo_version,
+    select_engine,
     validate_index_descriptors,
     verify as verify_oci,
 )
@@ -264,6 +265,21 @@ class OCITests(unittest.TestCase):
                     self.assertIn(mounts, ([], [f"{archive}:/work/image.oci.tar:ro"]))
                 if error is None:
                     self.assertIn(" copy --all oci-archive:/work/image.oci.tar ", log)
+
+    def test_engine_is_a_known_name_resolved_on_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40)
+            env["PATH"] = str(Path(directory) / "bin")
+            for configured, error in (("docker", None), ("", None), ("podman", "requires Docker"),
+                                      (str(Path(directory) / "bin" / "docker"), "must be one of"),
+                                      ("sh", "must be one of")):
+                with (self.subTest(configured=configured),
+                      patch.dict(os.environ, env | {"CONTAINER_ENGINE": configured})):
+                    if error is None:
+                        self.assertEqual(select_engine(), "docker")
+                    else:
+                        with self.assertRaisesRegex(OCIError, error):
+                            select_engine()
 
     def test_symlinked_or_empty_archive_is_refused_before_the_engine_runs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
