@@ -29,7 +29,7 @@ const ALLOWED = new Set([
   "card.icon",
   "lane.icon",
   "laneIcons[lane.key]",
-  "columnMeta[column].icon",
+  "COLUMN[column].icon",
 ]);
 
 function svelteFiles(dir: string): string[] {

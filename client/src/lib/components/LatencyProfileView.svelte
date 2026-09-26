@@ -168,6 +168,7 @@
       lane.p10 == null || lane.p90 == null
         ? null
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
+      lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
       showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
@@ -235,107 +236,105 @@
         </span>
       </div>
 
-      <div class="strip">
-        <div class="ticks" aria-hidden="true">
-          {#each ticks as tick, index (index)}
-            <span style={`left:${pos(tick, scale)}%`}
-              >{tickLabel(tick)}{index === 2 ? " ms" : ""}</span
+      <button
+        type="button"
+        class="track"
+        aria-label={accessibleLane(lane)}
+        disabled={entries(lane).length === 0}
+        onpointermove={(event) => onTrackMove(event, lane)}
+        onpointerleave={() => {
+          if (keyboardLane !== lane.key) hover = null;
+        }}
+        onfocus={(event) => onTrackFocus(event, lane)}
+        onblur={() => {
+          keyboardLane = null;
+          hover = null;
+        }}
+        onkeydown={(event) => onTrackKey(event, lane)}
+      >
+        <span class="profile-artwork" aria-hidden="true">
+          {#if lane.min != null && lane.max != null}
+            <span
+              class="range"
+              style:transform={`translateX(${pos(lane.min, scale)}%) scaleX(${rangeWidth(lane.min, lane.max, scale) / 100})`}
+            ></span>
+            <span
+              class="position"
+              style:transform={`translateX(${pos(lane.min, scale)}%)`}
+              ><i class="range-cap"></i></span
             >
-          {/each}
-        </div>
-        <button
-          type="button"
-          class="track"
-          aria-label={accessibleLane(lane)}
-          disabled={entries(lane).length === 0}
-          onpointermove={(event) => onTrackMove(event, lane)}
-          onpointerleave={() => {
-            if (keyboardLane !== lane.key) hover = null;
-          }}
-          onfocus={(event) => onTrackFocus(event, lane)}
-          onblur={() => {
-            keyboardLane = null;
-            hover = null;
-          }}
-          onkeydown={(event) => onTrackKey(event, lane)}
-        >
-          <span class="profile-artwork" aria-hidden="true">
-            {#if lane.min != null && lane.max != null}
-              <span
-                class="range"
-                style:transform={`translateX(${pos(lane.min, scale)}%) scaleX(${rangeWidth(lane.min, lane.max, scale) / 100})`}
-              ></span>
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.min, scale)}%)`}
-                ><i class="range-cap"></i></span
+            <span
+              class="position"
+              style:transform={`translateX(${pos(lane.max, scale)}%)`}
+              ><i class="range-cap"></i></span
+            >
+          {/if}
+          {#if lane.p10 != null && lane.p90 != null}
+            <span
+              class="band"
+              style:transform={`translateX(${pos(lane.p10, scale)}%) scaleX(${rangeWidth(lane.p10, lane.p90, scale) / 100})`}
+            ></span>
+          {/if}
+          {#if lane.center != null}
+            <span
+              class="position"
+              style:transform={`translateX(${pos(lane.center, scale)}%)`}
+              ><i class="center-marker"></i></span
+            >
+          {/if}
+          {#if showCurrent && lane.current != null}
+            <span
+              class="position"
+              style:transform={`translateX(${pos(lane.current, scale)}%)`}
+              ><i class="current-marker"></i></span
+            >
+          {/if}
+          {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+            <i
+              class="timeout-marker"
+              style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
+            ></i>
+          {/if}
+        </span>
+        {#if hover?.key === lane.key && hoverValue != null}
+          <span class="guide" style={`left:${pos(hoverValue, scale)}%`}></span>
+          <span
+            class="hover-card"
+            bind:clientWidth={cardWidth}
+            style={`left:${cardLeft}px`}
+          >
+            <span class="hover-head">
+              <span>{lane.label}</span>
+              <strong
+                >{metricLabel(lane, hover.metric)}
+                {fmtMs(hoverValue)}</strong
               >
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.max, scale)}%)`}
-                ><i class="range-cap"></i></span
-              >
-            {/if}
-            {#if lane.p10 != null && lane.p90 != null}
-              <span
-                class="band"
-                style:transform={`translateX(${pos(lane.p10, scale)}%) scaleX(${rangeWidth(lane.p10, lane.p90, scale) / 100})`}
-              ></span>
-            {/if}
-            {#if lane.center != null}
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.center, scale)}%)`}
-                ><i class="center-marker"></i></span
-              >
-            {/if}
-            {#if showCurrent && lane.current != null}
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.current, scale)}%)`}
-                ><i class="current-marker"></i></span
+            </span>
+            {#if hoverContext(lane, hover.metric)}
+              <span class="hover-context"
+                >{hoverContext(lane, hover.metric)}</span
               >
             {/if}
             {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-              <i
-                class="timeout-marker"
-                style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
-              ></i>
+              <em>{timeoutLabel(lane.timeoutRatio)}</em>
             {/if}
           </span>
-          {#if hover?.key === lane.key && hoverValue != null}
-            <span class="guide" style={`left:${pos(hoverValue, scale)}%`}
-            ></span>
-            <span
-              class="hover-card"
-              bind:clientWidth={cardWidth}
-              style={`left:${cardLeft}px`}
-            >
-              <span class="hover-head">
-                <span>{lane.label}</span>
-                <strong
-                  >{metricLabel(lane, hover.metric)}
-                  {fmtMs(hoverValue)}</strong
-                >
-              </span>
-              {#if hoverContext(lane, hover.metric)}
-                <span class="hover-context"
-                  >{hoverContext(lane, hover.metric)}</span
-                >
-              {/if}
-              {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-                <em>{timeoutLabel(lane.timeoutRatio)}</em>
-              {/if}
-            </span>
-          {/if}
-        </button>
-      </div>
+        {/if}
+      </button>
     </div>
   {/each}
+  <div class="ticks" aria-hidden="true">
+    {#each ticks as tick, index (index)}
+      <span style={`left:${pos(tick, scale)}%`}
+        >{tickLabel(tick)}{index === 2 ? " ms" : ""}</span
+      >
+    {/each}
+  </div>
 </div>
 
 <style>
   .lanes {
+    --lane-pad: var(--space-3);
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
@@ -343,9 +342,9 @@
   }
   .lane {
     display: grid;
-    gap: var(--space-1);
+    gap: 6px;
     min-width: 0;
-    padding: 6px var(--space-3);
+    padding: 6px var(--lane-pad);
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-well);
     background: var(--surface-1);
@@ -422,15 +421,10 @@
   .accounting-warning {
     color: var(--warn);
   }
-  .strip {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-  }
   .ticks {
     position: relative;
     height: 13px;
-    margin: 0 1px;
+    margin-inline: calc(var(--lane-pad) + 2px);
   }
   .ticks span {
     position: absolute;
@@ -604,8 +598,11 @@
   .hover-card > em {
     color: var(--err);
   }
+  .lanes[data-variant="compact"] {
+    --lane-pad: 10px;
+  }
   .lanes[data-variant="compact"] .lane {
-    padding: 9px 10px 10px;
+    padding-block: 9px 10px;
   }
   .lanes[data-variant="compact"] .lane-meta strong {
     font-size: var(--type-sm);

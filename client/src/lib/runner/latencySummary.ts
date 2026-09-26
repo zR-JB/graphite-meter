@@ -13,6 +13,7 @@ export interface LatencyLaneSnapshot {
   max: number | null;
   p10: number | null;
   p90: number | null;
+  p95?: number | null;
   /** Median (p50) of every population; the idle headline may use its stable window. */
   center: number | null;
   jitter: number | null;
@@ -39,6 +40,7 @@ export function latencyLanes(
           max: summary.maxMs,
           p10: summary.p10Ms,
           p90: summary.p90Ms,
+          p95: summary.p95Ms,
           center:
             (stage === "latency" ? result?.reportedMs : null) ?? summary.p50Ms,
           jitter: summary.jitterMs,

@@ -132,9 +132,7 @@ async function completeAndReload(page: Page, ids: string[]) {
   ]);
   await page.reload();
   await expect(page.locator(".result-detail")).toBeVisible();
-  await expect(page.locator(".saved-servers-section li")).toHaveCount(
-    ids.length,
-  );
+  await expect(page.locator(".result-detail tbody tr")).toHaveCount(ids.length);
   expect((await savedResult(page)).multiServer).toEqual(saved.multiServer);
   expect(await selectedIds(page)).toEqual(ids);
 }

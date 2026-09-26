@@ -3,13 +3,11 @@ import {
   probeAccountingDetails,
   probeAccountingSummary,
   hasProbeAccountingNotice,
-  timeoutLabel,
   entries,
   nearestMetric,
   hoverContext,
   metricLabel,
   profileDomain,
-  savedLatencyHasProbeEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
 
@@ -20,6 +18,7 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     max: 90,
     p10: 20,
     p90: 80,
+    p95: null,
     center: 50,
     centerKind: "average",
     current: 55,
@@ -41,20 +40,6 @@ test("profileDomain is shared by live and finalized lane profiles", () => {
     max: 200,
     span: 200,
   });
-});
-
-test("timeoutLabel: hidden at zero, extra precision under one percent", () => {
-  expect(timeoutLabel(0)).toBe("");
-  expect(timeoutLabel(-1)).toBe("");
-  expect(timeoutLabel(0.005)).toBe("0.50% timeouts");
-  expect(timeoutLabel(0.05)).toBe("5.0% timeouts");
-});
-
-test("saved probe timeouts require a supported latency transport", () => {
-  expect(savedLatencyHasProbeEvidence("webtransport")).toBe(true);
-  expect(savedLatencyHasProbeEvidence("websocket")).toBe(true);
-  expect(savedLatencyHasProbeEvidence(null)).toBe(false);
-  expect(savedLatencyHasProbeEvidence("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {

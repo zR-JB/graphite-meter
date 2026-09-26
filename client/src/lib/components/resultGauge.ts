@@ -3,7 +3,7 @@ import { bidirectionalResultPresentation } from "../presentation/bidirectionalRe
 
 export type ResultArcPhase = "download" | "upload" | "bidirectional";
 
-interface ResultGaugeArc {
+export interface ResultGaugeArc {
   phase: ResultArcPhase;
   label: string;
   bytesPerSec: number;

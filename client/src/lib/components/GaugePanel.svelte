@@ -9,11 +9,10 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
-  import LatencyServerSelector from "./LatencyServerSelector.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
-  import { fmtSpeed, fmtMs, reasonLabel } from "../format";
+  import { fmtSpeed, fmtMs } from "../format";
   import { gaugeLatencyPresentation } from "./gaugeLatency";
   import {
     LiveRateAnimator,
@@ -24,9 +23,8 @@
     type PresentationHandle,
   } from "../canvas/presentation";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
-  import { preparationFailurePresentation } from "./preparationFailure";
+  import { gaugeReadout } from "./gaugeReadout";
   import { ICON } from "../constants";
-  import { phaseLabel } from "../presentation/vocabulary";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -72,7 +70,6 @@
   let liveRatePresentation: PresentationHandle | null = null;
   let reducedRateMotion = false;
 
-  const EMPTY_DISPLAY = { value: "—", unit: "" };
   const completedKind = $derived<"speed" | "latency">(
     terminalArcs.length ? "speed" : "latency",
   );
@@ -126,39 +123,6 @@
       gaugeTicks.length > 1,
   );
 
-  const display = $derived.by(() => {
-    const p = store.phase;
-    if (unusableStage) return EMPTY_DISPLAY;
-    if (p === "latency")
-      return store.liveLatencyLost
-        ? { value: "—", unit: "probe timeout" }
-        : { value: fmtMs(gaugeLatency.rttMs), unit: "ms" };
-    if (
-      p === "idle" ||
-      p === "connecting" ||
-      p === "error" ||
-      p === "aborted" ||
-      p === "warmup"
-    )
-      return EMPTY_DISPLAY;
-    if (p === "complete") {
-      if (headlineArc)
-        return {
-          value: fmtSpeed(gaugeRate(headlineArc.bytesPerSec)),
-          unit: `${gaugeUnit} · ${headlineArc.label}`,
-        };
-      return store.result?.latency
-        ? { value: fmtMs(gaugeLatency.rttMs), unit: "ms" }
-        : EMPTY_DISPLAY;
-    }
-    if (!store.aggregateEvidence)
-      return { value: "—", unit: "awaiting server windows" };
-    return {
-      value: fmtSpeed(gaugeRate(liveRateValues.transfer)),
-      unit: gaugeUnit,
-    };
-  });
-
   const liveRateInput = $derived.by(() => {
     const phase = store.phase;
     const bidi = store.visualBidirectional ?? { down: 0, up: 0 };
@@ -188,101 +152,26 @@
     liveRatePresentation?.invalidate();
   });
 
-  // The visible display may follow the bounded upload bridge, but a live
-  // announcement describes measured throughput and must remain authoritative.
-  const announcementDisplay = $derived.by(() => {
-    if (!store.aggregateEvidence && store.isRunning)
-      return { value: "—", unit: "awaiting server windows" };
-    if (
-      store.phase === "download" ||
-      store.phase === "upload" ||
-      store.phase === "bidirectional"
-    )
-      return {
-        value: fmtSpeed(gaugeRate(store.liveTransferBytesPerSec)),
-        unit: gaugeUnit,
-      };
-    return display;
-  });
-
-  const terminalAnnouncement = $derived(
-    terminalArcs
-      .map(
-        (arc) =>
-          `${arc.label} ${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}${arc.dashed ? ", partial" : ""}`,
-      )
-      .join("; "),
-  );
-  const terminalPrimary = $derived.by(() => {
-    const arc = store.phase === "complete" ? headlineArc : null;
-    return arc
-      ? {
-          ...arc,
-          value: fmtSpeed(gaugeRate(arc.bytesPerSec)),
-          direction:
-            arc.phase === "download" || arc.label.endsWith("download")
-              ? ("download" as const)
-              : arc.phase === "upload" || arc.label.endsWith("upload")
-                ? ("upload" as const)
-                : ("bidirectional" as const),
-        }
-      : null;
-  });
-
-  const preparationLabel = $derived(
-    store.preparation.status === "authenticating"
-      ? "Checking sign-in"
-      : phaseLabel("connecting"),
-  );
-  const hint = $derived(
-    store.preparing
-      ? preparationLabel
-      : ["idle", "connecting", "warmup"].includes(store.phase)
-        ? phaseLabel(store.phase)
-        : "",
-  );
-
-  const preparationPathLabel = (state: string): string => {
-    if (state === "disabled") return "not needed";
-    return state;
-  };
-  const preparationAnnouncement = $derived.by(() => {
-    if (!store.preparing) return "";
-    return `${preparationLabel}. Throughput path ${preparationPathLabel(store.preparation.throughput)}; Latency path ${preparationPathLabel(store.preparation.latency)}`;
-  });
-  const preparationFailure = $derived(
-    preparationFailurePresentation(store.preparation, store.startError),
-  );
-
-  const status = $derived.by(() => {
-    switch (store.phase) {
-      case "aborted":
-        return {
-          tone: "aborted",
-          headline: phaseLabel("aborted"),
-          action: "Press Run again to restart",
-        };
-      case "error":
-        return {
-          tone: "error",
-          headline: store.error
-            ? reasonLabel(store.error.reason)
-            : "Something went wrong",
-          action: "Press Run again to retry",
-        };
-      default:
-        return null;
-    }
-  });
-
-  const statusText = $derived(
-    store.preparing
-      ? preparationAnnouncement
-      : preparationFailure
-        ? `${preparationFailure.headline} — ${preparationFailure.detail}`
-        : status
-          ? `${status.headline} — ${status.action}`
-          : hint,
+  const readout = $derived(
+    gaugeReadout({
+      phase: store.phase,
+      running: store.isRunning,
+      preparing: store.preparing,
+      preparation: store.preparation,
+      startError: store.startError,
+      error: store.error,
+      aggregateEvidence: store.aggregateEvidence,
+      latencyTimeout: store.liveLatencyLost,
+      latencyMs: gaugeLatency.rttMs,
+      hasLatencyResult: !!store.result?.latency,
+      unusable: unusableStage,
+      arcs: terminalArcs,
+      headline: headlineArc,
+      animatedBytesPerSec: liveRateValues.transfer,
+      measuredBytesPerSec: store.liveTransferBytesPerSec,
+      rate: (bytesPerSec) => fmtSpeed(gaugeRate(bytesPerSec)),
+      unit: gaugeUnit,
+    }),
   );
 
   // The live region mirrors a per-frame value. Mid-phase announcements wait a
@@ -296,10 +185,7 @@
   let lastAnnouncedPhase = "";
   $effect(() => {
     const phase = store.phase;
-    pendingAnnouncement =
-      statusText ||
-      (phase === "complete" && terminalAnnouncement) ||
-      `${announcementDisplay.value} ${announcementDisplay.unit}, phase ${phase}`;
+    pendingAnnouncement = readout.announcement;
     const commit = () => {
       announcement = pendingAnnouncement;
       lastAnnouncedAt = performance.now();
@@ -432,68 +318,71 @@
           </div>
         {/if}
         <div class="metric-wrap">
-          {#if terminalPrimary}
+          {#if readout.terminal}
             <div
               class="terminal-readout"
-              class:partial={terminalPrimary.dashed}
+              class:partial={readout.terminal.dashed}
               aria-hidden="true"
             >
               <span class="terminal-direction">
                 <span
                   class="tone-icon terminal-icon"
-                  data-tone={terminalPrimary.direction}
+                  data-tone={readout.terminal.direction}
                 >
-                  {#if terminalPrimary.direction === "download"}
+                  {#if readout.terminal.direction === "download"}
                     {@html ICON.download}
-                  {:else if terminalPrimary.direction === "upload"}
+                  {:else if readout.terminal.direction === "upload"}
                     {@html ICON.upload}
                   {:else}
                     {@html ICON.bidirectional}
                   {/if}
                 </span>
-                {terminalPrimary.direction === "download"
+                {readout.terminal.direction === "download"
                   ? "Download"
-                  : terminalPrimary.direction === "upload"
+                  : readout.terminal.direction === "upload"
                     ? "Upload"
                     : "Bidirectional"}
               </span>
-              <span class="terminal-number">{terminalPrimary.value}</span>
+              <span class="terminal-number">{readout.terminal.value}</span>
               <span class="terminal-unit">{gaugeUnit}</span>
-              {#if terminalPrimary.dashed}
+              {#if readout.terminal.dashed}
                 <span class="terminal-partial"
-                  >Partial {terminalPrimary.direction}</span
+                  >Partial {readout.terminal.direction}</span
                 >
               {/if}
             </div>
           {:else}
-            {#if display.value}<span class="gauge-value" aria-hidden="true"
-                >{display.value}</span
+            {#if readout.display.value}<span
+                class="gauge-value"
+                aria-hidden="true">{readout.display.value}</span
               >{/if}
-            {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-                >{display.unit}</span
+            {#if readout.display.unit}<span
+                class="gauge-unit"
+                aria-hidden="true">{readout.display.unit}</span
               >{/if}
           {/if}
           <span class="sr-only"
-            >{announcementDisplay.value} {announcementDisplay.unit}</span
+            >{readout.announced.value} {readout.announced.unit}</span
           >
         </div>
       </div>
       <div class="gauge-footer">
-        {#if hint || status || preparationFailure}
+        {#if readout.hint || readout.status || readout.failure}
           <div class="gauge-notes">
             {#if store.preparing}
-              <span class="gauge-status preparation">{preparationLabel}</span>
-            {:else if preparationFailure}
-              <span class="gauge-status error"
-                >{preparationFailure.headline}</span
+              <span class="gauge-status preparation"
+                >{readout.preparationLabel}</span
               >
-              <span class="gauge-hint">{preparationFailure.detail}</span>
-            {:else if status}
-              <span class="gauge-status" class:error={status.tone === "error"}>
-                {status.headline}
+            {:else if readout.failure}
+              <span class="gauge-status error">{readout.failure.headline}</span>
+              <span class="gauge-hint">{readout.failure.detail}</span>
+            {:else if readout.status}
+              <span class="gauge-status" class:error={readout.status.error}>
+                {readout.status.headline}
               </span>
-              <span class="gauge-hint">{status.action}</span>
-            {:else if hint}<span class="gauge-hint">{hint}</span>{/if}
+              <span class="gauge-hint">{readout.status.action}</span>
+            {:else if readout.hint}<span class="gauge-hint">{readout.hint}</span
+              >{/if}
           </div>
         {/if}
       </div>
@@ -507,7 +396,6 @@
 
     {#if store.latencyEnabled}
       <div class="well latency-panel">
-        <LatencyServerSelector />
         <LatencyProfile />
       </div>
     {/if}

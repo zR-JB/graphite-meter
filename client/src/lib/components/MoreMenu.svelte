@@ -8,12 +8,12 @@
 
   interface Props {
     label: string;
-    archive?: boolean;
+    danger?: boolean;
     children: Snippet<
       [select: (action: (invoker: HTMLButtonElement) => void) => void]
     >;
   }
-  let { label, archive = false, children }: Props = $props();
+  let { label, danger = false, children }: Props = $props();
   let open = $state(false);
   let focusLast = false;
   let trigger: HTMLButtonElement;
@@ -33,7 +33,7 @@
   }
 </script>
 
-<div class="more-control" class:archive>
+<div class="more-control" class:danger>
   <button
     bind:this={trigger}
     class="btn btn-icon more-trigger"
@@ -45,7 +45,7 @@
     popovertarget={menuId}
     style:anchor-name={`--${menuId}`}
     onkeydown={triggerKeydown}
-    use:tooltip={{ text: label, disabled: !archive }}
+    use:tooltip={{ text: label, disabled: !danger }}
   >
     {@html ICON.more}
   </button>
@@ -88,21 +88,21 @@
     color: var(--text-muted);
     font-size: var(--type-2xs);
   }
-  .archive .more-menu :global(button) {
+  .danger .more-menu :global(button) {
     color: var(--err);
   }
-  .archive .more-menu :global(button:focus-visible) {
+  .danger .more-menu :global(button:focus-visible) {
     background: var(--err-soft);
   }
   @media (hover: hover) {
-    .archive .more-menu :global(button:hover) {
+    .danger .more-menu :global(button:hover) {
       background: var(--err-soft);
     }
   }
-  .archive .more-menu :global(button > span:first-child) {
+  .danger .more-menu :global(button > span:first-child) {
     color: inherit;
   }
-  .archive .more-menu :global(strong) {
+  .danger .more-menu :global(strong) {
     color: var(--text);
   }
 </style>

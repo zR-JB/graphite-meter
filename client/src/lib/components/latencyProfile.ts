@@ -9,13 +9,15 @@ export const LATENCY_LANES = STAGE_ORDER.map((key) => ({
   label: LATENCY_POPULATION[key].short,
 }));
 
-export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
+export type MetricKey =
+  "min" | "p10" | "center" | "p90" | "p95" | "max" | "current";
 
 const METRIC_ORDER: readonly MetricKey[] = [
   "min",
   "p10",
   "center",
   "p90",
+  "p95",
   "max",
   "current",
 ];
@@ -24,6 +26,7 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
   min: "Min",
   p10: "P10",
   p90: "P90",
+  p95: "P95",
   max: "Max",
   current: "Latest",
 };
@@ -40,6 +43,7 @@ type LatencyProfileLaneLike = {
   max: number | null;
   p10: number | null;
   p90: number | null;
+  p95?: number | null;
   center: number | null;
   current?: number | null;
   centerKind?: "average" | "result";

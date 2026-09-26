@@ -1,4 +1,4 @@
-import { MISSING } from "../presentation/vocabulary";
+import { MISSING, type Outcome } from "../presentation/vocabulary";
 import {
   fmtMs,
   fmtSpeed,
@@ -6,11 +6,21 @@ import {
   rateUnit,
   rateValueAt,
 } from "../format";
-import type { StageStatus } from "./types";
+import type { HistoryRecord, StageStatus } from "./types";
 
 interface HistoryUnits {
   base: "base10" | "base2";
   kind: "bits" | "bytes";
+}
+
+/** Saved rates choose their own unit tier; a live run's tier never applies. */
+export function historyRate(bytesPerSec: number, units: HistoryUnits) {
+  const baseUnits = units.kind === "bits" ? bytesPerSec * 8 : bytesPerSec;
+  const tier = rateScaleIndex(baseUnits, units.base);
+  return {
+    num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
+    unit: rateUnit(units.base, units.kind, tier),
+  };
 }
 
 export function formatHistoryRate(
@@ -18,9 +28,8 @@ export function formatHistoryRate(
   units: HistoryUnits,
 ): string {
   if (bytesPerSec == null) return MISSING;
-  const baseUnits = units.kind === "bits" ? bytesPerSec * 8 : bytesPerSec;
-  const tier = rateScaleIndex(baseUnits, units.base);
-  return `${fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier))} ${rateUnit(units.base, units.kind, tier)}`;
+  const { num, unit } = historyRate(bytesPerSec, units);
+  return `${num} ${unit}`;
 }
 
 const RELATIVE_TIME_LIMIT_MS = 60 * 60 * 1_000;
@@ -40,14 +49,6 @@ export function formatLatency(value: number | null | undefined): string {
   return value == null ? MISSING : `${fmtMs(value)} ms`;
 }
 
-export function formatPercent(
-  value: number | null | undefined,
-  fractionDigits = 1,
-): string {
-  if (value == null) return MISSING;
-  return `${value.toFixed(Number.isInteger(value) ? 0 : fractionDigits)}%`;
-}
-
 export function stageStatusLabel(status: StageStatus): string {
   return status === "not-run"
     ? "Skipped"
@@ -56,4 +57,18 @@ export function stageStatusLabel(status: StageStatus): string {
       : status === "partial"
         ? "Partial"
         : MISSING;
+}
+
+/** One completeness rule for the list badge and the detail. */
+export function historyOutcome(record: HistoryRecord): Outcome {
+  if (record.outcome === "incomplete") return "incomplete";
+  const { latency, download, upload, bidirectional } = record.stages;
+  return record.outcome === "partial" ||
+    record.failures.length > 0 ||
+    (record.multiServer?.failures.length ?? 0) > 0 ||
+    [latency, download, upload, bidirectional].some(
+      ({ status }) => status === "partial" || status === "failed",
+    )
+    ? "partial"
+    : "complete";
 }

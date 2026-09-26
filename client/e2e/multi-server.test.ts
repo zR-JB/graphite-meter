@@ -209,27 +209,25 @@ test("four real servers share one run and retain separate receiver windows and l
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
-  await expect(page.locator(".result-server-context")).toBeVisible();
-  await expect(
-    page.locator(".result-server-context").getByRole("option"),
-  ).toHaveCount(5);
+  const savedScope = page
+    .locator(".result-detail")
+    .getByRole("combobox", { name: "Result measurements" });
+  await expect(savedScope).toBeVisible();
+  await expect(savedScope.locator("option")).toHaveCount(5);
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  await page.locator(".result-server-context").scrollIntoViewIfNeeded();
   await page.artifact("multi-server-history-desktop");
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.locator(".result-server-context").scrollIntoViewIfNeeded();
-  await expectNoHorizontalOverflow(page.locator(".result-server-context"));
+  await expectNoHorizontalOverflow(page.locator(".result-detail"));
   await page.artifact("multi-server-history-phone");
-  await page.getByText("Servers & run context", { exact: true }).click();
-  const servers = page.locator(".saved-servers-section");
+  await page.getByText("Servers & paths", { exact: true }).click();
+  const servers = page.locator(".result-detail table");
   await servers.scrollIntoViewIfNeeded();
-  await expect(servers.locator("li")).toHaveCount(4);
+  await expect(servers.locator("tbody tr")).toHaveCount(4);
   await expect(servers).toContainText("Loopback fixture");
   await expect(servers).toContainText(new URL(fleet[1].url).host);
-  await expectNoHorizontalOverflow(servers);
   await page.artifact("saved-servers-phone");
   await page.reload();
-  await expect(page.locator(".result-server-context")).toBeVisible();
+  await expect(savedScope).toBeVisible();
   expect((await savedResult(page)).multiServer?.intervals).toEqual(
     saved.multiServer?.intervals,
   );
@@ -248,17 +246,17 @@ test("a single-server result keeps the ordinary live and history views in a flee
   expect(saved.multiServer?.selection).toHaveLength(1);
   expect(saved.multiServer?.intervals).toEqual([]);
   expect(saved.wireEstimates?.downloadBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".result-server-context")).toHaveCount(0);
+  await expect(page.locator(".summary-scope")).toHaveCount(0);
   await expect(page.locator(".server-indicator")).toHaveCount(0);
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").click();
   await expect(page.locator(".result-detail")).toBeVisible();
-  await expect(page.locator(".result-server-context")).toHaveCount(0);
+  await expect(page.locator(".summary-scope")).toHaveCount(0);
   await expect(page.locator(".server-focus")).toHaveCount(0);
-  await page.getByText("Servers & run context", { exact: true }).click();
-  await expect(page.locator(".saved-servers-section li")).toHaveCount(1);
-  await expect(page.locator(".saved-servers-section")).toContainText(
+  await page.getByText("Servers & paths", { exact: true }).click();
+  await expect(page.locator(".result-detail tbody tr")).toHaveCount(1);
+  await expect(page.locator(".result-detail tbody")).toContainText(
     "Home · Loopback fixture",
   );
   await page.artifact("single-server-fleet-history");
@@ -382,19 +380,13 @@ test("a real peer dropout keeps healthy transfers running and persists its failu
     subsequent.every((interval) => !interval.participants.includes("server-2")),
   ).toBe(true);
   expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".result-server-context")).toContainText(
-    "2 of 3 servers",
-  );
+  await expect(page.locator(".summary-scope")).toContainText("2 of 3 servers");
   const settings = await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await page.reload();
-  await expect(page.locator(".result-server-context")).toContainText(
-    "2 of 3 servers",
-  );
-  await expect(page.locator(".result-server-context")).toContainText(
-    "Amsterdam",
-  );
+  await expect(page.locator(".summary-scope")).toContainText("2 of 3 servers");
+  await expect(page.locator(".summary-scope")).toContainText("Amsterdam");
   expect((await savedResult(page)).multiServer?.failures).toEqual(
     saved.multiServer?.failures,
   );
@@ -492,62 +484,41 @@ test("primary latency selection is fixed for the run and saved alongside every t
   expect(primary.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
   expect(primary.latencyByStage.download?.probeCount).toBeGreaterThan(0);
   expect(saved.multiServer?.latencyFocus).toBe("server-1");
-  await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
-    "aria-label",
-    /Frankfurt/,
-  );
-  await expect(page.locator(".latency-focus select")).toHaveCount(0);
+  const latencyFocus = page.locator(".latency-focus select");
+  await expect(latencyFocus).toHaveValue("server-1");
+  await expect(latencyFocus).toBeDisabled();
   await page
     .getByRole("combobox", { name: "Result measurements" })
     .press("Home");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(page.locator(".result-cards")).toContainText("Not measured");
-  await expect(page.locator(".latency-focus .server-tag")).toHaveAttribute(
-    "aria-label",
-    /Frankfurt/,
-  );
+  await expect(latencyFocus).toHaveValue("server-1");
   await page.artifact("primary-latency-result");
   await openSettings(page);
   await settings.getByRole("link", { name: "View History" }).click();
   await page.locator("a.result-row").first().click();
   await settings.getByRole("button", { name: "Close Settings" }).click();
-  // Closing the dock remounts inline details in the desktop inspector.
-  await expect(
-    page.locator(".detail-inspector .saved-server-context"),
-  ).toBeVisible();
   const savedScope = page
-    .locator(".saved-server-context")
+    .locator(".result-detail")
     .getByRole("combobox", { name: "Result measurements" });
-  await savedScope.press("Home");
-  await page.keyboard.press("Enter");
+  const profile = page.locator(
+    '[data-latency-profile][data-variant="compact"]',
+  );
   await expect(savedScope).toHaveValue("");
-  await expect(page.locator(".latency-empty")).toHaveCount(0);
-  const savedLatency = page.getByRole("combobox", {
-    name: "Saved latency source",
-  });
-  await expect(savedLatency).toHaveValue("server-1");
-  await savedScope.click();
+  await expect(profile).toBeVisible();
+  await expect(page.locator(".result-detail h3")).toContainText("Frankfurt");
+  await savedScope.press("Home");
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("self");
-  await expect(savedLatency).toHaveValue("server-1");
-  await expect(page.locator(".latency-empty")).toHaveCount(0);
-  await savedLatency.press("Home");
-  await page.keyboard.press("Enter");
-  await expect(savedLatency).toHaveValue("self");
-  await expect(page.locator(".latency-empty")).toBeVisible();
+  await expect(page.locator(".result-detail .result-cards")).toContainText(
+    "Not measured",
+  );
+  await expect(profile).toBeVisible();
   await savedScope.press("End");
   await page.keyboard.press("Enter");
   await expect(savedScope).toHaveValue("server-1");
-  await expect(savedLatency).toHaveValue("self");
-  await expect(page.locator(".latency-empty")).toBeVisible();
-  await savedLatency.press("End");
-  await page.keyboard.press("Enter");
-  await expect(savedLatency).toHaveValue("server-1");
-  await expect(page.locator(".latency-empty")).toHaveCount(0);
-  await expect(
-    page.locator('[data-latency-profile][data-variant="compact"]'),
-  ).toBeVisible();
+  await expect(profile).toBeVisible();
   await page.artifact("primary-latency-history");
 });

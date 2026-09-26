@@ -128,6 +128,7 @@ export interface LatencyLane {
   max: number | null;
   p10: number | null;
   p90: number | null;
+  p95: number | null;
   center: number | null;
   /** Live populations are centred on their median; only old history saved means. */
   centerKind: "average" | "result";
@@ -952,6 +953,7 @@ class AppStore {
         max: lane?.max ?? null,
         p10: lane?.p10 ?? null,
         p90: lane?.p90 ?? null,
+        p95: lane?.p95 ?? null,
         center: lane?.center ?? null,
         centerKind: "result" as const,
         current:

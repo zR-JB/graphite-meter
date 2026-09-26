@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
   import { fmtMs } from "../format";
-  import ServerSelector from "./ServerSelector.svelte";
+  import ServerScope from "./ServerScope.svelte";
   import { serverAccent, serverLabel } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -138,14 +138,14 @@
     {#if selected.length > 1 && store.latencyEnabled}
       <div class="latency-policy">
         <strong>Latency server</strong>
-        <ServerSelector
+        <ServerScope
           servers={selected}
           value={store.latencySelection.mode === "all"
             ? ""
             : store.primaryLatencyServer}
           label="Latency measurement servers"
-          aggregate
-          aggregateDescription="Measure latency to every server"
+          aggregate="Every server"
+          hint="Measure latency to every server"
           disabled={locked}
           onchange={(id) =>
             controller.configureLatency(
@@ -287,7 +287,7 @@
     font-size: var(--type-xs);
   }
   .latency-policy {
-    --selector-width: 100%;
+    --scope-width: 100%;
     display: grid;
     justify-items: start;
     gap: 6px;

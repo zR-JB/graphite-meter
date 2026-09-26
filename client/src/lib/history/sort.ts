@@ -1,5 +1,6 @@
 import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
 import type { HistoryRecord } from "./types";
+import { LATENCY_POPULATION, STAGE } from "../presentation/vocabulary";
 export type HistorySort =
   "date" | "download" | "upload" | "bidirectional" | "idle" | "loaded";
 export const HISTORY_SORTS: readonly HistorySort[] = [
@@ -12,11 +13,11 @@ export const HISTORY_SORTS: readonly HistorySort[] = [
 ];
 export const HISTORY_SORT_LABEL: Record<HistorySort, string> = {
   date: "Date",
-  download: "Download",
-  upload: "Upload",
-  bidirectional: "Bidirectional",
-  idle: "Idle",
-  loaded: "Loaded",
+  download: STAGE.download.label,
+  upload: STAGE.upload.label,
+  bidirectional: STAGE.bidirectional.label,
+  idle: LATENCY_POPULATION.latency.label,
+  loaded: "Loaded latency",
 };
 export function naturalDescending(sort: HistorySort): boolean {
   return sort !== "idle" && sort !== "loaded";
@@ -34,7 +35,7 @@ function value(record: HistoryRecord, sort: HistorySort): number | null {
       record.stages.bidirectional.up?.reportedBytesPerSec,
     ).combinedBytesPerSec;
   if (sort === "idle") return record.stages.latency.result?.reportedMs ?? null;
-  // Use the result's user-facing aggregate; do not recombine detail lanes.
+  // The highest loaded median, the same statistic the detail lanes centre on.
   return record.bufferbloat?.loadedMs ?? null;
 }
 
