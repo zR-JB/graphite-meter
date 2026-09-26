@@ -60,7 +60,7 @@
       },
       details,
       shown,
-      store.latencyFocus,
+      details?.latencyFocus,
     );
     return summaryCards(evidence, rate, store.unitBase);
   });

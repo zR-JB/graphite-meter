@@ -4,7 +4,9 @@ import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
+  testRunResult,
 } from "../runner/test-helpers.testutil";
+import type { RunResult } from "../runner/contract";
 import { singleLatencyBucket } from "../runner/series";
 import { LatencyPopulation } from "../runner/measure";
 import { parseCatalog } from "../servers/catalog";
@@ -145,6 +147,27 @@ test("selection readiness follows each prototype-named server's view", async () 
   } finally {
     store.servers.clear();
     store.selectedServers = previousSelection;
+    restore();
+  }
+});
+
+test("focusing another server leaves the headline latency result alone", async () => {
+  const restore = stubGlobals(TEST_BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const latency = (reportedMs: number) =>
+    ({ reportedMs }) as NonNullable<RunResult["latency"]>;
+  const result = testRunResult({ latency: latency(10) });
+  result.multiServer.servers = [
+    { server: { id: "b", name: "b" }, latency: latency(40) },
+  ] as unknown as typeof result.multiServer.servers;
+  try {
+    store.reset();
+    store.ingest({ type: "complete", result });
+    store.focusLatencyServer("b");
+    expect(store.stageResults.latency).toBe(result.latency);
+  } finally {
+    store.reset();
+    store.latencyFocus = "self";
     restore();
   }
 });

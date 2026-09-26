@@ -249,9 +249,6 @@ class AppStore {
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
     this.latencyRevision++;
-    const server = this.#focused;
-    if (server)
-      this.stageResults = { ...this.stageResults, latency: server.latency };
     this.#latencyScale.reset();
     for (const sample of this.latency)
       this.latencyScaleMs = this.#latencyScale.observe(sample);
