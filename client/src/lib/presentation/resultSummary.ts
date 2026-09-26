@@ -1,7 +1,7 @@
 import { compensationTooltip, type WireModel } from "../compensation";
 import { fmtAddedMs, fmtBytes, fmtMs } from "../format";
 import type {
-  BufferbloatGrade,
+  AddedLatency,
   RunResult,
   TransportRole,
 } from "../runner/contract";
@@ -22,7 +22,7 @@ export interface SummaryEvidence extends Pick<
   "download" | "upload" | "bidirectional" | "latency"
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
-  added: BufferbloatGrade | null;
+  added: AddedLatency | null;
   latencySource?: string;
 }
 export interface SummaryCard {
@@ -35,9 +35,8 @@ export interface SummaryCard {
   unit: string;
   detail: string;
   jitter: string | null;
-  /** Signed added latency for a loaded stage, or the latency card's secondary grade. */
+  /** Signed added latency of a loaded stage. */
   added: string | null;
-  grade: string | null;
   wire: (WireView & { num: string }) | null;
 }
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
@@ -122,7 +121,6 @@ export function summaryCards(
       detail: "",
       jitter: null,
       added: null,
-      grade: null,
       quality: null,
       wire: null,
     };
@@ -135,7 +133,6 @@ export function summaryCards(
           num: fmtMs(latency.reportedMs),
           unit: "ms",
           jitter: latency.jitterMs == null ? MISSING : fmtMs(latency.jitterMs),
-          grade: evidence.added ? `Grade ${evidence.added.grade}` : null,
           detail: evidence.latencySource
             ? `from ${evidence.latencySource}`
             : "",
@@ -186,7 +183,7 @@ export function summaryCards(
       if (result)
         card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
-    const added = evidence.added?.addedMs[key];
+    const added = evidence.added?.[key];
     if (added != null && status !== "failed") card.added = fmtAddedMs(added);
     if (value === null) return [card];
     const shown = rate(value);
@@ -217,6 +214,6 @@ export function serverEvidence(
     upload: server.upload,
     bidirectional: server.bidirectional,
     latency: server.latency,
-    added: server.bufferbloat,
+    added: server.addedLatency,
   };
 }

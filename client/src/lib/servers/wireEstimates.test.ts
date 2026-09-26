@@ -39,7 +39,7 @@ function fixture(): MultiServerResult {
         upload: null,
         bidirectional: null,
       },
-      bufferbloat: null,
+      addedLatency: null,
       download: null,
       upload: null,
       bidirectional: null,

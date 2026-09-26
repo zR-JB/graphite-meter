@@ -60,7 +60,7 @@
         upload: result.upload,
         bidirectional: result.bidirectional,
         latency: result.latency,
-        added: result.bufferbloat,
+        added: result.addedLatency,
       },
       details,
       shown,

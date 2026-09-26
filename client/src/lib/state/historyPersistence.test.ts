@@ -58,7 +58,7 @@ function result(): RunResult {
           ...pathEvidence(testPreparedPaths()),
           latency: null,
           latencyByStage: empty,
-          bufferbloat: null,
+          addedLatency: null,
           download: { ...throughput },
           upload: null,
           bidirectional: null,

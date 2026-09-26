@@ -54,13 +54,7 @@ const result: RunResult = {
       timeoutCount: 1,
     },
   },
-  bufferbloat: {
-    addedMs: { download: 8, upload: -2, bidirectional: null },
-    grade: "B",
-    idleMs: 12,
-    loadedMs: 20,
-    increaseMs: 8,
-  },
+  addedLatency: { download: 8, upload: -2, bidirectional: null },
   multiServer: {
     selection: [{ id: "a", name: "edge", url: "https://a.example" }],
     participants: ["a"],
@@ -109,7 +103,7 @@ result.multiServer.servers = [
     latencyTarget: { origin: "https://a.example", transport: "websocket" },
     latency: result.latency,
     latencyByStage: result.latencyByStage,
-    bufferbloat: result.bufferbloat,
+    addedLatency: result.addedLatency,
     download: result.download,
     upload: result.upload,
     bidirectional: result.bidirectional,
@@ -247,7 +241,13 @@ test("a schema 4 record reads as a one-server result with its grade and wire mod
       upload: { status: "failed", result: null },
       bidirectional: { status: "not-run", down: null, up: null },
     },
-    bufferbloat: { idleMs: 12, loadedMs: 18, increaseMs: 6, grade: "A" },
+    bufferbloat: {
+      idleMs: 12,
+      loadedMs: 18,
+      increaseMs: 6,
+      grade: "A",
+      addedMs: { download: 6 },
+    },
     totalBytes: 5000,
     server: { name: "Home", location: "Here", engine: "e4" },
     transport: {
@@ -278,8 +278,9 @@ test("a schema 4 record reads as a one-server result with its grade and wire mod
     stages: { latency: "complete", upload: "failed", bidirectional: "not-run" },
     bidirectional: null,
     latencyByStage: { download: { p50Ms: 18, probeCount: 50 }, upload: null },
-    bufferbloat: { grade: "A", addedMs: { download: null } },
+    addedLatency: { download: 6, upload: null, bidirectional: null },
   });
+  expect(JSON.stringify(record)).not.toContain("grade");
   expect(record.result.download?.wire?.totalMultiplier).toBeCloseTo(1.05);
   expect(record.result.multiServer.servers).toMatchObject([
     {

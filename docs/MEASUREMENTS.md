@@ -151,8 +151,9 @@ is emitted.
 ## Saved history
 
 The browser saves history schema 5: the run's own result with the client build and the headline server's engine.
-Schema 4 records from earlier releases are read as a one-server result and stay unchanged in storage. Other or
-malformed records stay in storage but are skipped and reported; a database of another version is refused unchanged.
+Schema 4 records from earlier releases are read as a one-server result without their A–F grade and stay unchanged in
+storage. Other or malformed records stay in storage but are skipped and reported; a database of another version is
+refused unchanged.
 Up to 2,000 results are kept; Complete, Partial and Incomplete runs are saved when saving is on.
 
 A record holds the selected servers and survivors, per-server transport evidence and stage statuses, stage latency

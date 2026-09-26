@@ -88,14 +88,6 @@
                 >
               </p>
             {/if}
-            {#if card.grade !== null}
-              <p class="line">
-                <strong>{card.grade}</strong>
-                <span class="term" {@attach tooltip(() => JARGON.addedLatency)}
-                  >added latency</span
-                >
-              </p>
-            {/if}
             {#if card.wire}
               <p class="line">
                 <strong>{card.wire.num}</strong>

@@ -151,29 +151,23 @@ test("paired server timing uses only valid in-window replies and leaves raw stat
   });
 });
 
-test("stage populations stay separate and added latency is the signed worst loaded median", () => {
+test("stage populations stay separate and added latency is signed per loaded stage", () => {
   const latency = new ServerLatency();
   for (const rtt of [10, 20]) latency.observe("latency", reply(rtt), 0, 0);
   for (let i = 0; i < 100; i++) latency.observe("download", reply(20), 0, 0);
   latency.observe("upload", reply(300), 0, 0);
   latency.observe("upload", reply(250, true), 0, 0);
   expect(latency.result()).toMatchObject({ reportedMs: 15 });
-  expect(latency.bufferbloat()).toEqual({
-    addedMs: { download: 5, upload: 285, bidirectional: null },
-    grade: "F",
-    idleMs: 15,
-    loadedMs: 300,
-    increaseMs: 285,
+  expect(latency.addedLatency()).toEqual({
+    download: 5,
+    upload: 285,
+    bidirectional: null,
   });
   expect(latency.summaries().bidirectional).toBeNull();
   const faster = new ServerLatency();
   faster.observe("latency", reply(30), 0, 0);
   faster.observe("download", reply(20), 0, 0);
-  expect(faster.bufferbloat()).toMatchObject({
-    addedMs: { download: -10 },
-    grade: "A",
-    increaseMs: -10,
-  });
+  expect(faster.addedLatency()).toMatchObject({ download: -10 });
   const loadedOnly = new ServerLatency();
   loadedOnly.observe("download", reply(30), 0, 0);
   expect(loadedOnly.result()).toBeNull();

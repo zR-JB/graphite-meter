@@ -192,7 +192,7 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
       upload: null,
       bidirectional: null,
     },
-    bufferbloat: null,
+    addedLatency: null,
     multiServer: {
       selection: [server],
       participants: [server.id],

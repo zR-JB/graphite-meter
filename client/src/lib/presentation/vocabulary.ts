@@ -108,8 +108,7 @@ export const reasonLabel = (reason: FailureReason) =>
 
 export const JARGON = {
   addedLatency:
-    "Added latency: loaded median minus idle median for the same server, signed. " +
-    "The grade labels the worst stage: A ≤5 ms, B ≤30, C ≤60, D ≤200, otherwise F.",
+    "Added latency: loaded median minus idle median for the same server, signed.",
   jitter:
     "Jitter: mean absolute change between consecutive replies. Lower is steadier; " +
     "probe timeouts are left out.",

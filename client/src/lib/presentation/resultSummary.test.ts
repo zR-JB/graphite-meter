@@ -31,7 +31,6 @@ const lane = (reportedBytesPerSec: number) => ({
   peakBytesPerSec: null,
 });
 const rate = (value: number) => ({ num: String(value), unit: "B/s" });
-const latencyOnly = { idleMs: 12, loadedMs: 20, increaseMs: 8 };
 
 test("a saved wire overhead shows from half a percent and only when chosen", () => {
   const wire = (totalMultiplier: number, show = true) =>
@@ -86,7 +85,7 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
   });
 });
 
-test("cards show signed added latency, the grade, and one pip rule", () => {
+test("loaded cards show signed added latency and every card one pip rule", () => {
   const cards = summaryCards(
     {
       status: {
@@ -99,25 +98,16 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
       upload: { ...lane(20), stabilityPct: 80 },
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
-      added: {
-        addedMs: { download: 8.25, upload: -0.04, bidirectional: 0 },
-        grade: "B",
-        ...latencyOnly,
-      },
+      added: { download: 8.25, upload: -0.04, bidirectional: 0 },
     },
     rate,
     "base10",
     true,
   );
-  const shown = cards.map((card) => [
-    card.added,
-    card.grade,
-    card.quality?.band,
-  ]);
-  expect(shown).toEqual([
-    ["+8.3", null, "high"],
-    ["+0.0", null, "medium"],
-    [null, null, undefined],
-    [null, "Grade B", "high"],
+  expect(cards.map((card) => [card.added, card.quality?.band])).toEqual([
+    ["+8.3", "high"],
+    ["+0.0", "medium"],
+    [null, undefined],
+    [null, "high"],
   ]);
 });

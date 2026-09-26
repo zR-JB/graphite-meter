@@ -1,6 +1,6 @@
 import {
   FAILURE_REASONS,
-  type BufferbloatGrade,
+  type AddedLatency,
   type LatencyResult,
   type RunResult,
   type RunnerConfig,
@@ -167,6 +167,13 @@ const rate = maybe(
 const lanes = maybe(shape({ down: rate, up: rate }));
 const populations = each(maybe(shape({ p50Ms: maybe(num), probeCount: num })));
 const measured = {
+  addedLatency: maybe(
+    shape({
+      download: maybe(num),
+      upload: maybe(num),
+      bidirectional: maybe(num),
+    }),
+  ),
   latency: maybe(shape({ reportedMs: num })),
   latencyByStage: populations,
   download: rate,
@@ -187,7 +194,6 @@ const readable = shape({
       ["complete", "partial", "incomplete"].includes(`${value}`),
     stages: object,
     durationMs: num,
-    bufferbloat: maybe(shape({ grade: str })),
     multiServer: shape({
       latencyFocus: str,
       selection: list(shape({ id: str, name: str, url: str })),
@@ -242,8 +248,7 @@ interface Schema4 {
       up: ThroughputResult | null;
     };
   };
-  bufferbloat:
-    (Omit<BufferbloatGrade, "addedMs"> & Partial<BufferbloatGrade>) | null;
+  bufferbloat: { addedMs?: Partial<AddedLatency> } | null;
   totalBytes: number;
   server: { name: string; location: string | null; engine: string };
   transport: Record<
@@ -333,10 +338,14 @@ function fromSchema4(saved: Schema4): HistoryRecord {
     latencyByStage: Object.fromEntries(
       STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])]),
     ) as RunResult["latencyByStage"],
-    bufferbloat: saved.bufferbloat && {
-      addedMs: { download: null, upload: null, bidirectional: null },
-      ...saved.bufferbloat,
-    },
+    addedLatency: saved.bufferbloat?.addedMs
+      ? {
+          download: null,
+          upload: null,
+          bidirectional: null,
+          ...saved.bufferbloat.addedMs,
+        }
+      : null,
   };
   const statuses = Object.fromEntries(
     STAGES.map((stage) => [stage, stages[stage].status]),

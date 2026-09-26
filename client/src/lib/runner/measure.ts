@@ -1,5 +1,5 @@
 import type {
-  BufferbloatGrade,
+  AddedLatency,
   FailureReason,
   FlowDirection,
   LatencyObservation,
@@ -428,29 +428,15 @@ export class ServerLatency {
   }
 
   /** Each loaded median against the full idle median; a negative difference stays negative. */
-  bufferbloat(): BufferbloatGrade | null {
+  addedLatency(): AddedLatency | null {
+    const idleMs = this.stages.latency.summary()?.p50Ms;
     const loaded = (["download", "upload", "bidirectional"] as const).map(
       (stage) => [stage, this.summary(stage)?.p50Ms ?? null] as const,
     );
-    const medians = loaded.flatMap(([, p50]) => (p50 == null ? [] : [p50]));
-    const idleMs = this.stages.latency.summary()?.p50Ms;
-    if (idleMs == null || !medians.length) return null;
-    const addedMs = Object.fromEntries(
+    if (idleMs == null || loaded.every(([, p50]) => p50 == null)) return null;
+    return Object.fromEntries(
       loaded.map(([stage, p50]) => [stage, p50 == null ? null : p50 - idleMs]),
-    ) as BufferbloatGrade["addedMs"];
-    const loadedMs = Math.max(...medians);
-    const increaseMs = loadedMs - idleMs;
-    const grade =
-      increaseMs <= 5
-        ? "A"
-        : increaseMs <= 30
-          ? "B"
-          : increaseMs <= 60
-            ? "C"
-            : increaseMs <= 200
-              ? "D"
-              : "F";
-    return { addedMs, idleMs, loadedMs, increaseMs, grade };
+    ) as AddedLatency;
   }
 }
 
@@ -559,7 +545,7 @@ export interface ServerMeasurementSummary {
   latencyTarget: { origin: string; transport: string } | null;
   latency: LatencyResult | null;
   latencyByStage: Record<TransportRole, StageLatencySummary | null>;
-  bufferbloat: BufferbloatGrade | null;
+  addedLatency: AddedLatency | null;
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
   bidirectional: {

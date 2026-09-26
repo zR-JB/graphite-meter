@@ -1296,7 +1296,7 @@ export class Run {
     const result: RunResult = {
       ...this.#results,
       stages,
-      bufferbloat: source.bufferbloat(),
+      addedLatency: source.addedLatency(),
       latencyByStage: source.summaries(),
       multiServer: this.details(),
       outcome: statuses.includes("failed")
@@ -1359,7 +1359,7 @@ export class Run {
           ...pathEvidence(paths),
           ...evidence,
           latencyByStage: latency.summaries(),
-          bufferbloat: latency.bufferbloat(),
+          addedLatency: latency.addedLatency(),
           totalBytes: aggregate.totals(server.id),
           stages: Object.fromEntries(
             STAGES.map((stage) => [stage, status(stage)]),

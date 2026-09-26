@@ -177,7 +177,7 @@ export interface RunResult {
   latency: LatencyResult | null;
   latencyByStage: Record<TransportRole, StageLatencySummary | null>;
   /** Unavailable unless both idle and loaded latency evidence exist. */
-  bufferbloat: BufferbloatGrade | null;
+  addedLatency: AddedLatency | null;
   startedAt: number; // epoch ms
   durationMs: number;
 }
@@ -226,16 +226,11 @@ export interface LatencyResult {
   jitterMs: number | null;
 }
 
-/** Added latency: loaded median − full idle median, signed, in ms. */
-export interface BufferbloatGrade {
-  /** Per transfer stage; null without that stage's median. */
-  addedMs: Record<"download" | "upload" | "bidirectional", number | null>;
-  idleMs: number;
-  /** The worst stage's median and its increase, which the secondary A–F grade labels. */
-  loadedMs: number;
-  increaseMs: number;
-  grade: "A" | "B" | "C" | "D" | "F";
-}
+/** Loaded median − full idle median per transfer stage, signed ms; null without that stage's median. */
+export type AddedLatency = Record<
+  "download" | "upload" | "bidirectional",
+  number | null
+>;
 
 /* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =

@@ -183,6 +183,7 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
 
   await history(page, id(2_000));
   await expect(page.locator(".result-detail")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".result-detail")).not.toContainText("Grade");
   await expect(heading).toContainText("2000 results");
 });
 

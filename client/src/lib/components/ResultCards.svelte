@@ -46,7 +46,7 @@
         upload: store.stageResults.upload,
         bidirectional: store.result?.bidirectional ?? null,
         latency: store.stageResults.latency,
-        added: store.result?.bufferbloat ?? null,
+        added: store.result?.addedLatency ?? null,
       },
       details,
       shown,
