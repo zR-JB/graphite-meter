@@ -25,7 +25,6 @@ export interface StagePresentation {
 
 interface StagePresentationInput {
   configured: boolean;
-  /** The run's own status once the stage ended. */
   settled: StageStatus | undefined;
   phase: Phase;
   phaseStage: TransportRole | null;

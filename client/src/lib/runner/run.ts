@@ -132,6 +132,7 @@ export class Run {
   readonly #servers: Participant[];
   readonly #latencySource: Participant;
   readonly #create: (options: StageOptions) => StageTransport;
+  readonly #dropped: DroppedServer[];
   #handlers = new Set<(event: RunnerEvent) => void>();
   #phase: Phase = "idle";
   #cfg: RunnerConfig | null = null;
@@ -174,9 +175,6 @@ export class Run {
   #reported: Record<FlowDirection, number> = { down: 0, up: 0 };
   #bytes = 0;
   #continuity = 0;
-
-  /** Servers that failed their check before the run, shown with the reason they were left out. */
-  readonly #dropped: DroppedServer[];
 
   constructor(
     servers: PreparedServer[],

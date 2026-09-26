@@ -891,7 +891,6 @@ export class ThroughputAggregate {
     return { down: reduce("down"), up: reduce("up") };
   }
 
-  /** The window a direction's headline came from, once `result` chose it. */
   headline(stage: TransferStage, dir: FlowDirection): AggregateWindow | null {
     return (
       this.intervals.findLast(

@@ -465,7 +465,6 @@ export function createApplicationController(
       event instanceof CustomEvent && event.detail === "renew"
         ? "renew"
         : "expired";
-    // The run in progress is saved before the page leaves for sign-in.
     runner?.end("sign-in-required", "Signed out during the test");
     for (
       let waitedMs = 0;

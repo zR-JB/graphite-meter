@@ -34,7 +34,6 @@ export interface CompensationEstimate extends CompensationBreakdown {
   confidence: CompensationConfidence;
 }
 
-/** The saved part of an estimate: its model and the multiplier over the measured rate. */
 export type WireModel = CompensationBreakdown & { totalMultiplier: number };
 
 export function wireModel(estimate: CompensationEstimate): WireModel {

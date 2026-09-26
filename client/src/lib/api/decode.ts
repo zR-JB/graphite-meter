@@ -54,7 +54,6 @@ export function displayText(value: unknown, max: number, allowEmpty = false) {
   return text;
 }
 
-/** Free-form detail keeps at most `max` characters, or none when it could disguise itself. */
 export const safeDetail = (text: string, max: number) =>
   UNSAFE_TEXT.test(text) ? "" : text.slice(0, max);
 
