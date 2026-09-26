@@ -18,10 +18,7 @@ impl Preflight {
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
         config.validate()?;
         let mut nonce = [0_u8; 16];
-        crate::crypto::provider()
-            .secure_random
-            .fill(&mut nonce)
-            .map_err(|_| "failed to generate discovery identity")?;
+        getrandom::fill(&mut nonce).map_err(|_| "failed to generate discovery identity")?;
         let generation = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
         Ok(Self { config, generation })
     }

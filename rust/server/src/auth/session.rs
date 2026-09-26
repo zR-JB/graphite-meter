@@ -289,10 +289,7 @@ pub(super) fn token_hash(token: &str) -> TokenHash {
 
 pub(super) fn random_token<const N: usize>() -> Result<String, SessionError> {
     let mut bytes = [0; N];
-    crate::crypto::provider()
-        .secure_random
-        .fill(&mut bytes)
-        .map_err(|_| SessionError::RandomUnavailable)?;
+    getrandom::fill(&mut bytes).map_err(|_| SessionError::RandomUnavailable)?;
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 

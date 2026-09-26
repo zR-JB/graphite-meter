@@ -25,6 +25,7 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time", "sync", "process"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 bytes = "1"
+getrandom = "0.4.3"
 http = "1"
 url = "2.5.8"
 serde = { version = "1", features = ["derive"] }

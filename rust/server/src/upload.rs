@@ -474,10 +474,7 @@ fn nanos(duration: Duration) -> u64 {
     duration.as_nanos().min(u64::MAX as u128) as u64
 }
 fn random(bytes: &mut [u8]) -> Result<(), UploadError> {
-    crate::crypto::provider()
-        .secure_random
-        .fill(bytes)
-        .map_err(|_| UploadError::RandomUnavailable)
+    getrandom::fill(bytes).map_err(|_| UploadError::RandomUnavailable)
 }
 fn token_mac(key: &[u8; 32]) -> Hmac<Sha256> {
     Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts a 32-byte key")

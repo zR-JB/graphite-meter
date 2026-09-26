@@ -105,10 +105,7 @@ impl HttpServer {
             config.trusted_proxies.clone(),
         );
         let mut block = vec![0; 256 * 1024];
-        crate::crypto::provider()
-            .secure_random
-            .fill(&mut block)
-            .map_err(|_| "download payload randomness unavailable")?;
+        getrandom::fill(&mut block).map_err(|_| "download payload randomness unavailable")?;
         Ok(Self {
             config,
             discovery,

@@ -71,10 +71,7 @@ impl Hash {
 pub fn hash_password(password: &str) -> Result<String, &'static str> {
     validate_password(password)?;
     let mut salt = [0; 16];
-    crate::crypto::provider()
-        .secure_random
-        .fill(&mut salt)
-        .map_err(|_| "failed to generate password salt")?;
+    getrandom::fill(&mut salt).map_err(|_| "failed to generate password salt")?;
     let key = derive(password, &salt)?;
     Ok(format!(
         "$argon2id$v=19$m={MEMORY},t={TIME},p={THREADS}${}${}",

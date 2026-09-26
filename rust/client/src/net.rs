@@ -307,10 +307,7 @@ impl Http {
         let source = canonical_origin(source)?;
         let login = validated_login(&source, auth_url)?;
         let mut entropy = [0_u8; 32];
-        crate::crypto::provider()
-            .secure_random
-            .fill(&mut entropy)
-            .map_err(|_| "secure randomness unavailable")?;
+        getrandom::fill(&mut entropy).map_err(|_| "secure randomness unavailable")?;
         let verifier = zeroize::Zeroizing::new(URL_SAFE_NO_PAD.encode(entropy));
         zeroize::Zeroize::zeroize(&mut entropy);
         let hash = Sha256::digest(verifier.as_bytes());

@@ -151,10 +151,7 @@ impl Upload {
             return Err("server returned an invalid upload session ID".into());
         }
         let mut block = vec![0_u8; 64 * 1024];
-        crate::crypto::provider()
-            .secure_random
-            .fill(&mut block)
-            .map_err(|_| "secure randomness unavailable")?;
+        getrandom::fill(&mut block).map_err(|_| "secure randomness unavailable")?;
         let block = Bytes::from(block);
         let (state_tx, state) = watch::channel(State::default());
         let (stop_lanes, lane_stop) = watch::channel(false);
