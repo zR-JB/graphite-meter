@@ -3,14 +3,10 @@
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
-  import { fmtBytes, fmtDuration } from "../../format";
-  import {
-    formatHistoryRate,
-    formatLatency,
-    historyRate,
-  } from "../../history/format";
+  import { fmtBytes, fmtDuration, resultRate } from "../../format";
+  import { formatHistoryRate, formatLatency } from "../../history/format";
   import type { HistoryRecord } from "../../history/types";
-  import { latencyLanes } from "../../runner/measure";
+  import { latencyLanes, transferredBytes } from "../../runner/measure";
   import { store } from "../../state/store.svelte";
   import {
     OUTCOME,
@@ -69,7 +65,7 @@
     );
     return summaryCards(
       evidence,
-      (value) => historyRate(value, units),
+      (value) => resultRate(value, units),
       store.unitBase,
       store.showWireEstimates,
     );
@@ -227,10 +223,7 @@
       </h2>
       <p>
         {fmtDuration(result.durationMs)} · {fmtBytes(
-          run.servers.reduce(
-            (sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up,
-            0,
-          ),
+          transferredBytes(run),
           store.unitBase,
         )} transferred
       </p>

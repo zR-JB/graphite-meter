@@ -1,32 +1,12 @@
 import { MISSING } from "../presentation/vocabulary";
-import {
-  fmtMs,
-  fmtSpeed,
-  rateUnit,
-  rateValueAt,
-  throughputUnitIndex,
-} from "../format";
-
-interface HistoryUnits {
-  base: "base10" | "base2";
-  kind: "bits" | "bytes";
-}
-
-/** Saved rates choose their own unit tier by the live rule; a live run's tier never applies. */
-export function historyRate(bytesPerSec: number, units: HistoryUnits) {
-  const tier = throughputUnitIndex(bytesPerSec, units.base, units.kind);
-  return {
-    num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
-    unit: rateUnit(units.base, units.kind, tier),
-  };
-}
+import { fmtMs, resultRate } from "../format";
 
 export function formatHistoryRate(
   bytesPerSec: number | null | undefined,
-  units: HistoryUnits,
+  units: Parameters<typeof resultRate>[1],
 ): string {
   if (bytesPerSec == null) return MISSING;
-  const { num, unit } = historyRate(bytesPerSec, units);
+  const { num, unit } = resultRate(bytesPerSec, units);
   return `${num} ${unit}`;
 }
 

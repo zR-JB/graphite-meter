@@ -22,6 +22,7 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
         throughputTarget: "protocol:http1",
         latencyTarget: "transport:websocket",
       },
+      stages: { ...baseConfig.stages, bidirectional: true },
     },
   });
   await ready(page);
@@ -33,7 +34,12 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   const identity = await preflight.json();
   expect(saved.result.multiServer.selection[0].name).toBe(identity.server.name);
   expect(saved.engine).toBe(identity.engineVersion);
-  for (const stage of ["latency", "download", "upload"] as const)
+  for (const stage of [
+    "latency",
+    "download",
+    "upload",
+    "bidirectional",
+  ] as const)
     expect(saved.result.stages[stage]).toBe("complete");
   expect(saved.result.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
   expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
@@ -46,6 +52,30 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   expect(saved.result.multiServer.servers[0].throughput?.origin).toBe(
     home.http,
   );
+
+  const readouts = (root: string) =>
+    page.evaluate(
+      (root) =>
+        [
+          ...document.querySelectorAll(
+            `${root} .result-card .readout:not(.details)`,
+          ),
+        ].map((card) => card.textContent!.replace(/\s+/g, " ").trim()),
+      root,
+    );
+  const live = await readouts(".results-slot");
+  const transferred = await page
+    .locator("footer.status .transferred .readout")
+    .textContent();
+  await page.goto(`${home.http}/#/history/${saved.id}`);
+  await expect(page.locator(".detail-pane .result-card")).toHaveCount(
+    live.length,
+  );
+  expect(await readouts(".detail-pane")).toEqual(live);
+  await expect(page.locator(".detail-pane")).toContainText(
+    `${transferred} transferred`,
+  );
+  await page.goto(`${home.http}/#/`);
 
   const row = page.locator(`a.result-row[data-history-id="${saved.id}"]`);
   await page.getByRole("button", { name: "Open History" }).click();

@@ -2,7 +2,7 @@
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
-  import { fmtSpeed, fmtMs } from "../format";
+  import { fmtMs, resultRate } from "../format";
   import { MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
@@ -25,10 +25,8 @@
     if (details?.servers.some((s) => s.server.id === id && s.latencyTarget))
       controller.focusServer(id);
   }
-  const rate = (bytesPerSec: number) => ({
-    num: fmtSpeed(store.toUnit(bytesPerSec)),
-    unit: store.unitLabel,
-  });
+  const rate = (bytesPerSec: number) =>
+    resultRate(bytesPerSec, { base: store.unitBase, kind: store.unitKind });
   const status = (key: Stage) => store.stagePresentation[key].status;
 
   const settled = $derived.by(() => {
@@ -79,21 +77,27 @@
             live.rates ? live.rates.down + live.rates.up : null,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
           ];
-    const format = (n: number | null) =>
-      n === null ? MISSING : key === "latency" ? fmtMs(n) : rate(n).num;
-    const unit =
-      key === "latency" ? (timeout ? "timeout" : "ms") : store.unitLabel;
+    const readout = (n: number | null) =>
+      key === "latency"
+        ? { num: n === null ? MISSING : fmtMs(n), unit: "ms" }
+        : n === null
+          ? { num: MISSING, unit: store.unitLabel }
+          : rate(n);
+    const shown = readout(value);
+    const spoken = readout(accessible);
     return {
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
       status: active ? "active" : "pending",
-      num: timeout ? MISSING : format(value),
-      unit,
+      num: timeout ? MISSING : shown.num,
+      unit: timeout ? "timeout" : shown.unit,
       rows: [],
       details: [],
       accessible: active
-        ? `${timeout ? "probe timeout" : format(accessible)} ${unit}`
+        ? timeout
+          ? "probe timeout"
+          : `${spoken.num} ${spoken.unit}`
         : undefined,
     };
   }

@@ -119,6 +119,18 @@ export function rawRateFrom(
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
+/** A result rate chooses its own unit tier by the live rule, never a run's chart tier. */
+export function resultRate(
+  bytesPerSec: number,
+  units: { base: UnitBase; kind: UnitKind },
+) {
+  const tier = throughputUnitIndex(bytesPerSec, units.base, units.kind);
+  return {
+    num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
+    unit: rateUnit(units.base, units.kind, tier),
+  };
+}
+
 /** The 100 Mbit/s reference used before automatic measurement has data. */
 export const DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC = 12_500_000;
 

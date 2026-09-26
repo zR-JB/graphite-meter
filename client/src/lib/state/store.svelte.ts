@@ -38,7 +38,11 @@ import {
   planned,
   STAGES,
 } from "../runner/schedule";
-import { latencyLanes, type MultiServerResult } from "../runner/measure";
+import {
+  latencyLanes,
+  transferredBytes,
+  type MultiServerResult,
+} from "../runner/measure";
 import { appendThroughputSample, upsertLatencyBucket } from "../runner/series";
 import {
   deriveStagePresentation,
@@ -278,7 +282,6 @@ class AppStore {
   throughputRevision = $state(0);
   /** The current transfer stage's latest sample; null between stages. */
   live = $state.raw<LiveSample | null>(null);
-  bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
   get idleLatency(): LatencyBucket[] {
@@ -326,6 +329,11 @@ class AppStore {
     this.#representative?.validation ?? UNCHECKED,
   );
   result = $state.raw<RunResult | null>(null);
+  bytesTransferred = $derived(
+    this.result
+      ? transferredBytes(this.result.multiServer)
+      : (this.throughput.at(-1)?.bytesCumulative ?? 0),
+  );
   stageResults = $state.raw<StageResults>(EMPTY_STAGE_RESULTS);
   settledStages = $state.raw<Partial<Record<TransportRole, StageStatus>>>({});
   error = $state.raw<RunnerError | null>(null);

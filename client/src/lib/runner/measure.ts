@@ -564,6 +564,11 @@ export interface MultiServerResult {
   omittedIntervals: number;
   failures: ServerFailure[];
 }
+export const transferredBytes = ({ servers }: MultiServerResult) =>
+  servers.reduce(
+    (sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up,
+    0,
+  );
 /** The verified paths a server's results were measured on. */
 export function pathEvidence(
   paths: PreparedPaths,
