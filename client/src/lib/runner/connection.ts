@@ -38,7 +38,6 @@ export interface ConnectionHost {
   discover: typeof discoverServer;
   prepare: typeof prepareConnections;
   limiter: ReturnType<typeof originLimiter>;
-  /** Background checks and idle latency run only while this holds. */
   active(): boolean;
   metadata(): boolean;
   idle(id: string): boolean;
@@ -48,7 +47,6 @@ export interface ConnectionHost {
 export interface CheckOptions {
   force?: boolean;
   role?: ConnectionRole;
-  /** Re-verify paths older than the freshness window, as a run start does. */
   fresh?: boolean;
   due?: boolean;
   signal?: AbortSignal;
@@ -227,7 +225,6 @@ export class ServerConnection {
     this.#sync();
   }
 
-  /** Retries waiting on backoff run now; sign-in waits for approval. */
   resume(): void {
     for (const job of [this.#discovering, ...Object.values(this.#roles)])
       if (!job.backoff.signIn) job.backoff.at = 0;
@@ -244,7 +241,6 @@ export class ServerConnection {
     this.#closed = true;
   }
 
-  /** When the next background check is due; Infinity when none is. */
   dueAt(): number {
     const discovering = this.#discovering;
     let at =
@@ -480,7 +476,6 @@ export class ServerConnection {
         ? failureMessage(this.#error, this.server)
         : capability || (failed && this.#validation[failed].message);
     let validation = this.#validation;
-    // The view reports what a run could use now; the evidence itself stays for the next check.
     for (const role of roles) {
       const own = validation[role];
       const shown =

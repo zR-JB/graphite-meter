@@ -298,7 +298,7 @@ class AppStore {
   #scaleThroughput: { t: number; bytesPerSec: number }[] = [];
   #throughputTargetSpanMs = 0;
   #sustainedPeakBytesPerSec = $state(0);
-  bytesTransferred = $state(0);
+  bytesTransferred = $derived(this.liveThroughput.at(-1)?.bytesCumulative ?? 0);
   uploadPresentationBytesPerSec = $state<number | null>(null);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
@@ -666,7 +666,6 @@ class AppStore {
       this.#sustainedPeakBytesPerSec,
       sustainedRate(scale, SCALE_DWELL_MS),
     );
-    this.bytesTransferred = sample.bytesCumulative;
     this.#peakBytesPerSec = Math.max(this.#peakBytesPerSec, scaleRate);
     const history = this.#throughput;
     if (appendThroughputSample(history, sample, this.#throughputTargetSpanMs))
@@ -829,7 +828,6 @@ class AppStore {
       throughput: [],
       throughputRevision: 0,
       liveThroughput: [],
-      bytesTransferred: 0,
       idleLatency: [],
       serverDetails: null,
       phase: "idle" as const,

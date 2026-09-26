@@ -78,7 +78,6 @@ async function loadServerCatalog(signal: AbortSignal): Promise<ServerCatalog> {
   return parseCatalog(await readJSONResponse(response), location.origin);
 }
 
-/** Coordinates catalog, selection, approval and runs; each server's connection owns its own evidence. */
 export function createApplicationController(
   store: typeof applicationStore,
   dependencies: Partial<ApplicationDependencies> = {},
@@ -527,7 +526,6 @@ export function createApplicationController(
         wake();
       });
   }
-  /** Session coverage, then fresh paths for every selected server, then one run. */
   async function start(
     config: RunnerConfig,
     signal: AbortSignal,
@@ -723,7 +721,6 @@ export function createApplicationController(
     cancelServerApproval,
     focusServer,
     configureLatency,
-    /** An explicit retry refreshes discovery and the named role, on one server or every selected one. */
     async retry({ id, role }: { id?: string; role?: ConnectionRole } = {}) {
       if (!booted || store.isRunning) return;
       cancelPendingStart();
