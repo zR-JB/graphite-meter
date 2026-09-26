@@ -549,7 +549,7 @@
     position: absolute;
     translate: var(--x) var(--y);
     color: var(--text-soft);
-    font: 600 var(--type-2xs) / 1 var(--font-mono);
+    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     opacity: 0.75;
@@ -583,7 +583,7 @@
     max-width: 100%;
     color: var(--text);
     font-family: var(--font-display);
-    font-weight: 600;
+    font-weight: var(--w-strong);
     font-variant-numeric: lining-nums tabular-nums;
     letter-spacing: var(--track-tight);
     white-space: nowrap;
@@ -607,7 +607,7 @@
     gap: 6px;
     color: var(--text-muted);
     font-size: clamp(var(--type-xs), 3.6cqmin, 13px);
-    font-weight: 600;
+    font-weight: var(--w-strong);
     line-height: 1;
     white-space: nowrap;
   }
@@ -633,8 +633,7 @@
   .gauge-unit {
     margin-top: var(--space-1);
     font-size: var(--type-sm);
-    font-weight: 600;
-    letter-spacing: 0.02em;
+    font-weight: var(--w-strong);
   }
   .terminal-partial {
     color: var(--text-muted);
@@ -655,14 +654,14 @@
   .gauge-hint {
     color: var(--text-muted);
     font-size: var(--type-sm);
-    font-weight: 600;
+    font-weight: var(--w-strong);
     line-height: 1.35;
   }
   /* Aborted / error headline above the softer action line. A user abort
      stays neutral at full text strength so the state is unmissable. */
   .gauge-status {
     color: var(--text);
-    font: 700 var(--type-xs) var(--font-mono);
+    font: var(--w-heavy) var(--type-xs) var(--font-mono);
     letter-spacing: var(--track-wide);
     text-transform: uppercase;
   }

@@ -158,7 +158,7 @@
     gap: 6px;
   }
   .num {
-    font: 600 var(--type-xl) / 1 var(--font-display);
+    font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-tight);
   }

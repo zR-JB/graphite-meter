@@ -820,8 +820,8 @@
     padding: var(--space-1) 6px;
     margin-left: -6px;
     border-radius: var(--r-chrome);
-    font: 700 var(--type-md) / 1.4 var(--font-mono);
-    letter-spacing: -0.025em;
+    font: var(--w-heavy) var(--type-md) / 1.4 var(--font-mono);
+    letter-spacing: var(--track-tight);
     transition: color var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
@@ -865,7 +865,7 @@
   }
   .live-copy strong {
     color: var(--tone);
-    font-weight: 800;
+    font-weight: var(--w-heavy);
   }
   /* Overflow: 44px coarse targets leave three direct actions room down to a
      ~320px bar, one down to ~260px, then everything moves into More. */

@@ -283,7 +283,7 @@
   }
   strong {
     font-size: var(--type-sm);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
   small {
     color: var(--text-muted);
@@ -371,7 +371,7 @@
   .server-name {
     overflow: hidden;
     font-size: var(--type-xs);
-    font-weight: 600;
+    font-weight: var(--w-strong);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -434,7 +434,7 @@
   .approval-code strong {
     display: block;
     padding-block: var(--space-1);
-    font: 600 var(--type-lg) / 1.4 var(--font-mono);
-    letter-spacing: 0.12em;
+    font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
+    letter-spacing: var(--track-wide);
   }
 </style>

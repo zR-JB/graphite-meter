@@ -195,7 +195,7 @@
     border-top: 1px solid var(--border-subtle);
   }
   .direction-options button > span {
-    font: var(--w-heavy) 15px var(--font-mono);
+    font: var(--w-heavy) var(--type-md) var(--font-mono);
     text-align: center;
   }
 </style>

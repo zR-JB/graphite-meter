@@ -130,7 +130,7 @@
     position: fixed;
     right: 18px;
     bottom: 40px;
-    z-index: 50;
+    z-index: var(--z-toast);
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr);
     align-items: center;
@@ -166,7 +166,7 @@
   .kicker {
     color: var(--text-muted);
     font-size: var(--type-2xs);
-    font-weight: 700;
+    font-weight: var(--w-heavy);
   }
   strong {
     margin-top: 2px;

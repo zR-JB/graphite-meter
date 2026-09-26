@@ -179,7 +179,7 @@
   }
   .seg-fill.is-stalled {
     background: var(--err);
-    animation: stall-pulse 1100ms var(--ease-out) infinite;
+    animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
   }
   @keyframes stall-pulse {
     50% {
@@ -190,7 +190,7 @@
     --progress: 1;
     width: 45%;
     background: color-mix(in srgb, var(--brand) 55%, transparent);
-    animation: warmup-sweep 1100ms var(--ease-out) infinite;
+    animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
   }
   /* Reduced motion keeps warmup legible as a steady, dimmed bar. */
   @media (prefers-reduced-motion: reduce) {
@@ -234,8 +234,8 @@
     min-width: 0;
     overflow: hidden;
     font-size: var(--type-sm);
-    font-weight: 700;
-    letter-spacing: -0.01em;
+    font-weight: var(--w-heavy);
+    letter-spacing: var(--track-tight);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -253,7 +253,7 @@
     border-radius: var(--r-well);
     background: var(--surface-inset);
     color: var(--text-soft);
-    font: 700 var(--type-2xs) / 1 var(--font-mono);
+    font: var(--w-heavy) var(--type-2xs) / 1 var(--font-mono);
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }

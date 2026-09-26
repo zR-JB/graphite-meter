@@ -528,7 +528,7 @@
   }
   .phase-label {
     translate: 0 -100%;
-    font-weight: 700;
+    font-weight: var(--w-heavy);
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
     opacity: 0.62;
@@ -537,10 +537,10 @@
     max-width: 126px;
     overflow: hidden;
     padding: 2px 5px;
-    border: 1px solid color-mix(in srgb, var(--text-soft) 55%, transparent);
+    border: 1px solid;
     border-radius: var(--r-well);
     background: var(--surface-1);
-    font-weight: 700;
+    font-weight: var(--w-heavy);
     text-overflow: ellipsis;
   }
   .chip {
@@ -567,6 +567,6 @@
     color: var(--text-soft);
   }
   .chip-row b {
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
 </style>

@@ -70,7 +70,7 @@
       0 2px 8px color-mix(in srgb, var(--brand) 10%, transparent);
     color: var(--text-inverse);
     font-family: var(--font-display);
-    font-weight: 600;
+    font-weight: var(--w-strong);
     letter-spacing: var(--track-wide);
     text-transform: uppercase;
     transition:

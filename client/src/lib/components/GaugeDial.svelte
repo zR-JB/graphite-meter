@@ -422,13 +422,13 @@
   }
   .motion .live,
   .motion .result-layer {
-    transition: opacity 180ms ease-out;
+    transition: opacity var(--dur-slide) var(--ease-out);
   }
   .motion .live svg path {
-    transition: stroke 180ms linear;
+    transition: stroke var(--dur-slide) linear;
   }
   .motion .live svg circle {
-    transition: fill 180ms linear;
+    transition: fill var(--dur-slide) linear;
   }
   @starting-style {
     .motion .result-layer {

@@ -197,7 +197,7 @@
   .backdrop {
     position: fixed;
     inset: var(--topbar-h) 0 0 0;
-    z-index: 49;
+    z-index: var(--z-scrim);
     background: var(--scrim);
     opacity: 0;
     pointer-events: none;
@@ -215,7 +215,7 @@
     position: fixed;
     top: var(--topbar-h);
     bottom: var(--statusbar-h);
-    z-index: 50;
+    z-index: var(--z-panel);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
@@ -241,7 +241,7 @@
     transform: none;
   }
   .raised:not(.docked) .panel {
-    z-index: 51;
+    z-index: var(--z-panel-top);
   }
   .docked .panel {
     position: relative;
@@ -281,7 +281,7 @@
     transition: background-color var(--dur-hover) var(--ease-out);
   }
   .resize-handle:is(:hover, :focus-visible)::after {
-    background: color-mix(in srgb, var(--brand) 65%, transparent);
+    background: var(--brand);
   }
   .resize-handle:focus-visible {
     outline: none;
@@ -332,11 +332,11 @@
   }
   .title .caps {
     color: var(--brand-strong);
-    letter-spacing: 0.14em;
+    letter-spacing: var(--track-wide);
   }
   h2 {
     margin-top: 2px;
-    font: 600 var(--type-xl) var(--font-display);
+    font: var(--w-strong) var(--type-xl) var(--font-display);
     letter-spacing: var(--track-tight);
     overflow-wrap: anywhere;
   }

@@ -58,7 +58,7 @@
   }
   .label {
     color: var(--text);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
   .build {
     margin-left: auto;
@@ -66,7 +66,7 @@
   }
   .paused {
     color: var(--err);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
   @container status (max-width: 800px) {
     .build {

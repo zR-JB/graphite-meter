@@ -115,7 +115,7 @@
     place-items: center;
     width: 20px;
     height: 20px;
-    border: 1px solid color-mix(in srgb, var(--brand) 38%, var(--border));
+    border: 1px solid var(--brand-line);
     border-radius: var(--r-full);
     background: var(--brand-soft);
     color: var(--brand-strong);

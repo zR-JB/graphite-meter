@@ -166,7 +166,7 @@
   }
   @media (hover: hover) {
     .choice:hover:not(.unavailable) {
-      border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+      border-color: var(--brand-line);
     }
   }
   .choice.selected {

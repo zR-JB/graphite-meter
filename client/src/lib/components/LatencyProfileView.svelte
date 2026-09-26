@@ -395,7 +395,7 @@
   }
   .lane-meta strong {
     flex: none;
-    font: 700 13px / 1 var(--font-mono);
+    font: var(--w-heavy) var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
@@ -493,7 +493,7 @@
     inset-block: 0;
   }
   .lanes[data-motion="true"] :is(.range, .band, .position) {
-    transition: transform 220ms var(--ease-out);
+    transition: transform var(--dur-graph) var(--ease-out);
   }
   .range {
     top: calc(50% - 2px);
@@ -588,7 +588,7 @@
   .hover-card > em {
     overflow: hidden;
     color: var(--text-muted);
-    font: 700 var(--type-2xs) var(--font-mono);
+    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
     font-style: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -598,7 +598,7 @@
     text-transform: uppercase;
   }
   .hover-head strong {
-    font: 700 var(--type-sm) var(--font-mono);
+    font: var(--w-heavy) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
