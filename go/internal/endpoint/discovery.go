@@ -141,7 +141,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 	// Callers share the slice; clipping makes their appends copy.
 	h.connect = slices.Clip(h.connect)
 	if h.servers, h.serversErr = d.serversFor(h.connect); h.serversErr != nil {
-		log.Printf("[gm:discovery] server catalogue for host %q: %v", host, h.serversErr)
+		log.Printf("[gm:discovery] server catalogue for host %q: %q", host, h.serversErr)
 	}
 	sources := d.cfg.ServerCatalog.ConnectSources()
 	for _, raw := range h.connect {
