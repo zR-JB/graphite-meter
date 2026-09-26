@@ -56,14 +56,14 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	h1p.SetHTTP1(true)
 	uiMux := newMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1},
 		http.NotFoundHandler(), authn)
-	ui := baseServer(authn.Enforce(uiMux, auth.Listener{UI: true}), h1p)
+	ui := baseServer(authn.Enforce(uiMux, auth.Listener{UI: true}), h1p, controlTimeout)
 	go serve(tls.NewListener(uiLn, cm.tlsConfig("http/1.1")), ui)
 	t.Cleanup(func() { _ = ui.Close() })
 
 	h2p := &http.Protocols{}
 	h2p.SetHTTP2(true)
 	h2Mux := newMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}, nil, authn)
-	h2 := baseServer(authn.Enforce(h2Mux, auth.Listener{}), h2p)
+	h2 := baseServer(authn.Enforce(h2Mux, auth.Listener{}), h2p, controlTimeout)
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 

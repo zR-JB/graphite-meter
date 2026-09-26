@@ -55,7 +55,7 @@ func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
 		_, _ = w.Write([]byte("ok"))
 	})
 	srv := httptest.NewUnstartedServer(handler)
-	srv.Config = baseServer(handler, nil)
+	srv.Config = baseServer(handler, nil, controlTimeout)
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	defer srv.Close()
@@ -125,7 +125,7 @@ func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
 // An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server advertises larger ones.
 func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
-	srv.Config = baseServer(http.NotFoundHandler(), nil)
+	srv.Config = baseServer(http.NotFoundHandler(), nil, controlTimeout)
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	defer srv.Close()

@@ -75,7 +75,7 @@ func nativeAuthHTTP(t *testing.T, protocol string) (*http.Client, string, *atomi
 	default:
 		t.Fatalf("unsupported native protocol %q", protocol)
 	}
-	srv := baseServer(handler, serverProtocols)
+	srv := baseServer(handler, serverProtocols, controlTimeout)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -176,7 +176,7 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := baseServer(publicMux(t, e, topology, static.Handler(false, false)), p)
+	srv := baseServer(publicMux(t, e, topology, static.Handler(false, false)), p, controlTimeout)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},

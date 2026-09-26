@@ -42,6 +42,8 @@ const (
 	h3MaxHeaderBytes = 8 << 10
 	// A client's QUIC connections each carry that many request streams, so they have their own small share.
 	maxClientQUICConnections = 8
+	// controlTimeout bounds an idle connection, a handshake and every exchange outside measurement admission.
+	controlTimeout = 15 * time.Second
 )
 
 // endpoints is the one measurement core every listener mounts.
@@ -51,12 +53,11 @@ type endpoints struct {
 	download              *endpoint.Download
 	upload                *endpoint.Upload
 	// WebTransport lanes run through these; tests wrap them.
-	stream      endpoint.StreamFunc
-	receive     endpoint.ReceiveFunc
-	admission   *requestAdmission
-	trusted     []netip.Prefix
-	wtIdleBound time.Duration
-	// controlTimeout bounds a request outside measurement admission, and the body drained after any request.
+	stream         endpoint.StreamFunc
+	receive        endpoint.ReceiveFunc
+	admission      *requestAdmission
+	trusted        []netip.Prefix
+	wtIdleBound    time.Duration
 	controlTimeout time.Duration
 }
 
@@ -103,7 +104,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		upload: upload, receive: upload.Receive,
 		admission:   admission,
 		trusted:     cfg.TrustedProxies,
-		wtIdleBound: wire.WTIdleBound, controlTimeout: 15 * time.Second,
+		wtIdleBound: wire.WTIdleBound, controlTimeout: controlTimeout,
 	}
 }
 
@@ -118,9 +119,9 @@ func publicH3Port(cfg *config.Config) string {
 	return port
 }
 
-func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
-		MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
+func baseServer(handler http.Handler, protocols *http.Protocols, timeout time.Duration) *http.Server {
+	return &http.Server{Handler: boundedRequest(handler, timeout), ReadTimeout: timeout, WriteTimeout: timeout,
+		IdleTimeout: timeout, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
 			// Bound upload DATA frames so control requests can share a saturated connection.
 			MaxReadFrameSize: 16 << 10,
 			// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
@@ -265,8 +266,8 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 	if l.topo.spa {
 		spa = b.spa
 	}
-	s := baseServer(boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener),
-		b.e.controlTimeout), protocols)
+	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener), protocols,
+		b.e.controlTimeout)
 	ln, err := b.sockets.listenTCP(l.addr)
 	if err != nil {
 		return err
@@ -307,12 +308,13 @@ func h3QUICConfig() *quic.Config {
 
 func (b *listenerBuild) addH3() error {
 	quicConfig := h3QUICConfig()
-	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
+	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig,
+		IdleTimeout: b.e.controlTimeout}
 	// Enforce has already bound a CONNECT's origin to its principal.
 	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
 	webtransport.ConfigureHTTP3Server(h3)
-	h3.Handler = b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil, b.authn),
-		auth.Listener{WebTransport: true})
+	h3.Handler = boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil,
+		b.authn), auth.Listener{WebTransport: true}), b.e.controlTimeout)
 	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {

@@ -269,6 +269,7 @@ meter.example {
 - Set `X-Real-IP` from the proxy connection peer.
 - Remove client-supplied `Forwarded` and `X-Forwarded-For` values.
 - Allow WebSocket Upgrade to `/ws/ping`.
+- Expire idle upstream connections within 15 seconds; Graphite Meter closes them then.
 - Do not buffer, cache, compress, or transform `/upload/progress`.
 - Set `GM_TRUSTED_PROXIES` only to the proxy peers.
 - Redact the `/auth/oidc/callback` query string from logs.

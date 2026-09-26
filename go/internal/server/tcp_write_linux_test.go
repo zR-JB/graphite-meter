@@ -31,7 +31,7 @@ func TestHTTP2ControlIsNotTrappedBehindQueuedDownloads(t *testing.T) {
 	srv := httptest.NewUnstartedServer(handler)
 	protocols := new(http.Protocols)
 	protocols.SetHTTP2(true)
-	srv.Config = baseServer(handler, protocols)
+	srv.Config = baseServer(handler, protocols, controlTimeout)
 	srv.Listener = admittedListener{Listener: srv.Listener, admission: newConnectionAdmission(10, 10, nil)}
 	srv.EnableHTTP2 = true
 	srv.StartTLS()

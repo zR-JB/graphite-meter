@@ -1,16 +1,21 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -195,5 +200,139 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 				t.Fatalf("admitted with a validated source = %v, want %v", got, loaded)
 			}
 		})
+	}
+}
+
+// A peer that stalls a control exchange, or idles between exchanges, gives its connection slot back within the
+// control deadline on every native listener.
+func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
+	t.Parallel()
+	const timeout = 200 * time.Millisecond
+	send := func(request string) func(*testing.T, net.Conn) {
+		return func(t *testing.T, c net.Conn) {
+			if _, err := io.WriteString(c, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	stalls := map[string]func(*testing.T, net.Conn){
+		"partial headers": send("GET /probe HTTP/1.1\r\nHost: meter\r\n"),
+		"pending body":    send("POST /upload/session HTTP/1.1\r\nHost: meter\r\nContent-Length: 10\r\n\r\n"),
+		"idle keep-alive": func(t *testing.T, c net.Conn) {
+			send("GET /missing HTTP/1.1\r\nHost: meter\r\n\r\n")(t, c)
+			res, err := http.ReadResponse(bufio.NewReader(c), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		},
+		// Pipelined answers fill the socket buffers until a finished handler's flush blocks.
+		"unread responses": func(_ *testing.T, c net.Conn) {
+			go func() {
+				request := strings.Repeat("GET /missing HTTP/1.1\r\nHost: meter\r\n\r\n", 64)
+				for {
+					if _, err := io.WriteString(c, request); err != nil {
+						return
+					}
+				}
+			}()
+		},
+	}
+	dialers := map[string]func(*testing.T, *config.Config) net.Conn{
+		"h1": func(t *testing.T, cfg *config.Config) net.Conn { return dialTCP(t, cfg.Native.H1) },
+		"h1 tls": func(t *testing.T, cfg *config.Config) net.Conn {
+			return dialTLS(t, cfg.Native.H1TLS, "http/1.1")
+		},
+		"h3 companion": func(t *testing.T, cfg *config.Config) net.Conn { return dialTLS(t, cfg.Native.H3, "http/1.1") },
+	}
+	for listener, dial := range dialers {
+		for stall, hold := range stalls {
+			t.Run(listener+" "+stall, func(t *testing.T) {
+				t.Parallel()
+				cfg, build := slotServer(t, timeout)
+				hold(t, dial(t, cfg))
+				awaitSlots(t, build.connections, 1)
+				awaitSlots(t, build.connections, 0)
+			})
+		}
+	}
+	t.Run("h2 idle", func(t *testing.T) {
+		t.Parallel()
+		cfg, build := slotServer(t, timeout)
+		protocols := &http.Protocols{}
+		protocols.SetHTTP2(true)
+		tr := &http.Transport{Protocols: protocols,
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // test certificate
+		defer tr.CloseIdleConnections()
+		getOnce(t, &http.Client{Transport: tr}, "https://"+cfg.Native.H2+"/probe")
+		awaitSlots(t, build.connections, 1)
+		awaitSlots(t, build.connections, 0)
+	})
+	t.Run("h3 idle", func(t *testing.T) {
+		t.Parallel()
+		cfg, build := slotServer(t, timeout)
+		tr := &http3.Transport{QUICConfig: transport.NewQUICConfig(),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // test certificate
+		defer tr.Close()
+		getOnce(t, &http.Client{Transport: tr}, "https://"+cfg.Native.H3+"/probe")
+		awaitSlots(t, build.connections, 1)
+		awaitSlots(t, build.connections, 0)
+	})
+}
+
+func slotServer(t *testing.T, timeout time.Duration) (*config.Config, *listenerBuild) {
+	t.Helper()
+	return startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+		cfg.Native.H1, cfg.Native.H1TLS, cfg.Native.H2 = sockets.reserveTCP(), sockets.reserveTCP(), sockets.reserveTCP()
+		cfg.Native.H3 = sockets.reserveH3()
+	}, func(e *endpoints) { e.controlTimeout = timeout })
+}
+
+// dialTCP opens a client socket whose small receive buffer lets unread responses back up quickly.
+func dialTCP(t *testing.T, addr string) net.Conn {
+	t.Helper()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.(*net.TCPConn).SetReadBuffer(4096)
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func dialTLS(t *testing.T, addr, alpn string) net.Conn {
+	t.Helper()
+	conn := tls.Client(dialTCP(t, addr), &tls.Config{InsecureSkipVerify: true, //nolint:gosec // test certificate
+		NextProtos: []string{alpn}})
+	if err := conn.HandshakeContext(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return conn
+}
+
+func getOnce(t *testing.T, client *http.Client, url string) {
+	t.Helper()
+	res, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s = %d", url, res.StatusCode)
+	}
+}
+
+// awaitSlots polls, since a server-side close reaches the count only after the peer could observe it. A TLS close
+// may first spend five seconds offering close_notify to a peer that stopped reading.
+func awaitSlots(t *testing.T, connections *connectionAdmission, want int) {
+	t.Helper()
+	start := time.Now()
+	for connections.stats().active != want {
+		if time.Since(start) > 7*time.Second {
+			t.Fatalf("%d connection slots held after %v, want %d", connections.stats().active, time.Since(start), want)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

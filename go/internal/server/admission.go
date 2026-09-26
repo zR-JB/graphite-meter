@@ -158,16 +158,16 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 	})
 }
 
-// boundedRequest gives every request a control deadline, which measurement admission replaces, and bounds the
-// unread body an HTTP/1 connection drains after its handler returns.
+// boundedRequest gives every request a control deadline, which measurement admission replaces; after the handler,
+// the connection has half of it to drain an unread body and all of it to flush the response.
 func boundedRequest(next http.Handler, timeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		controller := http.NewResponseController(w)
 		_ = controller.SetReadDeadline(time.Now().Add(timeout))
 		_ = controller.SetWriteDeadline(time.Now().Add(timeout))
 		next.ServeHTTP(w, r)
-		_ = controller.SetReadDeadline(time.Now().Add(timeout))
-		_ = controller.SetWriteDeadline(time.Time{})
+		_ = controller.SetReadDeadline(time.Now().Add(timeout / 2))
+		_ = controller.SetWriteDeadline(time.Now().Add(timeout))
 	})
 }
 

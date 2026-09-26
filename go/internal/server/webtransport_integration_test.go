@@ -43,16 +43,28 @@ func (d *testWTTransport) armClose() {
 // wtServer boots HTTP/1.1 and HTTP/3 listeners; shape may adjust the measurement core before it is mounted.
 func wtServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *endpoints) {
 	t.Helper()
+	cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+		cfg.Native.H1 = sockets.reserveTCP()
+		cfg.Native.H3 = sockets.reserveH3()
+		if tune != nil {
+			tune(cfg)
+		}
+	}, shape)
+	httpBase := "http://" + cfg.Native.H1
+	waitForOK(t, http.DefaultClient, httpBase+"/preflight")
+	return "https://" + cfg.Native.H3, httpBase, build.e
+}
+
+// startListeners runs the listeners tune reserves, under a test certificate, until the test ends.
+func startListeners(t *testing.T, tune func(*config.Config, *testListenerSockets),
+	shape func(*endpoints)) (*config.Config, *listenerBuild) {
+	t.Helper()
 	cert, key := writeCertificate(t, t.TempDir(), "srv", "127.0.0.1",
 		time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = sockets.reserveTCP()
-	cfg.Native.H3 = sockets.reserveH3()
 	cfg.TLSCert, cfg.TLSKey = cert, key
-	if tune != nil {
-		tune(&cfg)
-	}
+	tune(&cfg, sockets)
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	build, err := newListenerBuild(ctx, &cfg, sockets)
@@ -71,9 +83,7 @@ func wtServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (
 		// Service cleanup must still run after t.Context is canceled.
 		t.Cleanup(func() { _ = stop(context.Background()) })
 	}
-	httpBase := "http://" + cfg.Native.H1
-	waitForOK(t, http.DefaultClient, httpBase+"/preflight")
-	return "https://" + cfg.Native.H3, httpBase, build.e
+	return &cfg, build
 }
 
 func wtTestServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *testWTTransport) {
