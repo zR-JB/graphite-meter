@@ -34,6 +34,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+refute() {
+    if grep -Eqi "$1" "$2"; then
+        echo "unexpected '$1' in $2" >&2
+        exit 1
+    fi
+}
+
 "$engine" run -d --name "$container" -p 127.0.0.1::7246 "$image" >/dev/null
 port=$("$engine" port "$container" 7246/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')
 test -n "$port"
@@ -89,7 +96,7 @@ test "$("$engine" inspect -f '{{ index .Config.Labels "org.opencontainers.image.
 
 curl -fsS "$base/" -o "$tmp/index.html"
 grep -qi '<script[^>]*type="module"' "$tmp/index.html"
-! grep -q '/src/main.ts' "$tmp/index.html"
+refute '/src/main.ts' "$tmp/index.html"
 
 python3 - "$tmp/index.html" > "$tmp/client-assets.txt" <<'PY'
 from html.parser import HTMLParser
@@ -128,16 +135,16 @@ while IFS= read -r path; do
         *.woff2) echo "$content_type" | grep -Eqi 'font/woff2|application/octet-stream' ;;
         *.svg) echo "$content_type" | grep -Eqi 'image/svg\+xml|text/xml' ;;
     esac
-    ! grep -Eqi '<!doctype html|<html' "$body"
+    refute '<!doctype html|<html' "$body"
     rm -f "$headers" "$body"
 done < "$tmp/client-assets.txt"
 
 grep -qi '<div id="app"' "$tmp/index.html"
 direct_route_status=$(curl -sS -o "$tmp/direct-route.txt" -w '%{http_code}' "$base/settings/")
 test "$direct_route_status" = 404
-! grep -Eqi '<!doctype html|<html|<div id="app"' "$tmp/direct-route.txt"
+refute '<!doctype html|<html|<div id="app"' "$tmp/direct-route.txt"
 missing_status=$(curl -sS -o "$tmp/missing-asset.txt" -w '%{http_code}' "$base/assets/missing.js")
 test "$missing_status" = 404
-! grep -Eqi '<!doctype html|<html' "$tmp/missing-asset.txt"
+refute '<!doctype html|<html' "$tmp/missing-asset.txt"
 
 echo "container verification passed: $image"
