@@ -14,6 +14,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+const laneBuffer = 256 << 10
+
 func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 	total := &r.coordinated.down
 	if r.target.Transport == wire.TransportWebTransport {
@@ -25,7 +27,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 		}
 		defer host.close()
 		return r.runLanes(ctx, gate, Down, nil, func(ctx context.Context, _ int, ready func()) error {
-			buf := make([]byte, 1<<20)
+			buf := make([]byte, laneBuffer)
 			return runWTLane(ctx, host, func(ctx context.Context, sess *wtSession) (bool, error) {
 				return downloadLaneWT(ctx, sess, buf, total, ready)
 			})
@@ -41,7 +43,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 }
 
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64, ready func()) error {
-	buf := make([]byte, 1<<20)
+	buf := make([]byte, laneBuffer)
 	return persist(ctx, func(ctx context.Context) (bool, error) {
 		u, err := endpointWithQuery(base, url.Values{
 			"bytes": {strconv.FormatInt(transferBytesPerStream, 10)},

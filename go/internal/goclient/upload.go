@@ -112,7 +112,7 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		if err != nil {
 			return body.moved.Load(), err
 		}
-		_, _ = io.Copy(io.Discard, res.Body)
+		_, _ = io.CopyN(io.Discard, res.Body, maxControlBytes)
 		_ = res.Body.Close()
 		if res.StatusCode != http.StatusOK {
 			return false, refusal{unexpectedStatus(res)}

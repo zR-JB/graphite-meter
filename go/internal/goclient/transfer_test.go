@@ -248,3 +248,36 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadLaneDrainsABoundedResponse(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		var drained, requests int
+		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if requests++; requests > 1 {
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			}
+			_, _ = io.CopyN(io.Discard, req.Body, 64*1024)
+			body := io.NopCloser(readerFunc(func(p []byte) (int, error) {
+				if drained >= 1<<20 {
+					return 0, io.EOF
+				}
+				drained += len(p)
+				return len(p), nil
+			}))
+			return &http.Response{StatusCode: http.StatusOK, Body: body, Request: req}, nil
+		})
+		r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		_ = lane(r, Up, "")(ctx)
+		if drained > 2*maxControlBytes {
+			t.Fatalf("an upload response was drained for %d bytes", drained)
+		}
+	})
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
