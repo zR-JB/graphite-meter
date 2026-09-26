@@ -303,7 +303,7 @@
         {#if hover?.key === lane.key && hoverValue != null}
           <span class="guide" style={`left:${pos(hoverValue, scale)}%`}></span>
           <span
-            class="hover-card"
+            class="inspect-card hover-card"
             bind:clientWidth={cardWidth}
             style={`left:${cardLeft}px`}
           >
@@ -558,20 +558,13 @@
     pointer-events: none;
   }
   .hover-card {
-    position: absolute;
     z-index: 10;
     top: calc(50% - 12px);
     display: grid;
     gap: var(--space-1);
     min-width: 156px;
     max-width: min(238px, 76vw);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--elev-tooltip);
     translate: 0 -50%;
-    pointer-events: none;
   }
   .hover-head {
     display: flex;

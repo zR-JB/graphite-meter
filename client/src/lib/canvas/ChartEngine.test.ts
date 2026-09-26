@@ -32,7 +32,7 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   let publishes = 0;
   let timeScale = 0;
   const engine = new ChartEngine(
-    () => current,
+    current,
     (next) => {
       published = next;
       publishes++;
@@ -44,14 +44,14 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   expect(published.layout.viewport.tMin).toBe(0);
 
   current = { ...current, phase: "download", timelineT: 5_000 };
-  engine.wake();
+  engine.update(current);
   expect(engine.render(116)).toBe(true);
   expect(published.layout.viewport.tMin).toBe(0);
   expect(timeScale).toBeGreaterThan(4_000);
   expect(timeScale).toBeLessThan(7_000);
 
   current = { ...current, phase: "upload", timelineT: 8_000 };
-  engine.retarget();
+  engine.update(current);
   expect(engine.render(132)).toBe(true);
   expect(published.layout.viewport.tMin).toBe(0);
 
@@ -78,7 +78,7 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
     throughput,
     latency,
   };
-  engine.wake();
+  engine.update(current);
   active = engine.render(now);
   for (let i = 0; i < 400 && active; i++) {
     now += 16;
@@ -147,7 +147,7 @@ test("saved duplicate terminal points render and hover at the last value without
   }));
   let published!: ChartPresentation;
   const engine = new ChartEngine(
-    () => data({ throughput, phase: "complete", timelineT: 500 }),
+    data({ throughput, phase: "complete", timelineT: 500 }),
     (next) => (published = next),
   );
   try {
@@ -195,10 +195,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
     ],
   });
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => current,
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(current, (next) => (published = next));
   try {
     engine.attach(canvas);
     engine.reducedMotion = true;
@@ -211,7 +208,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
     ).toBe(true);
     current.throughputRevision++;
     appendThroughputSample(current.throughput, sample(2000, "up", 700));
-    engine.wake();
+    engine.update(current);
     engine.render(16);
     expect(engine.inspect(published.layout.x(1000))).toMatchObject({
       downBytesPerSec: 500,
@@ -233,15 +230,12 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
   try {
     let current = data();
     let published!: ChartPresentation;
-    const engine = new ChartEngine(
-      () => current,
-      (next) => (published = next),
-    );
+    const engine = new ChartEngine(current, (next) => (published = next));
     engine.attach(canvas);
     engine.reducedMotion = true;
     expect(engine.render(100)).toBe(false);
     current = { ...current, phase: "download", timelineT: 5_000 };
-    engine.wake();
+    engine.update(current);
     expect(engine.render(116)).toBe(true);
     expect(published.layout.viewport.tMax).toBe(7_000);
     expect(engine.render(132)).toBe(false);
@@ -264,7 +258,7 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
         },
       ],
     };
-    engine.wake();
+    engine.update(current);
     expect(engine.render(148)).toBe(false);
     engine.destroy();
   } finally {
@@ -309,7 +303,7 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       latencyEnabled: true,
       timelineT: 4_000,
     });
-    const engine = new ChartEngine(() => current);
+    const engine = new ChartEngine(current);
     engine.attach(canvas);
     engine.render(0);
 
@@ -325,13 +319,17 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     }
     expect(counts.paths).toBe(beforeHover);
 
-    // A camera change rebuilds once; subsequent easing frames only compose it.
-    current = { ...current, timelineT: 12_000 };
-    engine.wake();
-    engine.render(100);
-    const beforeCameraFrames = counts.paths;
-    for (let now = 116; now <= 420; now += 16) engine.render(now);
-    expect(counts.paths - beforeCameraFrames).toBeLessThan(1_000);
+    // Twenty clock-only updates cost less than one scene rebuild.
+    const beforeClock = counts.paths;
+    for (let now = 216; now <= 520; now += 16) {
+      engine.update({ ...current, timelineT: 4_000 + now * 20 });
+      engine.render(now);
+    }
+    const clockPaths = counts.paths - beforeClock;
+    const beforeData = counts.paths;
+    engine.update({ ...current, latencyRevision: 1 });
+    engine.render(540);
+    expect(clockPaths).toBeLessThan((counts.paths - beforeData) / 10);
     engine.destroy();
   } finally {
     restore();
@@ -355,10 +353,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     resultRates: { bidiDown: 100_000, bidiUp: 100_000 },
   });
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => current,
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(current, (next) => (published = next));
   engine.render(100);
   expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
     "bidiDown",
@@ -373,7 +368,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     ...current,
     resultRates: { bidiDown: 200_000, bidiUp: 100_000 },
   };
-  engine.wake();
+  engine.update(current);
   engine.render(116);
   expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
     "bidiDown",
@@ -387,10 +382,7 @@ test("inspection retains a time position through gaps without inventing latency"
   try {
     let current = data({ latencyEnabled: true });
     let published!: ChartPresentation;
-    const engine = new ChartEngine(
-      () => current,
-      (next) => (published = next),
-    );
+    const engine = new ChartEngine(current, (next) => (published = next));
     engine.attach(canvas);
     engine.reducedMotion = true;
     engine.render(0);
@@ -413,7 +405,7 @@ test("inspection retains a time position through gaps without inventing latency"
         },
       ],
     };
-    engine.wake();
+    engine.update(current);
     engine.render(16);
     const before = counts.paths;
     expect(engine.inspect(published.layout.x(400))).toMatchObject({
@@ -437,10 +429,7 @@ test("inspection retains a time position through gaps without inventing latency"
 test("canvas sizing ignores entry transforms and recovers after a layout resize", () => {
   const { canvas, restore } = canvasEnvironment();
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => data(),
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(data(), (next) => (published = next));
   canvas.getBoundingClientRect = () =>
     ({ width: 591, height: 236.4 }) as DOMRect;
   try {

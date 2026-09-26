@@ -4,6 +4,7 @@
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
+    type ChartData,
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
@@ -14,7 +15,6 @@
 
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
-  let engine: ChartEngine;
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
   let selectedT = $state<number | null>(null);
@@ -26,39 +26,41 @@
   const hasData = $derived(
     store.throughput.length > 0 || store.latency.length > 0,
   );
+  const rows = $derived.by(() => {
+    if (!hover) return [];
+    const rate = (bytesPerSec: number) =>
+      `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`;
+    const rows: { label: string; value: string }[] = [];
+    if (hover.bytesPerSec != null)
+      rows.push({ label: "Rate", value: rate(hover.bytesPerSec) });
+    if (hover.downBytesPerSec != null)
+      rows.push({
+        label: STAGE.download.label,
+        value: rate(hover.downBytesPerSec),
+      });
+    if (hover.upBytesPerSec != null)
+      rows.push({
+        label: STAGE.upload.label,
+        value: rate(hover.upBytesPerSec),
+      });
+    if (chartPresentation?.latencyEnabled)
+      rows.push({
+        label: "RTT median",
+        value: hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`,
+      });
+    if (hover.timeoutCount > 0)
+      rows.push({
+        label: "Probe timeouts",
+        value: `${hover.timeoutCount} of ${hover.pingCount}`,
+      });
+    return rows;
+  });
   const selectionText = $derived.by(() => {
     if (!hasData) return "No measurements yet";
-    const details = [
-      `${((hover?.t ?? selectedTime) / 1000).toFixed(1)} seconds`,
-    ];
-    if (!hover) return `${details[0]}, no measurements at this position`;
-    if (hover.bytesPerSec != null)
-      details.push(
-        `rate ${fmtSpeed(store.toUnit(hover.bytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.downBytesPerSec != null)
-      details.push(
-        `download ${fmtSpeed(store.toUnit(hover.downBytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.upBytesPerSec != null)
-      details.push(
-        `upload ${fmtSpeed(store.toUnit(hover.upBytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.rtt != null)
-      details.push(`RTT median ${fmtMs(hover.rtt)} milliseconds`);
-    if (hover.pingCount > 0)
-      details.push(
-        `probe timeouts ${hover.timeoutCount} of ${hover.pingCount} resolved probes in bucket`,
-      );
-    if (
-      hover.bytesPerSec == null &&
-      hover.downBytesPerSec == null &&
-      hover.upBytesPerSec == null &&
-      hover.rtt == null &&
-      hover.pingCount === 0
-    )
-      details.push("no measurements at this position");
-    return details.join(", ");
+    const at = fmtDuration(hover?.t ?? selectedTime);
+    return rows.some((row) => row.value !== MISSING)
+      ? [at, ...rows.map((row) => `${row.label} ${row.value}`)].join(", ")
+      : `${at}, no measurements at this position`;
   });
   let pointerFrame = 0;
   let pointerClientX = 0;
@@ -119,29 +121,44 @@
       ),
     };
   });
-  // Invalidate only for state read by ChartEngine.
-  $effect(() => {
-    void store.phase;
-    void store.runSeq;
-    void store.throughput.length;
-    void store.throughputRevision;
-    void store.latency.length;
-    void store.latencyRevision;
-    void store.latencyEnabled;
-    void store.chartScaleBytesPerSec; // re-arm if the chart scale / pinned ceiling shifts while parked
-    void store.latencyScaleMs;
-    void store.stageResults.download;
-    void store.stageResults.upload;
-    void store.result?.bidirectional;
-    // Units only change tick text, but the loop parks after a run.
-    void store.unitBase;
-    void store.unitKind;
-    void store.unitLabel;
-    engine?.wake();
+  const chartData = (): ChartData => ({
+    throughput: store.throughput,
+    throughputRevision: store.throughputRevision,
+    latency: store.latency,
+    latencyRevision: store.latencyRevision,
+    latencyEnabled: store.latencyEnabled,
+    phase: store.phase,
+    phaseStartedAtMs: store.phaseStartedAtMs,
+    timelineT: Math.max(
+      store.phaseStartedAtMs + store.phaseElapsedMs,
+      store.throughput.at(-1)?.t ?? 0,
+      store.latency.at(-1)?.endT ?? 0,
+    ),
+    runSeq: store.runSeq,
+    scaleBytesPerSec: store.chartScaleBytesPerSec,
+    latencyScaleMs: store.latencyScaleMs,
+    resultRates: {
+      download: store.stageResults.download?.reportedBytesPerSec,
+      upload: store.stageResults.upload?.reportedBytesPerSec,
+      bidiDown: store.result?.bidirectional?.down?.reportedBytesPerSec,
+      bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
+    },
   });
+  const engine = new ChartEngine(
+    chartData(),
+    (next) => {
+      chartPresentation = next;
+      setTimeScale(next.layout.viewport.tMax);
+      updateHover();
+    },
+    (tMax) => {
+      setTimeScale(tMax);
+      if (selectedT != null) updateHover();
+    },
+  );
+  $effect(() => engine.update(chartData()));
   $effect(() => {
-    void store.phaseElapsedMs;
-    engine?.retarget();
+    engine.reducedMotion = prefersReducedMotion.current;
   });
 
   function onMove(e: PointerEvent) {
@@ -235,40 +252,6 @@
   }
 
   onMount(() => {
-    engine = new ChartEngine(
-      () => ({
-        throughput: store.throughput,
-        throughputRevision: store.throughputRevision,
-        latency: store.latency, // raw event-time buckets drive glyphs, axes, and hover
-        latencyRevision: store.latencyRevision,
-        latencyEnabled: store.latencyEnabled,
-        phase: store.phase,
-        phaseStartedAtMs: store.phaseStartedAtMs,
-        timelineT: Math.max(
-          store.phaseStartedAtMs + store.phaseElapsedMs,
-          store.throughput.at(-1)?.t ?? 0,
-          store.latency.at(-1)?.endT ?? 0,
-        ),
-        runSeq: store.runSeq,
-        scaleBytesPerSec: store.chartScaleBytesPerSec,
-        latencyScaleMs: store.latencyScaleMs,
-        resultRates: {
-          download: store.stageResults.download?.reportedBytesPerSec,
-          upload: store.stageResults.upload?.reportedBytesPerSec,
-          bidiDown: store.result?.bidirectional?.down?.reportedBytesPerSec,
-          bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
-        },
-      }),
-      (next) => {
-        chartPresentation = next;
-        setTimeScale(next.layout.viewport.tMax);
-        updateHover();
-      },
-      (tMax) => {
-        setTimeScale(tMax);
-        if (selectedT != null) updateHover();
-      },
-    );
     engine.attach(canvasEl!);
 
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
@@ -289,9 +272,6 @@
       resizeObserver.disconnect();
       stopWatchingPixelRatio();
     };
-  });
-  $effect(() => {
-    engine.reducedMotion = prefersReducedMotion.current;
   });
 </script>
 
@@ -401,51 +381,17 @@
         ></span>
       {/each}
       <div
-        class="chip"
+        class="inspect-card chip"
         bind:offsetWidth={chipWidth}
         bind:offsetHeight={chipHeight}
         style:transform={`translate(${chipPosition.x}px, ${chipPosition.y}px)`}
       >
         <div class="chip-row">
-          <span>t</span><b>{fmtDuration(hover.t)}</b>
+          <span>Time</span><b>{fmtDuration(hover.t)}</b>
         </div>
-        {#if hover.bytesPerSec != null}
-          <div class="chip-row">
-            <span>rate</span><b
-              >{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if hover.downBytesPerSec != null}
-          <div class="chip-row">
-            <span>down</span><b
-              >{fmtSpeed(store.toUnit(hover.downBytesPerSec))}
-              {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if hover.upBytesPerSec != null}
-          <div class="chip-row">
-            <span>up</span><b
-              >{fmtSpeed(store.toUnit(hover.upBytesPerSec))}
-              {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if chartPresentation.latencyEnabled}
-          <div class="chip-row">
-            <span>RTT median</span><b
-              >{hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`}</b
-            >
-          </div>
-        {/if}
-        {#if hover.timeoutCount > 0}
-          <div class="chip-row">
-            <span>probe timeouts</span><b
-              >{hover.timeoutCount}/{hover.pingCount}</b
-            >
-          </div>
-        {/if}
+        {#each rows as row (row.label)}
+          <div class="chip-row"><span>{row.label}</span><b>{row.value}</b></div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -484,8 +430,7 @@
   }
   .chart-labels,
   .inspection-guide,
-  .inspection-dot,
-  .chip {
+  .inspection-dot {
     pointer-events: none;
   }
   .inspection-guide,
@@ -544,17 +489,11 @@
     text-overflow: ellipsis;
   }
   .chip {
-    position: absolute;
     top: 0;
     left: 0;
     width: 224px;
     min-width: 112px;
     max-width: calc(100% - 2 * var(--space-2));
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--elev-float);
     font: var(--type-xs) / 1.5 var(--font-mono);
     will-change: transform;
   }

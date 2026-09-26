@@ -155,8 +155,28 @@ function fillCircle(
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
 }
+// Everything that redraws the cached scene; the live clock only re-aims the camera.
+const sceneKey = (d: ChartData) => [
+  d.throughput,
+  d.throughput.length,
+  d.throughputRevision,
+  d.latency,
+  d.latency.length,
+  d.latencyRevision,
+  d.latencyEnabled,
+  d.phase,
+  d.phaseStartedAtMs,
+  d.runSeq,
+  d.scaleBytesPerSec,
+  d.latencyScaleMs,
+  d.resultRates.download,
+  d.resultRates.upload,
+  d.resultRates.bidiDown,
+  d.resultRates.bidiUp,
+];
 export class ChartEngine {
-  #get: () => ChartData;
+  #data: ChartData;
+  #sceneKey: unknown[];
   #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #onTimeScale: ((tMax: number) => void) | null;
   #presentationKey = "";
@@ -222,13 +242,22 @@ export class ChartEngine {
   };
   /** onPresentation runs when labels or scales change; onTimeScale on every camera frame. */
   constructor(
-    get: () => ChartData,
+    data: ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
     onTimeScale?: (tMax: number) => void,
   ) {
-    this.#get = get;
+    this.#data = data;
+    this.#sceneKey = sceneKey(data);
     this.#onPresentation = onPresentation ?? null;
     this.#onTimeScale = onTimeScale ?? null;
+  }
+  update(data: ChartData): void {
+    const key = sceneKey(data);
+    const clockOnly = key.every((value, i) => value === this.#sceneKey[i]);
+    this.#data = data;
+    this.#sceneKey = key;
+    if (clockOnly) this.#retarget();
+    else this.#wake();
   }
   get viewport(): ChartViewport {
     return this.#vp;
@@ -236,7 +265,7 @@ export class ChartEngine {
   set reducedMotion(value: boolean) {
     if (value === this.#reducedMotion) return;
     this.#reducedMotion = value;
-    this.wake();
+    this.#wake();
   }
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
@@ -249,13 +278,11 @@ export class ChartEngine {
     this.invalidateTheme();
   }
   #restoreSurface = (): void => this.invalidateTheme();
-  /** Data or scale changed: redraw the cached scene. */
-  wake(): void {
+  #wake(): void {
     this.#sceneDirty = true;
-    this.retarget();
+    this.#retarget();
   }
-  /** Only the live clock moved: re-aim the camera and keep the scene. */
-  retarget(): void {
+  #retarget(): void {
     this.#dirty = true;
     this.#presentation?.invalidate();
   }
@@ -287,7 +314,7 @@ export class ChartEngine {
       this.#sceneCtx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     }
     this.#resolveColors();
-    this.wake();
+    this.#wake();
   }
   inspectTime(t: number): HoverInfo | null {
     return this.inspect(this.#layout.x(t));
@@ -302,7 +329,7 @@ export class ChartEngine {
     );
     const frac = (x - this.#layout.plot.left) / plotW;
     const t = this.#vp.tMin + frac * (this.#vp.tMax - this.#vp.tMin);
-    const data = this.#get();
+    const data = this.#data;
     this.#indexData(data);
     const bytesPerSec =
       interpolateConnectedAt(
@@ -415,7 +442,7 @@ export class ChartEngine {
       this.#vp = { ...this.#vp, tMin: 0, tMax: this.#displayTMax };
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
       this.#onTimeScale?.(this.#displayTMax);
-      this.#publishPresentation(this.#get(), !cameraMoving);
+      this.#publishPresentation(this.#data, !cameraMoving);
     }
     if (this.#sceneDirty) {
       this.#rebuildScene(now);
@@ -455,7 +482,7 @@ export class ChartEngine {
     this.#sceneDirty = true;
   }
   #update(): void {
-    const d = this.#get();
+    const d = this.#data;
     if (d.runSeq !== this.#runSeq) {
       this.#runSeq = d.runSeq;
       this.#resetRunState();
@@ -592,7 +619,7 @@ export class ChartEngine {
   #rebuildScene(now: number): void {
     const ctx = this.#sceneCtx;
     if (!ctx || !this.#scene) return;
-    const d = this.#get();
+    const d = this.#data;
     ctx.clearRect(0, 0, this.#w, this.#h);
     this.#drawThroughput(ctx, d.throughput);
     if (this.#result) this.#drawPhaseStats(ctx, d.resultRates);
@@ -604,7 +631,7 @@ export class ChartEngine {
     const ctx = this.#ctx;
     const scene = this.#scene;
     if (!ctx || !scene) return false;
-    const d = this.#get();
+    const d = this.#data;
     ctx.clearRect(0, 0, this.#w, this.#h);
     this.#drawGrid(ctx);
     const { plot } = this.#layout;
