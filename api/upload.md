@@ -39,7 +39,9 @@ endpoint work.
 Reconnecting retains the same ID and receiver counters. A replacement progress
 reader supersedes its predecessor. Watching a feed does not keep an idle upload
 alive; existing idle expiry, finalization retention, and capacity limits remain
-in force. A refused WebTransport lane can be reported on another control stream.
+in force. A feed whose receiver expires, or is displaced at the capacity limit
+before its first byte, ends with an `invalid` error record, and that ID stays
+refused until its token would have expired. A refused WebTransport lane can be reported on another control stream.
 See [upload refusal codes](uploadrefusals.txt) for the shared classifications.
 
 ## Progress records

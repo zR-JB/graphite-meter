@@ -26,6 +26,7 @@ type Upload struct {
 	tokenKey  [sha256.Size]byte
 	mu        sync.Mutex
 	receivers map[string]*uploadAgg
+	evicted   map[string]int64
 	byClient  map[string]int
 }
 
@@ -38,7 +39,7 @@ const (
 
 func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 	u := &Upload{meter: meter, trusted: trusted, epoch: time.Now(), receivers: map[string]*uploadAgg{},
-		byClient: map[string]int{}}
+		evicted: map[string]int64{}, byClient: map[string]int{}}
 	_, _ = rand.Read(u.tokenKey[:])
 	return u
 }
@@ -181,10 +182,13 @@ func (u *Upload) streamProgress(ctx context.Context, agg *uploadAgg, w io.Writer
 	})
 }
 
-func writeRefusalRecord(w io.Writer, access uploadAccess) {
+func refusalRecord(access uploadAccess) wire.UploadProgress {
 	info := uploadAccessInfos[access]
-	_ = json.MarshalEncode(jsontext.NewEncoder(w),
-		wire.UploadProgress{Type: "error", Message: info.message, Code: info.code})
+	return wire.UploadProgress{Type: "error", Message: info.message, Code: info.code}
+}
+
+func writeRefusalRecord(w io.Writer, access uploadAccess) {
+	_ = json.MarshalEncode(jsontext.NewEncoder(w), refusalRecord(access))
 }
 
 func (u *Upload) runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool,
@@ -203,6 +207,7 @@ func (u *Upload) runProgress(done, superseded <-chan struct{}, agg *uploadAgg, e
 		case <-superseded:
 			return
 		case <-agg.expired:
+			emit(refusalRecord(uploadAccessInvalid))
 			return
 		case <-agg.finished:
 			if u.waitDrained(done, superseded, agg) {

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -187,7 +188,7 @@ func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, up
 		}
 		return agg, uploadAccessOK
 	}
-	if !u.validID(id) {
+	if _, evicted := u.evicted[id]; evicted || !u.validID(id) {
 		return nil, uploadAccessInvalid
 	}
 	if transport.ShareFull(c.keys, maxLiveUploadsPerClient, func(key string) int { return u.byClient[key] }) {
@@ -208,8 +209,12 @@ func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, up
 	return agg, uploadAccessOK
 }
 
-// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish, so watchers hold no cap.
+// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish, so watchers hold no cap;
+// its id stays refused while its token could recreate it.
 func (u *Upload) evictEmptyLocked() bool {
+	if len(u.evicted) >= maxLiveUploads {
+		return false
+	}
 	victim := ""
 	var oldest int64
 	for id, agg := range u.receivers {
@@ -220,6 +225,7 @@ func (u *Upload) evictEmptyLocked() bool {
 	}
 	if victim != "" {
 		u.expireLocked(victim)
+		u.evicted[victim] = u.now() + int64(uploadTokenTTL)
 	}
 	return victim != ""
 }
@@ -258,9 +264,11 @@ func (u *Upload) get(id string) (*uploadAgg, bool) {
 }
 
 func (u *Upload) sweep(ttl time.Duration) {
-	cutoff := u.now() - int64(ttl)
+	now := u.now()
+	cutoff := now - int64(ttl)
 	u.mu.Lock()
 	defer u.mu.Unlock()
+	maps.DeleteFunc(u.evicted, func(_ string, until int64) bool { return until < now })
 	for id, agg := range u.receivers {
 		if agg.lanes == 0 && agg.lastTouchMono.Load() < cutoff {
 			u.expireLocked(id)

@@ -247,16 +247,43 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 }
 
 // Watching is not upload activity: an untouched receiver is reaped at its TTL and its feed ends with it.
+// A watched receiver still expires, and its feed says so rather than ending bare.
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewUpload(nil, nil)
 		id := store.Mint()
-		_, done := startFeed(t.Context(), http.HandlerFunc(store.ServeProgress), id)
+		rec, done := startFeed(t.Context(), http.HandlerFunc(store.ServeProgress), id)
 		time.Sleep(uploadIDTTL + time.Second)
 		store.sweep(uploadIDTTL)
 		synctest.Wait()
-		if _, ok := store.get(id); ok || !ended(done) {
-			t.Fatalf("idle watched receiver retained = %v, feed ended = %v", ok, ended(done))
+		if _, ok := store.get(id); ok || !ended(done) || !strings.HasSuffix(rec.text(), `"code":"invalid"}`+"\n") {
+			t.Fatalf("idle watched receiver retained = %v, feed ended = %v with %q", ok, ended(done), rec.text())
+		}
+	})
+}
+
+// An evicted receiver's feed says so, and its still-valid id cannot quietly recreate an empty receiver.
+func TestEvictedReceiverStaysGone(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := NewUpload(nil, nil)
+		id := store.Mint()
+		rec, done := startFeed(t.Context(), http.HandlerFunc(store.ServeProgress), id)
+		fillStore(store)
+		if _, ok := store.getOrCreate(store.Mint()); !ok {
+			t.Fatal("the watched empty receiver was not displaced")
+		}
+		synctest.Wait()
+		if !ended(done) || !strings.HasSuffix(rec.text(), `"code":"invalid"}`+"\n") {
+			t.Fatalf("evicted feed ended = %v with %q", ended(done), rec.text())
+		}
+		store.sweep(uploadIDTTL)
+		if _, access := store.accessFor(id, ownedBy("192.0.2.1"), true); access != uploadAccessInvalid {
+			t.Fatalf("a lane on the evicted id = %v, want invalid", access)
+		}
+		time.Sleep(uploadTokenTTL + uploadSweepInterval)
+		store.sweep(uploadIDTTL)
+		if len(store.evicted) != 0 {
+			t.Fatalf("%d evicted ids outlived their tokens", len(store.evicted))
 		}
 	})
 }
