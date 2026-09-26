@@ -87,12 +87,20 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
 test("cards show signed added latency, the grade, and one pip rule", () => {
   const cards = summaryCards(
     {
-      status: { download: "complete", upload: "complete", latency: "complete" },
+      status: {
+        download: "complete",
+        upload: "complete",
+        bidirectional: "failed",
+        latency: "complete",
+      },
       download: lane(40),
       upload: { ...lane(20), stabilityPct: 80 },
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
-      added: { addedMs: { download: 8.25, upload: -0.04 }, grade: "B" },
+      added: {
+        addedMs: { download: 8.25, upload: -0.04, bidirectional: 0 },
+        grade: "B",
+      },
     },
     rate,
     "base10",
@@ -106,6 +114,7 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
   expect(shown).toEqual([
     ["+8.3", null, "high"],
     ["+0.0", null, "medium"],
+    [null, null, undefined],
     [null, "Grade B", "high"],
   ]);
 });

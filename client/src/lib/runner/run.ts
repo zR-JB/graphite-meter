@@ -1190,15 +1190,14 @@ export class Run {
       stage,
       this.#completedEarly.has(stage),
     );
-    const window = this.#aggregate.intervals.findLast(
-      (interval) => interval.stage === stage,
-    )?.headline;
     const path = (id: string) => {
       const server = this.#servers.find((entry) => entry.server.id === id);
       return server ? pathEvidence(server.paths).throughput : null;
     };
     const [down, up] = (["down", "up"] as const).map((dir) =>
-      lanes[dir] ? headlineWire(window, dir, path) : null,
+      lanes[dir]
+        ? headlineWire(this.#aggregate.headline(stage, dir), dir, path)
+        : null,
     );
     if (stage === "bidirectional") {
       results.bidirectional = {

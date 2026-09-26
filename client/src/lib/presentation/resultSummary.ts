@@ -200,7 +200,7 @@ export function summaryCards(
         card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
     const added = evidence.added?.addedMs?.[key];
-    if (added != null) card.added = fmtAddedMs(added);
+    if (added != null && status !== "failed") card.added = fmtAddedMs(added);
     if (value === null) return [card];
     const shown = rate(value);
     const view = showWire && status === "complete" && wireView(wire, value);

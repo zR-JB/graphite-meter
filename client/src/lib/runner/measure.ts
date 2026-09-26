@@ -861,31 +861,47 @@ export class ThroughputAggregate {
     return sum;
   }
 
-  /** The stage headline from its latest interval; saved evidence names the reported window. */
+  /** Each direction's headline from the latest whole interval with enough evidence while a server is left. */
   result(
     stage: TransferStage,
     stable: boolean,
   ): Record<FlowDirection, ThroughputResult | null> {
-    const record = this.intervals.findLast(
-      (interval) => interval.stage === stage,
-    );
-    const open = record && this.#interval(record);
-    const none = { down: null, up: null };
-    if (!record?.complete || !record.full || !open) return none;
-    const window =
-      stable && sufficient(record.headline) ? record.headline! : record.full;
-    record.headline = window;
+    const intervals = this.intervals.filter((i) => i.stage === stage);
     const reduce = (dir: FlowDirection): ThroughputResult | null => {
-      const rate = rateOf(window, dir);
-      if (!rate || !sufficient(window)) return null;
-      return {
-        reportedBytesPerSec: rate,
-        totalBytes: this.#stageTotal(stage, dir),
-        peakBytesPerSec: this.peak(stage, dir),
-        stabilityPct: stabilityPct(open.total[dir].rates),
-      };
+      if (!intervals.at(-1)?.participants.length) return null;
+      for (const record of intervals.toReversed()) {
+        const open = this.#interval(record);
+        if (!record.complete || !record.full || !open) continue;
+        const window =
+          stable && sufficient(record.headline)
+            ? record.headline!
+            : record.full;
+        const rate = rateOf(window, dir);
+        if (!rate || !sufficient(window)) continue;
+        record.headline = window;
+        return {
+          reportedBytesPerSec: rate,
+          totalBytes: this.#stageTotal(stage, dir),
+          peakBytesPerSec: open.peaks.get(COMBINED)?.[dir] ?? null,
+          stabilityPct: stabilityPct(open.total[dir].rates),
+        };
+      }
+      return null;
     };
     return { down: reduce("down"), up: reduce("up") };
+  }
+
+  /** The window a direction's headline came from, once `result` chose it. */
+  headline(stage: TransferStage, dir: FlowDirection): AggregateWindow | null {
+    return (
+      this.intervals.findLast(
+        ({ stage: at, complete, headline }) =>
+          at === stage &&
+          complete &&
+          sufficient(headline) &&
+          !!rateOf(headline!, dir),
+      )?.headline ?? null
+    );
   }
 
   peak(stage: TransferStage, dir: FlowDirection): number | null {
@@ -895,29 +911,26 @@ export class ThroughputAggregate {
     );
   }
 
-  /** One server's share from the latest interval it took part in, including before a dropout. */
+  /** One server's share from the latest whole interval where its own component has enough evidence. */
   serverResult(
     stage: TransferStage,
     dir: FlowDirection,
     id: string,
   ): ThroughputResult | null {
-    const record = this.intervals.findLast(
-      (interval) =>
-        interval.stage === stage &&
-        interval.full &&
-        interval.participants.includes(id),
-    );
-    const component = record?.full?.[dir]?.find((c) => c.serverId === id);
-    const open = record && this.#interval(record);
-    if (!component?.bytes || !open || component.durationMs < MIN_EVIDENCE_MS)
-      return null;
-    const { rates } = open.servers.get(id)![dir];
-    return {
-      reportedBytesPerSec: component.bytesPerSec,
-      totalBytes: this.#stageTotal(stage, dir, id),
-      peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
-      stabilityPct: stabilityPct(rates),
-    };
+    for (const record of this.intervals.toReversed()) {
+      if (record.stage !== stage || !record.complete) continue;
+      const component = record.full?.[dir]?.find((c) => c.serverId === id);
+      const open = this.#interval(record);
+      if (!component?.bytes || !open || component.durationMs < MIN_EVIDENCE_MS)
+        continue;
+      return {
+        reportedBytesPerSec: component.bytesPerSec,
+        totalBytes: this.#stageTotal(stage, dir, id),
+        peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
+        stabilityPct: stabilityPct(open.servers.get(id)![dir].rates),
+      };
+    }
+    return null;
   }
 }
 
@@ -939,7 +952,7 @@ function raise(
 }
 
 /** A reportable window spans the evidence floor in the client clock and in every receiver clock. */
-function sufficient(window: AggregateWindow | null): boolean {
+export function sufficient(window: AggregateWindow | null): boolean {
   return (
     !!window &&
     window.endMs - window.startMs >= MIN_EVIDENCE_MS &&

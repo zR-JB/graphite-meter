@@ -14,7 +14,7 @@ import { createUuid } from "../uuid";
 import { planned, STAGES } from "../runner/schedule";
 import {
   EARLY_FINISH,
-  MIN_EVIDENCE_MS,
+  sufficient,
   type LatencyLaneSnapshot,
   type MultiServerResult,
   type TransferStage,
@@ -89,13 +89,7 @@ export function incoherence(
     if (status === "not-run" && (lanes.some(Boolean) || spans.length))
       problems.push(`${name} is not-run but has evidence`);
     if (name !== "latency" && status === "complete") {
-      const window = spans.at(-1)?.headline;
-      const clocks = [...(window?.down ?? []), ...(window?.up ?? [])];
-      if (
-        !window ||
-        !clocks.length ||
-        clocks.some((c) => c.durationMs < MIN_EVIDENCE_MS)
-      )
+      if (!spans.some(({ headline }) => sufficient(headline)))
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
       const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);

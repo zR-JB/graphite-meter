@@ -404,7 +404,7 @@ test("every headline needs 800 ms in every clock and moved bytes", () => {
   m.begin("download", ["a"], 2_000, "dropout");
   m.observe(boundary(2_000, { a: 2_000 }));
   m.observe(boundary(2_500, { a: 3_500 }));
-  expect(m.result("download", false).down).toBeNull();
+  expect(m.result("download", false).down?.reportedBytesPerSec).toBe(5_000);
   expect(m.serverResult("download", "down", "b")?.reportedBytesPerSec).toBe(
     4_000,
   );
@@ -533,6 +533,7 @@ type Vector = {
     } | null;
   }[];
   peak: { downBytesPerSec: number | null; upBytesPerSec: number | null };
+  headline: { down: number | null; up: number | null } | null;
 };
 const vectors: Vector[] = await Bun.file(
   new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
@@ -577,6 +578,15 @@ for (const vector of vectors)
       downBytesPerSec: m.peak(vector.stage, "down"),
       upBytesPerSec: m.peak(vector.stage, "up"),
     }).toEqual(vector.peak);
+    const { down, up } = m.result(vector.stage, false);
+    expect(
+      down || up
+        ? {
+            down: down?.reportedBytesPerSec ?? null,
+            up: up?.reportedBytesPerSec ?? null,
+          }
+        : null,
+    ).toEqual(vector.headline);
   });
 
 const latencyVectors: {

@@ -299,7 +299,7 @@ test("two servers sum their windows, and terminal evidence after the final bound
   near(result.multiServer.servers[1].download?.reportedBytesPerSec, 3_000);
 });
 
-test("a late dropout leaves the headline unavailable while the failed stage keeps earlier evidence", async () => {
+test("a late dropout keeps the headline of the interval every server finished", async () => {
   const h = await harness(
     two({ measure: fail(900) }),
     { download: true },
@@ -307,8 +307,9 @@ test("a late dropout leaves the headline unavailable while the failed stage keep
   );
   h.start();
   const result = await h.result();
-  expect(result.download).toBeNull();
-  expect(result.outcome).toBe("incomplete");
+  near(result.download?.reportedBytesPerSec, 4_000);
+  expect(result.stages.download).toBe("partial");
+  expect(result.outcome).toBe("partial");
   expect(result.multiServer.participants).toEqual(["b"]);
   expect(
     result.multiServer.intervals.map((interval) => interval.reason),
