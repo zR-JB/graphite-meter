@@ -77,36 +77,6 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil
 }
 
-func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.LatencyTarget) error {
-	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	sess, err := wtDial(verifyCtx, cfg, target.Origin, route.WTPing, nil)
-	if err != nil {
-		return err
-	}
-	defer sess.close()
-	var lastErr error
-	for verifyCtx.Err() == nil {
-		if err := sess.SendDatagram([]byte(wire.EncodePing(0))); err != nil {
-			return fmt.Errorf("latency WebTransport probe failed: %w", err)
-		}
-		replyCtx, cancelReply := context.WithTimeout(verifyCtx, 750*time.Millisecond)
-		reply, err := sess.ReceiveDatagram(replyCtx)
-		cancelReply()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		if frame, err := wire.DecodePong(string(reply)); err == nil && frame.ID == 0 {
-			return nil
-		}
-	}
-	if lastErr != nil {
-		return fmt.Errorf("latency WebTransport readiness failed: %w", lastErr)
-	}
-	return fmt.Errorf("latency WebTransport did not become ready")
-}
-
 func verifyThroughputWebTransport(ctx context.Context, cfg Config, target *wire.ThroughputTarget) error {
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()

@@ -168,7 +168,7 @@ func prepareRun(
 			failures = append(failures, fmt.Errorf("%s: %w", server.Server.Name, server.Err))
 			continue
 		}
-		rtt := server.Connection.PreflightRTT
+		rtt := server.Connection.WarmRTT
 		if prepared.LatencyFocus == "" || rtt > 0 && (best <= 0 || rtt < best) {
 			prepared.LatencyFocus = server.Server.ID
 			best = rtt

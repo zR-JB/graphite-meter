@@ -118,7 +118,6 @@ type LatencyStats struct {
 	Timeouts                           int
 	Unresolved                         int
 	SendFailures                       int
-	TimeoutAfter                       time.Duration
 	Elapsed                            time.Duration
 }
 
@@ -136,9 +135,4 @@ func (s LatencyStats) TimeoutRatio() (float64, bool) {
 		return 0, false
 	}
 	return float64(s.Timeouts) / float64(resolved), true
-}
-
-// HasObservations distinguishes a measured partial population from a failure before any probes were measured.
-func (s LatencyStats) HasObservations() bool {
-	return s.Count+s.Timeouts+s.Unresolved+s.SendFailures > 0
 }

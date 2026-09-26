@@ -167,7 +167,7 @@ func TestGetPreflight(t *testing.T) {
 	})
 }
 
-func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
+func TestVerifyLatencyRequiresMatchingProbeReply(t *testing.T) {
 	t.Parallel()
 	for _, matching := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unmatched", true: "matched"}[matching], func(t *testing.T) {
@@ -197,9 +197,9 @@ func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
 			}))
 			defer server.Close()
 			target := testChannel(server.URL, server.URL, false)
-			err := verifyLatencyWebSocket(t.Context(), server.Client(), &target)
-			if (err == nil) != matching {
-				t.Fatalf("readiness error = %v, matching reply = %v", err, matching)
+			rtt, err := verifyLatency(t.Context(), DefaultConfig(), server.Client(), &target)
+			if (err == nil) != matching || matching && rtt <= 0 {
+				t.Fatalf("readiness = %v, %v; matching reply = %v", rtt, err, matching)
 			}
 		})
 	}

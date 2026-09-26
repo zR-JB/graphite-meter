@@ -2,14 +2,11 @@ package goclient
 
 import (
 	"context"
-	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
-	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -42,52 +39,18 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	return pf, nil
 }
 
-func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, what string) (wire.Probe, string, error) {
+// getJSONProbe validates the target's probe evidence and returns the protocol this client negotiated.
+func getJSONProbe(ctx context.Context, hc *http.Client, origin, path string) (string, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
-		return wire.Probe{}, "", err
+		return "", err
 	}
 	var p wire.Probe
-	response, err := controlJSON(ctx, hc, http.MethodGet, u, what, &p)
+	response, err := controlJSON(ctx, hc, http.MethodGet, u, "probe", &p)
 	if err != nil {
-		return wire.Probe{}, "", err
+		return "", err
 	}
-	if err := p.Validate(); err != nil {
-		return wire.Probe{}, "", err
-	}
-	return p, response.Proto, nil
-}
-
-func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.LatencyTarget) error {
-	u, err := wsEndpoint(target.Origin, route.Ping)
-	if err != nil {
-		return err
-	}
-	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	conn, response, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{
-		HTTPClient:      hc,
-		CompressionMode: websocket.CompressionDisabled,
-	})
-	if err != nil {
-		if authErr := authResponseError(response); authErr != nil {
-			return authErr
-		}
-		return fmt.Errorf("latency WebSocket connection failed: %w", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if err := conn.Write(verifyCtx, websocket.MessageText, []byte(wire.EncodePing(0))); err != nil {
-		return fmt.Errorf("latency WebSocket probe failed: %w", err)
-	}
-	for {
-		_, message, err := conn.Read(verifyCtx)
-		if err != nil {
-			return fmt.Errorf("latency WebSocket readiness failed: %w", err)
-		}
-		if pong, err := wire.DecodePong(string(message)); err == nil && pong.ID == 0 {
-			return nil
-		}
-	}
+	return response.Proto, p.Validate()
 }
 
 func httpEndpoint(base, path string) (string, error) {

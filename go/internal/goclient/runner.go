@@ -22,12 +22,10 @@ import (
 )
 
 type PreparedConnection struct {
-	PreflightRTT     time.Duration
+	WarmRTT          time.Duration
 	Preflight        wire.Preflight
 	ThroughputTarget wire.ThroughputTarget
 	LatencyTarget    *wire.LatencyTarget
-	Probe            wire.Probe
-	LatencyProbe     *wire.Probe
 	VerifiedAt       time.Time
 	configKey        string
 }
@@ -245,14 +243,14 @@ func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnec
 	}
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol)
 	defer closeTransfer()
-	probe, clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe, "probe")
+	clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, target.Routes.Probe)
 	if err != nil {
 		return err
 	}
 	if target.Protocol == "negotiated" {
 		target.Protocol = protocolFromEvidence(clientProtocol)
 	}
-	prepared.ThroughputTarget, prepared.Probe = target, probe
+	prepared.ThroughputTarget = target
 	return nil
 }
 
@@ -262,35 +260,24 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 	if err != nil {
 		return err
 	}
-	if target.Transport == wire.TransportWebTransport {
-		if err := verifyLatencyWebTransport(ctx, cfg, target); err != nil {
-			if cfg.LatencyTransport != "auto" {
-				return err
-			}
-			if target, err = latencyTargetOver(cfg, targets, wire.TransportWebSocket); err != nil {
-				return err
-			}
+	wsClient, closeWebSocket := websocketClient(cfg)
+	defer closeWebSocket()
+	rtt, err := verifyLatency(ctx, cfg, wsClient, target)
+	if err != nil && target.Transport == wire.TransportWebTransport && cfg.LatencyTransport == "auto" {
+		if target, err = latencyTargetOver(cfg, targets, wire.TransportWebSocket); err != nil {
+			return err
 		}
+		rtt, err = verifyLatency(ctx, cfg, wsClient, target)
+	}
+	if err != nil {
+		return err
 	}
 	if target.Transport == wire.TransportWebTransport {
 		if err := validatePingInterval(cfg.PingInterval); err != nil {
 			return err
 		}
 	}
-	wsClient, closeWebSocket := websocketClient(cfg)
-	defer closeWebSocket()
-	probeStarted := time.Now()
-	probe, _, err := getJSONProbe(ctx, wsClient, target.Origin, route.Probe, "latency probe")
-	if err != nil {
-		return err
-	}
-	rtt := time.Since(probeStarted)
-	if target.Transport == wire.TransportWebSocket {
-		if err := verifyLatencyWebSocket(ctx, wsClient, target); err != nil {
-			return err
-		}
-	}
-	prepared.LatencyTarget, prepared.LatencyProbe, prepared.PreflightRTT = target, &probe, rtt
+	prepared.LatencyTarget, prepared.WarmRTT = target, rtt
 	return nil
 }
 

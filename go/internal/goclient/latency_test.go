@@ -37,15 +37,18 @@ func TestMeasureLatencyPopulations(t *testing.T) {
 			ratio, ok := s.TimeoutRatio()
 			return s.Count > 0 && s.Mean > 0 && ok && ratio >= 0.10 && ratio <= 0.55
 		}},
-		{"window shorter than the deadline", answerNone, 0, 10 * time.Millisecond, 80 * time.Millisecond,
+		{"silent probes drain to their deadline", answerNone, 0, 10 * time.Millisecond, 80 * time.Millisecond,
 			func(s LatencyStats) bool {
-				_, ok := s.TimeoutRatio()
-				return s.Count == 0 && s.Timeouts == 0 && s.Unresolved > 0 && !ok &&
-					s.TimeoutAfter == 250*time.Millisecond
+				ratio, ok := s.TimeoutRatio()
+				return s.Count == 0 && s.Timeouts > 0 && s.Unresolved == 0 && ok && ratio == 1
 			}},
-		{"late replies", answerAll, 265 * time.Millisecond, 20 * time.Millisecond, 600 * time.Millisecond,
+		{"in-flight replies at window end", answerAll, 100 * time.Millisecond, 20 * time.Millisecond,
+			150 * time.Millisecond, func(s LatencyStats) bool {
+				return s.Count >= 7 && s.Timeouts == 0 && s.Unresolved == 0
+			}},
+		{"slow replies above the cadence", answerAll, 400 * time.Millisecond, 80 * time.Millisecond, time.Second,
 			func(s LatencyStats) bool {
-				return s.Count == 0 && s.Timeouts > 0 && s.JitterPairs == 0 && s.ReflectorTiming == nil
+				return s.Count > 0 && s.Timeouts > 0 && s.P50 >= 400*time.Millisecond
 			}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -127,21 +130,30 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 	}
 }
 
-func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
+func TestProbeDeadlinesAdaptAndSeparateUnresolved(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
-	var stats latencyStats
-	stats.add(10*time.Millisecond, false, 0)
-	pending := map[uint32]time.Time{
-		1: now.Add(-time.Second),
-		2: now.Add(-250 * time.Millisecond),
-		3: now.Add(-time.Millisecond),
+	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}}
+	if l.timeout() != probeTimeoutFloor {
+		t.Fatalf("cold timeout = %v", l.timeout())
 	}
-	stats.closePending(pending, now, 250*time.Millisecond)
-	stats.add(100*time.Millisecond, false, 0)
-	got := stats.snapshot()
-	if len(pending) != 0 || got.Timeouts != 2 || got.Unresolved != 1 || got.JitterPairs != 0 {
-		t.Fatalf("cutoff summary: %+v, pending=%v", got, pending)
+	for range 20 {
+		l.observe(2 * time.Second)
+	}
+	if got := l.timeout(); got < 2*time.Second || got > probeTimeoutCeil {
+		t.Fatalf("timeout after slow replies = %v, want at least the observed RTT", got)
+	}
+	l.stats.add(10*time.Millisecond, false, 0)
+	l.pending = map[uint32]probe{
+		1: {sent: now.Add(-time.Second), deadline: now.Add(-time.Millisecond), measured: true},
+		2: {sent: now.Add(-time.Millisecond), deadline: now.Add(time.Second), measured: true},
+		3: {sent: now.Add(-time.Second), deadline: now.Add(-time.Millisecond)},
+	}
+	l.closePending(now)
+	l.stats.add(100*time.Millisecond, false, 0)
+	got := l.stats.snapshot()
+	if len(l.pending) != 0 || got.Timeouts != 1 || got.Unresolved != 1 || got.JitterPairs != 0 {
+		t.Fatalf("cutoff summary: %+v", got)
 	}
 }
 

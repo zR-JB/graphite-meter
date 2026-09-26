@@ -221,8 +221,8 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 			prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol,
 		)
 	}
-	if prepared.Probe.ProtocolNegotiated != "http/1.1" || backendProtocol.Load() != "HTTP/1.1" {
-		t.Fatalf("backend evidence = %q, request = %q", prepared.Probe.ProtocolNegotiated, backendProtocol.Load())
+	if got := backendProtocol.Load(); got != "HTTP/1.1" {
+		t.Fatalf("backend request = %q, want HTTP/1.1 behind the HTTP/2 proxy", got)
 	}
 }
 
@@ -331,7 +331,7 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	}
 }
 
-func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
+func TestLoadedLatencyDrainsSilentProbesToTimeouts(t *testing.T) {
 	t.Parallel()
 	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
 		t.Run(duration.String(), func(t *testing.T) {
@@ -360,8 +360,8 @@ func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 				t.Fatalf("loaded results: %+v %+v", transferResult, results)
 			}
 			stats := results[0].Latency
-			if stats.Count != 0 || stats.Unresolved == 0 || duration > stats.TimeoutAfter && stats.Timeouts == 0 {
-				t.Fatalf("missing timeout or unresolved population: %+v", stats)
+			if stats.Count != 0 || stats.Unresolved != 0 || stats.Timeouts == 0 {
+				t.Fatalf("silent loaded probes did not drain to timeouts: %+v", stats)
 			}
 		})
 	}

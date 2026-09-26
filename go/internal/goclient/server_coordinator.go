@@ -100,7 +100,7 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 			target:        new(connection.ThroughputTarget),
 			latencyTarget: connection.LatencyTarget,
 			coordinated:   &participantCounters{},
-			idleRTT:       connection.PreflightRTT,
+			idleRTT:       connection.WarmRTT,
 			teardown:      teardown,
 		}
 		r.emit = func(e Event) {
@@ -302,6 +302,13 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	sampling := &sampler{c: c, stage: stage, ctx: stageCtx, results: make(chan sampledBoundary, 1)}
 	defer func() {
 		sampling.stop()
+		if normalEnd {
+			// Loaded probes sent inside the window may still reply; transfers stop first.
+			for _, s := range servers {
+				s.cancelTransfer(context.Canceled)
+			}
+			work.Wait()
+		}
 		cancel(stageErr)
 		work.Wait()
 		close(outcomes)
