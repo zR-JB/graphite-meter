@@ -540,32 +540,28 @@
     }
   }
 
+  // Preserve an intentional dock resize even if reload beats the normal
+  // debounced preference save. Leave other persisted preferences untouched.
+  function saveDockWidths() {
+    if (resizedDock)
+      savePersisted({
+        ...loadPersisted(),
+        dockWidth: $state.snapshot(store.dockWidth),
+      });
+  }
+  function onHashChange() {
+    const next = panelsForLayout(parseRoute(window.location.hash));
+    if (serializeRoute(next) !== window.location.hash)
+      window.history.replaceState(
+        { graphiteRoute: false },
+        "",
+        serializeRoute(next),
+      );
+    commitRoute(next, true);
+  }
+
   onMount(() => {
-    // Preserve an intentional dock resize even if reload beats the normal
-    // debounced preference save. Leave other persisted preferences untouched.
-    const saveDockWidths = () => {
-      if (resizedDock)
-        savePersisted({
-          ...loadPersisted(),
-          dockWidth: $state.snapshot(store.dockWidth),
-        });
-    };
-    window.addEventListener("pagehide", saveDockWidths);
-    const onHashChange = () => {
-      const next = panelsForLayout(parseRoute(window.location.hash));
-      if (serializeRoute(next) !== window.location.hash)
-        window.history.replaceState(
-          { graphiteRoute: false },
-          "",
-          serializeRoute(next),
-        );
-      commitRoute(next, true);
-    };
-    window.addEventListener("hashchange", onHashChange);
-    window.addEventListener("popstate", onHashChange);
     onHashChange();
-    window.addEventListener("keydown", onKeydown);
-    window.addEventListener("beforeunload", onBeforeUnload);
     if (authEnabled)
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
@@ -574,16 +570,16 @@
           // lazy chunk; the measurement UI remains usable without it.
           AccountControl = null;
         });
-
-    return () => {
-      window.removeEventListener("pagehide", saveDockWidths);
-      window.removeEventListener("keydown", onKeydown);
-      window.removeEventListener("hashchange", onHashChange);
-      window.removeEventListener("popstate", onHashChange);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
   });
 </script>
+
+<svelte:window
+  onpagehide={saveDockWidths}
+  onhashchange={onHashChange}
+  onpopstate={onHashChange}
+  onkeydown={onKeydown}
+  onbeforeunload={onBeforeUnload}
+/>
 
 <main
   id="console"
@@ -969,7 +965,7 @@
 
   @media (max-width: 759px) {
     .topbar {
-      gap: 2px;
+      gap: var(--space-1);
       padding-inline: 6px;
     }
     .brand-label,

@@ -196,7 +196,7 @@
     gap: var(--space-3);
     min-height: 10rem;
   }
-  @media (max-width: 560px) {
+  @media (max-width: 759px) {
     .legal-body {
       padding: var(--space-3);
     }

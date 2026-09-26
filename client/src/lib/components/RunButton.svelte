@@ -77,7 +77,7 @@
     max-width: 320px;
     min-height: 46px;
     align-self: center;
-    border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+    border: 1px solid var(--brand-line);
     border-radius: var(--r-pill);
     background: linear-gradient(180deg, var(--brand-strong), var(--brand));
     box-shadow:
@@ -102,7 +102,7 @@
     transform: scale(0.985);
   }
   .run-button.running {
-    border-color: color-mix(in srgb, var(--err) 40%, var(--border));
+    border-color: var(--err-line);
     background: var(--err-soft);
     box-shadow: none;
     color: var(--err);
@@ -134,5 +134,6 @@
     background: color-mix(in srgb, currentColor 8%, transparent);
     font: var(--w-normal) var(--type-2xs) / 1 var(--font-mono);
     letter-spacing: 0;
+    text-transform: none;
   }
 </style>

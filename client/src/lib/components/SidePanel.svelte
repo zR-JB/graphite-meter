@@ -202,7 +202,7 @@
     position: fixed;
     inset: var(--topbar-h) 0 0 0;
     z-index: 49;
-    background: color-mix(in srgb, var(--canvas) 55%, transparent);
+    background: var(--scrim);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--dur-slide) var(--ease-out);

@@ -94,7 +94,7 @@
       background-color var(--dur-hover) var(--ease-out);
   }
   input:checked + .track {
-    border-color: color-mix(in srgb, var(--brand) 42%, var(--border));
+    border-color: var(--brand-line);
     background: var(--brand-soft);
   }
   input:checked + .track .knob {

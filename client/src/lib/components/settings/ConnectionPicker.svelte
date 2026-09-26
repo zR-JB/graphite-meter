@@ -176,7 +176,7 @@
     }
   }
   .choice.selected {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    border-color: var(--brand-line);
     background: var(--brand-soft);
   }
   .choice.unavailable {
@@ -189,7 +189,7 @@
     pointer-events: none;
   }
   .choice:focus-within {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    border-color: var(--brand-line);
     box-shadow: var(--ring-halo);
   }
   .radio-dot {

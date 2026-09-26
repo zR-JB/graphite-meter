@@ -152,11 +152,6 @@
   .signout:focus-visible {
     outline-offset: -3px;
   }
-  @media (max-width: 640px) {
-    .name {
-      display: none;
-    }
-  }
   /* Narrow and touch layouts keep only the sign-out action, as a topbar
      button of its own. */
   @media (max-width: 759px), (pointer: coarse) {

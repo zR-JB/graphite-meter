@@ -440,7 +440,7 @@
     background: var(--surface-1);
   }
   .result-chip.active {
-    border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
+    border-color: var(--brand-line);
   }
   .result-chip .tone-icon {
     width: 20px;

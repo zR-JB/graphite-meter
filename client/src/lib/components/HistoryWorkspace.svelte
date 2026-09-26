@@ -1080,7 +1080,7 @@
     overscroll-behavior-y: contain;
   }
   .inline-inspector {
-    border-top: 2px solid color-mix(in srgb, var(--brand) 50%, var(--border));
+    border-top: 2px solid var(--brand-line);
   }
   .selection-state {
     display: grid;

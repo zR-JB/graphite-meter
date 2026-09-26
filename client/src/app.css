@@ -169,6 +169,10 @@
   --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
 
   --grid-line: light-dark(rgb(43 44 40 / 0.06), rgb(211 219 227 / 0.05));
+  /* Edges of selected or active controls, and the dimming behind overlays. */
+  --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
+  --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
+  --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
 
   /* Elevation. The ink is the shadow hue; depths differ per theme because a
      dark canvas needs a much denser shadow to read at all. */
@@ -367,7 +371,7 @@
   select:focus-visible,
   input:where([type="number"], [type="text"], [type="search"]):focus-visible {
     outline: none;
-    border-color: color-mix(in srgb, var(--brand) 56%, var(--border));
+    border-color: var(--brand-line);
     box-shadow: var(--ring-halo);
   }
   kbd {
@@ -477,11 +481,11 @@
     background-color: var(--surface-inset);
   }
   .btn-accent {
-    --btn-line: color-mix(in srgb, var(--brand) 55%, var(--border));
+    --btn-line: var(--brand-line);
     color: var(--brand-strong);
   }
   .btn-danger {
-    --btn-line: color-mix(in srgb, var(--err) 48%, var(--border));
+    --btn-line: var(--err-line);
     background: transparent;
     box-shadow: inset 0 0 0 1px var(--btn-line);
   }
@@ -888,7 +892,7 @@
     }
   }
   dialog.float::backdrop {
-    background: color-mix(in srgb, var(--canvas) 64%, transparent);
+    background: var(--scrim);
     transition:
       opacity var(--dur-hover) var(--ease-out),
       overlay var(--dur-hover) allow-discrete,

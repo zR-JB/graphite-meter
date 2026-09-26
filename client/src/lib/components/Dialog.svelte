@@ -31,9 +31,18 @@
     children,
   }: Props = $props();
   let dialog: HTMLDialogElement;
+  // A native close can follow a cancel the owner is still applying (for
+  // example an asynchronous history.back()), so report once per opening.
+  let reported = false;
+  function cancel() {
+    if (reported) return;
+    reported = true;
+    onCancel();
+  }
 
   $effect(() => {
     if (!open) return;
+    reported = false;
     const opener =
       invoker ??
       (document.activeElement instanceof HTMLElement
@@ -66,13 +75,13 @@
   onkeydown={keydown}
   oncancel={(event) => {
     event.preventDefault();
-    onCancel();
+    cancel();
   }}
   onclose={() => {
-    if (open) onCancel();
+    if (open) cancel();
   }}
   onclick={(event) => {
-    if (lightDismiss && event.target === dialog) onCancel();
+    if (lightDismiss && event.target === dialog) cancel();
   }}
 >
   {@render children()}

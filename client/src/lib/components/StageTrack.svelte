@@ -215,7 +215,7 @@
     transform: none;
   }
   .seg.on {
-    border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
+    border-color: var(--brand-line);
     background: var(--brand-soft);
     color: var(--text);
   }
@@ -330,7 +330,7 @@
   }
   .seg--failed .seg-tag,
   .seg--partial .seg-tag {
-    border-color: color-mix(in srgb, var(--err) 35%, var(--border-subtle));
+    border-color: var(--err-line);
     color: var(--err);
   }
   @container viz (max-width: 680px) {
