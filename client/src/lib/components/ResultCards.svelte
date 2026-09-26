@@ -154,6 +154,7 @@
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
+    transition: var(--transition-control);
   }
   .result-chip.active {
     border-color: var(--brand-line);

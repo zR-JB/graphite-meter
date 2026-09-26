@@ -4,6 +4,7 @@
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
   import { statusLabel } from "../presentation/vocabulary";
+  import { handoff } from "../presentation/motion.svelte";
 
   const elapsedMs = $derived(
     store.result?.durationMs ?? store.runClock.current,
@@ -15,7 +16,7 @@
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const { status } = $derived(store.preparation);
   const refused = $derived(status === "blocked" || status === "failed");
-  const label = $derived(
+  const label = handoff(() =>
     statusLabel(status, store.phase, store.result?.outcome),
   );
 </script>
@@ -23,11 +24,12 @@
 {#if refused}
   <span
     class="label"
+    style:opacity={label.opacity}
     {@attach tooltip(() => store.startError || store.startBlocker)}
-    >{label}</span
+    >{label.shown}</span
   >
 {:else}
-  <span class="label">{label}</span>
+  <span class="label" style:opacity={label.opacity}>{label.shown}</span>
 {/if}
 <span
   class="elapsed"

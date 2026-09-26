@@ -25,6 +25,7 @@ test("lockReason uses the central terminal and recovery state", () => {
     [false, "upload", "upload", "download", "partial", "Partial"],
     [false, "upload", "upload", "upload", "recovering", "Recovering"],
     [false, "download", "download", "upload", "pending", "Upcoming"],
+    [false, "upload", "upload", "download", "complete", null],
   ] as const)
     expect(lockReason(terminal, phase, selected, target, status)).toBe(
       expected,

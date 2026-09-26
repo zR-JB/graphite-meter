@@ -22,6 +22,7 @@
   import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
+  import { handoff, Smoothed } from "../presentation/motion.svelte";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -34,10 +35,22 @@
         ? `Tested ${indicatedServers.length} servers`
         : `${indicatedServers.length} servers selected`,
   );
-  const resultsView = $derived.by<"none" | "partial" | "final">(() => {
-    if (store.phase === "complete") return "final";
-    if (store.phase === "idle") return "none";
-    return "partial";
+  // The instrument presents the phase it hands off to, never a flash of one it passes through.
+  const view = handoff(() => store.phase);
+  const phase = $derived(view.shown);
+  // Live chips give way to result cards in one handoff of their own.
+  const results = handoff((): "none" | "partial" | "final" =>
+    store.phase === "complete"
+      ? "final"
+      : store.phase === "idle"
+        ? "none"
+        : "partial",
+  );
+  let resultsBody = $state(0);
+  const resultsHeight = new Smoothed();
+  $effect(() => {
+    const height = resultsBody;
+    untrack(() => resultsHeight.set(height, { over: 240 }));
   });
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
@@ -47,7 +60,7 @@
   // A one-sided bidirectional partial has no truthful combined gauge value.
   const unusableStage = $derived(
     activeStagePresentation?.status === "failed" ||
-      (store.phase === "complete" &&
+      (phase === "complete" &&
         terminalArcs.length === 0 &&
         !store.result?.latency),
   );
@@ -67,12 +80,12 @@
   );
   const gaugeLatency = $derived.by(() => {
     return latencyGauge({
-      phase: store.phase,
+      phase,
       liveRttMs: store.liveRtt,
       axisMs: store.latencyScaleMs,
       history: store.latency,
       completedRttMs:
-        store.phase === "complete" && terminalArcs.length === 0
+        phase === "complete" && terminalArcs.length === 0
           ? (store.result?.latency?.reportedMs ?? null)
           : null,
     });
@@ -84,8 +97,8 @@
   });
 
   const msTicksActive = $derived(
-    store.phase === "latency" ||
-      (store.phase === "complete" && completedKind === "latency"),
+    phase === "latency" ||
+      (phase === "complete" && completedKind === "latency"),
   );
   const gaugeScaleBytesPerSec = $derived(store.scales.gaugeBytesPerSec);
   const gaugeUnit = $derived(store.unitLabel);
@@ -107,17 +120,17 @@
   const liveTarget = $derived(liveTargets(store.live));
   const showGaugeTicks = $derived(
     !unusableStage &&
-      (store.phase === "latency" ||
-        store.phase === "download" ||
-        store.phase === "upload" ||
-        store.phase === "bidirectional" ||
-        store.phase === "complete") &&
+      (phase === "latency" ||
+        phase === "download" ||
+        phase === "upload" ||
+        phase === "bidirectional" ||
+        phase === "complete") &&
       gaugeTicks.length > 1,
   );
 
   const readout = $derived(
     gaugeReadout({
-      phase: store.phase,
+      phase,
       running: store.isRunning,
       preparing: store.preparing,
       preparation: store.preparation,
@@ -146,7 +159,7 @@
   );
 
   const dialState = $derived.by<GaugeDialState>(() => {
-    const p = store.phase;
+    const p = phase;
     const scale = store.scales.gaugeBytesPerSec;
     return {
       phase: p,
@@ -220,7 +233,11 @@
       >
         <GaugeDial input={dialState} {layout} />
         {#if showGaugeTicks}
-          <div class="gauge-ticks" aria-hidden="true">
+          <div
+            class="gauge-ticks"
+            aria-hidden="true"
+            style:opacity={view.opacity}
+          >
             {#each layout.labelPoints as point, index (index)}
               <span
                 class="gauge-tick"
@@ -232,7 +249,7 @@
             {/each}
           </div>
         {/if}
-        <div class="metric-wrap">
+        <div class="metric-wrap" style:opacity={view.opacity}>
           {#if readout.terminal}
             <div
               class="terminal-readout"
@@ -263,7 +280,7 @@
           <span class="sr-only">{display.value} {display.unit}</span>
         </div>
       </div>
-      <div class="gauge-footer">
+      <div class="gauge-footer" style:opacity={view.opacity}>
         {#if readout.hint || readout.status || readout.failure}
           <div class="gauge-notes">
             {#if store.preparing}
@@ -297,12 +314,18 @@
     {/if}
   </div>
 
-  <div class="results-slot">
-    {#if resultsView === "partial"}
-      <ResultCards compact live={liveReadout} />
-    {:else if resultsView === "final"}
-      <ResultCards />
-    {/if}
+  <div
+    class="results-slot"
+    style:opacity={results.opacity}
+    style:height={`${resultsHeight.current}px`}
+  >
+    <div class="results-body" bind:clientHeight={resultsBody}>
+      {#if results.shown === "partial"}
+        <ResultCards compact live={liveReadout} />
+      {:else if results.shown === "final"}
+        <ResultCards />
+      {/if}
+    </div>
   </div>
 </section>
 
@@ -578,7 +601,13 @@
   .gauge-status.preparation {
     color: var(--brand-strong);
   }
-  .results-slot:empty {
+  /* The slot glides to its content's height, so the chart below never jumps. */
+  .results-slot {
+    flex: none;
+    overflow: clip;
+    overflow-clip-margin: var(--space-1);
+  }
+  .results-slot:has(> .results-body:empty) {
     display: none;
   }
 </style>

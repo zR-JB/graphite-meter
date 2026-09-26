@@ -373,6 +373,7 @@
     border-radius: var(--r-well);
     background: var(--surface-1);
     box-shadow: var(--elev-tile);
+    transition: var(--transition-control);
   }
   @media (max-height: 800px) {
     .lanes[data-variant="bare"] {

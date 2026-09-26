@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { inView } from "../actions/inView";
-  import { nextFrame } from "../presentation/motion.svelte";
+  import { handoff, nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
@@ -18,6 +18,14 @@
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
+  // A new stage's label and a finished stage's rate hand off; positions follow the camera.
+  const marks = handoff(
+    () => ({
+      labels: chartPresentation?.phaseLabels ?? [],
+      stats: chartPresentation?.phaseStats ?? [],
+    }),
+    ({ labels, stats }) => `${labels.length}:${stats.length}`,
+  );
   let selectedT = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
@@ -342,25 +350,28 @@
             >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
         {/each}
-        {#each presentation.phaseLabels as label (label.phase + label.x)}
-          <span
-            class="phase-label"
-            style:left={`${label.x}px`}
-            style:top={`${label.y}px`}
-            >{label.phase === "bidirectional"
-              ? STAGE.bidirectional.short
-              : phaseLabel(label.phase)}</span
-          >
-        {/each}
-        {#each presentation.phaseStats as stat (stat.lane)}
-          <span
-            class="stat-label"
-            data-tone={stat.tone}
-            style:left={`${stat.x}px`}
-            style:top={`${stat.y}px`}
-            >{fmtSpeed(store.toUnit(stat.bytesPerSec))} {store.unitLabel}</span
-          >
-        {/each}
+        <div class="marks" style:opacity={marks.opacity}>
+          {#each marks.shown.labels as label (label.phase + label.x)}
+            <span
+              class="phase-label"
+              style:left={`${label.x}px`}
+              style:top={`${label.y}px`}
+              >{label.phase === "bidirectional"
+                ? STAGE.bidirectional.short
+                : phaseLabel(label.phase)}</span
+            >
+          {/each}
+          {#each marks.shown.stats as stat (stat.lane)}
+            <span
+              class="stat-label"
+              data-tone={stat.tone}
+              style:left={`${stat.x}px`}
+              style:top={`${stat.y}px`}
+              >{fmtSpeed(store.toUnit(stat.bytesPerSec))}
+              {store.unitLabel}</span
+            >
+          {/each}
+        </div>
       </div>
     {/if}
 
@@ -422,7 +433,8 @@
     box-shadow: var(--elev-recess);
   }
   .canvas,
-  .chart-labels {
+  .chart-labels,
+  .marks {
     position: absolute;
     inset: 0;
     width: 100%;

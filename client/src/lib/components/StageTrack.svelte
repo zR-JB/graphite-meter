@@ -7,6 +7,7 @@
   import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
   import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
   import { STAGES } from "../runner/schedule";
+  import { handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
 
@@ -39,6 +40,12 @@
       };
     }),
   );
+  // Status tags hand off together; a warmup shorter than the fade never shows.
+  const track = handoff(
+    () => segments,
+    (list) => list.map((s) => `${s.state}:${s.reason}`).join(),
+  );
+  const shown = $derived(new Map(track.shown.map((s) => [s.key, s])));
 </script>
 
 <fieldset class="stage-track" class:quad={segments.length === 4}>
@@ -48,6 +55,7 @@
     ></legend
   >
   {#each segments as s (s.key)}
+    {@const look = shown.get(s.key) ?? s}
     <button
       type="button"
       class="seg seg--{s.state}"
@@ -64,7 +72,7 @@
       onclick={() => controller.toggleStage(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">
-        {#if s.state === "warmup"}
+        {#if s.state === "warmup" && look.state === "warmup"}
           <span class="seg-fill seg-fill--warmup"></span>
         {:else if s.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
@@ -87,10 +95,14 @@
           <span class="seg-ico"><Icon name={s.icon} /></span>
           <span class="seg-label">{s.label}</span>
         </span>
-        {#if s.reason}
-          <span class="seg-tag">{s.reason}</span>
-        {:else if s.state === "complete"}
-          <span class="seg-ico seg-check"><Icon name="check" /></span>
+        {#if look.reason}
+          <span class="seg-tag" style:opacity={track.opacity}
+            >{look.reason}</span
+          >
+        {:else if look.state === "complete"}
+          <span class="seg-ico seg-check" style:opacity={track.opacity}
+            ><Icon name="check" /></span
+          >
         {/if}
       </span>
     </button>
@@ -166,10 +178,12 @@
     background: var(--tone);
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
-    transition: transform var(--dur-graph) var(--ease-out);
+    transition:
+      transform var(--dur-graph) var(--ease-out),
+      background-color var(--dur-graph) var(--ease-out);
   }
   .seg-fill.is-live {
-    transition: none;
+    transition: background-color var(--dur-graph) var(--ease-out);
   }
   .seg-fill.is-done {
     background: var(--ok);
@@ -249,7 +263,6 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 12ch;
     height: 18px;
     margin-left: auto;
     padding: 0 6px;
