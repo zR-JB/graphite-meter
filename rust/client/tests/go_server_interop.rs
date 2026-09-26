@@ -23,10 +23,10 @@ struct Case {
 }
 
 #[tokio::test]
+#[ignore = "requires Go server fixture; run rust/tests/client_interop.py"]
 async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
-    let Ok(url) = std::env::var("GM_GO_INTEROP_URL") else {
-        return Ok(());
-    };
+    let url = std::env::var("GM_GO_INTEROP_URL")
+        .map_err(|_| "GM_GO_INTEROP_URL is required; run rust/tests/client_interop.py")?;
     let _ = graphite_meter_client::crypto::provider().install_default();
     for case in [
         Case {
@@ -58,10 +58,10 @@ async fn run_case(url: &str, case: Case) -> Result<(), Error> {
 }
 
 #[tokio::test]
+#[ignore = "requires authenticated Go server fixture; run rust/tests/client_interop.py"]
 async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
-    let Ok(url) = std::env::var("GM_GO_AUTH_URL") else {
-        return Ok(());
-    };
+    let url = std::env::var("GM_GO_AUTH_URL")
+        .map_err(|_| "GM_GO_AUTH_URL is required; run rust/tests/client_interop.py")?;
     let _ = graphite_meter_client::crypto::provider().install_default();
     let http = Http::new(false)?;
     let entry = ServerEntry {

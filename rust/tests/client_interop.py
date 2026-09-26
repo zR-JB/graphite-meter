@@ -123,7 +123,8 @@ def main() -> None:
                 raise TimeoutError(f"Go HTTP/3 bootstrap did not start: {log.read_text()}")
             command = [
                 "cargo", "test", "--locked", "-p", "graphite-meter-client",
-                "--test", "go_server_interop", "--", "--nocapture",
+                "--test", "go_server_interop", "go_server_completes_native_transport_stages",
+                "--", "--exact", "--ignored", "--nocapture",
             ]
             untrusted_env = {**environment, "GM_GO_INTEROP_URL": discovery}
             untrusted_env.pop("SSL_CERT_FILE", None)
@@ -211,7 +212,7 @@ def main() -> None:
                 [
                     "cargo", "test", "--locked", "-p", "graphite-meter-client",
                     "--test", "go_server_interop", "go_server_completes_approved_native_stages",
-                    "--", "--nocapture",
+                    "--", "--exact", "--ignored", "--nocapture",
                 ],
                 cwd=ROOT / "rust",
                 env={
