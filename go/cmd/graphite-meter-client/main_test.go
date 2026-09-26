@@ -88,12 +88,14 @@ func TestParseStages(t *testing.T) {
 		"latency,download,upload,bidirectional": {Latency: true, Download: true, Upload: true, Bidirectional: true},
 		"ping,down,up,bidi":                     {Latency: true, Download: true, Upload: true, Bidirectional: true},
 		"":                                      {},
-		"download,bogus":                        {Download: true},
 		" Latency , DOWN ":                      {Latency: true, Download: true},
 	} {
-		if got := parseStages(raw); got != want {
-			t.Errorf("parseStages(%q) = %+v, want %+v", raw, got, want)
+		if got, err := parseStages(raw); got != want || err != nil {
+			t.Errorf("parseStages(%q) = %+v, %v; want %+v", raw, got, err, want)
 		}
+	}
+	if _, err := parseStages("download,bogus"); err == nil {
+		t.Error("an unknown stage name was dropped silently")
 	}
 }
 

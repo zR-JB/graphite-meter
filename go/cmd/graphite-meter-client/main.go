@@ -26,7 +26,7 @@ func main() {
 	}
 
 	cfg := goclient.DefaultConfig()
-	var stages, ping, loadedPing string
+	var ping, loadedPing string
 	var showVersion, report bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
 	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)",
@@ -46,8 +46,11 @@ func main() {
 	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "latency origin from discovery, or auto")
 	flag.StringVar(&cfg.LatencyTransport, "latency-transport", cfg.LatencyTransport,
 		"latency transport: auto, websocket, or webtransport")
-	flag.StringVar(&stages, "stages", "latency,download,upload",
-		"comma-separated stages: latency,download,upload,bidirectional")
+	flag.Func("stages", "comma-separated stages: latency, download, upload, bidirectional "+
+		"(default latency,download,upload)", func(raw string) (err error) {
+		cfg.Stages, err = parseStages(raw)
+		return err
+	})
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
 	flag.DurationVar(&cfg.DownloadDuration, "download-duration", cfg.DownloadDuration, "download measurement duration")
@@ -76,7 +79,6 @@ func main() {
 	if flag.NArg() > 0 {
 		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
 	}
-	cfg.Stages = parseStages(stages)
 	for name, raw := range map[string]string{"-ping": ping, "-loaded-ping": loadedPing} {
 		interval, err := parsePing(raw)
 		switch {
@@ -166,10 +168,10 @@ func fail(code int, err error) {
 	os.Exit(code)
 }
 
-func parseStages(raw string) goclient.StageSet {
+func parseStages(raw string) (goclient.StageSet, error) {
 	var s goclient.StageSet
 	for part := range strings.SplitSeq(raw, ",") {
-		switch strings.TrimSpace(strings.ToLower(part)) {
+		switch name := strings.TrimSpace(strings.ToLower(part)); name {
 		case "latency", "ping":
 			s.Latency = true
 		case "download", "down":
@@ -178,9 +180,12 @@ func parseStages(raw string) goclient.StageSet {
 			s.Upload = true
 		case "bidirectional", "bidi":
 			s.Bidirectional = true
+		case "":
+		default:
+			return s, fmt.Errorf("unknown stage %q: use latency, download, upload, or bidirectional", name)
 		}
 	}
-	return s
+	return s, nil
 }
 
 func parsePing(raw string) (time.Duration, error) {
