@@ -251,6 +251,49 @@ test("approval popup reserves an isolated window synchronously and survives brow
   }
 });
 
+test("only the page's own server is a cookie session; every other entry is public and cookie-free", async () => {
+  const restore = stubGlobals({
+    location: new URL("https://home.example/"),
+    document: {
+      querySelector: () => ({ getAttribute: () => "enabled" }),
+      cookie: "__Host-gm_csrf=page-csrf",
+    },
+  });
+  try {
+    const { requestOptions, serverCredentials, socketMint } =
+      await import("./credentials");
+    const home = { id: "self", name: "Home", url: "https://home.example" };
+    expect(serverCredentials(home).kind).toBe("session");
+    for (const server of [
+      { ...home, url: "https://elsewhere.example" },
+      { ...home, id: "peer" },
+    ]) {
+      const context = serverCredentials(server);
+      expect(context.kind).toBe("public");
+      expect(requestOptions(context, server.url + "/upload", "POST")).toEqual({
+        headers: {},
+        credentials: "omit",
+      });
+      expect(socketMint(context, server.url, "/ping", "wt")).toBeUndefined();
+    }
+    expect(
+      requestOptions(serverCredentials(home), home.url + "/upload", "POST"),
+    ).toEqual({
+      headers: { "X-CSRF-Token": "page-csrf" },
+      credentials: "include",
+    });
+    // A same-origin WebSocket carries the cookie itself; only WebTransport needs a ticket.
+    expect(
+      socketMint(serverCredentials(home), home.url, "/ping", "ws"),
+    ).toBeUndefined();
+    expect(
+      socketMint(serverCredentials(home), home.url, "/ping", "wt")?.credentials,
+    ).toBe("include");
+  } finally {
+    restore();
+  }
+});
+
 test("session fetches enforce the same selected-server boundary as grants", async () => {
   const requests: string[] = [];
   const restore = stubGlobals({
