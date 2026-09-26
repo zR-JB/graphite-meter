@@ -18,13 +18,21 @@ TARGET = "x86_64-unknown-linux-gnu"
 REPO = Path(__file__).resolve().parents[1]
 
 
+def release_directory(requested: Path) -> Path:
+    # Release output stays inside this checkout or a temporary staging directory.
+    output = os.path.realpath(requested)
+    if not output.startswith((str(REPO) + os.sep, os.path.realpath(tempfile.gettempdir()) + os.sep)):
+        raise ValueError(f"release output must be inside {REPO} or the temporary directory")
+    os.makedirs(output, exist_ok=True)
+    return Path(output)
+
+
 def build(version: str, output: Path, supplement: Path) -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", version):
         raise ValueError("invalid release version")
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         raise ValueError(f"Rust packaging currently requires a native {TARGET} builder")
-    output = output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    output = release_directory(output)
     channel = tomllib.loads((REPO / "rust/rust-toolchain.toml").read_text())["toolchain"]["channel"]
     base = f"graphite-meter-client_{version}_linux_amd64_rust"
     environment = dict(os.environ, GM_ENGINE_VERSION=f"{version}-rust")
@@ -84,8 +92,7 @@ def build(version: str, output: Path, supplement: Path) -> None:
 def build_container(version: str, output: Path) -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", version):
         raise ValueError("invalid release version")
-    output = output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    output = release_directory(output)
     with tempfile.TemporaryDirectory(prefix=".rust-export-", dir=output) as temporary:
         if "," in temporary:
             raise ValueError("container artifact path must not contain commas")

@@ -17,11 +17,11 @@ RUN python3 --version && cargo +1.98.1 --version
 
 FROM rust-build AS tui-build
 ARG VERSION
-RUN python3 scripts/package-rust.py "$VERSION" --output /out \
+RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist \
     --supplement legal/rust-platform-debian-bookworm.json
 
 FROM scratch AS tui-artifacts
-COPY --from=tui-build /out/ /
+COPY --from=tui-build /src/dist/ /
 
 FROM docker.io/oven/bun:${BUN_VERSION} AS browser
 ARG VERSION
