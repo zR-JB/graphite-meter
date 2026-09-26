@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -910,6 +911,28 @@ class PipelineTests(unittest.TestCase):
         self.assertIn('source="docker://$IMAGE@$source_digest"', text)
         self.assertIn('skopeo copy --all --preserve-digests "$source"', text)
         self.assertNotIn('skopeo copy --all --preserve-digests "docker://$IMAGE:$VERSION"', text)
+
+    def _run_promotion(self, digest: str, series: str, latest: str) -> subprocess.CompletedProcess[str]:
+        text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
+        step = text.split("name: Promote verified stable image without rollback", 1)[1]
+        script = textwrap.dedent(step.split("run: |\n", 1)[1])
+        shim = 'docker() { while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done; sh -ec "$2"; }\n'
+        with tempfile.TemporaryDirectory() as td:
+            skopeo = pathlib.Path(td) / "skopeo"
+            skopeo.write_text('#!/bin/sh\n[ "$1" = inspect ] && printf "%s\\n" "$FAKE_DIGEST"\nexit 0\n')
+            skopeo.chmod(0o755)
+            env = dict(
+                os.environ, PATH=f"{td}{os.pathsep}{os.environ['PATH']}", FAKE_DIGEST=digest,
+                REGISTRY_TOKEN="token", REPOSITORY="Owner/Repo", REGISTRY_ACTOR="owner", VERSION="1.2.3",
+                SERIES="1.2", PROMOTE_SERIES=series, PROMOTE_LATEST=latest, SKOPEO_IMAGE="skopeo",
+            )
+            return subprocess.run(["bash", "-c", shim + script], env=env, capture_output=True, text=True)
+
+    def test_promotion_rejects_a_source_digest_with_trailing_data(self) -> None:
+        result = self._run_promotion("sha256:" + "a" * 64 + "evil", "true", "true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source tag returned an invalid digest", result.stderr)
+        self.assertNotIn("promoted", result.stdout)
 
     def test_skopeo_version_parser_accepts_supported_output_shapes(self) -> None:
         self.assertEqual(parse_skopeo_version("skopeo version 1.22.2"), "1.22.2")

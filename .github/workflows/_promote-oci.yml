@@ -97,7 +97,7 @@ jobs:
               printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
               source_tag="docker://$IMAGE:$VERSION"
               source_digest=$(skopeo inspect --format "{{.Digest}}" "$source_tag")
-              if ! printf '%s\n' "$source_digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              if ! printf "%s\n" "$source_digest" | grep -Eq "^sha256:[0-9a-f]{64}\$"; then
                 echo "source tag returned an invalid digest: $source_digest" >&2
                 exit 1
               fi
