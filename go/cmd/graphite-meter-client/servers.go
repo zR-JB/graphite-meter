@@ -33,6 +33,13 @@ func (m model) catalogServer(id string) (wire.ServerEntry, bool) {
 }
 
 func (m model) serverName(id string) string {
+	if m.run != nil && m.run.details != nil {
+		for _, s := range m.run.details.Servers {
+			if s.Server.ID == id {
+				return s.Server.Name
+			}
+		}
+	}
 	if server, ok := m.catalogServer(id); ok {
 		return server.Name
 	}
@@ -284,7 +291,7 @@ func (m model) detailsView(w int) string {
 		lines = append(lines, "", m.st.heading.Render("Left the test"))
 		for _, f := range details.Failures {
 			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s",
-				r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), errorText(f.Err)))
+				m.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), errorText(f.Err)))
 		}
 	}
 	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {

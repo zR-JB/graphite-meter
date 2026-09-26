@@ -62,6 +62,7 @@ func DecodeUploadProgress(data []byte) (UploadProgress, error) {
 				}
 			}
 		}
+		event.Message, event.Code = CleanText(event.Message, 256), CleanText(event.Code, 64)
 		return event, nil
 	case "progress", "complete":
 		for name, dst := range map[string]*uint64{"bytes": &event.Bytes, "nanos": &event.Nanos} {

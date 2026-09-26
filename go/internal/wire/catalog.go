@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
 )
@@ -39,13 +38,9 @@ func (c ServerCatalog) Validate() error {
 	}
 	ids, origins := map[string]bool{}, map[string]bool{}
 	for _, entry := range c.Servers {
-		idRune := func(r rune) bool {
-			return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
-				strings.ContainsRune("._-", r)
-		}
-		if len(entry.ID) == 0 || len(entry.ID) > 64 ||
-			strings.ContainsFunc(entry.ID, func(r rune) bool { return !idRune(r) }) ||
-			len(entry.Name) > 256 || len(entry.Location) > 256 || !plainText(entry.Name+entry.Location) {
+		if len(entry.ID) == 0 || len(entry.ID) > 64 || strings.ContainsFunc(entry.ID, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-')
+		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name+entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}
 		if ids[entry.ID] || origins[origin.Key(entry.URL)] {
@@ -159,9 +154,6 @@ func (c ServerCatalog) ConnectSources() []string {
 func BrowserConnectSourceSupported(raw string) bool {
 	return !strings.Contains(raw, "://[")
 }
-
-// plainText rejects C0, DEL and C1 controls, which a terminal would act on.
-func plainText(s string) bool { return !strings.ContainsFunc(s, unicode.IsControl) }
 
 // CanonicalOrigin is shared by catalogue decoders and authentication audiences.
 func CanonicalOrigin(raw string) (string, error) {

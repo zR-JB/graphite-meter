@@ -7,22 +7,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const missing = "—"
 
-// errorText drops the controls a remote peer's error message could carry, keeping line breaks.
-func errorText(err error) string {
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, err.Error())
-}
+// errorText applies the wire text policy: error messages may carry a remote peer's words.
+func errorText(err error) string { return wire.CleanText(err.Error(), 320) }
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
 

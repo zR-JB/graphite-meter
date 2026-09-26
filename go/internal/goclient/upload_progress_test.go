@@ -32,7 +32,8 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 		{"equal pair", [][]string{{held, held}}, 100, 10},
 		{"complete ends the feed", [][]string{{held, `{"type":"complete","bytes":130,"nanos":40}`,
 			`{"type":"progress","bytes":140,"nanos":50}`}}, 130, 40},
-		{"stale prefix of a replacement feed", [][]string{{held}, {`{"type":"progress","bytes":90,"nanos":5}`}}, 100, 10},
+		{"stale prefix of a replacement feed", [][]string{{held}, {`{"type":"progress","bytes":90,"nanos":5}`}},
+			100, 10},
 		{"replacement feed moves on", [][]string{{held}, {`{"type":"progress","bytes":90,"nanos":5}`,
 			`{"type":"progress","bytes":120,"nanos":30}`}}, 120, 30},
 	} {

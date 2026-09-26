@@ -319,7 +319,7 @@ func (m model) runView(w, h int) string {
 	}
 	title := "Results"
 	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + m.run.serverName(m.run.focus)
+		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
 	}
 	return top + "\n" + m.st.panel(title, results, w, resultsH)
 }
@@ -427,7 +427,7 @@ func (m model) liveView(w, h int) string {
 	}
 	out := []string{strings.Join(readings, "   ")}
 	if m.multipleRunServers() {
-		out = append(out, m.st.muted.Render("Latency to "+r.serverName(r.focus)+" · l switches server"))
+		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
 	}
 	chartH := h - len(out)
 	span := m.now.Sub(r.started).Seconds()

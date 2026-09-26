@@ -282,7 +282,7 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
 	case goclient.EventServerFailure:
-		m.notice = r.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
+		m.notice = m.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
 		if e.Phase == goclient.PhasePreparing {
@@ -346,17 +346,6 @@ func (r *runState) adopt(details *goclient.RunDetails) {
 	if !slices.ContainsFunc(details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus }) {
 		r.focus = details.LatencyFocus
 	}
-}
-
-func (r *runState) serverName(id string) string {
-	if r.details != nil {
-		for _, s := range r.details.Servers {
-			if s.Server.ID == id {
-				return s.Server.Name
-			}
-		}
-	}
-	return id
 }
 
 func (r *runState) nextFocus() {
