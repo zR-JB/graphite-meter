@@ -20,10 +20,10 @@ import type {
   RunResult,
   StageLatencySummary,
   BufferbloatGrade,
+  ConnectionRole,
 } from "./contract";
 import {
   shouldExitPhase,
-  bandForState,
   type ConfidenceScore,
   type LatencyConfidenceScore,
 } from "./adaptive";
@@ -49,9 +49,11 @@ import {
 const PRESENTATION_CADENCE_MS = 60;
 const RUNNER_DEADLINE_MS = PRESENTATION_CADENCE_MS;
 const STABILITY_CADENCE_MS = 100;
+const PROGRESS_CADENCE_MS = 250;
 
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
+const TIMER_GAP_MS = STALL_WATCHDOG_MS; // a longer tick gap interrupts stability
 const RECOVERY_ATTEMPTS = 2;
 const RECOVERY_ATTEMPT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 export const STAGE_RECOVERY_BUDGET_MS =
@@ -100,6 +102,8 @@ export interface CoreHost {
   // Direct events bypass measurement accumulation.
   emit(e: RunnerEvent): void;
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
+  /** A measurement request was refused for missing or expired authorization. */
+  authenticationRequired?(role: ConnectionRole): void;
   // A stage failure skips only that stage unless no usable work remains.
   failStage(
     stage: TransportRole,
@@ -162,14 +166,17 @@ export interface RunMeasurementSource {
   latencyResult(config: RunnerConfig): LatencyResult | null;
   latencySummaries(): Record<TransportRole, StageLatencySummary | null>;
   bufferbloatGrade(): BufferbloatGrade | null;
-  details(): NonNullable<RunResult["multiServer"]>;
+  details?(): NonNullable<RunResult["multiServer"]>;
 }
 
 export class RunnerCore implements NetworkRunner, CoreHost {
   #handlers = new Set<(e: RunnerEvent) => void>();
   #phase: Phase = "idle";
   #backend: RunnerBackend;
-  #source?: RunMeasurementSource;
+  /** Owns every reduction: the direct accumulator or a coordinated server set. */
+  readonly #reductions: RunMeasurementSource;
+  /** A coordinated source owns latency populations and per-server stall recovery. */
+  readonly #coordinated: boolean;
   #cfg: RunnerConfig | null = null;
 
   #tickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -177,9 +184,13 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #t0 = 0; // monotonic clock reading at run start
   #segments: Segment[] = [];
   #stagePreparing = false;
+  #stageEnding = false;
+  #endRequested = false;
   #stagePreparationId = 0;
   #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
+  #lastProgressAt = -Infinity;
+  #progressKey = "";
   #lastLatencySummaryAt = -Infinity;
   #lastThroughputDisplayAt: Record<FlowDirection, number> = {
     down: -Infinity,
@@ -224,8 +235,38 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   constructor(backend: RunnerBackend, source?: RunMeasurementSource) {
     this.#backend = backend;
-    this.#source = source;
+    this.#coordinated = !!source;
+    this.#reductions = source ?? this.#direct();
     backend.attach(this);
+  }
+
+  /** The direct runner reduces its own accumulator; a failed stage keeps partial evidence. */
+  #direct(): RunMeasurementSource {
+    const accum = this.#accum;
+    const failed = (stage: TransportRole) => this.#stageFailures.has(stage);
+    return {
+      confidence: (stage) => accum.confidence(stage),
+      trackStableRun: (stage, score, cfg) =>
+        accum.trackStableRun(stage, score, cfg),
+      canComplete: () => true,
+      armLatencyEarlyStop: () => accum.armLatencyEarlyStop(),
+      cancelLatencyEarlyStop: () => accum.cancelLatencyEarlyStop(),
+      confirmLatencyEarlyStop: () => accum.confirmLatencyEarlyStop(),
+      throughputResult: (stage, stable) =>
+        failed(stage)
+          ? accum.partialThroughputResult(stage)
+          : accum.throughputResult(stage, stable),
+      bidirectionalResult: (stable) =>
+        failed("bidirectional")
+          ? (this.#biResult ?? accum.partialBidirectionalResult())
+          : accum.bidirectionalResult(stable),
+      latencyResult: (cfg) =>
+        failed("latency")
+          ? accum.partialLatencyResult(cfg)
+          : accum.latencyResult(cfg),
+      latencySummaries: () => accum.latencySummaries(),
+      bufferbloatGrade: () => accum.bufferbloatGrade(),
+    };
   }
 
   /* ================= NetworkRunner surface ================= */
@@ -301,7 +342,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #resetRunState() {
     this.#running = false;
     this.#activeSeg = null;
-    this.#lastStabilityAt = -Infinity;
+    this.#lastStabilityAt = this.#lastProgressAt = -Infinity;
+    this.#progressKey = "";
     this.#lastThroughputDisplayAt.down = -Infinity;
     this.#lastThroughputDisplayAt.up = -Infinity;
     this.#bytesCumulative = 0;
@@ -329,7 +371,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#rateEstimator.up.reset();
     this.#presentedRate = { down: 0, up: 0 };
     this.#continuityId = 0;
-    this.#stagePreparing = false;
+    this.#stagePreparing = this.#stageEnding = this.#endRequested = false;
     this.#stagePreparationId++;
   }
 
@@ -341,7 +383,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#tickTimer) clearTimeout(this.#tickTimer);
     this.#tickTimer = null;
     this.#running = false;
-    this.#stagePreparing = false;
+    this.#stagePreparing = this.#stageEnding = false;
     this.#stagePreparationId++;
     const from = this.#phase;
     this.#flushLatencyPresentation();
@@ -361,6 +403,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   dispose(): void {
     this.#backend.dispose?.();
     this.abort();
+  }
+
+  /** End after the active stage with every retained result; later stages do not run. */
+  finish(): void {
+    if (!this.#running) return;
+    this.#endRequested = true;
+    // A pending stage end completes the run when it settles.
+    if (this.#stageEnding) return;
+    if (this.#tickTimer) clearTimeout(this.#tickTimer);
+    this.#tickTimer = null;
+    this.#stagePreparing = false;
+    this.#stagePreparationId++;
+    this.#finish();
   }
 
   /* ================= LIVE RECONFIGURE ================= */
@@ -412,7 +467,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const latencyBoundary = this.#latencyBuckets.nextBoundaryT;
     if (latencyBoundary != null)
       deadlines.push(latencyBoundary - this.#measuredElapsed);
-    if (!this.#source && isMeasuredPhase(this.#phase)) {
+    if (!this.#coordinated && isMeasuredPhase(this.#phase)) {
       deadlines.push(
         this.#measuring
           ? this.#lastSampleWall + STALL_WATCHDOG_MS - now
@@ -436,7 +491,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
     if (this.#stagePreparing) return;
-    this.#measuredElapsed += dtWall;
+    // A throttled or suspended page still enters every segment in order: one
+    // tick never crosses more than the current boundary, and a long timer gap
+    // restarts stability confirmation instead of confirming across it.
+    const current = segmentAt(this.#segments, this.#measuredElapsed);
+    this.#measuredElapsed = Math.min(
+      this.#measuredElapsed + Math.max(0, dtWall),
+      current?.end ?? Infinity,
+    );
+    if (dtWall > TIMER_GAP_MS && isMeasuredPhase(this.#phase))
+      this.resetMeasurementInterval();
     const elapsed = this.#measuredElapsed;
     for (const bucket of this.#latencyBuckets.closeThrough(
       this.#measuredElapsed,
@@ -449,7 +513,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
 
     // Prolonged silence trips the watchdog; the runner alone expires recovery.
-    if (!this.#source && this.#updateStallState(now)) return;
+    if (!this.#coordinated && this.#updateStallState(now)) return;
     if (!this.#measuring) this.#emitStallPresentation(now);
 
     const seg = segmentAt(this.#segments, elapsed);
@@ -538,10 +602,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       enter();
     }
 
-    // Progress within the current phase: real coverage, never faked.
+    // Progress within the current phase: real coverage, never faked. Presentation
+    // interpolates between these coarse updates; changes are sent at once.
     const phaseElapsedMs = elapsed - seg.start;
     const phaseBudgetMs = seg.end - seg.start;
     const frac = phaseElapsedMs / phaseBudgetMs;
+    const progressKey = `${seg.phase}:${phaseBudgetMs}:${this.#measuring}`;
+    if (
+      progressKey === this.#progressKey &&
+      now - this.#lastProgressAt < PROGRESS_CADENCE_MS
+    )
+      return;
+    this.#progressKey = progressKey;
+    this.#lastProgressAt = now;
     this.emit({
       type: "progress",
       phase: seg.phase,
@@ -672,7 +745,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       this.#noteRealSample();
     // A server collection owns independent latency populations and presentation
     // buckets. The schedule only needs liveness and its shared confidence check.
-    if (this.#source) {
+    if (this.#coordinated) {
       if (
         phase === "latency" &&
         performance.now() - this.#lastStabilityAt >= STABILITY_CADENCE_MS &&
@@ -733,9 +806,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.emit({
       type: "latencySummary",
       stage,
-      summary:
-        this.#source?.latencySummaries()[stage] ??
-        this.#accum.latencySummary(stage),
+      summary: this.#reductions.latencySummaries()[stage],
     });
   }
 
@@ -770,25 +841,9 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const seg = this.#activeSeg;
     if (!seg || seg.phase === "warmup") return false;
     const conf: ConfidenceScore | LatencyConfidenceScore =
-      this.#source?.confidence(seg.phase) ?? this.#accum.confidence(seg.phase);
-    const stable = (this.#source ?? this.#accum).trackStableRun(
-      seg.phase,
-      conf.score,
-      this.#cfg!.adaptive,
-    );
-    const now = performance.now();
-    if (now - this.#lastStabilityAt >= STABILITY_CADENCE_MS) {
-      this.#lastStabilityAt = now;
-      this.emit({
-        type: "stability",
-        snapshot: {
-          phase: seg.phase,
-          score: conf.score,
-          band: bandForState(stable, conf.score),
-          sampleCount: conf.sampleCount,
-        },
-      });
-    }
+      this.#reductions.confidence(seg.phase);
+    this.#reductions.trackStableRun(seg.phase, conf.score, this.#cfg!.adaptive);
+    this.#lastStabilityAt = performance.now();
     return this.#updateEarlyCandidate(seg, this.#measuredElapsed, conf);
   }
 
@@ -928,6 +983,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
   }
 
+  authenticationRequired(role: ConnectionRole): void {
+    if (this.#running) this.emit({ type: "authenticationRequired", role });
+  }
+
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
     if (this.#phase === "error") return;
     if (this.#tickTimer) {
@@ -970,22 +1029,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   }
 
   #hasRegimeCandidate(seg: Segment): boolean {
-    if (seg.phase === "download")
-      return this.#rateEstimator.down.snapshot().candidate !== null;
-    if (seg.phase === "upload")
-      return this.#rateEstimator.up.snapshot().candidate !== null;
-    if (seg.phase === "bidirectional")
-      return (
-        this.#rateEstimator.down.snapshot().candidate !== null ||
-        this.#rateEstimator.up.snapshot().candidate !== null
-      );
-    return false;
+    const { down, up } = this.#rateEstimator;
+    return seg.phase === "download"
+      ? down.hasCandidate
+      : seg.phase === "upload"
+        ? up.hasCandidate
+        : seg.phase === "bidirectional" &&
+          (down.hasCandidate || up.hasCandidate);
   }
 
   #cancelEarlyCandidate(): void {
     this.#earlyCandidateSeg = -1;
     this.#earlyCandidateStartedAt = 0;
-    (this.#source ?? this.#accum).cancelLatencyEarlyStop();
+    this.#reductions.cancelLatencyEarlyStop();
   }
 
   /** Arm, revoke, or confirm an early finish without changing measured time. */
@@ -1003,7 +1059,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
         : ({ kind: "transfer" } as const);
     const eligible =
       this.#measuring &&
-      (this.#source?.canComplete(seg.phase) ?? true) &&
+      this.#reductions.canComplete(seg.phase) &&
       !this.#hasRegimeCandidate(seg) &&
       shouldExitPhase({
         ...evidencePolicy,
@@ -1021,14 +1077,12 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#earlyCandidateSeg !== segIndex) {
       this.#earlyCandidateSeg = segIndex;
       this.#earlyCandidateStartedAt = elapsed;
-      if (seg.phase === "latency")
-        (this.#source ?? this.#accum).armLatencyEarlyStop();
+      if (seg.phase === "latency") this.#reductions.armLatencyEarlyStop();
     }
     if (elapsed - this.#earlyCandidateStartedAt < cfg.adaptive.confirmationMs)
       return false;
 
-    if (seg.phase === "latency")
-      (this.#source ?? this.#accum).confirmLatencyEarlyStop();
+    if (seg.phase === "latency") this.#reductions.confirmLatencyEarlyStop();
     const previousTotalMs = this.#segments.at(-1)?.end ?? 0;
     const truncated = truncateSegmentAt(this.#segments, seg, elapsed);
     this.#segments = truncated.segments;
@@ -1043,19 +1097,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const ending = this.#backend.onStageEnd(activity);
     if (!ending) return false;
     const preparationId = ++this.#stagePreparationId;
-    this.#stagePreparing = true;
+    this.#stagePreparing = this.#stageEnding = true;
     void ending.then(
       () => {
         if (preparationId !== this.#stagePreparationId || !this.#running)
           return;
-        this.#stagePreparing = false;
+        this.#stagePreparing = this.#stageEnding = false;
         this.#lastRealNow = performance.now();
-        done();
+        if (this.#endRequested) this.#complete();
+        else done();
         this.#armTick();
       },
       (cause) => {
         if (preparationId !== this.#stagePreparationId) return;
-        this.#stagePreparing = false;
+        this.#stagePreparing = this.#stageEnding = false;
         this.fail(
           "protocol-error",
           `${activity.stage} finalization failed`,
@@ -1079,11 +1134,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
     if (phase === "latency") {
       if (!cfg.stages.latency || this.#latResult) return;
-      this.#latResult = this.#source
-        ? this.#source.latencyResult(cfg)
-        : failed
-          ? this.#accum.partialLatencyResult(cfg)
-          : this.#accum.latencyResult(cfg);
+      this.#latResult = this.#reductions.latencyResult(cfg);
       if (this.#latResult)
         this.emit({
           type: "stageResult",
@@ -1098,17 +1149,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
       (phase === "download" ? this.#dlResult : this.#ulResult)
     )
       return;
-    const result = this.#source
-      ? this.#source.throughputResult(
-          phase,
-          this.#completedEarlyStages.has(phase),
-        )
-      : failed
-        ? this.#accum.partialThroughputResult(phase)
-        : this.#accum.throughputResult(
-            phase,
-            this.#completedEarlyStages.has(phase),
-          );
+    const result = this.#reductions.throughputResult(
+      phase,
+      this.#completedEarlyStages.has(phase),
+    );
     if (!result) return;
     if (phase === "download") this.#dlResult = result;
     else this.#ulResult = result;
@@ -1117,48 +1161,43 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= FINISH → RunResult ================= */
   #finish() {
-    const complete = (): void => {
-      if (this.#tickTimer) clearTimeout(this.#tickTimer);
-      this.#tickTimer = null;
-      this.#running = false;
+    if (
+      !this.#activeSeg ||
+      !this.#waitForStageEnd(this.#activeSeg.activity, () => this.#complete())
+    )
+      this.#complete();
+  }
 
-      const cfg = this.#cfg!;
-      this.#finalizeStage(this.#phase);
-      const actualMs = Math.max(0, performance.now() - this.#t0);
-      const bidirectional = cfg.stages.bidirectional
-        ? this.#source
-          ? this.#source.bidirectionalResult(
-              this.#completedEarlyStages.has("bidirectional"),
-            )
-          : this.#stageFailures.has("bidirectional")
-            ? (this.#biResult ?? this.#accum.partialBidirectionalResult())
-            : this.#accum.bidirectionalResult(
-                this.#completedEarlyStages.has("bidirectional"),
-              )
-        : null;
-      const result = {
-        download: this.#dlResult,
-        upload: this.#ulResult,
-        bidirectional,
-        latency: this.#latResult,
-        bufferbloat: (this.#source ?? this.#accum).bufferbloatGrade(),
-        latencyByStage: (this.#source ?? this.#accum).latencySummaries(),
-        ...(this.#source ? { multiServer: this.#source.details() } : {}),
-        stageFailures: Object.fromEntries(this.#stageFailures),
-        startedAt: Date.now() - actualMs,
-        durationMs: actualMs,
-      };
+  #complete(): void {
+    if (this.#tickTimer) clearTimeout(this.#tickTimer);
+    this.#tickTimer = null;
+    this.#running = false;
 
-      this.#phase = "complete";
-      this.#backend.onComplete();
-      this.emit({ type: "complete", result });
+    const cfg = this.#cfg!;
+    this.#finalizeStage(this.#phase);
+    const actualMs = Math.max(0, performance.now() - this.#t0);
+    const bidirectional = cfg.stages.bidirectional
+      ? this.#reductions.bidirectionalResult(
+          this.#completedEarlyStages.has("bidirectional"),
+        )
+      : null;
+    const result = {
+      download: this.#dlResult,
+      upload: this.#ulResult,
+      bidirectional,
+      latency: this.#latResult,
+      bufferbloat: this.#reductions.bufferbloatGrade(),
+      latencyByStage: this.#reductions.latencySummaries(),
+      ...(this.#reductions.details
+        ? { multiServer: this.#reductions.details() }
+        : {}),
+      stageFailures: Object.fromEntries(this.#stageFailures),
+      startedAt: Date.now() - actualMs,
+      durationMs: actualMs,
     };
 
-    if (
-      this.#activeSeg &&
-      this.#waitForStageEnd(this.#activeSeg.activity, complete)
-    )
-      return;
-    complete();
+    this.#phase = "complete";
+    this.#backend.onComplete();
+    this.emit({ type: "complete", result });
   }
 }

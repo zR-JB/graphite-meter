@@ -1,8 +1,7 @@
-import { test, expect } from "bun:test";
+import { test, expect, jest } from "bun:test";
 import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
-import { stubFetch } from "./test-helpers.test";
-import { nextBackoff } from "./backoff";
+import { stubFetch } from "./test-helpers.testutil";
 
 const MINT = { url: "https://meter.test/wt/session" };
 
@@ -103,15 +102,16 @@ function respondOnAbort(): {
 
 test("a mint that never answers is abandoned on its own bound", async () => {
   const hang = respondOnAbort();
+  jest.useFakeTimers();
   try {
-    expect(await mintWtToken({ url: "https://meter.test/hangs" })).toEqual({
-      token: "",
-      authRequired: false,
-    });
+    const pending = mintWtToken({ url: "https://meter.test/hangs" });
+    jest.advanceTimersByTime(3_000);
+    expect(await pending).toEqual({ token: "", authRequired: false });
   } finally {
+    jest.useRealTimers();
     hang.restore();
   }
-}, 10_000);
+});
 
 test("a caller's signal cuts the mint short", async () => {
   const hang = respondOnAbort();
@@ -213,7 +213,7 @@ test("repeated unavailable dials stay within the eight-ticket pool and honor ser
     let backoff = 0;
     for (let elapsed = 0; elapsed < 90_000;) {
       expect((await mintWtToken(mint)).token).not.toBe("");
-      backoff = nextBackoff(backoff, 100, 2000);
+      backoff = backoff ? Math.min(backoff * 2, 2000) : 100;
       elapsed += backoff;
       now += backoff;
     }

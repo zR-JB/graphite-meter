@@ -1,5 +1,5 @@
 import { test, expect, afterEach } from "bun:test";
-import { bootWorker, type WorkerRealm } from "./test-helpers.test";
+import { bootWorker, type WorkerRealm } from "./test-helpers.testutil";
 
 const globals = globalThis as Record<string, unknown>;
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";

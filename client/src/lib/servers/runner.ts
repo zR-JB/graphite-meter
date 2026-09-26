@@ -12,7 +12,11 @@ import {
   type PreparedServer,
   type ParticipantTransport,
 } from "./coordinator";
-import type { MultiServerResult, ServerFailure } from "./measurement";
+import {
+  pathEvidence,
+  type MultiServerResult,
+  type ServerFailure,
+} from "./measurement";
 import { planServerStreams, validateServerStreams } from "./streamBudget";
 
 type BackendFactory = (
@@ -23,16 +27,15 @@ type BackendFactory = (
 /** A single receiver uses the ordinary runner; only multiple receivers require aggregation. */
 export function createServerRunner(
   servers: PreparedServer[],
-  focus: string,
-  createBackend: BackendFactory = (paths, count) =>
-    new RealBackend(paths, count),
+  latencySource: string,
+  createBackend?: BackendFactory,
 ): NetworkRunner {
   if (servers.length !== 1)
-    return new ServerCoordinator(servers, focus, createBackend);
+    return new ServerCoordinator(servers, latencySource, createBackend);
   const selected = servers[0];
   const planned = [{ id: selected.server.id, paths: selected.paths }];
   const core: RunnerCore = new RunnerCore(
-    createBackend(
+    (createBackend ?? ((paths, count) => new RealBackend(paths, count)))(
       selected.paths,
       (activity, dir) =>
         planServerStreams(core.config!, planned, activity)[selected.server.id][
@@ -89,7 +92,6 @@ function singleServerDetails(
   failures: ServerFailure[],
 ): MultiServerResult {
   const server = identity(selected.server);
-  const { throughput, latency } = selected.paths;
   return {
     selection: [server],
     participants: [server.id],
@@ -100,21 +102,7 @@ function singleServerDetails(
     servers: [
       {
         server,
-        throughput: {
-          origin: throughput.target.origin,
-          transport: throughput.target.transport,
-          protocol: throughput.fetch.protocol,
-          ...(throughput.browserProtocol
-            ? { browserProtocol: throughput.browserProtocol }
-            : {}),
-          clientIpVersion: throughput.probe.clientIpVersion,
-        },
-        latencyTarget: latency
-          ? {
-              origin: latency.target.origin,
-              transport: latency.target.transport,
-            }
-          : null,
+        ...pathEvidence(selected.paths),
         latency: result.latency,
         latencyByStage: result.latencyByStage,
         bufferbloat: result.bufferbloat,

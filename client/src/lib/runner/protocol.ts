@@ -28,12 +28,3 @@ export function compensationTransportFromProtocol(
   if (normalized === "http2") return "http2";
   return secure ? "https-tls" : "http1-clear";
 }
-
-export function compensationTransportLabel(
-  transport: CompensationTransport,
-): string {
-  if (transport === "http1-clear") return `${httpProtocolLabel("http1")} clear`;
-  if (transport === "https-tls") return `${httpProtocolLabel("http1")} TLS`;
-  if (transport === "http2") return httpProtocolLabel("http2");
-  return `${httpProtocolLabel("http3")} QUIC`;
-}

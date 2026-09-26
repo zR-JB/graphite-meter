@@ -1,4 +1,4 @@
-import { testClock } from "../workers/test-helpers.test";
+import { testClock } from "../workers/test-helpers.testutil";
 import { test, expect } from "bun:test";
 import {
   TransferDirection,

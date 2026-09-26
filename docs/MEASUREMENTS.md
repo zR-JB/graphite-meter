@@ -53,9 +53,13 @@ are computed component by component from the chosen window's protocol and IP-fam
 evidence; missing evidence makes the estimate unavailable.
 
 Advancing receiver time with unchanged bytes establishes measured zero delivery.
-A missing, stale, or zero-duration component does not establish a zero rate. Missing
-checkpoint evidence interrupts the aggregate interval; recovering evidence starts
-a fresh interval and stability confirmation. Unique measured-byte ledgers are
+A missing, stale, or zero-duration component does not establish a zero rate. That
+boundary is skipped: the interval keeps its previous valid boundary, and the next
+valid boundary spans the gap in each receiver's own clock. A replaced receiver
+cannot be spanned and starts a fresh interval and stability confirmation. After
+measurement has started, a server whose checkpoints fail at three consecutive
+boundaries is removed; a refused grant removes it at once and asks for sign-in.
+Unique measured-byte ledgers are
 independent of headline-window selection and do not count overlapping checkpoints,
 feed reports or interval boundaries twice. Warmup bytes are excluded.
 
@@ -75,8 +79,21 @@ one population for presentation; there is no averaged multi-server ping or blend
 responsiveness grade. The browser can probe one explicitly selected primary server
 (the default) or every selected server. Primary selection is fixed before the run;
 other servers still generate throughput load, and their unmeasured latency fields
-remain null. Switching the displayed server never starts, stops or retargets probes. [Server controls and deployment](SERVERS.md) describe selection,
+remain null. The headline latency and grade come from the primary server, or with
+All from the server with the lowest preparation RTT, fixed before the run.
+Switching the displayed server never starts, stops or retargets probes and never
+changes saved statistics. [Server controls and deployment](SERVERS.md) describe selection,
 authorization, shared-origin stream budgets and result details.
+
+### Hidden pages
+
+A run continues while its page is hidden. Workers keep moving and timing bytes and
+probes; the page's own timers may be throttled or suspended. The stage schedule
+still enters every warmup and stage in order: one timer tick never advances past
+the current segment's end, so a long gap shortens only the segment it occurred in.
+A timer gap longer than 1.5 seconds also restarts stability confirmation, so an
+adaptive early finish never relies on evidence across the gap. Rates always divide
+by the elapsed time of their own byte counters.
 
 ## Round-trip latency and probe timeouts
 

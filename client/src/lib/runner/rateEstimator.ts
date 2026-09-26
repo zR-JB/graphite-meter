@@ -122,6 +122,14 @@ export class GrowingRateEstimator {
     return this.snapshot(regimeChanged);
   }
 
+  get hasCandidate(): boolean {
+    return this.#candidate !== null;
+  }
+
+  get presentedBytesPerSec(): number {
+    return this.#presentedBytesPerSec;
+  }
+
   snapshot(regimeChanged = false): RateEstimate {
     return {
       presentedBytesPerSec: this.#presentedBytesPerSec,

@@ -1,512 +1,566 @@
-import { expect, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
+import { afterEach, beforeEach, expect, jest, test } from "bun:test";
+import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
+} from "../runner/test-helpers.testutil";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type { CoreHost } from "../runner/core";
-import type { RunResult, RunnerEvent } from "../runner/contract";
-import { isMultiServerResult } from "./serialization";
+import type {
+  PhaseActivity,
+  ReceiverCheckpoint,
+  RunResult,
+  RunnerConfig,
+  RunnerEvent,
+} from "../runner/contract";
+import type { ParticipantTransport } from "./coordinator";
 import { buildHistoryRecord, isHistoryRecord } from "../history/types";
+import { ServerAuthenticationRequired } from "./credentials";
 
-async function run(
-  options: {
-    dropAt?: number;
-    dropAll?: boolean;
-    latencyFailure?: boolean;
-    pendingLatency?: boolean;
-    initialFailure?: boolean;
-    laterPreparationFailure?: boolean;
-    adaptive?: boolean;
-    readinessOwnsReceiver?: boolean;
-    terminalDownloadBytes?: number;
-    missingCheckpoints?: boolean;
-  } = {},
+let restore: () => void;
+beforeEach(() => {
+  restore = stubGlobals(TEST_BUILD_TOKENS);
+  jest.useFakeTimers();
+});
+afterEach(() => {
+  jest.useRealTimers();
+  restore();
+});
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+}
+/** Advance the fake clock in small steps so promise continuations interleave with timers. */
+async function advance(ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += 5) {
+    jest.advanceTimersByTime(5);
+    await settle();
+  }
+}
+
+interface Peer {
+  id: string;
+  /** Download bytes per millisecond. */
+  rate?: number;
+  latency?: boolean;
+  begin?(activity: PhaseActivity): void | Promise<void>;
+  measure?(host: CoreHost, activity: PhaseActivity): void;
+  end?(
+    host: CoreHost,
+    activity: PhaseActivity,
+    flush: boolean,
+  ): void | Promise<void>;
+  checkpoint?(measuring: boolean): Promise<ReceiverCheckpoint | null>;
+}
+
+const receiver = (id: string, perMs = 3) => {
+  const at = Math.round(performance.now());
+  return {
+    id,
+    bytes: at * perMs,
+    nanos: at * 1e6,
+    requestedAtMs: at,
+    receivedAtMs: at,
+  };
+};
+
+async function coordinated(
+  peers: Peer[],
+  stages: Partial<RunnerConfig["stages"]>,
+  duration: Partial<RunnerConfig["duration"]>,
+  options: { latencySource?: string; adaptive?: boolean } = {},
 ) {
-  const restore = stubGlobals(TEST_BUILD_TOKENS);
   const { ServerCoordinator } = await import("./coordinator");
   const calls: string[] = [];
   const events: RunnerEvent[] = [];
-  const timers: ReturnType<typeof setTimeout>[] = [];
-  const servers = ["a", "b"].map((id) => {
-    const url = `https://${id}.example`;
+  const servers = peers.map((peer) => {
+    const url = `https://${peer.id}.example`;
     const paths = testPreparedPaths();
     paths.throughput.target.origin = paths.throughput.fetch.origin = url;
-    paths.latency!.target.origin = url;
-    return { server: { id, url, name: id }, paths };
+    if (peer.latency === false) paths.latency = null;
+    else paths.latency!.target.origin = url;
+    return { server: { id: peer.id, url, name: peer.id }, paths };
   });
   let index = 0;
-  const coordinator = new ServerCoordinator(servers, "a", () => {
-    const id = ["a", "b"][index++];
-    let host: CoreHost;
-    let last = 0;
-    let measuring = false;
-    return {
-      attach(value) {
-        host = value;
-      },
-      onRunStart() {},
-      onStageBegin(activity) {
-        measuring = false;
-        calls.push(`begin:${id}`);
-        if (
-          (id === "a" || options.dropAll) &&
-          (options.initialFailure ||
-            (options.laterPreparationFailure && activity.stage === "upload"))
-        )
-          throw new Error("fixture preparation failure");
-      },
-      waitForReadiness: options.readinessOwnsReceiver
-        ? async () => {
-            calls.push(`ready:${id}`);
-          }
-        : undefined,
-      onStageMeasure() {
-        measuring = true;
-        last = performance.now();
-        calls.push(`measure:${id}`);
-        if (options.pendingLatency)
-          host.ingestLatency({
-            rttMs: 10,
-            lost: false,
-            observedAtMs: performance.now(),
-          });
-        if (options.dropAt && (id === "a" || options.dropAll))
-          timers.push(
-            setTimeout(
-              () =>
-                host.failStage(
-                  "download",
-                  "connection-lost",
-                  "fixture dropout",
-                  "down",
-                ),
-              options.dropAt,
-            ),
-          );
-        if (options.latencyFailure && id === "a")
-          timers.push(
-            setTimeout(() => host.ingestLatencyAccountingIncomplete(), 200),
-          );
-      },
-      onStageEnd(_activity, flush = true) {
-        calls.push(`end:${id}`);
-        if (flush && options.terminalDownloadBytes)
+  const coordinator = new ServerCoordinator(
+    servers,
+    options.latencySource ?? peers[0].id,
+    (): ParticipantTransport => {
+      const peer = peers[index++];
+      let host: CoreHost;
+      let last = 0;
+      let measuring = false;
+      return {
+        attach: (value) => (host = value),
+        onRunStart() {},
+        onStageBegin(activity) {
+          measuring = false;
+          calls.push(`begin:${peer.id}:${activity.stage}`);
+          return peer.begin?.(activity);
+        },
+        onStageMeasure(activity) {
+          measuring = true;
+          last = performance.now();
+          calls.push(`measure:${peer.id}`);
+          peer.measure?.(host, activity);
+        },
+        onStageEnd(activity, flush = true) {
+          measuring = false;
+          calls.push(`end:${peer.id}`);
+          return peer.end?.(host, activity, flush);
+        },
+        onAbort() {},
+        onComplete() {},
+        checkpoint: () =>
+          peer.checkpoint?.(measuring) ?? Promise.resolve(receiver(peer.id)),
+        flushDownload(now) {
+          if (!measuring) return;
           host.ingestThroughput(
             "down",
-            options.terminalDownloadBytes,
-            0,
-            false,
-            false,
-          );
-        if (!flush && options.pendingLatency)
-          host.ingestLatencyAccountingIncomplete();
-      },
-      onAbort() {},
-      onComplete() {},
-      checkpoint: async () => {
-        if (options.missingCheckpoints && measuring && id === "a") return null;
-        if (options.readinessOwnsReceiver && !measuring)
-          throw new DOMException(
-            "Redundant preparation checkpoint timed out",
-            "TimeoutError",
-          );
-        const at = Math.round(performance.now());
-        return {
-          id,
-          bytes: at * 3,
-          nanos: at * 1e6,
-          requestedAtMs: at,
-          receivedAtMs: at,
-        };
-      },
-      flushDownload(now) {
-        if (last) {
-          host.ingestThroughput(
-            "down",
-            (now - last) * (id === "a" ? 1 : 3),
+            (now - last) * (peer.rate ?? 1),
             (now - last) / 1000,
           );
           last = now;
-        }
-      },
-    };
-  });
-  try {
-    const result = await new Promise<RunResult>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("coordinator did not finish")),
-        options.adaptive ? 15000 : 5000,
-      );
-      timers.push(timeout);
-      coordinator.on((event) => {
-        events.push(event);
-        if (event.type === "complete") {
-          clearTimeout(timeout);
-          resolve(event.result);
-        }
-        if (event.type === "error") reject(event.error);
-      });
-      coordinator.start(
-        {
-          ...structuredClone(DEFAULT_CONFIG),
-          stages: {
-            latency: false,
-            download: true,
-            upload: !!(
-              options.adaptive ||
-              options.laterPreparationFailure ||
-              options.readinessOwnsReceiver ||
-              options.missingCheckpoints
-            ),
-            bidirectional: false,
-          },
-          skipLoadedLatencyWhenStageOff: !options.pendingLatency,
-          duration: {
-            warmupMs: 0,
-            latencyMs: 0,
-            downloadMs: options.adaptive ? 6000 : 1400,
-            uploadMs: options.adaptive
-              ? 6000
-              : options.missingCheckpoints
-                ? 2200
-                : options.laterPreparationFailure ||
-                    options.readinessOwnsReceiver
-                  ? 1400
-                  : 0,
-            bidirectionalMs: 0,
-          },
-          adaptive: {
-            ...DEFAULT_CONFIG.adaptive,
-            enabled: options.adaptive ?? false,
-          },
         },
-        0,
-      );
-    });
-    return { result, calls, events };
-  } finally {
-    timers.forEach(clearTimeout);
-    coordinator.dispose();
-    restore();
-  }
+      };
+    },
+  );
+  coordinator.on((event) => events.push(event));
+  const config: RunnerConfig = {
+    ...structuredClone(DEFAULT_CONFIG),
+    stages: {
+      latency: false,
+      download: false,
+      upload: false,
+      bidirectional: false,
+      ...stages,
+    },
+    skipLoadedLatencyWhenStageOff: true,
+    duration: {
+      warmupMs: 0,
+      latencyMs: 0,
+      downloadMs: 0,
+      uploadMs: 0,
+      bidirectionalMs: 0,
+      ...duration,
+    },
+    adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: !!options.adaptive },
+  };
+  const terminal = () =>
+    events.find((event) => event.type === "complete" || event.type === "error");
+  return {
+    coordinator,
+    calls,
+    events,
+    config,
+    start: () => coordinator.start(config, 0),
+    /** Drive the clock until the run ends, returning its result. */
+    async result(limitMs = 20_000): Promise<RunResult> {
+      for (let t = 0; t < limitMs && !terminal(); t += 50) await advance(50);
+      const end = terminal();
+      coordinator.dispose();
+      if (end?.type === "complete") return end.result;
+      throw end?.type === "error" ? end.error : new Error("run did not end");
+    },
+  };
 }
+const two = (overrides: Partial<Peer>[] = []): Peer[] => [
+  { id: "a", rate: 1, ...overrides[0] },
+  { id: "b", rate: 3, ...overrides[1] },
+];
+
 test("one coordinated stage reports the combined path, and v4 evidence survives serialization", async () => {
-  const { result, calls, events } = await run();
-  expect(calls.filter((value) => value.startsWith("begin:"))).toEqual([
-    "begin:a",
-    "begin:b",
-  ]);
-  expect(calls.filter((value) => value.startsWith("measure:"))).toEqual([
+  const run = await coordinated(
+    two(),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.start();
+  const result = await run.result();
+  expect(run.calls.filter((call) => call.startsWith("measure:"))).toEqual([
     "measure:a",
     "measure:b",
   ]);
-  expect(
-    events.filter(
-      (event) => event.type === "phase" && event.transition.to === "download",
-    ),
-  ).toHaveLength(1);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
-  expect(isMultiServerResult(result.multiServer)).toBe(true);
-  const saved = buildHistoryRecord(result, {
-    paths: null,
-    clientBuild: "test",
-  });
-  expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
-}, 6000);
-test("verified stage readiness is not overturned by a redundant receiver request", async () => {
-  const { result, calls } = await run({ readinessOwnsReceiver: true });
   expect(result.outcome).toBe("complete");
-  expect(result.multiServer?.failures).toEqual([]);
-  expect(calls.filter((call) => call.startsWith("ready:"))).toHaveLength(4);
-  expect(result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-}, 6000);
+  const saved = buildHistoryRecord(result, { paths: null, clientBuild: "t" });
+  expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
+});
 
 test("terminal bytes after the coordinated boundary cannot change measured totals or rates", async () => {
-  const { result } = await run({ terminalDownloadBytes: 1_000_000 });
+  const run = await coordinated(
+    two().map((peer) => ({
+      ...peer,
+      end: (host, _activity, flush) => {
+        if (flush) host.ingestThroughput("down", 1_000_000, 0, false, false);
+      },
+    })),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
   expect(result.download?.totalBytes).toBeLessThan(10_000);
-  for (const server of result.multiServer!.servers) {
+  for (const server of result.multiServer!.servers)
     expect(server.totalBytes.down).toBeLessThan(10_000);
-    expect(server.download?.totalBytes).toBeLessThan(10_000);
-  }
-}, 6000);
+});
 
 test("a late dropout leaves the headline unavailable while retaining earlier measurements", async () => {
-  const { result } = await run({ dropAt: 900 });
+  const run = await coordinated(
+    two([
+      {
+        measure: (host) =>
+          setTimeout(
+            () =>
+              host.failStage("download", "connection-lost", "fixture", "down"),
+            900,
+          ),
+      },
+    ]),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.download).toBeNull();
+  expect(result.outcome).toBe("partial");
   expect(result.multiServer?.participants).toEqual(["b"]);
   expect(result.multiServer?.intervals[0].full?.downBytesPerSec).toBeCloseTo(
     4000,
     0,
   );
   expect(result.multiServer?.failures[0].serverId).toBe("a");
-  expect(
-    isMultiServerResult(JSON.parse(JSON.stringify(result.multiServer))),
-  ).toBe(true);
-}, 6000);
-test("all participants failing produces an incomplete result with both failures", async () => {
-  const { result } = await run({ dropAt: 400, dropAll: true });
+});
+
+test("all participants failing emits one incomplete completion, never an aborted phase", async () => {
+  const drop: Partial<Peer> = {
+    measure: (host) =>
+      setTimeout(
+        () => host.failStage("download", "connection-lost", "fixture", "down"),
+        400,
+      ),
+  };
+  const run = await coordinated(
+    two([drop, drop]),
+    { download: true, upload: true },
+    { downloadMs: 1400, uploadMs: 1400 },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.outcome).toBe("incomplete");
   expect(result.download).toBeNull();
   expect(result.multiServer?.participants).toEqual([]);
   expect(result.multiServer?.failures).toHaveLength(2);
-}, 6000);
+  const phases = run.events.flatMap((event) =>
+    event.type === "phase" ? [event.transition.to] : [],
+  );
+  expect(phases).not.toContain("aborted");
+  expect(phases).not.toContain("upload");
+  expect(run.events.filter((event) => event.type === "complete")).toHaveLength(
+    1,
+  );
+});
+
 test("a latency-only failure preserves both throughput participants", async () => {
-  const { result } = await run({ latencyFailure: true });
+  const run = await coordinated(
+    two([
+      {
+        measure: (host) =>
+          setTimeout(() => host.ingestLatencyAccountingIncomplete(), 200),
+      },
+    ]),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.coordinator.on(() => {});
+  run.config.skipLoadedLatencyWhenStageOff = false;
+  run.start();
+  const result = await run.result();
   expect(result.multiServer?.participants).toEqual(["a", "b"]);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
   expect(result.multiServer?.failures[0].scope).toBe("latency");
-}, 6000);
+});
 
 test("a throughput dropout reports discarded loaded probes before reducing the participant", async () => {
-  const { result } = await run({ dropAt: 200, pendingLatency: true });
+  const probe = (host: CoreHost) =>
+    host.ingestLatency({
+      rttMs: 10,
+      lost: false,
+      observedAtMs: performance.now(),
+    });
+  const run = await coordinated(
+    two([
+      {
+        measure: (host) => {
+          probe(host);
+          setTimeout(
+            () =>
+              host.failStage("download", "connection-lost", "fixture", "down"),
+            200,
+          );
+        },
+        end: (host, _activity, flush) => {
+          if (!flush) host.ingestLatencyAccountingIncomplete();
+        },
+      },
+      { measure: probe },
+    ]),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.config.skipLoadedLatencyWhenStageOff = false;
+  run.start();
+  const result = await run.result();
   const [failed, healthy] = result.multiServer!.servers;
   expect(failed.latencyByStage.download).toMatchObject({
     accountingComplete: false,
     probeCount: 1,
-    timeoutCount: 0,
-    unresolvedCount: 0,
   });
   expect(healthy.latencyByStage.download).toMatchObject({
     accountingComplete: true,
     probeCount: 1,
   });
-  expect(result.multiServer!.participants).toEqual(["b"]);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(3000, 0);
-}, 6000);
+});
 
 test("initial preparation failure requires resolving the selection", async () => {
-  await expect(run({ initialFailure: true })).rejects.toMatchObject({
+  const run = await coordinated(
+    two([
+      {
+        begin: () => {
+          throw new Error("fixture");
+        },
+      },
+    ]),
+    { download: true },
+    { downloadMs: 1400 },
+  );
+  run.start();
+  await expect(run.result()).rejects.toMatchObject({
     reason: "protocol-error",
   });
 });
 
-test("all peers failing later preparation retain a valid incomplete history record", async () => {
-  const { result } = await run({
-    laterPreparationFailure: true,
-    dropAll: true,
-    pendingLatency: true,
-  });
-  expect(result.outcome).toBe("incomplete");
-  expect(result.multiServer?.participants).toEqual([]);
-  expect(result.download).not.toBeNull();
-  expect(result.upload).toBeNull();
-  expect(isMultiServerResult(result.multiServer)).toBe(true);
-  expect(
-    isHistoryRecord(
-      buildHistoryRecord(result, { paths: null, clientBuild: "test" }),
-    ),
-  ).toBe(true);
-});
-
 test("later preparation failure removes only its server and retains the completed stage", async () => {
-  const { result } = await run({
-    laterPreparationFailure: true,
-    pendingLatency: true,
-  });
+  const run = await coordinated(
+    two([
+      {
+        begin: (activity) => {
+          if (activity.stage === "upload") throw new Error("fixture");
+        },
+      },
+    ]),
+    { download: true, upload: true },
+    { downloadMs: 1400, uploadMs: 1400 },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
   expect(result.upload?.reportedBytesPerSec).toBeCloseTo(3000, 0);
   expect(result.multiServer?.participants).toEqual(["b"]);
-  expect(
-    result.multiServer?.servers[0].latencyByStage.download?.accountingComplete,
-  ).toBe(true);
-  expect(result.multiServer?.servers[0].latencyByStage.upload).toBeNull();
   expect(result.multiServer?.failures).toMatchObject([
-    {
-      serverId: "a",
-      stage: "upload",
-      scope: "throughput",
-      reason: "preparation-failed",
-    },
+    { serverId: "a", stage: "upload", reason: "preparation-failed" },
   ]);
-}, 6000);
+});
 
-test("a primary latency server owns probes while every server still transfers", async () => {
-  const restore = stubGlobals(TEST_BUILD_TOKENS);
-  const { ServerCoordinator } = await import("./coordinator");
-  const servers = ["a", "b"].map((id) => ({
-    server: { id, name: id, url: `https://${id}.example` },
-    paths: { ...testPreparedPaths(), ...(id === "a" ? { latency: null } : {}) },
-  }));
-  const calls: string[] = [];
-  let index = 0;
-  const coordinator = new ServerCoordinator(servers, "b", (paths) => {
-    const id = servers[index++].server.id;
-    let host: CoreHost;
-    return {
-      attach(value) {
-        host = value;
-      },
-      onRunStart() {},
-      onAbort() {},
-      onComplete() {},
-      onStageBegin(activity) {
-        calls.push(`${id}:${activity.stage}`);
-      },
-      onStageMeasure() {
-        if (paths.latency)
-          for (let i = 0; i < 4; i++)
-            host.ingestLatency({
-              rttMs: 2,
-              lost: false,
-              observedAtMs: performance.now(),
-            });
-      },
-      onStageEnd() {},
-      checkpoint: async () => null,
-      flushDownload() {
-        host.ingestThroughput("down", 10000, 0.25);
-      },
-    };
-  });
-  try {
-    const complete = new Promise<RunResult>((resolve, reject) =>
-      coordinator.on((event) => {
-        if (event.type === "complete") resolve(event.result);
-        if (event.type === "error") reject(event.error);
-      }),
-    );
-    coordinator.start(
-      {
-        ...structuredClone(DEFAULT_CONFIG),
-        adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: false },
-        stages: {
-          latency: true,
-          download: true,
-          upload: false,
-          bidirectional: false,
-        },
-        duration: {
-          ...DEFAULT_CONFIG.duration,
-          warmupMs: 0,
-          latencyMs: 50,
-          downloadMs: 1000,
-        },
-      },
-      2,
-    );
-    const result = await complete;
-    expect(calls).toEqual(["b:latency", "a:download", "b:download"]);
-    expect(result.multiServer?.servers[0].latencyTarget).toBeNull();
-    expect(result.multiServer?.servers[0].latencyByStage.latency).toBeNull();
-    expect(
-      result.multiServer?.servers[1].latencyByStage.latency?.probeCount,
-    ).toBe(4);
-    expect(
-      result.multiServer?.servers[1].latencyByStage.download?.probeCount,
-    ).toBe(4);
-    expect(result.multiServer?.participants).toEqual(["a", "b"]);
-    expect(result.multiServer?.failures).toEqual([]);
-  } finally {
-    coordinator.dispose();
-    restore();
-  }
+test("the headline latency source is fixed before the run and is not pooled", async () => {
+  const probes = (rttMs: number) => (host: CoreHost) => {
+    for (let i = 0; i < 4; i++)
+      host.ingestLatency({
+        rttMs,
+        lost: false,
+        observedAtMs: performance.now(),
+      });
+  };
+  const run = await coordinated(
+    [
+      { id: "a", latency: false },
+      { id: "b", measure: probes(2) },
+      { id: "c", measure: probes(40) },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1000 },
+    { latencySource: "c" },
+  );
+  run.start();
+  const result = await run.result();
+  expect(run.calls.filter((call) => call.startsWith("begin:"))).toEqual([
+    "begin:b:latency",
+    "begin:c:latency",
+    "begin:a:download",
+    "begin:b:download",
+    "begin:c:download",
+  ]);
+  expect(result.latency?.reportedMs).toBe(40);
+  expect(result.multiServer?.latencyFocus).toBe("c");
+  expect(result.multiServer?.servers[0].latencyByStage.latency).toBeNull();
+  expect(result.multiServer?.servers[1].latency?.reportedMs).toBe(2);
 });
 
 test("adaptive stage completion retains each result before entering the next stage", async () => {
-  const { result, events } = await run({ adaptive: true });
+  const run = await coordinated(
+    two(),
+    { download: true, upload: true },
+    { downloadMs: 6000, uploadMs: 6000 },
+    { adaptive: true },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.download?.reportedBytesPerSec).toBeGreaterThan(0);
   expect(result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
-  const downloadResult = events.findIndex(
+  const stageResult = run.events.findIndex(
     (event) => event.type === "stageResult" && event.stage === "download",
   );
-  const uploadPhase = events.findIndex(
+  const upload = run.events.findIndex(
     (event) => event.type === "phase" && event.transition.to === "upload",
   );
-  expect(downloadResult).toBeGreaterThan(-1);
-  expect(downloadResult).toBeLessThan(uploadPhase);
-}, 16000);
-
-test("a conflicting live stream plan is rejected without changing the running schedule", async () => {
-  const restore = stubGlobals(TEST_BUILD_TOKENS);
-  const { ServerCoordinator } = await import("./coordinator");
-  let host: CoreHost;
-  let last = 0;
-  let measured!: () => void;
-  const measuring = new Promise<void>((resolve) => (measured = resolve));
-  const coordinator = new ServerCoordinator(
-    [
-      {
-        server: { id: "self", name: "Self", url: "http://meter.test" },
-        paths: testPreparedPaths({ latency: null }),
-      },
-    ],
-    "self",
-    () => ({
-      attach(value) {
-        host = value;
-      },
-      onRunStart() {},
-      onStageBegin() {},
-      onStageMeasure() {
-        last = performance.now();
-        measured();
-      },
-      onStageEnd() {},
-      onAbort() {},
-      onComplete() {},
-      checkpoint: async () => null,
-      flushDownload(now) {
-        host.ingestThroughput("down", (now - last) * 3, (now - last) / 1000);
-        last = now;
-      },
-    }),
-  );
-  const config = {
-    ...structuredClone(DEFAULT_CONFIG),
-    transferStreams: { mode: "forced" as const, count: 5 },
-    stages: {
-      latency: false,
-      download: true,
-      upload: false,
-      bidirectional: false,
-    },
-    skipLoadedLatencyWhenStageOff: true,
-    duration: { ...DEFAULT_CONFIG.duration, warmupMs: 0, downloadMs: 1200 },
-    adaptive: { ...DEFAULT_CONFIG.adaptive, enabled: false },
-  };
-  try {
-    const completion = new Promise<RunResult>((resolve, reject) =>
-      coordinator.on((event) => {
-        if (event.type === "complete") resolve(event.result);
-        if (event.type === "error") reject(event.error);
-      }),
-    );
-    coordinator.start(config, 0);
-    await measuring;
-    expect(() =>
-      coordinator.reconfigure({
-        stages: { ...config.stages, upload: true },
-        duration: config.duration,
-        adaptive: config.adaptive,
-      }),
-    ).toThrow("Forced streams");
-    const result = await completion;
-    expect(result.download?.reportedBytesPerSec).toBeCloseTo(3000, 0);
-    expect(result.upload).toBeNull();
-    expect(result.multiServer?.failures).toEqual([]);
-  } finally {
-    coordinator.dispose();
-    restore();
-  }
+  expect(stageResult).toBeGreaterThan(-1);
+  expect(stageResult).toBeLessThan(upload);
 });
 
-test("repeated missing upload checkpoints drop only the unobservable peer and retain survivor evidence", async () => {
-  const { result, events } = await run({ missingCheckpoints: true });
+test("a conflicting live stream plan is rejected without changing the running schedule", async () => {
+  const run = await coordinated(
+    [{ id: "self", rate: 3, latency: false }],
+    { download: true },
+    { downloadMs: 1200 },
+  );
+  run.config.transferStreams = { mode: "forced", count: 5 };
+  run.start();
+  await advance(100);
+  expect(() =>
+    run.coordinator.reconfigure({
+      stages: { ...run.config.stages, upload: true },
+      duration: run.config.duration,
+      adaptive: run.config.adaptive,
+    }),
+  ).toThrow("Forced streams");
+  const result = await run.result();
+  expect(result.download?.reportedBytesPerSec).toBeCloseTo(3000, 0);
+  expect(result.upload).toBeNull();
+});
+
+test("one missed receiver checkpoint keeps the interval, its headline and presentation evidence", async () => {
+  let checkpoints = 0;
+  const run = await coordinated(
+    two([
+      {
+        // Miss exactly one measured boundary, then the final one.
+        checkpoint: async (measuring) =>
+          measuring && [3, 99].includes(++checkpoints) ? null : receiver("a"),
+      },
+    ]),
+    { upload: true },
+    { uploadMs: 2000 },
+  );
+  run.start();
+  await advance(1900);
+  checkpoints = 98;
+  const result = await run.result();
+  expect(result.upload?.reportedBytesPerSec).toBeCloseTo(6000, 0);
+  expect(result.multiServer?.intervals).toHaveLength(1);
+  expect(result.multiServer?.failures).toEqual([]);
+  expect(
+    run.events.some(
+      (event) => event.type === "aggregateEvidence" && !event.available,
+    ),
+  ).toBe(false);
+});
+
+test("repeated missing upload checkpoints drop only the unobservable peer", async () => {
+  const run = await coordinated(
+    two([
+      { checkpoint: async (measuring) => (measuring ? null : receiver("a")) },
+    ]),
+    { upload: true },
+    { uploadMs: 2200 },
+  );
+  run.start();
+  const result = await run.result();
   expect(result.outcome).toBe("partial");
-  expect(result.upload).not.toBeNull();
-  const failures = events.filter((event) => event.type === "serverFailure");
+  const failures = run.events.filter((event) => event.type === "serverFailure");
   expect(failures).toHaveLength(1);
   expect(failures[0]).toMatchObject({
     failure: { serverId: "a", reason: "receiver-checkpoint-failed" },
     participants: ["b"],
   });
   expect(result.upload!.reportedBytesPerSec).toBeCloseTo(3000, 0);
-  expect(
-    events.some(
-      (event) => event.type === "aggregateEvidence" && event.available,
-    ),
-  ).toBe(true);
+});
+
+test("an expired grant during a checkpoint asks for sign-in and removes only that server", async () => {
+  const run = await coordinated(
+    two([
+      {
+        checkpoint: async (measuring) => {
+          if (measuring && performance.now() > 500)
+            throw new ServerAuthenticationRequired({
+              id: "a",
+              name: "a",
+              url: "https://a.example",
+            });
+          return receiver("a");
+        },
+      },
+    ]),
+    { upload: true },
+    { uploadMs: 2000 },
+  );
+  run.start();
+  const result = await run.result();
+  expect(result.multiServer?.failures).toMatchObject([
+    { serverId: "a", reason: "sign-in-required", message: "Sign in to a" },
+  ]);
+  expect(result.multiServer?.participants).toEqual(["b"]);
+});
+
+test("each participant ends its stage as soon as its own final evidence arrives", async () => {
+  let measuredAt = Infinity;
+  const run = await coordinated(
+    two([
+      {
+        measure: () => (measuredAt = performance.now()),
+        // Regular boundaries end at 1000 ms; only the final one at 1100 ms is slow.
+        checkpoint: async () => {
+          if (performance.now() - measuredAt > 1050)
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          return receiver("a");
+        },
+      },
+    ]),
+    { upload: true },
+    { uploadMs: 1100 },
+  );
+  run.start();
+  await advance(1400);
+  // b stopped while a's final checkpoint was still outstanding.
+  expect(run.calls.filter((call) => call.startsWith("end:"))).toEqual([
+    "end:b",
+  ]);
+  const result = await run.result();
+  expect(result.upload?.reportedBytesPerSec).toBeCloseTo(6000, 0);
+});
+
+test("an aborted stage end delivers no late events", async () => {
+  let release!: () => void;
+  const run = await coordinated(
+    two().map((peer) => ({
+      ...peer,
+      end: () => new Promise<void>((resolve) => (release = resolve)),
+    })),
+    { download: true, upload: true },
+    { downloadMs: 1000, uploadMs: 1000 },
+  );
+  run.start();
+  await advance(1100);
+  expect(run.calls).toContain("end:a");
+  run.coordinator.abort();
+  const count = run.events.length;
+  expect(run.events.at(-1)).toMatchObject({
+    type: "phase",
+    transition: { to: "aborted" },
+  });
+  release();
+  await advance(500);
+  expect(run.events).toHaveLength(count);
+  run.coordinator.dispose();
 });

@@ -96,6 +96,7 @@ export class TransferDirection {
   #stopping = false;
   /* Per-direction measured-byte watchdog. */
   #progressTimer: ReturnType<typeof setTimeout> | null = null;
+  #lastProgressAt = 0;
 
   constructor(opts: DirectionOptions) {
     this.dir = opts.dir;
@@ -178,13 +179,22 @@ export class TransferDirection {
     if (this.stalled) this.setStalled(false);
   }
 
+  /** Progress only moves a timestamp; one timer re-checks it when it would expire. */
   #armProgressWatchdog(): void {
-    if (this.#progressTimer !== null) clearTimeout(this.#progressTimer);
+    this.#lastProgressAt = performance.now();
+    if (this.#progressTimer === null)
+      this.#checkProgress(DIRECTION_PROGRESS_WINDOW_MS);
+  }
+
+  #checkProgress(delayMs: number): void {
     this.#progressTimer = setTimeout(() => {
       this.#progressTimer = null;
       if (!this.measuring || !this.#live || this.#stopping) return;
-      this.setStalled(true, `${this.dir} direction carried no data`);
-    }, DIRECTION_PROGRESS_WINDOW_MS);
+      const quietMs = performance.now() - this.#lastProgressAt;
+      if (quietMs < DIRECTION_PROGRESS_WINDOW_MS)
+        this.#checkProgress(DIRECTION_PROGRESS_WINDOW_MS - quietMs);
+      else this.setStalled(true, `${this.dir} direction carried no data`);
+    }, delayMs);
   }
 
   /* Flush the partial cadence window and let session lanes deliver terminal counters. */

@@ -1,4 +1,4 @@
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import { test, expect } from "bun:test";
 import type { RunnerConfig } from "./contract";
 import type { ConnectionPreparation } from "./real/prepare";
@@ -8,7 +8,7 @@ import {
   TEST_WT_ORIGIN,
   TEST_WT_PREFLIGHT,
   testWtConfig,
-} from "./test-helpers.test";
+} from "./test-helpers.testutil";
 const dials: string[] = [];
 class FakeWebTransport {
   readonly ready: Promise<void>;

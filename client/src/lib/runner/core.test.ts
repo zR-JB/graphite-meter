@@ -16,8 +16,8 @@ import { latencyPresentationBucketMs } from "./latencyBuckets";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { RunAccumulator } from "./evaluation";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { stubGlobals } from "../test-helpers.test";
-import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
+import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.testutil";
 let fakeNow = 0;
 let tickCallback: (() => void) | null = null;
 const realNow = performance.now.bind(performance);
@@ -1007,9 +1007,6 @@ test("reply-driven latency bounds confidence work while retaining every measured
     advance(100);
     core.ingestLatency({ rttMs: 40, lost: false, observedAtMs: fakeNow });
     expect(confidence.mock.calls.length - initialCalls).toBe(2);
-    expect(typedEvents(events, "stability").at(-1)?.snapshot.sampleCount).toBe(
-      5_001,
-    );
     advance(890);
     expectComplete(events, (result) => {
       expect(result.latencyByStage.latency).toMatchObject({
@@ -1191,12 +1188,9 @@ test("adaptive enabled does not select a stable tail when the nominal phase wins
     core.ingestThroughput("down", 100, 0.1);
     advance(100);
   }
-  const stability = events.filter((event) => event.type === "stability").at(-1);
-  expect(stability?.type === "stability" && stability.snapshot.band).toBe(
-    "high",
-  );
   expectComplete(events, (complete) => {
     const result = complete.download!;
+    expect(result.band).toBe("high");
     expect(result.method).toBe("full-average");
     expect(result.reportedBytesPerSec).toBeCloseTo(640, 6);
     expect(result.reportedBytesPerSec).toBe(result.fullAverageBytesPerSec);
@@ -1330,7 +1324,7 @@ test("worker observations retain their timeline position across delayed delivery
   config.adaptive.enabled = false;
   config.duration.warmupMs = 0;
   config.duration.latencyMs = 4000;
-  core.start(config, 1);
+  core.start(config, 0);
   advance(200);
   expect(core.observationTime(195)).toBe(195);
   // A delivered batch takes time to consume before the next master tick.
@@ -1340,4 +1334,64 @@ test("worker observations retain their timeline position across delayed delivery
   advance(25);
   expect(core.observationTime(195)).toBe(195);
   core.dispose();
+});
+
+test("a suspended page enters every segment in order and restarts stability after the gap", async () => {
+  const { core, backend, events } = await startCore({
+    stages: { latency: false, download: true, upload: true },
+    duration: { warmupMs: 500, downloadMs: 1000, uploadMs: 1000 },
+  });
+  const phases = () =>
+    typedEvents(events, "phase").map((event) => event.transition.to);
+  // Worker samples keep arriving while the page's own timers are throttled.
+  const gap = (dir: "down" | "up") => {
+    fakeNow += 60_000;
+    core.ingestThroughput(dir, 1000, 0.1);
+    tickCallback?.();
+  };
+  // A tick crosses at most one boundary, and the gap is not measured time.
+  gap("down");
+  expect(phases()).toEqual(["connecting", "warmup", "download"]);
+  expect(backend.calls).toContain("measure:download");
+  gap("down");
+  expect(phases().slice(3)).toEqual(["warmup"]);
+  gap("up");
+  expect(phases().slice(3)).toEqual(["warmup", "upload"]);
+  expect(backend.calls).toContain("measure:upload");
+  gap("up");
+  expect(events.at(-1)?.type).toBe("complete");
+  expect(typedEvents(events, "stall")).toEqual([]);
+});
+
+test("presentation bucket width cannot change saved latency results", async () => {
+  const run = async (latencyMs: number) => {
+    const { core, events } = await startCore({
+      stages: { latency: true, download: false },
+      duration: { latencyMs },
+    });
+    advance(1);
+    for (let i = 0; i < 60; i++) {
+      core.ingestLatency({
+        rttMs: 10 + ((i * 7) % 13),
+        lost: i % 17 === 0,
+        observedAtMs: fakeNow,
+      });
+      advance(10);
+    }
+    advance(latencyMs);
+    const complete = completeEvent(events);
+    return {
+      buckets: eventSamples(events, "latency").length,
+      result: complete?.type === "complete" ? complete.result : null,
+    };
+  };
+  const narrow = await run(1_000);
+  const wide = await run(3_000_000);
+  expect(narrow.buckets).toBeGreaterThan(wide.buckets);
+  expect(wide.result?.latencyByStage.latency).toEqual(
+    narrow.result!.latencyByStage.latency,
+  );
+  expect(wide.result?.latency?.reportedMs).toBe(
+    narrow.result!.latency!.reportedMs,
+  );
 });

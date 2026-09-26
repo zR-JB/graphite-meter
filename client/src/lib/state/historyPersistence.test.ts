@@ -1,9 +1,9 @@
-import "./runes.test";
+import "./runes.testutil";
 import { expect, test } from "bun:test";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
+} from "../runner/test-helpers.testutil";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
@@ -153,6 +153,7 @@ test("wire snapshots are independent of their display preference", async () => {
     store.reset();
     store.showWireEstimates = false;
     store.resultHistoryPreference = "enabled";
+    store.activePaths = testPreparedPaths();
     store.ingest({ type: "complete", result: result() });
     const hiddenWireCandidate = store.historyCandidate;
     expect(

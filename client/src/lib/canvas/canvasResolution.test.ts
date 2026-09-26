@@ -16,7 +16,7 @@ test("pinch zoom gains bounded half-step resolution headroom", () => {
 });
 
 test("density changes and returning to a visible tab refresh resolution without a layout resize", async () => {
-  const { stubGlobals } = await import("../test-helpers.test");
+  const { stubGlobals } = await import("../test-helpers.testutil");
   const { watchCanvasPixelRatio } = await import("./canvasResolution");
   const media: EventTarget[] = [];
   const viewport = Object.assign(new EventTarget(), { scale: 1 });

@@ -1,4 +1,4 @@
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import { expect, test } from "bun:test";
 import {
   ChartEngine,

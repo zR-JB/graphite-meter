@@ -1,10 +1,10 @@
-import "./runes.test";
+import "./runes.testutil";
 import { expect, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
+} from "../runner/test-helpers.testutil";
 import { singleLatencyBucket } from "../runner/latencyBuckets";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { parseCatalog } from "../servers/catalog";

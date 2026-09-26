@@ -31,7 +31,7 @@ export function serverCredentials(server: ServerEntry): ServerCredentials {
   return {
     server,
     kind:
-      server.id === "self" && server.url === location.origin && authEnabled
+      server.id === "self" && server.url === location.origin && authEnabled()
         ? "session"
         : "public",
   };
@@ -62,7 +62,7 @@ export function requestOptions(
   if (context?.kind === "public") return { headers: {}, credentials: "omit" };
   return {
     headers: method === "GET" || method === "HEAD" ? {} : csrfHeader(),
-    credentials: authEnabled ? "include" : "same-origin",
+    credentials: authEnabled() ? "include" : "same-origin",
   };
 }
 export async function measurementFetch(
@@ -96,15 +96,20 @@ export function socketMint(
   path: string,
   kind: "ws" | "wt",
 ): WtMint | undefined {
-  const protectedServer = context ? context.kind !== "public" : authEnabled;
+  const protectedServer = context ? context.kind !== "public" : authEnabled();
   if (!protectedServer || (kind === "ws" && context?.kind !== "grant"))
     return undefined;
   const url = `${origin}/${kind}/session?target=${encodeURIComponent(origin + path)}`;
   return { url, ...requestOptions(context, url, "POST") };
 }
-export function reportServerAuthentication(context?: ServerCredentials): void {
+/** The page login owns session failures; a remote grant belongs to its participant's host. */
+export function reportServerAuthentication(
+  context: ServerCredentials | undefined,
+  host?: { authenticationRequired?(role: "throughput" | "latency"): void },
+  role: "throughput" | "latency" = "throughput",
+): void {
   if (!context || context.kind === "session") reportAuthenticationRequired();
-  // Remote transport failures are reported to their participant's host, which owns cancellation.
+  else host?.authenticationRequired?.(role);
 }
 export async function classifyServerAuthentication(
   context?: ServerCredentials,

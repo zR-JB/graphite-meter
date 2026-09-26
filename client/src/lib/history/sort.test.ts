@@ -5,7 +5,7 @@ import {
   sortPreparedHistory,
 } from "./sort";
 import type { HistoryRecord } from "./types";
-import { historyRecord } from "./test-helpers.test";
+import { historyRecord } from "./test-helpers.testutil";
 
 function record(
   id: string,

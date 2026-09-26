@@ -475,12 +475,6 @@ export function browserProtocolMatchesTarget(
   );
 }
 
-export function throughputTargetKey(
-  target: FetchThroughputTarget | WebTransportThroughputTarget | null,
-): string {
-  return target ? `${target.id}\n${target.origin}` : "";
-}
-
 /* Select latency independently of throughput. */
 export function selectLatencyTarget(
   discovery: TransportDiscovery,

@@ -1,4 +1,4 @@
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import { test, expect } from "bun:test";
 import { emptyConnectionValidation } from "./connectionModel";
 import type { PhaseActivity, RunnerConfig } from "./contract";
@@ -8,7 +8,7 @@ import {
   TEST_WT_PREFLIGHT,
   testHost,
   testWtConfig,
-} from "./test-helpers.test";
+} from "./test-helpers.testutil";
 const WT_ORIGIN = TEST_WT_ORIGIN;
 class LiveWebTransport {
   readonly ready = Promise.resolve();

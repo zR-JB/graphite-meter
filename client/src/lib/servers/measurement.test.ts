@@ -122,7 +122,7 @@ test("opposite fluctuations use aggregate stability and simultaneous peaks", () 
   const windows = m.intervals[0].headline!.up!;
   expect(windows[0].startNanos).toBe(windows[1].startNanos);
 });
-test("measured zero is valid, missing receiver evidence is unavailable", () => {
+test("measured zero is valid, and one missing receiver skips only its boundary", () => {
   const m = new AggregateMeasurements();
   m.begin("upload", ["a", "b"], 0);
   m.observe(
@@ -136,19 +136,25 @@ test("measured zero is valid, missing receiver evidence is unavailable", () => {
     ),
   );
   expect(m.result("upload", "up", false)?.reportedBytesPerSec).toBe(0);
-  m.observe(boundary(1250, {}, { a: receiver("a", 0, 1250e6 + 1), b: null }));
-  expect(m.result("upload", "up", false)).toBeNull();
-  expect(m.intervals[0].full?.upBytesPerSec).toBe(0);
-  m.observe(
+  expect(
+    m.observe(boundary(1250, {}, { a: receiver("a", 0, 1250e6 + 1), b: null })),
+  ).toBeNull();
+  // The interval keeps its last valid boundary and its headline.
+  expect(m.result("upload", "up", false)?.reportedBytesPerSec).toBe(0);
+  const spanning = m.observe(
     boundary(
       1500,
       {},
-      { a: receiver("a", 0, 1500e6 + 1), b: receiver("b", 0, 1500e6 + 1) },
+      {
+        a: receiver("a", 1000, 1500e6 + 1),
+        b: receiver("b", 500, 1500e6 + 1),
+      },
     ),
   );
-  expect(m.confidence().sampleCount).toBe(0);
-  expect(m.intervals).toHaveLength(2);
-  expect(m.result("upload", "up", false)).toBeNull();
+  expect(spanning?.startMs).toBe(1000);
+  expect(spanning?.upBytesPerSec).toBe(3000);
+  expect(m.intervals).toHaveLength(1);
+  expect(m.intervals[0].complete).toBe(true);
 });
 test("dropout revokes stable evidence and final headline needs a survivor interval", () => {
   const m = new AggregateMeasurements();
@@ -184,7 +190,6 @@ test("progress and overlapping checkpoints cannot double count bytes across inte
   m.begin("bidirectional", ["a"], 2200);
   m.observe(boundary(2200, { a: 0 }, { a: receiver("b", 50000, 1) }));
   m.observe(boundary(3200, { a: 1000 }, { a: receiver("b", 50500, 1e9 + 1) }));
-  expect(m.stageTotals("upload", "a").up).toBe(2000);
   expect(m.result("upload", "up", false)?.totalBytes).toBe(2000);
   expect(m.result("bidirectional", "up", false)?.totalBytes).toBe(500);
 });

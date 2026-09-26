@@ -17,7 +17,7 @@ export { WT_MAX_LANES };
 type MultiplexedProtocol = "http2" | "http3";
 
 /* Upload splits by protocol — under loss h2 gains 10.1% going from 1 to 4 lanes while h3 loses 9.3% over the same. */
-export const MULTIPLEXED_STREAMS: Record<
+const MULTIPLEXED_STREAMS: Record<
   MultiplexedProtocol,
   Record<FlowDirection, number>
 > = {

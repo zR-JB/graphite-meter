@@ -148,7 +148,7 @@ export class LatencyChannel {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: this.#deps.credentials
         ? this.#deps.credentials.kind === "session"
-        : authEnabled,
+        : authEnabled(),
     });
   }
 
@@ -216,7 +216,11 @@ export class LatencyChannel {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
-      reportServerAuthentication(this.#deps.credentials);
+      reportServerAuthentication(
+        this.#deps.credentials,
+        this.#deps.host,
+        "latency",
+      );
       this.#deps.host.ingestLatencyAccountingIncomplete();
       this.#deps.stall("Sign in again to measure latency");
       return;
@@ -348,7 +352,7 @@ export class IdleKeepalive {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: this.#credentials
         ? this.#credentials.kind === "session"
-        : authEnabled,
+        : authEnabled(),
     });
     // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });

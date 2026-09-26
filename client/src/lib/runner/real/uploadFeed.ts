@@ -3,7 +3,6 @@ import {
   redirectForCredentials,
   sessionAuthenticationRequired,
 } from "../../request-auth";
-import { nextBackoff } from "../workers/backoff";
 import { readProgressFeed, type ProgressEvent } from "../workers/progressFeed";
 import { classifyUploadFailure } from "../uploadFailure";
 
@@ -130,7 +129,7 @@ export function startUploadFeed(options: {
       }
       if (signal.aborted) return;
       emit({ type: "stall", detail });
-      backoff = nextBackoff(backoff, 100, 2000);
+      backoff = backoff ? Math.min(backoff * 2, 2000) : 100;
       await delay(backoff);
     }
   }

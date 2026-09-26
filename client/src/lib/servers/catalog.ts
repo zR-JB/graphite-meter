@@ -2,8 +2,8 @@ import type { Preflight } from "../api/preflight";
 import type { ServerEntry } from "../api/servers";
 export type { ServerEntry } from "../api/servers";
 
-export const MAX_SERVERS = 32;
-export const MAX_SELECTED_SERVERS = 4;
+const MAX_SERVERS = 32;
+const MAX_SELECTED_SERVERS = 4;
 export type ServerIdentity = Omit<ServerEntry, "additionalOrigins">;
 export interface ServerCatalog {
   defaultSelection: string[];
@@ -14,7 +14,7 @@ export interface SavedSelection {
   url: string;
 }
 
-export function canonicalOrigin(value: unknown): string {
+function canonicalOrigin(value: unknown): string {
   if (
     typeof value !== "string" ||
     value.length > 2048 ||
@@ -71,14 +71,6 @@ function text(value: unknown, maximum: number, empty = false): string {
   )
     throw new Error("Invalid server identity");
   return value;
-}
-export function singletonCatalog(origin: string): ServerCatalog {
-  return {
-    defaultSelection: ["self"],
-    servers: [
-      { id: "self", url: canonicalOrigin(origin), name: "This server" },
-    ],
-  };
 }
 export function parseCatalog(value: unknown, origin: string): ServerCatalog {
   const input = object(value);

@@ -7,7 +7,7 @@ import {
 } from "../runner/real/backendPure";
 import type { ServerIdentity } from "./catalog";
 
-export interface ServerTransportOption {
+interface ServerTransportOption {
   value: string;
   label: string;
   detail: string;

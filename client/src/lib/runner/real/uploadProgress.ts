@@ -41,7 +41,7 @@ interface UploadProgressDeps {
   lane: UploadProgressLane;
   sampleProvesStageLiveness: () => boolean;
   discardTransfer: () => void;
-  authoritativePresentation: (bytesPerSec: number) => void;
+  authoritativePresentation?: (bytesPerSec: number) => void;
   recoveryStartedAt?: number;
   checkpoint?: (signal: AbortSignal) => Promise<ReceiverCheckpoint | null>;
 }
@@ -195,7 +195,7 @@ export class UploadProgressChannel {
     }
     if (msg.type === "auth-required") {
       this.#deps.discardTransfer();
-      reportServerAuthentication(this.#deps.credentials);
+      reportServerAuthentication(this.#deps.credentials, host);
       host.failStage(
         lane.stage,
         "connection-lost",
@@ -266,7 +266,7 @@ export class UploadProgressChannel {
       lane.noteMeasuredProgress(bytes);
     }
     if (delta > 0) {
-      this.#deps.authoritativePresentation(host.presentationRate("up"));
+      this.#deps.authoritativePresentation?.(host.presentationRate("up"));
       if (!recovered) lane.noteMeasuredProgress(delta);
     }
     if (msg.type === "complete") {

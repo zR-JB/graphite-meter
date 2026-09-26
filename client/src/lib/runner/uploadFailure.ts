@@ -1,7 +1,7 @@
 import type { RecoveryCause } from "./contract";
 
 /** Stable server refusal codes, carried in both HTTP and WebTransport paths. */
-export type UploadRefusalCode =
+type UploadRefusalCode =
   "invalid" | "globalFull" | "clientFull" | "ownerMismatch";
 
 /* Classify only explicit protocol evidence. */

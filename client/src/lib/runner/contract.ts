@@ -71,14 +71,6 @@ export interface AdaptiveDurationConfig {
 /** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
 export type StabilityBand = "low" | "medium" | "high";
 
-/* Live stability snapshot drives the pip, revocable early-finish confirmation, and adaptive completion. */
-export interface StabilitySnapshot {
-  phase: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
-  score: number; // stability score 0..1 (adaptive.ts)
-  band: StabilityBand;
-  sampleCount: number; // usable samples in the confidence window
-}
-
 export interface TransferStreamPolicy {
   mode: "auto" | "forced";
   /** H1 per-direction ceiling in auto mode; exact count in forced mode. */
@@ -455,9 +447,10 @@ export type RunnerEvent =
       phaseBudgetMs: number;
       measuring: boolean; // false while delivery is stalled
     }
-  | { type: "stability"; snapshot: StabilitySnapshot } // live stability; stalls report link health separately.
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
+  /* A single-server run's grant was refused; participants report serverFailure. */
+  | { type: "authenticationRequired"; role: ConnectionRole }
   // Transport negotiation telemetry: which connection method a phase is trying, and whether it is negotiating /.
   | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends, so a finished stage shows its real result.
@@ -486,7 +479,6 @@ export interface NetworkRunner {
   on(handler: (e: RunnerEvent) => void): () => void;
   reconfigure(config: LiveRunConfig): void;
   readonly phase: Phase;
-  focusServer?(id: string): void;
 }
 
 /* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

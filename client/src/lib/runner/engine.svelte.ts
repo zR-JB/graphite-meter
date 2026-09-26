@@ -52,7 +52,6 @@ import {
   CONNECTION_ROLES,
   connectionDraftKey,
   connectionDraftRoleKey,
-  emptyConnectionValidation,
   latencyPathNeeded,
   uploadCapabilityFailure,
 } from "./connectionModel";
@@ -113,7 +112,7 @@ export function createApplicationController(
   const connections = new ServerConnections({
     discover,
     prepare,
-    changed: publishConnection,
+    changed: publishConnections,
     idleEvent: (id, event) => ingest(event, id),
   });
   let approval: AbortController | null = null;
@@ -179,18 +178,21 @@ export function createApplicationController(
   ) {
     connections.invalidate(ids, roles);
   }
-  function publishConnection(view: ServerConnectionView) {
-    store.serverReadiness.set(view.server.id, view.readiness);
-    store.serverValidation.set(view.server.id, view.validation);
-    if (view.discovery)
-      store.serverDiscoveries.set(view.server.id, view.discovery);
-    else store.serverDiscoveries.delete(view.server.id);
-    const server = store.serverCatalog?.servers.find(
-      (server) => server.id === view.server.id,
-    );
-    if (server) {
-      server.name = view.server.name;
-      server.location = view.server.location;
+  function publishConnections(views: ServerConnectionView[]) {
+    for (const view of views) {
+      store.serverReadiness.set(view.server.id, view.readiness);
+      if (store.serverValidation.get(view.server.id) !== view.validation)
+        store.serverValidation.set(view.server.id, view.validation);
+      if (!view.discovery) store.serverDiscoveries.delete(view.server.id);
+      else if (store.serverDiscoveries.get(view.server.id) !== view.discovery)
+        store.serverDiscoveries.set(view.server.id, view.discovery);
+      const server = store.serverCatalog?.servers.find(
+        (server) => server.id === view.server.id,
+      );
+      if (server && server.name !== view.server.name)
+        server.name = view.server.name;
+      if (server && server.location !== view.server.location)
+        server.location = view.server.location;
     }
     store.serverMetadataLoading = connections.metadataLoading;
     adoptSelectedEvidence();
@@ -265,8 +267,6 @@ export function createApplicationController(
         )
           makeTransportPortable(role);
       }
-      store.transportDiscovery = null;
-      store.connectionValidation = emptyConnectionValidation();
       connections.reset(catalog.servers);
       syncIntent();
       if (selection.unresolved.length)
@@ -290,22 +290,8 @@ export function createApplicationController(
           cause instanceof Error ? cause.message : "Could not load servers";
     }
   }
-  function representativeServer() {
-    if (!store.serverCatalog || !store.selectedServers.length) return null;
-    const selected = catalogSelected();
-    return store.latencySelection.mode === "primary"
-      ? (selected.find((server) => server.id === store.primaryLatencyServer) ??
-          selected[0])
-      : (selected.find((server) => server.id === "self") ?? selected[0]);
-  }
+  /** A verified selection clears an offline verdict. */
   function adoptSelectedEvidence() {
-    const first = representativeServer();
-    store.transportDiscovery = first
-      ? (store.serverDiscoveries.get(first.id) ?? null)
-      : null;
-    store.connectionValidation = first
-      ? (store.serverValidation.get(first.id) ?? emptyConnectionValidation())
-      : emptyConnectionValidation();
     if (readySelected(false)) store.connectivity = "connected";
     refreshIdle();
   }
@@ -449,7 +435,6 @@ export function createApplicationController(
     )
       return;
     store.focusLatencyServer(id);
-    runner?.focusServer?.(id);
   }
   const hidden = () => document.visibilityState === "hidden";
   function schedule() {
@@ -459,7 +444,7 @@ export function createApplicationController(
         !store.isRunning &&
         !pendingStart &&
         !hidden(),
-      representativeServer()?.id === "self" && latencyPathNeeded(store.config)
+      store.representativeServerId === "self" && latencyPathNeeded(store.config)
         ? "self"
         : null,
     );
@@ -480,7 +465,20 @@ export function createApplicationController(
   }
   function ingest(event: RunnerEvent, serverId?: string) {
     if (event.type === "serverFailure") {
-      invalidateSelected([event.failure.scope], [event.failure.serverId]);
+      if (event.failure.reason === "sign-in-required")
+        connections.requireAuthentication(
+          event.failure.serverId,
+          event.failure.message,
+        );
+      else invalidateSelected([event.failure.scope], [event.failure.serverId]);
+    }
+    if (event.type === "authenticationRequired") {
+      const [only] = store.selectedServers;
+      if (store.selectedServers.length === 1)
+        connections.requireAuthentication(
+          only,
+          `Sign in again to measure ${event.role}`,
+        );
     }
     if (event.type === "connectivity") {
       if (event.state === "offline") offline(serverId);
@@ -683,15 +681,18 @@ export function createApplicationController(
       const paths = focus.paths;
       store.preparationStatus = "launching";
       store.latencyFocus = focus.server.id;
-      unsubscribe?.();
-      runner?.dispose();
+      releaseRunner();
       connections.activity(false, null);
       activeCapabilities = prepared.map(({ server, paths }) => ({
         name: server.name,
         uploadCheckpoint: paths.discovery.uploadCheckpoint,
       }));
-      runner = createRunner(prepared, focus.server.id);
-      unsubscribe = runner.on(ingest);
+      const owner = createRunner(prepared, focus.server.id);
+      runner = owner;
+      // Only the current run may write the store, even through a retained callback.
+      unsubscribe = owner.on((event) => {
+        if (runner === owner) ingest(event);
+      });
       store.activeConfig = structuredClone(config);
       store.activePaths = paths;
       store.activeServers = prepared.map(({ server, paths }) => ({
@@ -722,9 +723,16 @@ export function createApplicationController(
         schedule();
       });
   }
+  /** A superseded run can never deliver another event. */
+  function releaseRunner() {
+    unsubscribe?.();
+    unsubscribe = undefined;
+    runner?.dispose();
+    runner = null;
+  }
   function returnToStart() {
     cancelPendingStart();
-    runner?.abort();
+    releaseRunner();
     store.reset();
     requestValidation();
   }
@@ -817,16 +825,12 @@ export function createApplicationController(
     );
     disposeDraft?.();
     cancelPendingStart();
-    unsubscribe?.();
-    runner?.dispose();
-    runner = null;
+    releaseRunner();
     activeCapabilities = [];
     window.removeEventListener("online", onlineAgain);
     window.removeEventListener("offline", offline);
     document.removeEventListener("visibilitychange", visibilityChanged);
     store.reset();
-    store.transportDiscovery = null;
-    store.connectionValidation = emptyConnectionValidation();
   }
   function toggleStage(stage: StageKey): boolean {
     if (!store.canToggleStage(stage)) return false;

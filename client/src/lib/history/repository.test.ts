@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { HISTORY_LIMIT } from "./types";
 import { retainNewest } from "./repository";
-import { historyRecord } from "./test-helpers.test";
+import { historyRecord } from "./test-helpers.testutil";
 
 test("retention keeps exactly the newest 2,000 records", () => {
   const kept = retainNewest(

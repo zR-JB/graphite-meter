@@ -7,7 +7,6 @@ import {
   INITIAL_RTT_ESTIMATE,
   type RttEstimate,
 } from "./rttEstimator";
-import { nextBackoff } from "./backoff";
 import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { createPingScheduler, type PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
@@ -355,7 +354,9 @@ function scheduleReconnect(detail: string): void {
     post({ type: "stall", detail });
     stalledOut = true;
   }
-  backoff = nextBackoff(backoff, RECONNECT_MIN_MS, RECONNECT_MAX_MS);
+  backoff = backoff
+    ? Math.min(backoff * 2, RECONNECT_MAX_MS)
+    : RECONNECT_MIN_MS;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();

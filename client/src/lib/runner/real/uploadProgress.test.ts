@@ -1,4 +1,4 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach, jest } from "bun:test";
 import type { CoreHost } from "../core";
 import type { FetchThroughputTarget } from "../../api/endpoints";
 import {
@@ -9,9 +9,17 @@ import {
 const realFetch = globalThis.fetch;
 const channels: UploadProgressChannel[] = [];
 afterEach(() => {
+  jest.useRealTimers();
   channels.splice(0).forEach((channel) => channel.discard());
   globalThis.fetch = realFetch;
 });
+/** Run receiver watch and grace timers on a fake clock, letting stream reads settle. */
+async function drive(ms: number, done: () => boolean = () => false) {
+  for (let elapsed = 0; elapsed < ms && !done(); elapsed += 5) {
+    jest.advanceTimersByTime(5);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+}
 const target: FetchThroughputTarget = {
   id: "http://meter.test:7246",
   origin: "http://meter.test:7246",
@@ -348,6 +356,7 @@ test("only advancing receiver bytes establish progress after a stall", () => {
   expect(progress).toEqual([100]);
 });
 test("missing terminal record expires grace without inventing final counters", async () => {
+  jest.useFakeTimers();
   const feed = fetchFeed();
   const { channel, curve, failures } = channelUnderTest({ measuring: true });
   const primed = channel.prime("gmu_one");
@@ -355,8 +364,11 @@ test("missing terminal record expires grace without inventing final counters", a
   expect(await primed).toBe(true);
   feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
   feed.write({ type: "progress", bytes: 250, nanos: 2e9 });
-  await until(() => curve.length === 1);
-  await channel.finish();
+  await drive(100, () => curve.length === 1);
+  let finished = false;
+  const finishing = channel.finish().then(() => (finished = true));
+  await drive(2_000, () => finished);
+  await finishing;
   expect(curve).toEqual([150]);
   expect(feed.requests[0].init.signal?.aborted).toBe(true);
   expect(failures).toEqual([]);
@@ -374,6 +386,7 @@ test("a replacement session cannot regress either receiver counter", () => {
 });
 
 test("a buffered feed uses same-receiver checkpoints without inventing delivery or double counting late chunks", async () => {
+  jest.useFakeTimers();
   globalThis.fetch = (async () =>
     new Response(new ReadableStream())) as unknown as typeof fetch;
   let requests = 0;
@@ -389,7 +402,9 @@ test("a buffered feed uses same-receiver checkpoints without inventing delivery 
     fixture.channel.observeCheckpoint(checkpoint);
     return checkpoint;
   });
-  expect(await fixture.channel.prime("buffered")).toBe(true);
+  const primed = fixture.channel.prime("buffered");
+  await drive(1_000, () => requests > 0);
+  expect(await primed).toBe(true);
   expect(requests).toBe(1);
   expect(fixture.progress).toEqual([]);
   expect(fixture.curve).toEqual([]);
@@ -428,6 +443,7 @@ test("a buffered feed uses same-receiver checkpoints without inventing delivery 
 });
 
 test("discard aborts a pending fallback checkpoint and cannot reopen a meter", async () => {
+  jest.useFakeTimers();
   globalThis.fetch = (async () =>
     new Response(new ReadableStream())) as unknown as typeof fetch;
   let pendingSignal: AbortSignal | undefined;
@@ -439,7 +455,7 @@ test("discard aborts a pending fallback checkpoint and cannot reopen a meter", a
     });
   });
   const ready = fixture.channel.prime("disposed");
-  for (let i = 0; i < 150 && !pendingSignal; i++) await Bun.sleep(5);
+  await drive(1_000, () => pendingSignal !== undefined);
   expect(pendingSignal).toBeDefined();
   fixture.channel.discard();
   expect(pendingSignal!.aborted).toBe(true);

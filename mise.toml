@@ -160,22 +160,17 @@ run = "bun run check"
 [tasks.client-test]
 description = "Run all browser-source unit tests"
 dir = "client"
-run = "bun test src --parallel --timings=test-timings.json"
+run = "bun test src --parallel"
 
 [tasks.client-test-changed]
 description = "Run affected browser-source unit tests"
 dir = "client"
-run = "bun test src --changed --parallel --timings=test-timings.json"
+run = "bun test src --changed --parallel"
 
 [tasks.client-audit]
 description = "Check the live registry advisory database"
 dir = "client"
 run = "bun audit"
-
-[tasks.client-test-timings]
-description = "Refresh Bun's per-file test timing metadata"
-dir = "client"
-run = "bun test src --parallel --timings=test-timings.json --update-timings"
 
 [tasks.client-watch]
 description = "Run the standalone Vite development server"

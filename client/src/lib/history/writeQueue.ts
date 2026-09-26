@@ -1,9 +1,9 @@
-import { isHistoryRecord, type HistoryRecord } from "./types";
+import type { HistoryRecord } from "./types";
 import {
-  InvalidHistoryRecordError,
+  currentHistoryGeneration,
+  isRepairHistoryGeneration,
   StaleHistoryGenerationError,
-} from "./errors";
-import { currentHistoryGeneration, isRepairHistoryGeneration } from "./changes";
+} from "./changes";
 type HistoryWrite = (
   record: HistoryRecord,
   isCurrent: () => boolean,
@@ -35,10 +35,6 @@ export class HistoryWriteQueue {
       if (isRepairHistoryGeneration(observedGeneration))
         this.#resynchronize(observedGeneration);
       else this.clear(observedGeneration);
-    }
-    if (!isHistoryRecord(record)) {
-      this.onPermanentFailure(record);
-      return false;
     }
     if (this.#pending.some((pending) => pending.record.id === record.id))
       return true;
@@ -110,7 +106,8 @@ export class HistoryWriteQueue {
           else this.clear(generation);
           continue;
         }
-        if (error instanceof InvalidHistoryRecordError) {
+        // A value storage cannot clone never succeeds on retry.
+        if (error instanceof DOMException && error.name === "DataCloneError") {
           this.#pending.shift();
           this.onPermanentFailure(pending.record);
           continue;

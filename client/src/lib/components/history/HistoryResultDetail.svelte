@@ -22,7 +22,7 @@
     formatPercent,
   } from "../../history/format";
   import type { HistoryRecord, ThroughputSnapshot } from "../../history/types";
-  import { historyLatencyLanes } from "../../history/types";
+  import { latencyLanes } from "../../runner/latencySummary";
   import { store } from "../../state/store.svelte";
   import {
     LATENCY_LANES,
@@ -111,7 +111,7 @@
   );
   const focusedLanes = $derived(
     focused
-      ? historyLatencyLanes(focused.latency, focused.latencyByStage)
+      ? latencyLanes(focused.latency, focused.latencyByStage)
       : record.stages.latency.lanes,
   );
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
@@ -211,8 +211,9 @@
               tone: meta.key,
               icon: meta.key === "latency" ? ICON.ping : ICON[meta.key],
               ...snapshot,
+              // Records with server details project medians; older lanes saved means.
               centerKind:
-                meta.key === "latency"
+                focused || meta.key === "latency"
                   ? ("result" as const)
                   : ("average" as const),
             },

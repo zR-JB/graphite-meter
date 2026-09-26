@@ -15,6 +15,7 @@ import {
   LATENCY_CONFIDENCE_WINDOW_MS,
   bandForState,
   isStillStable,
+  stabilityPct,
   TRANSFER_CONFIDENCE_BUCKETS,
   type ConfidenceScore,
   type LatencyConfidenceScore,
@@ -450,15 +451,9 @@ export class RunAccumulator {
         hasStableEvidence = true;
       }
     }
-    const stability = transferConfidence([...lane.stabilityBuckets.rates]);
-    const descriptiveStability =
-      stability.sampleCount >= 2
-        ? Math.max(0, Math.min(1, 1 - stability.varianceRatio))
-        : 0;
-
     return {
       peakBytesPerSec: lane.peakBytesPerSec,
-      stabilityPct: descriptiveStability * 100,
+      stabilityPct: stabilityPct(lane.stabilityBuckets.rates),
       totalBytes: lane.bytes,
       reportedBytesPerSec: reported,
       fullAverageBytesPerSec: full,
