@@ -166,7 +166,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
-		m.close()
 		m.interrupted = true
 		return m, tea.Quit
 	case m.edit != nil:
@@ -301,11 +300,5 @@ func (m model) quit() (tea.Model, tea.Cmd) {
 		m.notice = "Stopping the test before quitting…"
 		return m, nil
 	}
-	m.close()
 	return m, tea.Quit
-}
-
-func (m *model) close() {
-	m.invalidatePreparation()
-	m.controller.Close()
 }

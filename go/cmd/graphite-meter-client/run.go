@@ -281,7 +281,6 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	}
 	m.notice = ""
 	if m.quitting {
-		m.close()
 		return m, tea.Quit
 	}
 	if isAuthRequired(done.Err) {

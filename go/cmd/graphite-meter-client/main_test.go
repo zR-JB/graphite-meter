@@ -45,7 +45,7 @@ func quits(cmd tea.Cmd) bool {
 func testModel(t *testing.T) model {
 	t.Helper()
 	m := newModel(goclient.DefaultConfig())
-	t.Cleanup(m.close)
+	t.Cleanup(m.controller.Close)
 	m.width, m.height = 120, 40
 	m.prepare = prepareReady
 	return m

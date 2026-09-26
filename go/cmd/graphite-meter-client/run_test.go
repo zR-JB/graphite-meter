@@ -44,7 +44,7 @@ func TestReprepareCancelsActiveRequestAndDiscardsItsReply(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = url
 	m := newModel(cfg)
-	t.Cleanup(m.close)
+	t.Cleanup(m.controller.Close)
 	m, command := modelAndCmd(m.Update(prepareDueMsg{seq: m.prepareSeq}))
 	replied := make(chan tea.Msg, 1)
 	go func() { replied <- command() }()
@@ -72,6 +72,7 @@ func TestQuitAndShutdownCancelOwnedWork(t *testing.T) {
 		if _, cmd := modelAndCmd(m.Update(press("ctrl+c"))); !quits(cmd) {
 			t.Fatal("ctrl+c did not quit")
 		}
+		m.controller.Close()
 		for _, p := range []*goclient.Preparation{preparation, m.controller.NewPreparation(m.cfg, nil)} {
 			if _, err := p.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatalf("quit left preparation work possible: %v", err)
@@ -91,7 +92,7 @@ func TestPreparationCancellationReachesQueuedApprovalPoll(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = "https://meter.test"
 	m := newModel(cfg)
-	t.Cleanup(m.close)
+	t.Cleanup(m.controller.Close)
 	pending, err := m.preparation.BeginAuthorization(cfg.BaseURL, cfg.BaseURL+"/login")
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +135,7 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = url
 	m := newModel(cfg)
-	t.Cleanup(m.close)
+	t.Cleanup(m.controller.Close)
 	preparation, seq := m.preparation, m.prepareSeq
 	m, _ = modelAndCmd(m.startRun())
 	if _, err := preparation.PrepareRun(); !errors.Is(err, context.Canceled) || m.prepareSeq == seq {
@@ -197,7 +198,7 @@ func TestQuitDuringARunStopsAndReports(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = url
 	m := newModel(cfg)
-	t.Cleanup(m.close)
+	t.Cleanup(m.controller.Close)
 	m, _ = modelAndCmd(m.startRun())
 	within(t, entered, "run never reached preparation")
 	m, cmd := modelAndCmd(m.Update(press("q")))
