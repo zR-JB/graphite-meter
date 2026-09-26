@@ -12,7 +12,15 @@ use graphite_meter_core::{
 };
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
-use std::{sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 use tokio::{
     sync::Mutex,
     time::{Instant, timeout_at},
@@ -21,33 +29,90 @@ use tokio::{
 pub(crate) const TRANSFER_PROGRESS_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
+pub(crate) struct TransferProgress {
+    epoch: Instant,
+    nanos: AtomicU64,
+}
+
+impl TransferProgress {
+    pub(crate) fn record(&self) {
+        self.nanos
+            .store(self.epoch.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    }
+
+    fn last(&self) -> Instant {
+        self.epoch + Duration::from_nanos(self.nanos.load(Ordering::Relaxed))
+    }
+}
+
 pub(crate) struct TransferRetry {
-    last_progress: Instant,
+    pub(crate) progress: Arc<TransferProgress>,
+    last_error: Option<Error>,
+    recovery: Option<Instant>,
+    deadline: Pin<Box<tokio::time::Sleep>>,
 }
 
 impl TransferRetry {
     pub(crate) fn new() -> Self {
         Self {
-            last_progress: Instant::now(),
+            progress: Arc::new(TransferProgress {
+                epoch: Instant::now(),
+                nanos: AtomicU64::new(0),
+            }),
+            last_error: None,
+            recovery: None,
+            deadline: Box::pin(tokio::time::sleep(TRANSFER_PROGRESS_TIMEOUT)),
         }
     }
 
     pub(crate) fn progressed(&mut self) {
-        self.last_progress = Instant::now();
+        self.progress.record();
+        self.recovery = None;
+    }
+
+    pub(crate) async fn run<T>(
+        &mut self,
+        attempt: impl Future<Output = Result<T, Error>>,
+    ) -> Result<T, Error> {
+        let started = Instant::now();
+        tokio::pin!(attempt);
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut self.deadline => {
+                    let next = self.progress.last() + TRANSFER_PROGRESS_TIMEOUT;
+                    if next <= Instant::now() {
+                        return Err(self.last_error.take().unwrap_or_else(|| "lane stopped moving bytes for two seconds".into()));
+                    }
+                    if started.elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
+                        self.recovery = None;
+                    }
+                    self.deadline.as_mut().reset(next);
+                }
+                result = &mut attempt => return result,
+            }
+        }
     }
 
     pub(crate) async fn retry(
         &mut self,
         error: Error,
-        moved: bool,
+        received: bool,
         retryable: bool,
     ) -> Result<(), Error> {
-        if moved {
-            self.last_progress = Instant::now();
+        if received {
+            self.recovery = None;
         }
-        if !retryable || self.last_progress.elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
+        let deadline = *self
+            .recovery
+            .get_or_insert_with(|| Instant::now() + TRANSFER_PROGRESS_TIMEOUT);
+        if !retryable
+            || self.progress.last().elapsed() >= TRANSFER_PROGRESS_TIMEOUT
+            || deadline <= Instant::now()
+        {
             return Err(error);
         }
+        self.last_error = Some(error);
         tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
         Ok(())
     }

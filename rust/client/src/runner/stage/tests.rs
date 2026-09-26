@@ -96,6 +96,9 @@ async fn download_peer_with_gate(
                             return;
                         }
                         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
+                        if flag.load(Ordering::SeqCst) == 5 && request.windows(6).any(|value| value == b"lane=1") {
+                            std::future::pending::<()>().await;
+                        }
                         let bytes = [0_u8; 65536];
                         while flag.load(Ordering::SeqCst) != 3 && stream.write_all(&bytes).await.is_ok() {
                             if flag.load(Ordering::SeqCst) == 4 {
@@ -725,10 +728,10 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
     let snapshot = observed.borrow();
     let result = &snapshot.results[0];
     assert!(!result.complete);
-    assert_eq!(
+    assert!(matches!(
         result.server_results[1].error.as_deref(),
-        Some("stopped delivering bytes")
-    );
+        Some("stopped delivering bytes" | "lane stopped moving bytes for two seconds")
+    ));
     assert!(result.down_bps.is_some());
     assert!(result.server_results[0].down_bps.is_some());
     Ok(())
@@ -828,5 +831,32 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
     drop(resources);
     peer.abort();
     healthy_peer.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn stalled_lane_expires_while_its_sibling_keeps_receiving() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    mode.store(5, Ordering::SeqCst);
+    let transport =
+        Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http1, true).await?);
+    let (_stop, cancelled) = watch::channel(false);
+    let mut download = Download::start(transport, 2, Duration::from_secs(30), cancelled).await?;
+    let baseline = download.bytes();
+    let failure = tokio::time::timeout(Duration::from_secs(3), async {
+        let mut tick = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            tick.tick().await;
+            if let Err(error) = download.health() {
+                break error;
+            }
+        }
+    })
+    .await;
+    assert!(download.bytes() > baseline);
+    download.stop().await;
+    peer.abort();
+    assert!(failure?.to_string().contains("lane stopped moving bytes"));
     Ok(())
 }

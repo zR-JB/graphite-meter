@@ -2,7 +2,7 @@
 use crate::{
     Error,
     net::Http,
-    transport::{TransferRetry, Transport},
+    transport::{TransferProgress, TransferRetry, Transport},
     webtransport::{ConnectRejected, Session, SessionSlot},
 };
 use graphite_meter_core::{
@@ -202,6 +202,7 @@ async fn receive_http_lane(
     let mut retry = TransferRetry::new();
     loop {
         let mut moved = false;
+        let progress = retry.progress.clone();
         let attempt = async {
             let mut body = transport
                 .receive(
@@ -224,14 +225,16 @@ async fn receive_http_lane(
                 bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
                 received += chunk.len() as u64;
                 moved |= !chunk.is_empty();
+                if !chunk.is_empty() {
+                    progress.record();
+                }
             }
             if received != HTTP_DOWNLOAD_BYTES {
                 return Err("download ended before its declared byte count".into());
             }
             Ok::<(), Error>(())
-        }
-        .await;
-        if let Err(error) = attempt {
+        };
+        if let Err(error) = retry.run(attempt).await {
             let retryable = transport.retryable_transfer_error(&error);
             retry.retry(error, moved, retryable).await?;
         } else if moved {
@@ -252,25 +255,29 @@ async fn receive_webtransport(
     let mut announced = false;
     let mut retry = TransferRetry::new();
     loop {
-        let session = slot.current().await;
+        let session = retry.run(async { Ok(slot.current().await) }).await?;
         let mut moved = false;
-        let result = receive_webtransport_chunk(
-            &session,
-            &bytes,
-            &ready,
-            &mut announced,
-            &mut moved,
-            datagrams,
-        )
-        .await;
+        let progress = retry.progress.clone();
+        let result = retry
+            .run(receive_webtransport_chunk(
+                &session,
+                &bytes,
+                &ready,
+                &mut announced,
+                &mut moved,
+                &progress,
+                datagrams,
+            ))
+            .await;
         if let Err(error) = result {
             let retryable = session.retryable_failure(&error);
             retry.retry(error, moved, retryable).await?;
             if session.is_closed()
-                && let Err(error) = slot.reconnect(&session).await
-                && (error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>())
+                && let Err(error) = retry.run(slot.reconnect(&session)).await
             {
-                return Err(error);
+                let retryable =
+                    !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
+                retry.retry(error, false, retryable).await?;
             }
         } else if moved {
             retry.progressed();
@@ -284,11 +291,15 @@ async fn receive_webtransport_chunk(
     ready: &mpsc::Sender<()>,
     announced: &mut bool,
     moved: &mut bool,
+    progress: &TransferProgress,
     datagrams: bool,
 ) -> Result<(), Error> {
     if datagrams {
         let chunk = session.recv_datagram().await?;
         *moved |= !chunk.is_empty();
+        if !chunk.is_empty() {
+            progress.record();
+        }
         record_webtransport(bytes, ready, announced, chunk.len())?;
         return Ok(());
     }
@@ -299,6 +310,9 @@ async fn receive_webtransport_chunk(
             .checked_add(chunk.len() as u64)
             .ok_or("download byte count overflow")?;
         *moved |= !chunk.is_empty();
+        if !chunk.is_empty() {
+            progress.record();
+        }
         record_webtransport(bytes, ready, announced, chunk.len())?;
         if received > WT_STREAM_BYTES {
             return Err("WebTransport download exceeded its declared byte count".into());
