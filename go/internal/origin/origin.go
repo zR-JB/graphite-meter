@@ -1,32 +1,13 @@
-// Package origin provides the canonical identity used for HTTP endpoint catalogs.
+// Package origin forwards to wire.OriginKey until the native client imports it directly.
 package origin
 
-import (
-	"net"
-	"net/url"
-	"strings"
-)
+import "github.com/zR-JB/graphite-meter/go/internal/wire"
 
 func Key(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		return raw
+	if key, ok := wire.OriginKey(raw); ok {
+		return key
 	}
-	scheme := strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
-		port = ""
-	}
-	if port != "" {
-		host = net.JoinHostPort(host, port)
-	} else if strings.Contains(host, ":") {
-		// Hostname strips the brackets an IPv6 literal needs to be a valid authority.
-		host = "[" + host + "]"
-	}
-	return scheme + "://" + host
+	return raw
 }
 
-func Equal(a, b string) bool {
-	return Key(a) == Key(b)
-}
+func Equal(a, b string) bool { return a == b || wire.SameOrigin(a, b) }

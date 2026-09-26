@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 )
 
 const MaxCatalogServers = 32
@@ -44,14 +42,14 @@ func (c ServerCatalog) Validate() error {
 		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name+entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}
-		if ids[entry.ID] || origins[origin.Key(entry.URL)] {
-			return fmt.Errorf("duplicate catalogue server %q", entry.ID)
-		}
-		ids[entry.ID], origins[origin.Key(entry.URL)] = true, true
-		_, err := CanonicalOrigin(entry.URL)
+		key, err := CanonicalOrigin(entry.URL)
 		if entry.URL == "." && entry.ID != "self" || entry.URL != "." && err != nil {
 			return fmt.Errorf("invalid catalogue origin for %q", entry.ID)
 		}
+		if ids[entry.ID] || origins[key] {
+			return fmt.Errorf("duplicate catalogue server %q", entry.ID)
+		}
+		ids[entry.ID], origins[key] = true, true
 		if len(entry.AdditionalOrigins) > 32 {
 			return fmt.Errorf("too many additional origins for %q", entry.ID)
 		}
@@ -80,12 +78,12 @@ func (c ServerCatalog) ValidateSelection(selected []string) error {
 
 func (c ServerCatalog) Resolve(base string) ServerCatalog {
 	c.Servers = slices.Clone(c.Servers)
-	for i := range c.Servers {
-		if c.Servers[i].URL == "." {
-			c.Servers[i].URL = origin.Key(base)
-		} else {
-			c.Servers[i].URL = origin.Key(c.Servers[i].URL)
+	for i, s := range c.Servers {
+		raw := s.URL
+		if raw == "." {
+			raw = base
 		}
+		c.Servers[i].URL, _ = OriginKey(raw)
 	}
 	return c
 }
@@ -106,7 +104,7 @@ func (s ServerEntry) AllowsOrigin(raw string) bool {
 	if strings.EqualFold(u.Hostname(), base.Hostname()) {
 		return true
 	}
-	return slices.ContainsFunc(s.AdditionalOrigins, func(allowed string) bool { return origin.Equal(raw, allowed) })
+	return slices.ContainsFunc(s.AdditionalOrigins, func(allowed string) bool { return SameOrigin(raw, allowed) })
 }
 
 func (s ServerEntry) ValidateDiscovery(p Preflight) error {
@@ -167,5 +165,33 @@ func CanonicalOrigin(raw string) (string, error) {
 	if strings.Contains(u.Hostname(), ":") && net.ParseIP(u.Hostname()) == nil {
 		return "", fmt.Errorf("invalid IPv6 origin")
 	}
-	return origin.Key(raw), nil
+	key, _ := OriginKey(raw)
+	return key, nil
+}
+
+// OriginKey is raw's scheme and host, lowercased and without a default port; ok is false if raw has neither.
+func OriginKey(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
+		return "", false
+	}
+	scheme, host, port := strings.ToLower(u.Scheme), strings.ToLower(u.Hostname()), u.Port()
+	if scheme == "http" && port == "80" || scheme == "https" && port == "443" {
+		port = ""
+	}
+	if port != "" {
+		return scheme + "://" + net.JoinHostPort(host, port), true
+	}
+	if strings.Contains(host, ":") {
+		// Hostname strips the brackets an IPv6 literal needs to be a valid authority.
+		return scheme + "://[" + host + "]", true
+	}
+	return scheme + "://" + host, true
+}
+
+// SameOrigin reports whether a and b name one origin; text that is no origin matches nothing.
+func SameOrigin(a, b string) bool {
+	keyA, okA := OriginKey(a)
+	keyB, okB := OriginKey(b)
+	return okA && okB && keyA == keyB
 }

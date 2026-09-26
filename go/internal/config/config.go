@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -450,7 +449,7 @@ func (c Config) validatePublicOrigins() error {
 		if n.Public == "" {
 			continue
 		}
-		key := origin.Key(n.Public)
+		key, _ := wire.OriginKey(n.Public)
 		if protocol, ok := deterministic[key]; ok && protocol != n.Protocol {
 			return fmt.Errorf("native origin %q is advertised with multiple deterministic protocols", n.Public)
 		}
@@ -461,7 +460,8 @@ func (c Config) validatePublicOrigins() error {
 			if value != "self" && !validOrigin(value, "") {
 				return fmt.Errorf("%s contains invalid origin %q", l.env, value)
 			}
-			if _, ok := deterministic[origin.Key(value)]; ok && l.env != "GM_PUBLIC_LATENCY_ORIGINS" {
+			key, _ := wire.OriginKey(value)
+			if _, ok := deterministic[key]; ok && l.env != "GM_PUBLIC_LATENCY_ORIGINS" {
 				return fmt.Errorf("origin %q cannot be both native deterministic and public negotiated", value)
 			}
 		}

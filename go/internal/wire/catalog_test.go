@@ -45,6 +45,26 @@ func TestCatalogDiscoveryBoundary(t *testing.T) {
 	}
 }
 
+// Origins compare by scheme, lowercased host and non-default port; text that is no origin matches nothing.
+func TestOriginKey(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://Meter.Example:443": "https://meter.example",
+		"http://meter.example:80":   "http://meter.example",
+		"https://[::1]:443":         "https://[::1]",
+		"https://[::1]:8443":        "https://[::1]:8443",
+	} {
+		if got, ok := OriginKey(raw); !ok || got != want || !SameOrigin(raw, want) {
+			t.Errorf("OriginKey(%q) = %q, %t, want %q", raw, got, ok, want)
+		}
+	}
+	for _, pair := range [][2]string{{"https://meter.example:444", "https://meter.example"}, {"junk", "junk"},
+		{".", "."}} {
+		if SameOrigin(pair[0], pair[1]) {
+			t.Errorf("SameOrigin(%q, %q) = true", pair[0], pair[1])
+		}
+	}
+}
+
 func TestCatalogSelectionAndResolution(t *testing.T) {
 	c := SingletonCatalog()
 	c.Servers = append(c.Servers, ServerEntry{ID: "remote", URL: "https://remote.example", Name: "Remote"})

@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -193,7 +192,7 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 	throughput, latency := []wire.ThroughputTarget{}, []wire.LatencyTarget{}
 	fetch := func(base, protocol string) {
 		for i, t := range throughput {
-			if t.Transport == wire.TransportFetchStream && origin.Equal(t.Origin, base) {
+			if t.Transport == wire.TransportFetchStream && sameTarget(t.Origin, base) {
 				if t.Protocol != protocol {
 					throughput[i].Protocol = "negotiated"
 				}
@@ -205,7 +204,7 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 	}
 	websocket := func(base string) {
 		if !slices.ContainsFunc(latency, func(t wire.LatencyTarget) bool {
-			return t.Transport == wire.TransportWebSocket && origin.Equal(t.Origin, base)
+			return t.Transport == wire.TransportWebSocket && sameTarget(t.Origin, base)
 		}) {
 			latency = append(latency, wire.LatencyTarget{Origin: base, Transport: wire.TransportWebSocket})
 		}
@@ -243,6 +242,9 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 		EngineVersion: cfg.EngineVersion, Generation: d.generation, Capabilities: wire.Capabilities{
 			UploadCheckpoint: true, ThroughputTargets: throughput, LatencyTargets: latency}}
 }
+
+// sameTarget also matches the relative self target ".".
+func sameTarget(a, b string) bool { return a == b || wire.SameOrigin(a, b) }
 
 func nativeOrigin(public, scheme, host, addr string) string {
 	if public != "" {
