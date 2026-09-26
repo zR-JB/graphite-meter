@@ -122,7 +122,6 @@ export class LatencyPresentationBuckets {
     };
   }
 
-  /** In place: a closed bucket stays sorted, so a late revision costs one adaptive pass. */
   #summarize(bucket: Bucket, endT: number): LatencyBucket {
     const rtts = bucket.rtts.sort((a, b) => a - b);
     return {

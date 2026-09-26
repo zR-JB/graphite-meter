@@ -208,8 +208,8 @@ export function shouldExitPhase(input: {
 
 /** Raw outcomes of one stage; presentation buckets never feed it. */
 export class LatencyPopulation {
-  #buffer = new Float64Array(0);
-  #merged = 0;
+  /** Ascending replies over a buffer with spare capacity; later replies wait in `#fresh`. */
+  #sorted = new Float64Array(0);
   #fresh: number[] = [];
   #sum = 0;
   #final: StageLatencySummary | null | undefined;
@@ -273,7 +273,7 @@ export class LatencyPopulation {
 
   close(): void {
     this.#final = this.summary();
-    this.#buffer = new Float64Array(0);
+    this.#sorted = new Float64Array(0);
   }
 
   summary(): StageLatencySummary | null {
@@ -317,20 +317,18 @@ export class LatencyPopulation {
   }
 
   #merge(): Float64Array {
-    const n = this.#merged;
+    const n = this.#sorted.length;
     const k = this.#fresh.length;
-    if (this.#buffer.length < n + k) {
-      const grown = new Float64Array(2 * (n + k));
-      grown.set(this.#buffer.subarray(0, n));
-      this.#buffer = grown;
+    let buffer = new Float64Array(this.#sorted.buffer);
+    if (buffer.length < n + k) {
+      buffer = new Float64Array(2 * (n + k));
+      buffer.set(this.#sorted);
     }
-    const buffer = this.#buffer;
     const fresh = Float64Array.from(this.#fresh).sort();
     for (let i = n - 1, j = k - 1, w = n + k - 1; j >= 0; w--)
       buffer[w] = i >= 0 && buffer[i] > fresh[j] ? buffer[i--] : fresh[j--];
     this.#fresh = [];
-    this.#merged = n + k;
-    return buffer.subarray(0, n + k);
+    return (this.#sorted = buffer.subarray(0, n + k));
   }
 }
 
