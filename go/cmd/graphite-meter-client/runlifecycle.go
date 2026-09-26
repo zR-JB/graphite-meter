@@ -12,7 +12,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// prepareDebounce lets a burst of setting changes start one path check.
 const prepareDebounce = 350 * time.Millisecond
 
 func prepareRun(preparation *goclient.Preparation, seq int) tea.Cmd {
@@ -27,7 +26,6 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg { return prepareDueMsg{seq: seq} })
 }
 
-// invalidatePreparation cancels the check and sign-in in flight.
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil
@@ -50,10 +48,10 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		m.cfg.ServerIDs = msg.run.SelectedIDs()
 	}
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
-		// A catalogue challenge has no server entry.
 		m.authServerID = ""
 		if msg.run != nil {
-			if i := slices.IndexFunc(msg.run.Servers, func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) }); i >= 0 {
+			challenged := func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) }
+			if i := slices.IndexFunc(msg.run.Servers, challenged); i >= 0 {
 				m.authServerID = msg.run.Servers[i].Server.ID
 			}
 		}
@@ -67,7 +65,6 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case msg.err != nil && (msg.run == nil || len(msg.run.Servers) == 0):
-		// A catalogue failure has no server row to carry it.
 		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
 	case msg.err != nil:
 		m.prepare, m.prepareErr = prepareFailed, ""
@@ -116,7 +113,6 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
 		return m, nil
 	}
-	// The grant must come from the challenging issuer.
 	expected := m.cfg.BaseURL
 	if server, ok := m.catalogServer(m.authServerID); ok {
 		expected = server.URL
@@ -133,7 +129,6 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	return m.reprepare()
 }
 
-// runState is one run's view: combined results from EventResult, per-server data from RunDetails.
 type runState struct {
 	plan          []goclient.StagePlan
 	stages        []stageProgress
@@ -257,7 +252,6 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	}
 	m.notice = ""
 	if isAuthRequired(done.Err) {
-		// Recheck the selection to find the challenging server.
 		m.run = nil
 		m.notice = "Sign-in expired. Checking the selected servers…"
 		return m.reprepare()
@@ -274,8 +268,14 @@ func (m *model) apply(e goclient.Event) {
 		m.notice = r.serverName(e.ServerID) + ": " + e.Failure.Message
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
-		state := map[goclient.Phase]stageState{goclient.PhasePreparing: stagePreparing, goclient.PhaseWarmup: stageWarmup, goclient.PhaseMeasuring: stageMeasuring, goclient.PhaseFinished: stageDone}[e.Phase]
-		if i := slices.IndexFunc(r.stages, func(s stageProgress) bool { return s.name == e.Stage }); i >= 0 && state != stagePending {
+		state := map[goclient.Phase]stageState{
+			goclient.PhasePreparing: stagePreparing,
+			goclient.PhaseWarmup:    stageWarmup,
+			goclient.PhaseMeasuring: stageMeasuring,
+			goclient.PhaseFinished:  stageDone,
+		}[e.Phase]
+		i := slices.IndexFunc(r.stages, func(s stageProgress) bool { return s.name == e.Stage })
+		if i >= 0 && state != stagePending {
 			r.stages[i].state, r.stages[i].since = state, e.At
 		}
 	case goclient.EventThroughput:
@@ -301,7 +301,6 @@ func (r *runState) adopt(details *goclient.RunDetails) {
 		return
 	}
 	r.details = details
-	// Default to the run's own latency focus.
 	if !slices.ContainsFunc(details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus }) {
 		r.focus = details.LatencyFocus
 	}
@@ -309,8 +308,10 @@ func (r *runState) adopt(details *goclient.RunDetails) {
 
 func (r *runState) serverName(id string) string {
 	if r.details != nil {
-		if i := slices.IndexFunc(r.details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == id }); i >= 0 {
-			return r.details.Servers[i].Server.Name
+		for _, s := range r.details.Servers {
+			if s.Server.ID == id {
+				return s.Server.Name
+			}
 		}
 	}
 	return id
@@ -324,7 +325,6 @@ func (r *runState) nextFocus() {
 	r.focus = r.details.Servers[(i+1)%len(r.details.Servers)].Server.ID
 }
 
-// latencyPopulations are the focused server's latency results by stage.
 func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 	out := map[goclient.Stage]goclient.Result{}
 	if r.details == nil {
@@ -343,7 +343,6 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 	return out
 }
 
-// statusLabel is the header's lifecycle word.
 func (m model) statusLabel() string {
 	if r := m.run; r != nil {
 		switch {

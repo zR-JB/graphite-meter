@@ -13,7 +13,10 @@ type keymap struct {
 }
 
 var keys = keymap{
-	sections:      key.NewBinding(key.WithKeys("tab", "shift+tab", "right", "left"), key.WithHelp("tab/←/→", "section")),
+	sections: key.NewBinding(
+		key.WithKeys("tab", "shift+tab", "right", "left"),
+		key.WithHelp("tab/←/→", "section"),
+	),
 	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "row")),
 	change:        key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "change")),
 	start:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start test")),
@@ -48,7 +51,6 @@ func reverse(msg tea.KeyMsg) bool {
 	return false
 }
 
-// ShortHelp lists exactly the bindings the current screen accepts.
 func (m model) ShortHelp() []key.Binding {
 	switch {
 	case m.detailsOpen:
@@ -69,7 +71,6 @@ func (m model) ShortHelp() []key.Binding {
 		}
 		return append(bindings, keys.help, keys.quit)
 	case m.auth != nil:
-		// Enter opens the sign-in page, not a row.
 		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.sections, keys.rows, keys.help, keys.quit}
 	}
 	bindings := []key.Binding{keys.sections, keys.rows, keys.change, keys.start, keys.recheck}

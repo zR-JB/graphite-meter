@@ -10,12 +10,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-// Units and precision follow the browser's format.ts; "—" marks missing data.
 const missing = "—"
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
 
-// fmtRate promotes the unit only past 1.2× the next tier.
 func fmtRate(bytesPerSec float64) string {
 	bits := bytesPerSec * 8
 	tier := 0
@@ -56,7 +54,6 @@ func fmtMs(d time.Duration) string {
 	return fmt.Sprintf("%.0f ms", ms)
 }
 
-// fmtAdded keeps the sign.
 func fmtAdded(d time.Duration) string {
 	if d < 0 {
 		return "−" + fmtMs(-d)
@@ -64,7 +61,6 @@ func fmtAdded(d time.Duration) string {
 	return "+" + fmtMs(d)
 }
 
-// fmtSetting renders a configured duration: 800 ms, 4 s, 1.5 s.
 func fmtSetting(d time.Duration) string {
 	if d < time.Second {
 		return fmt.Sprintf("%d ms", d.Milliseconds())
@@ -72,7 +68,6 @@ func fmtSetting(d time.Duration) string {
 	return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s"
 }
 
-// fmtClock renders a running or measured span in tenths of a second.
 func fmtClock(d time.Duration) string {
 	return fmt.Sprintf("%.1f s", max(d, 0).Seconds())
 }
@@ -84,7 +79,6 @@ var stageLabels = map[goclient.Stage]string{
 	goclient.StageBidirectional: "Bidirectional",
 }
 
-// compactStage is the stage name where a column is narrow.
 func compactStage(stage goclient.Stage) string {
 	if stage == goclient.StageBidirectional {
 		return "Bi-dir"
@@ -92,7 +86,6 @@ func compactStage(stage goclient.Stage) string {
 	return stageLabels[stage]
 }
 
-// populationLabel names a latency population by the load it was measured under.
 func populationLabel(stage goclient.Stage) string {
 	if stage == goclient.StageLatency {
 		return "Idle latency"
@@ -110,7 +103,6 @@ func directionLabel(r goclient.Result) string {
 	return "Bi-dir ↓"
 }
 
-// latencyParts reports a population, median first.
 func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
 	median := missing
 	if s.Count > 0 {
@@ -144,7 +136,6 @@ func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string
 	return parts
 }
 
-// wrapParts joins facts with " · ", breaking only between facts.
 func wrapParts(parts []string, w int) []string {
 	var lines []string
 	line := ""
@@ -166,8 +157,8 @@ func reflectorTimingSummary(s *goclient.ReflectorTimingStats) string {
 	if s == nil {
 		return ""
 	}
-	return fmt.Sprintf("Server timing (%d paired replies, means): raw %s · handling %s · adjusted %s. Only server handling is subtracted.",
-		s.Count, fmtMs(s.MeanRawRTT), fmtMs(s.MeanHandling), fmtMs(s.MeanAdjustedRTT))
+	const summary = "Server timing (%d paired replies, means): raw %s · handling %s · adjusted %s (handling removed)."
+	return fmt.Sprintf(summary, s.Count, fmtMs(s.MeanRawRTT), fmtMs(s.MeanHandling), fmtMs(s.MeanAdjustedRTT))
 }
 
 func protocolChoiceLabel(protocol string) string {
@@ -177,7 +168,6 @@ func protocolChoiceLabel(protocol string) string {
 	return goclient.ProtocolLabel(protocol)
 }
 
-// eighths are partial-cell fills, so a bar grows in sub-cell steps.
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
 func renderBar(value, scale float64, width int) string {

@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// P50 is the midpoint median; P10/P90/P95 use nearest rank.
 func TestPercentiles(t *testing.T) {
 	t.Parallel()
 	four := []time.Duration{10, 20, 30, 40}
@@ -36,7 +35,6 @@ func timeoutRatio(t *testing.T, s LatencyStats) float64 {
 	return ratio
 }
 
-// Jitter, quantiles, timeouts, continuity, and undefined populations.
 func TestLatencyDefinitionFixtures(t *testing.T) {
 	t.Parallel()
 	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
@@ -47,9 +45,15 @@ func TestLatencyDefinitionFixtures(t *testing.T) {
 	}
 	mixed.add(0, true, 0)
 	mixed.add(0, true, 0)
-	mixed.add(0, false, 0) // A non-positive reply is neither an RTT nor a timeout.
+	mixed.add(0, false, 0)
 	got := mixed.snapshot()
-	if got.Count != 4 || got.Min != ms(10) || got.Mean != ms(25) || got.P50 != ms(25) || got.P95 != ms(40) || got.Jitter != ms(70)/3 || timeoutRatio(t, got) != 2.0/6.0 {
+	if got.Count != 4 ||
+		got.Min != ms(10) ||
+		got.Mean != ms(25) ||
+		got.P50 != ms(25) ||
+		got.P95 != ms(40) ||
+		got.Jitter != ms(70)/3 ||
+		timeoutRatio(t, got) != 2.0/6.0 {
 		t.Fatalf("mixed fixture: %+v", got)
 	}
 
@@ -61,7 +65,6 @@ func TestLatencyDefinitionFixtures(t *testing.T) {
 	if got.Jitter != ms(90) || got.JitterPairs != 3 || got.P50 != ms(55) || got.P10 != ms(10) || got.P90 != ms(100) {
 		t.Fatalf("alternating fixture: %+v", got)
 	}
-	// A snapshot must not sort the receive-order population later replies extend.
 	alternating.add(ms(10), false, 0)
 	if alternating.snapshot().Jitter != ms(90) {
 		t.Fatal("snapshot changed receive order")

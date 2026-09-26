@@ -30,7 +30,12 @@ func (b wsBus) Recv(ctx context.Context) (string, error) {
 	return string(msg), err
 }
 
-func (b wsBus) Close() { b.conn.Close(websocket.StatusNormalClosure, "") } //nolint:errcheck // the samples are already collected
+func (b wsBus) Close() {
+	b.conn.Close(
+		websocket.StatusNormalClosure,
+		"",
+	)
+} //nolint:errcheck // the samples are already collected
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	if r.latencyTarget.Transport == wire.TransportWebTransport {
@@ -44,7 +49,10 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
+	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{
+		HTTPClient:      r.websocketHTTP,
+		CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		if authErr := authResponseError(response); authErr != nil {
 			return nil, authErr
@@ -87,7 +95,13 @@ func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus
 	}
 }
 
-func (r *runner) measureLatency(ctx context.Context, stage Stage, underLoad bool, duration time.Duration, gate *stageGate) (result LatencyStats, failure error) {
+func (r *runner) measureLatency(
+	ctx context.Context,
+	stage Stage,
+	underLoad bool,
+	duration time.Duration,
+	gate *stageGate,
+) (result LatencyStats, failure error) {
 	if r.latencyTarget == nil {
 		return LatencyStats{}, fmt.Errorf("no latency target selected")
 	}

@@ -53,7 +53,9 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	var hdr http.Header
 	if token := cfg.grant; token != "" {
 		parsed, err := url.Parse(u)
-		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.BaseURL)) {
+		if err != nil ||
+			parsed.Scheme != "https" ||
+			!strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.BaseURL)) {
 			return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 		}
 		hdr = http.Header{"Authorization": {"Bearer " + token}}
@@ -62,7 +64,6 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
-	// A refused upgrade returns its response, which carries any auth challenge.
 	response, sess, err := wtTransport.Dial(ctx, u, hdr)
 	if err != nil {
 		_ = wtTransport.Close()
@@ -143,7 +144,11 @@ type wtStageSession struct {
 	closed    bool
 }
 
-func newWTStageSession(ctx context.Context, dial func(ctx context.Context) (*wtSession, error), establish func(ctx context.Context, sess *wtSession) error) (*wtStageSession, error) {
+func newWTStageSession(
+	ctx context.Context,
+	dial func(ctx context.Context) (*wtSession, error),
+	establish func(ctx context.Context, sess *wtSession) error,
+) (*wtStageSession, error) {
 	w := &wtStageSession{dial: dial, establish: establish}
 	sess, err := dial(ctx)
 	if err != nil {
@@ -201,7 +206,11 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return fmt.Errorf("webtransport session lost and not replaced within %v: %w", wtSessionRedialWindow, lastErr)
+			return fmt.Errorf(
+				"webtransport session lost and not replaced within %v: %w",
+				wtSessionRedialWindow,
+				lastErr,
+			)
 		case <-time.After(wtRedialBackoff):
 		}
 	}
@@ -218,7 +227,11 @@ const wtLaneMaxFastFailures = 5
 
 const wtLaneProgressWindow = wtSessionRedialWindow
 
-func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.Context, sess *wtSession) (bool, error)) error {
+func runWTLane(
+	ctx context.Context,
+	host *wtStageSession,
+	lane func(ctx context.Context, sess *wtSession) (bool, error),
+) error {
 	fastFailures := 0
 	var failingSince time.Time
 	for ctx.Err() == nil {
@@ -264,7 +277,13 @@ func (r *runner) wtDownloadQuery() url.Values {
 	}
 }
 
-func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, buf []byte, total *atomic.Uint64, ready func()) (bool, error) {
+func (r *runner) downloadLaneWT(
+	ctx context.Context,
+	sess *wtSession,
+	buf []byte,
+	total *atomic.Uint64,
+	ready func(),
+) (bool, error) {
 	progressed := false
 	for ctx.Err() == nil {
 		str, err := sess.AcceptUniStream(ctx)

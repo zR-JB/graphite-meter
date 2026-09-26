@@ -13,7 +13,6 @@ const (
 	Up   Direction = "up"
 )
 
-// Stage names one scheduled measurement stage.
 type Stage string
 
 const (
@@ -23,7 +22,6 @@ const (
 	StageBidirectional Stage = "bidirectional"
 )
 
-// Phase is a stage's position: connect, warm up, measure.
 type Phase int
 
 const (
@@ -33,16 +31,15 @@ const (
 	PhaseFinished
 )
 
-// Outcome classifies a run; every value but OutcomeRunning is final.
 type Outcome string
 
 const (
 	OutcomeRunning    Outcome = "running"
-	OutcomeComplete   Outcome = "complete"   // Every stage finished with every selected server.
-	OutcomePartial    Outcome = "partial"    // Every stage finished; a server or latency population dropped out.
-	OutcomeIncomplete Outcome = "incomplete" // A stage ended without its result after measurement began.
-	OutcomeStopped    Outcome = "stopped"    // The operator cancelled the run.
-	OutcomeFailed     Outcome = "failed"     // The run ended before any stage measured.
+	OutcomeComplete   Outcome = "complete"
+	OutcomePartial    Outcome = "partial"
+	OutcomeIncomplete Outcome = "incomplete"
+	OutcomeStopped    Outcome = "stopped"
+	OutcomeFailed     Outcome = "failed"
 )
 
 type EventKind int
@@ -57,23 +54,21 @@ const (
 	EventDone
 )
 
-// Event is one run message. Live samples may be dropped; other kinds are delivered.
 type Event struct {
 	Kind       EventKind
 	At         time.Time
 	Stage      Stage
 	Phase      Phase
 	Direction  Direction
-	ServerID   string // Latency samples and server failures.
+	ServerID   string
 	Throughput ThroughputSample
 	Latency    LatencySample
-	Result     *Result        // The combined transfer result of one stage direction.
-	Servers    *RunDetails    // Membership and per-server results; EventDone carries the final copy.
-	Failure    *ServerFailure // A server or its latency population left the run.
-	Err        error          // EventDone: why the run did not complete.
+	Result     *Result
+	Servers    *RunDetails
+	Failure    *ServerFailure
+	Err        error
 }
 
-// Outcome classifies a terminal event, including one without server details.
 func (e Event) Outcome() Outcome {
 	switch {
 	case e.Servers != nil:
@@ -86,35 +81,31 @@ func (e Event) Outcome() Outcome {
 	return OutcomeComplete
 }
 
-// ThroughputSample is the latest combined window rate.
 type ThroughputSample struct {
-	Unavailable bool // No window covers every participant, for example right after a dropout.
+	Unavailable bool
 	BytesPerSec float64
-	TotalBytes  uint64 // Moved in this stage and direction so far, across every participant.
+	TotalBytes  uint64
 }
 
-// LatencySample is one resolved probe to the server named by its event.
 type LatencySample struct {
 	RTT       time.Duration
 	UnderLoad bool
 	TimedOut  bool
 }
 
-// Result is one stage population; latency populations have no direction.
 type Result struct {
 	Stage       Stage
 	Direction   Direction
 	Unavailable bool
-	MeanBps     float64 // Bytes per second over the measured window.
-	PeakBps     float64 // Highest sampled window, never a sum of independent peaks.
-	TotalBytes  uint64  // Every byte moved in the stage, including windows without a rate.
+	MeanBps     float64
+	PeakBps     float64
+	TotalBytes  uint64
 	Samples     int
 	Latency     LatencyStats
-	Elapsed     time.Duration // Length of the measured window behind MeanBps or the latency population.
-	Err         error         // Non-nil marks an incomplete stage summary and preserves its failure.
+	Elapsed     time.Duration
+	Err         error
 }
 
-// ReceiverTimed reports whether the rate uses the receiver's clock.
 func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.

@@ -7,7 +7,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// runDirect runs one server without a catalogue.
 func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 	cfg = cfg.normalized()
 	connection, err := prepare(ctx, cfg)
@@ -15,11 +14,14 @@ func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 		emit(Event{Kind: EventDone, At: time.Now(), Err: err})
 		return err
 	}
-	server := PreparedServer{Server: wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: "fixture"}, Connection: connection, config: cfg}
+	server := PreparedServer{
+		Server:     wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: "fixture"},
+		Connection: connection,
+		config:     cfg,
+	}
 	return runSelection(ctx, nil, cfg, &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}, emit)
 }
 
-// runTestStage runs one stage through the production coordinator with injected transports.
 func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Duration) error {
 	cfg := r.cfg
 	cfg.Stages = StageSet{
@@ -28,7 +30,14 @@ func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Du
 		Upload:        stage == StageUpload,
 		Bidirectional: stage == StageBidirectional,
 	}
-	cfg.LatencyDuration, cfg.DownloadDuration, cfg.UploadDuration, cfg.BidirectionalDuration = duration, duration, duration, duration
+	for _, d := range []*time.Duration{
+		&cfg.LatencyDuration,
+		&cfg.DownloadDuration,
+		&cfg.UploadDuration,
+		&cfg.BidirectionalDuration,
+	} {
+		*d = duration
+	}
 	target := wire.ThroughputTarget{Origin: cfg.BaseURL, Transport: r.targetTransport(), Routes: r.routes()}
 	if r.target != nil {
 		target = *r.target
@@ -50,7 +59,6 @@ func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Du
 	return err
 }
 
-// testTransferResult runs one stage and returns its combined transfer result.
 func (r *runner) testTransferResult(ctx context.Context, stage Stage, duration time.Duration) (Result, error) {
 	var result Result
 	emit := r.emit

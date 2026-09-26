@@ -26,10 +26,15 @@ func testUploadFeed(body io.ReadCloser) *uploadFeed {
 
 func newWaitNextProgress(t *testing.T) (*uploadProgress, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(t.Context())
-	return &uploadProgress{ctx: ctx, cancel: cancel, done: make(chan struct{}), changed: make(chan struct{}, 1), errs: make(chan error, 1)}, cancel
+	return &uploadProgress{
+		ctx:     ctx,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		changed: make(chan struct{}, 1),
+		errs:    make(chan error, 1),
+	}, cancel
 }
 
-// The receiver pair only moves forward.
 func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 	t.Parallel()
 	t.Run("records", func(t *testing.T) {
@@ -50,9 +55,15 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 		if n, ns := p.counters(); n != 120 || ns != 30 || p.seq.Load() != 2 {
 			t.Fatalf("accepted receiver pair = (%d, %d), sequence=%d", n, ns, p.seq.Load())
 		}
-		// An explicit zero window is evidence, not a missing value.
 		zero := &uploadProgress{ready: make(chan error, 1), changed: make(chan struct{}, 1)}
-		zero.read(testUploadFeed(io.NopCloser(strings.NewReader("{\"type\":\"ready\"}\n{\"type\":\"complete\",\"bytes\":0,\"nanos\":0}\n"))), make(chan struct{}))
+		zero.read(
+			testUploadFeed(
+				io.NopCloser(
+					strings.NewReader("{\"type\":\"ready\"}\n{\"type\":\"complete\",\"bytes\":0,\"nanos\":0}\n"),
+				),
+			),
+			make(chan struct{}),
+		)
 		if n, ns := zero.counters(); n != 0 || ns != 0 || zero.seq.Load() != 1 {
 			t.Fatalf("zero window = (%d, %d), sequence=%d", n, ns, zero.seq.Load())
 		}
@@ -64,7 +75,11 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 			defer liveWriter.Close()
 			enc := jsontext.NewEncoder(liveWriter)
 			_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
-			_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "complete", Bytes: 1000, Nanos: uint64(5 * time.Second)})
+			_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{
+				Type:  "complete",
+				Bytes: 1000,
+				Nanos: uint64(5 * time.Second),
+			})
 		}()
 		r := &runner{emit: func(Event) {}}
 		p, err := r.readUploadProgress(t.Context(), testUploadFeed(live), "http://127.0.0.1/upload/progress")
@@ -77,14 +92,22 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 		}
 		stale, staleWriter := io.Pipe()
 		p.attach(testUploadFeed(stale))
-		if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), wire.UploadProgress{Type: "progress", Bytes: 1000, Nanos: uint64(3200 * time.Millisecond)}); err != nil {
+		if err := jsonv2.MarshalEncode(jsontext.NewEncoder(staleWriter), wire.UploadProgress{
+			Type:  "progress",
+			Bytes: 1000,
+			Nanos: uint64(3200 * time.Millisecond),
+		}); err != nil {
 			t.Fatalf("write the superseded feed's buffered record: %v", err)
 		}
 		staleWriter.Close()
 		_, done := p.current()
 		<-done
 		if bytes, nanos := p.counters(); bytes != 1000 || nanos != uint64(5*time.Second) {
-			t.Fatalf("counters = (%d bytes, %v), want (1000 bytes, 5s): the superseded feed walked the pair backwards", bytes, time.Duration(nanos))
+			t.Fatalf(
+				"counters = (%d bytes, %v), want (1000 bytes, 5s): the superseded feed walked the pair backwards",
+				bytes,
+				time.Duration(nanos),
+			)
 		}
 	})
 	t.Run("concurrent feeds", func(t *testing.T) {
@@ -117,7 +140,12 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 			wg.Go(func() {
 				defer feed.Close() //nolint:errcheck // the reader's own error path covers this
 				for i := uint64(1); i <= records; i++ {
-					if _, err := fmt.Fprintf(feed, "{\"type\":\"progress\",\"bytes\":%d,\"nanos\":%d}\n", i, i); err != nil {
+					if _, err := fmt.Fprintf(
+						feed,
+						"{\"type\":\"progress\",\"bytes\":%d,\"nanos\":%d}\n",
+						i,
+						i,
+					); err != nil {
 						return
 					}
 				}
@@ -172,12 +200,12 @@ func TestUploadProgressWaitNext(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		ctx, lane := c.prepare(progress, cancel)
 		err := progress.waitNext(ctx, 1, lane)
-		if c.wantErr == "" && err != nil || c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)) {
+		if c.wantErr == "" && err != nil ||
+			c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)) {
 			t.Errorf("%s: waitNext = %v, want %q", c.name, err, c.wantErr)
 		}
 		cancel()
 	}
-	// Progress wakes a waiter across a feed replacement and at the feed's end.
 	synctest.Test(t, func(t *testing.T) {
 		progress, cancel := newWaitNextProgress(t)
 		defer cancel()
@@ -210,7 +238,6 @@ func TestUploadProgressWaitNext(t *testing.T) {
 	})
 }
 
-// A paced reattach resumes the same aggregate.
 func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	t.Parallel()
 	const recordsPerFeed = 3
@@ -238,14 +265,17 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	defer p.close()
 	<-ctx.Done()
 	if carried, _ := p.counters(); carried <= recordsPerFeed {
-		t.Errorf("the counter stopped at %d, want it past %d: the reattach resumes the same aggregate", carried, recordsPerFeed)
+		t.Errorf(
+			"the counter stopped at %d, want it past %d: the reattach resumes the same aggregate",
+			carried,
+			recordsPerFeed,
+		)
 	}
 	if paced := int64(window/wtRedialBackoff) + 2; gets.Load() > paced {
 		t.Errorf("issued %d progress GETs in %v, want at most %d: the reopen is not paced", gets.Load(), window, paced)
 	}
 }
 
-// A permanent refusal ends recovery with its cause after one request.
 func TestUploadProgressPermanentLossFails(t *testing.T) {
 	t.Parallel()
 	progress, cancel := newWaitNextProgress(t)
@@ -256,19 +286,28 @@ func TestUploadProgressPermanentLossFails(t *testing.T) {
 	r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		header := http.Header{"Graphite-Meter-Auth": {"required"}, "Graphite-Meter-Auth-Url": {"/auth/start"}}
-		return &http.Response{StatusCode: http.StatusForbidden, Header: header, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+		return &http.Response{
+			StatusCode: http.StatusForbidden,
+			Header:     header,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
 	})}, emit: func(Event) {}}
 	go r.reattachUploadProgress(progress, "http://progress.invalid/upload/progress")
 	err := waitCoordinatedTransfer(t.Context(), nil, progress.errs)
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok || requests.Load() != 1 {
-		t.Fatalf("permanent auth refusal = %v after %d requests, want AuthRequiredError after one", err, requests.Load())
+		t.Fatalf(
+			"permanent auth refusal = %v after %d requests, want AuthRequiredError after one",
+			err,
+			requests.Load(),
+		)
 	}
 }
 
 type ownedProgressBody struct {
 	started         chan struct{}
 	stop            chan struct{}
-	release         chan struct{} // Nil closes at once; otherwise Close waits for it.
+	release         chan struct{}
 	first           bool
 	reading         atomic.Bool
 	concurrentClose atomic.Bool
@@ -306,20 +345,26 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
-// Close joins every reader and recovery, and adopts nothing afterwards.
 func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 	t.Parallel()
 	t.Run("reader owns its body", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			body := &ownedProgressBody{started: make(chan struct{}), stop: make(chan struct{})}
-			progress, err := (&runner{}).readUploadProgress(t.Context(), &uploadFeed{ReadCloser: body, interrupt: sync.OnceFunc(func() { close(body.stop) })}, "")
+			progress, err := (&runner{}).readUploadProgress(t.Context(), &uploadFeed{
+				ReadCloser: body,
+				interrupt:  sync.OnceFunc(func() { close(body.stop) }),
+			}, "")
 			if err != nil {
 				t.Fatal(err)
 			}
 			<-body.started
 			progress.close()
 			if body.concurrentClose.Load() || !body.closed.Load() {
-				t.Fatalf("reader close ownership: concurrent=%v closed=%v", body.concurrentClose.Load(), body.closed.Load())
+				t.Fatalf(
+					"reader close ownership: concurrent=%v closed=%v",
+					body.concurrentClose.Load(),
+					body.closed.Load(),
+				)
 			}
 			late := &closeRecorder{Reader: strings.NewReader("{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n")}
 			progress.attach(testUploadFeed(late))
@@ -330,8 +375,15 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 	})
 	t.Run("superseded reader", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			body := &ownedProgressBody{started: make(chan struct{}), stop: make(chan struct{}), release: make(chan struct{})}
-			progress, err := (&runner{http: &http.Client{}}).readUploadProgress(t.Context(), &uploadFeed{ReadCloser: body, interrupt: sync.OnceFunc(func() { close(body.stop) })}, "http://fixture.invalid/upload/progress")
+			body := &ownedProgressBody{
+				started: make(chan struct{}),
+				stop:    make(chan struct{}),
+				release: make(chan struct{}),
+			}
+			progress, err := (&runner{http: &http.Client{}}).readUploadProgress(t.Context(), &uploadFeed{
+				ReadCloser: body,
+				interrupt:  sync.OnceFunc(func() { close(body.stop) }),
+			}, "http://fixture.invalid/upload/progress")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -359,7 +411,11 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 			var active atomic.Bool
 			r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				if requests++; requests == 1 {
-					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{\"type\":\"ready\"}\n")), Request: req}, nil
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader("{\"type\":\"ready\"}\n")),
+						Request:    req,
+					}, nil
 				}
 				active.Store(true)
 				defer active.Store(false)

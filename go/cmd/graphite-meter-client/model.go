@@ -11,7 +11,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-// Replies carry their start sequence; superseded ones are dropped.
 type (
 	preparationMsg struct {
 		seq int
@@ -35,7 +34,6 @@ type (
 	}
 )
 
-// prepareState is the setup's readiness, from the most recent path check.
 type prepareState int
 
 const (
@@ -55,17 +53,15 @@ type model struct {
 	help       help.Model
 	notice     string
 
-	// Setup.
 	section       int
 	row           int
 	edit          editState
-	latencyChoice string // Selected latency server; empty follows the run's lowest-latency choice.
+	latencyChoice string
 	serverChooser bool
 	serverDraft   []string
 	serverRow     int
-	openChooser   bool // The chooser opens when the running check delivers a catalogue.
+	openChooser   bool
 
-	// Preparation; prepareSeq drops superseded replies.
 	prepareSeq   int
 	preparation  *goclient.Preparation
 	prepare      prepareState
@@ -75,10 +71,8 @@ type model struct {
 	authServerID string
 	authSince    time.Time
 	authOpened   bool
-	// openApproval opens the browser; tests replace it.
 	openApproval func(*goclient.PendingAuthorization)
 
-	// Run; runSeq drops events from a replaced run.
 	runSeq        int
 	events        <-chan goclient.Event
 	run           *runState
@@ -107,7 +101,6 @@ func newModel(cfg goclient.Config) model {
 	}
 }
 
-// Init checks the configured paths at once.
 func (m model) Init() tea.Cmd {
 	return tea.Batch(m.prepareAfter(0), m.spin.Tick)
 }
@@ -140,7 +133,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsMsg:
 		return m.handleEvents(msg)
 	default:
-		// Clipboard replies belong to the text input.
 		if m.edit.row != nil {
 			var cmd tea.Cmd
 			m.edit.input, cmd = m.edit.input.Update(msg)
@@ -150,7 +142,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey routes by screen; each branch accepts exactly its footer's bindings.
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case m.detailsOpen:
@@ -200,7 +191,6 @@ func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleSignInKey keeps enter on the pending sign-in.
 func (m model) handleSignInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.openSignIn):
@@ -253,7 +243,6 @@ func (m *model) navigate(msg tea.KeyMsg) {
 	m.row = min(max(m.row, 0), len(sections[m.section].rows)-1)
 }
 
-// handleTick advances the spinner and glides displayed rates.
 func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	if !m.animating() {
 		return m, nil
@@ -274,7 +263,6 @@ func (m *model) close() {
 	m.controller.Close()
 }
 
-// newHelp styles the footer.
 func newHelp() help.Model {
 	h := help.New()
 	h.Styles.ShortKey, h.Styles.FullKey = labelStyle, labelStyle

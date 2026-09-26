@@ -15,7 +15,6 @@ import (
 )
 
 func main() {
-	// Informational flags exit before any rendering.
 	if slices.Contains(os.Args[1:], "--legal") {
 		fmt.Print(string(legal.TUIReport()))
 		return
@@ -25,28 +24,82 @@ func main() {
 	var stages, ping string
 	var showVersion bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
-	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)", func(id string) error {
+	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)", func(
+		id string,
+	) error {
 		if id == "" || len(cfg.ServerIDs) >= 4 || slices.Contains(cfg.ServerIDs, id) {
 			return fmt.Errorf("select one to four different server IDs")
 		}
 		cfg.ServerIDs = append(cfg.ServerIDs, id)
 		return nil
 	})
-	flag.StringVar(&cfg.ThroughputTarget, "throughput-origin", cfg.ThroughputTarget, "throughput origin from discovery, or auto")
-	flag.StringVar(&cfg.ThroughputProtocol, "throughput-protocol", cfg.ThroughputProtocol, "protocol for a negotiated throughput origin: auto, http1, http2, or http3")
-	flag.StringVar(&cfg.ThroughputTransport, "throughput-transport", cfg.ThroughputTransport, "throughput transport: auto, fetch-stream, or webtransport")
+	flag.StringVar(
+		&cfg.ThroughputTarget,
+		"throughput-origin",
+		cfg.ThroughputTarget,
+		"throughput origin from discovery, or auto",
+	)
+	flag.StringVar(
+		&cfg.ThroughputProtocol,
+		"throughput-protocol",
+		cfg.ThroughputProtocol,
+		"protocol for a negotiated throughput origin: auto, http1, http2, or http3",
+	)
+	flag.StringVar(
+		&cfg.ThroughputTransport,
+		"throughput-transport",
+		cfg.ThroughputTransport,
+		"throughput transport: auto, fetch-stream, or webtransport",
+	)
 	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "latency origin from discovery, or auto")
-	flag.StringVar(&cfg.LatencyTransport, "latency-transport", cfg.LatencyTransport, "latency transport: auto, websocket, or webtransport")
-	flag.StringVar(&stages, "stages", "latency,download,upload", "comma-separated stages: latency,download,upload,bidirectional")
+	flag.StringVar(
+		&cfg.LatencyTransport,
+		"latency-transport",
+		cfg.LatencyTransport,
+		"latency transport: auto, websocket, or webtransport",
+	)
+	flag.StringVar(
+		&stages,
+		"stages",
+		"latency,download,upload",
+		"comma-separated stages: latency,download,upload,bidirectional",
+	)
 	flag.DurationVar(&cfg.Warmup, "warmup", cfg.Warmup, "per-stage warmup duration")
 	flag.DurationVar(&cfg.LatencyDuration, "latency-duration", cfg.LatencyDuration, "latency measurement duration")
 	flag.DurationVar(&cfg.DownloadDuration, "download-duration", cfg.DownloadDuration, "download measurement duration")
 	flag.DurationVar(&cfg.UploadDuration, "upload-duration", cfg.UploadDuration, "upload measurement duration")
-	flag.DurationVar(&cfg.BidirectionalDuration, "bidirectional-duration", cfg.BidirectionalDuration, "bidirectional measurement duration")
-	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax, "maximum H1 streams per direction")
-	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced, "force exact streams per server and direction (0 = automatic; 128 per direction across the run)")
-	flag.StringVar(&ping, "ping", "medium", "ping cadence: fast (80 ms), medium (250 ms), slow (600 ms), or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency path)")
-	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency, "measure latency while transfer stages are loaded")
+	flag.DurationVar(
+		&cfg.BidirectionalDuration,
+		"bidirectional-duration",
+		cfg.BidirectionalDuration,
+		"bidirectional measurement duration",
+	)
+	flag.IntVar(
+		&cfg.TransferStreams.AutomaticMax,
+		"auto-streams",
+		cfg.TransferStreams.AutomaticMax,
+		"maximum H1 streams per direction",
+	)
+	flag.IntVar(
+		&cfg.TransferStreams.Forced,
+		"streams",
+		cfg.TransferStreams.Forced,
+		"force exact streams per server and direction (0 = automatic; 128 per direction across the run)",
+	)
+	flag.StringVar(
+		&ping,
+		"ping",
+		"medium",
+		"ping cadence: fast (80 ms), medium (250 ms), slow (600 ms), or a duration (up to "+
+			goclient.MaxPingInterval.String()+
+			" over the WebTransport latency path)",
+	)
+	flag.BoolVar(
+		&cfg.LoadedLatency,
+		"loaded-latency",
+		cfg.LoadedLatency,
+		"measure latency while transfer stages are loaded",
+	)
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.Parse()
@@ -108,10 +161,10 @@ func transportFlags(throughput, latency string) error {
 	return nil
 }
 
-// parsePing accepts cadence names or a positive duration.
 func parsePing(raw, latencyTransport string) (time.Duration, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
-	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }); i >= 0 && name != "" {
+	named := func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }
+	if i := slices.IndexFunc(cadences, named); i >= 0 && name != "" {
 		return cadences[i].interval, nil
 	}
 	if name == "" {

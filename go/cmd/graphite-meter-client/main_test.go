@@ -15,8 +15,9 @@ func modelAndCmd(next tea.Model, cmd tea.Cmd) (model, tea.Cmd) { return next.(mo
 
 func press(name string) tea.KeyMsg {
 	types := map[string]tea.KeyType{
-		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "space": tea.KeySpace, "tab": tea.KeyTab, "shift+tab": tea.KeyShiftTab,
-		"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight, "ctrl+c": tea.KeyCtrlC, "backspace": tea.KeyBackspace,
+		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "space": tea.KeySpace, "tab": tea.KeyTab,
+		"shift+tab": tea.KeyShiftTab, "up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft,
+		"right": tea.KeyRight, "ctrl+c": tea.KeyCtrlC,
 	}
 	if t, ok := types[name]; ok {
 		return tea.KeyMsg{Type: t}
@@ -32,7 +33,6 @@ func quits(cmd tea.Cmd) bool {
 	return ok
 }
 
-// testModel is a setup screen with no network work started.
 func testModel(t *testing.T) model {
 	t.Helper()
 	m := newModel(goclient.DefaultConfig())
@@ -44,12 +44,21 @@ func testModel(t *testing.T) model {
 
 func readyConnection(name string) *goclient.PreparedConnection {
 	return &goclient.PreparedConnection{
-		ThroughputTarget: wire.ThroughputTarget{Origin: "https://" + name + ".example", Transport: wire.TransportFetchStream, Protocol: "http2", TLS: true},
-		LatencyTarget:    &wire.LatencyTarget{Origin: "https://" + name + ".example", Transport: wire.TransportWebSocket, Protocol: "http1", TLS: true},
+		ThroughputTarget: wire.ThroughputTarget{
+			Origin:    "https://" + name + ".example",
+			Transport: wire.TransportFetchStream,
+			Protocol:  "http2",
+			TLS:       true,
+		},
+		LatencyTarget: &wire.LatencyTarget{
+			Origin:    "https://" + name + ".example",
+			Transport: wire.TransportWebSocket,
+			Protocol:  "http1",
+			TLS:       true,
+		},
 	}
 }
 
-// preparedFixture selects one server per error; a nil error is a ready server.
 func preparedFixture(errs ...error) *goclient.PreparedRun {
 	run := &goclient.PreparedRun{}
 	for i, err := range errs {
@@ -93,7 +102,6 @@ func TestParsePing(t *testing.T) {
 		{"1500ms", "auto", 1500 * time.Millisecond, ""},
 		{goclient.MaxPingInterval.String(), wire.TransportWebTransport, goclient.MaxPingInterval, ""},
 		{"45s", wire.TransportWebSocket, 45 * time.Second, ""},
-		// A bound that only the datagram path has is enforced once that path is chosen.
 		{"45s", wire.TransportWebTransport, 0, goclient.MaxPingInterval.String()},
 		{"instant", "auto", 0, "fast, medium, slow"},
 		{"0s", "auto", 0, "positive duration"},
@@ -125,14 +133,13 @@ func TestFlagsRejectAnUnknownTransport(t *testing.T) {
 	}
 }
 
-// Units and precision follow the browser's format.ts.
 func TestFormatting(t *testing.T) {
 	t.Parallel()
 	for got, want := range map[string]string{
 		fmtRate(0):                          "0.00 bit/s",
 		fmtRate(1500):                       "12.00 kbit/s",
 		fmtRate(12_500_000):                 "100.0 Mbit/s",
-		fmtRate(137_500_000):                "1100 Mbit/s", // Promotion waits for 1.2 of the next unit.
+		fmtRate(137_500_000):                "1100 Mbit/s",
 		fmtRate(162_500_000):                "1.30 Gbit/s",
 		fmtBytes(999):                       "999 B",
 		fmtBytes(1_500):                     "1.5 kB",
@@ -151,7 +158,6 @@ func TestFormatting(t *testing.T) {
 	}
 }
 
-// Latency summaries lead with the median and never say loss.
 func TestLatencySummaryVocabulary(t *testing.T) {
 	t.Parallel()
 	idle := goclient.LatencyStats{Count: 4, P50: 10 * time.Millisecond}
@@ -162,9 +168,17 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 	}{
 		{goclient.LatencyStats{}, nil, []string{"median —", "p95 —", "jitter —", "probe timeouts —", "0 replies"}},
 		{goclient.LatencyStats{Timeouts: 3}, nil, []string{"probe timeouts 3/3 (100.0%)"}},
-		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond}, &idle, []string{"median 12.0 ms", "+2.0 ms added", "p95 20.0 ms", "jitter 0.0 ms"}},
+		{
+			goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
+			&idle,
+			[]string{"median 12.0 ms", "+2.0 ms added", "p95 20.0 ms", "jitter 0.0 ms"},
+		},
 		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, []string{"−2.0 ms added"}},
-		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil, []string{"4.0 s", "unfinished probes 2", "failed sends 1"}},
+		{
+			goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second},
+			nil,
+			[]string{"4.0 s", "unfinished probes 2", "failed sends 1"},
+		},
 	} {
 		got := strings.Join(latencyParts(c.stats, c.idle), " · ")
 		for _, want := range c.want {
@@ -193,7 +207,6 @@ func TestNavigationWrapsSectionsAndClampsRows(t *testing.T) {
 	}
 }
 
-// Enter changes the row; only path inputs trigger a recheck.
 func TestRowActivation(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -214,7 +227,13 @@ func TestRowActivation(t *testing.T) {
 		seq := m.prepareSeq
 		m, cmd := modelAndCmd(m.Update(press("enter")))
 		if !c.check(m) || (m.prepareSeq != seq) != c.recheck || c.recheck && cmd == nil {
-			t.Errorf("%s: config=%+v edit=%v rechecked=%v", m.setupRow(sections[c.section].rows[c.row]).label, m.cfg, m.edit.row != nil, m.prepareSeq != seq)
+			t.Errorf(
+				"%s: config=%+v edit=%v rechecked=%v",
+				m.setupRow(sections[c.section].rows[c.row]).label,
+				m.cfg,
+				m.edit.row != nil,
+				m.prepareSeq != seq,
+			)
 		}
 	}
 }
@@ -228,12 +247,36 @@ func TestCommitEdit(t *testing.T) {
 		check   func(goclient.Config) bool
 		wantErr string
 	}{
-		{rowCatalogue, false, "meter.example:8443/", func(c goclient.Config) bool { return c.BaseURL == "http://meter.example:8443" }, ""},
-		{rowCatalogue, false, "https://METER.example", func(c goclient.Config) bool { return c.BaseURL == "https://meter.example" }, ""},
+		{
+			rowCatalogue,
+			false,
+			"meter.example:8443/",
+			func(c goclient.Config) bool { return c.BaseURL == "http://meter.example:8443" },
+			"",
+		},
+		{
+			rowCatalogue,
+			false,
+			"https://METER.example",
+			func(c goclient.Config) bool { return c.BaseURL == "https://meter.example" },
+			"",
+		},
 		{rowCatalogue, false, "ftp://meter.example", nil, "http:// or https://"},
 		{rowWarmup, false, "0", func(c goclient.Config) bool { return c.Warmup == 0 }, ""},
-		{rowDownloadDuration, false, "12", func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second }, ""},
-		{rowDownloadDuration, false, "1.5m", func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second }, ""},
+		{
+			rowDownloadDuration,
+			false,
+			"12",
+			func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second },
+			"",
+		},
+		{
+			rowDownloadDuration,
+			false,
+			"1.5m",
+			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
+			"",
+		},
 		{rowUploadDuration, false, "0", nil, "greater than zero"},
 		{rowUploadDuration, false, "soon", nil, "duration like"},
 		{rowStreams, false, "8", func(c goclient.Config) bool {
@@ -254,7 +297,6 @@ func TestCommitEdit(t *testing.T) {
 		}
 		m, _ = modelAndCmd(m.Update(press("enter")))
 		if c.wantErr != "" {
-			// A rejected value keeps its field open so the text stays editable.
 			if m.edit.row == nil || !strings.Contains(m.edit.err, c.wantErr) || m.edit.input.Value() != c.typed {
 				t.Errorf("%q: edit=%+v, want it open with %q", c.typed, m.edit, c.wantErr)
 			}
@@ -271,11 +313,11 @@ func TestEditKeysDiscardAndQuit(t *testing.T) {
 	m := testModel(t)
 	m.beginEdit(rowCatalogue, m.cfg.BaseURL)
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit.row != nil || m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
+	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit.row != nil ||
+		m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
 		t.Fatal("esc applied the edit")
 	}
 	m.beginEdit(rowCatalogue, "")
-	// q is text inside a field; only ctrl+c quits from an editor.
 	if m, cmd := modelAndCmd(m.Update(press("q"))); quits(cmd) || m.edit.input.Value() != "q" {
 		t.Fatal("q left the editor")
 	}
@@ -284,7 +326,6 @@ func TestEditKeysDiscardAndQuit(t *testing.T) {
 	}
 }
 
-// While sign-in is pending, enter only opens the sign-in page.
 func TestSignInKeysOwnEnter(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
@@ -313,7 +354,6 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	}
 }
 
-// Replies from superseded work never change the view.
 func TestStaleRepliesAreDropped(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)

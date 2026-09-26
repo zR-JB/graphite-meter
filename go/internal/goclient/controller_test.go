@@ -68,7 +68,12 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 			t.Parallel()
 			srv := newLatencyOnlyServer(t)
 			defer srv.Close()
-			cfg := Config{BaseURL: srv.URL, Stages: StageSet{Latency: true}, LatencyDuration: 10 * time.Second, PingInterval: time.Millisecond}
+			cfg := Config{
+				BaseURL:         srv.URL,
+				Stages:          StageSet{Latency: true},
+				LatencyDuration: 10 * time.Second,
+				PingInterval:    time.Millisecond,
+			}
 			owner := NewController(t.Context())
 			defer owner.Close()
 			events := owner.Start(cfg, nil)
@@ -91,7 +96,10 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 						done = append(done, event)
 					}
 				}
-				if len(done) != 1 || !errors.Is(done[0].Err, context.Canceled) || done[0].Outcome() != OutcomeStopped || len(done[0].Servers.Servers) != 1 {
+				if len(done) != 1 ||
+					!errors.Is(done[0].Err, context.Canceled) ||
+					done[0].Outcome() != OutcomeStopped ||
+					len(done[0].Servers.Servers) != 1 {
 					t.Fatalf("user cancellation lost its terminal outcome: %+v", done)
 				}
 				results := done[0].Servers.Servers[0].Results
@@ -127,7 +135,10 @@ func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 	t.Parallel()
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
-	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}}} {
+	for _, terminal := range []Event{
+		{Kind: EventResult},
+		{Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}},
+	} {
 		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
 			t.Parallel()
 			delivery, abandon := context.WithCancel(t.Context())
@@ -203,7 +214,6 @@ func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
 	}
 }
 
-// A full view drops live samples; outcomes still wait for delivery.
 func TestLiveSamplesNeverBlockOnAFullView(t *testing.T) {
 	t.Parallel()
 	events := make(chan Event, 1)

@@ -41,14 +41,13 @@ func (c Config) needsLatency() bool {
 }
 
 type TransferStreamPolicy struct {
-	AutomaticMax int // Ceiling for automatic HTTP/1 lanes per direction.
-	Forced       int // Exact lanes per server and direction; zero is automatic.
+	AutomaticMax int
+	Forced       int
 }
 
 const (
 	maxTransferStreams = 128
 
-	// A transfer request never ends by its own length within a stage.
 	transferBytesPerStream = 64 << 30
 	maxIdleConnsPerHost    = 256
 	responseHeaderTimeout  = 10 * time.Second
@@ -64,7 +63,6 @@ func (s streamCounts) of(dir Direction) int {
 	return s.down
 }
 
-// Multiplexed protocols share one connection; their automatic lane counts are fixed.
 var multiplexedStreams = map[string]streamCounts{
 	"http2": {down: 1, up: 4},
 	"http3": {down: 1, up: 1},
@@ -87,7 +85,6 @@ func (p TransferStreamPolicy) lanes(protocol, transport string) streamCounts {
 	return streamCounts{down: p.AutomaticMax, up: p.AutomaticMax}
 }
 
-// Label describes the lanes a path would use.
 func (p TransferStreamPolicy) Label(protocol, transport string) string {
 	protocol = protocolFromEvidence(protocol)
 	webTransport := transport == wire.TransportWebTransport
@@ -116,7 +113,11 @@ func ValidatePingInterval(d time.Duration) error {
 		return fmt.Errorf("ping interval must be greater than zero")
 	}
 	if d > MaxPingInterval {
-		return fmt.Errorf("ping interval must be at most %v, half the server's %v WebTransport idle bound", MaxPingInterval, wire.WTIdleBound)
+		return fmt.Errorf(
+			"ping interval must be at most %v, half the server's %v WebTransport idle bound",
+			MaxPingInterval,
+			wire.WTIdleBound,
+		)
 	}
 	return nil
 }
@@ -130,7 +131,12 @@ func ValidateThroughputTransport(name string) error {
 	case "", "auto", wire.TransportFetchStream, wire.TransportWebTransport, wire.TransportWebTransportDatagram:
 		return nil
 	}
-	return fmt.Errorf("invalid throughput transport %q: use auto, %s, or %s", name, wire.TransportFetchStream, wire.TransportWebTransport)
+	return fmt.Errorf(
+		"invalid throughput transport %q: use auto, %s, or %s",
+		name,
+		wire.TransportFetchStream,
+		wire.TransportWebTransport,
+	)
 }
 
 func ValidateLatencyTransport(name string) error {
@@ -138,12 +144,17 @@ func ValidateLatencyTransport(name string) error {
 	case "", "auto", wire.TransportWebSocket, wire.TransportWebTransport:
 		return nil
 	}
-	return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", name, wire.TransportWebSocket, wire.TransportWebTransport)
+	return fmt.Errorf(
+		"invalid latency transport %q: use auto, %s, or %s",
+		name,
+		wire.TransportWebSocket,
+		wire.TransportWebTransport,
+	)
 }
 
 type Config struct {
-	BaseURL               string   // Origin of the operator's server catalogue.
-	ServerIDs             []string // Selected catalogue IDs; empty uses the operator's defaults.
+	BaseURL               string
+	ServerIDs             []string
 	ThroughputTarget      string
 	ThroughputProtocol    string
 	ThroughputTransport   string
@@ -160,7 +171,6 @@ type Config struct {
 	LoadedLatency         bool
 	InsecureSkipTLSVerify bool
 
-	// Per server: its catalogue identity and the grant its origin issued.
 	server *wire.ServerEntry
 	grant  string
 }
@@ -185,7 +195,6 @@ func DefaultConfig() Config {
 	}
 }
 
-// normalized fills unset and out-of-range values from DefaultConfig.
 func (c Config) normalized() Config {
 	d := DefaultConfig()
 	c.BaseURL = cmp.Or(c.BaseURL, d.BaseURL)
@@ -199,7 +208,10 @@ func (c Config) normalized() Config {
 	c.DownloadDuration = positive(c.DownloadDuration, d.DownloadDuration)
 	c.UploadDuration = positive(c.UploadDuration, d.UploadDuration)
 	c.BidirectionalDuration = positive(c.BidirectionalDuration, d.BidirectionalDuration)
-	c.TransferStreams.AutomaticMax = min(positive(c.TransferStreams.AutomaticMax, d.TransferStreams.AutomaticMax), maxTransferStreams)
+	c.TransferStreams.AutomaticMax = min(
+		positive(c.TransferStreams.AutomaticMax, d.TransferStreams.AutomaticMax),
+		maxTransferStreams,
+	)
 	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), maxTransferStreams)
 	c.PingInterval = positive(c.PingInterval, d.PingInterval)
 	return c

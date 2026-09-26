@@ -16,7 +16,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// hangingServer accepts requests and holds them until the client gives up.
 func hangingServer(t *testing.T) (url string, entered, left <-chan struct{}) {
 	t.Helper()
 	in, out := make(chan struct{}, 16), make(chan struct{}, 16)
@@ -61,7 +60,6 @@ func TestReprepareCancelsActiveRequestAndDiscardsItsReply(t *testing.T) {
 	}
 }
 
-// Leaving cancels owned work, including work from later model copies.
 func TestQuitAndShutdownCancelOwnedWork(t *testing.T) {
 	t.Parallel()
 	for _, editing := range []bool{false, true} {
@@ -114,7 +112,6 @@ func TestPreparationCancellationReachesQueuedApprovalPoll(t *testing.T) {
 	t.Fatal("approval poll never replied")
 }
 
-// drain runs a batch's commands, skipping animation ticks.
 func drain(cmd tea.Cmd) []tea.Msg {
 	var out []tea.Msg
 	switch msg := cmd().(type) {
@@ -145,7 +142,6 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	if _, cmd := modelAndCmd(m.Update(prepareDueMsg{seq: seq})); cmd != nil {
 		t.Fatal("a queued preparation started during the run")
 	}
-	// The run's own preparation owns a request that stopping must release.
 	within(t, entered, "run never reached preparation")
 	m, _ = modelAndCmd(m.Update(press("esc")))
 	if !m.stopPrompt {
@@ -158,7 +154,6 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	}
 }
 
-// finishFrom feeds a run's events until its terminal event.
 func finishFrom(t *testing.T, m model) model {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
@@ -208,7 +203,10 @@ func runModel(t *testing.T, servers ...string) model {
 			LatencyTarget: &wire.LatencyTarget{Transport: wire.TransportWebSocket, Protocol: "http1", TLS: true},
 		})
 	}
-	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{{Kind: goclient.EventServers, Servers: details}}}))
+	m, _ = modelAndCmd(m.Update(eventsMsg{
+		seq:    m.runSeq,
+		events: []goclient.Event{{Kind: goclient.EventServers, Servers: details}},
+	}))
 	return m
 }
 
@@ -220,7 +218,6 @@ func withPopulation(details *goclient.RunDetails, id string, results ...goclient
 	}
 }
 
-// The header uses lifecycle words, never engine phases.
 func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -228,9 +225,22 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 		event goclient.Event
 		want  string
 	}{
-		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: goclient.PhasePreparing}, "Checking paths"},
-		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseWarmup}, "Warmup"},
-		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageBidirectional, Phase: goclient.PhaseMeasuring}, "Bidirectional"},
+		{
+			goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: goclient.PhasePreparing},
+			"Checking paths",
+		},
+		{
+			goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseWarmup},
+			"Warmup",
+		},
+		{
+			goclient.Event{
+				Kind:  goclient.EventStage,
+				Stage: goclient.StageBidirectional,
+				Phase: goclient.PhaseMeasuring,
+			},
+			"Bidirectional",
+		},
 	} {
 		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{c.event}}))
 		if got := m.statusLabel(); got != c.want {
@@ -241,10 +251,20 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 		done goclient.Event
 		want string
 	}{
-		{goclient.Event{Kind: goclient.EventDone, Servers: &goclient.RunDetails{Outcome: goclient.OutcomePartial}}, "Partial"},
+		{
+			goclient.Event{Kind: goclient.EventDone, Servers: &goclient.RunDetails{Outcome: goclient.OutcomePartial}},
+			"Partial",
+		},
 		{goclient.Event{Kind: goclient.EventDone, Err: fmt.Errorf("stage: %w", context.Canceled)}, "Stopped"},
 		{goclient.Event{Kind: goclient.EventDone, Err: errors.New("server said context canceled")}, "Failed"},
-		{goclient.Event{Kind: goclient.EventDone, Err: errors.New("lost"), Servers: &goclient.RunDetails{Outcome: goclient.OutcomeIncomplete}}, "Incomplete"},
+		{
+			goclient.Event{
+				Kind:    goclient.EventDone,
+				Err:     errors.New("lost"),
+				Servers: &goclient.RunDetails{Outcome: goclient.OutcomeIncomplete},
+			},
+			"Incomplete",
+		},
 	} {
 		finished := runModel(t, "a")
 		finished, _ = modelAndCmd(finished.Update(eventsMsg{seq: finished.runSeq, events: []goclient.Event{c.done}}))
@@ -253,7 +273,12 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 		}
 	}
 	setup := testModel(t)
-	for state, want := range map[prepareState]string{prepareChecking: "Checking paths", prepareSignIn: "Sign in", prepareFailed: "Path failed", prepareReady: "Recheck needed"} {
+	for state, want := range map[prepareState]string{
+		prepareChecking: "Checking paths",
+		prepareSignIn:   "Sign in",
+		prepareFailed:   "Path failed",
+		prepareReady:    "Recheck needed",
+	} {
 		setup.prepare = state
 		if got := setup.statusLabel(); got != want {
 			t.Errorf("setup %v reads %q, want %q", state, got, want)
@@ -261,41 +286,97 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	}
 }
 
-// Buffered results survive the terminal event; running stages stop.
 func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
 	failure := errors.New("transfer failed")
-	partial := &goclient.RunDetails{Servers: m.run.details.Servers, Participants: []string{"a"}, Outcome: goclient.OutcomeIncomplete}
-	withPopulation(partial, "a", goclient.Result{Stage: goclient.StageBidirectional, Latency: goclient.LatencyStats{Unresolved: 2}, Err: failure})
+	partial := &goclient.RunDetails{
+		Servers:      m.run.details.Servers,
+		Participants: []string{"a"},
+		Outcome:      goclient.OutcomeIncomplete,
+	}
+	withPopulation(partial, "a", goclient.Result{
+		Stage:   goclient.StageBidirectional,
+		Latency: goclient.LatencyStats{Unresolved: 2},
+		Err:     failure,
+	})
 	m, cmd := modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{
 		{Kind: goclient.EventStage, Stage: goclient.StageBidirectional, Phase: goclient.PhaseMeasuring},
-		{Kind: goclient.EventResult, Stage: goclient.StageBidirectional, Direction: goclient.Down, Result: &goclient.Result{Stage: goclient.StageBidirectional, Direction: goclient.Down, TotalBytes: 42, Unavailable: true, Err: failure}},
+		{
+			Kind:      goclient.EventResult,
+			Stage:     goclient.StageBidirectional,
+			Direction: goclient.Down,
+			Result: &goclient.Result{
+				Stage:       goclient.StageBidirectional,
+				Direction:   goclient.Down,
+				TotalBytes:  42,
+				Unavailable: true,
+				Err:         failure,
+			},
+		},
 		{Kind: goclient.EventDone, Err: failure, Servers: partial},
 	}}))
-	if cmd != nil || !m.finished() || !errors.Is(m.run.err, failure) || len(m.run.results) != 1 || m.run.stages[3].state != stageStopped {
+	if cmd != nil ||
+		!m.finished() ||
+		!errors.Is(m.run.err, failure) ||
+		len(m.run.results) != 1 ||
+		m.run.stages[3].state != stageStopped {
 		t.Fatalf("terminal state: %+v", m.run)
 	}
 	view := m.View()
-	for _, want := range []string{"Incomplete: transfer failed", "Loaded latency · Bi-dir", "unfinished probes 2", "Bi-dir ↓", missing} {
+	for _, want := range []string{
+		"Incomplete: transfer failed",
+		"Loaded latency · Bi-dir",
+		"unfinished probes 2",
+		"Bi-dir ↓",
+		missing,
+	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view lost %q", want)
 		}
 	}
 }
 
-// Results use the shared vocabulary.
 func TestResultsNameEveryPopulation(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
 	m.run.results = []goclient.Result{
-		{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 117_500_000, PeakBps: 125_000_000, TotalBytes: 1_200_000_000, Elapsed: 10 * time.Second, Samples: 38},
-		{Stage: goclient.StageUpload, Direction: goclient.Up, MeanBps: 5_000_000, TotalBytes: 50_000_000, Elapsed: 10 * time.Second, Samples: 39},
+		{
+			Stage:      goclient.StageDownload,
+			Direction:  goclient.Down,
+			MeanBps:    117_500_000,
+			PeakBps:    125_000_000,
+			TotalBytes: 1_200_000_000,
+			Elapsed:    10 * time.Second,
+			Samples:    38,
+		},
+		{
+			Stage:      goclient.StageUpload,
+			Direction:  goclient.Up,
+			MeanBps:    5_000_000,
+			TotalBytes: 50_000_000,
+			Elapsed:    10 * time.Second,
+			Samples:    39,
+		},
+	}
+	idle := goclient.LatencyStats{
+		Count: 16, P50: 10 * time.Millisecond, P95: 12 * time.Millisecond, JitterPairs: 15,
+		Jitter: 400 * time.Microsecond, Elapsed: 4 * time.Second,
+		ReflectorTiming: &goclient.ReflectorTimingStats{
+			Count: 2, MeanRawRTT: 10 * time.Millisecond, MeanAdjustedRTT: 10 * time.Millisecond,
+		},
 	}
 	withPopulation(m.run.details, "a",
-		goclient.Result{Stage: goclient.StageLatency, Latency: goclient.LatencyStats{Count: 16, P50: 10 * time.Millisecond, P95: 12 * time.Millisecond, JitterPairs: 15, Jitter: 400 * time.Microsecond, Elapsed: 4 * time.Second,
-			ReflectorTiming: &goclient.ReflectorTimingStats{Count: 2, MeanRawRTT: 10 * time.Millisecond, MeanAdjustedRTT: 10 * time.Millisecond}}},
-		goclient.Result{Stage: goclient.StageDownload, Latency: goclient.LatencyStats{Count: 40, P50: 17800 * time.Microsecond, P95: 30 * time.Millisecond, Timeouts: 2}})
+		goclient.Result{Stage: goclient.StageLatency, Latency: idle},
+		goclient.Result{
+			Stage: goclient.StageDownload,
+			Latency: goclient.LatencyStats{
+				Count:    40,
+				P50:      17800 * time.Microsecond,
+				P95:      30 * time.Millisecond,
+				Timeouts: 2,
+			},
+		})
 	m.run.outcome = goclient.OutcomeComplete
 	text := m.finalReport()
 	for _, want := range []string{
@@ -310,7 +391,9 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 			t.Errorf("report lost %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "\x1b") || strings.Contains(text, "server-clock") || strings.Contains(strings.ToLower(text), "loss") {
+	if strings.Contains(text, "\x1b") ||
+		strings.Contains(text, "server-clock") ||
+		strings.Contains(strings.ToLower(text), "loss") {
 		t.Errorf("report styling or vocabulary: %q", text)
 	}
 	m.run = nil
@@ -319,7 +402,6 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	}
 }
 
-// The live panel draws only what the current stage measures.
 func TestLiveViewFollowsTheStage(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -332,7 +414,10 @@ func TestLiveViewFollowsTheStage(t *testing.T) {
 		{goclient.StageDownload, []string{"Download", "Loaded latency"}, []string{"Upload"}},
 		{goclient.StageBidirectional, []string{"Download", "Upload", "Loaded latency"}, nil},
 	} {
-		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{{Kind: goclient.EventStage, Stage: c.stage, Phase: goclient.PhaseMeasuring}}}))
+		m, _ = modelAndCmd(m.Update(eventsMsg{
+			seq:    m.runSeq,
+			events: []goclient.Event{{Kind: goclient.EventStage, Stage: c.stage, Phase: goclient.PhaseMeasuring}},
+		}))
 		live := m.liveView(60)
 		for _, want := range c.want {
 			if !strings.Contains(live, want) {
@@ -352,9 +437,24 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m := runModel(t, "a")
 	start := time.Now()
 	m.now = start.Add(2500 * time.Millisecond)
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: goclient.PhaseFinished, At: start})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring, At: start})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageUpload, Phase: goclient.Phase(99), At: start})
+	m.apply(goclient.Event{
+		Kind:  goclient.EventStage,
+		Stage: goclient.StageLatency,
+		Phase: goclient.PhaseFinished,
+		At:    start,
+	})
+	m.apply(goclient.Event{
+		Kind:  goclient.EventStage,
+		Stage: goclient.StageDownload,
+		Phase: goclient.PhaseMeasuring,
+		At:    start,
+	})
+	m.apply(goclient.Event{
+		Kind:  goclient.EventStage,
+		Stage: goclient.StageUpload,
+		Phase: goclient.Phase(99),
+		At:    start,
+	})
 	track := strings.Join(m.stageTrack(80), "\n")
 	for _, want := range []string{"✓ 4 s", "2.5 s / 10 s", "○ 10 s"} {
 		if !strings.Contains(track, want) {
@@ -366,15 +466,29 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	}
 }
 
-// Multi-server runs name servers, switch latency focus, and lead details with the table.
 func TestMultiServerRunViews(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a", "b")
-	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency, Latency: goclient.LatencyStats{Count: 3, P50: 10 * time.Millisecond}},
+	withPopulation(m.run.details, "a", goclient.Result{
+		Stage:   goclient.StageLatency,
+		Latency: goclient.LatencyStats{Count: 3, P50: 10 * time.Millisecond},
+	},
 		goclient.Result{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e6})
-	withPopulation(m.run.details, "b", goclient.Result{Stage: goclient.StageLatency, Latency: goclient.LatencyStats{Count: 3, P50: 90 * time.Millisecond}})
+	withPopulation(m.run.details, "b", goclient.Result{
+		Stage:   goclient.StageLatency,
+		Latency: goclient.LatencyStats{Count: 3, P50: 90 * time.Millisecond},
+	})
 	m.run.results = []goclient.Result{{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 3e6}}
-	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &goclient.ServerFailure{ServerID: "b", Message: "connection lost"}}}}))
+	m, _ = modelAndCmd(m.Update(eventsMsg{
+		seq: m.runSeq,
+		events: []goclient.Event{
+			{
+				Kind:     goclient.EventServerFailure,
+				ServerID: "b",
+				Failure:  &goclient.ServerFailure{ServerID: "b", Message: "connection lost"},
+			},
+		},
+	}))
 	if m.notice != "B: connection lost" {
 		t.Fatalf("failure notice = %q, want the server's name", m.notice)
 	}
@@ -382,7 +496,9 @@ func TestMultiServerRunViews(t *testing.T) {
 		t.Fatalf("focus A: %q", view)
 	}
 	m, _ = modelAndCmd(m.Update(press("l")))
-	if view := m.View(); m.run.focus != "b" || !strings.Contains(view, "latency to B") || !strings.Contains(view, "90.0 ms") {
+	if view := m.View(); m.run.focus != "b" ||
+		!strings.Contains(view, "latency to B") ||
+		!strings.Contains(view, "90.0 ms") {
 		t.Fatalf("focus did not move to B")
 	}
 	m, _ = modelAndCmd(m.Update(press("d")))
@@ -396,14 +512,22 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 }
 
-// One readiness row per selected server; failed peers stay listed.
 func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
 	m.preparedRun = preparedFixture(nil, &goclient.AuthRequiredError{}, errors.New("connection refused"))
 	m.cfg.ServerIDs = []string{"a", "b", "c"}
 	plan := m.planView(80)
-	for _, want := range []string{"A", "Ready", "B", "Sign in", "C", "Unavailable", "connection refused", "u Use available servers"} {
+	for _, want := range []string{
+		"A",
+		"Ready",
+		"B",
+		"Sign in",
+		"C",
+		"Unavailable",
+		"connection refused",
+		"u Use available servers",
+	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan lost %q: %q", want, plan)
 		}
@@ -411,19 +535,18 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	if !m.canUseAvailable() || !strings.Contains(m.setupRow(rowServers).note, "1 of 3 ready") {
 		t.Fatalf("available servers not offered: %q", m.setupRow(rowServers).note)
 	}
-	// Without a loaded catalogue the selection is refused.
 	m, _ = modelAndCmd(m.Update(press("u")))
 	if m.notice == "" {
 		t.Fatal("use available servers gave no feedback")
 	}
 }
 
-// s during a check says when the chooser opens.
 func TestServerChooserFlow(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
 	m.prepare = prepareChecking
-	if m, _ = modelAndCmd(m.Update(press("s"))); !m.openChooser || !strings.Contains(m.notice, "when the path check finishes") {
+	if m, _ = modelAndCmd(m.Update(press("s"))); !m.openChooser ||
+		!strings.Contains(m.notice, "when the path check finishes") {
 		t.Fatalf("deferred chooser notice: %q", m.notice)
 	}
 	run := preparedFixture(nil)
@@ -432,7 +555,22 @@ func TestServerChooserFlow(t *testing.T) {
 	if !m.serverChooser {
 		t.Fatal("the chooser did not open after the check")
 	}
-	for _, k := range []string{"space", "down", "space", "down", "space", "down", "space", "down", "space", "up", "up", "up", "up", "space"} {
+	for _, k := range []string{
+		"space",
+		"down",
+		"space",
+		"down",
+		"space",
+		"down",
+		"space",
+		"down",
+		"space",
+		"up",
+		"up",
+		"up",
+		"up",
+		"space",
+	} {
 		m, _ = modelAndCmd(m.Update(press(k)))
 	}
 	if len(m.serverDraft) != 4 || !strings.Contains(m.notice, "At most four") {
@@ -453,7 +591,9 @@ func TestViewNeverExceedsTheTerminalWidth(t *testing.T) {
 		setup.notice = strings.Repeat("a long notice ", 12)
 		run := runModel(t, "a", "b")
 		run.width = width
-		run.run.results = []goclient.Result{{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9}}
+		run.run.results = []goclient.Result{
+			{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9},
+		}
 		frames := map[string]string{"run": run.View()}
 		for section := range sections {
 			setup.section = section

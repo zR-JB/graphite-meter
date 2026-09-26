@@ -35,7 +35,8 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 		t.Fatal("fresh selection rejected")
 	}
 	changed := []wire.ServerEntry{{ID: "b", URL: "https://previous.example", Name: "B"}}
-	if _, err = prepareRun(t.Context(), cfg, changed, nil); err == nil || !strings.Contains(err.Error(), "changed origin") {
+	if _, err = prepareRun(t.Context(), cfg, changed, nil); err == nil ||
+		!strings.Contains(err.Error(), "changed origin") {
 		t.Fatalf("replaced identity accepted: %v", err)
 	}
 	cfg.ServerIDs = []string{"removed"}
@@ -65,7 +66,13 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 	}))
 	defer remote.Close()
 	a := coordinatedFixture(t, "a")
-	a.catalog = wire.ServerCatalog{DefaultSelection: []string{"slow"}, Servers: []wire.ServerEntry{{ID: "self", URL: ".", Name: "A"}, {ID: "slow", URL: remote.URL, Name: "Slow"}}}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"slow"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "slow", URL: remote.URL, Name: "Slow"},
+		},
+	}
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Download: true}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -134,7 +141,11 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 			doneCount++
 		}
 	})
-	if !errors.Is(err, context.Canceled) || doneCount != 1 || details == nil || len(details.Servers) != 4 || details.Outcome != OutcomeStopped {
+	if !errors.Is(err, context.Canceled) ||
+		doneCount != 1 ||
+		details == nil ||
+		len(details.Servers) != 4 ||
+		details.Outcome != OutcomeStopped {
 		t.Fatalf("cancelled result: %v %+v done=%d", err, details, doneCount)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -168,7 +179,12 @@ func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
 			upload = *e.Result
 		}
 	})
-	if err != nil || upload.Unavailable || upload.MeanBps <= 0 || details == nil || !slices.Equal(details.Participants, []string{"b"}) || len(details.Failures) != 1 {
+	if err != nil ||
+		upload.Unavailable ||
+		upload.MeanBps <= 0 ||
+		details == nil ||
+		!slices.Equal(details.Participants, []string{"b"}) ||
+		len(details.Failures) != 1 {
 		t.Fatalf("later preparation discarded healthy server: %v %+v %+v", err, upload, details)
 	}
 }

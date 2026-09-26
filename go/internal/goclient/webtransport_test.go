@@ -3,7 +3,6 @@ package goclient
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json/v2"
 	"errors"
 	"net"
 	"net/http"
@@ -40,7 +39,13 @@ func webTransportCatalog() wire.Preflight {
 func TestAutomaticSelectionPreference(t *testing.T) {
 	t.Parallel()
 	pf := webTransportCatalog()
-	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: "auto", LatencyTarget: "auto", LatencyTransport: "auto"}
+	cfg := Config{
+		BaseURL:             "https://meter:7249",
+		ThroughputTarget:    "auto",
+		ThroughputTransport: "auto",
+		LatencyTarget:       "auto",
+		LatencyTransport:    "auto",
+	}
 
 	throughput, err := selectTarget(cfg, pf)
 	if err != nil || throughput.Transport != wire.TransportFetchStream {
@@ -52,7 +57,11 @@ func TestAutomaticSelectionPreference(t *testing.T) {
 	}
 
 	// An origin advertising only WebTransport remains reachable automatically.
-	wtOnly := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{pf.Capabilities.ThroughputTargets[1]}}}
+	wtOnly := wire.Preflight{
+		Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{pf.Capabilities.ThroughputTargets[1]},
+		},
+	}
 	fallback, err := selectTarget(cfg, wtOnly)
 	if err != nil || fallback.Transport != wire.TransportWebTransport {
 		t.Fatalf("fallback throughput target = %+v, %v", fallback, err)
@@ -63,7 +72,13 @@ func TestAutomaticSelectionPreference(t *testing.T) {
 func TestExplicitTransportSelectionIsHonoured(t *testing.T) {
 	t.Parallel()
 	pf := webTransportCatalog()
-	cfg := Config{BaseURL: "https://meter:7249", ThroughputTarget: "auto", ThroughputTransport: wire.TransportFetchStream, LatencyTarget: "auto", LatencyTransport: wire.TransportWebSocket}
+	cfg := Config{
+		BaseURL:             "https://meter:7249",
+		ThroughputTarget:    "auto",
+		ThroughputTransport: wire.TransportFetchStream,
+		LatencyTarget:       "auto",
+		LatencyTransport:    wire.TransportWebSocket,
+	}
 
 	throughput, err := selectTarget(cfg, pf)
 	if err != nil || throughput.Transport != wire.TransportFetchStream {
@@ -111,7 +126,11 @@ func runWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 	})
 
 	if err == nil {
-		t.Fatalf("runWTLane returned <nil> after %v with %d redial attempts, want the lost session reported: the stage would publish the bytes of the time the session was up over the whole measured window", time.Since(started), dials.Load())
+		t.Fatalf(
+			"runWTLane returned nil after %v and %d redials, want the lost session reported",
+			time.Since(started),
+			dials.Load(),
+		)
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("the lane only gave up when the stage context expired (%v); the redial is not bounded", err)
@@ -168,8 +187,7 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 }
 
 type fastFailureCase struct {
-	name string
-	// failures is how many lane entries fail before one blocks until the stage ends.
+	name        string
 	failures    int
 	pause       time.Duration
 	progress    bool
@@ -215,7 +233,13 @@ func runFastFailureCase(t *testing.T, c fastFailureCase) {
 	})
 
 	if got := err != nil; got != c.wantErr {
-		t.Fatalf("runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)", err, c.wantErr, entries.Load(), dials.Load())
+		t.Fatalf(
+			"runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)",
+			err,
+			c.wantErr,
+			entries.Load(),
+			dials.Load(),
+		)
 	}
 	if c.wantErr && ctx.Err() != nil {
 		t.Fatalf("lane failed only when the stage deadline expired: %v", err)
@@ -224,11 +248,14 @@ func runFastFailureCase(t *testing.T, c fastFailureCase) {
 		t.Errorf("the lane ran %d times, want %d", entries.Load(), c.wantEntries)
 	}
 	if c.wantDials >= 0 && dials.Load() != c.wantDials {
-		t.Errorf("the shared session was re-dialled %d times, want %d: a lane error is not on its own a lost session, and every sibling lane transfers on the session a redial tears down", dials.Load(), c.wantDials)
+		t.Errorf(
+			"the shared session was redialled %d times, want %d: one lane's error is not a lost session",
+			dials.Load(),
+			c.wantDials,
+		)
 	}
 }
 
-// Lane and session recovery run in virtual time.
 func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]func(*testing.T){
@@ -415,15 +442,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 	t.Parallel()
 	wt := testTransfer("wt", wtUnreachableOrigin, "http3", true)
 	wt.Transport = wire.TransportWebTransport
-	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
-			testTransfer("one", "http://one.example", "negotiated", false),
-			testTransfer("two", "http://two.example", "negotiated", false),
-			wt,
-		}}})
-	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(ambiguousFetch(wt))
 	defer srv.Close()
 
 	cfg := DefaultConfig()
@@ -433,7 +452,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 		t.Fatal("Prepare succeeded with no reachable throughput target")
 	}
 	if !strings.Contains(err.Error(), "select an origin") {
-		t.Fatalf("Prepare error = %q, want the fetch selection's own refusal: automatic selection reached WebTransport only because it could not choose between the advertised fetch origins, and that is what the operator can act on", err)
+		t.Fatalf("prepare error = %q, want the fetch selection's own refusal", err)
 	}
 }
 
@@ -444,8 +463,16 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 		cfg  func(Config) Config
 		want string
 	}{
-		{"throughput", func(c Config) Config { c.ThroughputTransport = "webscoket"; return c }, "invalid throughput transport"},
-		{"latency", func(c Config) Config { c.LatencyTransport = "webtransport-datagram"; return c }, "invalid latency transport"},
+		{
+			"throughput",
+			func(c Config) Config { c.ThroughputTransport = "webscoket"; return c },
+			"invalid throughput transport",
+		},
+		{
+			"latency",
+			func(c Config) Config { c.LatencyTransport = "webtransport-datagram"; return c },
+			"invalid latency transport",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -527,7 +554,6 @@ func runWTLaneRealProgressResetsFailureBounds(t *testing.T) {
 	}
 }
 
-// A refused WebTransport upgrade yields AuthRequiredError.
 func TestWebTransportDialClassifiesAuthenticationRequired(t *testing.T) {
 	t.Parallel()
 	certificates := httptest.NewTLSServer(http.NotFoundHandler())

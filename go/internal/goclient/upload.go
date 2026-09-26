@@ -58,7 +58,6 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 		if err != nil {
 			return err
 		}
-		// Session re-establish is WebTransport's only feed recovery.
 		defer host.close()
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
@@ -368,7 +367,15 @@ func (r *runner) reattachUploadProgress(p *uploadProgress, target string) {
 
 func (r *runner) readUploadProgress(ctx context.Context, body *uploadFeed, deleteURL string) (*uploadProgress, error) {
 	readCtx, cancel := context.WithCancel(ctx)
-	p := &uploadProgress{ctx: readCtx, cancel: cancel, client: r.http, url: deleteURL, ready: make(chan error, 1), changed: make(chan struct{}, 1), errs: make(chan error, 1)}
+	p := &uploadProgress{
+		ctx:     readCtx,
+		cancel:  cancel,
+		client:  r.http,
+		url:     deleteURL,
+		ready:   make(chan error, 1),
+		changed: make(chan struct{}, 1),
+		errs:    make(chan error, 1),
+	}
 	context.AfterFunc(readCtx, p.interruptBody)
 	p.attach(body)
 	select {
@@ -505,10 +512,8 @@ func (p *uploadProgress) close() {
 	})
 }
 
-// teardownTimeout bounds releasing server state after a stage.
 const teardownTimeout = time.Second
 
-// bye releases the receiver within the run's teardown scope.
 func (p *uploadProgress) bye(teardown context.Context) {
 	ctx, cancel := context.WithTimeout(teardown, teardownTimeout)
 	defer cancel()

@@ -42,10 +42,10 @@ func TestAdaptiveWarmup(t *testing.T) {
 	t.Parallel()
 	const base = 500 * time.Millisecond
 	for _, c := range []struct{ rtt, want time.Duration }{
-		{0, base},                             // no RTT measured yet uses the floor
-		{10 * time.Millisecond, base},         // a small RTT still uses the floor
-		{100 * time.Millisecond, time.Second}, // ten round trips
-		{time.Second, 4 * time.Second},        // capped at the ceiling
+		{0, base},
+		{10 * time.Millisecond, base},
+		{100 * time.Millisecond, time.Second},
+		{time.Second, 4 * time.Second},
 	} {
 		if got := adaptiveWarmup(base, c.rtt); got != c.want {
 			t.Errorf("adaptiveWarmup(%v, %v) = %v, want %v", base, c.rtt, got, c.want)
@@ -74,7 +74,9 @@ func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
 func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		origin := "http://" + r.Host
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "test"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{
+			Name: "test",
+		}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
 			UploadCheckpoint:  true,
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
@@ -84,7 +86,12 @@ func mountDiscovery(mux *http.ServeMux) {
 		_ = json.MarshalWrite(w, wire.SingletonCatalog())
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	})
 }
 
@@ -106,7 +113,6 @@ func countUpload(received *atomic.Uint64) http.HandlerFunc {
 	}
 }
 
-// newTransferServer serves every route a run uses.
 func newTransferServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	var uploaded atomic.Uint64
@@ -132,7 +138,6 @@ func newLatencyOnlyServer(t *testing.T) *httptest.Server {
 	return httptest.NewServer(mux)
 }
 
-// Each stage publishes its populations; one terminal event carries the details.
 func TestRunStagesEndToEnd(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -148,10 +153,23 @@ func TestRunStagesEndToEnd(t *testing.T) {
 		t.Run(fmt.Sprintf("%s/%d", c.stages.name(), c.streams), func(t *testing.T) {
 			t.Parallel()
 			srv := newTransferServer(t)
-			cfg := Config{BaseURL: srv.URL, Stages: c.stages, Warmup: 0, LatencyDuration: captureWindow, DownloadDuration: time.Second, BidirectionalDuration: time.Second, PingInterval: 20 * time.Millisecond, TransferStreams: TransferStreamPolicy{Forced: c.streams}}
+			cfg := Config{
+				BaseURL:               srv.URL,
+				Stages:                c.stages,
+				Warmup:                0,
+				LatencyDuration:       captureWindow,
+				DownloadDuration:      time.Second,
+				BidirectionalDuration: time.Second,
+				PingInterval:          20 * time.Millisecond,
+				TransferStreams:       TransferStreamPolicy{Forced: c.streams},
+			}
 			var mu sync.Mutex
 			var events []Event
-			if err := runDirect(t.Context(), cfg, func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }); err != nil {
+			if err := runDirect(
+				t.Context(),
+				cfg,
+				func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
+			); err != nil {
 				t.Fatalf("run: %v", err)
 			}
 			mu.Lock()
@@ -160,7 +178,10 @@ func TestRunStagesEndToEnd(t *testing.T) {
 			for _, e := range events {
 				if e.Kind == EventResult {
 					directions = append(directions, e.Direction)
-					if e.Result.Unavailable || e.Result.TotalBytes == 0 || e.Result.Samples == 0 || e.Result.MeanBps <= 0 {
+					if e.Result.Unavailable ||
+						e.Result.TotalBytes == 0 ||
+						e.Result.Samples == 0 ||
+						e.Result.MeanBps <= 0 {
 						t.Fatalf("result lacks a measured window: %+v", e.Result)
 					}
 				}
@@ -171,7 +192,8 @@ func TestRunStagesEndToEnd(t *testing.T) {
 			}
 			if c.stages.Latency || cfg.LoadedLatency {
 				results := done.Servers.Servers[0].Results
-				if i := slices.IndexFunc(results, func(r Result) bool { return r.Direction == "" }); i < 0 || results[i].Latency.Count == 0 {
+				i := slices.IndexFunc(results, func(r Result) bool { return r.Direction == "" })
+				if i < 0 || results[i].Latency.Count == 0 {
 					t.Fatalf("no latency population: %+v", results)
 				}
 			}
@@ -190,7 +212,13 @@ func (s StageSet) name() string {
 func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
 	t.Parallel()
 	srv := newTransferServer(t)
-	cfg := Config{BaseURL: srv.URL, Stages: StageSet{Download: true}, Warmup: 3 * time.Second, DownloadDuration: 3 * time.Second, TransferStreams: TransferStreamPolicy{Forced: 1}}
+	cfg := Config{
+		BaseURL:          srv.URL,
+		Stages:           StageSet{Download: true},
+		Warmup:           3 * time.Second,
+		DownloadDuration: 3 * time.Second,
+		TransferStreams:  TransferStreamPolicy{Forced: 1},
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	time.AfterFunc(150*time.Millisecond, cancel)
 	var terminal []Event
@@ -216,13 +244,19 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
 			Generation: "test", Server: wire.ServerInfo{Name: "proxy"},
-			Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{testTransfer("http2", origin, "http2", true)}},
+			Capabilities: wire.Capabilities{
+				ThroughputTargets: []wire.ThroughputTarget{testTransfer("http2", origin, "http2", true)},
+			},
 		})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		probeRequestProtocol.Store(r.Proto)
-		// Proxy-to-Go evidence.
-		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	})
 	mux.HandleFunc("/download", writeDownload)
 	srv := httptest.NewUnstartedServer(mux)
@@ -231,7 +265,13 @@ func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
 	defer srv.Close()
 	origin = srv.URL
 
-	cfg := Config{BaseURL: origin, Stages: StageSet{Download: true}, DownloadDuration: 100 * time.Millisecond, InsecureSkipTLSVerify: true, TransferStreams: TransferStreamPolicy{Forced: 1}}
+	cfg := Config{
+		BaseURL:               origin,
+		Stages:                StageSet{Download: true},
+		DownloadDuration:      100 * time.Millisecond,
+		InsecureSkipTLSVerify: true,
+		TransferStreams:       TransferStreamPolicy{Forced: 1},
+	}
 	if err := runDirect(t.Context(), cfg, func(Event) {}); err != nil {
 		t.Fatalf("run through an H2 proxy with H1 downstream evidence: %v", err)
 	}
@@ -245,14 +285,23 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	var backendProtocol atomic.Value
 	backendMux := http.NewServeMux()
 	backendMux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
-			ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Protocol: "negotiated", Transport: wire.TransportFetchStream}},
-			LatencyTargets:    []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
+		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{
+			Name: "proxied",
+		}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{
+				{Origin: ".", Protocol: "negotiated", Transport: wire.TransportFetchStream},
+			},
+			LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
 		}})
 	})
 	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
 		backendProtocol.Store(r.Proto)
-		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	})
 	backendMux.Handle("/ws/ping", echoPingHandler())
 	backend := httptest.NewServer(backendMux)
@@ -269,8 +318,13 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.ThroughputTarget.Protocol != "http2" || prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol != "negotiated" {
-		t.Fatalf("client-to-proxy protocol = %q; advertised %q", prepared.ThroughputTarget.Protocol, prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol)
+	if prepared.ThroughputTarget.Protocol != "http2" ||
+		prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol != "negotiated" {
+		t.Fatalf(
+			"client-to-proxy protocol = %q; advertised %q",
+			prepared.ThroughputTarget.Protocol,
+			prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol,
+		)
 	}
 	if prepared.Probe.ProtocolNegotiated != "http/1.1" || backendProtocol.Load() != "HTTP/1.1" {
 		t.Fatalf("backend evidence = %q, request = %q", prepared.Probe.ProtocolNegotiated, backendProtocol.Load())
@@ -279,19 +333,13 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 
 func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	t.Parallel()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
-			testTransfer("one", "http://one.example", "negotiated", false),
-			testTransfer("two", "http://two.example", "negotiated", false),
-		}}})
-	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(ambiguousFetch())
 	defer srv.Close()
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages = srv.URL, StageSet{Download: true}
 	_, err := prepare(t.Context(), cfg)
-	if preparationErr, ok := errors.AsType[*PreparationError](err); !ok || len(preparationErr.Preflight.Capabilities.ThroughputTargets) != 2 {
+	if preparationErr, ok := errors.AsType[*PreparationError](err); !ok ||
+		len(preparationErr.Preflight.Capabilities.ThroughputTargets) != 2 {
 		t.Fatalf("prepare error = %T %v, want a PreparationError with both discovered targets", err, err)
 	}
 }
@@ -319,7 +367,12 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 4}, http: srv.Client(), emit: func(Event) {}}
+	r := &runner{
+		cfg:     Config{BaseURL: srv.URL}.normalized(),
+		streams: streamCounts{down: 1, up: 4},
+		http:    srv.Client(),
+		emit:    func(Event) {},
+	}
 	if err := r.runTestStage(t.Context(), StageBidirectional, captureWindow); err != nil {
 		t.Fatalf("coordinated transfer stage: %v", err)
 	}
@@ -347,7 +400,12 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 
 	var mu sync.Mutex
 	var events []Event
-	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() }}
+	r := &runner{
+		cfg:     Config{BaseURL: srv.URL}.normalized(),
+		streams: streamCounts{down: 1, up: 1},
+		http:    srv.Client(),
+		emit:    func(e Event) { mu.Lock(); events = append(events, e); mu.Unlock() },
+	}
 	started := time.Now()
 	err := r.runTestStage(t.Context(), StageBidirectional, 3*time.Second)
 	if err == nil || !strings.Contains(err.Error(), "500") {
@@ -359,12 +417,15 @@ func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	for _, event := range events {
-		if event.Kind == EventThroughput || event.Kind == EventLatency || event.Kind == EventResult || event.Kind == EventStage && event.Phase != PhasePreparing {
+		if event.Kind == EventThroughput ||
+			event.Kind == EventLatency ||
+			event.Kind == EventResult ||
+			event.Kind == EventStage && event.Phase != PhasePreparing {
 			t.Fatalf("preparation failure published measured data: %+v", event)
 		}
 	}
 	if downloadBytesServed.Load() == 0 {
-		t.Error("download lane made no progress before the sibling upload lane's error; cancellation of a priming direction was not exercised")
+		t.Error("download made no progress before the upload failed; sibling cancellation was not exercised")
 	}
 }
 
@@ -419,7 +480,6 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 	}
 }
 
-// A silent latency bus still reports timeouts and unfinished probes.
 func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 	t.Parallel()
 	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
@@ -430,7 +490,11 @@ func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 			defer ping.Close()
 			var details *RunDetails
 			var transferResult *Result
-			r := &runner{cfg: Config{BaseURL: transfer.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond}.normalized(), streams: streamCounts{down: 1}, http: transfer.Client(), emit: func(e Event) {
+			r := &runner{cfg: Config{
+				BaseURL:       transfer.URL,
+				LoadedLatency: true,
+				PingInterval:  10 * time.Millisecond,
+			}.normalized(), streams: streamCounts{down: 1}, http: transfer.Client(), emit: func(e Event) {
 				if e.Kind == EventResult {
 					transferResult = e.Result
 				}
@@ -443,7 +507,10 @@ func TestLoadedLatencyPublishesTimeoutOnlyAndUnresolvedResults(t *testing.T) {
 				t.Fatal(err)
 			}
 			results := details.Servers[0].Results
-			if transferResult == nil || transferResult.Direction != Down || len(results) != 2 || results[0].Direction != "" {
+			if transferResult == nil ||
+				transferResult.Direction != Down ||
+				len(results) != 2 ||
+				results[0].Direction != "" {
 				t.Fatalf("loaded results: %+v %+v", transferResult, results)
 			}
 			stats := results[0].Latency

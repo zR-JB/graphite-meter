@@ -11,13 +11,10 @@ import (
 )
 
 const (
-	// shellMargin is shellStyle's horizontal margin.
-	shellMargin = 2
-	// panelBorderWidth is the border's two columns.
+	shellMargin      = 2
 	panelBorderWidth = 2
-	// gutterWidth separates two side-by-side panels.
-	gutterWidth  = 2
-	twoColumnMin = 115
+	gutterWidth      = 2
+	twoColumnMin     = 115
 )
 
 func (m model) View() string {
@@ -67,14 +64,17 @@ func (m model) header(w int) string {
 		}
 		context = strings.Join(names, ", ")
 	}
-	return fitLine(left+spacer+right, w) + "\n" + fitLine(mutedStyle.Render("native client "+goclient.Version+"  ")+accentStyle.Render(context), w)
+	return fitLine(left+spacer+right, w) +
+		"\n" +
+		fitLine(mutedStyle.Render("native client "+goclient.Version+"  ")+accentStyle.Render(context), w)
 }
 
-// panels lays two panels side by side on a wide terminal and stacks them otherwise.
 func panels(w int, left func(int) string, right func(int) string) string {
 	if w < twoColumnMin {
 		inner := w - panelBorderWidth
-		return panelStyle.Width(inner).Render(fitBlock(left(inner-4), inner-4)) + "\n\n" + panelStyle.Width(inner).Render(fitBlock(right(inner-4), inner-4))
+		return panelStyle.Width(inner).Render(fitBlock(left(inner-4), inner-4)) +
+			"\n\n" +
+			panelStyle.Width(inner).Render(fitBlock(right(inner-4), inner-4))
 	}
 	inner := w - gutterWidth - 2*panelBorderWidth
 	leftW := inner * 12 / 20
@@ -87,7 +87,6 @@ func (m model) setupView(w int) string {
 	var b strings.Builder
 	b.WriteString(m.tabBar(w))
 	b.WriteString("\n\n")
-	// A pending sign-in goes above the settings it blocks.
 	if auth := m.signInView(); auth != "" {
 		b.WriteString(panelStyle.Width(w - panelBorderWidth).Render(fitBlock(auth, w-6)))
 		b.WriteString("\n\n")
@@ -112,7 +111,6 @@ func (m model) tabBar(w int) string {
 	if lipgloss.Width(line) < w {
 		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
 	}
-	// Clip so the block never exceeds w.
 	return fitLine(line, w)
 }
 
@@ -146,7 +144,6 @@ func (m model) sectionView(w int) string {
 	return strings.Join(lines, "\n")
 }
 
-// planView lists server readiness, resolved paths, and stages.
 func (m model) planView(w int) string {
 	lines := []string{accentStyle.Render("Test plan")}
 	if m.prepare == prepareChecking && m.preparedRun == nil {
@@ -167,9 +164,15 @@ func (m model) planView(w int) string {
 		case "Unavailable":
 			glyph = errorStyle.Render("✗")
 		}
-		lines = append(lines, glyph+" "+pad(serverLabel(r.server.Name, r.server.Location), nameWidth)+"  "+labelStyle.Render(r.label))
+		lines = append(
+			lines,
+			glyph+" "+pad(serverLabel(r.server.Name, r.server.Location), nameWidth)+"  "+labelStyle.Render(r.label),
+		)
 		if r.detail != "" {
-			lines = append(lines, lipgloss.NewStyle().MarginLeft(4).Width(max(1, w-4)).Render(warnStyle.Render(r.detail)))
+			lines = append(
+				lines,
+				lipgloss.NewStyle().MarginLeft(4).Width(max(1, w-4)).Render(warnStyle.Render(r.detail)),
+			)
 		}
 	}
 	if m.prepareErr != "" {
@@ -179,7 +182,14 @@ func (m model) planView(w int) string {
 		lines = append(lines, mutedStyle.Render("u Use available servers"))
 	}
 	throughput, latency := m.pathSummaries()
-	lines = append(lines, "", labelStyle.Render(pad("Throughput", 11))+throughput, labelStyle.Render(pad("Latency", 11))+latency, "", labelStyle.Render("Stages"))
+	lines = append(
+		lines,
+		"",
+		labelStyle.Render(pad("Throughput", 11))+throughput,
+		labelStyle.Render(pad("Latency", 11))+latency,
+		"",
+		labelStyle.Render("Stages"),
+	)
 	for _, stage := range m.cfg.Plan() {
 		lines = append(lines, "  "+pad(stageLabels[stage.Name], 14)+mutedStyle.Render(fmtSetting(stage.Duration)))
 	}
@@ -196,7 +206,6 @@ func serverLabel(name, location string) string {
 	return name + " · " + location
 }
 
-// pathSummaries names the checked paths.
 func (m model) pathSummaries() (throughput, latency string) {
 	var throughputs, latencies []string
 	if m.preparedRun != nil {
@@ -242,7 +251,13 @@ func (m model) signInView() string {
 	}
 	code := lipgloss.JoinHorizontal(lipgloss.Center,
 		labelStyle.Render("Match this code ")+codeStyle.Render(m.auth.Code),
-		mutedStyle.Render(fmt.Sprintf("  waited %s · expires in %s", fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))),
+		mutedStyle.Render(
+			fmt.Sprintf(
+				"  waited %s · expires in %s",
+				fmtClock(waited),
+				fmtClock(goclient.AuthorizationTimeout-waited),
+			),
+		),
 	)
 	return strings.Join([]string{
 		m.spin.View() + " " + accentStyle.Render("Sign in to "+issuer+" · "+status),
@@ -271,7 +286,6 @@ func (m model) runView(w int) string {
 	return b.String()
 }
 
-// testView names the servers and paths, then the stage track.
 func (m model) testView(w int) string {
 	r := m.run
 	lines := []string{accentStyle.Render("Test")}
@@ -302,7 +316,10 @@ func (m model) testView(w int) string {
 		field("Throughput", valueStyle.Render(strings.Join(throughputs, " / ")))
 		field("Latency", valueStyle.Render(latency))
 		field("Streams", valueStyle.Render(streams))
-		field("Timing", valueStyle.Render("warmup "+fmtSetting(m.cfg.Warmup)+" · ping "+cadenceLabel(m.cfg.PingInterval)))
+		field(
+			"Timing",
+			valueStyle.Render("warmup "+fmtSetting(m.cfg.Warmup)+" · ping "+cadenceLabel(m.cfg.PingInterval)),
+		)
 	}
 	lines = append(lines, "")
 	return strings.Join(append(lines, m.stageTrack(w)...), "\n")
@@ -320,7 +337,14 @@ func (m model) stageTrack(w int) []string {
 		case stageWarmup:
 			lines = append(lines, name+m.spin.View()+mutedStyle.Render(" warmup ")+valueStyle.Render(fmtClock(elapsed)))
 		case stageMeasuring:
-			lines = append(lines, name+renderBar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+valueStyle.Render(fmtClock(min(elapsed, s.duration)))+mutedStyle.Render(" / "+fmtSetting(s.duration)))
+			lines = append(
+				lines,
+				name+
+					renderBar(elapsed.Seconds(), s.duration.Seconds(), barW)+
+					"  "+
+					valueStyle.Render(fmtClock(min(elapsed, s.duration)))+
+					mutedStyle.Render(" / "+fmtSetting(s.duration)),
+			)
 		case stageDone:
 			lines = append(lines, name+successStyle.Render("✓ ")+mutedStyle.Render(fmtSetting(s.duration)))
 		case stageStopped:
@@ -332,7 +356,6 @@ func (m model) stageTrack(w int) []string {
 	return lines
 }
 
-// liveView draws only what the current stage measures.
 func (m model) liveView(w int) string {
 	r := m.run
 	lines := []string{accentStyle.Render("Live")}
@@ -348,7 +371,10 @@ func (m model) liveView(w int) string {
 		if r.rates[dir].Unavailable {
 			value = mutedStyle.Render(fmt.Sprintf("%13s", missing) + "  window restarting")
 		}
-		lines = append(lines, labelStyle.Render(pad(label, 9))+renderBar(r.displayRates[dir], scale, max(12, w-26))+value)
+		lines = append(
+			lines,
+			labelStyle.Render(pad(label, 9))+renderBar(r.displayRates[dir], scale, max(12, w-26))+value,
+		)
 	}
 	if len(stage.Directions) == 0 || m.cfg.LoadedLatency {
 		label := "Loaded latency"
@@ -374,7 +400,6 @@ func (m model) liveView(w int) string {
 	return strings.Join(lines, "\n")
 }
 
-// resultLines lists populations in run order: combined throughput, focused-server latency.
 func (m model) resultLines(w int) []string {
 	r := m.run
 	latency := r.latencyPopulations()
@@ -431,7 +456,11 @@ func throughputLines(result goclient.Result, scale float64, barW, w int) []strin
 	if result.ReceiverTimed() {
 		facts = append(facts, "receiver-timed")
 	}
-	head := labelStyle.Render(pad(directionLabel(result), 14)) + renderBar(result.MeanBps, scale, barW) + "  " + valueStyle.Render(fmt.Sprintf("%13s", rate)) + "  "
+	head := labelStyle.Render(pad(directionLabel(result), 14)) +
+		renderBar(result.MeanBps, scale, barW) +
+		"  " +
+		valueStyle.Render(fmt.Sprintf("%13s", rate)) +
+		"  "
 	indent := strings.Repeat(" ", lipgloss.Width(head))
 	var lines []string
 	for i, line := range wrapParts(facts, w-len(indent)) {
@@ -462,7 +491,6 @@ func latencyLines(result goclient.Result, idle *goclient.LatencyStats, w int) []
 	return lines
 }
 
-// finalReport is the plain-text report printed on exit.
 func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
@@ -479,7 +507,6 @@ func (m model) finalReport() string {
 	return ansi.Strip(strings.Join(lines, "\n"))
 }
 
-// helpView renders the footer for the current screen.
 func (m model) helpView() string {
 	m.help.Width = m.innerWidth()
 	return fitBlock(m.help.View(m), m.innerWidth())

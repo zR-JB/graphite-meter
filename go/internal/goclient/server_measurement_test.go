@@ -17,8 +17,14 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("upload", []string{"a", "b"}, 0, "stage-start")
-	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 100, 100), "b": nativeReceiver("b", 200, 100)}))
-	sample := a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 1100, 1100), "b": nativeReceiver("b", 6200, 2100)}))
+	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{
+		"a": nativeReceiver("a", 100, 100),
+		"b": nativeReceiver("b", 200, 100),
+	}))
+	sample := a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{
+		"a": nativeReceiver("a", 1100, 1100),
+		"b": nativeReceiver("b", 6200, 2100),
+	}))
 	if sample == nil || *sample.UpBytesPerSec != 4000 {
 		t.Fatalf("sum of receiver-window means = %+v, want 4000 B/s", sample)
 	}
@@ -76,8 +82,14 @@ func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
 	a.begin("bidirectional", []string{"a", "b"}, 0, "stage-start")
-	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 0, 100), "b": nativeReceiver("b", 0, 100)}))
-	a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000, "b": 2000}, map[string]*ReceiverSnapshot{"a": nativeReceiver("a", 1000, 1100), "b": nativeReceiver("b", 6000, 2100)}))
+	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, map[string]*ReceiverSnapshot{
+		"a": nativeReceiver("a", 0, 100),
+		"b": nativeReceiver("b", 0, 100),
+	}))
+	a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000, "b": 2000}, map[string]*ReceiverSnapshot{
+		"a": nativeReceiver("a", 1000, 1100),
+		"b": nativeReceiver("b", 6000, 2100),
+	}))
 	if a.result("bidirectional", Down).MeanBps != 3000 || a.result("bidirectional", Up).MeanBps != 4000 {
 		t.Fatal("bidirectional clocks were mixed")
 	}

@@ -12,19 +12,17 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// ServerRunSummary is one selected server's part of a run.
 type ServerRunSummary struct {
 	Server                     wire.ServerEntry
 	Throughput                 wire.ThroughputTarget
 	LatencyTarget              *wire.LatencyTarget
-	Results                    []Result // Latency populations and this server's component of each transfer result.
+	Results                    []Result
 	TotalDownload, TotalUpload uint64
 }
 
-// RunDetails is the run's membership and per-server evidence.
 type RunDetails struct {
 	Servers          []ServerRunSummary
-	Participants     []string // Servers still measuring throughput.
+	Participants     []string
 	LatencyFocus     string
 	Intervals        []AggregationInterval
 	OmittedIntervals int
@@ -32,7 +30,6 @@ type RunDetails struct {
 	Outcome          Outcome
 }
 
-// Stage resources: each active direction plus latency.
 const roleLatency = "latency"
 
 type participant struct {
@@ -76,7 +73,6 @@ type coordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-// runSelection runs one stage schedule over every prepared server.
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
 	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
 	defer func() {
@@ -90,15 +86,28 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 		return err
 	}
 	for _, server := range prepared.Servers {
-		// Paths and credentials are the server's; the schedule is the run's.
 		own := server.config
 		own.Warmup = c.cfg.Warmup
 		connection := server.Connection
-		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol, func() *http.Transport { return baseTransport(own) })
+		hc, closeHTTP := protocolClient(
+			own,
+			connection.ThroughputTarget.Protocol,
+			func() *http.Transport { return baseTransport(own) },
+		)
 		ws, closeWS := websocketClient(own)
 		defer closeHTTP()
 		defer closeWS()
-		r := &runner{cfg: own, streams: streams[server.Server.ID], http: hc, websocketHTTP: ws, target: new(connection.ThroughputTarget), latencyTarget: connection.LatencyTarget, coordinated: &participantCounters{}, idleRTT: connection.PreflightRTT, teardown: teardown}
+		r := &runner{
+			cfg:           own,
+			streams:       streams[server.Server.ID],
+			http:          hc,
+			websocketHTTP: ws,
+			target:        new(connection.ThroughputTarget),
+			latencyTarget: connection.LatencyTarget,
+			coordinated:   &participantCounters{},
+			idleRTT:       connection.PreflightRTT,
+			teardown:      teardown,
+		}
 		r.emit = func(e Event) { e.ServerID = server.Server.ID; emit(e) }
 		c.servers = append(c.servers, &participant{prepared: server, transport: r})
 	}
@@ -118,19 +127,31 @@ func (c *coordinator) ids() []string {
 }
 
 func (c *coordinator) details(outcome Outcome) *RunDetails {
-	details := &RunDetails{Participants: c.ids(), Intervals: slices.Clone(c.aggregate.intervals), OmittedIntervals: c.aggregate.omitted, Failures: slices.Clone(c.failures), Outcome: outcome}
+	details := &RunDetails{
+		Participants:     c.ids(),
+		Intervals:        slices.Clone(c.aggregate.intervals),
+		OmittedIntervals: c.aggregate.omitted,
+		Failures:         slices.Clone(c.failures),
+		Outcome:          outcome,
+	}
 	if c.prepared != nil {
 		details.LatencyFocus = c.prepared.LatencyFocus
 	}
 	for _, server := range c.servers {
 		total := c.aggregate.totals[server.id()]
 		connection := server.prepared.Connection
-		details.Servers = append(details.Servers, ServerRunSummary{Server: server.prepared.Server, Throughput: connection.ThroughputTarget, LatencyTarget: connection.LatencyTarget, Results: slices.Clone(server.results), TotalDownload: total.down, TotalUpload: total.up})
+		details.Servers = append(details.Servers, ServerRunSummary{
+			Server:        server.prepared.Server,
+			Throughput:    connection.ThroughputTarget,
+			LatencyTarget: connection.LatencyTarget,
+			Results:       slices.Clone(server.results),
+			TotalDownload: total.down,
+			TotalUpload:   total.up,
+		})
 	}
 	return details
 }
 
-// publish shares membership and per-server results on membership changes and stage ends.
 func (c *coordinator) publish() {
 	c.emit(Event{Kind: EventServers, At: time.Now(), Servers: c.details(OutcomeRunning)})
 }
@@ -161,7 +182,6 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 	return OutcomeFailed
 }
 
-// failure removes a server, or only its latency population.
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
 	scope := "throughput"
 	if role == roleLatency {
@@ -179,16 +199,28 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		server.cancelTransfer(err)
 		server.cancelLatency(err)
 	}
-	failure := ServerFailure{ServerID: server.id(), Stage: stage.Name, Scope: scope, Reason: "connection-lost", Message: err.Error(), At: at.Sub(c.started)}
+	failure := ServerFailure{
+		ServerID: server.id(),
+		Stage:    stage.Name,
+		Scope:    scope,
+		Reason:   "connection-lost",
+		Message:  err.Error(),
+		At:       at.Sub(c.started),
+	}
 	if _, ok := errors.AsType[*AuthRequiredError](err); ok {
 		failure.Reason = "authentication-required"
 	}
 	c.failures = append(c.failures, failure)
-	c.emit(Event{Kind: EventServerFailure, At: at, Stage: stage.Name, ServerID: failure.ServerID, Failure: new(failure)})
+	c.emit(Event{
+		Kind:     EventServerFailure,
+		At:       at,
+		Stage:    stage.Name,
+		ServerID: failure.ServerID,
+		Failure:  new(failure),
+	})
 	c.publish()
 }
 
-// retainLatency keeps one final population per server and stage.
 func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 	if outcome.role != roleLatency {
 		return
@@ -198,7 +230,8 @@ func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 		result.Err = nil
 	}
 	p := outcome.server.participant
-	if i := slices.IndexFunc(p.results, func(old Result) bool { return old.Stage == result.Stage && old.Direction == "" }); i >= 0 {
+	sameStage := func(old Result) bool { return old.Stage == result.Stage && old.Direction == "" }
+	if i := slices.IndexFunc(p.results, sameStage); i >= 0 {
 		p.results[i] = result
 		return
 	}
@@ -229,8 +262,6 @@ const (
 	phaseMeasure
 )
 
-// stage prepares every resource, warms up, then opens one measured window for all populations.
-// A failure before the first window fails the run; after it, the server leaves.
 func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	transfer := len(stage.Directions) > 0
@@ -241,7 +272,6 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	if !transfer || c.cfg.LoadedLatency {
 		roles = append(roles, roleLatency)
 	}
-	// Each resource sends readiness and its outcome once, so neither send blocks.
 	ready := make(chan readyResource, len(c.active())*len(roles))
 	outcomes := make(chan resourceOutcome, cap(ready))
 	start := make(chan struct{})
@@ -261,7 +291,11 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 			if role == roleLatency {
 				own, ownCancel = latencyCtx, cancelLatency
 			}
-			gate := &stageGate{cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{p.id(), role} }}
+			gate := &stageGate{
+				cancel:      ownCancel,
+				start:       start,
+				reportReady: func() { ready <- readyResource{p.id(), role} },
+			}
 			gates = append(gates, gate)
 			work.Go(func() { outcomes <- s.measure(own, stage, role, gate) })
 		}
@@ -293,11 +327,18 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	}
 	handle := func(outcome resourceOutcome) error {
 		c.retainLatency(outcome, false)
-		if outcome.err == nil || ctx.Err() != nil || outcome.server.removed || outcome.role == roleLatency && outcome.server.latencyFailed {
+		if outcome.err == nil ||
+			ctx.Err() != nil ||
+			outcome.server.removed ||
+			outcome.role == roleLatency && outcome.server.latencyFailed {
 			return nil
 		}
 		if !c.hasMeasured {
-			return fmt.Errorf("%s: %w; resolve the selection before starting", outcome.server.prepared.Server.Name, outcome.err)
+			return fmt.Errorf(
+				"%s: %w; resolve the selection before starting",
+				outcome.server.prepared.Server.Name,
+				outcome.err,
+			)
 		}
 		c.failure(outcome.server, stage, outcome.role, outcome.err, outcome.at)
 		if len(c.ids()) == 0 {
@@ -314,7 +355,8 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	defer timer.Stop()
 	var tick <-chan time.Time
 	for {
-		if phase == phasePrepare && !slices.ContainsFunc(servers, func(s *stageServer) bool { return len(missing(s)) > 0 }) {
+		if phase == phasePrepare &&
+			!slices.ContainsFunc(servers, func(s *stageServer) bool { return len(missing(s)) > 0 }) {
 			phase = phaseWarmup
 			warmup := c.cfg.Warmup
 			for _, s := range servers {
@@ -395,8 +437,13 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 	}
 }
 
-// openWindow takes the baselines, then opens the measured window.
-func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers []*stageServer, outcomes <-chan resourceOutcome, handle func(resourceOutcome) error) (time.Time, measurementBoundary, error) {
+func (c *coordinator) openWindow(
+	ctx context.Context,
+	stage StagePlan,
+	servers []*stageServer,
+	outcomes <-chan resourceOutcome,
+	handle func(resourceOutcome) error,
+) (time.Time, measurementBoundary, error) {
 	initial := c.capture(ctx, stage, c.active())
 	if stage.Name == StageUpload || stage.Name == StageBidirectional {
 		for _, s := range servers {
@@ -412,7 +459,6 @@ func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers [
 			return time.Time{}, initial, errNoSurvivors
 		}
 	}
-	// Failures reported during the baseline belong before the window.
 	for drained := false; !drained; {
 		select {
 		case outcome := <-outcomes:
@@ -435,7 +481,6 @@ func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers [
 	return started, initial, nil
 }
 
-// sampler takes one boundary at a time; a membership change discards the one in flight.
 type sampler struct {
 	c            *coordinator
 	stage        StagePlan
@@ -476,7 +521,6 @@ func (s *sampler) capture(final bool) {
 	})
 }
 
-// reset starts a new interval for the survivors after a membership change.
 func (s *sampler) reset() {
 	s.epoch++
 	if s.cancel != nil {
@@ -494,7 +538,6 @@ func (s *sampler) stop() {
 	s.work.Wait()
 }
 
-// observe folds a boundary into the aggregate; done ends the stage.
 func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool, error) {
 	c := s.c
 	s.inFlight = false
@@ -522,8 +565,16 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 		for _, dir := range s.stage.Directions {
 			if dir == Down && bytes.down > s.lastBytes[id].down || dir == Up && bytes.up > s.lastBytes[id].up {
 				s.lastMovement[id][dir] = time.Now()
-			} else if !s.ending && server.transport.targetTransport() == wire.TransportFetchStream && time.Since(s.lastMovement[id][dir]) >= busRedialWindow {
-				c.failure(server, s.stage, string(dir), fmt.Errorf("%s stopped delivering bytes for %v", dir, busRedialWindow), time.Now())
+			} else if !s.ending &&
+				server.transport.targetTransport() == wire.TransportFetchStream &&
+				time.Since(s.lastMovement[id][dir]) >= busRedialWindow {
+				c.failure(
+					server,
+					s.stage,
+					string(dir),
+					fmt.Errorf("%s stopped delivering bytes for %v", dir, busRedialWindow),
+					time.Now(),
+				)
 				removed = true
 				break
 			}
@@ -544,9 +595,13 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	return false, nil
 }
 
-// capture reads counters, then receiver checkpoints; one that keeps failing leaves a gap.
 func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*participant) measurementBoundary {
-	boundary := measurementBoundary{at: time.Since(c.started), down: map[string]uint64{}, up: map[string]*ReceiverSnapshot{}, observedUp: map[string]uploadLedger{}}
+	boundary := measurementBoundary{
+		at:         time.Since(c.started),
+		down:       map[string]uint64{},
+		up:         map[string]*ReceiverSnapshot{},
+		observedUp: map[string]uploadLedger{},
+	}
 	for _, server := range servers {
 		boundary.down[server.id()] = server.transport.coordinated.download()
 		if id, bytes, _ := server.transport.coordinated.upload(); id != "" {
@@ -581,18 +636,29 @@ func (c *coordinator) emitRates(stage StagePlan, window AggregateWindow) {
 			for _, bytes := range c.aggregate.stageTotals[stage.Name] {
 				total += bytes.of(dir)
 			}
-			c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{BytesPerSec: *rate, TotalBytes: total}})
+			c.emit(Event{
+				Kind:       EventThroughput,
+				At:         time.Now(),
+				Stage:      stage.Name,
+				Direction:  dir,
+				Throughput: ThroughputSample{BytesPerSec: *rate, TotalBytes: total},
+			})
 		}
 	}
 }
 
 func (c *coordinator) emitUnavailable(stage StagePlan) {
 	for _, dir := range stage.Directions {
-		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{Unavailable: true}})
+		c.emit(Event{
+			Kind:       EventThroughput,
+			At:         time.Now(),
+			Stage:      stage.Name,
+			Direction:  dir,
+			Throughput: ThroughputSample{Unavailable: true},
+		})
 	}
 }
 
-// finishTransferStage publishes the combined result and each server's component.
 func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
 		result := c.aggregate.result(stage.Name, dir)
@@ -610,7 +676,8 @@ func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 				if dir == Up {
 					components = interval.Window.Up
 				}
-				if i := slices.IndexFunc(components, func(w ComponentWindow) bool { return w.ServerID == server.id() }); i >= 0 {
+				mine := func(w ComponentWindow) bool { return w.ServerID == server.id() }
+				if i := slices.IndexFunc(components, mine); i >= 0 {
 					own.MeanBps, own.Elapsed = components[i].BytesPerSec, components[i].Duration
 					own.Unavailable = components[i].Duration < minimumSurvivorEvidence
 					break

@@ -38,11 +38,20 @@ var carbon = palette{
 }
 
 var (
-	shellStyle      = lipgloss.NewStyle().Margin(1, shellMargin)
-	titleStyle      = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brand).Padding(0, 1)
-	pillStyle       = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brandStrong).Padding(0, 1)
-	panelStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(carbon.border).Padding(1, 2)
-	activeTabStyle  = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brand).Padding(0, 1)
+	shellStyle = lipgloss.NewStyle().Margin(1, shellMargin)
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brand).Padding(
+		0,
+		1,
+	)
+	pillStyle = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brandStrong).Padding(
+		0,
+		1,
+	)
+	panelStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(carbon.border).Padding(1, 2)
+	activeTabStyle = lipgloss.NewStyle().Bold(true).Foreground(carbon.textInverse).Background(carbon.brand).Padding(
+		0,
+		1,
+	)
 	tabStyle        = lipgloss.NewStyle().Foreground(carbon.textMuted).Padding(0, 1)
 	selectedStyle   = lipgloss.NewStyle().Bold(true).Foreground(carbon.text).Background(carbon.surface)
 	labelStyle      = lipgloss.NewStyle().Foreground(carbon.text)
@@ -53,5 +62,12 @@ var (
 	warnStyle       = lipgloss.NewStyle().Foreground(carbon.warn)
 	successStyle    = lipgloss.NewStyle().Foreground(carbon.ok)
 	subtleRuleStyle = lipgloss.NewStyle().Foreground(carbon.border)
-	codeStyle       = lipgloss.NewStyle().Bold(true).Foreground(carbon.text).Border(lipgloss.RoundedBorder()).BorderForeground(carbon.brand).Padding(0, 1)
+	codeStyle       = lipgloss.NewStyle().Bold(true).Foreground(carbon.text).Border(
+		lipgloss.RoundedBorder(),
+	).BorderForeground(
+		carbon.brand,
+	).Padding(
+		0,
+		1,
+	)
 )

@@ -18,7 +18,9 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 		return wire.Preflight{}, err
 	}
 	var pf wire.Preflight
-	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, http.Header{"Cache-Control": {"no-store"}}, &pf, httpStatusError("preflight"))
+	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, http.Header{
+		"Cache-Control": {"no-store"},
+	}, &pf, httpStatusError("preflight"))
 	if err != nil {
 		return wire.Preflight{}, err
 	}
@@ -45,10 +47,16 @@ func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 }
 
 func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultThroughputRoutes()
+	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(
+		origin,
+		"https://",
+	), wire.DefaultThroughputRoutes()
 }
 func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultLatencyRoutes()
+	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(
+		origin,
+		"https://",
+	), wire.DefaultLatencyRoutes()
 }
 
 func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPrefix string) (wire.Probe, string, error) {
@@ -57,7 +65,15 @@ func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPref
 		return wire.Probe{}, "", err
 	}
 	var p wire.Probe
-	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, nil, &p, httpStatusError(statusPrefix))
+	response, err := (jsonHTTPClient{hc}).requestJSON(
+		ctx,
+		http.MethodGet,
+		u,
+		nil,
+		nil,
+		&p,
+		httpStatusError(statusPrefix),
+	)
 	if err != nil {
 		return wire.Probe{}, "", err
 	}
@@ -74,7 +90,10 @@ func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.L
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	conn, response, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{HTTPClient: hc, CompressionMode: websocket.CompressionDisabled})
+	conn, response, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{
+		HTTPClient:      hc,
+		CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		if authErr := authResponseError(response); authErr != nil {
 			return authErr

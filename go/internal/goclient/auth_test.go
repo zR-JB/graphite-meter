@@ -16,10 +16,18 @@ import (
 func TestAuthenticationLoginURLStaysOnTheServerHostname(t *testing.T) {
 	t.Parallel()
 	base, _ := url.Parse("https://meter.example:7248")
-	if login, err := authenticationLoginURL(base, "https://meter.example:7247/login"); err != nil || login.Host != "meter.example:7247" {
+	if login, err := authenticationLoginURL(
+		base,
+		"https://meter.example:7247/login",
+	); err != nil || login.Host != "meter.example:7247" {
 		t.Fatalf("login on another port = %v, %v", login, err)
 	}
-	for _, raw := range []string{"https://login.example:7247/login", "http://meter.example/login", "https://meter.example/login?next=x", "https://meter.example/other"} {
+	for _, raw := range []string{
+		"https://login.example:7247/login",
+		"http://meter.example/login",
+		"https://meter.example/login?next=x",
+		"https://meter.example/other",
+	} {
 		if _, err := authenticationLoginURL(base, raw); err == nil {
 			t.Fatalf("accepted authentication URL %s", raw)
 		}
@@ -31,15 +39,23 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func okResponse(r *http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{}, Request: r}, nil
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("")),
+		Header:     http.Header{},
+		Request:    r,
+	}, nil
 }
 
-// A grant reaches only its issuer's HTTPS hostname, never additional origins.
 func TestAuthenticatedClientAddsBearerOnlyOnTheIssuerHTTPSHostname(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.grant = "https://meter.example", "secret"
-	cfg.server = &wire.ServerEntry{ID: "a", URL: "https://meter.example", AdditionalOrigins: []string{"https://cdn.example"}}
+	cfg.server = &wire.ServerEntry{
+		ID:                "a",
+		URL:               "https://meter.example",
+		AdditionalOrigins: []string{"https://cdn.example"},
+	}
 	seen := ""
 	client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		seen = r.Header.Get("Authorization")
@@ -49,7 +65,11 @@ func TestAuthenticatedClientAddsBearerOnlyOnTheIssuerHTTPSHostname(t *testing.T)
 	if _, err := client.Do(req); err != nil || seen != "Bearer secret" {
 		t.Fatalf("authorization=%q, %v", seen, err)
 	}
-	for _, target := range []string{"https://other.example/probe", "https://cdn.example/probe", "http://meter.example/probe"} {
+	for _, target := range []string{
+		"https://other.example/probe",
+		"https://cdn.example/probe",
+		"http://meter.example/probe",
+	} {
 		bad, _ := http.NewRequest("GET", target, nil)
 		if _, err := client.Do(bad); err == nil {
 			t.Fatalf("grant sent to %s outside its issuer's HTTPS hostname", target)
@@ -69,7 +89,12 @@ func TestAuthenticatedClientNeverFollowsRedirects(t *testing.T) {
 		calls := 0
 		client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			calls++
-			return &http.Response{StatusCode: http.StatusTemporaryRedirect, Body: io.NopCloser(strings.NewReader("")), Header: http.Header{"Location": {location}}, Request: r}, nil
+			return &http.Response{
+				StatusCode: http.StatusTemporaryRedirect,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Header:     http.Header{"Location": {location}},
+				Request:    r,
+			}, nil
 		}))
 		req, _ := http.NewRequest(http.MethodGet, "https://meter.example/download", nil)
 		if _, err := client.Do(req); err == nil || calls != 1 {
@@ -89,20 +114,29 @@ func TestAuthenticatedOperationRejectsInsecureMode(t *testing.T) {
 }
 
 func pendingApproval(transport roundTripFunc) *PendingAuthorization {
-	return &PendingAuthorization{verifier: "verifier", tokenURL: "https://meter.example/auth/cli/token", close: func() {}, client: &http.Client{Transport: transport}}
+	return &PendingAuthorization{
+		verifier: "verifier",
+		tokenURL: "https://meter.example/auth/cli/token",
+		close:    func() {},
+		client:   &http.Client{Transport: transport},
+	}
 }
 
 func TestPollNamesWhyApprovalEnded(t *testing.T) {
 	t.Parallel()
 	pending := func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"status":"pending"}`)), Header: http.Header{}, Request: r}, nil
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(strings.NewReader(`{"status":"pending"}`)),
+			Header:     http.Header{},
+			Request:    r,
+		}, nil
 	}
 	refused := func(*http.Request) (*http.Response, error) { return nil, errors.New("connection refused") }
 	for _, c := range []struct {
 		transport roundTripFunc
 		want      string
 	}{
-		// A deadline names the last transport error.
 		{refused, "connection refused"},
 		{pending, "browser approval timed out"},
 	} {
@@ -122,9 +156,19 @@ func TestPollNamesWhyApprovalEnded(t *testing.T) {
 
 func TestPollRejectsMalformedSuccessfulApproval(t *testing.T) {
 	t.Parallel()
-	for _, body := range []string{`{"token":"ok"} {}`, `{"token":""}`, `{"token":"` + strings.Repeat("a", 8193) + `"}`, strings.Repeat(" ", maxControlBytes+1)} {
+	for _, body := range []string{
+		`{"token":"ok"} {}`,
+		`{"token":""}`,
+		`{"token":"` + strings.Repeat("a", 8193) + `"}`,
+		strings.Repeat(" ", maxControlBytes+1),
+	} {
 		approval := pendingApproval(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: r}, nil
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     http.Header{},
+				Request:    r,
+			}, nil
 		})
 		if _, err := approval.Poll(t.Context()); err == nil {
 			t.Fatal("accepted malformed approval")

@@ -58,10 +58,8 @@ func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan er
 	}
 }
 
-// checkpointRetry paces retries within one capture deadline.
 const checkpointRetry = 100 * time.Millisecond
 
-// receiverCheckpoint retries transient failures until ctx ends.
 func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {
 	for {
 		snapshot, err := r.receiverCheckpointOnce(ctx)
@@ -90,7 +88,9 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 		Bytes uint64 `json:"bytes"`
 		Nanos uint64 `json:"nanos"`
 	}
-	if _, err := (jsonHTTPClient{r.http}).requestJSON(ctx, http.MethodPost, target, nil, http.Header{"Cache-Control": {"no-store"}}, &count, httpStatusError("receiver checkpoint")); err != nil {
+	if _, err := (jsonHTTPClient{r.http}).requestJSON(ctx, http.MethodPost, target, nil, http.Header{
+		"Cache-Control": {"no-store"},
+	}, &count, httpStatusError("receiver checkpoint")); err != nil {
 		return nil, err
 	}
 	if count.Nanos == 0 || count.Nanos > uint64(1<<63-1) {

@@ -37,11 +37,10 @@ func (m model) serverName(id string) string {
 	return id
 }
 
-// readiness is one selected server's state after the latest path check.
 type readiness struct {
 	server wire.ServerEntry
-	label  string // Ready, Sign in, Unavailable, or Checking…
-	detail string // The failure behind Unavailable.
+	label  string
+	detail string
 	ready  bool
 }
 
@@ -78,7 +77,6 @@ func (m model) readyServers() []string {
 	return ids
 }
 
-// canUseAvailable reports whether some, not all, selected servers are ready.
 func (m model) canUseAvailable() bool {
 	ready := len(m.readyServers())
 	return m.prepare != prepareChecking && ready > 0 && ready < len(m.readiness())
@@ -167,7 +165,10 @@ func (m model) handleServerChooserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		id := servers[m.serverRow].ID
 		switch {
 		case slices.Contains(m.serverDraft, id):
-			m.serverDraft = slices.DeleteFunc(slices.Clone(m.serverDraft), func(value string) bool { return value == id })
+			m.serverDraft = slices.DeleteFunc(
+				slices.Clone(m.serverDraft),
+				func(value string) bool { return value == id },
+			)
 		case len(m.serverDraft) < wire.MaxSelectedServers:
 			m.serverDraft = append(slices.Clone(m.serverDraft), id)
 		default:
@@ -188,7 +189,11 @@ func (m model) handleServerChooserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) serverChooserView(w int) string {
 	catalog := m.preparedRun.Catalog
-	lines := []string{accentStyle.Render(fmt.Sprintf("Test servers · %d selected", len(m.serverDraft))), mutedStyle.Render("Choose up to 4. Their speeds are combined."), ""}
+	lines := []string{
+		accentStyle.Render(fmt.Sprintf("Test servers · %d selected", len(m.serverDraft))),
+		mutedStyle.Render("Choose up to 4. Their speeds are combined."),
+		"",
+	}
 	capacity := max(3, min(12, (max(m.height, 20)-10)/2))
 	start := min(max(m.serverRow-capacity/2, 0), max(0, len(catalog.Servers)-capacity))
 	for i := start; i < min(len(catalog.Servers), start+capacity); i++ {
@@ -234,10 +239,11 @@ func (m model) detailsCapacity() int { return max(3, m.height-9) }
 func (m model) detailsOverlay(w int) string {
 	lines := strings.Split(m.detailsView(w), "\n")
 	start := min(m.detailsScroll, max(0, len(lines)-m.detailsCapacity()))
-	return strings.Join(lines[start:min(len(lines), start+m.detailsCapacity())], "\n") + "\n\n" + mutedStyle.Render("↑/↓ scroll · esc closes details")
+	return strings.Join(lines[start:min(len(lines), start+m.detailsCapacity())], "\n") +
+		"\n\n" +
+		mutedStyle.Render("↑/↓ scroll · esc closes details")
 }
 
-// detailsView leads with the result table; aggregation intervals follow as debug detail.
 func (m model) detailsView(w int) string {
 	r := m.run
 	if r == nil || r.details == nil {
@@ -260,8 +266,10 @@ func (m model) detailsView(w int) string {
 		line := pad(name, nameWidth)
 		for _, column := range columns {
 			value := missing
-			if i := slices.IndexFunc(results, func(r goclient.Result) bool { return r.Stage == column.Stage && r.Direction == column.Direction }); i >= 0 && !results[i].Unavailable {
-				value = fmtRate(results[i].MeanBps)
+			for _, r := range results {
+				if r.Stage == column.Stage && r.Direction == column.Direction && !r.Unavailable {
+					value = fmtRate(r.MeanBps)
+				}
 			}
 			line += pad(value, cell)
 		}
@@ -292,7 +300,17 @@ func (m model) detailsView(w int) string {
 	if len(details.Failures) > 0 {
 		lines = append(lines, "", mutedStyle.Render("Left the test"))
 		for _, f := range details.Failures {
-			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s", r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), f.Message))
+			lines = append(
+				lines,
+				fmt.Sprintf(
+					"%s · %s %s · at %s · %s",
+					r.serverName(f.ServerID),
+					compactStage(f.Stage),
+					f.Scope,
+					fmtClock(f.At),
+					f.Message,
+				),
+			)
 		}
 	}
 	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
@@ -302,16 +320,35 @@ func (m model) detailsView(w int) string {
 			if interval.Complete && interval.Window != nil {
 				state = "measured window"
 			}
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s", compactStage(interval.Stage), interval.Start.Seconds(), interval.End.Seconds(), strings.Join(interval.Participants, ", "), state)))
+			lines = append(
+				lines,
+				mutedStyle.Render(
+					fmt.Sprintf(
+						"%s %.1f–%.1f s · %s · %s",
+						compactStage(interval.Stage),
+						interval.Start.Seconds(),
+						interval.End.Seconds(),
+						strings.Join(interval.Participants, ", "),
+						state,
+					),
+				),
+			)
 		}
 		if details.OmittedIntervals > 0 {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("%d older intervals omitted; byte totals retain the full run", details.OmittedIntervals)))
+			lines = append(
+				lines,
+				mutedStyle.Render(
+					fmt.Sprintf(
+						"%d older intervals omitted; byte totals retain the full run",
+						details.OmittedIntervals,
+					),
+				),
+			)
 		}
 	}
 	return fitBlock(strings.Join(lines, "\n"), w)
 }
 
-// outcomeNotice summarizes run membership.
 func (m model) outcomeNotice() string {
 	details := m.run.details
 	if details == nil {

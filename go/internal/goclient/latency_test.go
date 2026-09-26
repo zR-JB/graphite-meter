@@ -158,7 +158,10 @@ func TestMeasureLatencyMixedTimeoutsComputeRatioAndRTT(t *testing.T) {
 		t.Errorf("want positive RTT stats from the responded pings, got %+v", stats)
 	}
 	if timeoutRatio(t, stats) <= 0 || timeoutRatio(t, stats) >= 1 {
-		t.Errorf("TimeoutRatio = %v, want a partial ratio strictly between 0 and 1 for a mixed hit/miss sequence", timeoutRatio(t, stats))
+		t.Errorf(
+			"TimeoutRatio = %v, want a partial ratio strictly between 0 and 1 for a mixed hit/miss sequence",
+			timeoutRatio(t, stats),
+		)
 	}
 	if timeoutRatio(t, stats) < 0.10 || timeoutRatio(t, stats) > 0.55 {
 		t.Errorf("TimeoutRatio = %v, want roughly 1/%d given the drop pattern", timeoutRatio(t, stats), dropEvery)
@@ -294,7 +297,11 @@ func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
 	now := time.Now()
 	var stats latencyStats
 	stats.add(10*time.Millisecond, false, 0)
-	pending := map[uint32]time.Time{1: now.Add(-time.Second), 2: now.Add(-250 * time.Millisecond), 3: now.Add(-time.Millisecond)}
+	pending := map[uint32]time.Time{
+		1: now.Add(-time.Second),
+		2: now.Add(-250 * time.Millisecond),
+		3: now.Add(-time.Millisecond),
+	}
 	stats.closePending(pending, now, 250*time.Millisecond)
 	stats.add(100*time.Millisecond, false, 0)
 	got := stats.snapshot()
@@ -307,7 +314,11 @@ func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty
 	t.Parallel()
 	srv := newSilentPingServer(t)
 	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
+	r := &runner{
+		cfg:  Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(),
+		http: srv.Client(),
+		emit: func(Event) {},
+	}
 	attachTestLatencyTarget(r, srv.URL)
 	start := make(chan struct{})
 	close(start)
@@ -355,7 +366,11 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
+	r := &runner{
+		cfg:  Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized(),
+		http: srv.Client(),
+		emit: func(Event) {},
+	}
 	attachTestLatencyTarget(r, srv.URL)
 	start := make(chan struct{})
 	close(start)
@@ -385,7 +400,9 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 						w.WriteHeader(http.StatusForbidden)
 						return
 					}
-					conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+					conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{
+						CompressionMode: websocket.CompressionDisabled,
+					})
 					if err != nil {
 						return
 					}
@@ -408,7 +425,11 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				defer srv.Close()
 				var throughput *Result
 				var details *RunDetails
-				cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond, LoadedLatency: stage == StageDownload}.normalized()
+				cfg := Config{
+					BaseURL:       srv.URL,
+					PingInterval:  20 * time.Millisecond,
+					LoadedLatency: stage == StageDownload,
+				}.normalized()
 				r := &runner{
 					cfg:     cfg,
 					streams: streamCounts{down: 1},
@@ -424,7 +445,12 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				}
 				attachTestLatencyTarget(r, srv.URL)
 				err := r.runTestStage(t.Context(), stage, time.Second)
-				if err != nil || details == nil || details.Outcome != OutcomePartial || len(details.Participants) != 1 || len(details.Failures) != 1 || details.Failures[0].Scope != "latency" {
+				if err != nil ||
+					details == nil ||
+					details.Outcome != OutcomePartial ||
+					len(details.Participants) != 1 ||
+					len(details.Failures) != 1 ||
+					details.Failures[0].Scope != "latency" {
 					t.Fatalf("latency failure removed throughput membership: %v %+v", err, details)
 				}
 				results := details.Servers[0].Results
@@ -439,7 +465,12 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[i].Elapsed != stats.Elapsed {
 					t.Fatalf("failure reports requested duration rather than measured window: %+v", results[i])
 				}
-				if cfg.LoadedLatency && (throughput == nil || throughput.Direction != Down || throughput.Unavailable || throughput.TotalBytes == 0 || throughput.Err != nil) {
+				if cfg.LoadedLatency &&
+					(throughput == nil ||
+						throughput.Direction != Down ||
+						throughput.Unavailable ||
+						throughput.TotalBytes == 0 ||
+						throughput.Err != nil) {
 					t.Fatalf("latency failure discarded throughput: %+v", throughput)
 				}
 			})

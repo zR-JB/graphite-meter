@@ -16,22 +16,22 @@ import (
 // PreparedServer keeps transport evidence and credentials under one catalogue identity.
 type PreparedServer struct {
 	Server     wire.ServerEntry
-	Connection *PreparedConnection // Nil when Err is set before its paths were checked.
+	Connection *PreparedConnection
 	Err        error
 	config     Config
 }
 
-// PreparedRun is one catalogue selection; failed servers stay listed.
 type PreparedRun struct {
 	Err          error
 	Catalog      wire.ServerCatalog
 	Servers      []PreparedServer
-	LatencyFocus string // The ready server with the lowest latency probe time.
+	LatencyFocus string
 	configKey    string
 }
 
 func (p *PreparedRun) Ready() bool {
-	return p != nil && p.Err == nil && len(p.Servers) > 0 && !slices.ContainsFunc(p.Servers, func(s PreparedServer) bool { return s.Err != nil || s.Connection == nil })
+	failed := func(s PreparedServer) bool { return s.Err != nil || s.Connection == nil }
+	return p != nil && p.Err == nil && len(p.Servers) > 0 && !slices.ContainsFunc(p.Servers, failed)
 }
 
 func (p *PreparedRun) SelectedIDs() []string {
@@ -43,11 +43,22 @@ func (p *PreparedRun) SelectedIDs() []string {
 }
 
 func (p *PreparedRun) FreshFor(cfg Config) bool {
-	if !p.Ready() || p.configKey != selectionPreparationKey(cfg) || len(cfg.ServerIDs) > 0 && (len(cfg.ServerIDs) != len(p.Servers) || slices.ContainsFunc(p.Servers, func(s PreparedServer) bool { return !slices.Contains(cfg.ServerIDs, s.Server.ID) })) {
+	if !p.Ready() || p.configKey != selectionPreparationKey(cfg) {
 		return false
 	}
+	if ids := cfg.ServerIDs; len(ids) > 0 {
+		if len(ids) != len(p.Servers) {
+			return false
+		}
+		for _, s := range p.Servers {
+			if !slices.Contains(ids, s.Server.ID) {
+				return false
+			}
+		}
+	}
 	return !slices.ContainsFunc(p.Servers, func(s PreparedServer) bool {
-		return !s.Connection.FreshFor(s.config) || needsCheckpoint(cfg) && !s.Connection.Preflight.Capabilities.UploadCheckpoint
+		return !s.Connection.FreshFor(s.config) ||
+			needsCheckpoint(cfg) && !s.Connection.Preflight.Capabilities.UploadCheckpoint
 	})
 }
 
@@ -65,13 +76,17 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 	defer tr.CloseIdleConnections()
 	hc := authenticatedClient(cfg, tr)
 	// A catalogue is an authority boundary; a redirect cannot replace its operator.
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return errors.New("server catalogue must not redirect") }
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("server catalogue must not redirect")
+	}
 	target, err := httpEndpoint(cfg.BaseURL, "/servers")
 	if err != nil {
 		return wire.ServerCatalog{}, err
 	}
 	var catalog wire.ServerCatalog
-	if _, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, target, nil, http.Header{"Cache-Control": {"no-store"}}, &catalog, httpStatusError("server catalogue")); err != nil {
+	_, err = jsonHTTPClient{hc}.requestJSON(ctx, http.MethodGet, target, nil,
+		http.Header{"Cache-Control": {"no-store"}}, &catalog, httpStatusError("server catalogue"))
+	if err != nil {
 		return catalog, err
 	}
 	if err := catalog.Validate(); err != nil {
@@ -81,8 +96,12 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 	return catalog, catalog.Validate()
 }
 
-// prepareRun checks every selected server concurrently, each with its own origin's grant.
-func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, grants map[string]string) (result *PreparedRun, resultErr error) {
+func prepareRun(
+	ctx context.Context,
+	cfg Config,
+	previous []wire.ServerEntry,
+	grants map[string]string,
+) (result *PreparedRun, resultErr error) {
 	defer func() {
 		if result != nil {
 			result.Err = resultErr
@@ -109,7 +128,7 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 		return prepared, err
 	}
 	if len(ids) > 1 && (cfg.ThroughputTarget != "auto" || cfg.LatencyTarget != "auto") {
-		return prepared, errors.New("explicit origin overrides require a single selected server; use Automatic origins for simultaneous tests")
+		return prepared, errors.New("explicit origins need a single selected server; use Automatic origins for several")
 	}
 	for _, server := range catalog.Servers {
 		if !slices.Contains(ids, server.ID) {
@@ -140,11 +159,11 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 	for i := range prepared.Servers {
 		server := &prepared.Servers[i]
 		if server.Connection != nil {
-			// Discovery names the server; the catalogue entry is only its fallback.
 			metadata := server.Connection.Preflight.Server
 			server.Server.Name = cmp.Or(metadata.Name, server.Server.Name)
 			server.Server.Location = metadata.Location
-			if j := slices.IndexFunc(prepared.Catalog.Servers, func(s wire.ServerEntry) bool { return s.ID == server.Server.ID }); j >= 0 {
+			same := func(s wire.ServerEntry) bool { return s.ID == server.Server.ID }
+			if j := slices.IndexFunc(prepared.Catalog.Servers, same); j >= 0 {
 				prepared.Catalog.Servers[j] = server.Server
 			}
 		}

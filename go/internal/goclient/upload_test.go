@@ -19,7 +19,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A request body cycles its block up to its limit and stops on cancellation.
 func TestCyclingBody(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -56,7 +55,7 @@ func TestMintUploadID(t *testing.T) {
 		`{"uploadId":"abc-123"}`: "abc-123",
 		`{}`:                     "",
 		`not json`:               "",
-		"":                       "", // HTTP 500 below.
+		"":                       "",
 	} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			if body == "" {
@@ -201,11 +200,19 @@ func mountFakeProgress(mux *http.ServeMux, served *atomic.Uint64, started time.T
 			case <-r.Context().Done():
 				return
 			case <-finished:
-				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "complete", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{
+					Type:  "complete",
+					Bytes: served.Load(),
+					Nanos: uint64(time.Since(started)),
+				})
 				flusher.Flush()
 				return
 			case <-ticker:
-				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: served.Load(), Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{
+					Type:  "progress",
+					Bytes: served.Load(),
+					Nanos: uint64(time.Since(started)),
+				})
 				flusher.Flush()
 			}
 		}
@@ -291,7 +298,11 @@ func newStalledUploadServer() *httptest.Server {
 			case <-r.Context().Done():
 				return
 			case <-ticker:
-				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: 0, Nanos: uint64(time.Since(started))})
+				_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{
+					Type:  "progress",
+					Bytes: 0,
+					Nanos: uint64(time.Since(started)),
+				})
 				flusher.Flush()
 			}
 		}

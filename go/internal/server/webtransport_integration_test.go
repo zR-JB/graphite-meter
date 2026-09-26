@@ -775,7 +775,6 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	}
 }
 
-// collectStageResults keeps each stage's combined transfer result and the single server's latency population.
 func collectStageResults(e goclient.Event, results map[string]goclient.Result) {
 	if e.Kind == goclient.EventResult {
 		results[string(e.Stage)] = *e.Result

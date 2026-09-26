@@ -24,12 +24,29 @@ func TestTransferStreamPolicy(t *testing.T) {
 		{auto, "http1", wire.TransportFetchStream, streamCounts{6, 6}, "Automatic · up to 6 per direction"},
 		{auto, "http2", wire.TransportFetchStream, streamCounts{1, 4}, "Automatic · 1 download / 4 upload"},
 		{auto, "http3", wire.TransportFetchStream, streamCounts{1, 1}, "Automatic · 1 download / 1 upload"},
-		{auto, "h2", wire.TransportFetchStream, streamCounts{6, 6}, "Automatic · 1 download / 4 upload"}, // Evidence spellings label; plans use resolved protocols.
-		{auto, "http3", wire.TransportWebTransport, streamCounts{1, 1}, "Automatic · 1 continuous stream per direction"},
+		{
+			auto,
+			"h2",
+			wire.TransportFetchStream,
+			streamCounts{6, 6},
+			"Automatic · 1 download / 4 upload",
+		},
+		{
+			auto,
+			"http3",
+			wire.TransportWebTransport,
+			streamCounts{1, 1},
+			"Automatic · 1 continuous stream per direction",
+		},
 		{forced, "http2", wire.TransportFetchStream, streamCounts{9, 9}, "Forced · 9 per direction"},
 		{forced, "http3", wire.TransportWebTransport, streamCounts{9, 9}, "Forced · 9 per direction"},
-		// A forced count still clamps to what one session carries.
-		{TransferStreamPolicy{Forced: 99}, "http3", wire.TransportWebTransport, streamCounts{wire.WTMaxStreams, wire.WTMaxStreams}, "Forced · 16 per direction (capped from 99 by the session)"},
+		{
+			TransferStreamPolicy{Forced: 99},
+			"http3",
+			wire.TransportWebTransport,
+			streamCounts{wire.WTMaxStreams, wire.WTMaxStreams},
+			"Forced · 16 per direction (capped from 99 by the session)",
+		},
 	} {
 		if got := c.policy.lanes(c.protocol, c.transport); got != c.lanes {
 			t.Errorf("%+v lanes(%s, %s) = %+v, want %+v", c.policy, c.protocol, c.transport, got, c.lanes)
@@ -40,21 +57,30 @@ func TestTransferStreamPolicy(t *testing.T) {
 	}
 }
 
-// Normalization fills only unset or out-of-range values.
 func TestConfigNormalizedInvariants(t *testing.T) {
 	t.Parallel()
 	d := DefaultConfig()
-	if got := (Config{}).normalized(); got.BaseURL != d.BaseURL || got.LatencyDuration != d.LatencyDuration || got.PingInterval != d.PingInterval || got.TransferStreams != d.TransferStreams || got.Warmup != 0 {
+	if got := (Config{}).normalized(); got.BaseURL != d.BaseURL ||
+		got.LatencyDuration != d.LatencyDuration ||
+		got.PingInterval != d.PingInterval ||
+		got.TransferStreams != d.TransferStreams ||
+		got.Warmup != 0 {
 		t.Fatalf("empty config normalized to %+v", got)
 	}
 	c := d
 	c.ThroughputTarget, c.Warmup, c.DownloadDuration = "edge-h2", -time.Second, -1
 	c.TransferStreams = TransferStreamPolicy{AutomaticMax: 500, Forced: -5}
 	got := c.normalized()
-	if got.ThroughputTarget != "edge-h2" || got.Warmup != 0 || got.DownloadDuration != d.DownloadDuration || got.TransferStreams != (TransferStreamPolicy{AutomaticMax: maxTransferStreams}) {
+	if got.ThroughputTarget != "edge-h2" ||
+		got.Warmup != 0 ||
+		got.DownloadDuration != d.DownloadDuration || got.TransferStreams != (TransferStreamPolicy{
+		AutomaticMax: maxTransferStreams,
+	}) {
 		t.Fatalf("normalized %+v", got)
 	}
-	if got := (Config{TransferStreams: TransferStreamPolicy{Forced: 500}}).normalized(); got.TransferStreams.Forced != maxTransferStreams {
+	if got := (Config{
+		TransferStreams: TransferStreamPolicy{Forced: 500},
+	}).normalized(); got.TransferStreams.Forced != maxTransferStreams {
 		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, maxTransferStreams)
 	}
 }
@@ -97,14 +123,18 @@ func newWTLatencyServer(t *testing.T) *httptest.Server {
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
 }
 
-// The WebTransport idle bound applies only when that bus is selected.
 func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
@@ -133,7 +163,12 @@ func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
 		}})
 	})
 	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		_ = json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	})
 	mux.Handle("/ws/ping", echoPingHandler())
 	fallback := httptest.NewServer(mux)
@@ -141,7 +176,11 @@ func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
 	cfg.BaseURL, cfg.LatencyTransport = fallback.URL, "auto"
 	prepared, err := prepare(t.Context(), cfg)
 	if err != nil || prepared.LatencyTarget.Transport != wire.TransportWebSocket {
-		t.Fatalf("automatic path after an unreachable WebTransport bus = %+v, %v; want the WebSocket fallback", prepared, err)
+		t.Fatalf(
+			"automatic path after an unreachable WebTransport bus = %+v, %v; want the WebSocket fallback",
+			prepared,
+			err,
+		)
 	}
 }
 

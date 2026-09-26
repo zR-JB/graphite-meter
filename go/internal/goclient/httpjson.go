@@ -10,7 +10,14 @@ import (
 
 type jsonHTTPClient struct{ client *http.Client }
 
-func (c jsonHTTPClient) requestJSON(ctx context.Context, method, target string, body io.Reader, headers http.Header, out any, statusError func(*http.Response) error) (*http.Response, error) {
+func (c jsonHTTPClient) requestJSON(
+	ctx context.Context,
+	method, target string,
+	body io.Reader,
+	headers http.Header,
+	out any,
+	statusError func(*http.Response) error,
+) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return nil, err

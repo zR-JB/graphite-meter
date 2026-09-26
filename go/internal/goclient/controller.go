@@ -19,12 +19,11 @@ const (
 // AuthorizationTimeout bounds approval polling and its displayed countdown.
 const AuthorizationTimeout = 2 * time.Minute
 
-// Controller owns preparation, sign-in polling, grants, and run lifetimes.
 type Controller struct {
 	mu          sync.Mutex
 	catalog     *wire.ServerCatalog
 	selection   []wire.ServerEntry
-	grants      map[string]string // Bearer grants by their issuer's canonical origin; the only copy.
+	grants      map[string]string
 	ctx         context.Context
 	cancel      context.CancelFunc
 	preparation context.CancelFunc
@@ -49,7 +48,6 @@ type Preparation struct {
 	cfg   Config
 }
 
-// NewPreparation cancels the previous preparation, including its approval polling.
 func (c *Controller) NewPreparation(cfg Config) *Preparation {
 	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
@@ -84,7 +82,6 @@ func (p *Preparation) begin(timeout time.Duration) (context.Context, func(), err
 	}, nil
 }
 
-// PrepareRun checks the selection with the controller's grants.
 func (p *Preparation) PrepareRun() (*PreparedRun, error) {
 	ctx, done, err := p.begin(preparationTimeout)
 	if err != nil {
@@ -113,7 +110,6 @@ func (c *Controller) snapshot() ([]wire.ServerEntry, map[string]string) {
 	return slices.Clone(c.selection), maps.Clone(c.grants)
 }
 
-// BeginAuthorization signs in to serverID, or to the catalogue origin when it is empty.
 func (p *Preparation) BeginAuthorization(serverID, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
@@ -144,7 +140,6 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 	return pending.Poll(ctx)
 }
 
-// AcceptAuthorization keeps a grant in memory by its issuer origin.
 func (c *Controller) AcceptAuthorization(origin, token string) error {
 	canonical, err := wire.CanonicalOrigin(origin)
 	if err != nil || canonical != origin {
@@ -162,7 +157,6 @@ func (c *Controller) AcceptAuthorization(origin, token string) error {
 	return nil
 }
 
-// SelectServers acknowledges identities from the latest catalogue.
 func (c *Controller) SelectServers(ids []string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -181,8 +175,6 @@ func (c *Controller) SelectServers(ids []string) error {
 	return nil
 }
 
-// Start replaces any run and runs the selection, re-preparing a stale one.
-// The stream ends with one EventDone.
 func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 	previous, grants := c.snapshot()
 	c.mu.Lock()
@@ -196,7 +188,6 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 		close(events)
 		return events
 	}
-	// Delivery outlives measurement: a stopped run still reports its results.
 	delivery, abandon := context.WithCancel(c.ctx)
 	measurement, cancel := context.WithCancel(delivery)
 	c.run = &activeRun{cancel: cancel, abandon: abandon}
@@ -220,7 +211,6 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 	return events
 }
 
-// Run is Start for callers without a view; emit runs on the calling goroutine.
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	controller := NewController(ctx)
 	defer controller.Close()
@@ -254,14 +244,12 @@ func (c *Controller) Close() {
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
 	switch event.Kind {
 	case EventThroughput, EventLatency:
-		// Live samples never block their producer; a slow view drops them.
 		select {
 		case events <- event:
 		default:
 		}
 		return
 	case EventResult, EventDone:
-		// Outcomes wait for delivery even after measurement stops.
 		measurement = delivery
 	}
 	select {

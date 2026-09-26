@@ -35,7 +35,12 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 		timed.add(row.rtt, row.timeout, row.handling)
 	}
 	got := timed.snapshot()
-	wantTiming := ReflectorTimingStats{Count: 2, MeanRawRTT: 15 * time.Millisecond, MeanHandling: time.Millisecond, MeanAdjustedRTT: 14 * time.Millisecond}
+	wantTiming := ReflectorTimingStats{
+		Count:           2,
+		MeanRawRTT:      15 * time.Millisecond,
+		MeanHandling:    time.Millisecond,
+		MeanAdjustedRTT: 14 * time.Millisecond,
+	}
 	if got.ReflectorTiming == nil || *got.ReflectorTiming != wantTiming {
 		t.Fatalf("timing = %+v, want %+v", got.ReflectorTiming, wantTiming)
 	}
@@ -83,7 +88,9 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 			var mu sync.Mutex
 			var samples []LatencySample
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{
+					CompressionMode: websocket.CompressionDisabled,
+				})
 				if err != nil {
 					return
 				}
@@ -118,7 +125,10 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
-			r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(event Event) {
+			r := &runner{cfg: Config{
+				BaseURL:      srv.URL,
+				PingInterval: 10 * time.Millisecond,
+			}.normalized(), http: srv.Client(), emit: func(event Event) {
 				if event.Kind != EventLatency || event.Latency.TimedOut {
 					return
 				}
@@ -145,16 +155,21 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", stats.ReflectorTiming)
 				}
 			} else {
-				// Every reply carried a valid zero handling time.
 				paired := stats.Count
 				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired {
 					t.Fatalf("paired summary=%+v replies=%d", stats.ReflectorTiming, paired)
 				}
-				if stats.ReflectorTiming.MeanHandling != 0 || stats.ReflectorTiming.MeanAdjustedRTT != stats.ReflectorTiming.MeanRawRTT {
+				if stats.ReflectorTiming.MeanHandling != 0 ||
+					stats.ReflectorTiming.MeanAdjustedRTT != stats.ReflectorTiming.MeanRawRTT {
 					t.Fatalf("zero handling altered RTT: %+v", stats.ReflectorTiming)
 				}
 				if scenario == "reconnect" && (connections.Load() != 2 || paired != stats.Count) {
-					t.Fatalf("reconnect failed to retain timing: connections=%d paired=%d replies=%d", connections.Load(), paired, stats.Count)
+					t.Fatalf(
+						"reconnect failed to retain timing: connections=%d paired=%d replies=%d",
+						connections.Load(),
+						paired,
+						stats.Count,
+					)
 				}
 			}
 		})

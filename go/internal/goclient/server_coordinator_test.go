@@ -74,14 +74,30 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	registry.RegisterHTTP(route.UploadCheckpoint, http.HandlerFunc(upload.ServeCheckpoint))
 	registry.RegisterHTTP(route.Upload, upload)
 	registry.RegisterHTTP(route.Preflight, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: name}, EngineVersion: "test", Generation: name, Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"}}, LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}}}})
+		return json.MarshalWrite(w, wire.Preflight{
+			Server:        wire.ServerInfo{Name: name},
+			EngineVersion: "test",
+			Generation:    name,
+			Capabilities: wire.Capabilities{
+				UploadCheckpoint: true,
+				ThroughputTargets: []wire.ThroughputTarget{
+					{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"},
+				},
+				LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
+			},
+		})
 	}))
 	registry.RegisterHTTP(route.Servers, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		f.catalogReads.Add(1)
 		return json.MarshalWrite(w, f.catalog)
 	}))
 	registry.RegisterHTTP(route.Probe, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
+		return json.MarshalWrite(w, wire.Probe{
+			ClientIP:           "127.0.0.1",
+			ClientIPVersion:    4,
+			ClientIPSource:     "socket",
+			ProtocolNegotiated: "http/1.1",
+		})
 	}))
 	registry.RegisterHTTP(route.Download, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		block := make([]byte, 8192)
@@ -140,7 +156,13 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 }
 func prepareFixtureRun(t *testing.T, cfg Config, a, b *serverFixture) *PreparedRun {
 	t.Helper()
-	a.catalog = wire.ServerCatalog{DefaultSelection: []string{"self", "b"}, Servers: []wire.ServerEntry{{ID: "self", URL: ".", Name: "A"}, {ID: "b", URL: b.server.URL, Name: "B"}}}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"self", "b"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "b", URL: b.server.URL, Name: "B"},
+		},
+	}
 	prepared, err := prepareRun(t.Context(), cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +225,8 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 		}
 	}
 	for _, server := range details.Servers {
-		if !slices.ContainsFunc(server.Results, func(r Result) bool { return r.Direction == "" && r.Latency.Count > 0 }) {
+		measured := func(r Result) bool { return r.Direction == "" && r.Latency.Count > 0 }
+		if !slices.ContainsFunc(server.Results, measured) {
 			t.Fatalf("no independent loaded latency: %+v", server)
 		}
 	}
@@ -249,8 +272,14 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if measuredAt.IsZero() || measureEventLag > 500*time.Millisecond || finishedAt.Sub(measuredAt) < 900*time.Millisecond {
-		t.Fatalf("checkpoint wait consumed the client window: event lag=%v measured duration=%v", measureEventLag, finishedAt.Sub(measuredAt))
+	if measuredAt.IsZero() ||
+		measureEventLag > 500*time.Millisecond ||
+		finishedAt.Sub(measuredAt) < 900*time.Millisecond {
+		t.Fatalf(
+			"checkpoint wait consumed the client window: event lag=%v measured duration=%v",
+			measureEventLag,
+			finishedAt.Sub(measuredAt),
+		)
 	}
 	if details == nil || len(details.Intervals) != 1 || details.Intervals[0].Window == nil {
 		t.Fatalf("missing receiver window: %+v", details)
@@ -275,7 +304,12 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 		at        time.Duration
 		all       bool
 		available bool
-	}{{"survivor", 300 * time.Millisecond, false, true}, {"late", 950 * time.Millisecond, false, false}, {"all", 300 * time.Millisecond, true, false}} {
+	}{{
+		"survivor",
+		300 * time.Millisecond,
+		false,
+		true,
+	}, {"late", 950 * time.Millisecond, false, false}, {"all", 300 * time.Millisecond, true, false}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
@@ -320,7 +354,6 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 	}
 }
 
-// A refused checkpoint at a stage boundary is retried, not fatal.
 func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	t.Parallel()
 	a := coordinatedFixture(t, "a")

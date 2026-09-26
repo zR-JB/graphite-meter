@@ -34,7 +34,6 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
-// PendingAuthorization is one browser sign-in; Origin is the grant's issuer.
 type PendingAuthorization struct {
 	BrowserURL, Code   string
 	Origin             string
@@ -79,14 +78,29 @@ func beginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("authentication endpoints must not redirect")
 	}
-	return &PendingAuthorization{BrowserURL: login.String(), Code: code, Origin: issuingOrigin, verifier: verifier, tokenURL: token.String(), client: client, close: tr.CloseIdleConnections}, nil
+	return &PendingAuthorization{
+		BrowserURL: login.String(),
+		Code:       code,
+		Origin:     issuingOrigin,
+		verifier:   verifier,
+		tokenURL:   token.String(),
+		client:     client,
+		close:      tr.CloseIdleConnections,
+	}, nil
 }
 
 func (p *PendingAuthorization) Open() { openBrowser(p.BrowserURL) }
 
 func authenticationLoginURL(base *url.URL, raw string) (*url.URL, error) {
 	login, err := url.Parse(raw)
-	if err != nil || login.Scheme != "https" || !strings.EqualFold(login.Hostname(), base.Hostname()) || login.Path != "/login" || login.User != nil || login.RawQuery != "" || login.ForceQuery || login.Fragment != "" {
+	if err != nil ||
+		login.Scheme != "https" ||
+		!strings.EqualFold(login.Hostname(), base.Hostname()) ||
+		login.Path != "/login" ||
+		login.User != nil ||
+		login.RawQuery != "" ||
+		login.ForceQuery ||
+		login.Fragment != "" {
 		return nil, errors.New("server returned an invalid authentication URL")
 	}
 	return login, nil

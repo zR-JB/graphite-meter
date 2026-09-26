@@ -11,7 +11,16 @@ func TestSelectedStreamBudgets(t *testing.T) {
 	cfg := DefaultConfig()
 	servers := []PreparedServer{}
 	for _, id := range []string{"a", "b"} {
-		servers = append(servers, PreparedServer{Server: wire.ServerEntry{ID: id}, Connection: &PreparedConnection{ThroughputTarget: wire.ThroughputTarget{Origin: "http://shared.example", Protocol: "http1", Transport: wire.TransportFetchStream}}})
+		servers = append(servers, PreparedServer{
+			Server: wire.ServerEntry{ID: id},
+			Connection: &PreparedConnection{
+				ThroughputTarget: wire.ThroughputTarget{
+					Origin:    "http://shared.example",
+					Protocol:  "http1",
+					Transport: wire.TransportFetchStream,
+				},
+			},
+		})
 	}
 	plan, err := planRunStreams(cfg, servers)
 	if err != nil || plan["a"] != (streamCounts{6, 6}) || plan["b"] != (streamCounts{6, 6}) {

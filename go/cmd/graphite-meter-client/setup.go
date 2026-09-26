@@ -45,19 +45,34 @@ const (
 	rowReset
 )
 
-// Setup panels, as in the browser.
 var sections = []struct {
 	label string
 	rows  []rowID
 }{
-	{"Connection paths", []rowID{rowCatalogue, rowServers, rowThroughputPath, rowProtocol, rowLatencyPath, rowLatencyServer}},
-	{"Duration & stages", []rowID{rowLatencyStage, rowDownloadStage, rowUploadStage, rowBidirectionalStage, rowLoadedLatency, rowWarmup, rowLatencyDuration, rowDownloadDuration, rowUploadDuration, rowBidirectionalDuration}},
+	{
+		"Connection paths",
+		[]rowID{rowCatalogue, rowServers, rowThroughputPath, rowProtocol, rowLatencyPath, rowLatencyServer},
+	},
+	{
+		"Duration & stages",
+		[]rowID{
+			rowLatencyStage,
+			rowDownloadStage,
+			rowUploadStage,
+			rowBidirectionalStage,
+			rowLoadedLatency,
+			rowWarmup,
+			rowLatencyDuration,
+			rowDownloadDuration,
+			rowUploadDuration,
+			rowBidirectionalDuration,
+		},
+	},
 	{"Advanced", []rowID{rowCadence, rowForceStreams, rowStreams, rowSkipTLS, rowReset}},
 }
 
 func (m model) currentRow() rowID { return sections[m.section].rows[m.row] }
 
-// Resolve pointers against the current model copy; never retain them across Update calls.
 func stageToggle(cfg *goclient.Config, id rowID) (*bool, string, string) {
 	switch id {
 	case rowLatencyStage:
@@ -95,7 +110,6 @@ type cadence struct {
 	interval time.Duration
 }
 
-// Browser cadence names; other intervals show as Custom.
 var cadences = []cadence{
 	{"Fast (80 ms)", 80 * time.Millisecond},
 	{"Medium (250 ms)", 250 * time.Millisecond},
@@ -119,7 +133,6 @@ var mechanisms = map[string]string{
 	wire.TransportWebTransport: "WebTransport",
 }
 
-// shortOrigin names an origin by port when it shares the catalogue host.
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
@@ -133,7 +146,7 @@ func shortOrigin(base, target string) string {
 
 type setupRow struct {
 	label, value, note string
-	inert              bool // Shown for context; activation explains why it cannot change.
+	inert              bool
 }
 
 func (m model) setupRow(id rowID) setupRow {
@@ -151,14 +164,28 @@ func (m model) setupRow(id rowID) setupRow {
 	case rowCatalogue:
 		return setupRow{label: "Catalogue URL", value: m.cfg.BaseURL, note: "server list origin"}
 	case rowServers:
-		return setupRow{label: "Test servers", value: m.selectedServerNames(), note: m.readinessSummary(), inert: !m.canChooseServers()}
+		return setupRow{
+			label: "Test servers",
+			value: m.selectedServerNames(),
+			note:  m.readinessSummary(),
+			inert: !m.canChooseServers(),
+		}
 	case rowThroughputPath:
 		return m.pathRow("Throughput path", m.cfg.ThroughputTarget, m.cfg.ThroughputTransport, m.throughputPaths())
 	case rowProtocol:
 		if t := m.selectedThroughputPath(); t != nil && t.Protocol != "negotiated" {
-			return setupRow{label: "HTTP version", value: protocolChoiceLabel(t.Protocol), note: "fixed by this path", inert: true}
+			return setupRow{
+				label: "HTTP version",
+				value: protocolChoiceLabel(t.Protocol),
+				note:  "fixed by this path",
+				inert: true,
+			}
 		}
-		return setupRow{label: "HTTP version", value: protocolChoiceLabel(m.cfg.ThroughputProtocol), note: "where the path negotiates"}
+		return setupRow{
+			label: "HTTP version",
+			value: protocolChoiceLabel(m.cfg.ThroughputProtocol),
+			note:  "where the path negotiates",
+		}
 	case rowLatencyPath:
 		return m.pathRow("Latency path", m.cfg.LatencyTarget, m.cfg.LatencyTransport, m.latencyPaths())
 	case rowLatencyServer:
@@ -166,25 +193,45 @@ func (m model) setupRow(id rowID) setupRow {
 		if name := m.serverName(m.latencyChoice); m.latencyChoice != "" {
 			value = name
 		}
-		return setupRow{label: "Latency server", value: value, note: "shown first; every server is measured", inert: len(m.readyServers()) < 2}
+		return setupRow{
+			label: "Latency server",
+			value: value,
+			note:  "shown first; every server is measured",
+			inert: len(m.readyServers()) < 2,
+		}
 	case rowCadence:
 		return setupRow{label: "Ping cadence", value: cadenceLabel(m.cfg.PingInterval), note: "probe interval"}
 	case rowForceStreams:
-		return setupRow{label: "Force exact stream count", value: checkbox(m.cfg.TransferStreams.Forced > 0), note: "per server and direction"}
+		return setupRow{
+			label: "Force exact stream count",
+			value: checkbox(m.cfg.TransferStreams.Forced > 0),
+			note:  "per server and direction",
+		}
 	case rowStreams:
 		if m.cfg.TransferStreams.Forced > 0 {
-			return setupRow{label: "Streams per server and direction", value: strconv.Itoa(m.cfg.TransferStreams.Forced), note: "1 to 128"}
+			return setupRow{
+				label: "Streams per server and direction",
+				value: strconv.Itoa(m.cfg.TransferStreams.Forced),
+				note:  "1 to 128",
+			}
 		}
-		return setupRow{label: "Maximum H1 streams per direction", value: strconv.Itoa(m.cfg.TransferStreams.AutomaticMax), note: "HTTP/1.1 paths only"}
+		return setupRow{
+			label: "Maximum H1 streams per direction",
+			value: strconv.Itoa(m.cfg.TransferStreams.AutomaticMax),
+			note:  "HTTP/1.1 paths only",
+		}
 	case rowSkipTLS:
-		return setupRow{label: "Skip TLS verify", value: checkbox(m.cfg.InsecureSkipTLSVerify), note: "unsafe; refuses sign-in"}
+		return setupRow{
+			label: "Skip TLS verify",
+			value: checkbox(m.cfg.InsecureSkipTLSVerify),
+			note:  "unsafe; refuses sign-in",
+		}
 	case rowReset:
 		return setupRow{label: "Reset settings", note: "keeps the catalogue and servers"}
 	}
 	return setupRow{}
 }
 
-// activate changes one row, rechecking paths when needed.
 func (m model) activate(id rowID) (tea.Model, tea.Cmd) {
 	before := m.cfg
 	if toggle, label, _ := stageToggle(&m.cfg, id); toggle != nil {
@@ -251,13 +298,12 @@ func (m model) activate(id rowID) (tea.Model, tea.Cmd) {
 	return m.recheckIfPathsChanged(before)
 }
 
-// preparationInputs is what a path check depends on.
 func preparationInputs(c goclient.Config) string {
-	return fmt.Sprint(c.BaseURL, c.ServerIDs, c.ThroughputTarget, c.ThroughputProtocol, c.ThroughputTransport, c.LatencyTarget, c.LatencyTransport,
-		c.Stages, c.LoadedLatency, c.PingInterval, c.TransferStreams, c.InsecureSkipTLSVerify)
+	return fmt.Sprint(c.BaseURL, c.ServerIDs, c.ThroughputTarget, c.ThroughputProtocol, c.ThroughputTransport,
+		c.LatencyTarget, c.LatencyTransport, c.Stages, c.LoadedLatency, c.PingInterval, c.TransferStreams,
+		c.InsecureSkipTLSVerify)
 }
 
-// recheckIfPathsChanged rechecks only when a path input changed.
 func (m model) recheckIfPathsChanged(before goclient.Config) (tea.Model, tea.Cmd) {
 	if preparationInputs(before) == preparationInputs(m.cfg) {
 		return m, nil
@@ -294,7 +340,6 @@ func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.apply):
 		before := m.cfg
 		if err := m.commitEdit(); err != nil {
-			// Keep the field open for correction.
 			m.edit.err, m.notice = err.Error(), err.Error()
 			return m, nil
 		}
@@ -311,7 +356,6 @@ func (m *model) commitEdit() error {
 	raw := strings.TrimSpace(m.edit.input.Value())
 	id := *m.edit.row
 	if value, label := durationSetting(&m.cfg, id); value != nil {
-		// A bare number is seconds, so "10" works as well as "10s".
 		if n, err := strconv.ParseFloat(raw, 64); err == nil {
 			raw = fmt.Sprintf("%gs", n)
 		}
@@ -336,7 +380,6 @@ func (m *model) commitEdit() error {
 			return errors.New("use an http:// or https:// origin, for example https://meter.example")
 		}
 		if canonical != m.cfg.BaseURL {
-			// Catalogue IDs belong to their catalogue.
 			m.cfg.ServerIDs, m.latencyChoice = nil, ""
 		}
 		m.cfg.BaseURL = canonical
@@ -356,10 +399,9 @@ func (m *model) commitEdit() error {
 	return nil
 }
 
-// pathChoice is one throughput or latency route the setup can cycle through.
 type pathChoice struct {
-	target    string // The origin the configuration holds, or "auto".
-	transport string // The mechanism the configuration holds, or "auto".
+	target    string
+	transport string
 	label     string
 	note      string
 }
@@ -371,10 +413,13 @@ func (c pathChoice) selects(target, transport string) bool {
 func (m model) pathRow(label, target, transport string, choices []pathChoice) setupRow {
 	for i, choice := range choices {
 		if choice.selects(target, transport) {
-			return setupRow{label: label, value: choice.label, note: strings.TrimSpace(fmt.Sprintf("%d/%d  %s", i+1, len(choices), choice.note))}
+			return setupRow{
+				label: label,
+				value: choice.label,
+				note:  strings.TrimSpace(fmt.Sprintf("%d/%d  %s", i+1, len(choices), choice.note)),
+			}
 		}
 	}
-	// Show an unoffered path as requested.
 	mechanism := cmp.Or(mechanisms[transport], transport)
 	value := mechanism + " · " + target
 	if target == "auto" {
@@ -396,7 +441,6 @@ func nextChoice(current string, choices []string) string {
 	return choices[(slices.Index(choices, current)+1)%len(choices)]
 }
 
-// singleDiscovery is the checked server's discovery, even when its paths failed.
 func (m model) singleDiscovery() *wire.Preflight {
 	if m.preparedRun == nil || len(m.preparedRun.Servers) != 1 {
 		return nil
@@ -422,10 +466,16 @@ func (m model) throughputPaths() []pathChoice {
 	}
 	choices := []pathChoice{{target: "auto", transport: "auto", label: "Automatic", note: resolved}}
 	for _, t := range pf.Capabilities.ThroughputTargets {
-		if t.Transport == wire.TransportWebTransportDatagram || slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(t.Origin, t.Transport) }) {
+		if t.Transport == wire.TransportWebTransportDatagram ||
+			slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(t.Origin, t.Transport) }) {
 			continue
 		}
-		choices = append(choices, pathChoice{target: t.Origin, transport: t.Transport, label: goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)})
+		choices = append(choices, pathChoice{
+			target:    t.Origin,
+			transport: t.Transport,
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
+		})
 	}
 	return choices
 }
@@ -444,12 +494,16 @@ func (m model) latencyPaths() []pathChoice {
 		if slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(t.Origin, t.Transport) }) {
 			continue
 		}
-		choices = append(choices, pathChoice{target: t.Origin, transport: t.Transport, label: goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS), note: shortOrigin(m.cfg.BaseURL, t.Origin)})
+		choices = append(choices, pathChoice{
+			target:    t.Origin,
+			transport: t.Transport,
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
+		})
 	}
 	return choices
 }
 
-// sharedPaths offers mechanisms; each server resolves its own origin.
 func (m model) sharedPaths(latency bool) []pathChoice {
 	kinds := []string{wire.TransportFetchStream, wire.TransportWebTransport}
 	if latency {
@@ -466,11 +520,7 @@ func (m model) sharedPaths(latency bool) []pathChoice {
 				} else if failed, ok := errors.AsType[*goclient.PreparationError](server.Err); ok {
 					pf = failed.Preflight
 				}
-				supported := slices.ContainsFunc(pf.Capabilities.ThroughputTargets, func(t wire.ThroughputTarget) bool { return t.Transport == kind })
-				if latency {
-					supported = slices.ContainsFunc(pf.Capabilities.LatencyTargets, func(t wire.LatencyTarget) bool { return t.Transport == kind })
-				}
-				if !supported {
+				if !offers(pf, latency, kind) {
 					unavailable = append(unavailable, server.Server.Name)
 				}
 			}
@@ -482,6 +532,20 @@ func (m model) sharedPaths(latency bool) []pathChoice {
 		choices = append(choices, pathChoice{target: "auto", transport: kind, label: mechanisms[kind], note: note})
 	}
 	return choices
+}
+
+func offers(pf wire.Preflight, latency bool, kind string) bool {
+	for _, t := range pf.Capabilities.LatencyTargets {
+		if latency && t.Transport == kind {
+			return true
+		}
+	}
+	for _, t := range pf.Capabilities.ThroughputTargets {
+		if !latency && t.Transport == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) selectedThroughputPath() *wire.ThroughputTarget {

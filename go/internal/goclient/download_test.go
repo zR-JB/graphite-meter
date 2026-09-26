@@ -100,13 +100,12 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	}
 }
 
-// A cancelled download stage stops promptly and reports the cancellation.
 func TestDownloadStageCancellation(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name        string
 		silent      bool
-		cancelAfter time.Duration // Negative cancels before the stage starts.
+		cancelAfter time.Duration
 	}{
 		{"streaming", false, 150 * time.Millisecond},
 		{"silent server", true, 150 * time.Millisecond},
@@ -124,7 +123,12 @@ func TestDownloadStageCancellation(t *testing.T) {
 				_, _ = w.Write(make([]byte, 64*1024))
 			}))
 			defer srv.Close()
-			r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+			r := &runner{
+				cfg:     Config{BaseURL: srv.URL}.normalized(),
+				streams: streamCounts{down: 1, up: 1},
+				http:    srv.Client(),
+				emit:    func(Event) {},
+			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if c.cancelAfter < 0 {

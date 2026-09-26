@@ -15,7 +15,11 @@ type laneGroup struct {
 	ready  chan struct{}
 }
 
-func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int, ready func()) error) *laneGroup {
+func (r *runner) startLanes(
+	ctx context.Context,
+	streams int,
+	body func(ctx context.Context, lane int, ready func()) error,
+) *laneGroup {
 	laneCtx, cancel := context.WithCancel(ctx)
 	g := &laneGroup{cancel: cancel, errs: make(chan error, streams), ready: make(chan struct{}, streams)}
 	stagger := r.laneStaggerStep(streams)
@@ -75,7 +79,6 @@ type latencyStats struct {
 
 func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
 
-// add records one resolved probe; handling time pairs only when it fits within the RTT.
 func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) {
 	if timeout {
 		s.timeouts++
@@ -103,7 +106,13 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 }
 
 func (s *latencyStats) snapshot() LatencyStats {
-	out := LatencyStats{Count: len(s.values), Timeouts: s.timeouts, Unresolved: s.unresolved, SendFailures: s.sendFailures, JitterPairs: s.pairs}
+	out := LatencyStats{
+		Count:        len(s.values),
+		Timeouts:     s.timeouts,
+		Unresolved:   s.unresolved,
+		SendFailures: s.sendFailures,
+		JitterPairs:  s.pairs,
+	}
 	if s.timingCount > 0 {
 		count := time.Duration(s.timingCount)
 		out.ReflectorTiming = &ReflectorTimingStats{
