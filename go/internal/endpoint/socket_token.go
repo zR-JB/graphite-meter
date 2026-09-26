@@ -25,7 +25,7 @@ func SocketToken(mint SocketTokenMinter) http.Handler {
 				http.Error(w, "invalid socket target", http.StatusBadRequest)
 				return
 			case auth.WTMintAtCapacity:
-				// Capacity, not permission: the login is intact and its oldest outstanding token expires within the token lifetime.
+				// Capacity, not permission: the login is intact and its oldest ticket expires soon.
 				w.Header().Set("Retry-After", "1")
 				http.Error(w, "webtransport token capacity reached", http.StatusTooManyRequests)
 				return
@@ -35,8 +35,7 @@ func SocketToken(mint SocketTokenMinter) http.Handler {
 			}
 			response.Token, response.Expires = token, expires.UnixMilli()
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
+		noStoreJSON(w)
 		_ = json.MarshalWrite(w, response)
 	})
 }

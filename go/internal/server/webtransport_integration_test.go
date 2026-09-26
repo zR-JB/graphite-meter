@@ -814,10 +814,10 @@ type wtLaneCounter struct {
 	lanes    int
 }
 
-func (c *wtLaneCounter) Stream(ctx context.Context, n int64, sink io.Writer) error {
+func (c *wtLaneCounter) Stream(ctx context.Context, n int64, sink io.Writer) {
 	obs, _ := c.enterLane(ctx)
 	defer c.leaveLane(obs)
-	return c.stream(ctx, n, sink)
+	c.stream(ctx, n, sink)
 }
 
 func (c *wtLaneCounter) Receive(ctx context.Context, id, owner string, src io.Reader) (int64, error) {

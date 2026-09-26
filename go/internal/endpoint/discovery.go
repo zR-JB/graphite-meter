@@ -59,8 +59,7 @@ func (d *Discovery) forHost(host string) *hostDiscovery {
 }
 
 func (d *Discovery) ServePreflight(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
+	noStoreJSON(w)
 	_, _ = w.Write(d.forHost(RequestHost(r)).preflight)
 }
 
@@ -70,8 +69,7 @@ func (d *Discovery) ServeServers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server catalogue unavailable", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
+	noStoreJSON(w)
 	_, _ = w.Write(h.servers)
 }
 
@@ -161,7 +159,9 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 				return
 			}
 		}
-		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportFetchStream, Protocol: protocol, TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
+		throughput = append(throughput,
+			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportFetchStream, Protocol: protocol,
+				TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
 	}
 	addLatency := func(base string) {
 		base = strings.TrimRight(base, "/")
@@ -170,13 +170,21 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 				return
 			}
 		}
-		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1", TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
+		latency = append(latency,
+			wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1",
+				TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
 	}
 	addWebTransport := func(base string) {
 		base = strings.TrimRight(base, "/")
-		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
-		throughput = append(throughput, wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransportDatagram, Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
-		latency = append(latency, wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3", TLS: true, Routes: wire.DefaultLatencyRoutes()})
+		throughput = append(throughput,
+			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3",
+				TLS: true, Routes: wire.DefaultThroughputRoutes()})
+		throughput = append(throughput,
+			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransportDatagram,
+				Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
+		latency = append(latency,
+			wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3",
+				TLS: true, Routes: wire.DefaultLatencyRoutes()})
 	}
 	cfg := d.cfg
 	for _, n := range cfg.Natives() {
@@ -202,7 +210,10 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 	for _, base := range cfg.Public.Latency {
 		addLatency(publicBase(base))
 	}
-	return wire.Preflight{Server: wire.ServerInfo{Name: cfg.ServerName, Location: cfg.ServerLocation}, EngineVersion: cfg.EngineVersion, Generation: d.generation, Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: throughput, LatencyTargets: latency}}
+	return wire.Preflight{Server: wire.ServerInfo{Name: cfg.ServerName, Location: cfg.ServerLocation},
+		EngineVersion: cfg.EngineVersion, Generation: d.generation,
+		Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: throughput,
+			LatencyTargets: latency}}
 }
 
 func publicBase(configured string) string {

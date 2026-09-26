@@ -119,7 +119,7 @@ func WTDownload(stream StreamFunc, idleBound time.Duration) SessionHandler {
 			wg.Go(func() { bumpOnPeerDatagrams(ctx, sess, live) })
 			sink := &datagramSink{conn: sess, done: ctx.Done()}
 			for ctx.Err() == nil && !sink.failed {
-				_ = stream(ctx, n, sink)
+				stream(ctx, n, sink)
 			}
 			return
 		}
@@ -149,7 +149,7 @@ func serveDownloadLane(ctx context.Context, stream StreamFunc, lanes laneOpener,
 			return
 		}
 		lane := &laneWriter{w: str, live: live}
-		withWTWriteStream(ctx, str, func() { _ = stream(ctx, n, lane) })
+		withWTWriteStream(ctx, str, func() { stream(ctx, n, lane) })
 		if !lane.moved {
 			return
 		}
@@ -211,7 +211,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 		id := query.Get("id")
 		// The CONNECT identifies the owner of every lane.
 		owner := UploadOwner(r, upload.trusted)
-		agg, access := upload.store.watchFor(id, owner)
+		agg, access := upload.store.accessFor(id, owner, false)
 		if access != uploadAccessOK {
 			// Report the refusal and release the session slot.
 			serveRefusal(ctx, sess, access)
@@ -253,7 +253,8 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 	}
 }
 
-func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtransport.Session, str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
+func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtransport.Session,
+	str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
 	// A blocked read does not watch ctx.
 	defer transport.UnblockReadsOnDone(ctx, str)()
 	_, err := receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
@@ -273,7 +274,8 @@ func serveRefusal(ctx context.Context, sess *webtransport.Session, access upload
 	withWTWriteStream(ctx, str, func() { writeRefusalRecord(str, access) })
 }
 
-func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn, agg *uploadAgg, id, owner string, live *sessionActivity) {
+func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn, agg *uploadAgg, id, owner string,
+	live *sessionActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {

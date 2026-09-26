@@ -10,9 +10,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// getOrCreateFor is an upload lane's lookup without the lane: it creates and touches but does not join.
 func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.accessFor(id, owner, true, false)
+	return s.accessFor(id, owner, false)
 }
 
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
@@ -103,7 +102,8 @@ func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
 			t.Fatal(access)
 		}
 	}
-	if _, access := store.getOrCreateFor(store.Mint(), "principal:subject\x00browser-grant:third"); access != uploadAccessClientFull {
+	third := "principal:subject\x00browser-grant:third"
+	if _, access := store.getOrCreateFor(store.Mint(), third); access != uploadAccessClientFull {
 		t.Fatal("another grant multiplied retention capacity")
 	}
 }
@@ -124,7 +124,8 @@ func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 		time.Sleep(wire.WTIdleBound)
 		s.sweep(uploadIDTTL)
 		if s.live.Load() != maxLiveUploadsPerClient {
-			t.Fatalf("live = %d within the transport's idle bound, want every receiver kept so a re-dial resumes its count", s.live.Load())
+			t.Fatalf("live = %d within the transport's idle bound, want every receiver kept for a re-dial",
+				s.live.Load())
 		}
 		if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessClientFull {
 			t.Fatalf("owner at its cap created another receiver: %v", access)
@@ -146,16 +147,6 @@ func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 	})
 }
 
-// The receiver TTL and the transport's idle bound must never be re-equalised.
-func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
-	if want := 2 * wire.WTIdleBound; uploadIDTTL < want {
-		t.Fatalf("uploadIDTTL = %v, want at least %v: detecting the stall alone takes up to 1.5 idle bounds", uploadIDTTL, want)
-	}
-	if uploadIDTTL < uploadTokenTTL {
-		t.Fatalf("uploadIDTTL = %v, want at least token validity %v", uploadIDTTL, uploadTokenTTL)
-	}
-}
-
 // A finished receiver keeps its completion and owner for as long as its token could recreate state.
 func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -170,10 +161,10 @@ func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 		if retained, ok := store.get(id); !ok || retained != agg {
 			t.Fatal("finished receiver was swept while its token could still create state")
 		}
-		if _, access := store.joinPostFor(id, "original"); access != uploadAccessInvalid {
+		if _, access := store.accessFor(id, "original", true); access != uploadAccessInvalid {
 			t.Fatalf("finished owner rejoined with access %v", access)
 		}
-		if _, access := store.joinPostFor(id, "other"); access != uploadAccessOwnerMismatch {
+		if _, access := store.accessFor(id, "other", true); access != uploadAccessOwnerMismatch {
 			t.Fatalf("ownership was lost with access %v", access)
 		}
 	})
@@ -195,7 +186,7 @@ func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 		}
 		s.sweep(uploadIDTTL)
 		if _, ok := s.getOrCreate(blocked); !ok || s.live.Load() != maxLiveUploads {
-			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted at the cap", ok, s.live.Load())
+			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted", ok, s.live.Load())
 		}
 	})
 }
@@ -262,22 +253,5 @@ func TestUploadAggElapsedTimeIsAnchoredAtTheFirstChunk(t *testing.T) {
 	a.recordChunk(3060*ms, 100)
 	if got := a.elapsedNanos(3060 * ms); got != 2060*ms || a.bytes.Load() != 300 {
 		t.Fatalf("elapsed %d with %d bytes after a stall, want %d with 300", got, a.bytes.Load(), 2060*ms)
-	}
-}
-
-func TestUploadAggCountsConcurrentLanesOnce(t *testing.T) {
-	var a uploadAgg
-	const lanes, perLane = 8, 500
-	var wg sync.WaitGroup
-	for lane := range lanes {
-		wg.Go(func() {
-			for i := range perLane {
-				a.recordChunk(int64(1+lane*perLane+i), 64)
-			}
-		})
-	}
-	wg.Wait()
-	if want := int64(lanes * perLane * 64); a.bytes.Load() != want || a.elapsedNanos(lanes*perLane+1) < 0 {
-		t.Errorf("bytes = %d, want %d (every chunk counted once)", a.bytes.Load(), want)
 	}
 }

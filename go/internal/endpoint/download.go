@@ -18,7 +18,6 @@ const (
 	maxBytes     int64 = 64 * 1024 * 1024 * 1024 // 64 GiB hard ceiling
 )
 
-// NewDownload builds the endpoint bound to the shared RNG block. meter may be nil (no verbose logging).
 func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
@@ -26,20 +25,18 @@ func NewDownload(block []byte, meter *Meter) *Download {
 // ServeHTTP streams the requested bytes; HEAD stops at the framing and generates nothing.
 func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n := parseBytes(r.URL.Query().Get("bytes"))
-	h := w.Header()
-	h.Set("Content-Type", "application/octet-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Length", strconv.FormatInt(n, 10))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
 	if r.Method != http.MethodHead {
-		_ = d.Stream(r.Context(), n, w)
+		d.Stream(r.Context(), n, w)
 	}
 }
 
 // Stream repeats the shared block into sink; cancellation or a failed write is the client leaving.
-func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) error {
+func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) {
 	d.meter.Open()
 	defer d.meter.Close()
-
 	block := d.block
 	blockLen := int64(len(block))
 	done := ctx.Done()
@@ -47,7 +44,7 @@ func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) error {
 	for n > 0 {
 		select {
 		case <-done:
-			return nil
+			return
 		default:
 		}
 		chunk := min(blockLen-off, n)
@@ -59,10 +56,9 @@ func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) error {
 			off = 0
 		}
 		if werr != nil {
-			return nil
+			return
 		}
 	}
-	return nil
 }
 
 func parseBytes(raw string) int64 {

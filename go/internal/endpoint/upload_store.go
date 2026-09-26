@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"hash/maphash"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -35,10 +36,10 @@ type uploadShard struct {
 }
 
 type uploadAgg struct {
-	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
+	bytes          atomic.Int64 // drained bytes across all of this id's lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last drained chunk; the sweeper's idle clock
-	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
+	lastTouchMono  atomic.Int64 // the sweeper's idle clock
+	posts          atomic.Int32 // live lanes
 	postsMu        sync.Mutex
 	postsChanged   chan struct{} // closed and replaced on every change: a broadcast
 	finished       chan struct{} // closed under postsMu by DELETE /upload/progress
@@ -80,7 +81,7 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 		a.firstChunkMono.CompareAndSwap(0, now)
 	}
 	a.bytes.Add(int64(n))
-	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
+	a.lastTouchMono.Store(now)
 }
 
 // beginPost, endPost and finish share postsMu so no lane can join after the
@@ -147,10 +148,9 @@ const (
 	uploadSweepInterval = 5 * time.Second
 )
 
-// NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
 	s := &UploadStore{byOwner: make(map[string]int), seed: maphash.MakeSeed(), epoch: time.Now()}
-	_, _ = rand.Read(s.tokenKey[:]) // crypto/rand.Read never fails
+	_, _ = rand.Read(s.tokenKey[:])
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
 	}
@@ -173,7 +173,7 @@ func (s *UploadStore) Mint() string {
 
 func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
 	var payload [8 + len(nonce)]byte
-	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
+	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- a positive monotonic timestamp
 	copy(payload[8:], nonce[:])
 	mac := hmac.New(sha256.New, s.tokenKey[:])
 	_, _ = mac.Write(payload[:])
@@ -210,18 +210,36 @@ const (
 	uploadAccessOwnerMismatch
 )
 
-// watchFor resolves a feed's receiver; watching does not refresh its idle clock.
-func (s *UploadStore) watchFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.accessFor(id, owner, false, false)
+var uploadAccessInfos = [...]struct {
+	message, code string
+	status        int
+}{
+	uploadAccessOK:            {},
+	uploadAccessInvalid:       {"unknown upload id", "invalid", http.StatusBadRequest},
+	uploadAccessGlobalFull:    {"upload capacity exhausted", "globalFull", http.StatusServiceUnavailable},
+	uploadAccessClientFull:    {"client upload capacity exhausted", "clientFull", http.StatusTooManyRequests},
+	uploadAccessOwnerMismatch: {"upload id belongs to another client", "ownerMismatch", http.StatusForbidden},
 }
 
-// A lane joins while the shard is held, so sweeping cannot remove the
-// aggregate before its live-post count protects it.
-func (s *UploadStore) joinPostFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.accessFor(id, owner, true, true)
+// uploadRefusalError carries the classified refusal across transports that have no HTTP status line.
+type uploadRefusalError struct{ access uploadAccess }
+
+func (e *uploadRefusalError) Error() string {
+	return "upload refused: " + uploadAccessInfos[e.access].message
 }
 
-func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg, uploadAccess) {
+func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
+	info := uploadAccessInfos[access]
+	w.Header().Set("X-Graphite-Upload-Refusal", info.code)
+	if access == uploadAccessGlobalFull || access == uploadAccessClientFull {
+		w.Header().Set("Retry-After", "1")
+	}
+	http.Error(w, info.message, info.status)
+}
+
+// accessFor resolves or creates id's receiver for owner. A lane joins while the shard is held, so
+// sweeping cannot remove the receiver first; a watcher neither joins nor refreshes its idle clock.
+func (s *UploadStore) accessFor(id, owner string, join bool) (*uploadAgg, uploadAccess) {
 	if id == "" {
 		return nil, uploadAccessInvalid
 	}
@@ -232,10 +250,10 @@ func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg,
 		if agg.owner != "" && owner != agg.owner {
 			return nil, uploadAccessOwnerMismatch
 		}
-		if join && !agg.beginPost() {
-			return nil, uploadAccessInvalid
-		}
-		if touch {
+		if join {
+			if !agg.beginPost() {
+				return nil, uploadAccessInvalid
+			}
 			agg.lastTouchMono.Store(s.now())
 		}
 		return agg, uploadAccessOK
@@ -243,14 +261,9 @@ func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg,
 	if !s.validID(id) {
 		return nil, uploadAccessInvalid
 	}
-	for {
-		n := s.live.Load()
-		if n >= maxLiveUploads {
-			return nil, uploadAccessGlobalFull
-		}
-		if s.live.CompareAndSwap(n, n+1) {
-			break
-		}
+	if s.live.Add(1) > maxLiveUploads {
+		s.live.Add(-1)
+		return nil, uploadAccessGlobalFull
 	}
 	budget := uploadBudget(owner)
 	if budget != "" {
@@ -267,7 +280,7 @@ func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg,
 	agg.lastTouchMono.Store(s.now())
 	sh.m[id] = agg
 	if join {
-		agg.beginPost() // a new aggregate cannot already be finished
+		agg.beginPost()
 	}
 	return agg, uploadAccessOK
 }
@@ -291,7 +304,6 @@ func uploadBudget(owner string) string {
 	return budget
 }
 
-// finishFor marks id's upload complete on behalf of owner, releasing the progress stream to emit its terminal record.
 func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	agg, ok := s.get(id)
 	if !ok {

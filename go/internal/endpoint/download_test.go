@@ -12,70 +12,38 @@ import (
 	"time"
 )
 
-// testBlockSize is a realistic download-block size for the wrap-around tests (matches the server's 256 KiB block).
-const testBlockSize = 256 * 1024
-
-// randomBlock returns n incompressible random bytes, like the server's shared download block.
 func randomBlock(n int) []byte {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
-	}
+	_, _ = rand.Read(b)
 	return b
 }
 
-// newDownloadServer serves /download from a block of blockSize random bytes.
-func newDownloadServer(blockSize int) (*httptest.Server, []byte) {
-	block := randomBlock(blockSize)
-	return httptest.NewServer(NewDownload(block, nil)), block
-}
-
-func TestDownloadExactByteCount(t *testing.T) {
-	srv, _ := newDownloadServer(testBlockSize)
+func TestDownloadStreamsTheWrappedBlock(t *testing.T) {
+	block := randomBlock(256 * 1024)
+	srv := httptest.NewServer(NewDownload(block, nil))
 	defer srv.Close()
-
-	const want = 1 << 20 // 1 MiB
-	res, err := http.Get(srv.URL + "/download?bytes=" + strconv.Itoa(want))
-	if err != nil {
-		t.Fatalf("get: %v", err)
+	const want = 300 << 10
+	get := func() []byte {
+		res, err := http.Get(srv.URL + "/download?bytes=" + strconv.Itoa(want))
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer res.Body.Close()
+		if res.Header.Get("Content-Length") != strconv.Itoa(want) || res.Header.Get("Cache-Control") != "no-store" ||
+			res.Header.Get("Content-Type") != "application/octet-stream" {
+			t.Fatalf("headers = %v", res.Header)
+		}
+		b, err := io.ReadAll(res.Body)
+		if err != nil || len(b) != want {
+			t.Fatalf("read %d bytes: %v", len(b), err)
+		}
+		return b
 	}
-	defer res.Body.Close()
-
-	if got := res.Header.Get("Content-Length"); got != strconv.Itoa(want) {
-		t.Errorf("Content-Length = %q, want %d", got, want)
+	a, b := get(), get()
+	if !bytes.Equal(a, b) || !bytes.Equal(a[:len(block)], block) ||
+		!bytes.Equal(a[len(block):], block[:want-len(block)]) {
+		t.Fatal("downloads are not the block repeated from its start")
 	}
-	if got := res.Header.Get("Content-Type"); got != "application/octet-stream" {
-		t.Errorf("Content-Type = %q", got)
-	}
-	if got := res.Header.Get("Cache-Control"); got != "no-store" {
-		t.Errorf("Cache-Control = %q", got)
-	}
-	n, err := io.Copy(io.Discard, res.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	if n != want {
-		t.Errorf("streamed %d bytes, want %d", n, want)
-	}
-}
-
-func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
-	meter := NewMeter("test:download")
-	download := NewDownload(randomBlock(4096), meter)
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil)
-	download.ServeHTTP(response, request)
-	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
-		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
-	}
-	if response.Body.Len() != 0 || meter.bytes.Load() != 0 || meter.conns.Load() != 0 {
-		t.Fatalf("HEAD generated %d body bytes; meter bytes=%d conns=%d", response.Body.Len(), meter.bytes.Load(), meter.conns.Load())
-	}
-}
-
-func TestDownloadFirstByte(t *testing.T) {
-	srv, _ := newDownloadServer(testBlockSize)
-	defer srv.Close()
 	client := srv.Client()
 	client.Timeout = 2 * time.Second
 	res, err := client.Get(srv.URL + "/download?bytes=" + strconv.FormatInt(maxBytes, 10))
@@ -83,58 +51,55 @@ func TestDownloadFirstByte(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	defer res.Body.Close()
-	one := make([]byte, 1)
-	if _, err := io.ReadFull(res.Body, one); err != nil {
-		t.Fatalf("first byte: %v", err)
+	if _, err := io.ReadFull(res.Body, make([]byte, 1)); err != nil {
+		t.Fatalf("first byte of the largest download: %v", err)
 	}
 }
 
-func TestDownloadDeterministicAndIncompressible(t *testing.T) {
-	srv, block := newDownloadServer(testBlockSize)
-	defer srv.Close()
-
-	const want = 300 << 10 // 300 KiB > block, so it wraps
-	get := func() []byte {
-		res, err := http.Get(srv.URL + "/download?bytes=" + strconv.Itoa(want))
-		if err != nil {
-			t.Fatalf("get: %v", err)
-		}
-		defer res.Body.Close()
-		b, err := io.ReadAll(res.Body)
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		return b
+func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
+	meter := NewMeter("test:download")
+	response := httptest.NewRecorder()
+	NewDownload(randomBlock(4096), meter).ServeHTTP(response,
+		httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil))
+	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
+		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
 	}
-
-	a, b := get(), get()
-	if !bytes.Equal(a, b) {
-		t.Fatal("two downloads differ, stream is not deterministic")
-	}
-	// Body must be the block, wrapping at the block boundary.
-	if !bytes.Equal(a[:len(block)], block) {
-		t.Error("first block-length of body != block")
-	}
-	if !bytes.Equal(a[len(block):], block[:want-len(block)]) {
-		t.Error("post-wrap bytes do not continue from block start")
+	if response.Body.Len() != 0 || meter.bytes.Load() != 0 || meter.conns.Load() != 0 {
+		t.Fatalf("HEAD generated %d body bytes; meter bytes=%d conns=%d",
+			response.Body.Len(), meter.bytes.Load(), meter.conns.Load())
 	}
 }
 
-func TestDownloadDefaultsAndClamps(t *testing.T) {
-	if got := parseBytes(""); got != defaultBytes {
-		t.Errorf("empty → %d, want default %d", got, defaultBytes)
+func TestDownloadSizeParsing(t *testing.T) {
+	for raw, want := range map[string]int64{
+		"": defaultBytes, "not-a-number": defaultBytes, "-5": defaultBytes,
+		strconv.FormatInt(maxBytes+1, 10): maxBytes,
+		// Every spelling of zero is a WebTransport verify session.
+		"0": 0, "00": 0, "+0": 0, "-0": 0,
+	} {
+		if got := parseBytes(raw); got != want {
+			t.Errorf("parseBytes(%q) = %d, want %d", raw, got, want)
+		}
 	}
-	if got := parseBytes("not-a-number"); got != defaultBytes {
-		t.Errorf("invalid → %d, want default %d", got, defaultBytes)
-	}
-	if got := parseBytes("-5"); got != defaultBytes {
-		t.Errorf("negative → %d, want default %d", got, defaultBytes)
-	}
-	if got := parseBytes(strconv.FormatInt(maxBytes+1, 10)); got != maxBytes {
-		t.Errorf("over-max → %d, want clamp %d", got, maxBytes)
-	}
-	if got := parseBytes("0"); got != 0 {
-		t.Errorf("zero → %d, want 0", got)
+}
+
+type cancelOnWrite struct {
+	cancel context.CancelFunc
+	n      int64
+}
+
+func (c *cancelOnWrite) Write(p []byte) (int, error) {
+	c.cancel()
+	c.n += int64(len(p))
+	return len(p), nil
+}
+
+func TestDownloadContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	sink := &cancelOnWrite{cancel: cancel}
+	NewDownload(randomBlock(4096), nil).Stream(ctx, 10<<20, sink)
+	if sink.n >= 10<<20 {
+		t.Errorf("wrote %d bytes, cancellation did not stop the stream", sink.n)
 	}
 }
 
@@ -146,68 +111,8 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 			b.SetBytes(size)
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := download.Stream(b.Context(), size, io.Discard); err != nil {
-					b.Fatal(err)
-				}
+				download.Stream(b.Context(), size, io.Discard)
 			}
 		})
-	}
-}
-
-func TestDownloadContextCancel(t *testing.T) {
-	block := randomBlock(4096)
-	dl := NewDownload(block, nil)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	// The sink cancels the context after the first write and keeps counting.
-	sink := &cancelOnWrite{cancel: cancel}
-
-	if err := dl.Stream(ctx, 10<<20, sink); err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if sink.n >= int64(10<<20) {
-		t.Errorf("wrote %d bytes, cancellation did not stop the stream", sink.n)
-	}
-}
-
-/* ---- test doubles for the context-cancel path (no HTTP plumbing) ---- */
-
-type cancelOnWrite struct {
-	cancel context.CancelFunc
-	once   bool
-	n      int64
-}
-
-func (c *cancelOnWrite) Write(p []byte) (int, error) {
-	if !c.once {
-		c.once = true
-		c.cancel()
-	}
-	c.n += int64(len(p))
-	return len(p), nil
-}
-
-func BenchmarkDownloadThroughput(b *testing.B) {
-	srv, _ := newDownloadServer(testBlockSize)
-	b.Cleanup(srv.Close)
-	const size = 8 << 20 // 8 MiB per request
-	client := srv.Client()
-	url := srv.URL + "/download?bytes=" + strconv.Itoa(size)
-
-	b.SetBytes(size)
-	b.ReportAllocs()
-	for b.Loop() {
-		res, err := client.Get(url)
-		if err != nil {
-			b.Fatal(err)
-		}
-		n, err := io.Copy(io.Discard, res.Body)
-		res.Body.Close()
-		if err != nil {
-			b.Fatal(err)
-		}
-		if n != size {
-			b.Fatalf("streamed %d bytes, want %d", n, size)
-		}
 	}
 }

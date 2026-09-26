@@ -11,7 +11,8 @@ import (
 
 func TestProbeReturnsConnectionEvidenceAndLoad(t *testing.T) {
 	rec := httptest.NewRecorder()
-	NewProbe(nil, "", func() (int, int) { return 12, 256 }).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://meter/probe", nil))
+	NewProbe(nil, "", func() (int, int) { return 12, 256 }).ServeHTTP(rec,
+		httptest.NewRequest(http.MethodGet, "http://meter/probe", nil))
 	var got wire.Probe
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)

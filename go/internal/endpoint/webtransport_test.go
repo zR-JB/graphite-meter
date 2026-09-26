@@ -39,32 +39,28 @@ func (c *recordingConn) ReceiveDatagram(context.Context) ([]byte, error) {
 	return []byte(next), nil
 }
 
-func TestDatagramSinkSplitsAtThePayloadBound(t *testing.T) {
-	conn := &recordingConn{}
-	n, err := (&datagramSink{conn: conn}).Write(make([]byte, wtDatagramPayload+1))
-	if err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if n != wtDatagramPayload+1 {
-		t.Fatalf("wrote %d bytes, want %d", n, wtDatagramPayload+1)
-	}
-	if len(conn.sent) != 2 || len(conn.sent[0]) != wtDatagramPayload || len(conn.sent[1]) != 1 {
-		t.Fatalf("datagram sizes = %v, want one full payload and a remainder", datagramSizes(conn.sent))
-	}
-}
-
 type failingConn struct{ recordingConn }
 
 func (c *failingConn) SendDatagram([]byte) error { return io.ErrClosedPipe }
 
-// The flood loop in HandleSession re-runs the download until the session dies.
-func TestDatagramSinkLatchesASendFailure(t *testing.T) {
-	sink := &datagramSink{conn: &failingConn{}}
-	if _, err := sink.Write(make([]byte, 1)); err == nil {
-		t.Fatal("write on a dead sink reported no error")
+// SendDatagram ignores cancellation, so an ended session must stop the sink between datagrams.
+func TestDatagramSink(t *testing.T) {
+	conn := &recordingConn{}
+	n, err := (&datagramSink{conn: conn}).Write(make([]byte, wtDatagramPayload+1))
+	if err != nil || n != wtDatagramPayload+1 || len(conn.sent) != 2 || len(conn.sent[0]) != wtDatagramPayload {
+		t.Fatalf("write = %d, %v in %d datagrams, want one full payload and a remainder", n, err, len(conn.sent))
 	}
-	if !sink.failed {
-		t.Fatal("send failure did not latch")
+	ended := make(chan struct{})
+	close(ended)
+	for name, sink := range map[string]*datagramSink{
+		"failed send":   {conn: &failingConn{}},
+		"ended session": {conn: conn, done: ended},
+	} {
+		sent := len(conn.sent)
+		if n, err := sink.Write(make([]byte, 4*wtDatagramPayload)); err == nil || n != 0 || !sink.failed ||
+			len(conn.sent) != sent {
+			t.Errorf("%s: write = %d, %v, want nothing sent and a latched failure", name, n, err)
+		}
 	}
 }
 
@@ -88,29 +84,6 @@ func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
 	})
 }
 
-// SendDatagram ignores cancellation, so an ended session must stop the sink between datagrams.
-func TestDatagramSinkStopsWhenTheSessionEnds(t *testing.T) {
-	conn := &recordingConn{}
-	done := make(chan struct{})
-	close(done)
-	sink := &datagramSink{conn: conn, done: done}
-	if n, err := sink.Write(make([]byte, 4*wtDatagramPayload)); err == nil || n != 0 || len(conn.sent) != 0 || !sink.failed {
-		t.Fatalf("write after the session ended = %d, %v with %d datagrams sent, want nothing sent and a latched failure", n, err, len(conn.sent))
-	}
-}
-
-// Every spelling of zero is the park path.
-func TestWTDownloadParksOnEveryZeroSpelling(t *testing.T) {
-	for _, spelling := range []string{"0", "00", "+0", "-0"} {
-		if got := parseBytes(spelling); got != 0 {
-			t.Errorf("parseBytes(%q) = %d, want 0 so the session parks", spelling, got)
-		}
-	}
-	if got := parseBytes(""); got != defaultBytes {
-		t.Errorf("parseBytes(\"\") = %d, want the default: an absent size is not a park request", got)
-	}
-}
-
 // ?datagrams= is presence-based, but a spelling of zero is a refusal rather than presence.
 func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	for _, tc := range []struct {
@@ -119,12 +92,10 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	}{
 		{"", false},
 		{"bytes=1024&streams=2", false},
-		// Presence is the documented request, whatever it is spelled with.
 		{"datagrams=", true},
 		{"datagrams=1", true},
 		{"datagrams=2", true},
 		{"datagrams=nonsense", true},
-		// Every zero and every refusal is a request for no datagrams.
 		{"datagrams=0", false},
 		{"datagrams=00", false},
 		{"datagrams=+0", false},
@@ -173,75 +144,60 @@ func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
 	})
 }
 
-// A mint refusal is two different answers.
-func TestSocketTokenSeparatesACappedMintFromARefusedOne(t *testing.T) {
+// A capped mint is retryable and a refused one is not; neither is an authentication challenge.
+func TestSocketToken(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		mint       auth.WTMint
-		status     int
-		retryAfter string
+		name              string
+		mint              SocketTokenMinter
+		status            int
+		retryAfter, token string
+		expires           int64
 	}{
-		{"at capacity", auth.WTMintAtCapacity, http.StatusTooManyRequests, "1"},
-		{"no session", auth.WTMintNoSession, http.StatusForbidden, ""},
+		{"public mode", nil, http.StatusOK, "", "", 0},
+		{"minted", func(*http.Request) (string, time.Time, auth.WTMint) {
+			return "gmw_minted", time.UnixMilli(3_600_000), auth.WTMintOK
+		}, http.StatusOK, "", "gmw_minted", 3_600_000},
+		{"at capacity", func(*http.Request) (string, time.Time, auth.WTMint) {
+			return "", time.Time{}, auth.WTMintAtCapacity
+		}, http.StatusTooManyRequests, "1", "", 0},
+		{"no session", func(*http.Request) (string, time.Time, auth.WTMint) {
+			return "", time.Time{}, auth.WTMintNoSession
+		}, http.StatusForbidden, "", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			mint := tc.mint
 			rec := httptest.NewRecorder()
-			SocketToken(func(*http.Request) (string, time.Time, auth.WTMint) {
-				return "", time.Time{}, mint
-			}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
-			if rec.Code != tc.status {
-				t.Errorf("status = %d, want %d", rec.Code, tc.status)
+			SocketToken(tc.mint).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
+			if rec.Code != tc.status || rec.Header().Get("Retry-After") != tc.retryAfter ||
+				rec.Header().Get("Graphite-Meter-Auth") != "" {
+				t.Fatalf("status = %d headers = %v", rec.Code, rec.Header())
 			}
-			if got := rec.Header().Get("Retry-After"); got != tc.retryAfter {
-				t.Errorf("Retry-After = %q, want %q", got, tc.retryAfter)
+			var body struct {
+				Token   string `json:"token"`
+				Expires int64  `json:"expires"`
 			}
-			// A refusal that carried the auth marker would send the user to a login; neither of these is an authentication.
-			if got := rec.Header().Get("Graphite-Meter-Auth"); got != "" {
-				t.Errorf("Graphite-Meter-Auth = %q, want it absent", got)
+			if tc.status == http.StatusOK && (json.Unmarshal(rec.Body.Bytes(), &body) != nil ||
+				body.Token != tc.token || body.Expires != tc.expires) {
+				t.Fatalf("body = %s", rec.Body.String())
 			}
 		})
-	}
-
-	// The control: a mint that succeeded still answers with its token.
-	rec := httptest.NewRecorder()
-	SocketToken(func(*http.Request) (string, time.Time, auth.WTMint) {
-		return "gmw_minted", time.Unix(0, 0).Add(time.Hour), auth.WTMintOK
-	}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
-	var minted struct {
-		Token   string `json:"token"`
-		Expires int64  `json:"expires"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
-		t.Fatalf("decode %q: %v", rec.Body.String(), err)
-	}
-	if minted.Token != "gmw_minted" || minted.Expires != 3_600_000 {
-		t.Errorf("token = %q, want the minted one", minted.Token)
-	}
-}
-
-func TestDatagramSourceYieldsOneDatagramPerRead(t *testing.T) {
-	src := datagramSource{conn: &recordingConn{incoming: []string{"first", "second"}}, ctx: t.Context()}
-	buf := make([]byte, 64)
-	for _, want := range []string{"first", "second"} {
-		n, err := src.Read(buf)
-		if err != nil {
-			t.Fatalf("read: %v", err)
-		}
-		if got := string(buf[:n]); got != want {
-			t.Fatalf("read = %q, want %q", got, want)
-		}
-	}
-	if _, err := src.Read(buf); !errors.Is(err, io.EOF) {
-		t.Fatalf("read after drain = %v, want EOF", err)
 	}
 }
 
 // The drain feeds the upload counter, so a datagram larger than the buffer must refuse rather than deliver a prefix.
-func TestDatagramSourceRefusesToTruncate(t *testing.T) {
-	src := datagramSource{conn: &recordingConn{incoming: []string{"a datagram longer than the buffer"}}, ctx: t.Context()}
-	if _, err := src.Read(make([]byte, 8)); err != io.ErrShortBuffer {
+func TestDatagramSourceYieldsWholeDatagrams(t *testing.T) {
+	src := datagramSource{conn: &recordingConn{incoming: []string{"first", "second", "longer than eight"}},
+		ctx: t.Context()}
+	buf := make([]byte, 8)
+	for _, want := range []string{"first", "second"} {
+		if n, err := src.Read(buf); err != nil || string(buf[:n]) != want {
+			t.Fatalf("read = %q, %v, want %q", buf[:n], err, want)
+		}
+	}
+	if _, err := src.Read(buf); err != io.ErrShortBuffer {
 		t.Fatalf("read into a short buffer = %v, want io.ErrShortBuffer", err)
+	}
+	if _, err := src.Read(buf); !errors.Is(err, io.EOF) {
+		t.Fatalf("read after drain = %v, want EOF", err)
 	}
 }
 
@@ -291,24 +247,4 @@ func nextProgressEvent(t *testing.T, records *bufio.Scanner) wire.UploadProgress
 	}
 	t.Fatal("progress stream ended early")
 	return wire.UploadProgress{}
-}
-
-func datagramSizes(sent [][]byte) []int {
-	sizes := make([]int, len(sent))
-	for i, d := range sent {
-		sizes[i] = len(d)
-	}
-	return sizes
-}
-
-func TestSocketTokenWithoutAuthIncludesZeroExpiry(t *testing.T) {
-	rec := httptest.NewRecorder()
-	SocketToken(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
-	var response map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response["token"] != "" || response["expires"] != float64(0) {
-		t.Fatalf("auth-off response = %s", rec.Body.String())
-	}
 }

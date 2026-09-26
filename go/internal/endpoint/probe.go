@@ -19,7 +19,7 @@ type Probe struct {
 	load          LoadFunc
 }
 
-// NewProbe builds the probe endpoint. bootstrapPort must be set only on the H3 TCP bootstrap listener.
+// NewProbe sets bootstrapPort only on the H3 TCP bootstrap listener.
 func NewProbe(trusted []netip.Prefix, bootstrapPort string, load LoadFunc) *Probe {
 	return &Probe{trusted: trusted, bootstrapPort: bootstrapPort, load: load}
 }
@@ -31,8 +31,7 @@ func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "close")
 	}
 	client := transport.ResolveClientAddress(r, p.trusted)
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
+	noStoreJSON(w)
 	probe := wire.Probe{
 		ClientIP: client.Addr.String(), ClientIPVersion: client.Version,
 		ClientIPSource: string(client.Source), ProtocolNegotiated: protocol,

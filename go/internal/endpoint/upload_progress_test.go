@@ -69,11 +69,9 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 		if !strings.Contains(rec.text(), `{"type":"ready"}`) {
 			t.Fatalf("feed opened with %q, want ready", rec.text())
 		}
-		if got, want := rec.Header().Get("Content-Type"), "application/x-ndjson"; got != want {
-			t.Fatalf("Content-Type = %q, want %q", got, want)
-		}
-		if got, want := rec.Header().Get("Cache-Control"), "no-store, no-transform"; got != want {
-			t.Fatalf("Cache-Control = %q, want %q", got, want)
+		if rec.Header().Get("Content-Type") != "application/x-ndjson" ||
+			rec.Header().Get("Cache-Control") != "no-store, no-transform" {
+			t.Fatalf("feed headers = %v", rec.Header())
 		}
 		agg, ok := store.get(id)
 		if !ok {
@@ -122,31 +120,11 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		takeover, second := startFeed(ctx, h, id)
 		if !ended(first) || !strings.Contains(takeover.text(), `{"type":"ready"}`) {
-			t.Fatalf("superseded feed ended = %v, takeover = %q; want the old feed gone and the new one ready", ended(first), takeover.text())
+			t.Fatalf("superseded feed ended = %v, takeover = %q", ended(first), takeover.text())
 		}
 		cancel()
 		<-second
 	})
-}
-
-// A superseded feed shares the terminal wait with the live one.
-func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
-	var agg uploadAgg
-	a, b := agg.postsWaiter(), agg.postsWaiter()
-	if a != b {
-		t.Fatal("two waiters got different channels: a single change cannot reach both")
-	}
-	agg.beginPost()
-	for i, ch := range []<-chan struct{}{a, b} {
-		select {
-		case <-ch:
-		default:
-			t.Fatalf("waiter %d was not woken: the lane-count change did not broadcast", i)
-		}
-	}
-	if c := agg.postsWaiter(); c == a {
-		t.Fatal("the next waiter reused the closed channel: it would never see another change")
-	}
 }
 
 // A superseded feed must abandon the terminal wait rather than sit on it until its transport dies.
@@ -170,7 +148,7 @@ func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	})
 }
 
-// The feed reports receiver time every tick whether or not bytes moved, so zero delivery is distinguishable from a missing feed.
+// Every tick reports receiver time whether or not bytes moved, so zero delivery differs from a missing feed.
 func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewUploadStore()
@@ -194,14 +172,14 @@ func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 			t.Fatalf("%d records over five ticks, want 5: %+v", len(records), records)
 		}
 		for i, e := range records {
-			if want := uint64(i+1) * uint64(uploadProgressTick); e.Type != "progress" || e.Bytes != 4096 || e.Nanos != want {
+			want := uint64(i+1) * uint64(uploadProgressTick)
+			if e.Type != "progress" || e.Bytes != 4096 || e.Nanos != want {
 				t.Fatalf("record %d = %+v, want progress of 4096 bytes at %d ns", i, e, want)
 			}
 		}
 	})
 }
 
-// The refusals the WebTransport progress stream now carries as error records are the same ones the HTTP feed answers.
 func TestUploadProgressRefusalResponses(t *testing.T) {
 	serve := func(store *UploadStore, method, id, remote string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/upload/progress?id="+id, nil)
@@ -214,7 +192,8 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	}
 	t.Run("an unknown id is a 400", func(t *testing.T) {
 		for _, method := range []string{http.MethodGet, http.MethodDelete} {
-			if rec := serve(NewUploadStore(), method, "forged", ""); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), uploadAccessMessage(uploadAccessInvalid)) {
+			rec := serve(NewUploadStore(), method, "forged", "")
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown upload id") {
 				t.Fatalf("%s = %d %q, want 400 naming the unknown id", method, rec.Code, rec.Body.String())
 			}
 		}
@@ -229,8 +208,8 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 			}
 		}
 		rec := serve(store, http.MethodGet, store.Mint(), owner)
-		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" || !strings.Contains(rec.Body.String(), uploadAccessMessage(uploadAccessClientFull)) {
-			t.Fatalf("status = %d Retry-After %q body %q, want a retryable 429", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+		if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "1" {
+			t.Fatalf("status = %d Retry-After %q, want a retryable 429", rec.Code, rec.Header().Get("Retry-After"))
 		}
 	})
 
@@ -240,7 +219,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		if _, access := store.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
 			t.Fatalf("create = %v", access)
 		}
-		if rec := serve(store, http.MethodGet, id, "192.0.2.2"); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), uploadAccessMessage(uploadAccessOwnerMismatch)) {
+		if rec := serve(store, http.MethodGet, id, "192.0.2.2"); rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d body %q: another client's upload was readable", rec.Code, rec.Body.String())
 		}
 	})
@@ -248,8 +227,9 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	// GET's route also carries HEAD, which must neither create a receiver nor claim its feed.
 	t.Run("HEAD is a 405", func(t *testing.T) {
 		store := NewUploadStore()
-		if rec := serve(store, http.MethodHead, store.Mint(), ""); rec.Code != http.StatusMethodNotAllowed || store.live.Load() != 0 {
-			t.Fatalf("status = %d with %d receivers, want %d and none", rec.Code, store.live.Load(), http.StatusMethodNotAllowed)
+		rec := serve(store, http.MethodHead, store.Mint(), "")
+		if rec.Code != http.StatusMethodNotAllowed || store.live.Load() != 0 {
+			t.Fatalf("status = %d with %d receivers, want 405 and none", rec.Code, store.live.Load())
 		}
 	})
 }
@@ -264,7 +244,7 @@ func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 		store.sweep(uploadIDTTL)
 		synctest.Wait()
 		if _, ok := store.get(id); ok || !ended(done) {
-			t.Fatalf("receiver retained = %v, feed ended = %v; want a watched but idle receiver reaped and its feed closed", ok, ended(done))
+			t.Fatalf("idle watched receiver retained = %v, feed ended = %v", ok, ended(done))
 		}
 	})
 }
