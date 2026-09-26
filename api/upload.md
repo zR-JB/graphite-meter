@@ -15,6 +15,9 @@ rejected, and counter records always carry explicit `bytes` and `nanos`. See als
    owner before reading the body. Missing, forged, expired, or foreign IDs are
    refused without counting data. A completed POST replies with that POST's
    byte count; this response does not replace the aggregate progress feed.
+   A POST that sends nothing for the [idle bound](wire.md#lane-endings) is
+   answered `408` with `X-Graphite-Upload-Refusal: idle`; one that reaches the
+   operation lifetime is closed without an answer. Its bytes count either way.
 4. `DELETE /upload/progress?id=...` finalizes the aggregate. The progress feed
    emits `complete` after active data lanes have drained, then closes.
 

@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
@@ -186,14 +186,14 @@ func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
 			upload := store
 			id := store.Mint()
 			if tc.want != uploadAccessGlobalFull {
-				if n, err := upload.Receive(id, ownedBy("owner"), strings.NewReader("first")); err != nil ||
-					n != 5 {
+				n, err := upload.Receive(id, ownedBy("owner"), strings.NewReader("first"), &idleDeadline{})
+				if err != nil || n != 5 {
 					t.Fatalf("initial upload = %d, %v", n, err)
 				}
 			}
 			tc.setup(store, id)
 			body := strings.NewReader("must not be drained")
-			n, err := upload.Receive(id, ownedBy(tc.owner), body)
+			n, err := upload.Receive(id, ownedBy(tc.owner), body, &idleDeadline{})
 			refusal, ok := errors.AsType[*uploadRefusalError](err)
 			if !ok || refusal.access != tc.want || n != 0 || body.Len() != len("must not be drained") ||
 				!strings.Contains(err.Error(), uploadAccessInfos[tc.want].message) {
@@ -216,7 +216,7 @@ func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-// A stuck body read is bounded by the upload timeout, or by the request's own earlier deadline.
+// A stuck body read is bounded by the idle bound, or by the request's own earlier deadline.
 func TestUploadBoundsItsBodyRead(t *testing.T) {
 	for _, remaining := range []time.Duration{0, -time.Second, time.Second, time.Hour} {
 		t.Run(remaining.String(), func(t *testing.T) {
@@ -232,33 +232,13 @@ func TestUploadBoundsItsBodyRead(t *testing.T) {
 			before := time.Now()
 			store.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
-			if remaining != 0 && remaining < uploadReadTimeout {
+			if remaining != 0 && remaining < wire.WTIdleBound {
 				if !rec.read.Equal(want) {
 					t.Fatalf("read deadline = %v, want the request deadline %v", rec.read, want)
 				}
-			} else if rec.read.Before(before.Add(uploadReadTimeout)) ||
-				rec.read.After(time.Now().Add(uploadReadTimeout)) {
-				t.Fatalf("read deadline %v does not keep the upload timeout", rec.read)
-			}
-		})
-	}
-}
-
-func BenchmarkUploadBufferSize(b *testing.B) {
-	const size = 64 << 20
-	source := bytes.Repeat([]byte{1}, size)
-	for _, bufferSize := range []int{32 << 10, uploadBufSize, 256 << 10, 1 << 20} {
-		b.Run(strconv.Itoa(bufferSize), func(b *testing.B) {
-			buffer := make([]byte, bufferSize)
-			reader := bytes.NewReader(source)
-			sink := discardSink{upload: NewUpload(nil, nil), agg: new(uploadAgg)}
-			b.SetBytes(size)
-			b.ReportAllocs()
-			for b.Loop() {
-				reader.Reset(source)
-				if _, err := io.CopyBuffer(sink, io.LimitReader(reader, size), buffer); err != nil {
-					b.Fatal(err)
-				}
+			} else if rec.read.Before(before.Add(wire.WTIdleBound)) ||
+				rec.read.After(time.Now().Add(wire.WTIdleBound)) {
+				t.Fatalf("read deadline %v does not keep the idle bound", rec.read)
 			}
 		})
 	}

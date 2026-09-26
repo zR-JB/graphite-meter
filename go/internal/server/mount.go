@@ -54,9 +54,9 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 		m.handle(route.Ping, m.webSocketPing())
 	}
 	if topo.wt != nil {
-		m.handle(route.WTDownload, m.webTransport(topo.wt, endpoint.WTDownload(e.download, e.wtIdleBound)))
-		m.handle(route.WTUpload, m.webTransport(topo.wt, endpoint.WTUpload(e.upload, e.wtIdleBound)))
-		m.handle(route.WTPing, m.webTransport(topo.wt, endpoint.WTPing(e.wtIdleBound)))
+		m.handle(route.WTDownload, m.webTransport(topo.wt, endpoint.WTDownload(e.download)))
+		m.handle(route.WTUpload, m.webTransport(topo.wt, endpoint.WTUpload(e.upload)))
+		m.handle(route.WTPing, m.webTransport(topo.wt, endpoint.WTPing))
 	}
 	if topo.spa {
 		authn.Mount(m.mux)
@@ -108,12 +108,10 @@ func (m *mounter) webSocketPing() http.Handler {
 		// Ending the bus is a close handshake, which also unblocks its reads and writes.
 		ctx, cancel := linkedContext(m.ctx, r.Context())
 		defer cancel()
+		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)
 		end := func() {
-			if auth.SessionEnded(r.Context()) {
-				conn.Close(websocket.StatusPolicyViolation, "authentication required")
-				return
-			}
-			conn.Close(websocket.StatusNormalClosure, "")
+			end := endpoint.EndOf(ctx, m.ctx)
+			conn.Close(websocket.StatusCode(end.WS), end.Reason)
 		}
 		ended := context.AfterFunc(ctx, end)
 		// The read limit admits one extra byte, so an oversized message fails before filling buf.
@@ -123,6 +121,7 @@ func (m *mounter) webSocketPing() http.Handler {
 			if err != nil {
 				return nil, err
 			}
+			live.Bump()
 			n, err := io.ReadFull(message, buf[:])
 			switch err {
 			case io.ErrUnexpectedEOF, io.EOF:
@@ -145,25 +144,29 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 			http.Error(w, "webtransport upgrade failed", http.StatusBadRequest)
 			return
 		}
-		defer sess.CloseWithError(0, "") //nolint:errcheck // the session is going away either way
 		ctx, cancel := linkedContext(m.ctx, r.Context(), sess.Context())
 		defer cancel()
-		serve(ctx, sess, r)
+		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)
+		defer func() {
+			end := endpoint.EndOf(ctx, m.ctx)
+			_ = sess.CloseWithError(webtransport.SessionErrorCode(end.WT), end.Reason)
+		}()
+		serve(ctx, sess, r, live)
 	})
 }
 
-// linkedContext ends with parent or any of ends; upgraded channels outlive their request's tracking.
+// linkedContext ends with parent or any of ends, keeping its cause; upgraded channels outlive their request.
 func linkedContext(parent context.Context, ends ...context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancelCause(parent)
 	stops := make([]func() bool, len(ends))
 	for i, end := range ends {
-		stops[i] = context.AfterFunc(end, cancel)
+		stops[i] = context.AfterFunc(end, func() { cancel(context.Cause(end)) })
 	}
 	return ctx, func() {
 		for _, stop := range stops {
 			stop()
 		}
-		cancel()
+		cancel(nil)
 	}
 }
 

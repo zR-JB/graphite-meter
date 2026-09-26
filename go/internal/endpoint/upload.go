@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -29,9 +30,7 @@ type Upload struct {
 }
 
 const (
-	// uploadReadTimeout ends a lane idle this long, so a half-open lane cannot pin a goroutine.
-	uploadReadTimeout = 120 * time.Second
-	// Reads rarely exceed a socket or stream buffer; a larger one only costs memory (BenchmarkUploadBufferSize).
+	// Reads rarely exceed a socket or stream buffer; a larger one only costs memory.
 	uploadBufSize           = 64 * 1024
 	uploadProgressTick      = 100 * time.Millisecond
 	uploadProgressHeartbeat = time.Second
@@ -46,40 +45,29 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
-type bodyDeadline struct {
-	io.Reader
-	*http.ResponseController
-}
-
-// discardSink records chunks on the receiver; it has no ReadFrom, so io.CopyBuffer uses the pooled buffer.
-type discardSink struct {
-	upload *Upload
-	agg    *uploadAgg
-}
-
-func (s discardSink) Write(p []byte) (int, error) {
-	s.upload.meter.Add(len(p))
-	s.agg.recordChunk(s.upload.now(), len(p))
-	return len(p), nil
-}
-
+// ServeHTTP answers an idle lane 408; one at its lifetime has no writable answer. Its bytes count either way.
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	limit, _ := r.Context().Deadline()
-	body := &idleTimeoutReader{str: bodyDeadline{r.Body, http.NewResponseController(w)}, timeout: uploadReadTimeout,
-		limit: limit}
-	n, err := u.Receive(r.URL.Query().Get("id"), uploadClientOf(r, u.trusted), body)
+	idle := &idleDeadline{set: http.NewResponseController(w).SetReadDeadline, limit: limit}
+	n, err := u.Receive(r.URL.Query().Get("id"), uploadClientOf(r, u.trusted), r.Body, idle)
+	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
+		writeUploadAccessError(w, refusal.access)
+		return
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)) {
+		w.Header().Set("X-Graphite-Upload-Refusal", endIdle.Reason)
+		http.Error(w, endIdle.Reason, http.StatusRequestTimeout)
+		return
+	}
 	if err != nil {
-		if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
-			writeUploadAccessError(w, refusal.access)
-		}
 		return
 	}
 	noStoreJSON(w)
 	_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)
 }
 
-// Receive joins the owner's receiver before reading and records each chunk.
-func (u *Upload) Receive(id string, c uploadClient, src io.Reader) (int64, error) {
+// Receive joins the owner's receiver before reading and records each chunk as the lane's progress.
+func (u *Upload) Receive(id string, c uploadClient, src io.Reader, idle *idleDeadline) (int64, error) {
 	agg, access := u.accessFor(id, c, true)
 	if access != uploadAccessOK {
 		return 0, &uploadRefusalError{access: access}
@@ -89,7 +77,24 @@ func (u *Upload) Receive(id string, c uploadClient, src io.Reader) (int64, error
 	defer scratchPool.Put(bufp)
 	u.meter.Open()
 	defer u.meter.Close()
-	return io.CopyBuffer(discardSink{upload: u, agg: agg}, src, *bufp)
+	idle.moved(time.Now())
+	var total int64
+	for {
+		n, err := src.Read(*bufp)
+		if n > 0 {
+			now := time.Now()
+			idle.moved(now)
+			u.meter.Add(n)
+			agg.recordChunk(u.mono(now), n)
+			total += int64(n)
+		}
+		if err == io.EOF {
+			return total, nil
+		}
+		if err != nil {
+			return total, err
+		}
+	}
 }
 
 func (u *Upload) ServeSession(w http.ResponseWriter, _ *http.Request) {

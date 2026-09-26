@@ -54,7 +54,7 @@ type endpoints struct {
 	upload                *endpoint.Upload
 	admission             *requestAdmission
 	trusted               []netip.Prefix
-	wtIdleBound           time.Duration
+	idleBound             time.Duration
 	controlTimeout        time.Duration
 }
 
@@ -101,7 +101,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		upload:         upload,
 		admission:      admission,
 		trusted:        cfg.TrustedProxies,
-		wtIdleBound:    wire.WTIdleBound,
+		idleBound:      wire.WTIdleBound,
 		controlTimeout: controlTimeout,
 	}
 }

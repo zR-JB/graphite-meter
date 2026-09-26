@@ -225,7 +225,8 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 		}
 		watchers := fill(func(*uploadAgg) {})
 		upload := s
-		if n, err := upload.Receive(s.Mint(), ownedBy("client"), strings.NewReader("lane")); err != nil || n != 4 {
+		lane := strings.NewReader("lane")
+		if n, err := upload.Receive(s.Mint(), ownedBy("client"), lane, &idleDeadline{}); err != nil || n != 4 {
 			t.Fatalf("lane at a cap of empty receivers = %d, %v", n, err)
 		}
 		select {
@@ -239,7 +240,8 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 		s.mu.Lock()
 		close(watchers[1].finished)
 		s.mu.Unlock()
-		if _, err := upload.Receive(s.Mint(), ownedBy("client"), strings.NewReader("lane")); err == nil {
+		lane.Reset("lane")
+		if _, err := upload.Receive(s.Mint(), ownedBy("client"), lane, &idleDeadline{}); err == nil {
 			t.Fatal("a receiver holding bytes or a finish was displaced")
 		}
 		select {

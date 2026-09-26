@@ -97,8 +97,10 @@ const (
 	uploadSweepInterval = 5 * time.Second
 )
 
-// now is the monotonic receiver clock in ns; it starts at 1 so zero marks an unset anchor.
-func (u *Upload) now() int64 { return int64(time.Since(u.epoch)) + 1 }
+// mono is the monotonic receiver clock in ns; it starts at 1 so zero marks an unset anchor.
+func (u *Upload) mono(t time.Time) int64 { return int64(t.Sub(u.epoch)) + 1 }
+
+func (u *Upload) now() int64 { return u.mono(time.Now()) }
 
 // Mint generates a URL-safe, authenticated upload id without storing per-id state.
 func (u *Upload) Mint() string {

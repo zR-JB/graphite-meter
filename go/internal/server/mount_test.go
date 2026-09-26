@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -164,32 +165,40 @@ func TestWebSocketPingRefusesAnOversizedFrame(t *testing.T) {
 	}
 }
 
-// A hijacked connection is invisible to http.Server.Shutdown, so the server's context must end the bus.
-func TestWebSocketPingEndsWithTheServer(t *testing.T) {
+// A hijacked bus outlives http.Server.Shutdown and its request, so the server's context, the request lifetime and
+// the idle bound each end it with their own close code.
+func TestWebSocketPingReportsWhyItEnded(t *testing.T) {
 	t.Parallel()
-	ctx, stop := context.WithCancel(t.Context())
-	srv := httptest.NewServer(newMux(ctx, testEndpoints(t), muxTopology{latency: true}, nil, publicAuth(t)))
-	defer srv.Close()
-	conn := dialPing(t, srv)
-	stop()
-	readCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, _, err := conn.Read(readCtx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-		t.Fatalf("close after server shutdown = %v, want a normal closure", err)
-	}
-}
-
-// The request lifetime bounds a WebSocket bus even though its connection has been hijacked.
-func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
-	t.Parallel()
-	e := testEndpoints(t)
-	e.admission = newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour)
-	srv := httptest.NewServer(publicMux(t, e, muxTopology{latency: true}, nil))
-	defer srv.Close()
-	conn := dialPing(t, srv)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-		t.Fatalf("WebSocket lifetime close = %v", err)
+	for _, tc := range []struct {
+		name   string
+		status websocket.StatusCode
+		setup  func(e *endpoints)
+	}{
+		{"shutdown", websocket.StatusGoingAway, func(*endpoints) {}},
+		{"lifetime", 4002, func(e *endpoints) {
+			e.admission = newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour)
+		}},
+		{"idle", 4001, func(e *endpoints) { e.idleBound = 40 * time.Millisecond }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, stop := context.WithCancel(t.Context())
+			defer stop()
+			e := testEndpoints(t)
+			tc.setup(e)
+			srv := httptest.NewServer(newMux(ctx, e, muxTopology{latency: true}, nil, publicAuth(t)))
+			defer srv.Close()
+			conn := dialPing(t, srv)
+			if tc.name == "shutdown" {
+				stop()
+			}
+			readCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			_, _, err := conn.Read(readCtx)
+			if closed, ok := errors.AsType[websocket.CloseError](err); !ok || closed.Code != tc.status ||
+				closed.Reason != tc.name {
+				t.Fatalf("close = %v, want %d %q", err, tc.status, tc.name)
+			}
+		})
 	}
 }

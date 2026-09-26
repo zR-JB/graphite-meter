@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type Download struct {
@@ -27,7 +28,10 @@ func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
 	if r.Method != http.MethodHead {
-		d.Stream(r.Context(), n, w)
+		limit, _ := r.Context().Deadline()
+		sink := &idleWriter{w: w, idle: idleDeadline{set: http.NewResponseController(w).SetWriteDeadline, limit: limit}}
+		sink.idle.moved(time.Now())
+		d.Stream(r.Context(), n, sink)
 	}
 }
 

@@ -94,9 +94,24 @@ carries nothing the **peer** sent for about **30 seconds** is closed, ping buses
 server-generated progress heartbeat is not traffic, and neither is a server-generated datagram
 flood, so a `/wt/download?datagrams=` session the peer never speaks on closes on the same bound),
 and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its answer is the
-handshake — is closed after a **30-second linger**. A client MUST treat a bound-driven close as a
+handshake — is closed after a **5-second linger**. A client MUST treat a bound-driven close as a
 reconnect rather than a stage failure, and re-dial against the same upload `id`: the server keeps
 one aggregate per id, so the counters carry across.
+
+### Lane endings
+
+Every lane shares one **30-second** idle bound: WebTransport sessions and the WebSocket bus close
+after about that long without peer traffic, an HTTP upload that stops sending is answered `408`, and
+an HTTP download the peer stops draining is closed. A server-ended bus or session names its cause;
+clients may ignore it and treat any close as a reconnect.
+
+| Cause                        | WebSocket close                | WebTransport close          |
+| ---------------------------- | ------------------------------ | --------------------------- |
+| Peer closed or lane finished | `1000`                         | `0`                         |
+| Idle                         | `4001 idle`                    | `1 idle`                    |
+| Lifetime bound               | `4002 lifetime`                | `2 lifetime`                |
+| Sign-out or grant revocation | `1008 authentication required` | `3 authentication required` |
+| Server shutdown              | `1001 shutdown`                | `4 shutdown`                |
 
 **Discovery contract.** `transport` is required on every throughput and latency target;
 clients never infer a transport from its absence.

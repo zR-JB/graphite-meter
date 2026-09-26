@@ -64,10 +64,10 @@ func TestDatagramSink(t *testing.T) {
 // A session ends after two quiet half-bounds, never while its peer keeps it active.
 func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		ctx, live := watchSession(t.Context(), time.Second)
+		ctx, live := WatchIdle(t.Context(), time.Second)
 		for range 10 {
 			time.Sleep(400 * time.Millisecond)
-			live.bump()
+			live.Bump()
 		}
 		synctest.Wait()
 		if ctx.Err() != nil {
@@ -75,8 +75,8 @@ func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
 		}
 		time.Sleep(2 * time.Second)
 		synctest.Wait()
-		if ctx.Err() == nil {
-			t.Fatal("a session quiet for two bounds is still open")
+		if !errors.Is(context.Cause(ctx), errIdle) {
+			t.Fatalf("a session quiet for two bounds ended with %v", context.Cause(ctx))
 		}
 	})
 }
@@ -111,38 +111,31 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	}
 }
 
-// deadlineRecordingStream records every read deadline armed on it.
-type deadlineRecordingStream struct{ deadlines []time.Time }
-
-func (s *deadlineRecordingStream) SetReadDeadline(t time.Time) error {
-	s.deadlines = append(s.deadlines, t)
-	return nil
-}
-
-func (s *deadlineRecordingStream) Read(p []byte) (int, error) { return len(p), nil }
-
-// A lane is bounded by inactivity, not by one absolute deadline, and re-arming is paced rather than per read.
-func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
+// A lane is bounded by inactivity, not by one absolute deadline, and re-arming is paced rather than per chunk.
+func TestIdleDeadlineReArmsWithTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		stream := &deadlineRecordingStream{}
-		limit := time.Now().Add(11 * time.Second)
-		reader := &idleTimeoutReader{str: stream, timeout: 8 * time.Second, limit: limit}
-		buf := make([]byte, 8)
+		var deadlines []time.Time
+		limit := time.Now().Add(wire.WTIdleBound + 10*time.Second)
+		set := func(d time.Time) error {
+			deadlines = append(deadlines, d)
+			return nil
+		}
+		idle := &idleDeadline{set: set, limit: limit}
 		for range 3 {
-			_, _ = reader.Read(buf)
+			idle.moved(time.Now())
 		}
-		if len(stream.deadlines) != 1 {
-			t.Fatalf("armed %d deadlines over three back-to-back reads, want 1", len(stream.deadlines))
+		if len(deadlines) != 1 {
+			t.Fatalf("armed %d deadlines over three back-to-back chunks, want 1", len(deadlines))
 		}
-		time.Sleep(2 * time.Second)
-		_, _ = reader.Read(buf)
-		if len(stream.deadlines) != 2 || !stream.deadlines[1].Equal(time.Now().Add(8*time.Second)) {
-			t.Fatalf("deadlines = %v, want a second one a full timeout after the later read", stream.deadlines)
+		time.Sleep(wire.WTIdleBound / 4)
+		idle.moved(time.Now())
+		if len(deadlines) != 2 || !deadlines[1].Equal(time.Now().Add(wire.WTIdleBound)) {
+			t.Fatalf("deadlines = %v, want a second one a full bound after the later chunk", deadlines)
 		}
-		time.Sleep(2 * time.Second)
-		_, _ = reader.Read(buf)
-		if len(stream.deadlines) != 3 || !stream.deadlines[2].Equal(limit) {
-			t.Fatalf("deadlines = %v, want the last capped at the lane's lifetime", stream.deadlines)
+		time.Sleep(wire.WTIdleBound / 2)
+		idle.moved(time.Now())
+		if len(deadlines) != 3 || !deadlines[2].Equal(limit) {
+			t.Fatalf("deadlines = %v, want the last capped at the lane's lifetime", deadlines)
 		}
 	})
 }

@@ -93,7 +93,7 @@ func wtTestServer(t *testing.T, tune func(*config.Config), shape func(*endpoints
 }
 
 func idleBound(bound time.Duration) func(*endpoints) {
-	return func(e *endpoints) { e.wtIdleBound = bound }
+	return func(e *endpoints) { e.idleBound = bound }
 }
 
 // insecureWTTransport dials a test listener's self-signed certificate.
@@ -407,6 +407,33 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	case <-sess.Context().Done():
 		t.Fatal("verify session closed instead of lingering: its answer is the handshake, and the client closes it")
 	default:
+	}
+}
+
+// A session the server ends carries why in its close code, which clients may ignore.
+func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		reason string
+		code   webtransport.SessionErrorCode
+		tune   func(*config.Config)
+		shape  func(*endpoints)
+	}{
+		{"idle", 1, nil, idleBound(300 * time.Millisecond)},
+		{"lifetime", 2, func(c *config.Config) { c.MaxOperationDuration = 300 * time.Millisecond }, nil},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			t.Parallel()
+			base, _, wtTransport := wtTestServer(t, tc.tune, tc.shape)
+			sess := dialWT(t, wtTransport, base+"/wt/ping")
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			_, err := sess.AcceptUniStream(ctx)
+			closed, ok := errors.AsType[*webtransport.SessionError](err)
+			if !ok || closed.ErrorCode != tc.code || closed.Message != tc.reason {
+				t.Fatalf("session ended with %v, want %d %q", err, tc.code, tc.reason)
+			}
+		})
 	}
 }
 
