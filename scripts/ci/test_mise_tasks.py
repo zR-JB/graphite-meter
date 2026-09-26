@@ -1,4 +1,3 @@
-"""Exercise real mise ordering and argument transport without installing tools."""
 from __future__ import annotations
 
 import json
@@ -116,3 +115,22 @@ with open(os.environ["GM_TASK_TRACE"], "a") as output:
         self.assertEqual(calls[0]["env"]["GM_CLIENT_REVISION"], payload)
         self.run_task("goclient-build", env={"VERSION": payload}, status=2)
         self.assertFalse(canary.exists())
+
+
+class PythonCheckTests(unittest.TestCase):
+    def test_python_check_rejects_a_type_error_and_accepts_its_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts/ci").mkdir(parents=True)
+            (root / "go").mkdir()
+            for name in ("mise.toml", "mise.lock", "go/go.mod", "scripts/ci/toolchains.py"):
+                shutil.copy2(ROOT / name, root / name)
+            env = os.environ | {"MISE_TRUSTED_CONFIG_PATHS": str(root), "MISE_AUTO_INSTALL": "0"}
+            for value, ok in (('"wrong"', False), ("42", True)):
+                probe = f"def answer() -> int:\n    return {value}\n"
+                (root / "scripts/probe.py").write_text(probe)
+                result = subprocess.run(["mise", "run", "python-check"], cwd=root, env=env,
+                                        capture_output=True, text=True)
+                output = result.stdout + result.stderr
+                self.assertEqual(result.returncode == 0, ok, output)
+                self.assertEqual("invalid-return-type" in output, not ok, output)

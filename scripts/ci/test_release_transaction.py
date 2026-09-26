@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
-"""Regression tests for the privileged stable GitHub Release transaction.
-
-The publication job intentionally stays checkout-free and shell-only. These tests
-exercise its embedded shell helpers from the unprivileged CI layer with a fake
-`gh` implementation so GitHub API convergence and permission failures remain
-covered without adding repository code execution to the privileged runner.
-"""
+"""Run the checkout-free publication shell against fake gh and Skopeo."""
 from __future__ import annotations
 
+import os
 import pathlib
 import subprocess
+import tempfile
 import textwrap
 import unittest
 
@@ -200,6 +196,39 @@ published=$(wait_for_release_published "test convergence")
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("release publication visibility", result.stderr)
+
+
+class PromotionTests(unittest.TestCase):
+    def promote(self, digest: str, series: str, latest: str) -> subprocess.CompletedProcess[str]:
+        text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
+        step = text.split("name: Promote verified stable image without rollback", 1)[1]
+        script = textwrap.dedent(step.split("run: |\n", 1)[1])
+        shim = ('docker() { while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done;'
+                ' sh -ec "$2"; }\n')
+        with tempfile.TemporaryDirectory() as directory:
+            skopeo = pathlib.Path(directory) / "skopeo"
+            skopeo.write_text('#!/bin/sh\n[ "$1" = inspect ] && printf "%s\\n" "$FAKE_DIGEST"\nexit 0\n')
+            skopeo.chmod(0o755)
+            env = os.environ | {
+                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "FAKE_DIGEST": digest,
+                "REGISTRY_TOKEN": "token", "REPOSITORY": "Owner/Repo", "REGISTRY_ACTOR": "owner",
+                "VERSION": "1.2.3", "SERIES": "1.2", "PROMOTE_SERIES": series,
+                "PROMOTE_LATEST": latest, "SKOPEO_IMAGE": "skopeo",
+            }
+            return subprocess.run(["bash", "-c", shim + script], env=env, capture_output=True,
+                                  text=True)
+
+    def test_promotion_rejects_a_source_digest_with_trailing_data(self) -> None:
+        result = self.promote("sha256:" + "a" * 64 + "evil", "true", "true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("source tag returned an invalid digest", result.stderr)
+        self.assertNotIn("promoted", result.stdout)
+
+    def test_promotion_of_an_older_series_succeeds_without_latest(self) -> None:
+        result = self.promote("sha256:" + "a" * 64, "true", "false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("promoted ghcr.io/owner/repo:1.2", result.stdout)
+        self.assertNotIn(":latest", result.stdout)
 
 
 if __name__ == "__main__":

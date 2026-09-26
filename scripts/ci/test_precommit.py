@@ -1,5 +1,3 @@
-"""Exercise staged-index tool resolution, bootstrap, and gate isolation."""
-
 from __future__ import annotations
 
 import json
@@ -35,6 +33,30 @@ def repository(parent: pathlib.Path) -> pathlib.Path:
     git(repo, "add", ".")
     git(repo, "-c", "user.name=CI", "-c", "user.email=ci@example.invalid", "commit", "-qm", "base")
     return repo
+
+
+class PlanTests(unittest.TestCase):
+    def test_changed_paths_select_component_gates(self) -> None:
+        go = "go/internal/server/listeners.go"
+        for paths, plan in (
+            (("api/routes.txt",), precommit.CheckPlan(pipeline=False, recipes=("check",))),
+            (("mise.lock", go), precommit.CheckPlan(pipeline=False, recipes=("check",))),
+            ((go,), precommit.CheckPlan(pipeline=False, recipes=(
+                "check-generated", "server-check", "server-test", "legal-check"))),
+            ((".github/workflows/ci.yml",), precommit.CheckPlan(pipeline=True, recipes=())),
+        ):
+            with self.subTest(paths=paths):
+                self.assertEqual(precommit.plan_checks(paths), plan)
+
+    def test_deleted_and_renamed_paths_still_select_checks(self) -> None:
+        raw = (b"M\0go/internal/server/listeners.go\0D\0.github/workflows/old.yml\0"
+               b"R100\0.github/workflows/ci.yml\0docs/ci-example.yml\0")
+        self.assertEqual(precommit.parse_staged_changes(raw), (
+            precommit.StagedChange("go/internal/server/listeners.go", deleted=False),
+            precommit.StagedChange(".github/workflows/old.yml", deleted=True),
+            precommit.StagedChange(".github/workflows/ci.yml", deleted=True),
+            precommit.StagedChange("docs/ci-example.yml", deleted=False),
+        ))
 
 
 class StagedMiseTests(unittest.TestCase):

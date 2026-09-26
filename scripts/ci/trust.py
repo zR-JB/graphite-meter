@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Typed trust predicates for CI, PR prereleases, and stable releases."""
+"""Trust predicates shared by stable releases and PR prereleases."""
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
+from pathlib import Path
+from typing import NoReturn
+
 from github_api import (
     APICall,
-    JsonArray,
+    ControlPlaneError,
     JsonObject,
-    JsonShapeError,
     JsonValue,
     api as default_api,
-    array_field,
+    decode_json,
     expect_array,
     expect_object,
     int_field,
@@ -19,441 +24,238 @@ from github_api import (
     str_field,
 )
 
+SHA_RE = re.compile(r"[0-9a-f]{40}")
+SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
+CONTROL_PLANE = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
+DONE = ("completed", "success")
 
-class TrustError(RuntimeError):
+
+class TrustError(ControlPlaneError):
     pass
 
 
-def _object(value: JsonValue, context: str) -> JsonObject:
-    try:
-        return expect_object(value, context)
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
+def refuse(message: str) -> NoReturn:
+    raise TrustError(message)
 
 
-def _array(value: JsonValue, context: str) -> JsonArray:
-    try:
-        return expect_array(value, context)
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
+def env(name: str) -> str:
+    if not (value := os.environ.get(name)):
+        refuse(f"{name} is required")
+    return value
 
 
-def _object_field(value: JsonObject, key: str, context: str) -> JsonObject:
-    try:
-        return object_field(value, key, context)
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
+def env_int(name: str) -> int:
+    if re.fullmatch(r"[1-9][0-9]*", value := env(name)) is None:
+        refuse(f"{name} must be a positive integer")
+    return int(value)
 
 
-def _optional_array(value: JsonObject, key: str, context: str) -> JsonArray:
-    item = value.get(key)
-    if item is None:
-        return []
-    return _array(item, f"{context}.{key}")
+def env_sha(name: str) -> str:
+    if SHA_RE.fullmatch(value := env(name)) is None:
+        refuse(f"{name} must be a 40-character commit SHA")
+    return value
 
 
-def _flatten_objects(pages: JsonValue, key: str) -> list[JsonObject]:
-    result: list[JsonObject] = []
-    for index, page_value in enumerate(_array(pages, "GitHub pagination response")):
-        page = _object(page_value, f"GitHub pagination page {index}")
-        try:
-            items = array_field(page, key, f"GitHub pagination page {index}")
-        except JsonShapeError as exc:
-            raise TrustError(str(exc)) from exc
-        for item_index, item in enumerate(items):
-            result.append(_object(item, f"{key}[{item_index}]"))
-    return result
+def require_checkout(sha: str) -> None:
+    head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+    if head.returncode != 0 or head.stdout.strip() != sha:
+        refuse(f"checked-out tooling does not match trusted commit {sha}")
 
 
-def _flatten_arrays(pages: JsonValue) -> list[JsonObject]:
-    result: list[JsonObject] = []
-    for page_index, page_value in enumerate(_array(pages, "GitHub pagination response")):
-        page = _array(page_value, f"GitHub pagination page {page_index}")
-        for item_index, item in enumerate(page):
-            result.append(_object(item, f"GitHub pagination page {page_index}[{item_index}]"))
-    return result
+def exact_files(directory: Path, names: set[str]) -> None:
+    entries = list(directory.iterdir()) if directory.is_dir() else []
+    if (found := {entry.name for entry in entries}) != names:
+        refuse(f"{directory.name} files are {sorted(found)}; expected {sorted(names)}")
+    for entry in entries:
+        if entry.is_symlink() or not entry.is_file():
+            refuse(f"{entry.name} is not a regular file")
 
 
-def require_pr(
-    repository: str,
-    pr_number: int,
-    expected_sha: str,
-    *,
-    api: APICall = default_api,
-) -> JsonObject:
-    pr = _object(api(f"repos/{repository}/pulls/{pr_number}"), f"PR #{pr_number}")
-    head = _object_field(pr, "head", f"PR #{pr_number}")
-    base = _object_field(pr, "base", f"PR #{pr_number}")
-    head_repo = _object_field(head, "repo", f"PR #{pr_number}.head")
-
-    if pr.get("state") != "open":
-        raise TrustError(f"PR #{pr_number} is not open")
-    if base.get("ref") != "main":
-        raise TrustError(f"PR #{pr_number} does not target main")
-    if head_repo.get("full_name") != repository:
-        raise TrustError("fork PRs cannot publish prereleases")
-    if head.get("sha") != expected_sha:
-        raise TrustError(f"PR #{pr_number} head SHA changed")
-    return pr
+def read_record(path: Path, keys: set[str], expected: JsonObject) -> JsonObject:
+    record = expect_object(decode_json(path.read_text(encoding="utf-8"), path.name), path.name)
+    if set(record) != keys:
+        refuse(f"{path.name} keys are {sorted(record)}; expected {sorted(keys)}")
+    for key, value in expected.items():
+        if type(record[key]) is not type(value) or record[key] != value:
+            refuse(f"{path.name} {key} does not match its trusted request run")
+    return record
 
 
-def require_exact_current_main(
-    repository: str,
-    expected_sha: str,
-    *,
-    api: APICall = default_api,
-) -> str:
-    """Require an exact SHA to still be the repository's current main tip."""
-    main = _object(api(f"repos/{repository}/commits/main"), "current main commit")
-    try:
-        main_sha = str_field(main, "sha", "current main commit")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-    if len(main_sha) != 40:
-        raise TrustError("could not resolve current main SHA")
-    if main_sha != expected_sha:
-        raise TrustError(
-            f"release source {expected_sha} is no longer current main; current main is {main_sha}"
-        )
-    return main_sha
+def _objects(pages: JsonValue, key: str | None = None) -> list[JsonObject]:
+    items: list[JsonObject] = []
+    for page in expect_array(pages, "GitHub pages"):
+        values = page if key is None else expect_object(page, "GitHub page").get(key)
+        items += [expect_object(item, "item") for item in expect_array(values, "page")]
+    return items
+
+
+def _number(value: JsonValue) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _text(value: JsonValue) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _get(value: JsonValue, key: str) -> JsonValue:
+    return value.get(key) if isinstance(value, dict) else None
+
+
+def _bound_to_pr(item: JsonObject, pr_number: int | None) -> bool:
+    if pr_number is None:
+        return True
+    prs = expect_array(item.get("pull_requests") or [], "pull_requests")
+    numbers = [expect_object(pr, "pull request").get("number") for pr in prs]
+    return numbers.count(pr_number) == 1
+
+
+def require_pr(repository: str, pr_number: int, sha: str, *, api: APICall = default_api) -> str:
+    """Return the head branch of an open same-repository PR at exactly `sha`."""
+    pr = expect_object(api(f"repos/{repository}/pulls/{pr_number}"), f"PR #{pr_number}")
+    head = object_field(pr, "head", f"PR #{pr_number}")
+    if pr.get("state") != "open" or object_field(pr, "base", "PR").get("ref") != "main":
+        refuse(f"PR #{pr_number} is not open against main")
+    if object_field(head, "repo", "PR head").get("full_name") != repository:
+        refuse("fork PRs cannot publish prereleases")
+    if head.get("sha") != sha:
+        refuse(f"PR #{pr_number} head SHA changed")
+    return str_field(head, "ref", "PR head")
+
+
+def current_main(repository: str, *, api: APICall = default_api) -> str:
+    sha = str_field(expect_object(api(f"repos/{repository}/commits/main"), "main"), "sha", "main")
+    if SHA_RE.fullmatch(sha) is None:
+        refuse("could not resolve current main SHA")
+    return sha
+
+
+def require_exact_current_main(repository: str, sha: str, *, api: APICall = default_api) -> str:
+    if (main := current_main(repository, api=api)) != sha:
+        refuse(f"{sha} is no longer current main; current main is {main}")
+    return main
 
 
 def require_current_main(
-    repository: str,
-    pr_number: int,
-    expected_sha: str,
-    *,
-    api: APICall = default_api,
+    repository: str, pr_number: int, sha: str, *, api: APICall = default_api,
 ) -> str:
-    """Require the PR head to contain the repository's current main tip."""
-    main = _object(api(f"repos/{repository}/commits/main"), "current main commit")
-    try:
-        main_sha = str_field(main, "sha", "current main commit")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-    if len(main_sha) != 40:
-        raise TrustError("could not resolve current main SHA")
-
-    comparison = _object(
-        api(f"repos/{repository}/compare/{main_sha}...{expected_sha}"),
-        "main/PR comparison",
-    )
-    try:
-        behind_by = int_field(comparison, "behind_by", "main/PR comparison")
-        merge_base = object_field(comparison, "merge_base_commit", "main/PR comparison")
-        merge_base_sha = str_field(merge_base, "sha", "main/PR comparison.merge_base_commit")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-
-    if behind_by != 0:
-        raise TrustError(
-            f"PR #{pr_number} is behind current main {main_sha} by {behind_by} commit(s); "
-            "update the branch and let CI pass again"
-        )
-    if merge_base_sha != main_sha:
-        raise TrustError(f"PR #{pr_number} does not contain current main {main_sha}")
-    return main_sha
-
-
-CONTROL_PLANE = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
+    """Require the PR head to contain current main and return that main SHA."""
+    main = current_main(repository, api=api)
+    comparison = expect_object(api(f"repos/{repository}/compare/{main}...{sha}"), "comparison")
+    base = str_field(object_field(comparison, "merge_base_commit", "comparison"), "sha", "base")
+    if int_field(comparison, "behind_by", "comparison") != 0 or base != main:
+        refuse(f"PR #{pr_number} is behind current main {main}; update it and let CI pass again")
+    return main
 
 
 def require_control_plane_matches_main(
-    repository: str,
-    pr_sha: str,
-    main_sha: str,
-    *,
-    api: APICall = default_api,
+    repository: str, pr_sha: str, main_sha: str, *, api: APICall = default_api,
 ) -> None:
     def entries(ref: str) -> dict[str, JsonValue]:
-        tree = _object(api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
-        items = [_object(item, "tree entry") for item in _optional_array(tree, "tree", "tree")]
-        return {str(item.get("path")): item.get("sha") for item in items}
+        tree = expect_object(api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
+        items = [expect_object(item, "entry") for item in expect_array(tree.get("tree"), "tree")]
+        return {_text(item.get("path")): item.get("sha") for item in items}
 
     pr, main = entries(pr_sha), entries(main_sha)
     if changed := [path for path in CONTROL_PLANE if pr.get(path) != main.get(path)]:
-        raise TrustError(
-            f"PR changes {', '.join(changed)}; prereleases require the current main CI control plane"
-        )
+        refuse(f"PR changes {', '.join(changed)}; prereleases need main's CI control plane")
 
 
-def workflow_id(
-    repository: str,
-    path: str,
-    *,
-    api: APICall = default_api,
-) -> int:
-    workflow = _object(api(f"repos/{repository}/actions/workflows/{path}"), f"workflow {path}")
-    try:
-        return int_field(workflow, "id", f"workflow {path}")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-
-
-def actor_login(run: JsonObject, key: str, context: str) -> str:
-    try:
-        actor = object_field(run, key, context)
-        return str_field(actor, "login", f"{context}.{key}")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-
-
-def run_artifacts(
-    repository: str,
-    run_id: int,
-    *,
-    api: APICall = default_api,
-) -> list[JsonObject]:
-    pages = api(
-        query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
-        paginate=True,
-    )
-    return _flatten_objects(pages, "artifacts")
-
-
-def require_exact_artifact(
-    repository: str,
-    run_id: int,
-    name: str,
-    *,
-    max_size: int,
-    required: bool,
-    api: APICall = default_api,
+def require_dispatch_run(
+    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, artifact: str,
+    *, max_size: int, api: APICall = default_api,
 ) -> None:
-    matches = [
-        artifact
-        for artifact in run_artifacts(repository, run_id, api=api)
-        if artifact.get("name") == name and artifact.get("expired") is False
-    ]
-    if not matches and not required:
-        return
+    """Bind a request run to its workflow, current main, one attempt, the owner and one artifact."""
+    workflow_id = int_field(expect_object(api(f"repos/{repository}/actions/workflows/{workflow}"),
+                                          workflow), "id", workflow)
+    run = expect_object(api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
+    if run.get("id") != run_id or run.get("workflow_id") != workflow_id:
+        refuse(f"run {run_id} is not a {workflow} run")
+    if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
+        refuse("request was not dispatched from main")
+    if run.get("head_sha") != main_sha:
+        refuse("main changed after the request; start a fresh request")
+    if run.get("run_attempt") != 1:
+        refuse("request reruns are not accepted; start a fresh dispatch")
+    if (run.get("status"), run.get("conclusion")) != DONE:
+        refuse(f"request run is {run.get('status')}/{run.get('conclusion')}")
+    for key in ("actor", "triggering_actor"):
+        if object_field(run, key, "request run").get("login") != owner:
+            refuse("request was not initiated by the repository owner")
+    pages = api(query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
+                paginate=True)
+    matches = [item for item in _objects(pages, "artifacts")
+               if item.get("name") == artifact and item.get("expired") is False]
     if len(matches) != 1:
-        raise TrustError(
-            f"expected exactly one non-expired artifact named {name}, found {len(matches)}"
-        )
-    try:
-        size = int_field(matches[0], "size_in_bytes", f"artifact {name}")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-    if size < 0:
-        raise TrustError(f"artifact {name} has an invalid size")
-    if size > max_size:
-        raise TrustError(f"artifact {name} is too large ({size} bytes; limit {max_size})")
+        refuse(f"expected one unexpired artifact {artifact}, found {len(matches)}")
+    if not 0 <= int_field(matches[0], "size_in_bytes", artifact) <= max_size:
+        refuse(f"artifact {artifact} exceeds {max_size} bytes")
 
 
 def require_ci_gate(
-    repository: str,
-    sha: str,
-    *,
-    event: str,
-    branch: str,
-    pr_number: int | None = None,
+    repository: str, sha: str, *, event: str, branch: str, pr_number: int | None = None,
     api: APICall = default_api,
 ) -> int:
-    """Require Gate from an exact successful `ci.yml` workflow run."""
-    run_pages = api(
-        query(
-            f"repos/{repository}/actions/workflows/ci.yml/runs",
-            event=event,
-            head_sha=sha,
-            per_page=100,
-        ),
-        paginate=True,
-    )
-    runs = _flatten_objects(run_pages, "workflow_runs")
-
-    def belongs_to_pr(run: JsonObject) -> bool:
-        if pr_number is None:
-            return True
-        matches = 0
-        for item in _optional_array(run, "pull_requests", "workflow run"):
-            pr = _object(item, "workflow run pull request")
-            if pr.get("number") == pr_number:
-                matches += 1
-        return matches == 1
-
-    bound_runs = [
-        run
-        for run in runs
-        if run.get("head_sha") == sha
-        and run.get("head_branch") == branch
-        and run.get("event") == event
-        and belongs_to_pr(run)
-    ]
+    """Require Gate in the newest `ci.yml` run for exactly this commit, branch and PR."""
+    pages = api(query(f"repos/{repository}/actions/workflows/ci.yml/runs",
+                      event=event, head_sha=sha, per_page=100), paginate=True)
+    identity = (sha, branch, event)
+    runs = [run for run in _objects(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
+            and (run.get("head_sha"), run.get("head_branch"), run.get("event")) == identity]
     scope = f"PR #{pr_number}" if pr_number is not None else branch
-    if not bound_runs:
-        raise TrustError(f"CI for {scope} at {sha} is missing")
-
-    def run_order(run: JsonObject) -> tuple[int, int, str]:
-        run_number = run.get("run_number")
-        run_attempt = run.get("run_attempt")
-        updated_at = run.get("updated_at")
-        return (
-            run_number if isinstance(run_number, int) and not isinstance(run_number, bool) else 0,
-            run_attempt if isinstance(run_attempt, int) and not isinstance(run_attempt, bool) else 0,
-            updated_at if isinstance(updated_at, str) else "",
-        )
-
-    selected = max(bound_runs, key=run_order)
-    try:
-        run_id = int_field(selected, "id", "selected CI run")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
-    status = selected.get("status")
-    conclusion = selected.get("conclusion")
-    if status != "completed" or conclusion != "success":
-        raise TrustError(
-            f"latest CI run {run_id} for {scope} at {sha} is {status}/{conclusion}; "
-            "an older successful run cannot authorize publication"
-        )
-
-    job_pages = api(
-        query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest", per_page=100),
-        paginate=True,
-    )
-    jobs = _flatten_objects(job_pages, "jobs")
-    gates = [job for job in jobs if job.get("name") == "Gate"]
-    if len(gates) != 1:
-        raise TrustError(f"CI run {run_id} has {len(gates)} Gate jobs")
-    gate = gates[0]
-    if gate.get("status") != "completed" or gate.get("conclusion") != "success":
-        raise TrustError(
-            f"Gate in CI run {run_id} is {gate.get('status')}/{gate.get('conclusion')}"
-        )
+    if not runs:
+        refuse(f"CI for {scope} at {sha} is missing")
+    run = max(runs, key=lambda item: (_number(item.get("run_number")),
+                                      _number(item.get("run_attempt")),
+                                      _text(item.get("updated_at"))))
+    run_id = int_field(run, "id", "CI run")
+    if (run.get("status"), run.get("conclusion")) != DONE:
+        refuse(f"latest CI run {run_id} for {scope} at {sha} is "
+               f"{run.get('status')}/{run.get('conclusion')}")
+    pages = api(query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                      per_page=100), paginate=True)
+    gates = [job for job in _objects(pages, "jobs") if job.get("name") == "Gate"]
+    if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
+        refuse(f"Gate in CI run {run_id} did not succeed")
     return run_id
 
 
 def require_check_run(
-    repository: str,
-    sha: str,
-    *,
-    name: str,
-    app_slug: str,
-    pr_number: int | None = None,
+    repository: str, sha: str, *, name: str, app_slug: str, pr_number: int | None = None,
     api: APICall = default_api,
 ) -> int:
-    pages = api(
-        query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100, filter="all"),
-        paginate=True,
-    )
-    checks = _flatten_objects(pages, "check_runs")
-
-    def belongs_to_pr(check: JsonObject) -> bool:
-        if pr_number is None:
-            return True
-        matches = 0
-        for item in _optional_array(check, "pull_requests", "check run"):
-            pr = _object(item, "check run pull request")
-            if pr.get("number") == pr_number:
-                matches += 1
-        return matches == 1
-
-    matches: list[JsonObject] = []
-    for check in checks:
-        app_value = check.get("app")
-        if not isinstance(app_value, dict):
-            continue
-        if (
-            check.get("name") == name
-            and app_value.get("slug") == app_slug
-            and belongs_to_pr(check)
-        ):
-            matches.append(check)
-    scope = f" for PR #{pr_number}" if pr_number is not None else ""
-    if not matches:
-        raise TrustError(f"{name}{scope} at {sha} is missing")
-
-    def check_order(check: JsonObject) -> tuple[bool, str, int]:
-        # Any unfinished matching check blocks publication, including queued
-        # runs without a start time. Completed retries are ordered by start;
-        # an older slow success must not hide a newer failed attempt.
-        started = check.get("started_at")
-        check_id = check.get("id")
-        return (
-            check.get("status") != "completed",
-            started if isinstance(started, str) else "",
-            check_id if isinstance(check_id, int) and not isinstance(check_id, bool) else 0,
-        )
-
-    selected = max(matches, key=check_order)
-    if selected.get("status") != "completed" or selected.get("conclusion") != "success":
-        raise TrustError(
-            f"{name}{scope} at {sha} is {selected.get('status')}/{selected.get('conclusion')}"
-        )
-    try:
-        return int_field(selected, "id", f"{name} check")
-    except JsonShapeError as exc:
-        raise TrustError(str(exc)) from exc
+    pages = api(query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
+                      filter="all"), paginate=True)
+    checks = [check for check in _objects(pages, "check_runs")
+              if check.get("name") == name and _get(check.get("app"), "slug") == app_slug
+              and _bound_to_pr(check, pr_number)]
+    scope = f"{name} for PR #{pr_number}" if pr_number is not None else name
+    if not checks:
+        refuse(f"{scope} at {sha} is missing")
+    # Unfinished checks block; an older slow success must not hide a newer retry.
+    check = max(checks, key=lambda item: (item.get("status") != "completed",
+                                          _text(item.get("started_at")), _number(item.get("id"))))
+    if (check.get("status"), check.get("conclusion")) != DONE:
+        refuse(f"{scope} at {sha} is {check.get('status')}/{check.get('conclusion')}")
+    return int_field(check, "id", name)
 
 
-def require_main_codeql(
-    repository: str,
-    sha: str,
-    *,
-    api: APICall = default_api,
-) -> None:
-    pages = api(
-        query(
-            f"repos/{repository}/code-scanning/analyses",
-            ref="refs/heads/main",
-            tool_name="CodeQL",
-            per_page=100,
-        ),
-        paginate=True,
-    )
+def require_main_codeql(repository: str, sha: str, *, api: APICall = default_api) -> None:
+    """Require the newest CodeQL analysis of every category at `sha` to be error-free."""
+    pages = api(query(f"repos/{repository}/code-scanning/analyses", ref="refs/heads/main",
+                      tool_name="CodeQL", per_page=100), paginate=True)
+    def order(item: JsonObject) -> tuple[str, int]:
+        return _text(item.get("created_at")), _number(item.get("id"))
 
-    analyses: list[JsonObject] = []
-    for analysis in _flatten_arrays(pages):
-        tool_value = analysis.get("tool")
-        if not isinstance(tool_value, dict):
-            continue
-        if analysis.get("commit_sha") == sha and tool_value.get("name") == "CodeQL":
-            analyses.append(analysis)
-    if not analyses:
-        raise TrustError(f"CodeQL analysis for {sha} is missing")
-
-    # The endpoint is historical and a rerun can leave an older failed analysis
-    # beside a newer success for the same category. Authorize only the newest
-    # exact-SHA result in each analysis identity; never let an older success hide
-    # a newer failure, and never let an older transient failure brick the SHA.
-    def identity(analysis: JsonObject) -> tuple[str, str, str]:
-        values: list[str] = []
-        for key in ("category", "analysis_key", "environment"):
-            value = analysis.get(key)
-            values.append(value if isinstance(value, str) else "")
-        return values[0], values[1], values[2]
-
-    def order(analysis: JsonObject) -> tuple[str, int]:
-        created = analysis.get("created_at")
-        analysis_id = analysis.get("id")
-        return (
-            created if isinstance(created, str) else "",
-            analysis_id if isinstance(analysis_id, int) and not isinstance(analysis_id, bool) else 0,
-        )
-
-    newest: dict[tuple[str, str, str], JsonObject] = {}
-    for analysis in analyses:
-        key = identity(analysis)
-        previous = newest.get(key)
-        if previous is None or order(analysis) > order(previous):
-            newest[key] = analysis
-
-    errors = [
-        analysis
-        for analysis in newest.values()
-        if isinstance(analysis.get("error"), str) and analysis.get("error") != ""
-    ]
-    if errors:
-        details: list[str] = []
-        for analysis in errors:
-            category = analysis.get("category")
-            analysis_key = analysis.get("analysis_key")
-            error = analysis.get("error")
-            label = category if isinstance(category, str) and category else analysis_key
-            details.append(f"{label if isinstance(label, str) and label else 'unknown'}: {error}")
-        raise TrustError(f"latest CodeQL analysis for {sha} has errors: {'; '.join(details)}")
-
-    for analysis in newest.values():
-        warning = analysis.get("warning")
-        if isinstance(warning, str) and warning:
+    matching = [item for item in _objects(pages)
+                if item.get("commit_sha") == sha and _get(item.get("tool"), "name") == "CodeQL"]
+    identity = ("category", "analysis_key", "environment")
+    newest = {tuple(_text(item.get(key)) for key in identity): item
+              for item in sorted(matching, key=order)}
+    if not newest:
+        refuse(f"CodeQL analysis for {sha} is missing")
+    if errors := [f"{key[0] or key[1]}: {item['error']}" for key, item in newest.items()
+                  if _text(item.get("error"))]:
+        refuse(f"latest CodeQL analysis for {sha} has errors: {'; '.join(errors)}")
+    for item in newest.values():
+        if warning := _text(item.get("warning")):
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")

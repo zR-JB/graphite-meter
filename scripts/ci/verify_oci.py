@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Verify release OCI platforms and provenance labels using pinned Skopeo.
-
-The verifier is pure Python apart from invoking the configured container engine.
-It intentionally does not depend on jq, grep, or host Skopeo.
-"""
+"""Verify release OCI platforms, provenance and labels with the pinned Skopeo image."""
 
 from __future__ import annotations
 
@@ -13,299 +9,142 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+
 from github_api import (
+    ControlPlaneError,
     JsonObject,
-    JsonShapeError,
     decode_json,
+    expect_array,
     expect_object,
-    int_field,
     object_field,
     str_field,
 )
+from trust import env
+
+DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
+PLATFORMS = {"amd64", "arm64"}
+INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
+MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
+SKOPEO_VERSION_RE = re.compile(r"skopeo version (\S+)(?: commit: [0-9a-fA-F]+)?")
+ARCHIVE = "oci-archive:/work/image.oci.tar"
 
 
-class VerificationError(RuntimeError):
+class VerificationError(ControlPlaneError):
     pass
-
-SHA256_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
-ATTESTATION_TYPE = "attestation-manifest"
-ATTESTATION_TYPE_ANNOTATION = "vnd.docker.reference.type"
-ATTESTATION_DIGEST_ANNOTATION = "vnd.docker.reference.digest"
-EXPECTED_PLATFORMS = {("linux", "amd64"), ("linux", "arm64")}
-OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
-OCI_MANIFEST_MEDIA_TYPE = "application/vnd.oci.image.manifest.v1+json"
-SKOPEO_VERSION_OUTPUT_RE = re.compile(
-    r"^skopeo version (?P<version>[^\s]+)(?: commit: [0-9a-fA-F]+)?$"
-)
-
 
 
 def parse_skopeo_version(output: str) -> str:
-    """Return the exact Skopeo semantic version from supported `--version` output."""
-    match = SKOPEO_VERSION_OUTPUT_RE.fullmatch(output.strip())
-    if match is None:
+    if (match := SKOPEO_VERSION_RE.fullmatch(output.strip())) is None:
         raise VerificationError(f"unexpected Skopeo --version output: {output!r}")
-    return match.group("version")
+    return match.group(1)
+
 
 def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
-    """Validate the two runnable images and their BuildKit provenance manifests.
-
-    Explicit `provenance: mode=max` creates one provenance attestation manifest
-    for each runnable platform in the OCI index. Attestation descriptors use
-    platform unknown/unknown and bind back to the runnable manifest digest via
-    the BuildKit reference annotations. No other index descriptors are allowed.
-    """
-    try:
-        if int_field(index, "schemaVersion", "OCI index") != 2:
-            raise VerificationError("OCI index.schemaVersion must be 2")
-        if str_field(index, "mediaType", "OCI index") != OCI_INDEX_MEDIA_TYPE:
-            raise VerificationError(f"OCI index.mediaType must be {OCI_INDEX_MEDIA_TYPE}")
-    except JsonShapeError as exc:
-        raise VerificationError(str(exc)) from exc
-
-    manifests_value = index.get("manifests")
-    if not isinstance(manifests_value, list):
-        raise VerificationError("OCI index.manifests must be an array")
-
-    runnable: dict[tuple[str, str], str] = {}
-    attestations: list[str] = []
-    for position, manifest_value in enumerate(manifests_value):
+    """Return the runnable digests, each of which needs exactly one linked provenance manifest."""
+    if index.get("schemaVersion") != 2 or index.get("mediaType") != INDEX_TYPE:
+        raise VerificationError(f"OCI index must be a schemaVersion 2 {INDEX_TYPE}")
+    runnable: dict[str, str] = {}
+    attested: list[str] = []
+    for position, value in enumerate(expect_array(index.get("manifests"), "OCI manifests")):
         context = f"OCI index.manifests[{position}]"
-        try:
-            manifest = expect_object(manifest_value, context)
-            platform = object_field(manifest, "platform", context)
-            os_name = str_field(platform, "os", f"{context}.platform")
-            architecture = str_field(platform, "architecture", f"{context}.platform")
-            digest = str_field(manifest, "digest", context)
-            media_type = str_field(manifest, "mediaType", context)
-        except JsonShapeError as exc:
-            raise VerificationError(str(exc)) from exc
-        if SHA256_DIGEST_RE.fullmatch(digest) is None:
-            raise VerificationError(f"{context}.digest must be a sha256 digest")
-        if media_type != OCI_MANIFEST_MEDIA_TYPE:
-            raise VerificationError(f"{context}.mediaType must be {OCI_MANIFEST_MEDIA_TYPE}")
-
-        platform_key = (os_name, architecture)
-        if platform_key in EXPECTED_PLATFORMS:
-            if platform_key in runnable:
-                raise VerificationError(
-                    f"OCI index contains duplicate runnable platform {os_name}/{architecture}"
-                )
-            runnable[platform_key] = digest
-            continue
-
-        if platform_key != ("unknown", "unknown"):
-            raise VerificationError(
-                f"OCI index contains unexpected platform {os_name}/{architecture}"
-            )
-        try:
+        manifest = expect_object(value, context)
+        platform = object_field(manifest, "platform", context)
+        system = str_field(platform, "os", context)
+        arch = str_field(platform, "architecture", context)
+        digest = str_field(manifest, "digest", context)
+        if DIGEST_RE.fullmatch(digest) is None or manifest.get("mediaType") != MANIFEST_TYPE:
+            raise VerificationError(f"{context} must be an OCI manifest with a sha256 digest")
+        if system == "linux" and arch in PLATFORMS and arch not in runnable:
+            runnable[arch] = digest
+        elif (system, arch) == ("unknown", "unknown"):
             annotations = object_field(manifest, "annotations", context)
-            reference_type = str_field(
-                annotations, ATTESTATION_TYPE_ANNOTATION, f"{context}.annotations"
-            )
-            reference_digest = str_field(
-                annotations, ATTESTATION_DIGEST_ANNOTATION, f"{context}.annotations"
-            )
-        except JsonShapeError as exc:
-            raise VerificationError(str(exc)) from exc
-        if reference_type != ATTESTATION_TYPE:
-            raise VerificationError(
-                f"{context} unknown/unknown descriptor is not a provenance attestation manifest"
-            )
-        if SHA256_DIGEST_RE.fullmatch(reference_digest) is None:
-            raise VerificationError(
-                f"{context} attestation reference digest must be a sha256 digest"
-            )
-        attestations.append(reference_digest)
-
-    if set(runnable) != EXPECTED_PLATFORMS:
-        actual = ", ".join(f"{os_name}/{arch}" for os_name, arch in sorted(runnable)) or "none"
-        raise VerificationError(
-            "OCI archive must contain exactly one runnable linux/amd64 and linux/arm64 "
-            f"manifest; got {actual}"
-        )
-
-    runnable_digests = set(runnable.values())
-    if len(attestations) != len(runnable_digests) or set(attestations) != runnable_digests:
-        raise VerificationError(
-            "OCI archive must contain exactly one provenance attestation manifest for each "
-            "runnable platform manifest"
-        )
-    if len(attestations) != len(set(attestations)):
-        raise VerificationError("OCI archive contains duplicate provenance attestation references")
-
-    return {architecture: digest for (_os_name, architecture), digest in runnable.items()}
-
-
-def parse_object_json(text: str, context: str) -> JsonObject:
-    try:
-        return expect_object(decode_json(text, context), context)
-    except JsonShapeError as exc:
-        raise VerificationError(str(exc)) from exc
-
-
-def require_env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        raise VerificationError(f"{name} must be set")
-    return value
+            if annotations.get("vnd.docker.reference.type") != "attestation-manifest":
+                raise VerificationError(f"{context} is not a provenance attestation manifest")
+            attested.append(str_field(annotations, "vnd.docker.reference.digest", context))
+        else:
+            raise VerificationError(f"unexpected or duplicate OCI platform {system}/{arch}")
+    if runnable.keys() != PLATFORMS:
+        raise VerificationError(f"OCI archive needs linux/amd64 and linux/arm64, got {runnable}")
+    if sorted(attested) != sorted(runnable.values()):
+        raise VerificationError("OCI archive needs one provenance attestation per image")
+    return runnable
 
 
 def select_engine() -> str:
     configured = os.environ.get("CONTAINER_ENGINE")
-    if configured:
-        if shutil.which(configured) is None:
-            raise VerificationError(f"container engine {configured!r} was not found")
-        return configured
-    for candidate in ("docker", "podman"):
-        if shutil.which(candidate) is not None:
+    for candidate in [configured] if configured else ["docker", "podman"]:
+        if shutil.which(candidate):
             return candidate
     raise VerificationError("OCI verification requires Docker or Podman")
 
 
 def run(*args: str) -> str:
-    result = subprocess.run(
-        args,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise VerificationError(f"command failed ({' '.join(args)}): {detail}")
     return result.stdout.strip()
 
 
-def run_skopeo_container(
-    engine: str,
-    image: str,
-    *args: str,
-    archive: Path | None = None,
-) -> str:
-    """Run pinned Skopeo with no network and at most one read-only host mount."""
-    command = [
-        engine,
-        "run",
-        "--rm",
-        "--network",
-        "none",
-        "--entrypoint",
-        "skopeo",
-    ]
-    if archive is not None:
-        command.extend(("-v", f"{archive.resolve()}:/work/image.oci.tar:ro"))
-    command.extend((image, *args))
-    return run(*command)
-
-
-def skopeo(engine: str, image: str, archive: Path, *args: str) -> str:
-    return run_skopeo_container(engine, image, *args, archive=archive)
+def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> str:
+    mount = ("-v", f"{archive.resolve()}:/work/image.oci.tar:ro") if archive else ()
+    return run(engine, "run", "--rm", "--network", "none", "--entrypoint", "skopeo", *mount,
+               image, *args)
 
 
 def verify_skopeo_runtime() -> tuple[str, str]:
-    """Verify the pinned Skopeo image and its declared human-readable version."""
-    engine = select_engine()
-    image = require_env("SKOPEO_IMAGE")
-    expected_skopeo = require_env("SKOPEO_VERSION")
-    version_text = run_skopeo_container(engine, image, "--version")
-    print(version_text)
-    actual_skopeo = parse_skopeo_version(version_text)
-    if actual_skopeo != expected_skopeo:
-        raise VerificationError(
-            f"unexpected Skopeo version; expected {expected_skopeo!r}, got {actual_skopeo!r}"
-        )
+    engine, image = select_engine(), env("SKOPEO_IMAGE")
+    output = skopeo(engine, image, "--version")
+    print(output)
+    if (actual := parse_skopeo_version(output)) != (expected := env("SKOPEO_VERSION")):
+        raise VerificationError(f"Skopeo version is {actual!r}; expected {expected!r}")
     return engine, image
-
-
-def verify_archive_blobs(engine: str, image: str, archive: Path) -> None:
-    """Force Skopeo to read every referenced blob without writing to the host."""
-    # The verifier container normally runs as root. A writable bind mount here
-    # would therefore create root-owned files in the runner's temporary
-    # directory and make Python cleanup fail after an otherwise successful copy.
-    # Keep the archive as the only bind mount and materialize the verified OCI
-    # layout in the container's ephemeral filesystem; successful `copy --all`
-    # is the proof that every referenced manifest/config/layer was readable.
-    run_skopeo_container(
-        engine,
-        image,
-        "copy",
-        "--all",
-        "oci-archive:/work/image.oci.tar",
-        "oci:/tmp/graphite-meter-verified:verified",
-        archive=archive,
-    )
 
 
 def verify(version: str, revision: str, archive: Path) -> None:
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         raise VerificationError(f"OCI archive is missing, empty, or not a regular file: {archive}")
-
     engine, image = verify_skopeo_runtime()
-    repository = require_env("REPOSITORY")
+    repository = env("REPOSITORY")
 
-    index = parse_object_json(
-        skopeo(engine, image, archive, "inspect", "--raw", "oci-archive:/work/image.oci.tar"),
-        "OCI index",
-    )
-    validate_index_descriptors(index)
+    def inspect(*args: str) -> JsonObject:
+        output = skopeo(engine, image, "inspect", *args, ARCHIVE, archive=archive)
+        return expect_object(decode_json(output, "skopeo inspect"), "skopeo inspect")
 
-    # Inspecting manifests/configs alone does not prove that every referenced
-    # layer blob is readable. A full local copy forces Skopeo to consume the
-    # complete multi-platform archive before it can become a publication handoff.
-    verify_archive_blobs(engine, image, archive)
-
-    expected_labels = {
+    validate_index_descriptors(inspect("--raw"))
+    # Copying every blob proves the archive is complete; the copy stays inside the container.
+    skopeo(engine, image, "copy", "--all", ARCHIVE, "oci:/tmp/graphite-meter-verified:verified",
+           archive=archive)
+    expected = {
         "org.opencontainers.image.source": f"https://github.com/{repository}",
         "org.opencontainers.image.revision": revision,
         "org.opencontainers.image.version": version,
         "org.opencontainers.image.licenses": "AGPL-3.0-or-later",
     }
-    for architecture in ("amd64", "arm64"):
-        labels = parse_object_json(
-            skopeo(
-                engine,
-                image,
-                archive,
-                "inspect",
-                "--override-os",
-                "linux",
-                "--override-arch",
-                architecture,
-                "--format",
-                "{{json .Labels}}",
-                "oci-archive:/work/image.oci.tar",
-            ),
-            f"OCI labels for linux/{architecture}",
-        )
-        for key, expected in expected_labels.items():
-            if labels.get(key) != expected:
+    for arch in sorted(PLATFORMS):
+        labels = inspect("--override-os", "linux", "--override-arch", arch,
+                         "--format", "{{json .Labels}}")
+        for key, value in expected.items():
+            if labels.get(key) != value:
                 raise VerificationError(
-                    f"OCI label {key!r} for linux/{architecture} is {labels.get(key)!r}; "
-                    f"expected {expected!r}"
-                )
-
+                    f"OCI label {key} for linux/{arch} is {labels.get(key)!r}; expected {value!r}")
     print(f"OCI verification passed: {version} @ {revision}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check-skopeo", action="store_true")
-    parser.add_argument("version", nargs="?")
-    parser.add_argument("revision", nargs="?")
-    parser.add_argument("archive", nargs="?", type=Path)
+    parser.add_argument("release", nargs="*", metavar="VERSION REVISION ARCHIVE")
     args = parser.parse_args()
+    if len(args.release) != (0 if args.check_skopeo else 3):
+        parser.error("pass --check-skopeo alone or VERSION REVISION ARCHIVE")
     try:
         if args.check_skopeo:
-            if any(value is not None for value in (args.version, args.revision, args.archive)):
-                parser.error("--check-skopeo does not accept release arguments")
             verify_skopeo_runtime()
             print("Skopeo runtime contract passed")
-            return
-        if args.version is None or args.revision is None or args.archive is None:
-            parser.error("version, revision, and archive are required")
-        verify(args.version, args.revision, args.archive)
-    except VerificationError as exc:
+        else:
+            verify(args.release[0], args.release[1], Path(args.release[2]))
+    except ControlPlaneError as exc:
         raise SystemExit(f"OCI verification failed: {exc}") from exc
 
 
