@@ -77,8 +77,8 @@ jobs:
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
         with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
-      - name: Refresh reviewed legal metadata
-        run: mise run legal-generate
+      - name: Check legal outputs for drift
+        run: mise run legal-check
       - name: Run component checks
         run: mise run core-check
 
@@ -180,8 +180,6 @@ jobs:
       - name: Set up release test toolchain
         uses: ./.github/actions/setup-project
         with: {go: 'true', bun: 'true', client-deps: 'true'}
-      - name: Refresh reviewed legal metadata
-        run: mise run legal-generate
       - name: Build and verify representative release packages
         run: mise run release-check
       - name: Verify pinned Skopeo runtime contract

@@ -94,6 +94,7 @@ jobs:
           VERSION: ${{ steps.request.outputs.version }}
           RELEASE_DIST: ${{ runner.temp }}/release-assets
         run: |
+          VERSION= mise run legal-check
           mise run legal-generate
           mise run release-build "$VERSION"
           mise run release-artifacts "$VERSION"

@@ -68,7 +68,7 @@ PATH_FILTERS = {
     "release": (".dockerignore",),
     "security": ("client/package.json", "client/bun.lock", "client/bunfig.toml"),
 }
-CI_SUPERSETS = {"server-test": "server-race", "legal-check": "legal-generate"}
+CI_SUPERSETS = {"server-test": "server-race"}
 
 
 class PolicyError(RuntimeError):
@@ -175,6 +175,8 @@ def check_workflows(root: Path) -> None:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
         if "setup-project" in step and step.count("cache: 'false'") != 3:
             fail("release-request.yml: the untrusted build must disable every cache")
+    if "VERSION= mise run legal-check\n" not in request:
+        fail("release-request.yml: stable builds must check committed legal outputs first")
 
 
 def check_ci(root: Path) -> None:
