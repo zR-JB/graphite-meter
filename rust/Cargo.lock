@@ -946,6 +946,9 @@ dependencies = [
  "h3",
  "h3-noq",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "miniz_oxide",
  "noq",
  "ratatui",
@@ -971,6 +974,23 @@ dependencies = [
  "serde_json",
  "socket2",
  "url",
+]
+
+[[package]]
+name = "graphite-meter-net"
+version = "0.8.6"
+dependencies = [
+ "base64 0.22.1",
+ "graphite-meter-core",
+ "http",
+ "hyper",
+ "hyper-util",
+ "ipnet",
+ "percent-encoding",
+ "rustls",
+ "rustls-platform-verifier",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

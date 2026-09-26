@@ -88,7 +88,7 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
     packages = {item['id']: item for item in metadata['packages']}
     own = {item['id'] for item in packages.values()
            if Path(item['manifest_path']).resolve().parent in
-           {repo / 'rust' / name for name in ('client', 'server', 'core')}}
+           {repo / 'rust' / name for name in ('client', 'server', 'core', 'net')}}
     root = next((item['id'] for item in packages.values() if item['name'] == package and item['id'] in own), None)
     if root is None:
         raise LegalError(f'workspace package is missing: {package}')

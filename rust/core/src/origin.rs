@@ -18,6 +18,14 @@ impl fmt::Display for OriginError {
 impl std::error::Error for OriginError {}
 
 impl Origin {
+    pub fn port_number(&self) -> u16 {
+        self.port
+            .as_deref()
+            .map_or(if self.scheme == "https" { 443 } else { 80 }, |port| {
+                port.parse().expect("validated origin port")
+            })
+    }
+
     pub fn authority(&self) -> String {
         let host = if self.host.contains(':') {
             format!("[{}]", self.host)

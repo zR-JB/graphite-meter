@@ -167,7 +167,7 @@ jobs:
       - name: Keep only dependency builds in a new cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         working-directory: rust
-        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
 
   rust-interop:
     name: Experimental Rust interoperability
@@ -211,7 +211,7 @@ jobs:
       - name: Keep only dependency builds in a new cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         working-directory: rust
-        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net
 
   browser:
     name: Browser (Chromium WebView)
