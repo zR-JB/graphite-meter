@@ -78,16 +78,16 @@ fn generate() -> Result<()> {
             if html.matches("</head>").count() != 1 {
                 return Err("index.html must contain exactly one closing head element".into());
             }
-            if html.matches("<script>").count() > 1 {
-                return Err(
-                    "index.html has multiple inline scripts; CSP supports one pre-paint script"
-                        .into(),
-                );
-            }
-            if let Some((_, script)) = html.split_once("<script>")
-                && !script.contains("</script>")
-            {
-                return Err("index.html has an unterminated inline script".into());
+            for tag in ["script", "style"] {
+                let open = format!("<{tag}>");
+                if html.matches(&open).count() > 1 {
+                    return Err(format!("index.html has multiple inline {tag} elements").into());
+                }
+                if let Some((_, content)) = html.split_once(&open)
+                    && !content.contains(&format!("</{tag}>"))
+                {
+                    return Err(format!("index.html has an unterminated inline {tag}").into());
+                }
             }
             if html.contains("name=\"graphite-meter-auth\"")
                 || html.contains("name=\"graphite-meter-result-history-default\"")

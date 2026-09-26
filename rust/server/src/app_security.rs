@@ -14,11 +14,15 @@ pub struct AppSecurity {
     preflight: Preflight,
     configured_sources: Vec<String>,
     authenticated_host: Option<String>,
-    script_policy: String,
+    asset_policy: String,
 }
 
 impl AppSecurity {
-    pub fn new(config: Arc<Config>, script_hash: Option<&str>) -> Result<Self, ConfigError> {
+    pub fn new(
+        config: Arc<Config>,
+        script_hash: Option<&str>,
+        style_hash: Option<&str>,
+    ) -> Result<Self, ConfigError> {
         config.validate()?;
         let authenticated_host = if config.auth.mode == AuthMode::Off {
             None
@@ -29,22 +33,23 @@ impl AppSecurity {
                     .host,
             )
         };
-        let mut script_policy = String::from("script-src 'self'");
-        if let Some(hash) = script_hash {
-            // The hash comes from embedded bytes, but keep this constructor's
-            // boundary independent of its caller and CSP quoting conventions.
-            use base64::{Engine, engine::general_purpose::STANDARD};
-            let decoded = STANDARD.decode(hash)?;
-            if decoded.len() != 32 || STANDARD.encode(&decoded) != hash {
-                return Err("invalid application script hash".into());
+        let mut asset_policy = String::new();
+        for (directive, hash) in [("script-src", script_hash), ("style-src", style_hash)] {
+            asset_policy.push_str(&format!("; {directive} 'self'"));
+            if let Some(hash) = hash {
+                use base64::{Engine, engine::general_purpose::STANDARD};
+                let decoded = STANDARD.decode(hash)?;
+                if decoded.len() != 32 || STANDARD.encode(&decoded) != hash {
+                    return Err("invalid application asset hash".into());
+                }
+                asset_policy.push_str(&format!(" 'sha256-{hash}'"));
             }
-            script_policy.push_str(&format!(" 'sha256-{hash}'"));
         }
         Ok(Self {
             configured_sources: config.server_catalog.connect_sources(),
             preflight: Preflight::new(config)?,
             authenticated_host,
-            script_policy,
+            asset_policy,
         })
     }
 
@@ -71,14 +76,13 @@ impl AppSecurity {
         sources.sort_unstable();
         sources.dedup();
         let mut csp = String::from(
-            "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'",
+            "default-src 'self'; img-src 'self' data:; font-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'",
         );
         for source in sources {
             csp.push(' ');
             csp.push_str(&source);
         }
-        csp.push_str("; ");
-        csp.push_str(&self.script_policy);
+        csp.push_str(&self.asset_policy);
         let mut headers = HeaderMap::new();
         headers.insert("content-security-policy", HeaderValue::from_str(&csp)?);
         headers.insert("x-frame-options", HeaderValue::from_static("DENY"));

@@ -232,3 +232,72 @@ fn oidc_csp_widens_only_form_action_to_validated_origin() {
         assert!(security_headers(Some(origin)).is_err(), "{origin:?}");
     }
 }
+
+#[tokio::test]
+async fn application_response_restricts_resources_and_hashes_embedded_inline_assets() {
+    use graphite_meter_server::{config::Config, http_server::HttpServer};
+    use std::{sync::Arc, time::Duration};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+        sync::oneshot,
+    };
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = oneshot::channel();
+        let serving = tokio::spawn(server.serve_http1(listener, async {
+            let _ = stopped.await;
+        }));
+        let mut socket = TcpStream::connect(address).await.unwrap();
+        socket
+            .write_all(
+                format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut response = String::new();
+        socket.read_to_string(&mut response).await.unwrap();
+        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+        let policy = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-security-policy: "))
+            .unwrap();
+        for directive in [
+            "default-src 'self'",
+            "img-src 'self' data:",
+            "font-src 'self'",
+            "worker-src 'self'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'self'",
+            "frame-ancestors 'none'",
+        ] {
+            assert!(
+                policy.split("; ").any(|actual| actual == directive),
+                "missing {directive}: {policy}"
+            );
+        }
+        for tag in ["script", "style"] {
+            let mut expected = format!("{tag}-src 'self'");
+            for inline in inline_blocks(body, tag) {
+                expected.push_str(&format!(
+                    " 'sha256-{}'",
+                    STANDARD.encode(Sha256::digest(inline.as_bytes()))
+                ));
+            }
+            assert!(
+                policy.split("; ").any(|actual| actual == expected),
+                "{policy}"
+            );
+        }
+        assert!(!policy.contains("unsafe-inline"));
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+}

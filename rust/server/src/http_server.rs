@@ -96,8 +96,11 @@ impl HttpServer {
             )?)
         };
         let assets = crate::assets::Assets::new(auth.is_some(), config.result_history_default);
-        let app_security =
-            crate::app_security::AppSecurity::new(config.clone(), assets.inline_script_hash())?;
+        let app_security = crate::app_security::AppSecurity::new(
+            config.clone(),
+            assets.inline_script_hash(),
+            assets.inline_style_hash(),
+        )?;
         let admission = Admission::new(config.limits);
         let discovery = Discovery::new(config.clone(), Some(admission.clone()), None)?;
         let connections = Connections::new(

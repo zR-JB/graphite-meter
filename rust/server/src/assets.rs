@@ -24,6 +24,7 @@ pub struct Assets {
     entries: &'static [EmbeddedAsset],
     index: Option<Bytes>,
     inline_script_hash: Option<String>,
+    inline_style_hash: Option<String>,
 }
 
 impl Assets {
@@ -39,7 +40,8 @@ impl Assets {
         history_default: bool,
     ) -> Self {
         let index = entries.iter().find(|entry| entry.path == "index.html");
-        let inline_script_hash = index.and_then(|entry| script_hash(entry.bytes));
+        let inline_script_hash = index.and_then(|entry| inline_hash(entry.bytes, "script"));
+        let inline_style_hash = index.and_then(|entry| inline_hash(entry.bytes, "style"));
         let index = index.map(|entry| {
             let mut marker = String::new();
             if auth_enabled {
@@ -56,6 +58,7 @@ impl Assets {
             entries,
             index,
             inline_script_hash,
+            inline_style_hash,
         }
     }
 
@@ -66,6 +69,10 @@ impl Assets {
     /// Base64 SHA-256 digest, without CSP quotes or the sha256- prefix.
     pub fn inline_script_hash(&self) -> Option<&str> {
         self.inline_script_hash.as_deref()
+    }
+
+    pub fn inline_style_hash(&self) -> Option<&str> {
+        self.inline_style_hash.as_deref()
     }
 
     /// `path` is the request URI path, excluding its query. No decoding,
@@ -139,11 +146,11 @@ fn response(
         .expect("static response headers are valid")
 }
 
-fn script_hash(html: &[u8]) -> Option<String> {
+fn inline_hash(html: &[u8], tag: &str) -> Option<String> {
     let html = std::str::from_utf8(html).ok()?;
-    let (_, script) = html.split_once("<script>")?;
-    let (script, _) = script.split_once("</script>")?;
-    Some(STANDARD.encode(Sha256::digest(script.as_bytes())))
+    let (_, content) = html.split_once(&format!("<{tag}>"))?;
+    let (content, _) = content.split_once(&format!("</{tag}>"))?;
+    Some(STANDARD.encode(Sha256::digest(content.as_bytes())))
 }
 
 #[cfg(test)]
@@ -154,7 +161,7 @@ mod tests {
             path: "index.html",
             content_type: "text/html; charset=utf-8",
             bytes:
-                b"<html><head><script>const theme = 'dark';\n</script></head><body></body></html>",
+                b"<html><head><style>html { background: #131518; }\n</style><script>const theme = 'dark';\n</script></head><body></body></html>",
         },
         EmbeddedAsset {
             path: "assets/app.js",
@@ -179,14 +186,30 @@ mod tests {
             head.headers()["content-length"],
             get.body().len().to_string()
         );
-        assert_eq!(
+        let security = crate::app_security::AppSecurity::new(
+            std::sync::Arc::new(crate::config::Config::default()),
             assets.inline_script_hash(),
-            Some(
-                STANDARD
-                    .encode(Sha256::digest(b"const theme = 'dark';\n"))
-                    .as_str()
-            )
-        );
+            assets.inline_style_hash(),
+        )
+        .unwrap();
+        let headers = security.headers("localhost").unwrap();
+        let policy = headers["content-security-policy"].to_str().unwrap();
+        for tag in ["script", "style"] {
+            let content = body
+                .split_once(&format!("<{tag}>"))
+                .unwrap()
+                .1
+                .split_once(&format!("</{tag}>"))
+                .unwrap()
+                .0;
+            let hash = STANDARD.encode(Sha256::digest(content.as_bytes()));
+            assert!(
+                policy
+                    .split("; ")
+                    .any(|directive| directive == format!("{tag}-src 'self' 'sha256-{hash}'"))
+            );
+        }
+        assert!(!policy.contains("unsafe-inline"));
         let public = Assets::from_entries(FILES, false, false).serve(&Method::GET, "/");
         assert!(
             !std::str::from_utf8(public.body())
