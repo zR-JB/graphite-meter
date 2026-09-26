@@ -987,7 +987,12 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 		results := map[string]goclient.Result{}
+		counting := false
 		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
+			if ev.Kind == goclient.EventStage && ev.Phase == goclient.PhasePreparing && !counting {
+				counting = true
+				countSessionsFromNow(t, e.admission)
+			}
 			if ev.Kind == goclient.EventResult && ev.Result != nil {
 				results[string(ev.Stage)] = *ev.Result
 			}
@@ -996,11 +1001,27 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		if err != nil || results["download"].TotalBytes == 0 || results["upload"].TotalBytes == 0 {
 			t.Fatalf("run at %d lanes: %v, %+v", streams, err, results)
 		}
+		// Lanes share their stage's session; only the previous stage's closing session may briefly overlap it.
+		if _, sessions := e.admission.stats(); sessions.peak > 2 {
+			t.Fatalf("%d WebTransport sessions were open at once at %d lanes, want at most 2", sessions.peak, streams)
+		}
 	}
-	// Lanes share their stage's session; only the previous stage's closing session may briefly overlap it.
-	if _, sessions := e.admission.stats(); sessions.peak > 2 {
-		t.Fatalf("%d WebTransport sessions were open at once, want at most 2", sessions.peak)
+}
+
+// countSessionsFromNow waits out the preparation's verify session, then restarts the session peak.
+func countSessionsFromNow(t *testing.T, a *requestAdmission) {
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, sessions := a.stats(); sessions.active == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Error("the preparation's sessions never closed")
+			return
+		}
 	}
+	a.mu.Lock()
+	a.sessions.peak = 0
+	a.mu.Unlock()
 }
 
 // A reset upload lane costs only its own bytes: the session, its siblings and a replacement lane carry on.
