@@ -62,6 +62,25 @@ class SourceArchiveTests(unittest.TestCase):
         self.assertEqual(sum(name.endswith('/replacement.go') for name in files), 1)
         self.assertNotIn(str(self.root).encode(), files['graphite-meter_development_third-party-source/LEGAL_INVENTORY.json'])
 
+    def test_links_may_not_leave_the_component_or_repository(self) -> None:
+        package = self.write('client/node_modules/pkg/index.js', 'code\n').parent
+        (package / 'README').symlink_to(package / 'index.js')
+        self.scopes['server/browser'] = [Component('pkg', '1', 'npm', source_path=package)]
+        output = self.root / 'sources.tar.gz'
+        third_party_source_bundle(self.root, Project(), 'development', self.scopes, [], output)
+        self.assertEqual(self.contents(output)[
+            'graphite-meter_development_third-party-source/third_party/npm/pkg_at_1/README'], b'code\n')
+        outside = tempfile.NamedTemporaryFile()
+        self.addCleanup(outside.close)
+        (package / 'secret').symlink_to(outside.name)
+        with self.assertRaisesRegex(LegalError, 'links outside'):
+            third_party_source_bundle(self.root, Project(), 'development', self.scopes, [], output)
+        self.scopes['server/browser'] = []
+        self.root.joinpath('manual.txt').symlink_to(outside.name)
+        entry = Provenance(name='m', localPaths=['manual.txt'], correspondingSource='third_party/manual/m')
+        with self.assertRaisesRegex(LegalError, 'links outside'):
+            third_party_source_bundle(self.root, Project(), 'development', self.scopes, [entry], output)
+
     def test_manual_archive_legal_files_and_relative_sources_are_required(self) -> None:
         self.write('manual/LICENSE', 'MIT License\n')
         entry = Provenance(name='font', localLegalFiles=[LegalFile('manual/LICENSE')], correspondingSource='third_party/manual/font')

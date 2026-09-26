@@ -116,14 +116,15 @@ def add_bytes(archive: tarfile.TarFile, name: str, data: bytes) -> None:
     archive.addfile(header, io.BytesIO(data))
 
 
-def add_tree(archive: tarfile.TarFile, root: Path, destination: str) -> None:
-    # Preserve the former walk's lexical depth-first order and dereference file
-    # symlinks without traversing directory links.
+def add_tree(archive: tarfile.TarFile, root: Path, destination: str, boundary: Path) -> None:
+    # Lexical depth-first order; file links are dereferenced only inside `boundary`.
+    if root.is_symlink() and not root.resolve().is_relative_to(boundary.resolve()):
+        raise LegalError(f'{root} links outside {boundary}')
     if root.is_symlink() or not root.is_dir():
         add_bytes(archive, destination, root.read_bytes())
         return
     for path in sorted(root.iterdir()):
-        add_tree(archive, path, destination + '/' + path.name)
+        add_tree(archive, path, destination + '/' + path.name, boundary)
 
 
 def third_party_source_bundle(repo: Path, project: Project, version: str,
@@ -145,7 +146,8 @@ def third_party_source_bundle(repo: Path, project: Project, version: str,
                     if component.source_path is None:
                         raise LegalError(f'source directory unavailable for {ecosystem} {component.name}@{component.version}')
                     add_tree(archive, component.source_path,
-                             f'{root}/third_party/{ecosystem}/' + safe_name(component.name + '@' + component.version))
+                             f'{root}/third_party/{ecosystem}/' + safe_name(component.name + '@' + component.version),
+                             component.source_path)
             for entry in provenance:
                 destination = root + '/' + manual_source_destination(entry)
                 for local in entry.localPaths + [item.name for item in entry.localLegalFiles]:
@@ -154,7 +156,7 @@ def third_party_source_bundle(repo: Path, project: Project, version: str,
                     path = repo / local
                     try:
                         path.lstat()
-                        add_tree(archive, path, destination + '/' + path.name)
+                        add_tree(archive, path, destination + '/' + path.name, repo)
                     except OSError as error:
                         raise LegalError(f'archive manual source {local} for {entry.name}: {error}') from error
             # The inventory envelope was a sorted map; component records keep their field order.
