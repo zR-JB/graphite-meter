@@ -928,9 +928,11 @@ const SAVE_DEBOUNCE_MS = 250;
 export function mountStoreEffects(store: AppStore): () => void {
   const onStorage = (event: StorageEvent) => {
     if (event.key !== STORAGE_KEY) return;
-    const persisted = loadPersisted();
-    store.resultHistoryPreference = persisted.resultHistoryPreference;
-    store.historyColumns = persisted.historyColumns;
+    const { resultHistoryPreference, historyColumns } = loadPersisted();
+    // Only a real change may reach the save effect, or two tabs rewrite each other.
+    store.resultHistoryPreference = resultHistoryPreference;
+    if (`${historyColumns}` !== `${store.historyColumns}`)
+      store.historyColumns = historyColumns;
   };
   window.addEventListener("storage", onStorage);
   let systemPrefersLight = $state(systemThemeDefault() === "light");
