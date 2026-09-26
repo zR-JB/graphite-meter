@@ -462,7 +462,7 @@ both TLS paths.
 | `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`   | Global measurement handlers.                              |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`    | Measurement handlers per client identity.                 |
 | `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`    | WebTransport sessions within the global measurement pool. |
-| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `16`    | WebTransport transfer sessions per client identity.       |
+| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`     | WebTransport transfer sessions per client identity.       |
 | `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `512`   | Concurrent TCP and QUIC connections.                      |
 | `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`    | Connections per direct client.                            |
 | `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`    | Maximum request-shaped measurement lifetime.              |
@@ -470,7 +470,8 @@ both TLS paths.
 
 All numeric limits must be positive. Per-client limits cannot exceed their global limit. The
 session pool is part of the measurement pool, and the session duration must be at least the
-operation duration.
+operation duration. A direct client address holds at most 8 QUIC connections, and a browser opens
+one per WebTransport session, so a larger session share helps only a login that spans addresses.
 
 Graphite Meter does not throttle measurement bandwidth because doing so would change the result.
 An internet-facing deployment should enable authentication or apply appropriate connection and

@@ -85,7 +85,7 @@ func Default() Config {
 		Native:        NativeEndpoints{H1: ":7246"},
 		ServerName:    "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
-		MaxActiveSessions: 64, MaxSessionsPerClient: 16,
+		MaxActiveSessions: 64, MaxSessionsPerClient: 8,
 		MaxConnections: 512, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
 		MaxSessionDuration:   2 * time.Hour,

@@ -203,6 +203,13 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 	}
 }
 
+// Browsers open one QUIC connection per WebTransport session, so the default share fits a client's connections.
+func TestDefaultSessionShareFitsAClientsQUICConnections(t *testing.T) {
+	if sessions := config.Default().MaxSessionsPerClient; sessions > maxClientQUICConnections {
+		t.Fatalf("%d sessions per client exceed its %d QUIC connections", sessions, maxClientQUICConnections)
+	}
+}
+
 // A peer that stalls a control exchange, or idles between exchanges, gives its connection slot back within the
 // control deadline on every native listener.
 func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
