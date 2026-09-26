@@ -166,21 +166,26 @@ const latencySeries = (b: LatencyBucket) =>
 const throughputSeries = (s: ThroughputSample) =>
   `${s.phase}:${s.dir}:${s.continuityId}`;
 
-/** Inserts or revises a bucket in time order; true when existing points changed. */
+/** Inserts or revises a bucket in time order, searching from the tail; true when existing points changed. */
 export function upsertLatencyBucket(
   history: LatencyBucket[],
   bucket: LatencyBucket,
   limit = SERIES_LIMIT,
 ): boolean {
   const key = latencySeries(bucket);
-  const existing = history.findIndex(
-    (b) => b.startT === bucket.startT && latencySeries(b) === key,
-  );
-  const following = history.findIndex((b) => b.startT > bucket.startT);
-  if (existing >= 0) history[existing] = bucket;
-  else if (following >= 0) history.splice(following, 0, bucket);
-  else history.push(bucket);
-  if (history.length <= limit) return existing >= 0 || following >= 0;
+  let at = history.length;
+  while (at > 0 && history[at - 1].startT > bucket.startT) at--;
+  let same = at - 1;
+  while (
+    same >= 0 &&
+    history[same].startT === bucket.startT &&
+    latencySeries(history[same]) !== key
+  )
+    same--;
+  const revised = same >= 0 && history[same].startT === bucket.startT;
+  if (revised) history[same] = bucket;
+  else history.splice(at, 0, bucket);
+  if (history.length <= limit) return revised || at < history.length - 1;
   history.splice(
     0,
     history.length,

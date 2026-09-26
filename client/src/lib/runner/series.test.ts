@@ -82,7 +82,10 @@ describe("latency history", () => {
     expect(
       upsertLatencyBucket(history, singleLatencyBucket(10, 14, false)),
     ).toBe(true);
-    expect(history.map((bucket) => bucket.medianRttMs)).toEqual([10, 14]);
+    expect(upsertLatencyBucket(history, singleLatencyBucket(5, 8, false))).toBe(
+      true,
+    );
+    expect(history.map((bucket) => bucket.medianRttMs)).toEqual([10, 8, 14]);
   });
 
   test("compaction keeps the success-weighted median and the worst tail", () => {
