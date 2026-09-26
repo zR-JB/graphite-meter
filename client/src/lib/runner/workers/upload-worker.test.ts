@@ -80,7 +80,7 @@ test("nextUploadBytes protects size and EWMA on non-positive elapsed time", () =
 
 for (const streams of [1, 128])
   test(`the first upload with ${streams} lanes copies only one source block, not the full reservoir`, async () => {
-    const { stubGlobals } = await import("../../test-helpers.test");
+    const { stubGlobals } = await import("../../test-helpers.testutil");
     const { incompressibleBlock } = await import("./payload");
     const NativeBlob = Blob;
     let copiedBytes = 0;

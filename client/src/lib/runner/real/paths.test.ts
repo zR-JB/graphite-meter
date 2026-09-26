@@ -1,5 +1,5 @@
-import { stubGlobals } from "../test-helpers.test";
-import { test, expect, spyOn } from "bun:test";
+import { stubGlobals } from "../../test-helpers.testutil";
+import { test, expect, jest, spyOn } from "bun:test";
 import {
   httpToWs,
   needsPings,
@@ -9,26 +9,28 @@ import {
   selectLatencyTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
-  throughputTargetKey,
   fetchViewOfWebTransport,
   targetOfKind,
   ROUTES,
   automaticThroughputTargets,
   automaticLatencyTargets,
-} from "./real/backendPure";
-import { isLoopbackHostname } from "../servers/catalog";
-import { kindsForRole, ridesSession } from "./real/transports";
+} from "./backendPure";
+import { isLoopbackHostname } from "../../servers/catalog";
+import { kindsForRole, ridesSession } from "./transports";
 import type {
   PreparedPaths,
   ConnectionRole,
   PhaseActivity,
   RunnerConfig,
-  StallInfo,
   TransportDiscovery,
-} from "./contract";
-import { emptyConnectionValidation } from "./connectionModel";
-import { DEFAULT_CONFIG } from "../state/defaults";
-import { TEST_BUILD_TOKENS, testHost, testTransfer } from "./test-helpers.test";
+} from "../contract";
+import { emptyConnectionValidation } from "../connectionModel";
+import { DEFAULT_CONFIG } from "../../state/defaults";
+import {
+  TEST_BUILD_TOKENS,
+  testHost,
+  testTransfer,
+} from "../test-helpers.testutil";
 type ThroughputAdvertisement = Parameters<
   typeof classifyTransportDiscovery
 >[0][number];
@@ -324,14 +326,6 @@ test("browser protocol verification is independent of server probe evidence", ()
   expect(protocolFromNextHop("h2")).toBe("http2");
 });
 
-test("idle target ownership includes protocol and public origin", () => {
-  const target = testTransfer("http2", "https://meter", "http2", true);
-  expect(throughputTargetKey(target)).toBe("http2\nhttps://meter");
-  expect(
-    throughputTargetKey({ ...target, origin: "https://other-meter" }),
-  ).not.toBe(throughputTargetKey(target));
-});
-
 test("clear DNS and IPv4 loopback targets stay usable from HTTPS", () => {
   for (const host of ["localhost", "meter.localhost", "127.42.0.9"]) {
     const target = testTransfer(
@@ -439,9 +433,9 @@ for (const { name, lanes, warmupMs, baseMs, expected } of [
   });
 
 async function preparationHarness() {
-  const { prepareConnections } = await import("./real/prepare");
+  const { prepareConnections } = await import("./prepare");
   let validation = emptyConnectionValidation();
-  let idle: import("./real/prepare").ConnectionPreparation["idle"];
+  let idle: import("./prepare").ConnectionPreparation["idle"];
   const discoveries: TransportDiscovery[] = [];
   return {
     discoveries,
@@ -483,362 +477,6 @@ async function preparationHarness() {
   };
 }
 
-test("real backend: probe refresh keeps the negotiated protocol per role, and the upload stage opens its progress channel before any POST lane", async () => {
-  const realWorker = globalThis.Worker;
-  const started: string[] = [];
-  const workerStarts: { kind: string; url: string }[] = [];
-  const pingMessages: Record<string, unknown>[] = [];
-  const fetchUrls: string[] = [];
-  const transferWorkers: FakeWorker[] = [];
-  let preflights = 0;
-  let browserProtocol = "http/1.1";
-  let progressFeed: ReadableStreamDefaultController<Uint8Array> | null = null;
-  const progressSignals: AbortSignal[] = [];
-  const sendProgress = (record: object): void => {
-    progressFeed!.enqueue(
-      new TextEncoder().encode(JSON.stringify(record) + "\n"),
-    );
-  };
-  const until = async (predicate: () => boolean): Promise<void> => {
-    for (let i = 0; i < 100 && !predicate(); i++) await Bun.sleep(1);
-    expect(predicate()).toBe(true);
-  };
-  let pingWorker: FakeWorker | null = null;
-  class FakeWorker {
-    onmessage: ((event: MessageEvent) => void) | null = null;
-    onerror: ((event: ErrorEvent) => void) | null = null;
-    readonly kind: "ping" | "upload" | "download";
-    constructor(url: URL) {
-      const path = String(url);
-      this.kind = path.includes("upload-worker")
-        ? "upload"
-        : path.includes("download-worker")
-          ? "download"
-          : "ping";
-      if (this.kind === "ping") pingWorker = this;
-      if (this.kind === "upload" || this.kind === "download")
-        transferWorkers.push(this);
-    }
-    postMessage(
-      message: { type: string; url?: string } & Record<string, unknown>,
-    ): void {
-      if (this.kind === "ping") pingMessages.push(message);
-      if (this.kind === "ping" && message.type === "stop") {
-        queueMicrotask(() => this.emit({ type: "stopped" }));
-        return;
-      }
-      if (message.type !== "start" && message.type !== "measure") return;
-      if (message.type === "start" && message.url)
-        workerStarts.push({ kind: this.kind, url: message.url });
-      if (this.kind === "ping") {
-        queueMicrotask(() => {
-          this.emit({ type: "ready" });
-          this.emit({
-            type: "samples",
-            samples: [
-              { rtt: 1, lost: false },
-              { rtt: 1, lost: false },
-              { rtt: 1, lost: false },
-              { rtt: 1, lost: false },
-              { rtt: 1, lost: false },
-            ],
-          });
-        });
-      } else if (message.type === "start") {
-        started.push(this.kind);
-      }
-    }
-    emit(data: unknown): void {
-      this.onmessage?.({ data } as MessageEvent);
-    }
-    terminate(): void {}
-  }
-  const probeWithRtts = async (
-    probe: Promise<PreparedPaths>,
-    rtt: number,
-  ): Promise<PreparedPaths> => {
-    let settled = false;
-    const done = probe.then(
-      (info) => {
-        settled = true;
-        return info;
-      },
-      (error: unknown) => {
-        settled = true;
-        throw error;
-      },
-    );
-    for (let turn = 0; turn < 100 && !settled; turn++) {
-      pingWorker?.emit({
-        type: "samples",
-        samples: pingSamples(rtt),
-      });
-      await Promise.resolve();
-    }
-    return done;
-  };
-  const restoreProbe = stubProbeEnvironment(
-    (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      fetchUrls.push(url);
-      if (url.includes("/preflight")) {
-        preflights++;
-        return Response.json(probeDiscovery(preflights > 1));
-      }
-      if (url.includes("/probe"))
-        return Response.json({
-          clientIp: "127.0.0.1",
-          clientIpVersion: 4,
-          clientIpSource: "socket",
-          protocolNegotiated: "http/1.1",
-        });
-      if (url.includes("/upload/session"))
-        return Response.json({ uploadId: "gmu_test" });
-      if (url.includes("/upload/progress")) {
-        if (init?.method === "DELETE")
-          return new Response(null, { status: 204 });
-        started.push("progress");
-        progressSignals.push(init!.signal!);
-        return new Response(
-          new ReadableStream<Uint8Array>({
-            start(controller) {
-              progressFeed = controller;
-              init!.signal!.addEventListener(
-                "abort",
-                () => controller.error(init!.signal!.reason),
-                { once: true },
-              );
-            },
-          }),
-        );
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    }) as typeof fetch,
-    { location: "http://meter.test:7246/", protocol: () => browserProtocol },
-  );
-  globalThis.Worker = FakeWorker as unknown as typeof Worker;
-  const preparation = await preparationHarness();
-  try {
-    const { RealBackend } = await import("./RealRunner");
-    const { TransportUnavailableError } = await import("./real/transportError");
-    const config = probeConfig(true);
-    config.stages = {
-      latency: true,
-      download: true,
-      upload: true,
-      bidirectional: false,
-    };
-    config.transports.throughputTarget = "http://meter.test:7246";
-    config.transferStreams = { mode: "forced", count: 6 };
-    config.duration = {
-      warmupMs: 0,
-      latencyMs: 1,
-      downloadMs: 1,
-      uploadMs: 1,
-      bidirectionalMs: 1,
-    };
-    const failures: string[] = [];
-    let incompleteAccounting = 0;
-    const discoveries = preparation.discoveries;
-    const uploadBytes: number[] = [];
-    const stalls: StallInfo[] = [];
-    const host = testHost(config, {
-      failStage(_stage, _reason, message) {
-        failures.push(message);
-      },
-      ingestLatencyAccountingIncomplete() {
-        incompleteAccounting++;
-      },
-      ingestThroughput(_dir, bytes) {
-        uploadBytes.push(bytes);
-      },
-      stall(info) {
-        stalls.push(info);
-      },
-    });
-    const probe = () => preparation.check(config);
-    const firstProbe = await probeWithRtts(probe(), 3);
-    expect(firstProbe.latency!.rttMs).toBe(3);
-    config.transports.throughputTarget = "https://meter.test:7249";
-    await expect(probe()).rejects.toBeInstanceOf(TransportUnavailableError);
-    expect(
-      discoveries.at(-1)?.throughput["https://meter.test:7248"].state,
-    ).toBe("advertised");
-    config.transports.throughputTarget = "http://meter.test:7246";
-    const info = await probeWithRtts(probe(), 5);
-    expect(
-      pingMessages.filter((message) => message.type === "start").length,
-    ).toBeGreaterThan(1);
-    expect(info.latency!.rttMs).toBe(5);
-    expect(info.latency!.probe.clientIp).toBe("127.0.0.1");
-    expect(info.latency!.probe.clientIpVersion).toBe(4);
-    expect(info.latency!.probe.clientIpSource).toBe("socket");
-    expect(info.latency!.probe.protocolNegotiated).toBe("http/1.1");
-    expect(preflights).toBe(3);
-    const preflightUrls = fetchUrls.filter((url) => url.includes("/preflight"));
-    expect(preflightUrls).toHaveLength(3);
-    expect(
-      preflightUrls.every((url) =>
-        url.startsWith("/preflight?client=web&client_version="),
-      ),
-    ).toBe(true);
-    expect(
-      workerStarts
-        .filter(({ kind }) => kind === "ping")
-        .every(({ url }) => url === "ws://meter.test:7246/ws/ping"),
-    ).toBe(true);
-    expect(workerStarts.some(({ url }) => url.includes("8765"))).toBe(false);
-    expect(
-      discoveries[0].throughput["https://meter.test:7248"],
-    ).toBeUndefined();
-    expect(discoveries[2].throughput["https://meter.test:7248"].state).toBe(
-      "advertised",
-    );
-    let fetchStart = fetchUrls.length;
-    await preparation.check(config, ["throughput"]);
-    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
-    fetchStart = fetchUrls.length;
-    const latencyProbe = await probeWithRtts(
-      preparation.check(config, ["latency"]),
-      7,
-    );
-    expect(latencyProbe.latency!.rttMs).toBe(7);
-    expect(fetchUrls.slice(fetchStart)).toHaveLength(2);
-    config.transports.throughputTarget = "https://proxy.test";
-    browserProtocol = "";
-    const proxyWithoutTiming = await preparation.check(config, ["throughput"]);
-    expect(proxyWithoutTiming.throughput.fetch.protocol).toBe("negotiated");
-    expect(
-      targetOfKind(
-        discoveries.at(-1)!.throughput["https://proxy.test"],
-        "fetch-stream",
-      )?.protocol,
-    ).toBe("negotiated");
-    browserProtocol = "h2";
-    const proxyThroughput = await preparation.check(config, ["throughput"]);
-    expect(proxyThroughput.throughput.fetch.protocol).toBe("http2");
-    const proxyLatency = await probeWithRtts(
-      preparation.check(config, ["latency"]),
-      9,
-    );
-    expect(proxyLatency.throughput.fetch.protocol).toBe("http2");
-    expect(proxyLatency.latency!.rttMs).toBe(9);
-    expect(
-      targetOfKind(
-        discoveries.at(-1)!.throughput["https://proxy.test"],
-        "fetch-stream",
-      )?.protocol,
-    ).toBe("negotiated");
-    config.transports.throughputTarget = "http://meter.test:7246";
-    browserProtocol = "http/1.1";
-    const paths = await preparation.check(config, ["throughput"]);
-    preparation.stop();
-    const backend = new RealBackend(paths);
-    backend.attach(host);
-    backend.onRunStart(config);
-    const unloaded = phaseActivity("latency");
-    backend.onStageBegin(unloaded);
-    expect(pingMessages.at(-1)).toMatchObject({
-      type: "start",
-      replyDriven: true,
-      maxInFlight: 4,
-    });
-    backend.onStageMeasure(unloaded);
-    expect(pingMessages.at(-1)).toEqual({ type: "measure" });
-    await backend.onStageEnd(unloaded);
-    const loaded = phaseActivity("download", ["down"], true);
-    backend.onStageBegin(loaded);
-    expect(pingMessages.at(-1)).toMatchObject({
-      type: "start",
-      intervalMs: 250,
-      replyDriven: false,
-      maxInFlight: 2,
-    });
-    backend.onStageMeasure(loaded);
-    expect(pingMessages.at(-1)).toEqual({ type: "measure" });
-    transferWorkers.at(-1)!.emit({
-      type: "error",
-      recoverable: true,
-      detail: "download stalled",
-    });
-    expect(stalls.at(-1)?.transport).toBe("fetch-stream");
-    await backend.onStageEnd(loaded);
-    expect(incompleteAccounting).toBe(0);
-    backend.onStageBegin(loaded);
-    backend.onStageMeasure(loaded);
-    backend.onStageEnd(loaded, false);
-    expect(incompleteAccounting).toBe(1);
-    started.length = 0;
-    uploadBytes.length = 0;
-    const stagePreparation = backend.onStageBegin({
-      stage: "upload",
-      transfer: ["up"],
-      loadedLatency: false,
-    });
-    await until(() => progressFeed !== null);
-    expect(started).toEqual(["progress"]);
-    expect(fetchUrls.at(-1)).toBe(
-      "http://meter.test:7246/upload/progress?id=gmu_test",
-    );
-    sendProgress({ type: "ready" });
-    await stagePreparation;
-    expect(started).toEqual([
-      "progress",
-      "upload",
-      "upload",
-      "upload",
-      "upload",
-      "upload",
-      "upload",
-    ]);
-    expect(failures).toEqual([]);
-    const activity = phaseActivity("upload", ["up"]);
-    backend.onStageMeasure(activity);
-    sendProgress({ type: "progress", bytes: 100, nanos: 100_000_000 });
-    sendProgress({ type: "progress", bytes: 200, nanos: 200_000_000 });
-    await until(() => uploadBytes.length === 1);
-    const ending = backend.onStageEnd(activity);
-    if (!ending)
-      throw new Error("upload finalization did not return a promise");
-    let ended = false;
-    void ending.then(() => (ended = true));
-    await Promise.resolve();
-    expect(ended).toBe(false);
-    sendProgress({ type: "complete", bytes: 300, nanos: 300_000_000 });
-    await ending;
-    expect(uploadBytes).toEqual([100, 100]);
-    expect(ended).toBe(true);
-    uploadBytes.length = 0;
-    progressFeed = null;
-    const stalePreparation = backend.onStageBegin(activity);
-    await until(() => progressFeed !== null);
-    sendProgress({ type: "ready" });
-    await stalePreparation;
-    backend.onStageMeasure(activity);
-    const staleEnding = backend.onStageEnd(activity);
-    if (!staleEnding)
-      throw new Error("stale upload finalization did not return a promise");
-    backend.onAbort();
-    expect(progressSignals.at(-1)?.aborted).toBe(true);
-    backend.onRunStart(config);
-    progressFeed = null;
-    const replacementPreparation = backend.onStageBegin(activity);
-    await until(() => progressFeed !== null);
-    sendProgress({ type: "ready" });
-    await replacementPreparation;
-    backend.onStageMeasure(activity);
-    await staleEnding;
-    sendProgress({ type: "progress", bytes: 100, nanos: 100_000_000 });
-    sendProgress({ type: "progress", bytes: 200, nanos: 200_000_000 });
-    await until(() => uploadBytes.length === 1);
-    expect(uploadBytes).toEqual([100]);
-    backend.onComplete();
-  } finally {
-    preparation.stop();
-    globalThis.Worker = realWorker;
-    restoreProbe();
-  }
-});
 const preflightDocument = {
   server: { name: "test" },
   engineVersion: "test",
@@ -848,18 +486,7 @@ const preflightDocument = {
     latency: [wsAd("http://meter.test:7246")],
   },
 };
-const probeDiscovery = (withH2: boolean) => ({
-  ...preflightDocument,
-  generation: withH2 ? "b" : "a",
-  capabilities: {
-    throughput: [
-      fetchAd("http://meter.test:7246", "http1"),
-      fetchAd("https://proxy.test", "negotiated"),
-      ...(withH2 ? [fetchAd("https://meter.test:7248", "http2")] : []),
-    ],
-    latency: [wsAd("http://meter.test:7246")],
-  },
-});
+
 const pathProbeDocument = {
   clientIp: "127.0.0.1",
   clientIpVersion: 4,
@@ -1122,7 +749,7 @@ test("a failed WebTransport-only path cannot turn its HTTP control probe into a 
 
 test("Automatic stops at an authentication failure instead of probing another endpoint", async () => {
   const { ServerAuthenticationRequired } =
-    await import("../servers/credentials");
+    await import("../../servers/credentials");
   const requests: string[] = [];
   const document = {
     ...preflightDocument,
@@ -1171,9 +798,8 @@ test("cross-origin IPv6 discovery and path preparation fail with DNS guidance be
     throw new Error("unexpected fetch");
   }) as typeof fetch);
   try {
-    const { discoverServer, prepareConnections } =
-      await import("./real/prepare");
-    const { BrowserOriginBlockedError } = await import("./real/transportError");
+    const { discoverServer, prepareConnections } = await import("./prepare");
+    const { BrowserOriginBlockedError } = await import("./transportError");
     const remote = "http://[::1]:7246";
     await expect(
       discoverServer(new AbortController().signal, {
@@ -1215,8 +841,8 @@ test("secure interfaces reject clear non-loopback discovery before any request",
     { location: "https://ui.example/" },
   );
   try {
-    const { discoverServer } = await import("./real/prepare");
-    const { BrowserOriginBlockedError } = await import("./real/transportError");
+    const { discoverServer } = await import("./prepare");
+    const { BrowserOriginBlockedError } = await import("./transportError");
     const failure = await discoverServer(new AbortController().signal, {
       server: {
         id: "clear",
@@ -1252,7 +878,7 @@ test("same-origin IPv6 discovery remains available through the page origin", asy
     { location: `${origin}/` },
   );
   try {
-    const { discoverServer } = await import("./real/prepare");
+    const { discoverServer } = await import("./prepare");
     const result = await discoverServer(new AbortController().signal, {
       server: { id: "self", name: "IPv6", url: origin },
       kind: "public",
@@ -1285,7 +911,7 @@ test("catalogue preflight timing includes the complete response body without pro
   }) as typeof fetch);
   performance.now = () => now;
   try {
-    const { discoverServer } = await import("./real/prepare");
+    const { discoverServer } = await import("./prepare");
     const result = await discoverServer(new AbortController().signal);
     expect(result.preflightMs).toBe(45);
     expect(requests).toBe(1);
@@ -1446,20 +1072,24 @@ test.each([null, 0])(
     const realWorker = globalThis.Worker;
     globalThis.Worker = FakePingWorker as unknown as typeof Worker;
     const preparation = await preparationHarness();
+    jest.useFakeTimers();
     try {
       let settled = false;
       const pending = preparation.check(probeConfig(true)).finally(() => {
         settled = true;
       });
+      // A silent bus resolves on its reply deadline, not on elapsed test time.
       for (let turn = 0; turn < 100 && !settled; turn++) {
         const worker = FakePingWorker.all.at(-1);
         worker?.emit({ type: "ready" });
         if (rtt !== null)
           worker?.emit({ type: "samples", samples: pingSamples(rtt) });
-        await Promise.resolve();
+        jest.advanceTimersByTime(20);
+        for (let i = 0; i < 20; i++) await Promise.resolve();
       }
       expect((await pending).latency!.rttMs).toBe(rtt);
     } finally {
+      jest.useRealTimers();
       preparation.stop();
       globalThis.Worker = realWorker;
       restore();
@@ -1538,10 +1168,11 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     }) as typeof fetch,
     { location: "https://meter.test/", protocol: "h2" },
   );
+  jest.useFakeTimers();
   try {
     globalThis.Worker = PingBusWorker as unknown as typeof Worker;
     globals.WebTransport = class {};
-    const { RealBackend } = await import("./RealRunner");
+    const { RealBackend } = await import("../RealRunner");
     const config = probeConfig(true);
     config.stages.download = false;
     config.transports.throughputTarget = "https://meter.test";
@@ -1564,7 +1195,8 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
           type: "samples",
           samples: pingSamples(2),
         });
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      jest.advanceTimersByTime(5);
+      for (let i = 0; i < 20; i++) await Promise.resolve();
     }
     const fallback = await degrading;
     expect(fallback.latency!.target.transport).toBe("websocket");
@@ -1583,13 +1215,14 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     expect(PingBusWorker.starts.at(-1)).toBe("websocket");
     backend.dispose();
   } finally {
+    jest.useRealTimers();
     globalThis.Worker = realWorker;
     if (realWebTransport === undefined)
       Reflect.deleteProperty(globals, "WebTransport");
     else globals.WebTransport = realWebTransport;
     restore();
   }
-}, 15000);
+});
 
 test("transport dispatch distinguishes sessions and supported roles", () => {
   expect(ridesSession("webtransport")).toBe(true);

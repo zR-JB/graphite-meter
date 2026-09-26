@@ -1,24 +1,15 @@
-import "./state/runes.test";
-import { beforeAll, expect, test } from "bun:test";
-import { stubGlobals } from "./test-helpers.test";
+import "./state/runes.testutil";
+import { expect, test } from "bun:test";
+import * as auth from "./auth";
+import { stubGlobals } from "./test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testServerCatalog,
   testServerDiscovery,
-} from "./runner/test-helpers.test";
+} from "./runner/test-helpers.testutil";
 
-// Match the server's authenticated-page marker before importing auth policy.
-let auth: typeof import("./auth");
-beforeAll(async () => {
-  const restoreMarker = stubGlobals({
-    document: { querySelector: () => ({ getAttribute: () => "enabled" }) },
-  });
-  try {
-    auth = await import("./auth");
-  } finally {
-    restoreMarker();
-  }
-});
+// The server marks authenticated pages; every stubbed document carries it.
+const authenticatedPage = () => ({ getAttribute: () => "enabled" });
 
 function environment(request: typeof fetch) {
   const target = new EventTarget();
@@ -33,6 +24,7 @@ function environment(request: typeof fetch) {
     document: Object.assign(new EventTarget(), {
       cookie: "__Host-gm_csrf=csrf",
       visibilityState: "visible",
+      querySelector: authenticatedPage,
     }),
     navigator: { onLine: true },
     location: {

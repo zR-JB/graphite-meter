@@ -25,7 +25,7 @@ import { describeTarget } from "./real/targetPresentation";
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
 export type { ConnectionRole } from "./contract";
-export interface RoleValidation<Path> {
+interface RoleValidation<Path> {
   selection: string;
   state: ConnectionValidationState;
   path: Path | null;
@@ -40,7 +40,7 @@ export const emptyConnectionValidation = (): ConnectionValidation => ({
   latency: { selection: "auto", state: "stale", path: null },
 });
 
-export interface ConnectionPresentation {
+interface ConnectionPresentation {
   role: ConnectionRole;
   selection: string;
   target:
@@ -61,7 +61,7 @@ export interface ConnectionPresentation {
 }
 
 export const CONNECTION_FRESH_MS = 2 * 60_000;
-export const CONNECTION_FAILURE_BACKOFF_MS = [
+const CONNECTION_FAILURE_BACKOFF_MS = [
   30_000, 60_000, 120_000, 240_000, 300_000,
 ] as const;
 export const CONNECTION_ROLES: ConnectionRole[] = ["throughput", "latency"];
@@ -93,7 +93,7 @@ export function latencyPathNeeded(config: RunnerConfig): boolean {
         config.stages.bidirectional))
   );
 }
-export function selectTarget(
+function selectTarget(
   discovery: TransportDiscovery,
   role: ConnectionRole,
   selection: string,
@@ -151,34 +151,6 @@ export function roleNeedsValidation(
         check.path.target.transport !== target?.transport))
   );
 }
-export function validationRoles(
-  config: RunnerConfig,
-  validation: ConnectionValidation,
-  requestedRole?: ConnectionRole | "all",
-  discovery?: TransportDiscovery | null,
-  maxAgeMs = CONNECTION_FRESH_MS,
-): ConnectionRole[] {
-  return CONNECTION_ROLES.filter((role) => {
-    if (role === "latency" && !latencyPathNeeded(config)) return false;
-    // Retrying one failed role does not also retry an unchanged failure in the other.
-    const check = validation[role];
-    if (
-      requestedRole &&
-      requestedRole !== "all" &&
-      requestedRole !== role &&
-      check.state === "failed" &&
-      check.selection === connectionSelection(config, role)
-    )
-      return false;
-    return (
-      requestedRole === "all" ||
-      role === requestedRole ||
-      roleNeedsValidation(config, validation, role, discovery) ||
-      Date.now() - validation[role].path!.verifiedAt > maxAgeMs
-    );
-  });
-}
-
 /** Upload accounting requires receiver checkpoints even when the path probe succeeded. */
 export function uploadCapabilityFailure(
   config: RunnerConfig,

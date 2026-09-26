@@ -3,7 +3,7 @@ import { test, expect, afterEach, beforeEach } from "bun:test";
 import { IdleKeepalive, LatencyChannel } from "./latencyChannel";
 import type { CoreHost } from "../core";
 import type { LatencyTarget } from "../../api/endpoints";
-import { TestWorker } from "./test-helpers.test";
+import { TestWorker } from "./test-helpers.testutil";
 import { ServerAuthenticationRequired } from "../../servers/credentials";
 
 const target: LatencyTarget = {

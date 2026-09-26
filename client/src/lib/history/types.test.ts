@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { buildHistoryRecord, isHistoryRecord } from "./types";
 import type { RunResult } from "../runner/contract";
-import { testPreparedPaths } from "../runner/test-helpers.test";
+import { testPreparedPaths } from "../runner/test-helpers.testutil";
 
 const throughput = {
   peakBytesPerSec: 120,

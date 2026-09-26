@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
+} from "../runner/test-helpers.testutil";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type { CoreHost } from "../runner/core";
 import type {

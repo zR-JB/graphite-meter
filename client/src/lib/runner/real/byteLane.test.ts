@@ -1,6 +1,6 @@
 import { test, expect, mock } from "bun:test";
 import type { LaneEvents } from "./byteLane";
-import { TestWorker } from "./test-helpers.test";
+import { TestWorker } from "./test-helpers.testutil";
 
 // One fake worker per spawn, capturing what the session owner attaches to it.
 const spawned: TestWorker[] = [];

@@ -1,12 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import type { CoreHost } from "../runner/core";
 import type { RunnerEvent, RunResult } from "../runner/contract";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import {
   testPreparedPaths,
   TEST_BUILD_TOKENS,
-} from "../runner/test-helpers.test";
-import { stubGlobals } from "../test-helpers.test";
+} from "../runner/test-helpers.testutil";
+import { stubGlobals } from "../test-helpers.testutil";
 import { buildHistoryRecord, isHistoryRecord } from "../history/types";
 
 test("one selected server delivers direct samples and visual hints without aggregate checkpoints", async () => {
@@ -45,12 +45,15 @@ test("one selected server delivers direct samples and visual hints without aggre
       throw new Error("unexpected aggregate checkpoint");
     },
   }));
+  jest.useFakeTimers();
   try {
+    let done = false;
     const completion = new Promise<RunResult>((resolve, reject) =>
       runner.on((event) => {
         events.push(event);
         if (event.type === "complete") resolve(event.result);
         if (event.type === "error") reject(event.error);
+        done ||= event.type === "complete" || event.type === "error";
       }),
     );
     runner.start(
@@ -72,6 +75,10 @@ test("one selected server delivers direct samples and visual hints without aggre
       },
       0,
     );
+    for (let elapsed = 0; elapsed < 2_000 && !done; elapsed += 20) {
+      jest.advanceTimersByTime(20);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    }
     const result = await completion;
     expect(checkpoints).toBe(0);
     expect(
@@ -97,6 +104,7 @@ test("one selected server delivers direct samples and visual hints without aggre
         result.bidirectional!.up!.totalBytes,
     );
   } finally {
+    jest.useRealTimers();
     runner.dispose();
     restore();
   }

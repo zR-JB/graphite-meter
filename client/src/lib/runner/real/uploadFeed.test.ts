@@ -1,4 +1,4 @@
-import { stubGlobals } from "../../test-helpers.test";
+import { stubGlobals } from "../../test-helpers.testutil";
 import { afterEach, expect, test } from "bun:test";
 import { startUploadFeed } from "./uploadFeed";
 type Event = Parameters<Parameters<typeof startUploadFeed>[0]["onEvent"]>[0];

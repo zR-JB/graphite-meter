@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
-import { TEST_BUILD_TOKENS } from "../runner/test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
+import { TEST_BUILD_TOKENS } from "../runner/test-helpers.testutil";
 
 test("remote preflight requires an explicit auth marker and preserves public HTTPS access from HTTP", async () => {
   let marked = true;

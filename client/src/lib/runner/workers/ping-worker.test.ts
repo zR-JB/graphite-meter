@@ -1,6 +1,6 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach, beforeEach, jest } from "bun:test";
 import type { PingWorkerEvent } from "./pingSample";
-import { bootWorker, type WorkerRealm } from "./test-helpers.test";
+import { bootWorker, type WorkerRealm } from "./test-helpers.testutil";
 
 const globals = globalThis as Record<string, unknown>;
 
@@ -160,10 +160,20 @@ async function start(scenario: Scenario): Promise<Realm> {
 
 async function halt(scenario: Scenario): Promise<void> {
   scenario.halted = true;
-  await Bun.sleep(250);
+  await sleep(250);
 }
 
+/** Advance the fake clock while letting stream and fetch continuations run. */
+async function sleep(ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += 5) {
+    jest.advanceTimersByTime(5);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+}
+
+beforeEach(() => jest.useFakeTimers());
 afterEach(() => {
+  jest.useRealTimers();
   globalThis.fetch = realFetch;
   globals.postMessage = realPost;
   globalThis.onmessage = null;
@@ -177,7 +187,7 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   const scenario = new Scenario("refused");
   scenario.outcomes = ["refuse"];
   await start(scenario);
-  await Bun.sleep(200);
+  await sleep(200);
   await halt(scenario);
 
   expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
@@ -190,11 +200,11 @@ test("a dial the server accepted never offers its token again", async () => {
   const scenario = new Scenario("accepted");
   scenario.outcomes = ["accept"];
   await start(scenario);
-  await Bun.sleep(50);
+  await sleep(50);
   expect(scenario.dials.length).toBe(1);
 
   scenario.sessions[0].drop();
-  await Bun.sleep(250);
+  await sleep(250);
   await halt(scenario);
 
   expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
@@ -206,7 +216,7 @@ test("a pending dial times out and retries with the same unspent token", async (
   const scenario = new Scenario("pending");
   scenario.outcomes = ["pending", "accept"];
   await start(scenario);
-  await Bun.sleep(3_300);
+  await sleep(3_300);
 
   expect(scenario.dials).toHaveLength(2);
   expect(scenario.tokens()[1]).toBe(scenario.tokens()[0]);
@@ -214,15 +224,15 @@ test("a pending dial times out and retries with the same unspent token", async (
 
   scenario.halted = true;
   scenario.sessions.at(-1)?.drop();
-  await Bun.sleep(250);
-}, 10_000);
+  await sleep(250);
+});
 
 async function waitUntil(predicate: () => boolean) {
   const deadline = performance.now() + 2_000;
   while (!predicate()) {
     if (performance.now() > deadline)
       throw new Error("worker transition did not settle");
-    await Bun.sleep(5);
+    await sleep(5);
   }
 }
 
@@ -296,7 +306,7 @@ test("a closed WebTransport dial becoming ready cannot restart the replacement b
       (event) => event.type === "open",
     ).length;
     first.accept();
-    await Bun.sleep(10);
+    await sleep(10);
     expect(first.sent).toEqual([]);
     expect(realm.posted.filter((event) => event.type === "open")).toHaveLength(
       openCount,
@@ -315,10 +325,10 @@ test("a ticket spent by a temporary downstream refusal can recover within readin
   scenario.refuseFirstTicket = true;
   const realm = await start(scenario);
   try {
-    await Bun.sleep(3_400);
+    await sleep(3_400);
     expect(realm.posted.some((message) => message.type === "open")).toBe(true);
     expect(scenario.mints).toBeGreaterThanOrEqual(2);
   } finally {
     realm.send({ type: "stop" });
   }
-}, 5_000);
+});

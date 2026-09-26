@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { HistoryWriteQueue } from "./writeQueue";
 import { historyChanges, StaleHistoryGenerationError } from "./changes";
 import type { HistoryRecord } from "./types";
-import { historyRecord } from "./test-helpers.test";
+import { historyRecord } from "./test-helpers.testutil";
 
 const valid = historyRecord();
 

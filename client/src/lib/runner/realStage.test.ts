@@ -4,7 +4,7 @@ import {
   TEST_BUILD_TOKENS,
   testHost,
   testPreparedPaths,
-} from "./test-helpers.test";
+} from "./test-helpers.testutil";
 import type { PhaseActivity } from "./contract";
 
 const upload: PhaseActivity = {

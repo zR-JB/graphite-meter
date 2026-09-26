@@ -31,7 +31,7 @@ export function serverCredentials(server: ServerEntry): ServerCredentials {
   return {
     server,
     kind:
-      server.id === "self" && server.url === location.origin && authEnabled
+      server.id === "self" && server.url === location.origin && authEnabled()
         ? "session"
         : "public",
   };
@@ -62,7 +62,7 @@ export function requestOptions(
   if (context?.kind === "public") return { headers: {}, credentials: "omit" };
   return {
     headers: method === "GET" || method === "HEAD" ? {} : csrfHeader(),
-    credentials: authEnabled ? "include" : "same-origin",
+    credentials: authEnabled() ? "include" : "same-origin",
   };
 }
 export async function measurementFetch(
@@ -96,7 +96,7 @@ export function socketMint(
   path: string,
   kind: "ws" | "wt",
 ): WtMint | undefined {
-  const protectedServer = context ? context.kind !== "public" : authEnabled;
+  const protectedServer = context ? context.kind !== "public" : authEnabled();
   if (!protectedServer || (kind === "ws" && context?.kind !== "grant"))
     return undefined;
   const url = `${origin}/${kind}/session?target=${encodeURIComponent(origin + path)}`;

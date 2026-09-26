@@ -1,9 +1,9 @@
 /* Presentation-only policy for an irregular authoritative upload feed. */
-export const UPLOAD_PRESENTATION_HINT_MAX_AGE_MS = 250;
+const UPLOAD_PRESENTATION_HINT_MAX_AGE_MS = 250;
 /* A worker targets 500 ms POSTs. */
 const UPLOAD_PRESENTATION_LANE_MAX_AGE_MS = 750;
 /* Active fallback converges back to authority instead of snapping off when a valid activation hint ages out. */
-export const UPLOAD_PRESENTATION_SETTLE_MS = 500;
+const UPLOAD_PRESENTATION_SETTLE_MS = 500;
 const UPLOAD_PRESENTATION_SETTLE_CADENCE_MS = 50;
 
 interface LaneHint {

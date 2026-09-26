@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { classifyTransportDiscovery } from "../runner/real/backendPure";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { testPreparedPaths } from "../runner/test-helpers.test";
+import { testPreparedPaths } from "../runner/test-helpers.testutil";
 import {
   portableTransportSelection,
   serverTransportOptions,

@@ -33,7 +33,8 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
-  import { authEnabled } from "../auth";
+  import { authEnabled as pageAuthEnabled } from "../auth";
+  const authEnabled = pageAuthEnabled();
   import { returnToLiveIndicator } from "../history/returnToLive";
   import {
     activatePanel,

@@ -1,9 +1,9 @@
-import "./runes.test";
+import "./runes.testutil";
 import { expect, test } from "bun:test";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
+} from "../runner/test-helpers.testutil";
 import type { RunResult, ThroughputResult } from "../runner/contract";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { singleLatencyBucket } from "../runner/latencyBuckets";

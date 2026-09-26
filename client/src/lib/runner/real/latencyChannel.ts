@@ -148,7 +148,7 @@ export class LatencyChannel {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: this.#deps.credentials
         ? this.#deps.credentials.kind === "session"
-        : authEnabled,
+        : authEnabled(),
     });
   }
 
@@ -352,7 +352,7 @@ export class IdleKeepalive {
       lossFloorMs: PING_LOSS_FLOOR_MS,
       checkAuthentication: this.#credentials
         ? this.#credentials.kind === "session"
-        : authEnabled,
+        : authEnabled(),
     });
     // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });
