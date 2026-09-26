@@ -275,20 +275,24 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			if !measuredUntil.IsZero() && measuredUntil.Before(now) {
 				now = measuredUntil
 			}
+			expired := 0
 			maps.DeleteFunc(pending, func(_ uint32, sent time.Time) bool {
 				if now.Sub(sent) < timeoutAfter {
 					return false
 				}
 				stats.add(0, true, 0)
+				expired++
+				return true
+			})
+			mu.Unlock()
+			for range expired {
 				r.emit(Event{
 					Kind:    EventLatency,
 					At:      now,
 					Stage:   stage,
 					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, TimedOut: true},
 				})
-				return true
-			})
-			mu.Unlock()
+			}
 		}
 	}
 }

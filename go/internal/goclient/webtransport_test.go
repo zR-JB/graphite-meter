@@ -2,8 +2,10 @@ package goclient
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json/v2"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -491,5 +495,34 @@ func TestRunWTLaneRealProgressResetsFailureBounds(t *testing.T) {
 	}
 	if entries != 2*wtLaneMaxFastFailures+1 {
 		t.Fatalf("lane entered %d times, want %d", entries, 2*wtLaneMaxFastFailures+1)
+	}
+}
+
+// A refused WebTransport upgrade carries the same challenge as an HTTP refusal, so every redial path stops on it.
+func TestWebTransportDialClassifiesAuthenticationRequired(t *testing.T) {
+	t.Parallel()
+	certificates := httptest.NewTLSServer(http.NotFoundHandler())
+	certificates.Close()
+	h3 := &http3.Server{
+		TLSConfig: &tls.Config{Certificates: certificates.TLS.Certificates, NextProtos: []string{http3.NextProtoH3}},
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Graphite-Meter-Auth", "required")
+			w.Header().Set("Graphite-Meter-Auth-URL", "https://meter.example/login")
+			w.WriteHeader(http.StatusForbidden)
+		}),
+	}
+	webtransport.ConfigureHTTP3Server(h3)
+	server := &webtransport.Server{H3: h3}
+	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(conn) }()
+	t.Cleanup(func() { _ = server.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	_, err = wtDial(ctx, Config{InsecureSkipTLSVerify: true}, "https://"+conn.LocalAddr().String(), "/wt/ping", nil)
+	if authErr, ok := errors.AsType[*AuthRequiredError](err); !ok || authErr.URL != "https://meter.example/login" {
+		t.Fatalf("wtDial = %v, want the server's authentication challenge", err)
 	}
 }

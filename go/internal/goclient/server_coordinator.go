@@ -72,7 +72,12 @@ type nativeCoordinator struct {
 var errNoSurvivors = errors.New("all selected servers failed")
 
 // RunSelection has one stage schedule. Its participants own connections and credentials, never independent runs.
-func RunSelection(ctx context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
+func RunSelection(ctx context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) error {
+	return runSelection(ctx, nil, cfg, prepared, emit)
+}
+
+// runSelection releases server state within teardown, which the controller ends when delivery is abandoned.
+func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
 	defer func() { emit(Event{Kind: EventDone, At: time.Now(), Err: err}) }()
 	cfg = cfg.normalized()
 	if prepared == nil || !prepared.Ready() {
@@ -94,7 +99,7 @@ func RunSelection(ctx context.Context, cfg Config, prepared *PreparedRun, emit f
 		connection := server.Connection
 		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol, func() *http.Transport { return baseTransport(own) })
 		ws, closeWS := websocketClient(own)
-		transport := &runner{cfg: own, http: hc, websocketHTTP: ws, target: new(connection.ThroughputTarget), latencyTarget: connection.LatencyTarget, coordinated: &participantCounters{}, idleRTT: connection.PreflightRTT}
+		transport := &runner{cfg: own, http: hc, websocketHTTP: ws, target: new(connection.ThroughputTarget), latencyTarget: connection.LatencyTarget, coordinated: &participantCounters{}, idleRTT: connection.PreflightRTT, teardown: teardown}
 		transport.emit = func(e Event) { e.ServerID = server.Server.ID; emit(e) }
 		participant := &nativeParticipant{prepared: server, transport: transport, close: func() { closeHTTP(); closeWS() }}
 		c.servers = append(c.servers, participant)
@@ -209,8 +214,14 @@ func (c *nativeCoordinator) retainLatency(outcome resourceOutcome, normalEnd boo
 func (c *nativeCoordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	var work sync.WaitGroup
-	ready := make(chan readyResource, 12)
-	outcomes := make(chan resourceOutcome, 12)
+	// Every resource reports readiness and its outcome at most once, so neither send can block.
+	resources := len(stage.Directions)
+	if len(stage.Directions) == 0 || c.cfg.LoadedLatency {
+		resources++
+	}
+	resources *= len(c.active())
+	ready := make(chan readyResource, resources)
+	outcomes := make(chan resourceOutcome, resources)
 	start := make(chan struct{})
 	var servers []*stageParticipant
 	var gates []*stageGate

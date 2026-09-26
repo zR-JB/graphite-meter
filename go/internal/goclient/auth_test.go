@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestAuthenticationLoginURLAcceptsCanonicalHostnameOnAnotherPort(t *testing.T) {
@@ -50,9 +52,13 @@ func TestAuthenticatedClientAddsBearerOnlyOnCanonicalHTTPSHost(t *testing.T) {
 	if seen != "Bearer secret" {
 		t.Fatalf("authorization=%q", seen)
 	}
-	bad, _ := http.NewRequest("GET", "https://other.example/probe", nil)
-	if _, err := client.Do(bad); err == nil {
-		t.Fatal("grant sent outside canonical host")
+	cfg.server = &wire.ServerEntry{ID: "a", URL: "https://meter.example", AdditionalOrigins: []string{"https://cdn.example"}}
+	client = authenticatedClient(cfg, client.Transport.(authTransport).base)
+	for _, target := range []string{"https://other.example/probe", "https://cdn.example/probe", "http://meter.example/probe"} {
+		bad, _ := http.NewRequest("GET", target, nil)
+		if _, err := client.Do(bad); err == nil {
+			t.Fatalf("grant sent to %s outside its issuer's HTTPS hostname", target)
+		}
 	}
 }
 

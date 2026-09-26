@@ -67,7 +67,6 @@ func (c Config) authToken() string {
 }
 
 type authTransport struct {
-	server          *wire.ServerEntry
 	token, hostname string
 	base            http.RoundTripper
 }
@@ -76,7 +75,8 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if t.token == "" {
 		return t.base.RoundTrip(r)
 	}
-	if r.URL.Scheme != "https" || !(strings.EqualFold(r.URL.Hostname(), t.hostname) || t.server != nil && t.server.AllowsOrigin(r.URL.Scheme+"://"+r.URL.Host)) {
+	// Additional catalogue origins constrain discovery only; a grant stays on its issuer's HTTPS hostname.
+	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
 		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 	}
 	clone := r.Clone(r.Context())
@@ -95,7 +95,7 @@ func pinnedHostname(origin string) string {
 
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 	token := cfg.authToken()
-	client := &http.Client{Transport: authTransport{server: cfg.server, token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
+	client := &http.Client{Transport: authTransport{token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
 	if token != "" || cfg.server != nil {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
@@ -325,6 +325,7 @@ type runner struct {
 	latencyTarget *wire.LatencyTarget
 	emit          func(Event)
 	idleRTT       time.Duration
+	teardown      context.Context // Releases server state after measurement stops; nil derives it from the stage.
 }
 
 const laneStagger = 75 * time.Millisecond

@@ -109,7 +109,7 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 
 // Start abandons a replaced run's delivery, then starts one bounded event stream.
 func (c *Controller) Start(cfg Config, prepared *PreparedConnection) <-chan Event {
-	return c.startEvents(func(ctx context.Context, emit func(Event)) {
+	return c.startEvents(func(ctx, teardown context.Context, emit func(Event)) {
 		_ = RunPrepared(ctx, cfg, prepared, func(event Event) {
 			if event.Kind == EventDone {
 				event.Err = ClassifyAuthFailure(ctx, cfg, event.Err)
@@ -124,7 +124,7 @@ func (c *Controller) StartSelection(cfg Config, prepared *PreparedRun) <-chan Ev
 	grants := maps.Clone(c.grants)
 	previous := slices.Clone(c.selection)
 	c.mu.Unlock()
-	return c.startEvents(func(ctx context.Context, emit func(Event)) {
+	return c.startEvents(func(ctx, teardown context.Context, emit func(Event)) {
 		if !prepared.FreshFor(cfg) {
 			preparation, cancel := context.WithTimeout(ctx, preparationTimeout)
 			var err error
@@ -135,11 +135,11 @@ func (c *Controller) StartSelection(cfg Config, prepared *PreparedRun) <-chan Ev
 				return
 			}
 		}
-		_ = RunSelection(ctx, cfg, prepared, emit)
+		_ = runSelection(ctx, teardown, cfg, prepared, emit)
 	})
 }
 
-func (c *Controller) startEvents(run func(context.Context, func(Event))) <-chan Event {
+func (c *Controller) startEvents(run func(measurement, teardown context.Context, emit func(Event))) <-chan Event {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -158,7 +158,7 @@ func (c *Controller) startEvents(run func(context.Context, func(Event))) <-chan 
 		defer cancel()
 		defer abandon()
 		defer close(events)
-		run(measurement, func(event Event) { sendRunEvent(measurement, delivery, events, event) })
+		run(measurement, delivery, func(event Event) { sendRunEvent(measurement, delivery, events, event) })
 	})
 	return events
 }
@@ -181,6 +181,14 @@ func (c *Controller) Close() {
 }
 
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
+	if event.Kind == EventThroughput || event.Kind == EventLatency {
+		// A live sample never delays the reader or timer that produced it; a slow view drops it.
+		select {
+		case events <- event:
+		default:
+		}
+		return
+	}
 	terminalServers := event.Kind == EventServers && event.Servers != nil && event.Servers.Outcome != "running"
 	if event.Kind == EventResult || event.Kind == EventDone || terminalServers {
 		measurement = delivery

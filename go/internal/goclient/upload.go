@@ -73,7 +73,11 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 			return r.uploadLane(laneCtx, id, i, bodyBlock, ready)
 		}
 	}
-	defer progress.bye()
+	teardown := r.teardown
+	if teardown == nil {
+		teardown = context.WithoutCancel(ctx)
+	}
+	defer progress.bye(teardown)
 	r.coordinated.attachUpload(id, progress)
 
 	streams := r.streams.of(Up)
@@ -501,19 +505,18 @@ func (p *uploadProgress) close() {
 	})
 }
 
-func (p *uploadProgress) bye() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// teardownTimeout bounds releasing server state after a stage; the measured window is already closed.
+const teardownTimeout = time.Second
+
+// bye releases the receiver within the run's teardown scope, which ends at once when the client closes.
+func (p *uploadProgress) bye(teardown context.Context) {
+	ctx, cancel := context.WithTimeout(teardown, teardownTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, p.url, nil)
 	if err == nil {
 		if res, doErr := p.client.Do(req); doErr == nil {
 			_ = res.Body.Close()
 		}
-	}
-	_, done := p.current()
-	select {
-	case <-done:
-	case <-ctx.Done():
 	}
 	p.close()
 }

@@ -229,3 +229,25 @@ func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
 		t.Fatal("approval request survived preparation replacement")
 	}
 }
+
+// A full view drops live samples instead of delaying the reader that timed them; outcomes still wait for delivery.
+func TestLiveSamplesNeverBlockOnAFullView(t *testing.T) {
+	t.Parallel()
+	events := make(chan Event, 1)
+	events <- Event{}
+	delivery, abandon := context.WithCancel(t.Context())
+	sendRunEvent(t.Context(), delivery, events, Event{Kind: EventLatency})
+	sendRunEvent(t.Context(), delivery, events, Event{Kind: EventThroughput})
+	delivered := make(chan struct{})
+	go func() {
+		sendRunEvent(t.Context(), delivery, events, Event{Kind: EventResult})
+		close(delivered)
+	}()
+	select {
+	case <-delivered:
+		t.Fatal("a result was dropped by a full view")
+	case <-time.After(20 * time.Millisecond):
+	}
+	abandon()
+	<-delivered
+}

@@ -53,7 +53,7 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	var hdr http.Header
 	if token := cfg.authToken(); token != "" {
 		parsed, err := url.Parse(u)
-		if err != nil || parsed.Scheme != "https" || !(strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.AuthOrigin)) || cfg.server != nil && cfg.server.AllowsOrigin(parsed.Scheme+"://"+parsed.Host)) {
+		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.AuthOrigin)) {
 			return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 		}
 		hdr = http.Header{"Authorization": {"Bearer " + token}}
@@ -62,9 +62,13 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
-	_, sess, err := wtTransport.Dial(ctx, u, hdr)
+	// A refused upgrade still returns its response, which carries the authentication challenge.
+	response, sess, err := wtTransport.Dial(ctx, u, hdr)
 	if err != nil {
 		_ = wtTransport.Close()
+		if authErr := authResponseError(response); authErr != nil {
+			return nil, authErr
+		}
 		return nil, fmt.Errorf("webtransport dial %s: %w", u, err)
 	}
 	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil

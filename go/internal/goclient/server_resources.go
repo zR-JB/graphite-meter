@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -57,7 +58,26 @@ func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan er
 	}
 }
 
+// checkpointRetry paces repeated checkpoint requests within one capture deadline.
+const checkpointRetry = 100 * time.Millisecond
+
+// receiverCheckpoint retries transient failures until ctx ends. Each attempt keeps its own request/response
+// bracket, so a late success never inherits an earlier attempt's timing.
 func (r *runner) receiverCheckpoint(ctx context.Context, started time.Time) (*ReceiverSnapshot, error) {
+	for {
+		snapshot, err := r.receiverCheckpointOnce(ctx, started)
+		if _, authRequired := errors.AsType[*AuthRequiredError](err); err == nil || authRequired {
+			return snapshot, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(checkpointRetry):
+		}
+	}
+}
+
+func (r *runner) receiverCheckpointOnce(ctx context.Context, started time.Time) (*ReceiverSnapshot, error) {
 	id, _, _ := r.coordinated.upload()
 	if id == "" {
 		return nil, fmt.Errorf("upload receiver is not ready")

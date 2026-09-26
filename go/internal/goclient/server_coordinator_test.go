@@ -316,3 +316,35 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 		})
 	}
 }
+
+// A refused checkpoint at either stage boundary is retried within the capture deadline rather than voiding the stage.
+func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
+	a := coordinatedFixture(t, "a")
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Upload: true}
+	cfg.UploadDuration = time.Second
+	prepared, err := prepareRun(t.Context(), cfg, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refuse := func(after time.Duration) {
+		time.AfterFunc(after, func() {
+			a.checkpointFailed.Store(true)
+			time.AfterFunc(300*time.Millisecond, func() { a.checkpointFailed.Store(false) })
+		})
+	}
+	var upload Result
+	err = RunSelection(t.Context(), cfg, prepared, func(e Event) {
+		switch {
+		case e.Kind == EventStage && e.Phase == StageWarmup:
+			refuse(0)
+		case e.Kind == EventStage && e.Phase == StageMeasuring:
+			refuse(cfg.UploadDuration - 100*time.Millisecond)
+		case e.Kind == EventResult && e.Direction == Up:
+			upload = *e.Result
+		}
+	})
+	if err != nil || upload.Err != nil || upload.Unavailable || upload.MeanBps <= 0 {
+		t.Fatalf("transient checkpoint refusal voided the stage: %v %+v", err, upload)
+	}
+}
