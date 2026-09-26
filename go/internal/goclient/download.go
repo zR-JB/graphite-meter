@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -17,7 +18,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 	total := &r.coordinated.down
 	if r.target.Transport == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
-			return wtDial(ctx, r.cfg, r.target.Origin, r.target.Routes.WTDownload, r.wtDownloadQuery())
+			return wtDial(ctx, r.cfg, r.target.Origin, route.WTDownload, r.wtDownloadQuery())
 		}, nil)
 		if err != nil {
 			return err
@@ -30,7 +31,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 			})
 		})
 	}
-	base, err := r.endpoint(r.target.Routes.Download)
+	base, err := r.endpoint(route.Download)
 	if err != nil {
 		return err
 	}

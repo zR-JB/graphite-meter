@@ -244,7 +244,7 @@ func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnec
 	}
 	transfer, closeTransfer := protocolClient(cfg, target.Protocol)
 	defer closeTransfer()
-	clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, target.Routes.Probe)
+	clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe)
 	if err != nil {
 		return err
 	}

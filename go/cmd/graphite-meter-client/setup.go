@@ -449,13 +449,13 @@ func discoveredPaths(pf *wire.Preflight, latency bool) []discoveredPath {
 	var paths []discoveredPath
 	if latency {
 		for _, t := range pf.Capabilities.LatencyTargets {
-			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS})
+			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS()})
 		}
 		return paths
 	}
 	for _, t := range pf.Capabilities.ThroughputTargets {
 		if t.Transport != wire.TransportWebTransportDatagram {
-			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS})
+			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS()})
 		}
 	}
 	return paths

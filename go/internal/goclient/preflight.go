@@ -28,12 +28,12 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	origin := self.String()
 	for i := range pf.Capabilities.ThroughputTargets {
 		if t := &pf.Capabilities.ThroughputTargets[i]; t.Origin == "." {
-			t.ID, t.Origin, t.TLS, t.Routes = origin, origin, self.Scheme == "https", wire.DefaultThroughputRoutes()
+			t.ID, t.Origin = origin, origin
 		}
 	}
 	for i := range pf.Capabilities.LatencyTargets {
 		if t := &pf.Capabilities.LatencyTargets[i]; t.Origin == "." {
-			t.ID, t.Origin, t.TLS, t.Routes = origin, origin, self.Scheme == "https", wire.DefaultLatencyRoutes()
+			t.ID, t.Origin = origin, origin
 		}
 	}
 	return pf, nil

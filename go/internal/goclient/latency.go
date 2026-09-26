@@ -38,13 +38,13 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 
 func dialLatencyBus(ctx context.Context, cfg Config, client *http.Client, target *wire.LatencyTarget) (pingBus, error) {
 	if target.Transport == wire.TransportWebTransport {
-		sess, err := wtDial(ctx, cfg, target.Origin, target.Routes.WTPing, nil)
+		sess, err := wtDial(ctx, cfg, target.Origin, route.WTPing, nil)
 		if err != nil {
 			return nil, err
 		}
 		return wtBus{sess: sess}, nil
 	}
-	u, err := wsEndpoint(target.Origin, target.Routes.Ping)
+	u, err := wsEndpoint(target.Origin, route.Ping)
 	if err != nil {
 		return nil, err
 	}

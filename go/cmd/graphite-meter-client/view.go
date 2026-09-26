@@ -239,9 +239,9 @@ func (m model) pathSummaries() (throughput, latency string) {
 		for _, s := range m.preparedRun.Servers {
 			if c := s.Connection; c != nil {
 				t := c.ThroughputTarget
-				throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS))
+				throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
 				if l := c.LatencyTarget; l != nil {
-					latencies = appendUnique(latencies, goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS))
+					latencies = appendUnique(latencies, goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS()))
 				}
 			}
 		}
@@ -342,7 +342,7 @@ func (m model) testView(w int, compact bool) string {
 			throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
 			streams = m.cfg.TransferStreams.Label(t.Protocol, t.Transport)
 			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
-				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS)
+				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS())
 			}
 		}
 		servers := strings.Join(names, ", ")

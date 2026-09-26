@@ -224,10 +224,13 @@ func runModel(t *testing.T, servers ...string) model {
 	m.run = newRunState(m.cfg, "", time.Now())
 	details := &goclient.RunDetails{LatencyFocus: servers[0], Participants: servers, Outcome: goclient.OutcomeRunning}
 	for _, id := range servers {
+		origin := "https://" + id
 		details.Servers = append(details.Servers, goclient.ServerRunSummary{
-			Server:        wire.ServerEntry{ID: id, Name: strings.ToUpper(id), Location: "Somewhere"},
-			Throughput:    wire.ThroughputTarget{Origin: "https://" + id, Transport: wire.TransportFetchStream, Protocol: "http2"},
-			LatencyTarget: &wire.LatencyTarget{Origin: "https://" + id, Transport: wire.TransportWebSocket, Protocol: "http1"},
+			Server: wire.ServerEntry{ID: id, Name: strings.ToUpper(id), Location: "Somewhere"},
+			Throughput: wire.ThroughputTarget{
+				Origin: origin, Transport: wire.TransportFetchStream, Protocol: "http2",
+			},
+			LatencyTarget: &wire.LatencyTarget{Origin: origin, Transport: wire.TransportWebSocket, Protocol: "http1"},
 		})
 	}
 	m, _ = modelAndCmd(m.Update(eventsMsg{

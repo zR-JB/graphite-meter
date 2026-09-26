@@ -30,7 +30,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	}
 	block := make([]byte, 1<<20)
 	rand.Read(block)
-	progressURL, err := r.endpoint(r.target.Routes.UploadProgress)
+	progressURL, err := r.endpoint(route.UploadProgress)
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	}
 	if r.target.Transport == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
-			return wtDial(ctx, r.cfg, r.target.Origin, r.target.Routes.WTUpload, url.Values{"id": {id}})
+			return wtDial(ctx, r.cfg, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
 		}, func(ctx context.Context, sess *wtSession) error {
 			str, err := acceptUploadProgressWT(ctx, sess)
 			if err == nil {
@@ -71,7 +71,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
-	u, err := r.endpoint(r.target.Routes.UploadSession)
+	u, err := r.endpoint(route.UploadSession)
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +87,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 
 func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte, ready func()) error {
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: ready})
-	base, err := r.endpoint(r.target.Routes.Upload)
+	base, err := r.endpoint(route.Upload)
 	if err != nil {
 		return err
 	}
