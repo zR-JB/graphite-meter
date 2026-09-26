@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/quic-go/webtransport-go"
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 )
 
@@ -260,6 +261,45 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 			if w.Code != want {
 				t.Errorf("unmetered %s %s = %d, want %d", method, path, w.Code, want)
 			}
+		}
+	}
+}
+
+// Run's own TCP listeners refuse an unauthenticated measurement, whatever each one mounts.
+func TestAssembledTCPListenersEnforceAuthentication(t *testing.T) {
+	hash, err := auth.HashPassword("secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Native = config.NativeEndpoints{H1: "h1", H1TLS: "h1tls", H2: "h2"}
+	cfg.AdvertisedNative = map[string]bool{}
+	cfg.Public.Throughput = []string{"https://meter.example"}
+	cfg.Auth = config.AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: hash,
+		OIDCProviderName: "Authelia"}
+	_, sockets := pipeServer(t, &cfg, nil)
+	for _, tc := range []struct {
+		addr, scheme string
+		http2        bool
+	}{
+		{"h1", "http", false},
+		{"h1tls", "https", false},
+		{"h2", "https", true},
+	} {
+		client := sockets[tc.addr].client(t)
+		tr := client.Transport.(*http.Transport)
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test certificate
+		tr.Protocols = &http.Protocols{}
+		tr.Protocols.SetHTTP1(!tc.http2)
+		tr.Protocols.SetHTTP2(tc.http2)
+		res, err := client.Get(tc.scheme + "://meter.example/download?bytes=1")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.addr, err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden || len(body) == 1 {
+			t.Errorf("%s unauthenticated download = %d with %d bytes, want 403", tc.addr, res.StatusCode, len(body))
 		}
 	}
 }
