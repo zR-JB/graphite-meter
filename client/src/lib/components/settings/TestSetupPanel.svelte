@@ -10,6 +10,7 @@
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
   import { describeTarget } from "../../runner/real/targetPresentation";
+  import { normalizeStreamCount } from "../../runner/real/streamPolicy";
   import { panelReadiness } from "../../runner/connectionModel";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
@@ -46,7 +47,7 @@
   function resetSettings() {
     resetConfirmOpen = false;
     store.restoreTestDisplayDefaults();
-    durationMode = presetFromDuration();
+    customDuration = false;
   }
 
   function targetOption(
@@ -177,25 +178,42 @@
   ) {
     return DURATION_FIELDS.every(([key]) => a[key] === b[key]);
   }
-  function presetFromDuration(): Preset {
+  let customDuration = $state(false);
+  const durationMode = $derived.by((): Preset => {
+    if (customDuration) return "custom";
     for (const key of ["short", "medium", "long"] as const)
       if (sameDuration(store.config.duration, DURATION_PRESETS[key]))
         return key;
     return "custom";
-  }
-  let durationMode = $state<Preset>(presetFromDuration());
+  });
   function setPreset(preset: Preset) {
-    durationMode = preset;
+    customDuration = preset === "custom";
     if (preset !== "custom") {
       controller.configureRun({ duration: { ...DURATION_PRESETS[preset] } });
     }
   }
+  function commitNumber(
+    event: Event,
+    current: number,
+    normalize: (value: number) => number,
+    commit: (value: number) => void,
+  ) {
+    const input = event.currentTarget as HTMLInputElement;
+    const raw = input.valueAsNumber;
+    const value = Number.isFinite(raw) ? normalize(raw) : current;
+    input.value = String(value);
+    if (value !== current) commit(value);
+  }
   function setDuration(key: DurationKey, event: Event) {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (!Number.isFinite(value) || value < 0) return;
-    controller.configureRun({
-      duration: { ...store.config.duration, [key]: value },
-    });
+    commitNumber(
+      event,
+      store.config.duration[key],
+      (value) => Math.max(0, value),
+      (value) =>
+        controller.configureRun({
+          duration: { ...store.config.duration, [key]: value },
+        }),
+    );
   }
   function setBidirectional(enabled: boolean) {
     controller.configureRun({
@@ -241,12 +259,17 @@
       : Math.max(1, Math.round(store.chartScaleBytesPerSec));
   }
   function setVizMax(event: Event) {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (Number.isFinite(value) && value > 0)
-      store.config.visualization.throughputMaxBytesPerSec = Math.max(
-        1,
-        Math.round(store.fromUnit(value)),
-      );
+    const current = Number(vizDisplay.toFixed(2));
+    commitNumber(
+      event,
+      current,
+      (value) => (value > 0 ? value : current),
+      (value) =>
+        (store.config.visualization.throughputMaxBytesPerSec = Math.max(
+          1,
+          Math.round(store.fromUnit(value)),
+        )),
+    );
   }
 
   const readiness = $derived(
@@ -325,7 +348,7 @@
               step="500"
               disabled={store.preparing}
               value={store.config.duration[key]}
-              oninput={(event) => setDuration(key, event)}
+              onchange={(event) => setDuration(key, event)}
             />
           </label>
         {/each}
@@ -430,7 +453,7 @@
           type="number"
           min="1"
           value={Number(vizDisplay.toFixed(2))}
-          oninput={setVizMax}
+          onchange={setVizMax}
         />
       </label>
     {/if}
@@ -518,7 +541,14 @@
         max="128"
         step="1"
         disabled={running || store.preparing}
-        bind:value={store.config.transferStreams.count}
+        value={store.config.transferStreams.count}
+        onchange={(event) =>
+          commitNumber(
+            event,
+            store.config.transferStreams.count,
+            normalizeStreamCount,
+            (count) => (store.config.transferStreams.count = count),
+          )}
       />
     </label>
     {#if store.config.transferStreams.mode === "forced"}
