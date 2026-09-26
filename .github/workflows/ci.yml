@@ -61,7 +61,9 @@ jobs:
       - name: Summarize CI plan
         env:
           CHANGES: ${{ steps.filter.outputs.changes }}
-        run: printf '### CI plan for `%s`\n\nSelected: `%s`; secret scan always runs.\n' "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
+        run: |
+          printf '### CI plan for `%s`\n\nSelected: `%s`; secret scan always runs.\n' \
+            "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
 
   core:
     name: Core checks
