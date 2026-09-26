@@ -15,7 +15,6 @@ core:
   - 'client/**'
   - 'go/**'
   - 'legal/**'
-  - 'scripts/**'
   - 'container/**'
   - 'LICENSE'
   - 'COPYRIGHT'
@@ -25,6 +24,7 @@ go:
   - 'api/**'
   - 'go/**'
   - 'client/src/auth/**'
+  - 'client/src/app.css'
 
 browser:
   - *workflow
@@ -34,8 +34,6 @@ browser:
 tui:
   - *workflow
   - 'go/**'
-  - 'scripts/tui-targets.txt'
-  - 'scripts/package-tui.sh'
 
 integration:
   - *workflow
@@ -54,7 +52,6 @@ smoke:
   - 'legal/**'
   - 'LICENSE'
   - 'COPYRIGHT'
-  - 'scripts/verify-container.sh'
 
 release:
   - *workflow
@@ -64,7 +61,6 @@ release:
   - 'legal/**'
   - 'container/**'
   - '.dockerignore'
-  - 'scripts/**'
   - 'LICENSE'
   - 'COPYRIGHT'
 

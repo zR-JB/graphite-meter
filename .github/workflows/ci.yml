@@ -47,9 +47,9 @@ jobs:
         with: {python: 'true'}
 
       - name: Enforce repository and workflow security policy
-        run: python3 scripts/ci/workflow_policy.py
+        run: mise run workflow-check
 
-      - name: Type-check tooling and test pipeline and legal boundaries
+      - name: Type-check and test tooling, pipeline and legal boundaries
         run: mise run pipeline-test
 
       - id: filter
@@ -60,32 +60,8 @@ jobs:
 
       - name: Summarize CI plan
         env:
-          CORE: ${{ steps.filter.outputs.core }}
-          GO: ${{ steps.filter.outputs.go }}
-          BROWSER: ${{ steps.filter.outputs.browser }}
-          TUI: ${{ steps.filter.outputs.tui }}
-          INTEGRATION: ${{ steps.filter.outputs.integration }}
-          SMOKE: ${{ steps.filter.outputs.smoke }}
-          RELEASE: ${{ steps.filter.outputs.release }}
-          SECURITY: ${{ steps.filter.outputs.security }}
-        run: |
-          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
-          ### CI execution plan
-
-          Source: \`${GITHUB_SHA}\`
-
-          | Area | Selected |
-          |---|---|
-          | Core | \`$CORE\` |
-          | Go race/coverage | \`$GO\` |
-          | Browser | \`$BROWSER\` |
-          | TUI cross-build | \`$TUI\` |
-          | Integration | \`$INTEGRATION\` |
-          | Container smoke | \`$SMOKE\` |
-          | Release package checks | \`$RELEASE\` |
-          | Vulnerability scan | \`$SECURITY\` |
-          | Secret scan | always |
-          EOF_SUMMARY
+          CHANGES: ${{ steps.filter.outputs.changes }}
+        run: printf '### CI plan for `%s`\n\nSelected: `%s`; secret scan always runs.\n' "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
 
   core:
     name: Core checks
@@ -102,8 +78,8 @@ jobs:
         with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
       - name: Refresh reviewed legal metadata
         run: mise run legal-generate
-      - name: Run deterministic repository gate
-        run: mise run check
+      - name: Run component checks
+        run: mise run core-check
 
   go:
     name: Go race and coverage
@@ -299,42 +275,16 @@ jobs:
     if: always()
     needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
-      - name: Summarize and require all selected jobs
+      - name: Require every selected job
         env:
-          PLAN: ${{ needs.plan.result }}
-          CORE: ${{ needs.core.result }}
-          GO: ${{ needs.go.result }}
-          BROWSER: ${{ needs.browser.result }}
-          TUI: ${{ needs.tui.result }}
-          INTEGRATION: ${{ needs.integration.result }}
-          SMOKE: ${{ needs.smoke.result }}
-          RELEASE: ${{ needs.release.result }}
-          SECURITY: ${{ needs.security.result }}
-          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           set -eu
-          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
-          ### CI Gate
-
-          | Job | Result |
-          |---|---|
-          | Plan | \`$PLAN\` |
-          | Core | \`$CORE\` |
-          | Go | \`$GO\` |
-          | Browser | \`$BROWSER\` |
-          | TUI | \`$TUI\` |
-          | Integration | \`$INTEGRATION\` |
-          | Container smoke | \`$SMOKE\` |
-          | Release packages | \`$RELEASE\` |
-          | Security | \`$SECURITY\` |
-          | Secret scan | \`$SECRET_SCAN\` |
-          EOF_SUMMARY
-          failed=0
-          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
-            case "$result" in success|skipped) ;; *) failed=1 ;; esac
-          done
-          if [ "$failed" -ne 0 ]; then
+          {
+            printf '### CI Gate\n\n| Job | Result |\n|---|---|\n'
+            jq -r 'to_entries[] | "| \(.key) | `\(.value.result)` |"' <<<"$NEEDS"
+          } >>"$GITHUB_STEP_SUMMARY"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null || {
             echo "::error::CI Gate failed; inspect the summary table for the failing job"
             exit 1
-          fi
-          echo "::notice::CI Gate passed for $GITHUB_SHA"
+          }

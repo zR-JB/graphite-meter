@@ -82,20 +82,25 @@ actual=$("$engine" run --rm "$GM_GITLEAKS_IMAGE" version | tr -d '\r')
 "$engine" run --rm -v "$PWD:/repo:ro" "$GM_GITLEAKS_IMAGE" detect --source=/repo --no-banner --redact --exit-code 1
 '''
 
-# Ordered steps preserve the existing mutation boundaries: generated assets,
-# builds, embedding, and legal scans must not race within a gate invocation.
+# Ordered: generated assets, builds and legal scans must not race.
 [tasks.check]
 description = "Run the deterministic developer gate"
 run = [
-  { task = "doctor" },
   { task = "workflow-check" },
   { task = "pipeline-test" },
+  { task = "core-check" },
+  { task = "server-test" },
+  { task = "legal-check" },
+]
+
+[tasks.core-check]
+description = "Run the component checks owned by the CI core job"
+run = [
+  { task = "doctor" },
   { task = "check-generated" },
   { task = "client-ci" },
   { task = "server-check" },
-  { task = "server-test" },
   { task = "staticcheck" },
-  { task = "legal-check" },
 ]
 
 [tasks.client-ci]
@@ -355,7 +360,6 @@ set -eu
 VERSION=$usage_version
 export VERSION
 mise run legal-check
-python3 -m unittest discover -s scripts/legal -t .
 mise run release-build "$VERSION"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
