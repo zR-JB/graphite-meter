@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 2 && isVersionCommand(os.Args[1]) {
+	if len(os.Args) == 2 && (os.Args[1] == "version" || os.Args[1] == "--version") {
 		fmt.Fprintln(os.Stdout, config.EngineVersion)
 		return
 	}
@@ -30,22 +30,16 @@ func main() {
 	}
 	cfg, err := parseConfig("graphite-meter", os.Args[1:], os.Stderr)
 	if errors.Is(err, flag.ErrHelp) {
-		return // -h printed the usage on stderr.
+		return
 	}
 	if err != nil {
 		log.Fatalf("configuration error: %v", err)
 	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
 	if err := server.Run(ctx, new(cfg)); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
-}
-
-func isVersionCommand(arg string) bool {
-	return arg == "version" || arg == "--version"
 }
 
 func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
