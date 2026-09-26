@@ -9,39 +9,25 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-)
-
-// LaneEnd is how the reason a lane ended reaches its peer on each transport (api/wire.md#lane-endings).
-type LaneEnd struct {
-	WS     int
-	WT     uint32
-	Reason string
-}
-
-var (
-	endPeer     = LaneEnd{1000, 0, ""}
-	endIdle     = LaneEnd{4001, 1, "idle"}
-	endLifetime = LaneEnd{4002, 2, "lifetime"}
-	endRevoked  = LaneEnd{1008, 3, "authentication required"}
-	endShutdown = LaneEnd{1001, 4, "shutdown"}
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 var errIdle = errors.New("lane idle")
 
 // EndOf reads why ctx ended; server is the process's lifetime.
-func EndOf(ctx, server context.Context) LaneEnd {
+func EndOf(ctx, server context.Context) wire.LaneEnd {
 	cause := context.Cause(ctx)
 	switch {
 	case server.Err() != nil:
-		return endShutdown
+		return wire.LaneShutdown
 	case auth.SessionEnded(ctx):
-		return endRevoked
+		return wire.LaneRevoked
 	case errors.Is(cause, errIdle):
-		return endIdle
+		return wire.LaneIdle
 	case errors.Is(cause, context.DeadlineExceeded):
-		return endLifetime
+		return wire.LaneLifetime
 	}
-	return endPeer
+	return wire.LaneFinished
 }
 
 type Activity struct{ n atomic.Uint64 }

@@ -63,12 +63,12 @@ func (u *Upload) serve(w http.ResponseWriter, r *http.Request, bound time.Durati
 	switch {
 	case err != nil && auth.SessionEnded(r.Context()):
 		auth.SignInRequired(w.Header())
-		w.Header().Set("X-Graphite-Upload-Refusal", "revoked")
-		http.Error(w, endRevoked.Reason, http.StatusForbidden)
+		w.Header().Set("X-Graphite-Upload-Refusal", wire.LaneRevoked.Name)
+		http.Error(w, wire.LaneRevoked.Reason, http.StatusForbidden)
 		return
 	case errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)):
-		w.Header().Set("X-Graphite-Upload-Refusal", endIdle.Reason)
-		http.Error(w, endIdle.Reason, http.StatusRequestTimeout)
+		w.Header().Set("X-Graphite-Upload-Refusal", wire.LaneIdle.Name)
+		http.Error(w, wire.LaneIdle.Reason, http.StatusRequestTimeout)
 		return
 	case err != nil:
 		return
