@@ -202,3 +202,99 @@ async fn cleartext_proxy_uses_absolute_form_without_connect() {
         "{head}"
     );
 }
+
+#[path = "../../test_identity.rs"]
+mod test_identity;
+
+#[tokio::test]
+async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    let (certificate, key) = test_identity::generate_identity().unwrap();
+    let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+    let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let server = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], key)
+        .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certificate).unwrap();
+    let client = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    let tls = TlsConnector::from(Arc::new(client));
+    for secure_proxy in [false, true] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let acceptor = acceptor.clone();
+        let peer = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut stream: Box<dyn Stream> = if secure_proxy {
+                Box::new(acceptor.accept(socket).await.unwrap())
+            } else {
+                Box::new(socket)
+            };
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await.unwrap());
+            }
+            let head = String::from_utf8(head).unwrap();
+            assert!(
+                head.starts_with("CONNECT localhost.:443 HTTP/1.1\r\n"),
+                "{head}"
+            );
+            assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="));
+            stream
+                .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                .await
+                .unwrap();
+            let mut stream = acceptor.accept(stream).await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(stream.read_u8().await.unwrap());
+            }
+            let head = String::from_utf8(head).unwrap();
+            assert!(head.starts_with("GET /probe HTTP/1.1\r\n"));
+            assert!(!head.contains("proxy-authorization"));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+        let scheme = if secure_proxy { "https" } else { "http" };
+        let mut proxy = Proxy::new("", &format!("{scheme}://user:secret@localhost:{port}"), "");
+        proxy.tls = Some(tls.clone());
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let connection = connect(&proxy, &origin("https://localhost."), Some(&tls))
+                .await
+                .unwrap();
+            assert!(!connection.absolute_form);
+            assert!(connection.proxy_authorization.is_none());
+            let (mut sender, driver) =
+                hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
+                    .await
+                    .unwrap();
+            tokio::spawn(driver);
+            let request = http::Request::get("/probe")
+                .header(http::header::HOST, "localhost.")
+                .body(String::new())
+                .unwrap();
+            assert!(
+                sender
+                    .send_request(request)
+                    .await
+                    .unwrap()
+                    .status()
+                    .is_success()
+            );
+            peer.await.unwrap();
+        })
+        .await
+        .unwrap();
+    }
+}
