@@ -123,7 +123,7 @@ function watchDisplay() {
   const TRANSFER = ["download", "upload", "bidirectional"];
   let reported = false;
   let phase = "";
-  let rated = 0;
+  const readouts = new Set<string>();
   const needles = new Set<string>();
   const report = (message: string) => {
     if (reported) return;
@@ -131,9 +131,10 @@ function watchDisplay() {
     console.error(message);
   };
   const settleTransfer = () => {
-    if (TRANSFER.includes(phase) && rated >= 5 && needles.size < 2)
+    // A steady rate may hold the needle; a changing readout with a still needle means it is stuck.
+    if (TRANSFER.includes(phase) && readouts.size >= 3 && needles.size < 2)
       report(`dial indicator did not move during ${phase}`);
-    rated = 0;
+    readouts.clear();
     needles.clear();
   };
   const sample = () => {
@@ -152,9 +153,9 @@ function watchDisplay() {
       phase = next;
     }
     if (!TRANSFER.includes(phase)) return;
-    if (!/\d/.test(document.querySelector(".gauge-value")?.textContent ?? ""))
-      return;
-    rated++;
+    const readout = document.querySelector(".gauge-value")?.textContent ?? "";
+    if (!/\d/.test(readout)) return;
+    readouts.add(readout);
     needles.add(
       document.querySelector<HTMLElement>(".live-head")?.style.transform ?? "",
     );
