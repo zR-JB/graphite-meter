@@ -279,19 +279,9 @@ export class AggregateMeasurements {
           this.beginUpload(id, boundary.up[id]!);
         this.observeUpload(id, boundary.up[id]!);
       }
-    if (!valid) {
-      record.complete = false;
-      record.endMs = boundary.atMs;
-      open.wasStable = false;
-      open.stable = null;
-      return null;
-    }
-    if (!record.complete) {
-      const stage = record.stage,
-        participants = record.participants;
-      this.begin(stage, participants, boundary.atMs, "evidence-resumed");
-      return this.observe(boundary);
-    }
+    // A boundary without every component is skipped: the interval keeps its
+    // last valid boundary, and the next valid boundary spans the gap.
+    if (!valid) return null;
     if (!open.first) {
       open.first = open.last = boundary;
       record.startMs = record.endMs = boundary.atMs;
@@ -327,6 +317,7 @@ export class AggregateMeasurements {
     const sample = this.#window(open.last!, boundary, record);
     const full = this.#window(open.first, boundary, record);
     if (!sample || !full) {
+      // A replaced receiver or regressed counter cannot be spanned.
       record.complete = false;
       record.endMs = boundary.atMs;
       this.begin(
@@ -442,11 +433,8 @@ export class AggregateMeasurements {
     open.score = score;
     return stable;
   }
-  result(
-    stage: TransferStage,
-    dir: FlowDirection,
-    stable: boolean,
-  ): ThroughputResult | null {
+  /** The latest interval of a stage and the window its headline uses. */
+  #headline(stage: TransferStage, stable: boolean) {
     const record = this.intervals.findLast(
       (interval) => interval.stage === stage,
     );
@@ -467,6 +455,21 @@ export class AggregateMeasurements {
         MIN_PARTIAL_TRANSFER_EVIDENCE_MS
         ? record.headline
         : record.full;
+    return { record, open, window };
+  }
+  /** Saved evidence names the window the stage's result reports. */
+  settle(stage: TransferStage, stable: boolean): void {
+    const headline = this.#headline(stage, stable);
+    if (headline) headline.record.headline = headline.window;
+  }
+  result(
+    stage: TransferStage,
+    dir: FlowDirection,
+    stable: boolean,
+  ): ThroughputResult | null {
+    const headline = this.#headline(stage, stable);
+    if (!headline) return null;
+    const { record, open, window } = headline;
     const components = window[dir];
     if (
       !components ||
@@ -477,9 +480,8 @@ export class AggregateMeasurements {
       return null;
     const key = dir === "down" ? "downBytesPerSec" : "upBytesPerSec";
     const rate = window[key],
-      full = record.full[key];
+      full = record.full![key];
     if (rate === null || full === null) return null;
-    record.headline = window;
     const confidence = transferConfidence([...open.rates[dir].rates]);
     return {
       reportedBytesPerSec: rate,

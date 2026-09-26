@@ -54,6 +54,7 @@ interface ServerState {
   discoveryError?: unknown;
   validation: ConnectionValidation;
   roles: Record<ConnectionRole, RoleState>;
+  published?: unknown[];
 }
 export interface ServerConnectionView {
   server: ServerEntry;
@@ -69,7 +70,7 @@ export interface ServerConnectionView {
 interface Dependencies {
   discover: typeof discoverServer;
   prepare: typeof prepareConnections;
-  changed: (view: ServerConnectionView) => void;
+  changed: (views: ServerConnectionView[]) => void;
   idleEvent: (id: string, event: RunnerEvent) => void;
 }
 const retryState = (): Retry => ({ attempts: 0, at: 0, authentication: false });
@@ -136,12 +137,18 @@ export class ServerConnections {
   #background = 0;
   #activeOrigins = new Map<string, number>();
   #queue: { origin: string; priority: () => number; start: () => void }[] = [];
+  #dirty = new Set<ServerState>();
+  #depth = 0;
+  #flushing = false;
 
   constructor(dependencies: Dependencies) {
     this.#deps = dependencies;
   }
 
   reset(servers: readonly ServerEntry[]): void {
+    this.#batch(() => this.#reset(servers));
+  }
+  #reset(servers: readonly ServerEntry[]): void {
     this.#disposed = false;
     const previous = new Map(this.#servers);
     this.#stop();
@@ -183,6 +190,9 @@ export class ServerConnections {
 
   /** Changed intent cancels only its role. Unchanged peers and verified equivalent paths are retained. */
   select(selection: readonly { id: string; config: RunnerConfig }[]): void {
+    this.#batch(() => this.#select(selection));
+  }
+  #select(selection: readonly { id: string; config: RunnerConfig }[]): void {
     this.#selected = selection.map(({ id }) => id);
     const configs = new Map(selection.map(({ id, config }) => [id, config]));
     for (const state of this.#servers.values()) {
@@ -266,8 +276,10 @@ export class ServerConnections {
     this.#schedule();
   }
   activity(enabled: boolean, idleServer: string | null): void {
+    idleServer = enabled ? idleServer : null;
+    if (enabled === this.#enabled && idleServer === this.#idleServer) return;
     this.#enabled = enabled;
-    this.#idleServer = enabled ? idleServer : null;
+    this.#idleServer = idleServer;
     this.#refreshIdle();
     this.#schedule();
   }
@@ -322,6 +334,9 @@ export class ServerConnections {
     );
   }
   invalidate(ids = this.#selected, roles = CONNECTION_ROLES): void {
+    this.#batch(() => this.#invalidate(ids, roles));
+  }
+  #invalidate(ids: string[], roles: ConnectionRole[]): void {
     for (const id of ids) {
       const state = this.#servers.get(id);
       if (!state) continue;
@@ -752,8 +767,50 @@ export class ServerConnections {
       },
     };
   }
+  /** A public operation publishes once, after its last change, and only changed views. */
+  #batch(run: () => void): void {
+    this.#depth++;
+    try {
+      run();
+    } finally {
+      if (--this.#depth === 0) this.#flush();
+    }
+  }
   #publish(state: ServerState): void {
-    if (this.#current(state)) this.#deps.changed(this.#view(state));
+    if (!this.#current(state)) return;
+    this.#dirty.add(state);
+    if (!this.#depth) this.#flush();
+  }
+  #flush(): void {
+    if (this.#flushing) return;
+    this.#flushing = true;
+    try {
+      while (this.#dirty.size) {
+        const views: ServerConnectionView[] = [];
+        for (const state of this.#dirty) {
+          this.#dirty.delete(state);
+          if (!this.#current(state)) continue;
+          const view = this.#view(state);
+          const key = [
+            view.readiness.state,
+            view.readiness.message,
+            view.readiness.checkedAt,
+            view.metadataChecking,
+            state.validation,
+            state.discovery,
+            state.discoveryError,
+            state.server,
+          ];
+          if (state.published?.every((value, i) => value === key[i])) continue;
+          state.published = key;
+          views.push(view);
+        }
+        // Consumers may call back into this owner; their changes publish next.
+        if (views.length) this.#deps.changed(views);
+      }
+    } finally {
+      this.#flushing = false;
+    }
   }
   #stopIdle(slot: RoleState): void {
     const idle = slot.idle;

@@ -48,8 +48,8 @@ function fixture(
   const manager = new ServerConnections({
     discover,
     prepare,
-    changed: (view) => {
-      views.set(view.server.id, view);
+    changed: (changed) => {
+      for (const view of changed) views.set(view.server.id, view);
     },
     idleEvent() {},
   });
@@ -731,4 +731,36 @@ test("independent background metadata checks overlap while leaving capacity for 
     manager.dispose();
     await settle();
   }
+});
+
+test("operations publish changed views once, without reentrant churn", async () => {
+  const batches: string[][] = [];
+  const manager: ServerConnections = new ServerConnections({
+    discover: async () => testPreparedPaths().discovery,
+    prepare: async () => preparation(),
+    changed: (views) => {
+      batches.push(views.map((view) => view.server.id));
+      // A consumer reacting to a publication may call back into the owner.
+      manager.activity(true, null);
+    },
+    idleEvent() {},
+  });
+  manager.reset(
+    ["self", "peer"].map((id) => ({ id, name: id, url: "http://meter.test" })),
+  );
+  expect(batches).toEqual([["self", "peer"]]);
+  const config = structuredClone(DEFAULT_CONFIG);
+  const selection = [
+    { id: "self", config },
+    { id: "peer", config },
+  ];
+  manager.select(selection);
+  await manager.check();
+  await settle();
+  const published = batches.length;
+  manager.select(selection);
+  manager.activity(true, null);
+  expect(batches).toHaveLength(published);
+  expect(manager.ready()).toBe(true);
+  manager.dispose();
 });

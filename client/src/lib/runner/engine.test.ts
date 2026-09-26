@@ -1256,3 +1256,33 @@ test("idle latency is stopped before the measurement runner starts and resumes a
     },
   );
 });
+
+test("returning to start releases the run so late events cannot reach the fresh store", async () => {
+  await withValidationRunner(
+    async () => testPreparedPaths(),
+    async ({ engine, runner }) => {
+      const { store } = await import("../state/store.svelte");
+      engine.toggleRun();
+      await yieldUntil(() => runner.starts === 1);
+      const late = runner.listener;
+      engine.returnToStart();
+      expect(store.phase).toBe("idle");
+      late({
+        type: "serverLatencySummary",
+        serverId: "self",
+        stage: "download",
+        summary: null,
+      });
+      runner.listener({
+        type: "stageSkipped",
+        failure: {
+          stage: "download",
+          reason: "connection-lost",
+          message: "late",
+        },
+      });
+      expect(store.summariesByServer.size).toBe(0);
+      expect(store.stageFailures).toEqual({});
+    },
+  );
+});

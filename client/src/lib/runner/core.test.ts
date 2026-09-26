@@ -1330,7 +1330,7 @@ test("worker observations retain their timeline position across delayed delivery
   config.adaptive.enabled = false;
   config.duration.warmupMs = 0;
   config.duration.latencyMs = 4000;
-  core.start(config, 1);
+  core.start(config, 0);
   advance(200);
   expect(core.observationTime(195)).toBe(195);
   // A delivered batch takes time to consume before the next master tick.
@@ -1340,4 +1340,31 @@ test("worker observations retain their timeline position across delayed delivery
   advance(25);
   expect(core.observationTime(195)).toBe(195);
   core.dispose();
+});
+
+test("a suspended page enters every segment in order and restarts stability after the gap", async () => {
+  const { core, backend, events } = await startCore({
+    stages: { latency: false, download: true, upload: true },
+    duration: { warmupMs: 500, downloadMs: 1000, uploadMs: 1000 },
+  });
+  const phases = () =>
+    typedEvents(events, "phase").map((event) => event.transition.to);
+  // Worker samples keep arriving while the page's own timers are throttled.
+  const gap = (dir: "down" | "up") => {
+    fakeNow += 60_000;
+    core.ingestThroughput(dir, 1000, 0.1);
+    tickCallback?.();
+  };
+  // A tick crosses at most one boundary, and the gap is not measured time.
+  gap("down");
+  expect(phases()).toEqual(["connecting", "warmup", "download"]);
+  expect(backend.calls).toContain("measure:download");
+  gap("down");
+  expect(phases().slice(3)).toEqual(["warmup"]);
+  gap("up");
+  expect(phases().slice(3)).toEqual(["warmup", "upload"]);
+  expect(backend.calls).toContain("measure:upload");
+  gap("up");
+  expect(events.at(-1)?.type).toBe("complete");
+  expect(typedEvents(events, "stall")).toEqual([]);
 });

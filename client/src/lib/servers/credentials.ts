@@ -102,9 +102,14 @@ export function socketMint(
   const url = `${origin}/${kind}/session?target=${encodeURIComponent(origin + path)}`;
   return { url, ...requestOptions(context, url, "POST") };
 }
-export function reportServerAuthentication(context?: ServerCredentials): void {
+/** The page login owns session failures; a remote grant belongs to its participant's host. */
+export function reportServerAuthentication(
+  context: ServerCredentials | undefined,
+  host?: { authenticationRequired?(role: "throughput" | "latency"): void },
+  role: "throughput" | "latency" = "throughput",
+): void {
   if (!context || context.kind === "session") reportAuthenticationRequired();
-  // Remote transport failures are reported to their participant's host, which owns cancellation.
+  else host?.authenticationRequired?.(role);
 }
 export async function classifyServerAuthentication(
   context?: ServerCredentials,

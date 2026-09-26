@@ -55,12 +55,17 @@ export class RealBackend implements RunnerBackend {
     dir: FlowDirection,
   ) => number;
 
+  /** Coordinated participants have no single upload gauge to drive. */
+  readonly #presentUpload: boolean;
+
   constructor(
     paths: PreparedPaths,
     streamCount?: (activity: PhaseActivity, dir: FlowDirection) => number,
+    presentUpload = true,
   ) {
     this.#streamCount = streamCount;
     this.#paths = paths;
+    this.#presentUpload = presentUpload;
   }
   attach(host: CoreHost): void {
     this.#host = host;
@@ -94,6 +99,7 @@ export class RealBackend implements RunnerBackend {
       this.#streamPolicy,
       this.#cbSeed,
       this.#streamCount,
+      this.#presentUpload ? new UploadPresentationBridge() : null,
     );
     this.#stage = stage;
     return stage.prepare();
@@ -174,7 +180,7 @@ class TransportStage {
   #latency: LatencyChannel | null = null;
   #stalled = false;
   #finishing = false;
-  #uploadPresentation = new UploadPresentationBridge();
+  readonly #uploadPresentation: UploadPresentationBridge | null;
   #presentationTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
@@ -183,7 +189,9 @@ class TransportStage {
     activity: PhaseActivity,
     policy: TransferStreamPolicy,
     cbSeed: string,
-    streamCount?: (activity: PhaseActivity, dir: FlowDirection) => number,
+    streamCount:
+      ((activity: PhaseActivity, dir: FlowDirection) => number) | undefined,
+    uploadPresentation: UploadPresentationBridge | null,
   ) {
     this.#host = host;
     this.#paths = paths;
@@ -191,6 +199,7 @@ class TransportStage {
     this.#policy = policy;
     this.#cbSeed = cbSeed;
     this.#streamCount = streamCount;
+    this.#uploadPresentation = uploadPresentation;
   }
 
   get hasUpload(): boolean {
@@ -417,16 +426,18 @@ class TransportStage {
         beginUploadMeasure: () => meter?.beginMeasure(),
         discardTransfer: () => this.discard(),
         authenticationRequired: () =>
-          reportServerAuthentication(this.#paths.credentials),
-        uploadPresentationHint: (lane, bytes, elapsedMs) => {
-          this.#uploadPresentation.hint(
-            lane,
-            bytes,
-            elapsedMs,
-            performance.now(),
-          );
-          this.#emitPresentation();
-        },
+          reportServerAuthentication(this.#paths.credentials, this.#host),
+        uploadPresentationHint: this.#uploadPresentation
+          ? (lane, bytes, elapsedMs) => {
+              this.#uploadPresentation!.hint(
+                lane,
+                bytes,
+                elapsedMs,
+                performance.now(),
+              );
+              this.#emitPresentation();
+            }
+          : undefined,
       },
     });
     this.#directions[dir] = direction;
@@ -446,14 +457,16 @@ class TransportStage {
           ? (signal) => this.checkpoint(signal)
           : undefined,
       credentials: this.#paths.credentials,
-      authoritativePresentation: (bytesPerSec) => {
-        this.#uploadPresentation.authoritative(
-          bytesPerSec,
-          true,
-          performance.now(),
-        );
-        this.#emitPresentation();
-      },
+      authoritativePresentation: this.#uploadPresentation
+        ? (bytesPerSec) => {
+            this.#uploadPresentation!.authoritative(
+              bytesPerSec,
+              true,
+              performance.now(),
+            );
+            this.#emitPresentation();
+          }
+        : undefined,
     });
     this.#upload = meter;
     if (progressUrl) {
@@ -593,7 +606,8 @@ class TransportStage {
   }
 
   #emitPresentation(): void {
-    if (this.#abort.signal.aborted) return;
+    const bridge = this.#uploadPresentation;
+    if (!bridge || this.#abort.signal.aborted) return;
     const healthy =
       !this.#finishing &&
       !this.#stalled &&
@@ -602,20 +616,17 @@ class TransportStage {
     const expectedLanes = this.#directions.up?.laneCount ?? 0;
     this.#host.emit({
       type: "uploadPresentation",
-      bytesPerSec: this.#uploadPresentation.target(now, healthy, expectedLanes),
+      bytesPerSec: bridge.target(now, healthy, expectedLanes),
     });
     clearTimeout(this.#presentationTimer);
-    const wakeMs = this.#uploadPresentation.nextWakeMs(
-      now,
-      healthy,
-      expectedLanes,
-    );
+    const wakeMs = bridge.nextWakeMs(now, healthy, expectedLanes);
     this.#presentationTimer =
       wakeMs === null
         ? undefined
         : setTimeout(() => this.#emitPresentation(), wakeMs);
   }
   #clearPresentation(): void {
+    if (!this.#uploadPresentation) return;
     clearTimeout(this.#presentationTimer);
     this.#uploadPresentation.stop();
     this.#host.emit({ type: "uploadPresentation", bytesPerSec: null });

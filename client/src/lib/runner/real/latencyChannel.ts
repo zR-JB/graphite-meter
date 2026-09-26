@@ -216,7 +216,11 @@ export class LatencyChannel {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
-      reportServerAuthentication(this.#deps.credentials);
+      reportServerAuthentication(
+        this.#deps.credentials,
+        this.#deps.host,
+        "latency",
+      );
       this.#deps.host.ingestLatencyAccountingIncomplete();
       this.#deps.stall("Sign in again to measure latency");
       return;

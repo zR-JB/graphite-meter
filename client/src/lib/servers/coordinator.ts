@@ -19,18 +19,17 @@ import type {
   ReceiverCheckpoint,
   RunnerConfig,
   RunnerEvent,
-  RunResult,
   StallInfo,
   TransportRole,
 } from "../runner/contract";
 import { identity, type ServerIdentity } from "./catalog";
+import { ServerAuthenticationRequired } from "./credentials";
 import {
   AggregateMeasurements,
   weakestLatencyConfidence,
   type Boundary,
   type MultiServerResult,
   type ServerFailure,
-  type TransferStage,
 } from "./measurement";
 import {
   planServerStreams,
@@ -78,11 +77,16 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   #measuring = false;
   #latencyMeasuring = false;
   #runStart = 0;
-  #focus: string;
+  /** The headline latency population, fixed before the run; display focus never changes it. */
+  readonly #latencySource: string;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #boundaryAbort = new AbortController();
   #boundary: Promise<void> | null = null;
+  /** Invalidates in-flight boundaries after membership or stage changes. */
   #epoch = 0;
+  /** Invalidates every continuation of a released run. */
+  #generation = 0;
+  #evidence = true;
   #failures: ServerFailure[] = [];
   #ledgerReported: Record<FlowDirection, number> = { down: 0, up: 0 };
   #completed = false;
@@ -90,11 +94,12 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
 
   constructor(
     servers: PreparedServer[],
-    focus: string,
+    latencySource: string,
     createBackend: (
       paths: PreparedPaths,
       count: (activity: PhaseActivity, dir: FlowDirection) => number,
-    ) => ParticipantTransport = (paths, count) => new RealBackend(paths, count),
+    ) => ParticipantTransport = (paths, count) =>
+      new RealBackend(paths, count, false),
   ) {
     if (
       servers.length < 1 ||
@@ -102,8 +107,10 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       new Set(servers.map((server) => server.server.id)).size !== servers.length
     )
       throw new Error("Select one to four different servers");
-    this.#focus = servers.some((server) => server.server.id === focus)
-      ? focus
+    this.#latencySource = servers.some(
+      (server) => server.server.id === latencySource,
+    )
+      ? latencySource
       : servers[0].server.id;
     this.#servers = servers.map((server) => ({
       ...server,
@@ -143,10 +150,11 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       if (event.type === "latency" || event.type === "latencySummary") return;
       if (event.type === "complete") {
         this.#completed = true;
-        event.result.outcome = this.#failures.length ? "partial" : "complete";
-        event.result.latency = this.#config
-          ? this.latencyResult(this.#config)
-          : null;
+        event.result.outcome = !this.#active().length
+          ? "incomplete"
+          : this.#failures.length
+            ? "partial"
+            : "complete";
       }
       this.#emit(event);
     });
@@ -189,12 +197,6 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     }
     this.#core.reconfigure(config);
   }
-  focusServer(id: string): void {
-    if (this.#servers.some((server) => server.server.id === id)) {
-      this.#focus = id;
-      this.#emit({ type: "serverDetails", details: this.details() });
-    }
-  }
   #emit(event: RunnerEvent): void {
     for (const handler of this.#handlers) handler(event);
   }
@@ -212,8 +214,16 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       ? this.#latencyServers()
       : this.#active();
   }
-  #focused(): Participant {
-    return this.#servers.find((server) => server.server.id === this.#focus)!;
+  #latencyHeadline(): Participant {
+    return this.#servers.find(
+      (server) => server.server.id === this.#latencySource,
+    )!;
+  }
+  /** Presentation drops live rates only when the combined interval restarts. */
+  #setEvidence(available: boolean): void {
+    if (available === this.#evidence) return;
+    this.#evidence = available;
+    this.#emit({ type: "aggregateEvidence", available });
   }
 
   #beginRun(config: RunnerConfig): void {
@@ -223,6 +233,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     this.#config = config;
     this.#runStart = performance.now();
     this.#failures = [];
+    this.#evidence = true;
     this.#aggregate.reset();
     this.#ledgerReported = { down: 0, up: 0 };
     this.#boundaryAbort = new AbortController();
@@ -318,7 +329,11 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
         void this.#sampleBoundary();
       }, CHECKPOINT_CADENCE_MS);
   }
-  async #sampleBoundary(final = false): Promise<void> {
+  /** `settled` runs as soon as a participant's boundary evidence is known. */
+  async #sampleBoundary(
+    final = false,
+    settled?: (server: Participant) => void,
+  ): Promise<void> {
     if (this.#boundary) {
       await this.#boundary;
       if (!final) return;
@@ -330,8 +345,8 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     )
       return;
     const epoch = this.#epoch,
-      stage = this.#activity.stage as TransferStage,
-      participants = this.#active();
+      participants = this.#active(),
+      upload = this.#activity.transfer.includes("up");
     const at = performance.now();
     for (const server of participants) server.backend.flushDownload(at);
     const boundary: Boundary = {
@@ -343,41 +358,49 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     };
     if (final) this.#measuring = false;
     const work = async () => {
-      const unresponsive: Participant[] = [];
-      if (this.#activity?.transfer.includes("up")) {
-        const results = await Promise.allSettled(
-          participants.map((server) =>
-            server.backend.checkpoint(this.#boundaryAbort.signal),
-          ),
-        );
+      const results = await Promise.allSettled(
+        participants.map((server) =>
+          (upload
+            ? server.backend.checkpoint(this.#boundaryAbort.signal)
+            : Promise.resolve(null)
+          ).finally(() => settled?.(server)),
+        ),
+      );
+      const removals: [Participant, string, string][] = [];
+      if (upload)
         participants.forEach((server, index) => {
           const result = results[index];
-          boundary.up[server.server.id] =
+          const checkpoint =
             result.status === "fulfilled" ? result.value : null;
-          server.checkpointMisses = boundary.up[server.server.id]
+          boundary.up[server.server.id] = checkpoint;
+          server.checkpointMisses = checkpoint
             ? 0
             : server.checkpointMisses + 1;
-          if (server.checkpointMisses >= 3 && !final) unresponsive.push(server);
+          if (
+            result.status === "rejected" &&
+            result.reason instanceof ServerAuthenticationRequired
+          )
+            removals.push([server, "sign-in-required", result.reason.message]);
+          // A single late receiver skips its boundary; only repeated loss removes it.
+          else if (server.checkpointMisses >= 3 && !final)
+            removals.push([
+              server,
+              "receiver-checkpoint-failed",
+              "Upload receiver checkpoints repeatedly failed",
+            ]);
         });
-      }
       if (epoch !== this.#epoch || this.#boundaryAbort.signal.aborted) return;
       const previousInterval = this.#aggregate.current?.id;
       const sample = this.#aggregate.observe(boundary);
-      this.#emit({ type: "aggregateEvidence", available: sample !== null });
-      if (unresponsive.length) {
-        // Do not repeatedly invalidate healthy peers for an unobservable receiver.
-        // The missing boundary remains incomplete; survivors start a new interval.
-        for (const server of unresponsive)
-          this.#remove(
-            server,
-            "receiver-checkpoint-failed",
-            "Upload receiver checkpoints repeatedly failed",
-          );
-        return;
-      }
-      if (!sample || previousInterval !== this.#aggregate.current?.id)
+      for (const [server, reason, message] of removals)
+        this.#remove(server, reason, message);
+      if (epoch !== this.#epoch) return;
+      if (previousInterval !== this.#aggregate.current?.id) {
+        this.#setEvidence(false);
         this.#core.resetMeasurementInterval();
-      if (sample)
+      }
+      if (sample) {
+        this.#setEvidence(true);
         for (const dir of this.#activity!.transfer) {
           const rate =
             dir === "down" ? sample.downBytesPerSec : sample.upBytesPerSec;
@@ -399,9 +422,8 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
             uniqueDelta,
           );
         }
+      }
       if (final) this.#aggregate.close();
-      if (stage !== this.#activity?.stage) return;
-      this.#emit({ type: "serverDetails", details: this.details() });
     };
     this.#boundary = work();
     try {
@@ -411,16 +433,27 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       if (!final) this.#armBoundary();
     }
   }
+  /** Each participant stops as soon as its own final evidence is known. */
   async #endStage(activity: PhaseActivity, flush = true): Promise<void> {
+    const generation = this.#generation;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
-    if (flush && activity.transfer.length) await this.#sampleBoundary(true);
+    const ending = new Map<Participant, Promise<unknown>>();
+    const end = (server: Participant) => {
+      if (!ending.has(server))
+        ending.set(
+          server,
+          Promise.resolve()
+            .then(() => server.backend.onStageEnd(activity, flush))
+            .catch(() => {}),
+        );
+    };
+    if (flush && activity.transfer.length)
+      await this.#sampleBoundary(true, end);
     this.#measuring = false;
-    await Promise.allSettled(
-      this.#stageParticipants(activity).map((server) =>
-        server.backend.onStageEnd(activity, flush),
-      ),
-    );
+    for (const server of this.#stageParticipants(activity)) end(server);
+    await Promise.all(ending.values());
+    if (generation !== this.#generation) return;
     this.#latencyMeasuring = false;
     for (const server of this.#servers) {
       const sample = server.buckets.flush(this.#core.elapsed);
@@ -443,6 +476,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
   }
   #release(): void {
     this.#epoch++;
+    this.#generation++;
     this.#measuring = this.#latencyMeasuring = false;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
@@ -556,42 +590,23 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     server.backend.onAbort();
     this.#failure(server, "throughput", reason, message);
     this.#epoch++;
-    this.#emit({ type: "aggregateEvidence", available: false });
-    this.#core.resetMeasurementInterval();
-    if (this.#activity)
+    const survivors = this.#active().map((server) => server.server.id);
+    // The latest interval has fixed membership, even when nobody survives.
+    if (this.#activity && this.#measuring)
       this.#aggregate.begin(
         this.#activity.stage,
-        this.#active().map((server) => server.server.id),
+        survivors,
         this.#now(),
         "dropout",
       );
-    if (!this.#active().length) {
-      this.#finishIncomplete();
+    if (!survivors.length) {
+      // The terminal outcome is emitted once, after the active stage ends.
+      this.#core.finish();
       return;
     }
+    this.#setEvidence(false);
+    this.#core.resetMeasurementInterval();
     void this.#sampleBoundary();
-  }
-  #finishIncomplete(): void {
-    this.#completed = true;
-    this.#core.abort();
-    this.#emit({ type: "complete", result: this.#result("incomplete") });
-  }
-  #result(outcome: RunResult["outcome"]): RunResult {
-    return {
-      download: this.throughputResult("download", false),
-      upload: this.throughputResult("upload", false),
-      bidirectional: this.#config?.stages.bidirectional
-        ? this.bidirectionalResult(false)
-        : null,
-      latency: this.#config ? this.latencyResult(this.#config) : null,
-      latencyByStage: this.latencySummaries(),
-      bufferbloat: this.bufferbloatGrade(),
-      stageFailures: {},
-      startedAt: Date.now() - this.#now(),
-      durationMs: this.#now(),
-      multiServer: this.details(),
-      outcome,
-    };
   }
   #host(server: Participant): CoreHost {
     const owner = this;
@@ -678,6 +693,13 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
       },
       failStage(_stage, reason, message) {
         owner.#remove(server, reason, message);
+      },
+      authenticationRequired(role) {
+        const message = `Sign in to ${server.server.name}`;
+        // Loaded latency alone never removes a throughput participant.
+        if (role === "throughput" || owner.#activity?.stage === "latency")
+          owner.#remove(server, "sign-in-required", message);
+        else owner.#failure(server, "latency", "sign-in-required", message);
       },
       presentationRate(dir) {
         return server.rates[dir].snapshot().presentedBytesPerSec;
@@ -766,6 +788,7 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     );
   }
   throughputResult(stage: "download" | "upload", stable: boolean) {
+    this.#aggregate.settle(stage, stable);
     return this.#aggregate.result(
       stage,
       stage === "download" ? "down" : "up",
@@ -773,26 +796,27 @@ export class ServerCoordinator implements NetworkRunner, RunMeasurementSource {
     );
   }
   bidirectionalResult(stable: boolean) {
+    this.#aggregate.settle("bidirectional", stable);
     return {
       down: this.#aggregate.result("bidirectional", "down", stable),
       up: this.#aggregate.result("bidirectional", "up", stable),
     };
   }
   latencyResult(config: RunnerConfig) {
-    return this.#focused().accum.latencyResult(config);
+    return this.#latencyHeadline().accum.latencyResult(config);
   }
   latencySummaries() {
-    return this.#focused().accum.latencySummaries();
+    return this.#latencyHeadline().accum.latencySummaries();
   }
   bufferbloatGrade() {
-    return this.#focused().accum.bufferbloatGrade();
+    return this.#latencyHeadline().accum.bufferbloatGrade();
   }
   details(): MultiServerResult {
     const config = this.#config;
     return {
       selection: this.#servers.map((server) => server.server),
       participants: this.#active().map((server) => server.server.id),
-      latencyFocus: this.#focus,
+      latencyFocus: this.#latencySource,
       intervals: structuredClone(this.#aggregate.intervals),
       omittedIntervals: this.#aggregate.omittedIntervals,
       failures: [...this.#failures],

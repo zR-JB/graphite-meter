@@ -20,6 +20,7 @@ import type {
   RunResult,
   StageLatencySummary,
   BufferbloatGrade,
+  ConnectionRole,
 } from "./contract";
 import {
   shouldExitPhase,
@@ -52,6 +53,7 @@ const STABILITY_CADENCE_MS = 100;
 
 // Stall deadlines use wall time; result accounting retains the dead-air duration.
 const STALL_WATCHDOG_MS = 1500; // measured-phase silence → auto-stall
+const TIMER_GAP_MS = STALL_WATCHDOG_MS; // a longer tick gap interrupts stability
 const RECOVERY_ATTEMPTS = 2;
 const RECOVERY_ATTEMPT_MS = ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS;
 export const STAGE_RECOVERY_BUDGET_MS =
@@ -100,6 +102,8 @@ export interface CoreHost {
   // Direct events bypass measurement accumulation.
   emit(e: RunnerEvent): void;
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void;
+  /** A measurement request was refused for missing or expired authorization. */
+  authenticationRequired?(role: ConnectionRole): void;
   // A stage failure skips only that stage unless no usable work remains.
   failStage(
     stage: TransportRole,
@@ -177,6 +181,8 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   #t0 = 0; // monotonic clock reading at run start
   #segments: Segment[] = [];
   #stagePreparing = false;
+  #stageEnding = false;
+  #endRequested = false;
   #stagePreparationId = 0;
   #activeSeg: Segment | null = null;
   #lastStabilityAt = -Infinity;
@@ -329,7 +335,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     this.#rateEstimator.up.reset();
     this.#presentedRate = { down: 0, up: 0 };
     this.#continuityId = 0;
-    this.#stagePreparing = false;
+    this.#stagePreparing = this.#stageEnding = this.#endRequested = false;
     this.#stagePreparationId++;
   }
 
@@ -341,7 +347,7 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     if (this.#tickTimer) clearTimeout(this.#tickTimer);
     this.#tickTimer = null;
     this.#running = false;
-    this.#stagePreparing = false;
+    this.#stagePreparing = this.#stageEnding = false;
     this.#stagePreparationId++;
     const from = this.#phase;
     this.#flushLatencyPresentation();
@@ -361,6 +367,19 @@ export class RunnerCore implements NetworkRunner, CoreHost {
   dispose(): void {
     this.#backend.dispose?.();
     this.abort();
+  }
+
+  /** End after the active stage with every retained result; later stages do not run. */
+  finish(): void {
+    if (!this.#running) return;
+    this.#endRequested = true;
+    // A pending stage end completes the run when it settles.
+    if (this.#stageEnding) return;
+    if (this.#tickTimer) clearTimeout(this.#tickTimer);
+    this.#tickTimer = null;
+    this.#stagePreparing = false;
+    this.#stagePreparationId++;
+    this.#finish();
   }
 
   /* ================= LIVE RECONFIGURE ================= */
@@ -436,7 +455,16 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const dtWall = now - this.#lastRealNow;
     this.#lastRealNow = now;
     if (this.#stagePreparing) return;
-    this.#measuredElapsed += dtWall;
+    // A throttled or suspended page still enters every segment in order: one
+    // tick never crosses more than the current boundary, and a long timer gap
+    // restarts stability confirmation instead of confirming across it.
+    const current = segmentAt(this.#segments, this.#measuredElapsed);
+    this.#measuredElapsed = Math.min(
+      this.#measuredElapsed + Math.max(0, dtWall),
+      current?.end ?? Infinity,
+    );
+    if (dtWall > TIMER_GAP_MS && isMeasuredPhase(this.#phase))
+      this.resetMeasurementInterval();
     const elapsed = this.#measuredElapsed;
     for (const bucket of this.#latencyBuckets.closeThrough(
       this.#measuredElapsed,
@@ -928,6 +956,10 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     }
   }
 
+  authenticationRequired(role: ConnectionRole): void {
+    if (this.#running) this.emit({ type: "authenticationRequired", role });
+  }
+
   fail(reason: RunnerError["reason"], message: string, cause?: unknown): void {
     if (this.#phase === "error") return;
     if (this.#tickTimer) {
@@ -1043,19 +1075,20 @@ export class RunnerCore implements NetworkRunner, CoreHost {
     const ending = this.#backend.onStageEnd(activity);
     if (!ending) return false;
     const preparationId = ++this.#stagePreparationId;
-    this.#stagePreparing = true;
+    this.#stagePreparing = this.#stageEnding = true;
     void ending.then(
       () => {
         if (preparationId !== this.#stagePreparationId || !this.#running)
           return;
-        this.#stagePreparing = false;
+        this.#stagePreparing = this.#stageEnding = false;
         this.#lastRealNow = performance.now();
-        done();
+        if (this.#endRequested) this.#complete();
+        else done();
         this.#armTick();
       },
       (cause) => {
         if (preparationId !== this.#stagePreparationId) return;
-        this.#stagePreparing = false;
+        this.#stagePreparing = this.#stageEnding = false;
         this.fail(
           "protocol-error",
           `${activity.stage} finalization failed`,
@@ -1117,48 +1150,47 @@ export class RunnerCore implements NetworkRunner, CoreHost {
 
   /* ================= FINISH → RunResult ================= */
   #finish() {
-    const complete = (): void => {
-      if (this.#tickTimer) clearTimeout(this.#tickTimer);
-      this.#tickTimer = null;
-      this.#running = false;
+    if (
+      !this.#activeSeg ||
+      !this.#waitForStageEnd(this.#activeSeg.activity, () => this.#complete())
+    )
+      this.#complete();
+  }
 
-      const cfg = this.#cfg!;
-      this.#finalizeStage(this.#phase);
-      const actualMs = Math.max(0, performance.now() - this.#t0);
-      const bidirectional = cfg.stages.bidirectional
-        ? this.#source
-          ? this.#source.bidirectionalResult(
+  #complete(): void {
+    if (this.#tickTimer) clearTimeout(this.#tickTimer);
+    this.#tickTimer = null;
+    this.#running = false;
+
+    const cfg = this.#cfg!;
+    this.#finalizeStage(this.#phase);
+    const actualMs = Math.max(0, performance.now() - this.#t0);
+    const bidirectional = cfg.stages.bidirectional
+      ? this.#source
+        ? this.#source.bidirectionalResult(
+            this.#completedEarlyStages.has("bidirectional"),
+          )
+        : this.#stageFailures.has("bidirectional")
+          ? (this.#biResult ?? this.#accum.partialBidirectionalResult())
+          : this.#accum.bidirectionalResult(
               this.#completedEarlyStages.has("bidirectional"),
             )
-          : this.#stageFailures.has("bidirectional")
-            ? (this.#biResult ?? this.#accum.partialBidirectionalResult())
-            : this.#accum.bidirectionalResult(
-                this.#completedEarlyStages.has("bidirectional"),
-              )
-        : null;
-      const result = {
-        download: this.#dlResult,
-        upload: this.#ulResult,
-        bidirectional,
-        latency: this.#latResult,
-        bufferbloat: (this.#source ?? this.#accum).bufferbloatGrade(),
-        latencyByStage: (this.#source ?? this.#accum).latencySummaries(),
-        ...(this.#source ? { multiServer: this.#source.details() } : {}),
-        stageFailures: Object.fromEntries(this.#stageFailures),
-        startedAt: Date.now() - actualMs,
-        durationMs: actualMs,
-      };
-
-      this.#phase = "complete";
-      this.#backend.onComplete();
-      this.emit({ type: "complete", result });
+      : null;
+    const result = {
+      download: this.#dlResult,
+      upload: this.#ulResult,
+      bidirectional,
+      latency: this.#latResult,
+      bufferbloat: (this.#source ?? this.#accum).bufferbloatGrade(),
+      latencyByStage: (this.#source ?? this.#accum).latencySummaries(),
+      ...(this.#source ? { multiServer: this.#source.details() } : {}),
+      stageFailures: Object.fromEntries(this.#stageFailures),
+      startedAt: Date.now() - actualMs,
+      durationMs: actualMs,
     };
 
-    if (
-      this.#activeSeg &&
-      this.#waitForStageEnd(this.#activeSeg.activity, complete)
-    )
-      return;
-    complete();
+    this.#phase = "complete";
+    this.#backend.onComplete();
+    this.emit({ type: "complete", result });
   }
 }

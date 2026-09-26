@@ -458,6 +458,8 @@ export type RunnerEvent =
   | { type: "stability"; snapshot: StabilitySnapshot } // live stability; stalls report link health separately.
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
+  /* A single-server run's grant was refused; participants report serverFailure. */
+  | { type: "authenticationRequired"; role: ConnectionRole }
   // Transport negotiation telemetry: which connection method a phase is trying, and whether it is negotiating /.
   | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends, so a finished stage shows its real result.
@@ -486,7 +488,6 @@ export interface NetworkRunner {
   on(handler: (e: RunnerEvent) => void): () => void;
   reconfigure(config: LiveRunConfig): void;
   readonly phase: Phase;
-  focusServer?(id: string): void;
 }
 
 /* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */
