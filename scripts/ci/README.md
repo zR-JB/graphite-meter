@@ -55,8 +55,11 @@ triggered by a tag push, and `validate` mode never reaches a write.
    the same trust is rechecked, and `_publish-oci.yml` repeats an API-only
    freshness check immediately before registry login.
 4. **Publication.** The verified image digest is pushed to its exact version
-   tag; stable releases then publish the verified GitHub Release and move the
-   `major.minor` and `latest` aliases without regressing them.
+   tag; stable releases then publish the verified GitHub Release and point the
+   `major.minor` and `latest` aliases at that digest without regressing them.
+
+The `ghcr-release` environment needs required reviewers and deployment limited
+to `main`; Actions artifact retention must allow 35 days.
 
 Checking before and after approval is deliberate: the first avoids approving
 invalid state, the second proves it still holds before the first irreversible
