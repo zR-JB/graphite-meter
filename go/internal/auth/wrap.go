@@ -129,8 +129,10 @@ func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
 }
 
 func (s *Service) authenticate(r *http.Request) (Principal, bool) {
-	if spec, ok := route.Lookup(r.URL.Path); ok && spec.Kind == route.WebSocket && r.URL.Query().Has("token") {
-		return s.consumeWebTransportToken(r.URL.Query().Get("token"), r)
+	if spec, ok := route.Lookup(r.URL.Path); ok && spec.Kind == route.WebSocket {
+		if query := r.URL.Query(); query.Has("token") {
+			return s.consumeWebTransportToken(query.Get("token"), r)
+		}
 	}
 	if r.Header.Get("Authorization") != "" {
 		return s.authenticateNonAmbient(r)

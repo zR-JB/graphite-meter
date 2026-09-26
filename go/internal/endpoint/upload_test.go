@@ -278,7 +278,7 @@ func TestUploadRespectsRequestDeadline(t *testing.T) {
 func BenchmarkUploadBufferSize(b *testing.B) {
 	const size = 64 << 20
 	source := bytes.Repeat([]byte{1}, size)
-	for _, bufferSize := range []int{32 << 10, 256 << 10, 1 << 20} {
+	for _, bufferSize := range []int{32 << 10, uploadBufSize, 256 << 10, 1 << 20} {
 		b.Run(strconv.Itoa(bufferSize), func(b *testing.B) {
 			buffer := make([]byte, bufferSize)
 			reader := bytes.NewReader(source)

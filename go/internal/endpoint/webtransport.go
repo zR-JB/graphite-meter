@@ -261,7 +261,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtransport.Session, str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
 	// A blocked read watches neither the session's end nor its idle bound.
 	defer transport.UnblockReadsOnDone(ctx, str)()
-	_, err := receive(ctx, id, owner, idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
+	_, err := receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		// Stream uploads have no response headers.
 		serveRefusal(ctx, sess, refusal.access)
@@ -288,14 +288,17 @@ func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn,
 		case <-ctx.Done():
 		}
 	}()
-	src := newIdleTimeoutSource(ctx, conn, uploadReadTimeout, live)
-	_, _ = receive(ctx, id, owner, src)
+	// The session's idle watcher bounds a silent drain; there is no stream to time out.
+	_, _ = receive(ctx, id, owner, datagramSource{conn: conn, ctx: ctx, live: live})
 }
 
+// idleTimeoutReader bounds a lane by inactivity: its read deadline stays
+// between 7/8 and all of timeout ahead of the last read.
 type idleTimeoutReader struct {
 	str     deadlineReader
 	timeout time.Duration
 	live    *sessionActivity
+	armed   time.Time
 }
 
 type deadlineReader interface {
@@ -303,43 +306,15 @@ type deadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-func (r idleTimeoutReader) Read(p []byte) (int, error) {
-	_ = r.str.SetReadDeadline(time.Now().Add(r.timeout))
+func (r *idleTimeoutReader) Read(p []byte) (int, error) {
+	// Re-arming costs more than the read it guards, so it happens once per eighth of the timeout.
+	if now := time.Now(); now.Sub(r.armed) > r.timeout/8 {
+		_ = r.str.SetReadDeadline(now.Add(r.timeout))
+		r.armed = now
+	}
 	n, err := r.str.Read(p)
 	if n > 0 {
 		r.live.bump()
-	}
-	return n, err
-}
-
-type idleTimeoutSource struct {
-	src     datagramSource
-	ctx     context.Context
-	cancel  context.CancelFunc
-	timer   *time.Timer
-	timeout time.Duration
-	live    *sessionActivity
-}
-
-func newIdleTimeoutSource(parent context.Context, conn datagramConn, timeout time.Duration, live *sessionActivity) *idleTimeoutSource {
-	ctx, cancel := context.WithCancel(parent)
-	s := &idleTimeoutSource{ctx: ctx, cancel: cancel, live: live}
-	s.src = datagramSource{conn: conn, ctx: ctx}
-	s.timer = time.AfterFunc(timeout, cancel)
-	s.timeout = timeout
-	context.AfterFunc(ctx, func() { s.timer.Stop() })
-	return s
-}
-
-func (s *idleTimeoutSource) Read(p []byte) (int, error) {
-	s.timer.Reset(s.timeout)
-	n, err := s.src.Read(p)
-	if err != nil {
-		s.timer.Stop()
-		s.cancel()
-	}
-	if n > 0 {
-		s.live.bump()
 	}
 	return n, err
 }
@@ -379,6 +354,7 @@ func (s *datagramSink) Write(p []byte) (int, error) {
 type datagramSource struct {
 	conn datagramConn
 	ctx  context.Context
+	live *sessionActivity
 }
 
 // A datagram is delivered whole or not at all: silently dropping its tail would under-report the upload counter.
@@ -390,5 +366,6 @@ func (s datagramSource) Read(p []byte) (int, error) {
 	if len(data) > len(p) {
 		return 0, io.ErrShortBuffer
 	}
+	s.live.bump()
 	return copy(p, data), nil
 }

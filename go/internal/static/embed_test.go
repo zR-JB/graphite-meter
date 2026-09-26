@@ -59,6 +59,23 @@ func TestHandlerRoutes(t *testing.T) {
 	}
 }
 
+// Hashed bundle files never change under their name; the shell and unhashed files must revalidate.
+func TestOnlyHashedAssetsAreImmutable(t *testing.T) {
+	files := testFS()
+	files["version.json"] = &fstest.MapFile{Data: []byte("{}")}
+	for path, want := range map[string]string{
+		"/assets/app.js": "public, max-age=31536000, immutable",
+		"/version.json":  "",
+		"/":              "no-store",
+	} {
+		rr := httptest.NewRecorder()
+		handlerForWithMarker(files, nil).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		if got := rr.Header().Get("Cache-Control"); rr.Code != http.StatusOK || got != want {
+			t.Errorf("GET %s = %d Cache-Control %q, want 200 %q", path, rr.Code, got, want)
+		}
+	}
+}
+
 func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handlerForWithMarker(testFS(), resultHistoryMarker(false)).ServeHTTP(rr, httptest.NewRequest(http.MethodHead, "/assets/app.js", nil))

@@ -123,7 +123,7 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	}
 }
 
-// deadlineRecordingStream records the read deadline armed before each read and advances a clock.
+// deadlineRecordingStream records every read deadline armed on it.
 type deadlineRecordingStream struct{ deadlines []time.Time }
 
 func (s *deadlineRecordingStream) SetReadDeadline(t time.Time) error {
@@ -131,33 +131,26 @@ func (s *deadlineRecordingStream) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-func (s *deadlineRecordingStream) Read(p []byte) (int, error) {
-	// Real elapsed time, so a re-armed deadline is strictly later than the last.
-	time.Sleep(time.Millisecond)
-	return len(p), nil
-}
+func (s *deadlineRecordingStream) Read(p []byte) (int, error) { return len(p), nil }
 
-// A lane is bounded by inactivity, not by one absolute deadline: the deadline is re-armed before every read.
-func TestIdleTimeoutReaderReArmsItsDeadlineEveryRead(t *testing.T) {
-	stream := &deadlineRecordingStream{}
-	reader := idleTimeoutReader{str: stream, timeout: time.Hour}
-
-	buf := make([]byte, 8)
-	const reads = 3
-	for i := range reads {
-		if _, err := reader.Read(buf); err != nil {
-			t.Fatalf("read %d: %v", i, err)
+// A lane is bounded by inactivity, not by one absolute deadline, and re-arming is paced rather than per read.
+func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		stream := &deadlineRecordingStream{}
+		reader := &idleTimeoutReader{str: stream, timeout: 8 * time.Second}
+		buf := make([]byte, 8)
+		for range 3 {
+			_, _ = reader.Read(buf)
 		}
-	}
-
-	if len(stream.deadlines) != reads {
-		t.Fatalf("armed %d deadlines over %d reads, want one per read: the lane is bounded by inactivity, not by a single deadline", len(stream.deadlines), reads)
-	}
-	for i := 1; i < len(stream.deadlines); i++ {
-		if !stream.deadlines[i].After(stream.deadlines[i-1]) {
-			t.Errorf("deadline %d (%v) did not advance past deadline %d (%v)", i, stream.deadlines[i], i-1, stream.deadlines[i-1])
+		if len(stream.deadlines) != 1 {
+			t.Fatalf("armed %d deadlines over three back-to-back reads, want 1", len(stream.deadlines))
 		}
-	}
+		time.Sleep(2 * time.Second)
+		_, _ = reader.Read(buf)
+		if len(stream.deadlines) != 2 || !stream.deadlines[1].Equal(time.Now().Add(8*time.Second)) {
+			t.Fatalf("deadlines = %v, want a second one a full timeout after the later read", stream.deadlines)
+		}
+	})
 }
 
 // A mint refusal is two different answers.
@@ -230,21 +223,6 @@ func TestDatagramSourceRefusesToTruncate(t *testing.T) {
 	if _, err := src.Read(make([]byte, 8)); err != io.ErrShortBuffer {
 		t.Fatalf("read into a short buffer = %v, want io.ErrShortBuffer", err)
 	}
-}
-
-// A datagram drain refused before its first read never reaches Read.
-func TestIdleTimeoutSourceDisarmsWhenTheDrainEnds(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		ctx, cancel := context.WithCancel(t.Context())
-		// Long enough that a still-armed timer cannot be mistaken for a fired one.
-		src := newIdleTimeoutSource(ctx, &recordingConn{}, time.Hour, nil)
-		cancel()
-		synctest.Wait()
-		// Stop reports true only for a timer it had to stop itself.
-		if src.timer.Stop() {
-			t.Fatal("the idle timer was still armed after the drain ended")
-		}
-	})
 }
 
 func TestStreamProgressReportsTheCounter(t *testing.T) {

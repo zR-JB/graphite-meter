@@ -105,6 +105,10 @@ func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
 		if name != "index.html" {
 			if f, err := fsys.Open(name); err == nil {
 				_ = f.Close()
+				if strings.HasPrefix(name, "assets/") {
+					// The bundler names every file under assets/ by its content hash.
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}

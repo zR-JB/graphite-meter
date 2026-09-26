@@ -29,7 +29,9 @@ func NewUpload(meter *Meter, store *UploadStore, trusted []netip.Prefix) *Upload
 	return &Upload{meter: meter, store: store, trusted: trusted}
 }
 
-const uploadBufSize = 256 * 1024
+// A read rarely returns more than a socket or stream buffer holds, so a larger
+// scratch buffer only costs memory per lane (BenchmarkUploadBufferSize).
+const uploadBufSize = 64 * 1024
 
 var scratchPool = sync.Pool{
 	New: func() any {

@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"hash/fnv"
+	"hash/maphash"
 	"maps"
 	"slices"
 	"strings"
@@ -21,6 +21,7 @@ import (
 // UploadStore holds per-test state shared between POST /upload lanes and the /upload/progress stream.
 type UploadStore struct {
 	shards   [uploadShardCount]uploadShard
+	seed     maphash.Seed
 	tokenKey [sha256.Size]byte
 	live     atomic.Int32 // live aggregates retained through completion replay
 	ownersMu sync.Mutex
@@ -74,7 +75,10 @@ func (a *uploadAgg) releaseProgress(claim chan struct{}) {
 }
 
 func (a *uploadAgg) recordChunk(now int64, n int) {
-	a.firstChunkMono.CompareAndSwap(0, now)
+	// Every chunk after the first reads instead of contending on a write.
+	if a.firstChunkMono.Load() == 0 {
+		a.firstChunkMono.CompareAndSwap(0, now)
+	}
 	a.bytes.Add(int64(n))
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
@@ -145,7 +149,7 @@ const (
 
 // NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
-	s := &UploadStore{byOwner: make(map[string]int)}
+	s := &UploadStore{byOwner: make(map[string]int), seed: maphash.MakeSeed()}
 	_, _ = rand.Read(s.tokenKey[:]) // crypto/rand.Read never fails
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
@@ -158,9 +162,7 @@ var uploadMonoOrigin = time.Now()
 func monoNanos() int64 { return int64(time.Since(uploadMonoOrigin)) }
 
 func (s *UploadStore) shard(id string) *uploadShard {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(id))
-	return &s.shards[h.Sum32()%uploadShardCount]
+	return &s.shards[maphash.String(s.seed, id)%uploadShardCount]
 }
 
 // Mint generates a URL-safe, authenticated upload-session token without storing per-token state.
