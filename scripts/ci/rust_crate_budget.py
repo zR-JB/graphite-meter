@@ -12,13 +12,13 @@ def main() -> None:
     for package, limit in (("graphite-meter-server", 135), ("graphite-meter-client", 164)):
         tree = subprocess.run(
             [
-                "cargo", "tree", "--locked", "--offline", "--edges", "normal",
+                "cargo", "tree", "--locked", "--edges", "normal",
                 "--target", "x86_64-unknown-linux-gnu", "--prefix", "none",
                 "--format", "{p}", "--package", package,
             ],
             cwd=ROOT / "rust",
             check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
             text=True,
         ).stdout
         packages = {line.split(" (", 1)[0] for line in tree.splitlines() if line}
