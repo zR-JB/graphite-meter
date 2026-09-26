@@ -2,7 +2,19 @@ import { afterAll } from "bun:test";
 import { resolve, sep } from "node:path";
 import { expect, test } from "../e2e/webview";
 
-const host = process.env.GM_BENCH_HOST ?? "127.0.0.1";
+// Every URL, listener and Chromium flag gets the address rebuilt from validated octets, never the raw variable.
+function ipv4(value: string): string {
+  const octets = value
+    .split(".")
+    .map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : NaN));
+  if (octets.length !== 4 || !octets.every((octet) => octet <= 255))
+    throw new Error(
+      `GM_BENCH_HOST must be an IPv4 address, got ${JSON.stringify(value)}`,
+    );
+  return octets.join(".");
+}
+
+const host = ipv4(process.env.GM_BENCH_HOST ?? "127.0.0.1");
 const ports = { h1: 7246, h1tls: 7247, h2: 7248, h3: 7249 };
 const spki = process.env.GM_BENCH_SPKI;
 if (!spki) throw new Error("GM_BENCH_SPKI is required for Chromium QUIC");

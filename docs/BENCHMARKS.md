@@ -21,7 +21,7 @@ required even for a clear HTTP/1.1 cell.
 | --- | --- | --- |
 | `GM_BENCH_SPKI` | required | Base64 SHA-256 SPKI pin for Chromium QUIC. |
 | `BUN_CHROME_PATH` | auto-discovered | Chrome for Testing or Chromium executable. |
-| `GM_BENCH_HOST` | `127.0.0.1` | Server bind and browser destination. |
+| `GM_BENCH_HOST` | `127.0.0.1` | IPv4 server bind and browser destination. |
 | `GM_BENCH_NETNS` | empty | Run the server through `ip netns exec`. |
 | `GM_BENCH_TLS_CERT` / `GM_BENCH_TLS_KEY` | `.dev-certs/localhost.pem` / `-key.pem` | TLS leaf and key. |
 | `GM_BENCH_ORIGINS` | `h1-clear` | Origins to measure: `h1-clear,h1-tls,h2,h3`. |
