@@ -155,9 +155,6 @@ func prepareRun(
 	if len(failures) > 0 {
 		return prepared, errors.Join(failures...)
 	}
-	if _, err := planRunStreams(cfg, prepared.Servers); err != nil {
-		return prepared, err
-	}
 	return prepared, nil
 }
 

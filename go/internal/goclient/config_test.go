@@ -27,7 +27,6 @@ func TestTransferStreamPolicy(t *testing.T) {
 		{auto, "http3", wire.TransportWebTransport, 1, 1},
 		{forced, "http2", wire.TransportFetchStream, 9, 9},
 		{forced, "http3", wire.TransportWebTransport, 9, 9},
-		{TransferStreamPolicy{Forced: 99}, "http3", wire.TransportWebTransport, wire.WTMaxStreams, wire.WTMaxStreams},
 	} {
 		if down, up := c.policy.Lanes(c.protocol, c.transport); down != c.down || up != c.up {
 			t.Errorf("%+v Lanes(%s, %s) = %d/%d, want %d/%d", c.policy, c.protocol, c.transport, down, up, c.down, c.up)
@@ -52,14 +51,14 @@ func TestConfigNormalizedInvariants(t *testing.T) {
 	if got.ThroughputTarget != "edge-h2" ||
 		got.Warmup != 0 ||
 		got.DownloadDuration != d.DownloadDuration || got.TransferStreams != (TransferStreamPolicy{
-		AutomaticMax: MaxTransferStreams,
+		AutomaticMax: MaxStreams,
 	}) {
 		t.Fatalf("normalized %+v", got)
 	}
 	if got := (Config{
 		TransferStreams: TransferStreamPolicy{Forced: 500},
-	}).normalized(); got.TransferStreams.Forced != MaxTransferStreams {
-		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, MaxTransferStreams)
+	}).normalized(); got.TransferStreams.Forced != MaxStreams {
+		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, MaxStreams)
 	}
 }
 
@@ -92,7 +91,7 @@ func TestConfigValidate(t *testing.T) {
 		{"short stage", func(c *Config) { c.DownloadDuration = 999 * time.Millisecond }, "download duration must be"},
 		{"long stage", func(c *Config) { c.BidirectionalDuration = time.Hour }, "bidirectional duration must be"},
 		{"fast ping", func(c *Config) { c.LoadedPingInterval = 79 * time.Millisecond }, "at least 80ms"},
-		{"streams", func(c *Config) { c.TransferStreams.Forced = MaxTransferStreams + 1 }, "streams must be"},
+		{"streams", func(c *Config) { c.TransferStreams.Forced = MaxStreams + 1 }, "streams must be"},
 	} {
 		cfg := DefaultConfig()
 		// An unreachable base URL proves prepare validates before discovery.

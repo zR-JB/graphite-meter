@@ -108,8 +108,6 @@ func connectionSummary(kind, protocol string, tls, latency bool) string {
 func streamsLabel(p goclient.TransferStreamPolicy, protocol, kind string) string {
 	down, up := p.Lanes(protocol, kind)
 	switch {
-	case p.Forced > down:
-		return fmt.Sprintf("Forced · %d per direction (capped from %d by the session)", down, p.Forced)
 	case p.Forced > 0:
 		return fmt.Sprintf("Forced · %d per direction", p.Forced)
 	case kind == wire.TransportWebTransport:

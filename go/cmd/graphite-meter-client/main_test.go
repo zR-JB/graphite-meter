@@ -143,7 +143,7 @@ func TestExitStatus(t *testing.T) {
 
 func TestFormatting(t *testing.T) {
 	t.Parallel()
-	capped, automatic := goclient.TransferStreamPolicy{Forced: 99}, goclient.TransferStreamPolicy{AutomaticMax: 6}
+	forced, automatic := goclient.TransferStreamPolicy{Forced: 9}, goclient.TransferStreamPolicy{AutomaticMax: 6}
 	wt := wire.TransportWebTransport
 	for got, want := range map[string]string{
 		fmtAdded(-1200 * time.Microsecond):         "−1.2 ms",
@@ -151,7 +151,7 @@ func TestFormatting(t *testing.T) {
 		fmtSetting(800 * time.Millisecond):         "800 ms",
 		fmtSetting(1500 * time.Millisecond):        "1.5 s",
 		fmtSetting(10 * time.Second):               "10 s",
-		streamsLabel(capped, "http3", wt):          "Forced · 16 per direction (capped from 99 by the session)",
+		streamsLabel(forced, "http3", wt):          "Forced · 9 per direction",
 		streamsLabel(automatic, "http2", ""):       "Automatic · 1 download / 4 upload",
 		connectionSummary(wt, "http3", true, true): "WebTransport datagrams · HTTP/3 · TLS",
 	} {
@@ -326,7 +326,7 @@ func TestCommitEdit(t *testing.T) {
 		{streamsRow, true, "9", func(c goclient.Config) bool {
 			return c.TransferStreams.Forced == 9 && c.TransferStreams.AutomaticMax == 6
 		}, ""},
-		{streamsRow, false, "129", nil, "1 to 128"},
+		{streamsRow, false, "16", nil, "1 to 15"},
 	} {
 		m := testModel(t)
 		if c.forced {

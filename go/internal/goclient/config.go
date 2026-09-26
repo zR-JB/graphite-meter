@@ -86,9 +86,10 @@ const (
 	PingSlow   = 600 * time.Millisecond
 )
 
-const (
-	MaxTransferStreams = 128
+// MaxStreams keeps a bidirectional stage inside a server's 32 measurements per client.
+const MaxStreams = 15
 
+const (
 	transferBytesPerStream = 64 << 30
 	maxIdleConnsPerHost    = 256
 	responseHeaderTimeout  = 10 * time.Second
@@ -102,14 +103,10 @@ var multiplexedStreams = map[string]byDirection[int]{
 
 func (p TransferStreamPolicy) Lanes(protocol, transport string) (down, up int) {
 	switch {
-	case transport == wire.TransportWebTransport:
-		n := 1
-		if p.Forced > 0 {
-			n = min(p.Forced, wire.WTMaxStreams)
-		}
-		return n, n
 	case p.Forced > 0:
 		return p.Forced, p.Forced
+	case transport == wire.TransportWebTransport:
+		return 1, 1
 	}
 	if lanes, ok := multiplexedStreams[protocol]; ok {
 		return lanes.down, lanes.up
@@ -162,9 +159,9 @@ func (c Config) Validate() error {
 			return fmt.Errorf("ping cadence must be reply-driven or at least %v", PingFast)
 		}
 	}
-	if streams := c.TransferStreams; streams.Forced < 0 || streams.Forced > MaxTransferStreams ||
-		streams.AutomaticMax < 1 || streams.AutomaticMax > MaxTransferStreams {
-		return fmt.Errorf("streams must be from 1 to %d", MaxTransferStreams)
+	if streams := c.TransferStreams; streams.Forced < 0 || streams.Forced > MaxStreams ||
+		streams.AutomaticMax < 1 || streams.AutomaticMax > MaxStreams {
+		return fmt.Errorf("streams must be from 1 to %d per server and direction", MaxStreams)
 	}
 	return c.normalized().checkPaths()
 }
@@ -241,9 +238,9 @@ func (c Config) normalized() Config {
 	c.BidirectionalDuration = positive(c.BidirectionalDuration, d.BidirectionalDuration)
 	c.TransferStreams.AutomaticMax = min(
 		positive(c.TransferStreams.AutomaticMax, d.TransferStreams.AutomaticMax),
-		MaxTransferStreams,
+		MaxStreams,
 	)
-	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), MaxTransferStreams)
+	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), MaxStreams)
 	if c.PingInterval != PingReplyDriven {
 		c.PingInterval = positive(c.PingInterval, PingMedium)
 	}
@@ -258,21 +255,4 @@ func positive[T int | time.Duration](value, fallback T) T {
 		return value
 	}
 	return fallback
-}
-
-func planRunStreams(cfg Config, servers []PreparedServer) (map[string]byDirection[int], error) {
-	plan := map[string]byDirection[int]{}
-	var total byDirection[int]
-	for _, server := range servers {
-		target := server.Connection.ThroughputTarget
-		down, up := cfg.TransferStreams.Lanes(target.Protocol, target.Transport)
-		lanes := byDirection[int]{down, up}
-		plan[server.Server.ID] = lanes
-		total.down += lanes.down
-		total.up += lanes.up
-	}
-	if total.down > MaxTransferStreams || total.up > MaxTransferStreams {
-		return nil, fmt.Errorf("the run exceeds %d streams per direction; reduce forced streams", MaxTransferStreams)
-	}
-	return plan, nil
 }

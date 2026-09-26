@@ -139,7 +139,7 @@ var (
 		},
 		parse: func(m *model, raw string) error {
 			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > goclient.MaxTransferStreams {
+			if err != nil || n < 1 || n > goclient.MaxStreams {
 				return errors.New("streams must be a whole number from " + streamRange)
 			}
 			if m.cfg.TransferStreams.Forced > 0 {
@@ -241,7 +241,7 @@ func (m model) activate(s *setting) (tea.Model, tea.Cmd) {
 	return m.recheckIfPathsChanged(before)
 }
 
-var streamRange = fmt.Sprintf("1 to %d", goclient.MaxTransferStreams)
+var streamRange = fmt.Sprintf("1 to %d", goclient.MaxStreams)
 
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)

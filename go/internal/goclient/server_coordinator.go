@@ -71,12 +71,10 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 	if !prepared.Ready() {
 		return errors.New("resolve every selected server before starting")
 	}
-	streams, err := planRunStreams(c.cfg, prepared.Servers)
-	if err != nil {
-		return err
-	}
 	for _, server := range prepared.Servers {
 		connection := server.Connection
+		target := connection.ThroughputTarget
+		downLanes, upLanes := c.cfg.TransferStreams.Lanes(target.Protocol, target.Transport)
 		hc, closeHTTP := protocolClient(server.credential, connection.ThroughputTarget.Protocol)
 		// Upload lanes get their own connection so control requests and download reads never queue behind them.
 		up, closeUp := protocolClient(server.credential, connection.ThroughputTarget.Protocol)
@@ -87,7 +85,7 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 		r := &runner{
 			cfg:           c.cfg,
 			cred:          server.credential,
-			streams:       streams[server.Server.ID],
+			streams:       byDirection[int]{downLanes, upLanes},
 			http:          hc,
 			uploadHTTP:    up,
 			websocketHTTP: ws,
