@@ -42,7 +42,7 @@ import {
   truncateSegmentAt,
   type Segment,
 } from "./schedule";
-import { LiveRates, stallRate } from "./liveRates";
+import { LiveRates } from "./liveRates";
 import { LatencyPresentationBuckets } from "./series";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { findCause, isNetworkFailure } from "./abortable";
@@ -153,11 +153,7 @@ export class Run {
   #failures: ServerFailure[] = [];
 
   #live = new LiveRates();
-  #rated = new Set<FlowDirection>();
   #stalled = false;
-  #stallAt = 0;
-  #stallFrom: Record<FlowDirection, number> = { down: 0, up: 0 };
-  #bridged: number | null = null;
   #reported: Record<FlowDirection, number> = { down: 0, up: 0 };
   #bytes = 0;
   #continuity = 0;
@@ -326,7 +322,6 @@ export class Run {
     this.#timer = null;
     this.#boundaryAbort.abort();
     this.#boundaryAbort = new AbortController();
-    this.#showBridge(null);
     this.#aggregate.close();
     for (const server of this.#servers) {
       this.#cancelRecovery(server);
@@ -534,7 +529,6 @@ export class Run {
     }
     if (!isTransfer(activity.stage)) return;
     this.#live.reset(Object.fromEntries(this.#ids().map((id) => [id, 0])));
-    this.#rated.clear();
     this.#aggregate.begin(activity.stage, this.#ids(), this.#now());
     this.#boundary();
   }
@@ -580,63 +574,44 @@ export class Run {
     this.#sampledAt = now;
     const transfer = this.#activity?.transfer ?? [];
     if (transfer.includes("down")) this.#boundary();
-    if (this.#stalled) {
-      for (const dir of transfer)
-        this.#emitThroughput(
-          dir,
-          stallRate(this.#stallFrom[dir], now - this.#stallAt),
-        );
-      return;
-    }
-    for (const server of this.#participants())
-      this.#live.download(server.server.id, server.down, now);
-    for (const dir of transfer) {
-      const rate = this.#live.rate(dir);
-      // No rate is shown before a stage's first evidence, so the gauge never dips to zero between stages.
-      if (rate > 0) this.#rated.add(dir);
-      if (this.#rated.has(dir)) this.#emitThroughput(dir, rate);
-    }
-    if (!transfer.includes("up")) return;
+    const phase = this.#phase;
+    if (!isTransfer(phase)) return;
+    if (!this.#stalled)
+      for (const server of this.#participants())
+        this.#live.download(server.server.id, server.down, now);
+    const rate = (dir: FlowDirection) =>
+      !transfer.includes(dir) ? null : this.#stalled ? 0 : this.#live.rate(dir);
     const lanes = (id: string) => {
       const server = this.#servers.find((entry) => entry.server.id === id)!;
       return server.paths.throughput.target.transport === "fetch-stream"
         ? (this.#streams[id]?.up ?? 0)
         : 1;
     };
-    this.#showBridge(this.#live.bridgedUpload(now, lanes));
-  }
-
-  #emitThroughput(dir: FlowDirection, bytesPerSec: number): void {
-    const phase = this.#phase;
-    if (!isTransfer(phase)) return;
     const elapsed =
       this.#elapsed +
-      (this.#pending ? 0 : Math.max(0, performance.now() - this.#lastRealNow));
+      (this.#pending ? 0 : Math.max(0, now - this.#lastRealNow));
     this.#emit({
-      type: "throughput",
+      type: "live",
       sample: {
         t: Math.min(elapsed, this.#active?.end ?? elapsed),
-        bytesPerSec,
-        bytesCumulative: this.#bytes,
-        dir,
         phase,
         continuityId: this.#continuity,
+        bytes: this.#bytes,
+        down: rate("down"),
+        up: rate("up"),
+        bridgedUp:
+          this.#stalled || !transfer.includes("up")
+            ? null
+            : this.#live.bridgedUpload(now, lanes),
+        stalled: this.#stalled,
       },
     });
-  }
-
-  /** A short-lived upload visual target while a receiver pauses irregularly. */
-  #showBridge(bytesPerSec: number | null): void {
-    if (bytesPerSec === this.#bridged) return;
-    this.#bridged = bytesPerSec;
-    this.#emit({ type: "uploadPresentation", bytesPerSec });
   }
 
   /** Each participant stops as soon as its own final evidence is known. */
   async #endStage(activity: PhaseActivity, then: () => void): Promise<void> {
     const generation = this.#generation;
     this.#pending = this.#ending = true;
-    this.#showBridge(null);
     const ending = new Map<Participant, Promise<unknown>>();
     const end = (server: Participant) => {
       if (!ending.has(server) && server.stage)
@@ -932,12 +907,6 @@ export class Run {
       this.#live.reset(this.#counts());
       return this.#emit({ type: "resume" });
     }
-    this.#stallAt = performance.now();
-    this.#stallFrom = {
-      down: this.#live.rate("down"),
-      up: this.#live.rate("up"),
-    };
-    this.#showBridge(null);
     const info = servers.find((server) => server.recovery)?.recovery?.info;
     this.#emit({
       type: "stall",

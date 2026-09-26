@@ -9,6 +9,7 @@ import type {
   RunResult,
   RunnerConfig,
   RunnerError,
+  LiveSample,
   ThroughputSample,
   LatencyBucket,
   ThroughputResult,
@@ -136,15 +137,6 @@ const EMPTY_LANE = {
   sendFailureCount: null,
   count: 0,
 };
-
-/** The bidirectional lanes' latest presented rates, newest sample per direction. */
-function bidirectionalLanes(samples: readonly ThroughputSample[]) {
-  const lanes = { down: 0, up: 0 };
-  for (const sample of samples)
-    if (sample.phase === "bidirectional")
-      lanes[sample.dir] = sample.bytesPerSec;
-  return lanes;
-}
 
 /** The rate held for at least `dwellMs` among recent samples; brief spikes cannot set a scale. */
 function sustainedRate(
@@ -321,12 +313,12 @@ class AppStore {
   }
   /** Changes when existing points move, so incremental chart indexes rebuild. */
   throughputRevision = $state(0);
-  liveThroughput = $state.raw<ThroughputSample[]>([]);
+  /** The current transfer stage's latest sample; null between stages. */
+  live = $state.raw<LiveSample | null>(null);
   #scaleThroughput: { t: number; bytesPerSec: number }[] = [];
   #throughputTargetSpanMs = 0;
   #sustainedPeakBytesPerSec = $state(0);
-  bytesTransferred = $derived(this.liveThroughput.at(-1)?.bytesCumulative ?? 0);
-  uploadPresentationBytesPerSec = $state<number | null>(null);
+  bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
   get idleLatency(): LatencyBucket[] {
@@ -444,36 +436,6 @@ class AppStore {
   prefer(patch: Partial<Pick<AppStore, DisplayPreference>>) {
     Object.assign(this, patch);
   }
-
-  liveBidirectional = $derived(
-    this.phase === "bidirectional"
-      ? bidirectionalLanes(this.liveThroughput)
-      : null,
-  );
-
-  liveTransferBytesPerSec = $derived(
-    this.liveBidirectional
-      ? this.liveBidirectional.down + this.liveBidirectional.up
-      : (this.phase === "download" || this.phase === "upload") &&
-          this.liveThroughput.at(-1)?.phase === this.phase
-        ? this.liveThroughput.at(-1)!.bytesPerSec
-        : 0,
-  );
-
-  visualBidirectional = $derived(
-    this.liveBidirectional && {
-      down: this.liveBidirectional.down,
-      up: this.uploadPresentationBytesPerSec ?? this.liveBidirectional.up,
-    },
-  );
-
-  visualTransferBytesPerSec = $derived(
-    this.phase === "upload"
-      ? (this.uploadPresentationBytesPerSec ?? this.liveTransferBytesPerSec)
-      : this.visualBidirectional
-        ? this.visualBidirectional.down + this.visualBidirectional.up
-        : this.liveTransferBytesPerSec,
-  );
 
   pulseLatency = $derived.by<LatencyBucket[]>(() => {
     if (this.isRunning) return this.latency;
@@ -668,25 +630,16 @@ class AppStore {
     );
   }
 
-  #ingestThroughput(sample: ThroughputSample): void {
-    const previous = this.liveThroughput;
-    this.liveThroughput = [
-      ...(previous[0]?.phase === sample.phase ? previous : []).filter(
-        (value) => value.dir !== sample.dir,
-      ),
-      sample,
-    ];
-    const lanes =
-      sample.phase === "bidirectional"
-        ? bidirectionalLanes(this.liveThroughput)
-        : null;
-    const scaleRate = lanes ? lanes.down + lanes.up : sample.bytesPerSec;
+  #ingestLive(live: LiveSample): void {
+    this.live = live;
+    if (live.down == null && live.up == null) return;
+    const scaleRate = (live.down ?? 0) + (live.up ?? 0);
     const scale = this.#scaleThroughput;
-    scale.push({ t: sample.t, bytesPerSec: scaleRate });
+    scale.push({ t: live.t, bytesPerSec: scaleRate });
     let drop = 0;
     while (
       scale.length - drop > 2 &&
-      scale[drop + 1].t < sample.t - SCALE_DWELL_MS * 2
+      scale[drop + 1].t < live.t - SCALE_DWELL_MS * 2
     )
       drop++;
     if (drop) scale.splice(0, drop);
@@ -695,14 +648,32 @@ class AppStore {
       sustainedRate(scale, SCALE_DWELL_MS),
     );
     this.#peakBytesPerSec = Math.max(this.#peakBytesPerSec, scaleRate);
-    const history = this.#throughput;
-    if (appendThroughputSample(history, sample, this.#throughputTargetSpanMs))
-      this.throughputRevision++;
+    const { t, phase, continuityId, bytes: bytesCumulative } = live;
+    for (const dir of ["down", "up"] as const) {
+      const bytesPerSec = live[dir];
+      if (bytesPerSec == null) continue;
+      const sample = {
+        t,
+        bytesPerSec,
+        bytesCumulative,
+        dir,
+        phase,
+        continuityId,
+      };
+      if (
+        appendThroughputSample(
+          this.#throughput,
+          sample,
+          this.#throughputTargetSpanMs,
+        )
+      )
+        this.throughputRevision++;
+    }
     this.#throughputTail++;
   }
 
   #complete(result: RunResult): void {
-    this.uploadPresentationBytesPerSec = null;
+    this.live = null;
     this.result = result;
     this.stageResults = {
       download: result.download,
@@ -791,7 +762,7 @@ class AppStore {
         this.phaseStage = stage;
         this.phaseStartedAtMs = t;
         this.phaseFraction = this.phaseElapsedMs = 0;
-        this.uploadPresentationBytesPerSec = null;
+        this.live = null;
         if (to === "connecting") {
           this.preparationStatus = "idle";
           this.startEpoch = Date.now();
@@ -818,17 +789,14 @@ class AppStore {
             ? { ...this.stageResults, latency: event.result }
             : { ...this.stageResults, [event.stage]: event.result };
         break;
-      case "throughput":
-        this.#ingestThroughput(event.sample);
-        break;
-      case "uploadPresentation":
-        this.uploadPresentationBytesPerSec = event.bytesPerSec;
+      case "live":
+        this.#ingestLive(event.sample);
         break;
       case "complete":
         this.#complete(event.result);
         break;
       case "error": {
-        this.uploadPresentationBytesPerSec = null;
+        this.live = null;
         this.error = event.error;
         this.measuring = true;
         this.stallInfo = null;
@@ -848,7 +816,7 @@ class AppStore {
       preparationStatus: "idle",
       throughput: [],
       throughputRevision: 0,
-      liveThroughput: [],
+      live: null,
       idleLatency: [],
       serverDetails: null,
       phase: "idle" as const,

@@ -19,7 +19,8 @@
   import { gaugeLatencyPresentation } from "./gaugeLatency";
   import {
     LiveRateAnimator,
-    type LiveRateValues,
+    liveTargets,
+    type RatePair,
   } from "../presentation/liveRateAnimator";
   import {
     presentation,
@@ -64,11 +65,7 @@
   let gaugeWidth = $state(0);
   let gaugeHeight = $state(0);
   const liveRateAnimator = new LiveRateAnimator();
-  let liveRateValues = $state.raw<LiveRateValues>({
-    transfer: 0,
-    down: 0,
-    up: 0,
-  });
+  let liveRateValues = $state.raw<RatePair | null>(null);
   let liveRatePresentation: PresentationHandle | null = null;
 
   const completedKind = $derived<"speed" | "latency">(
@@ -108,12 +105,7 @@
     }));
   });
   const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
-  const throughputEvidence = $derived(
-    (store.phase === "download" ||
-      store.phase === "upload" ||
-      store.phase === "bidirectional") &&
-      store.liveThroughput.some((sample) => sample.phase === store.phase),
-  );
+  const liveTarget = $derived(liveTargets(store.live));
   const showGaugeTicks = $derived(
     !unusableStage &&
       (store.phase === "latency" ||
@@ -124,40 +116,19 @@
       gaugeTicks.length > 1,
   );
 
-  const liveRateInput = $derived.by(() => {
-    const phase = store.phase;
-    const bidi = store.visualBidirectional ?? { down: 0, up: 0 };
-    return {
-      active:
-        store.measuring &&
-        (phase === "download" ||
-          phase === "upload" ||
-          phase === "bidirectional"),
-      context: `${store.runSeq}:${phase}`,
-      values: {
-        transfer: store.visualTransferBytesPerSec,
-        down: bidi.down,
-        up: bidi.up,
-      },
-    };
-  });
-
-  // The readout holds the last rate across a stage change until the next sample.
-  let shownBytesPerSec = $state<number | null>(null);
   function stepLiveRates(now: number): boolean {
     const frame = liveRateAnimator.step(
-      liveRateInput,
+      store.live,
+      store.runSeq,
       now,
       prefersReducedMotion.current,
     );
     liveRateValues = frame.values;
-    if (throughputEvidence) shownBytesPerSec = frame.values.transfer;
-    else if (readout.display) shownBytesPerSec = null;
     return frame.active;
   }
 
   $effect(() => {
-    void liveRateInput;
+    void store.live;
     void prefersReducedMotion.current;
     liveRatePresentation?.invalidate();
   });
@@ -184,9 +155,12 @@
   announceChanges(() => readout.announcement);
   const display = $derived(
     readout.display ??
-      (shownBytesPerSec === null
-        ? { value: MISSING, unit: "" }
-        : { value: fmtSpeed(gaugeRate(shownBytesPerSec)), unit: gaugeUnit }),
+      (liveRateValues
+        ? {
+            value: fmtSpeed(gaugeRate(liveRateValues.down + liveRateValues.up)),
+            unit: gaugeUnit,
+          }
+        : { value: MISSING, unit: "" }),
   );
 
   const dialState = $derived.by<GaugeDialState>(() => {
@@ -199,10 +173,12 @@
         ? 0
         : p === "complete" && headlineArc
           ? headlineArc.bytesPerSec
-          : store.visualTransferBytesPerSec,
+          : liveTarget
+            ? liveTarget.down + liveTarget.up
+            : 0,
       scaleBytesPerSec: scale,
       throughputEvidence:
-        p === "complete" ? terminalArcs.length > 0 : throughputEvidence,
+        p === "complete" ? terminalArcs.length > 0 : !!liveTarget,
       latencyScaleMs: gaugeLatency.scaleMs,
       rtt: gaugeLatency.rttMs,
       completedKind,

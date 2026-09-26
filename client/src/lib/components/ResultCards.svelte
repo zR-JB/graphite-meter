@@ -5,7 +5,7 @@
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { MISSING, STAGE } from "../presentation/vocabulary";
-  import type { LiveRateValues } from "../presentation/liveRateAnimator";
+  import type { RatePair } from "../presentation/liveRateAnimator";
   import {
     liveWire,
     summaryCards,
@@ -17,7 +17,7 @@
     liveRates,
   }: {
     compact?: boolean;
-    liveRates?: LiveRateValues;
+    liveRates?: RatePair | null;
   } = $props();
 
   const controller = getApplicationController();
@@ -63,38 +63,40 @@
     return summaryCards(evidence, rate, store.unitBase);
   });
 
-  // Live chips hold a row for every stage from the start, so none appears later.
   // Animated rates are visual only; accessible values use receiver accounting.
+  function chipValues(
+    key: (typeof ORDER)[number],
+    active: boolean,
+  ): [shown: number | null, accessible: number | null] {
+    if (key === "latency") {
+      const ms = active
+        ? store.liveRtt || null
+        : (store.stageResults.latency?.reportedMs ?? null);
+      return [ms, ms];
+    }
+    if (active) {
+      const { down = null, up = null } = store.live ?? {};
+      const measured =
+        down == null && up == null ? null : (down ?? 0) + (up ?? 0);
+      return [liveRates ? liveRates.down + liveRates.up : null, measured];
+    }
+    const bidi = store.result?.bidirectional;
+    const result =
+      key !== "bidirectional"
+        ? (store.stageResults[key]?.reportedBytesPerSec ?? null)
+        : bidi?.down && bidi.up
+          ? bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec
+          : null;
+    return [result, result];
+  }
+
+  // Live chips hold a row for every stage from the start, so none appears later.
   const chips = $derived.by(() =>
     ORDER.flatMap((key) => {
       const { status } = store.stagePresentation[key];
       if (status === "disabled") return [];
       const active = status === "active" || status === "recovering";
-      let value: number | null;
-      let authoritative: number | null;
-      if (key === "latency") {
-        value = active
-          ? store.liveRtt || null
-          : (store.stageResults.latency?.reportedMs ?? null);
-        authoritative = value;
-      } else if (key === "bidirectional") {
-        const live = liveRates ?? store.visualBidirectional;
-        const bidi = store.result?.bidirectional;
-        value = active
-          ? (live?.down ?? 0) + (live?.up ?? 0)
-          : bidi?.down && bidi.up
-            ? bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec
-            : null;
-        authoritative = active
-          ? (store.liveBidirectional?.down ?? 0) +
-            (store.liveBidirectional?.up ?? 0)
-          : value;
-      } else {
-        value = active
-          ? (liveRates?.transfer ?? store.visualTransferBytesPerSec)
-          : (store.stageResults[key]?.reportedBytesPerSec ?? null);
-        authoritative = active ? store.liveTransferBytesPerSec : value;
-      }
+      const [value, authoritative] = chipValues(key, active);
       const timeout = key === "latency" && active && store.liveLatencyLost;
       const format = (n: number | null) =>
         n === null ? MISSING : key === "latency" ? fmtMs(n) : rate(n).num;

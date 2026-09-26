@@ -3,8 +3,6 @@ import {
   GrowingRateEstimator,
   LiveRates,
   presentationWindowMs,
-  stallRate,
-  STALL_PRESENTATION_MS,
 } from "./liveRates";
 
 const push = (estimator: GrowingRateEstimator, rate: number, ms = 100) =>
@@ -70,15 +68,10 @@ test.each([
   expect(estimator.presented).toBeCloseTo(to, 6);
 });
 
-test("a stalled presentation falls linearly to exactly zero", () => {
-  expect(stallRate(1_000, 0)).toBe(1_000);
-  expect(stallRate(1_000, STALL_PRESENTATION_MS / 2)).toBe(500);
-  expect(stallRate(1_000, STALL_PRESENTATION_MS * 2)).toBe(0);
-});
-
 test("servers present independently, and only an irregular receiver is bridged by every lane's fresh hint", () => {
   const live = new LiveRates();
   live.reset({ a: 0, b: 0 }, 0);
+  expect(live.rate("down")).toBeNull();
   live.download("a", 1_000, 1_000);
   live.download("b", 3_000, 1_000);
   expect(live.rate("down")).toBe(4_000);

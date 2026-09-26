@@ -112,6 +112,21 @@ export interface LatencyObservation {
   rttEligible?: boolean;
 }
 
+/** One presentation tick of a transfer stage; a null rate has no evidence in this stage yet. */
+export interface LiveSample {
+  t: number; // ms since run start
+  phase: Extract<Phase, "download" | "upload" | "bidirectional">;
+  continuityId: number;
+  /** Measured bytes of the whole run so far. */
+  bytes: number;
+  down: number | null;
+  up: number | null;
+  /** Local upload timing while a receiver pauses irregularly, within 25% of its rate. */
+  bridgedUp: number | null;
+  /** Rates read zero while stalled; the display decides how they fade. */
+  stalled: boolean;
+}
+
 export interface ThroughputSample {
   t: number; // ms since run start (monotonic)
   bytesPerSec: number; // smoothed live rate; exact results use private byte/time observations
@@ -346,9 +361,7 @@ export type RunnerEvent =
     }
   | { type: "serverDetails"; details: import("./measure").MultiServerResult }
   | { type: "phase"; transition: PhaseTransition }
-  | { type: "throughput"; sample: ThroughputSample }
-  /* A short-lived upload-only visual target. */
-  | { type: "uploadPresentation"; bytesPerSec: number | null }
+  | { type: "live"; sample: LiveSample }
   // Progress within the active wall-time budget.
   | {
       type: "progress";

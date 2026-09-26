@@ -6,7 +6,6 @@ const FAST_WINDOW_MS = 750;
 const REGIME_READY_MS = 2_000;
 export const REGIME_DOWNSHIFT_CONFIRM_MS = 750;
 export const REGIME_UPSHIFT_CONFIRM_MS = 500;
-export const STALL_PRESENTATION_MS = 800;
 const HINT_MAX_AGE_MS = 250;
 const LANE_MAX_AGE_MS = 750;
 
@@ -119,11 +118,6 @@ export class GrowingRateEstimator {
   }
 }
 
-/** A stalled presentation falls to zero over 800 ms. */
-export const stallRate = (from: number, elapsedMs: number): number =>
-  Math.max(0, from || 0) *
-  (1 - Math.min(1, Math.max(0, elapsedMs / STALL_PRESENTATION_MS)));
-
 interface ServerRates {
   down: GrowingRateEstimator;
   up: GrowingRateEstimator;
@@ -137,10 +131,12 @@ interface ServerRates {
 /** Per-server presentation summed across servers, so one lagging receiver never freezes the others. */
 export class LiveRates {
   #servers = new Map<string, ServerRates>();
+  #seen = { down: false, up: false };
 
   /** Starts every series again from each server's current download count. */
   reset(counts: Record<string, number>, now = performance.now()): void {
     this.#servers.clear();
+    this.#seen = { down: false, up: false };
     for (const [id, downBytes] of Object.entries(counts))
       this.restart(id, downBytes, now);
   }
@@ -211,10 +207,12 @@ export class LiveRates {
         ?.hints.set(lane, { rate: bytes / (elapsedMs / 1000), at: now });
   }
 
-  rate(dir: FlowDirection): number {
+  /** Null until the series' first bytes, so a new stage never presents zero. */
+  rate(dir: FlowDirection): number | null {
     let sum = 0;
     for (const server of this.#servers.values()) sum += server[dir].presented;
-    return sum;
+    if (sum > 0) this.#seen[dir] = true;
+    return this.#seen[dir] ? sum : null;
   }
 
   /** While a receiver pauses irregularly, fresh hints from every lane bridge it within ±25%. */
