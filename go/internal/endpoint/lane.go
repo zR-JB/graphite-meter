@@ -110,8 +110,7 @@ func (d *idleDeadline) moved(now time.Time) {
 	d.armed = now
 }
 
-// endWith cuts the lane's blocked read or write once ctx ends, so a later move cannot re-arm it. Its release
-// returns only once no cut can follow, since a response controller must not outlive its handler.
+// endWith cuts a blocked read or write when ctx ends; its release outwaits the cut, as the controller dies.
 func (d *idleDeadline) endWith(ctx context.Context) (release func()) {
 	stop := context.AfterFunc(ctx, func() {
 		d.mu.Lock()

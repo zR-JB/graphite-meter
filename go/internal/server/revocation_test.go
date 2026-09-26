@@ -14,7 +14,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// signOut ends the stack's login, and with it every grant the login approved.
 func (s *authenticatedStack) signOut(t *testing.T) {
 	t.Helper()
 	form := url.Values{"csrf": {s.csrf.Value}}.Encode()
@@ -47,7 +46,6 @@ func (s *authenticatedStack) mintUpload(t *testing.T, bearer string) string {
 	return minted.UploadID
 }
 
-// awaitAdmitted waits until the probe counts the lane in flight, so sign-out finds it reading.
 func (s *authenticatedStack) awaitAdmitted(t *testing.T, bearer string) {
 	t.Helper()
 	for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(time.Millisecond) {

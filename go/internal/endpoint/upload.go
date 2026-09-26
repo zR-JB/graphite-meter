@@ -47,8 +47,6 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
-// ServeHTTP answers a revoked lane 403 and an idle one 408; one at its lifetime has no writable answer.
-// Its bytes count either way.
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	limit, _ := r.Context().Deadline()
 	idle := &idleDeadline{set: http.NewResponseController(w).SetReadDeadline, limit: limit}

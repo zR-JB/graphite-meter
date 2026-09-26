@@ -224,7 +224,6 @@ func (s *Service) sessionFormPrincipal(r *http.Request) (Principal, bool) {
 		r.Header.Get("Origin") == s.origin && constantEqual(p.session.csrf, r.FormValue("csrf"))
 }
 
-// SignInRequired marks a refusal both clients answer by signing in again.
 func SignInRequired(h http.Header) { h.Set("Graphite-Meter-Auth", "required") }
 
 func SessionEnded(ctx context.Context) bool {

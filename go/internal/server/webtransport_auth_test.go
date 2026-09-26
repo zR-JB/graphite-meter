@@ -14,8 +14,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A browser CONNECT carries neither cookies nor headers, so the whole authenticated WebTransport path rests on a token.
-
 // mintWTToken asks /wt/session for one CONNECT token to the ping bus as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	t.Helper()
