@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/h3",
     "branch": "graphite-meter/h3-v0.0.8",
-    "rev": "bfd9bf10e28bee25cfe5d74592498f45b6287b61",
+    "rev": "dc10d4813114da2c200c86322ed18753fa45055d",
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
-    "diffSha256": "3eeb7448e7a502cd26bcdf82fc0418e9406f838005514c215bce2810504b0de7",
+    "diffSha256": "9bc6a6c9f09e6031afae4f40c663956d6a0438d7cd38ee00a4e5198be5621fc2",
     "modifiedPackages": [
       "h3",
       "h3-noq"
@@ -54,6 +54,10 @@
       },
       {
         "subject": "Bound buffered frames and stream unknown payloads",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Own and coalesce retained receive buffers",
         "origin": "graphite-meter"
       }
     ],
