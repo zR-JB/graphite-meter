@@ -1,13 +1,13 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtMs, niceDomain } from "../format";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
+import { LATENCY_POPULATION } from "../presentation/vocabulary";
+import { STAGE_ORDER } from "../state/stagePresentation";
 
-export const LATENCY_LANES = [
-  { key: "latency", label: "Idle" },
-  { key: "download", label: "Loaded Down" },
-  { key: "upload", label: "Loaded Up" },
-  { key: "bidirectional", label: "Loaded Bi-dir" },
-] as const;
+export const LATENCY_LANES = STAGE_ORDER.map((key) => ({
+  key,
+  label: LATENCY_POPULATION[key].short,
+}));
 
 export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
 

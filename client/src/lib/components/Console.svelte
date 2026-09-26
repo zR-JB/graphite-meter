@@ -653,7 +653,9 @@
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
-        use:tooltip={historyOpen ? "Close History" : "History — saved results"}
+        use:tooltip={historyOpen
+          ? "Close History"
+          : "History — saved results (H)"}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         >{@html ICON.history}</button
@@ -666,9 +668,9 @@
     >
     <button
       class="btn btn-icon direct-endpoint"
-      aria-label="Toggle endpoint info"
+      aria-label="Toggle Details"
       aria-expanded={telemetryOpen}
-      use:tooltip={"Endpoint info"}
+      use:tooltip={"Details — server and connection (D)"}
       onclick={(event) =>
         togglePanelFromPointer("endpoint", event.currentTarget as HTMLElement)}
       >{@html ICON.info}</button
@@ -720,8 +722,7 @@
             onclick={loadHistoryWorkspace}>Retry</button
           >
         </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon">{@html ICON.history}</span>Opening local
-          archive…
+          <span class="empty-icon">{@html ICON.history}</span>Opening History…
         </div>{/if}
     </section>
   {:else}

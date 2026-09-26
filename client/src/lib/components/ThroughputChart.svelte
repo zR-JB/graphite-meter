@@ -7,17 +7,18 @@
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import { fmtSpeed, fmtMs } from "../format";
+  import { fmtDuration, fmtSpeed, fmtMs } from "../format";
+  import { STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   const PHASE_LABEL: Record<ChartLabelPhase, string> = {
-    warmup: "Warm-up",
-    latency: "Ping",
-    download: "Download",
-    upload: "Upload",
-    bidirectional: "Bi-dir",
-  } as const;
+    warmup: "Warmup",
+    latency: STAGE.latency.label,
+    download: STAGE.download.label,
+    upload: STAGE.upload.label,
+    bidirectional: STAGE.bidirectional.short,
+  };
 
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
@@ -358,9 +359,7 @@
             class="time-label"
             style:left={`${tick.x}px`}
             style:top={`${presentation.layout.timeLabelY}px`}
-            >{tick.t % 1000 === 0
-              ? `${tick.t / 1000}s`
-              : `${(tick.t / 1000).toFixed(1)}s`}</span
+            >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
         {/each}
         {#each presentation.phaseLabels as label (label.phase + label.x)}
@@ -406,7 +405,7 @@
         style:transform={`translate(${chipPosition.x}px, ${chipPosition.y}px)`}
       >
         <div class="chip-row">
-          <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
+          <span>t</span><b>{fmtDuration(hover.t)}</b>
         </div>
         {#if hover.bytesPerSec != null}
           <div class="chip-row">

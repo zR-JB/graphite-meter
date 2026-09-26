@@ -37,9 +37,9 @@
   {onResetWidth}
   {onClose}
   side="right"
-  title="Endpoint"
-  kicker="Info"
-  label="Endpoint info"
+  title="Details"
+  kicker="Server & connection"
+  label="Details"
   width="min(440px, 92vw)"
 >
   <EndpointInfo />

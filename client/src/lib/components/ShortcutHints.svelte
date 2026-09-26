@@ -1,42 +1,28 @@
 <script lang="ts">
-  /* Contextual keyboard-shortcut strip: a tokenized row of keycaps mirroring
-     the global keyboard map in <Console>, which owns the real handler. The
-     primary hint flips with run state (Space = Start test or Stop test), and the
-     "R · Run again" cap appears once a run resolves. */
+  // Mirrors Console's shortcuts and the Run button's label; R is an alias for Space.
   import { store } from "../state/store.svelte";
 
-  // Mirror RunButton's label exactly (Start test → Stop test → Run again) so the hint
-  // never names an action the button doesn't show.
-  const resolved = $derived(
-    store.phase === "complete" ||
-      store.phase === "aborted" ||
-      store.phase === "error",
-  );
   const primary = $derived(
     store.preparing
-      ? "Cancel start"
+      ? "Cancel"
       : store.isRunning
         ? "Stop test"
-        : resolved
-          ? "Run again"
-          : "Start test",
+        : store.phase === "idle"
+          ? "Start test"
+          : "Run again",
   );
 </script>
 
 <div class="command-hints" aria-label="Keyboard shortcuts">
   <span><kbd>Space</kbd>{primary}</span>
   <span><kbd>S</kbd>Settings</span>
-  <span><kbd>D</kbd>Info</span>
+  <span><kbd>D</kbd>Details</span>
   {#if store.savingResults}
     <span><kbd>H</kbd>History</span>
-  {/if}
-  {#if resolved}
-    <span><kbd>R</kbd>Run again</span>
   {/if}
 </div>
 
 <style>
-  /* A quiet row of keycap and label pairs mirroring Console's shortcuts. */
   .command-hints {
     display: flex;
     flex-wrap: wrap;

@@ -30,6 +30,17 @@ export function fmtMs(ms: number): string {
   return ms < 100 ? ms.toFixed(1) : ms.toFixed(0);
 }
 
+export function fmtDuration(ms: number, fractionDigits = 1): string {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 59.95) return `${seconds.toFixed(fractionDigits)} s`;
+  const whole = Math.round(seconds);
+  const [large, small, unit, rest] =
+    whole < 3600
+      ? [Math.floor(whole / 60), whole % 60, "min", "s"]
+      : [Math.floor(whole / 3600), Math.round((whole % 3600) / 60), "h", "min"];
+  return `${large} ${unit}${small ? ` ${small} ${rest}` : ""}`;
+}
+
 export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
   const step = base === "base10" ? 1000 : 1024;
   const units =

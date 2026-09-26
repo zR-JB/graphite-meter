@@ -4,7 +4,7 @@
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs } from "../format";
-  import { ICON } from "../constants";
+  import { MISSING, STAGE } from "../presentation/vocabulary";
   import { tooltip, JARGON } from "../actions/tooltip";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { LiveRateValues } from "../presentation/liveRateAnimator";
@@ -42,17 +42,10 @@
     )
       controller.focusServer(id);
   }
-  const dash = "—";
-  const stages = [
-    { key: "download", icon: ICON.download, label: "Download" },
-    { key: "upload", icon: ICON.upload, label: "Upload" },
-    {
-      key: "bidirectional",
-      icon: ICON.bidirectional,
-      label: "Bi-dir",
-    },
-    { key: "latency", icon: ICON.ping, label: "Ping" },
-  ] as const;
+  const dash = MISSING;
+  const stages = (
+    ["download", "upload", "bidirectional", "latency"] as const
+  ).map((key) => ({ key, icon: STAGE[key].icon, label: STAGE[key].short }));
   const bidirectionalEvidence = $derived(
     scoped
       ? scoped.bidirectional
@@ -129,13 +122,13 @@
           ...stage,
           status,
           active,
-          num: lost ? "lost" : hasValue ? format(value!) : dash,
+          num: lost ? dash : hasValue ? format(value!) : dash,
           accessibleNum: lost
-            ? "lost"
+            ? "probe timeout"
             : hasValue
               ? format(authoritative!)
               : dash,
-          unit: key === "latency" ? (lost ? "" : "ms") : store.unitLabel,
+          unit: key === "latency" ? (lost ? "timeout" : "ms") : store.unitLabel,
         },
       ];
     }),
@@ -221,7 +214,7 @@
     <header>
       <span class="tone-icon" data-tone={c.key}>{@html c.icon}</span>
       {#if c.key === "latency"}
-        <span class="label term" use:tooltip={JARGON.ping}>{c.label}</span>
+        <span class="label term" use:tooltip={JARGON.latency}>{c.label}</span>
       {:else}
         <span class="label">{c.label}</span>
       {/if}

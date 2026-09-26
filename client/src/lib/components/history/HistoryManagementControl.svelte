@@ -5,7 +5,7 @@
   let { onClear }: { onClear: (invoker: HTMLElement) => void } = $props();
 </script>
 
-<MoreMenu label="Archive management" archive>
+<MoreMenu label="History actions" archive>
   {#snippet children(select)}
     <button
       type="button"

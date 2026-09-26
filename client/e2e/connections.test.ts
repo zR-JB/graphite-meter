@@ -324,7 +324,7 @@ test("server selectors support keyboard selection and compact narrow layouts", a
         document.getElementById(element.getAttribute("aria-describedby")!)
           ?.textContent,
     ),
-  ).toBe("Ping each server");
+  ).toBe("Measure latency to every server");
   expect(
     (
       await new AxeBuilder({ page })

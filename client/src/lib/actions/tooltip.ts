@@ -314,22 +314,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   };
 }
 export const JARGON = {
-  bufferbloat:
-    "Largest stage median RTT increase over idle. Includes browser, server and network delay.",
   jitter:
     "RTT variation: average absolute change between consecutive successful replies in one segment. Lower is steadier; timeouts are excluded.",
-  p95: "95% of successful replies had an RTT at or below this value.",
-  p50: "Median RTT: half of successful replies were faster, half slower.",
-  p10: "10% of successful replies had an RTT at or below this value.",
-  p90: "90% of successful replies had an RTT at or below this value.",
-  probeTimeouts:
-    "Timed-out replies as a share of resolved probes, not IP packet loss. Interrupted probes and failed sends are excluded.",
   wireRate:
     "Estimated physical-link rate, including forward-path protocol overhead.",
-  stability: "How steady the measured speed was. Higher means less variation.",
-  ping: "Round-trip time to the server and back. Lower is faster.",
-  overheadCompensation:
-    "Adds forward-path framing and protocol headers using detected transport and IP, or conservative defaults.",
+  latency:
+    "Median round-trip time (RTT) to the server and back. Lower is faster.",
   unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
   unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
   unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",

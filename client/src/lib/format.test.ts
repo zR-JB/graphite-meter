@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import {
   fmtBytes,
+  fmtDuration,
   fmtSpeed,
   rateScaleIndex,
   rateValueAt,
@@ -11,6 +12,19 @@ import {
   rateUnit,
   throughputUnitIndex,
 } from "./format";
+
+test("durations read in seconds below a minute, then minutes and hours", () => {
+  const values = [999, 25_000, 59_900, 60_000, 65_000, 3_599_000, 3_690_000];
+  expect(values.map((ms) => fmtDuration(ms))).toEqual([
+    "1.0 s",
+    "25.0 s",
+    "59.9 s",
+    "1 min",
+    "1 min 5 s",
+    "59 min 59 s",
+    "1 h 2 min",
+  ]);
+});
 
 test("fmtBytes: zero renders as an integer byte count", () => {
   expect(fmtBytes(0, "base10")).toBe("0 B");

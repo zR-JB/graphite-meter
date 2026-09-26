@@ -52,7 +52,7 @@
         <span>{@html ICON.history}</span>
         <span
           ><strong>{historyActive ? "Close History" : "Open History"}</strong
-          ><small>Local saved results</small></span
+          ><small>Saved results</small></span
         >
       </button>
     {/if}
@@ -66,8 +66,9 @@
     >
       <span>{@html ICON.info}</span>
       <span
-        ><strong>{endpointActive ? "Close endpoint" : "Endpoint info"}</strong
-        ><small>Server and connection</small></span
+        ><strong>{endpointActive ? "Close Details" : "Details"}</strong><small
+          >Server and connection</small
+        ></span
       >
     </button>
     <button

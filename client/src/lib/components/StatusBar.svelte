@@ -1,25 +1,9 @@
 <script lang="ts">
-  // Bottom status strip: phase label, elapsed/remaining time, transferred bytes,
-  // build identity, and compact connection hints.
   import { tooltip } from "../actions/tooltip";
   import { store } from "../state/store.svelte";
-  import { fmtBytes } from "../format";
-  import { BUILD_IDENTITY } from "../constants";
-  import type { Phase } from "../runner/contract";
-  import { completionLabel } from "./phasePresentation";
-
-  const PHASE_LABEL: Record<Phase, string> = {
-    idle: "Idle",
-    connecting: "Verifying target",
-    warmup: "Warming up",
-    latency: "Measuring latency",
-    download: "Downloading",
-    upload: "Uploading",
-    bidirectional: "Bidirectional",
-    complete: "Complete",
-    aborted: "Aborted",
-    error: "Error",
-  };
+  import { fmtBytes, fmtDuration } from "../format";
+  import { BUILD } from "../buildenv";
+  import { phaseLabel } from "../presentation/vocabulary";
 
   let now = $state(Date.now());
   let visible = $state(typeof document === "undefined" || !document.hidden);
@@ -40,42 +24,33 @@
             : 0)),
   );
 
-  function fmtElapsed(ms: number): string {
-    const s = ms / 1000;
-    return `${s.toFixed(1)}s`;
-  }
-
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
 <svelte:document onvisibilitychange={() => (visible = !document.hidden)} />
 
-<span class="label"
-  >{store.phase === "complete"
-    ? completionLabel(store.result?.outcome)
-    : PHASE_LABEL[store.phase]}</span
->
+<span class="label">{phaseLabel(store.phase, store.result?.outcome)}</span>
 <span
   class="elapsed"
   class:secondary={showRemaining}
-  use:tooltip={`Elapsed ${fmtElapsed(elapsedMs)}`}
-  ><span class="caption">elapsed&nbsp;</span>{fmtElapsed(elapsedMs)}</span
+  use:tooltip={`Elapsed ${fmtDuration(elapsedMs)}`}
+  ><span class="caption">elapsed&nbsp;</span>{fmtDuration(elapsedMs)}</span
 >
 {#if showRemaining}
   <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}{fmtElapsed(store.phaseRemainingMs)} left{:else}Paused<span
+    {#if store.measuring}{fmtDuration(store.phaseRemainingMs)} left{:else}Paused<span
         class="caption"
       >
-        · {fmtElapsed(store.phaseRemainingMs)} left</span
+        · {fmtDuration(store.phaseRemainingMs)} left</span
       >{/if}
   </span>
 {/if}
 <span class="transferred"
   >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption"
-    >&nbsp;xfer</span
+    >&nbsp;transferred</span
   ></span
 >
-<span class="build">{BUILD_IDENTITY}</span>
+<span class="build">{BUILD.identity}</span>
 
 <style>
   span {

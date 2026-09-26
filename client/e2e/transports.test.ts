@@ -124,7 +124,7 @@ test("the served application measures real traffic and reloads its saved result"
   await waitForCompletion(page, 20_000);
   await expect(page.locator(".result-card")).toHaveCount(3);
   await expect(page.locator(".result-card .partial")).toHaveCount(0);
-  for (const label of ["Download", "Upload", "Ping"])
+  for (const label of ["Download", "Upload", "Latency"])
     await expect(
       page.locator(".result-card", { hasText: label }).locator(".val .num"),
     ).toHaveText(/\d/);

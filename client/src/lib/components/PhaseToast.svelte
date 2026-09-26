@@ -1,105 +1,103 @@
 <script lang="ts">
-  /* Transient phase-change toast, pinned bottom-right: one message per
-     `store.phase` change, then auto-dismiss. It is visual only: GaugePanel
-     is the single phase and value announcer, and only link and skipped-stage
-     issues, which nothing else voices, reach the status region below. */
+  /* Transient, visual-only phase notice; GaugePanel announces phases and
+     values, so only issues reach the status region below. */
   import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
-  import { reasonLabel } from "../format";
-  import { phaseKicker, phaseMessage } from "./phasePresentation";
+  import { fmtBytes, fmtDuration, reasonLabel } from "../format";
   import { failureDetail } from "./failurePresentation";
+  import { STAGE_ORDER } from "../state/stagePresentation";
+  import { STAGE, phaseLabel } from "../presentation/vocabulary";
 
-  // A terminal or skipped-stage notice earns a longer read than a routine
-  // phase blink.
   const LINGER_ALERT_MS = 3200;
   const LINGER_COMPLETE_MS = 2200;
   const LINGER_PHASE_MS = 1350;
 
-  function lingerMs(phase: typeof store.phase, skipped: boolean): number {
-    if (skipped || phase === "aborted" || phase === "error")
-      return LINGER_ALERT_MS;
-    return phase === "complete" ? LINGER_COMPLETE_MS : LINGER_PHASE_MS;
-  }
-
   let visible = $state(false);
   let prevPhase = store.phase;
   let timer: ReturnType<typeof setTimeout> | null = null;
-
-  // A skipped stage takes over the toast briefly, err-tinted. It coincides
-  // with the next stage's transition, so it outranks the routine phase
-  // message until its timer clears.
   let skipMessage = $state<string | null>(null);
   let prevFailCount = 0;
-  const STAGE_LABEL: Record<string, string> = {
-    latency: "Latency",
-    download: "Download",
-    upload: "Upload",
-    bidirectional: "Bi-dir",
-  };
 
-  // A stall (connection lost) holds the toast for its whole duration. It is
-  // not a phase transition, so it owns its own visibility and clears the
-  // moment `measuring` goes true. store.stallInfo carries the reason copy.
   const stalled = $derived(store.isRunning && !store.measuring);
-  const stallMessage = $derived.by(() => {
-    const info = store.stallInfo;
-    // Prefer the backend's human detail; else the friendly reason phrase.
-    const tail = info
-      ? failureDetail(info.detail, reasonLabel(info.reason))
-      : "the link dropped";
-    return `Connection lost — ${tail}`;
+  const stallMessage = $derived(
+    `Connection lost — ${
+      store.stallInfo
+        ? failureDetail(
+            store.stallInfo.detail,
+            reasonLabel(store.stallInfo.reason),
+          )
+        : "the link dropped"
+    }`,
+  );
+  const stages = $derived(
+    STAGE_ORDER.filter((stage) => store.runConfig.stages[stage]),
+  );
+  const notice = $derived.by(() => {
+    const { phase, result, error, phaseStage } = store;
+    const label = phaseLabel(phase, result?.outcome);
+    if (phase === "complete" && result)
+      return {
+        kicker: label,
+        message: `${fmtDuration(result.durationMs)} · ${fmtBytes(store.bytesTransferred, store.unitBase)} transferred`,
+      };
+    if (phase === "error")
+      return { kicker: label, message: error ? reasonLabel(error.reason) : "" };
+    if (phase === "aborted")
+      return { kicker: label, message: "Run again to restart" };
+    if (phaseStage && phase !== "warmup")
+      return {
+        kicker: `Stage ${stages.indexOf(phaseStage) + 1} of ${stages.length}`,
+        message: label,
+      };
+    return { kicker: "Preparing", message: label };
   });
 
-  const message = (p: typeof store.phase): string =>
-    phaseMessage(
-      p,
-      store.error ? reasonLabel(store.error.reason) : null,
-      store.result?.outcome,
-    );
+  function show(linger: number) {
+    visible = true;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      visible = false;
+      skipMessage = null;
+    }, linger);
+  }
 
   $effect(() => {
     const phase = store.phase;
     if (phase === prevPhase) return;
     prevPhase = phase;
-
-    visible = true;
-    if (timer) clearTimeout(timer);
-    const linger = lingerMs(phase, untrack(() => skipMessage) != null);
-    timer = setTimeout(() => {
-      visible = false;
-      skipMessage = null;
-    }, linger);
-
+    if (phase === "idle") return void (visible = false);
+    show(
+      untrack(() => skipMessage) != null ||
+        phase === "aborted" ||
+        phase === "error"
+        ? LINGER_ALERT_MS
+        : phase === "complete"
+          ? LINGER_COMPLETE_MS
+          : LINGER_PHASE_MS,
+    );
     return () => {
       if (timer) clearTimeout(timer);
     };
   });
 
   $effect(() => {
-    const failures = store.serverDetails?.failures.length
-      ? store.serverDetails.failures.map((failure) => {
-          const name =
-            store.serverDetails?.selection.find(
-              (server) => server.id === failure.serverId,
-            )?.name ?? "Server";
-          return `${name}: ${STAGE_LABEL[failure.stage] ?? failure.stage} unavailable`;
-        })
+    const details = store.serverDetails;
+    const failures = details?.failures.length
+      ? details.failures.map(
+          (failure) =>
+            `${details.selection.find((server) => server.id === failure.serverId)?.name ?? "Server"}: ${STAGE[failure.stage].label} unavailable`,
+        )
       : Object.values(store.stageFailures).map(
           (failure) =>
-            `${STAGE_LABEL[failure.stage]} skipped — ${failureDetail(failure.message)}`,
+            `${STAGE[failure.stage].label} skipped — ${failureDetail(failure.message)}`,
         );
     if (failures.length > prevFailCount) {
       skipMessage =
         failures.length > 1
           ? `${failures.length} measurement issues — details in results`
           : failures[failures.length - 1];
-      visible = true;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        visible = false;
-        skipMessage = null;
-      }, LINGER_ALERT_MS);
+      show(LINGER_ALERT_MS);
     }
     prevFailCount = failures.length;
   });
@@ -119,15 +117,9 @@
     >{#if stalled || skipMessage || store.phase === "error"}{@html ICON.info}{:else if store.phase === "complete"}{@html ICON.check}{:else}{@html ICON.ping}{/if}</span
   >
   <span class="kicker"
-    >{stalled
-      ? "Link"
-      : skipMessage
-        ? "Issue"
-        : phaseKicker(store.phase, store.result?.outcome)}</span
+    >{stalled ? "Connection" : skipMessage ? "Issue" : notice.kicker}</span
   >
-  <strong
-    >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong
-  >
+  <strong>{stalled ? stallMessage : (skipMessage ?? notice.message)}</strong>
 </div>
 <p class="sr-only" role="status">
   {stalled ? stallMessage : (skipMessage ?? "")}

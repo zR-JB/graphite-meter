@@ -90,7 +90,7 @@
               preflightMs == null
                 ? []
                 : [
-                    "Preflight request time includes connection setup and the response. It is not steady-state ping.",
+                    "Preflight request time includes connection setup and the response. It is not a latency measurement.",
                   ],
             )
             .filter(Boolean)
@@ -133,11 +133,11 @@
     <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
     <span class="sr-only" id={descriptionId}
       >Preflight request times include connection setup and the response. They
-      are not steady-state ping.</span
+      are not latency measurements.</span
     >
     {#if selected.length > 1 && store.latencyEnabled}
       <div class="latency-policy">
-        <strong>Measure ping to</strong>
+        <strong>Latency server</strong>
         <ServerSelector
           servers={selected}
           value={store.latencySelection.mode === "all"
@@ -145,7 +145,7 @@
             : store.primaryLatencyServer}
           label="Latency measurement servers"
           aggregate
-          aggregateDescription="Ping each server"
+          aggregateDescription="Measure latency to every server"
           disabled={locked}
           onchange={(id) =>
             controller.configureLatency(

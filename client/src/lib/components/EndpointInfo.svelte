@@ -306,7 +306,7 @@
             </div>
           {:else}
             <div>
-              <dt>Pre-test RTT</dt>
+              <dt>Pre-test latency</dt>
               <dd>
                 {connection.preTestPingMs !== undefined
                   ? `${fmtMs(connection.preTestPingMs)} ms`

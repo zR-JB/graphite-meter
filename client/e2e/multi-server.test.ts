@@ -84,7 +84,7 @@ test("an HTTP page automatically verifies clear and TLS HTTP/1.1 streams", async
       .locator("mark"),
   ).toHaveText("Used");
   await page.artifact("multi-server-endpoint-inspector");
-  await endpoint.getByRole("button", { name: "Close Endpoint" }).click();
+  await endpoint.getByRole("button", { name: "Close Details" }).click();
   for (const server of [home, peer]) {
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);

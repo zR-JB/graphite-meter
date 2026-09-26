@@ -26,6 +26,7 @@
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { preparationFailurePresentation } from "./preparationFailure";
   import { ICON } from "../constants";
+  import { phaseLabel } from "../presentation/vocabulary";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -231,23 +232,15 @@
   const preparationLabel = $derived(
     store.preparation.status === "authenticating"
       ? "Checking sign-in"
-      : store.preparation.status === "launching"
-        ? "Starting test"
-        : "Checking paths",
+      : phaseLabel("connecting"),
   );
-  const hint = $derived.by(() => {
-    if (store.preparing) return preparationLabel;
-    switch (store.phase) {
-      case "idle":
-        return "Ready to measure your connection";
-      case "connecting":
-        return "Verifying the selected protocol…";
-      case "warmup":
-        return "Checking your connection…";
-      default:
-        return "";
-    }
-  });
+  const hint = $derived(
+    store.preparing
+      ? preparationLabel
+      : ["idle", "connecting", "warmup"].includes(store.phase)
+        ? phaseLabel(store.phase)
+        : "",
+  );
 
   const preparationPathLabel = (state: string): string => {
     if (state === "disabled") return "not needed";
@@ -255,7 +248,7 @@
   };
   const preparationAnnouncement = $derived.by(() => {
     if (!store.preparing) return "";
-    return `Starting test. Throughput path ${preparationPathLabel(store.preparation.throughput)}; Latency path ${preparationPathLabel(store.preparation.latency)}`;
+    return `${preparationLabel}. Throughput path ${preparationPathLabel(store.preparation.throughput)}; Latency path ${preparationPathLabel(store.preparation.latency)}`;
   });
   const preparationFailure = $derived(
     preparationFailurePresentation(store.preparation, store.startError),
@@ -266,8 +259,8 @@
       case "aborted":
         return {
           tone: "aborted",
-          headline: "Test aborted",
-          action: "Press Run Again to restart",
+          headline: phaseLabel("aborted"),
+          action: "Press Run again to restart",
         };
       case "error":
         return {
@@ -275,7 +268,7 @@
           headline: store.error
             ? reasonLabel(store.error.reason)
             : "Something went wrong",
-          action: "Press Run Again to retry",
+          action: "Press Run again to retry",
         };
       default:
         return null;

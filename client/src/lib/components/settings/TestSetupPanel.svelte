@@ -16,6 +16,8 @@
   import { serverTransportOptions } from "../../servers/transportOptions";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
+  import { PING_CADENCE } from "../../presentation/vocabulary";
+  import { fmtDuration } from "../../format";
 
   interface Props {
     running?: boolean;
@@ -131,6 +133,10 @@
         ],
   );
 
+  const CADENCES = [
+    ["pingCadence", "Idle latency cadence"],
+    ["loadedPingCadence", "Loaded latency cadence"],
+  ] as const;
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
   const DURATION_FIELDS = [
@@ -187,7 +193,7 @@
     if (preset === "custom") return [];
     return activeDurationFields.map(([key, label]) => ({
       label,
-      value: `${+(DURATION_PRESETS[preset][key] / 1000).toFixed(1)}s`,
+      value: fmtDuration(DURATION_PRESETS[preset][key]),
     }));
   });
 
@@ -425,30 +431,19 @@
   </section>
   <section class="surface-inset panel">
     <h3 class="caps">Latency timing</h3>
-    <label class="field">
-      <span>Unloaded ping cadence</span>
-      <select
-        bind:value={store.config.pingCadence}
-        disabled={running || store.preparing}
-      >
-        <option value="reply-driven">Reply-driven</option>
-        <option value="fast">Fast (80 ms)</option>
-        <option value="medium">Medium (250 ms)</option>
-        <option value="slow">Slow (600 ms)</option>
-      </select>
-    </label>
-    <label class="field">
-      <span>Loaded ping cadence</span>
-      <select
-        bind:value={store.config.loadedPingCadence}
-        disabled={running || store.preparing}
-      >
-        <option value="reply-driven">Reply-driven</option>
-        <option value="fast">Fast (80 ms)</option>
-        <option value="medium">Medium (250 ms)</option>
-        <option value="slow">Slow (600 ms)</option>
-      </select>
-    </label>
+    {#each CADENCES as [key, label] (key)}
+      <label class="field">
+        <span>{label}</span>
+        <select
+          bind:value={store.config[key]}
+          disabled={running || store.preparing}
+        >
+          {#each Object.entries(PING_CADENCE) as [value, name] (value)}
+            <option {value}>{name}</option>
+          {/each}
+        </select>
+      </label>
+    {/each}
     <Switch
       bind:checked={store.config.skipLoadedLatencyWhenStageOff}
       disabled={running || store.preparing}

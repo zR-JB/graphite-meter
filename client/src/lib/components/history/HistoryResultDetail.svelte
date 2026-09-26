@@ -15,13 +15,12 @@
   import { bidirectionalResultPresentation } from "../../presentation/bidirectionalResult";
   import { ICON } from "../../constants";
   import {
-    formatDuration,
-    formatHistoryBytes,
     formatHistoryRate,
     formatLatency,
     formatPercent,
   } from "../../history/format";
   import type { HistoryRecord, ThroughputSnapshot } from "../../history/types";
+  import { fmtBytes, fmtDuration } from "../../format";
   import { latencyLanes } from "../../runner/latencySummary";
   import { store } from "../../state/store.svelte";
   import {
@@ -135,7 +134,7 @@
   }
 
   function bytes(result: Pick<ThroughputSnapshot, "totalBytes">): string {
-    return formatHistoryBytes(result.totalBytes, store.unitBase);
+    return fmtBytes(result.totalBytes, store.unitBase);
   }
 
   function throughputCard(
@@ -361,11 +360,11 @@
       </div>
       <div>
         <dt>Actual duration</dt>
-        <dd>{formatDuration(record.durationMs)}</dd>
+        <dd>{fmtDuration(record.durationMs)}</dd>
       </div>
       <div>
         <dt>Transferred</dt>
-        <dd>{formatHistoryBytes(record.totalBytes, store.unitBase)}</dd>
+        <dd>{fmtBytes(record.totalBytes, store.unitBase)}</dd>
       </div>
     </dl>
   </header>
