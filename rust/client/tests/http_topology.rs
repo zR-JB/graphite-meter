@@ -120,3 +120,83 @@ async fn http1_reuses_connections_and_http2_multiplexes_cold_requests() -> Resul
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn pooled_connections_expire_without_another_request_and_preserve_active_bodies()
+-> Result<(), Error> {
+    use http_body_util::{BodyExt, StreamBody};
+    use hyper::body::Frame;
+    use std::{convert::Infallible, time::Duration};
+
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    for protocol in [Protocol::Http1, Protocol::Http2] {
+        for active in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").await?;
+            let target = format!("http://{}/probe", listener.local_addr()?);
+            let (chunks, receiver) = tokio::sync::mpsc::unbounded_channel();
+            chunks.send(Bytes::from_static(b"first"))?;
+            let receiver = std::sync::Mutex::new(Some(receiver));
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let service = service_fn(move |_| {
+                    let receiver = receiver.lock().unwrap().take().unwrap();
+                    async move {
+                        let stream = futures_util::stream::unfold(receiver, |mut receiver| async {
+                            receiver
+                                .recv()
+                                .await
+                                .map(|chunk| (Ok::<_, Infallible>(Frame::data(chunk)), receiver))
+                        });
+                        Ok::<_, Infallible>(Response::new(StreamBody::new(Box::pin(stream))))
+                    }
+                });
+                if protocol == Protocol::Http1 {
+                    hyper::server::conn::http1::Builder::new()
+                        .serve_connection(TokioIo::new(socket), service)
+                        .await
+                } else {
+                    hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(socket), service)
+                        .await
+                }
+            });
+            let client = Http::new(false)?;
+            let mut response = client.request(Method::GET, &target, protocol).await?;
+            assert_eq!(
+                response
+                    .body_mut()
+                    .frame()
+                    .await
+                    .unwrap()?
+                    .into_data()
+                    .unwrap(),
+                b"first"[..]
+            );
+            let chunks = if active {
+                Some(chunks)
+            } else {
+                drop(chunks);
+                assert!(response.body_mut().collect().await?.to_bytes().is_empty());
+                None
+            };
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(91)).await;
+            tokio::task::yield_now().await;
+            tokio::time::resume();
+            if let Some(chunks) = chunks {
+                assert!(
+                    !server.is_finished(),
+                    "{protocol:?} closed an active response"
+                );
+                chunks.send(Bytes::from_static(b"last"))?;
+                drop(chunks);
+                assert_eq!(bounded_body(response).await?, b"last");
+            } else {
+                drop(response);
+            }
+            tokio::time::timeout(Duration::from_secs(5), server).await???;
+            drop(client);
+        }
+    }
+    Ok(())
+}

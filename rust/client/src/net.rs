@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio_rustls::TlsConnector;
@@ -36,6 +36,7 @@ pub type Response = http::Response<Incoming>;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_LIMIT: usize = 64 * 1024;
 const IDLE_PER_ORIGIN: usize = 32;
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub fn empty() -> Body {
     Empty::new().map_err(|never| match never {}).boxed_unsync()
@@ -53,14 +54,33 @@ struct Connections {
     proxy: Proxy,
     tls: [TlsConnector; 3],
     pools: Mutex<HashMap<Key, Arc<tokio::sync::Mutex<Pool>>>>,
+    maintenance: OnceLock<tokio::task::JoinHandle<()>>,
 }
 type Key = (String, Protocol);
 
-#[derive(Default)]
 struct Pool {
-    h1: Vec<(tokio::time::Instant, Http1)>,
+    used: tokio::time::Instant,
+    h1: Vec<Http1>,
     h2: Option<http2::SendRequest<Body>>,
 }
+impl Default for Pool {
+    fn default() -> Self {
+        Self {
+            used: tokio::time::Instant::now(),
+            h1: Vec::new(),
+            h2: None,
+        }
+    }
+}
+
+impl Drop for Connections {
+    fn drop(&mut self) {
+        if let Some(task) = self.maintenance.get() {
+            task.abort();
+        }
+    }
+}
+
 struct Http1 {
     sender: http1::SendRequest<Body>,
     absolute_form: bool,
@@ -86,24 +106,24 @@ impl Connections {
                 tls(&[b"h2", b"http/1.1"])?,
             ],
             pools: Mutex::new(HashMap::new()),
+            maintenance: OnceLock::new(),
         })
     }
 
     async fn sender(&self, origin: &str, protocol: Protocol, pool: &mut Pool) -> Result<Sender> {
+        pool.used = tokio::time::Instant::now();
         if let Some(sender) = &pool.h2
             && !sender.is_closed()
         {
             return Ok(Sender::H2(sender.clone()));
         }
-        pool.h1.retain(|(idle, connection)| {
-            !connection.sender.is_closed() && idle.elapsed() < Duration::from_secs(90)
-        });
+        pool.h1.retain(|connection| !connection.sender.is_closed());
         if let Some(index) = pool
             .h1
             .iter()
-            .position(|(_, connection)| connection.sender.is_ready())
+            .position(|connection| connection.sender.is_ready())
         {
-            return Ok(Sender::H1(pool.h1.swap_remove(index).1));
+            return Ok(Sender::H1(pool.h1.swap_remove(index)));
         }
         let target = target_origin(origin)?.ok_or("missing origin")?;
         let tls = (target.scheme == "https").then(|| match protocol {
@@ -137,7 +157,35 @@ impl Connections {
         }
     }
 
-    async fn send(&self, mut request: Request<Body>, protocol: Protocol) -> Result<Response> {
+    async fn send(
+        self: &Arc<Self>,
+        mut request: Request<Body>,
+        protocol: Protocol,
+    ) -> Result<Response> {
+        self.maintenance.get_or_init(|| {
+            let owner = Arc::downgrade(self);
+            let start = tokio::time::Instant::now() + POOL_IDLE_TIMEOUT;
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval_at(start, POOL_IDLE_TIMEOUT);
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    interval.tick().await;
+                    let Some(owner) = owner.upgrade() else {
+                        return;
+                    };
+                    owner
+                        .pools
+                        .lock()
+                        .expect("connections poisoned")
+                        .retain(|_, pool| {
+                            Arc::strong_count(pool) > 1
+                                || pool
+                                    .try_lock()
+                                    .is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
+                        });
+                }
+            })
+        });
         let (origin, _) = split_url(&request.uri().to_string())?;
         let origin = origin.key();
         let pool = self
@@ -184,7 +232,8 @@ impl Connections {
                 let response = connection.sender.send_request(request).await?;
                 let mut pool = pool.lock().await;
                 if pool.h1.len() < IDLE_PER_ORIGIN {
-                    pool.h1.push((tokio::time::Instant::now(), connection));
+                    pool.used = tokio::time::Instant::now();
+                    pool.h1.push(connection);
                 }
                 Ok(response)
             }
