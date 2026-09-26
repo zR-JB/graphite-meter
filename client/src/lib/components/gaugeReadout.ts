@@ -18,9 +18,6 @@ export interface GaugeReadoutInput {
   unusable: boolean;
   arcs: ResultGaugeArc[];
   headline: ResultGaugeArc | null;
-  /** Animated for display; never announced. */
-  animatedBytesPerSec: number;
-  measuredBytesPerSec: number;
   rate: (bytesPerSec: number) => string;
   unit: string;
 }
@@ -29,6 +26,7 @@ const EMPTY = { value: MISSING, unit: "" };
 const transfer = (phase: Phase) =>
   phase === "download" || phase === "upload" || phase === "bidirectional";
 
+// Null: the live transfer rate, which the panel formats per frame.
 function displayed(input: GaugeReadoutInput) {
   const { phase, headline } = input;
   const latency = { value: fmtMs(input.latencyMs), unit: "ms" };
@@ -45,8 +43,7 @@ function displayed(input: GaugeReadoutInput) {
       };
     return input.hasLatencyResult ? latency : EMPTY;
   }
-  if (!transfer(phase)) return EMPTY;
-  return { value: input.rate(input.animatedBytesPerSec), unit: input.unit };
+  return phase === "warmup" || transfer(phase) ? null : EMPTY;
 }
 
 function terminalStatus({ phase, error }: GaugeReadoutInput) {
@@ -66,10 +63,6 @@ function terminalStatus({ phase, error }: GaugeReadoutInput) {
 
 export function gaugeReadout(input: GaugeReadoutInput) {
   const { phase, preparation } = input;
-  const display = displayed(input);
-  const announced = transfer(phase)
-    ? { value: input.rate(input.measuredBytesPerSec), unit: input.unit }
-    : display;
   const arc = phase === "complete" ? input.headline : null;
   const terminal = arc && { ...arc, value: input.rate(arc.bytesPerSec) };
   const preparationLabel =
@@ -101,16 +94,12 @@ export function gaugeReadout(input: GaugeReadoutInput) {
           .join("; ")
       : "";
   return {
-    display,
+    display: displayed(input),
     terminal,
     preparationLabel,
     failure,
     status,
     hint,
-    announcement:
-      statusText ||
-      results ||
-      `${announced.value} ${announced.unit}, phase ${phase}`,
-    announced,
+    announcement: statusText || results || phaseLabel(phase),
   };
 }

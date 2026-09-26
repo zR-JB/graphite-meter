@@ -14,8 +14,6 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   unusable: false,
   arcs: [],
   headline: null,
-  animatedBytesPerSec: 100,
-  measuredBytesPerSec: 200,
   rate: (bytesPerSec) => String(bytesPerSec),
   unit: "B/s",
   ...overrides,
@@ -30,9 +28,8 @@ test("the display follows phase, evidence and missing data", () => {
     dashed: true,
   };
   for (const [overrides, value, unit] of [
-    [{}, "100", "B/s"],
     [{ unusable: true }, "—", ""],
-    [{ phase: "warmup" }, "—", ""],
+    [{ phase: "idle" }, "—", ""],
     [{ phase: "latency" }, "12.0", "ms"],
     [{ phase: "latency", latencyTimeout: true }, "—", "probe timeout"],
     [{ phase: "complete", hasLatencyResult: true }, "12.0", "ms"],
@@ -44,6 +41,8 @@ test("the display follows phase, evidence and missing data", () => {
     ],
   ] as const)
     expect(gaugeReadout(input(overrides)).display).toEqual({ value, unit });
+  for (const phase of ["warmup", "download"] as const)
+    expect(gaugeReadout(input({ phase })).display).toBeNull();
 });
 
 test("terminal readouts carry the measured direction and status", () => {

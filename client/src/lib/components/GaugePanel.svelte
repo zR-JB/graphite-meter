@@ -26,7 +26,8 @@
   } from "../canvas/presentation";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
-  import { STAGE } from "../presentation/vocabulary";
+  import { MISSING, STAGE } from "../presentation/vocabulary";
+  import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
 
   const indicatedServers = $derived(
@@ -140,6 +141,8 @@
     };
   });
 
+  // The readout holds the last rate across a stage change until the next sample.
+  let shownBytesPerSec = $state<number | null>(null);
   function stepLiveRates(now: number): boolean {
     const frame = liveRateAnimator.step(
       liveRateInput,
@@ -147,6 +150,8 @@
       prefersReducedMotion.current,
     );
     liveRateValues = frame.values;
+    if (throughputEvidence) shownBytesPerSec = frame.values.transfer;
+    else if (readout.display) shownBytesPerSec = null;
     return frame.active;
   }
 
@@ -170,42 +175,18 @@
       unusable: unusableStage,
       arcs: terminalArcs,
       headline: headlineArc,
-      animatedBytesPerSec: liveRateValues.transfer,
-      measuredBytesPerSec: store.liveTransferBytesPerSec,
       rate: (bytesPerSec) => fmtSpeed(gaugeRate(bytesPerSec)),
       unit: gaugeUnit,
     }),
   );
 
-  // Mid-phase announcements wait a second apart; phase changes jump the queue.
-  const ANNOUNCE_INTERVAL_MS = 1000;
-  let announcement = $state("");
-  let pendingAnnouncement = "";
-  let announceTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastAnnouncedAt = -Infinity;
-  let lastAnnouncedPhase = "";
-  $effect(() => {
-    const phase = store.phase;
-    pendingAnnouncement = readout.announcement;
-    const commit = () => {
-      announcement = pendingAnnouncement;
-      lastAnnouncedAt = performance.now();
-      lastAnnouncedPhase = phase;
-      announceTimer = null;
-    };
-    if (!store.isRunning || phase !== lastAnnouncedPhase) {
-      if (announceTimer) clearTimeout(announceTimer);
-      commit();
-    } else if (!announceTimer) {
-      announceTimer = setTimeout(
-        commit,
-        Math.max(
-          0,
-          ANNOUNCE_INTERVAL_MS - (performance.now() - lastAnnouncedAt),
-        ),
-      );
-    }
-  });
+  announceChanges(() => readout.announcement);
+  const display = $derived(
+    readout.display ??
+      (shownBytesPerSec === null
+        ? { value: MISSING, unit: "" }
+        : { value: fmtSpeed(gaugeRate(shownBytesPerSec)), unit: gaugeUnit }),
+  );
 
   const dialState = $derived.by<GaugeDialState>(() => {
     const p = store.phase;
@@ -252,7 +233,6 @@
   onMount(() => {
     liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
     return () => {
-      if (announceTimer) clearTimeout(announceTimer);
       liveRatePresentation?.destroy();
       liveRatePresentation = null;
     };
@@ -327,18 +307,12 @@
               {/if}
             </div>
           {:else}
-            {#if readout.display.value}<span
-                class="gauge-value"
-                aria-hidden="true">{readout.display.value}</span
-              >{/if}
-            {#if readout.display.unit}<span
-                class="gauge-unit"
-                aria-hidden="true">{readout.display.unit}</span
+            <span class="gauge-value" aria-hidden="true">{display.value}</span>
+            {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+                >{display.unit}</span
               >{/if}
           {/if}
-          <span class="sr-only"
-            >{readout.announced.value} {readout.announced.unit}</span
-          >
+          <span class="sr-only">{display.value} {display.unit}</span>
         </div>
       </div>
       <div class="gauge-footer">
@@ -361,7 +335,6 @@
           </div>
         {/if}
       </div>
-      <output class="sr-only" aria-live="polite">{announcement}</output>
     </div>
 
     <div class="instrument-controls">
