@@ -16,11 +16,16 @@ import (
 
 // A browser CONNECT carries neither cookies nor headers, so the whole authenticated WebTransport path rests on a token.
 
-// mintWTToken asks /wt/session for one CONNECT token as the browser does.
+// mintWTToken asks /wt/session for one CONNECT token to the ping bus as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	t.Helper()
+	return s.mintWTTokenFor(t, route.WTPing)
+}
+
+func (s *authenticatedStack) mintWTTokenFor(t *testing.T, path string) string {
+	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost,
-		s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+route.WTPing), nil)
+		s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+path), nil)
 	req.Header.Set("Origin", s.origin)
 	req.Header.Set("X-CSRF-Token", s.csrf.Value)
 	req.AddCookie(s.session)

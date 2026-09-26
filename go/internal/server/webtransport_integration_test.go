@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -540,8 +541,15 @@ func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				t.Fatal("a refused upload lane was left open: the client parked on flow control instead of seeing the reset")
 			}
-			return
+			break
 		}
+	}
+	// The session still says why: the refusal is a record on its own stream.
+	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancelAccept()
+	refusal, err := sess.AcceptUniStream(acceptCtx)
+	if err != nil || !firstProgressTypeIs(t, bufio.NewScanner(refusal), "error") {
+		t.Fatalf("refused lane reported no refusal record: %v", err)
 	}
 }
 
@@ -584,27 +592,56 @@ func waitForLoad(t *testing.T, httpBase string, want int) {
 func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)
+	for _, path := range []string{route.WTPing, route.WTDownload, route.WTUpload} {
+		foreign := http.Header{"Origin": {"https://attacker.example"}}
+		target := func() string { return s.h3URL + path + "?token=" + url.QueryEscape(s.mintWTTokenFor(t, path)) }
+		res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), target(), foreign)
+		if err == nil {
+			_ = sess.CloseWithError(0, "")
+			t.Fatalf("a %s CONNECT carrying a foreign Origin opened a session", path)
+		}
+		if res == nil {
+			t.Fatalf("foreign-Origin %s CONNECT failed without a response: %v", path, err)
+		}
+		if res.StatusCode == http.StatusOK {
+			t.Fatalf("foreign-Origin %s CONNECT status=%d, want a refusal", path, res.StatusCode)
+		}
 
-	foreign := http.Header{"Origin": {"https://attacker.example"}}
-	target := func() string { return s.h3URL + route.WTPing + "?token=" + url.QueryEscape(s.mintWTToken(t)) }
-	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), target(), foreign)
-	if err == nil {
+		// The control: the same credential, transport and header, and only the origin canonical.
+		res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), target(), http.Header{"Origin": {s.origin}})
+		if err != nil {
+			t.Fatalf("%s CONNECT from the canonical origin was refused with status=%v: %v", path, res, err)
+		}
 		_ = sess.CloseWithError(0, "")
-		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
 	}
-	if res == nil {
-		t.Fatalf("foreign-Origin CONNECT failed without a response: %v", err)
-	}
-	if res.StatusCode == http.StatusOK {
-		t.Fatalf("foreign-Origin CONNECT status=%d, want a refusal", res.StatusCode)
-	}
+}
 
-	// The control: the same credential, the same wtTransport and the same header, and only the origin canonical.
-	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), target(), http.Header{"Origin": {s.origin}})
-	if err != nil {
-		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
+// An upload session joins only its own client's receiver, whoever holds the id.
+func TestWebTransportUploadRefusesAnotherClientsReceiver(t *testing.T) {
+	t.Parallel()
+	loopback := netip.MustParsePrefix("127.0.0.0/8")
+	base, httpBase, wtTransport := wtTestServer(t, func(c *config.Config) {
+		c.TrustedProxies = []netip.Prefix{loopback}
+	}, nil)
+	id := mintUploadID(t, httpBase)
+	firstRecord := func(client, want string) {
+		t.Helper()
+		res, sess, err := dialWTUntilAnswered(t, wtTransport.Transport, base+"/wt/upload?id="+id,
+			http.Header{"X-Real-IP": {client}})
+		if err != nil {
+			t.Fatalf("dial as %s: %v %v", client, res, err)
+		}
+		wtTransport.armClose()
+		t.Cleanup(func() { _ = sess.CloseWithError(0, "") })
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		feed, err := sess.AcceptUniStream(ctx)
+		if err != nil || !firstProgressTypeIs(t, bufio.NewScanner(feed), want) {
+			t.Fatalf("%s's first record is not %q: %v", client, want, err)
+		}
 	}
-	_ = sess.CloseWithError(0, "")
+	firstRecord("198.51.100.1", "ready")
+	firstRecord("198.51.100.2", "error")
 }
 
 // dialWTUntilAnswered dials until the listener answers, so a QUIC listener still coming up is not read as a refusal.
