@@ -162,15 +162,17 @@ def require_control_plane_matches_main(
 
 
 def require_dispatch_run(
-    repository: str, owner: str, main_sha: str, run_id: int, workflow: str,
+    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
     artifacts: dict[str, int], *, api: APICall = default_api,
 ) -> None:
-    """Bind a request run to its workflow, current main, one attempt, the owner and artifacts."""
+    """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts."""
     workflow_id = int_field(expect_object(api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = expect_object(api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
     if run.get("id") != run_id or run.get("workflow_id") != workflow_id:
         refuse(f"run {run_id} is not a {workflow} run")
+    if run.get("display_title") != title:
+        refuse("request artifact does not match the dispatch inputs in the run title")
     if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
         refuse("request was not dispatched from main")
     if run.get("head_sha") != main_sha:

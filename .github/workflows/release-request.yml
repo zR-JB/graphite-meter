@@ -1,5 +1,7 @@
 name: Request release
-run-name: Release request · ${{ inputs.mode }} · ${{ inputs.tag }} · ${{ github.sha }}
+run-name: >-
+  Release request · ${{ inputs.mode }} · ${{ inputs.tag }} ·
+  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }}
 
 # LOW AUTHORITY: dispatch may select any ref, so this build has read-only access,
 # no secrets or caches, and no path to publication. Release accepts its output

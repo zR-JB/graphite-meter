@@ -95,6 +95,12 @@ def parse_release(tag: str, sha: str, pr: int) -> Release:
     return Release(tag, sha, pr)
 
 
+def request_title(mode: str, release: Release, main: str) -> str:
+    """The run-name that release-request.yml derives from its dispatch inputs."""
+    source = f"PR #{release.pr} @ {release.sha}" if release.pr else "main"
+    return f"Release request · {mode} · {release.tag} · {source} · {main}"
+
+
 def main_workflow(repository: str, name: str) -> str:
     return f"{repository}/.github/workflows/{name}@refs/heads/main"
 
@@ -202,7 +208,8 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
-                         "release-request.yml", artifacts, api=api)
+                         "release-request.yml", request_title(str(request["mode"]), release,
+                                                              publisher), artifacts, api=api)
     if (downloaded := {path.name for path in request_dir.iterdir()}) != set(artifacts):
         refuse(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
     return release, request["mode"] == "publish"

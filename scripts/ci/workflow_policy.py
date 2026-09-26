@@ -230,6 +230,8 @@ def check_repository(root: Path = ROOT) -> None:
     if unpinned := [image for image in re.findall(r"(?m)^FROM (\S+)", dockerfile)
                     if image != "scratch" and "@sha256:" not in image]:
         fail(f"container/Dockerfile base images must be digest-pinned: {unpinned}")
+    if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
+        fail("container/Dockerfile must not select a BuildKit frontend with # syntax=")
     check_actions(root)
     check_workflows(root)
     check_ci(root)

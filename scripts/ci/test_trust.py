@@ -16,6 +16,7 @@ from release import (
     command_prepare,
     command_recheck,
     parse_release,
+    request_title,
     require_compatible_release_tag,
     require_publishable,
     verify_request,
@@ -69,6 +70,7 @@ def dispatch_run(workflow_id: int, run_id: int) -> dict[str, object]:
         "id": run_id, "workflow_id": workflow_id, "event": "workflow_dispatch",
         "head_branch": "main", "head_sha": MAIN, "status": "completed", "conclusion": "success",
         "run_attempt": 1, "actor": {"login": "zR-JB"}, "triggering_actor": {"login": "zR-JB"},
+        "display_title": "title",
     }
 
 
@@ -251,6 +253,7 @@ class RequestTests(unittest.TestCase):
             ("head_sha", OLD, "main changed"),
             ("run_attempt", 2, "reruns"),
             ("workflow_id", 1, "is not a release-request.yml run"),
+            ("display_title", "other", "dispatch inputs"),
             ("triggering_actor", {"login": "other"}, "repository owner"),
             ("artifact", artifacts(name, expired=True), "expected one unexpired"),
             ("artifact", artifacts(name, size=4097), "exceeds"),
@@ -266,7 +269,7 @@ class RequestTests(unittest.TestCase):
             with self.subTest(field=field, error=error):
                 def bind() -> None:
                     require_dispatch_run(REPO, "zR-JB", MAIN, 6001, "release-request.yml",
-                                         {name: 4096}, api=api)
+                                         "title", {name: 4096}, api=api)
                 if error is None:
                     bind()
                 else:
@@ -354,6 +357,8 @@ class RequestTests(unittest.TestCase):
             ({"requestRunId": 1}, True, "requestRunId"),
             ({"tag": "v1.2.3-rc.1"}, True, "stable tags"),
             ({"mode": "force"}, True, "mode"),
+            ({"tag": "v1.2.4", "title": {"tag": "v1.2.3"}}, True, "dispatch inputs"),
+            (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, False, "dispatch inputs"),
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 root = Path(directory)
@@ -361,10 +366,15 @@ class RequestTests(unittest.TestCase):
                 candidate.mkdir()
                 for name in ("graphite-meter.oci.tar", "graphite-meter.oci.tar.sha256"):
                     (candidate / name).write_text("x")
-                (candidate / "request.json").write_text(json.dumps(request | change))
+                record = request | {key: value for key, value in change.items() if key != "title"}
+                (candidate / "request.json").write_text(json.dumps(record))
                 if artifacts_present:
                     (root / "release-assets-4242").mkdir()
-                api = fake(trusted_main(True))
+                inputs = record | cast(dict[str, object], change.get("title", {}))
+                title = request_title(str(inputs["mode"]), Release(
+                    str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])), MAIN)
+                api = fake(trusted_main(True) | {"/actions/runs/4242": dispatch_run(31337, 4242)
+                                                 | {"display_title": title}})
                 with patch.dict(os.environ, env), patch("release.require_checkout"):
                     if error is None:
                         release, publish = verify_request(root, api=api)
