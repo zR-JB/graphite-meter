@@ -195,6 +195,20 @@ func (c *coordinator) missingResults() bool {
 	return c.unavailable
 }
 
+// departure names why a removed server has no result of its own in stage.
+func (c *coordinator) departure(id string, stage Stage) error {
+	for _, f := range slices.Backward(c.failures) {
+		switch {
+		case f.ServerID != id || f.Scope != ScopeThroughput:
+		case f.Stage == stage:
+			return f.Err
+		default:
+			return fmt.Errorf("left the test during %s", f.Stage)
+		}
+	}
+	return errors.New("left the test")
+}
+
 func (c *coordinator) noSurvivors() error {
 	if len(c.failures) == 0 {
 		return errNoSurvivors

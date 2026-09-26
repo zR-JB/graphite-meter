@@ -517,7 +517,7 @@ func (s *stageRun) finish(stageErr error) {
 		for _, server := range c.servers {
 			own := c.aggregate.serverResult(server.id(), dir)
 			if server.removed {
-				own.Err = errors.New("earlier partial measurement")
+				own.Err = c.departure(server.id(), s.plan.Name)
 			}
 			server.results = append(server.results, own)
 		}

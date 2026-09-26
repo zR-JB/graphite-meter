@@ -128,7 +128,7 @@ func (a *aggregateMeasurements) restart(ids []string, at time.Duration, reason I
 	a.first, a.last, a.peakFrom = nil, nil, nil
 	a.peak, a.samples = byDirection[float64]{}, 0
 	for _, server := range a.servers {
-		server.peak, server.samples = byDirection[float64]{}, 0
+		server.window, server.peak, server.samples = byDirection[*ComponentWindow]{}, byDirection[float64]{}, 0
 	}
 }
 

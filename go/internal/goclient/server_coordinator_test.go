@@ -302,15 +302,10 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []struct {
 		name      string
-		at        time.Duration
+		after     int
 		all       bool
 		available bool
-	}{{
-		"survivor",
-		300 * time.Millisecond,
-		false,
-		true,
-	}, {"late", 950 * time.Millisecond, false, false}, {"all", 300 * time.Millisecond, true, false}} {
+	}{{"survivor", 1, false, true}, {"late", 4, false, false}, {"all", 1, true, false}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
@@ -319,15 +314,13 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			prepared := prepareFixtureRun(t, cfg, a, b)
 			var details *RunDetails
 			var result Result
-			var timer *time.Timer
+			samples := 0
 			err := runSelected(t.Context(), cfg, prepared, func(e Event) {
-				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
-					timer = time.AfterFunc(scenario.at, func() {
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable {
+					if samples++; samples == scenario.after {
 						a.failed.Store(true)
-						if scenario.all {
-							b.failed.Store(true)
-						}
-					})
+						b.failed.Store(scenario.all)
+					}
 				}
 				if e.Servers != nil {
 					details = e.Servers
@@ -336,9 +329,6 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 					result = *e.Result
 				}
 			})
-			if timer != nil {
-				timer.Stop()
-			}
 			if scenario.all && !errors.Is(err, errNoSurvivors) || !scenario.all && err != nil {
 				t.Fatalf("outcome=%v", err)
 			}
@@ -350,6 +340,17 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			}
 			if scenario.all && details.Outcome != OutcomeIncomplete {
 				t.Fatalf("all failed outcome=%q", details.Outcome)
+			}
+			left := map[string]error{}
+			for _, f := range details.Failures {
+				left[f.ServerID] = f.Err
+			}
+			for _, server := range details.Servers {
+				own, cause := server.Results[0], left[server.Server.ID]
+				if cause != nil && (!own.Unavailable || own.Err != cause) ||
+					cause == nil && own.Unavailable != result.Unavailable {
+					t.Errorf("%s kept a result its interval does not support: %+v", server.Server.ID, own)
+				}
 			}
 		})
 	}
