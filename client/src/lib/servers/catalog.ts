@@ -65,7 +65,7 @@ export function browserOriginRestriction(
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid server catalogue");
+    throw new Error("Invalid server catalog");
   return value as Record<string, unknown>;
 }
 function text(value: unknown, maximum: number, empty = false): string {
@@ -85,7 +85,7 @@ export function parseCatalog(value: unknown, origin: string): ServerCatalog {
     input.servers.length < 1 ||
     input.servers.length > MAX_SERVERS
   )
-    throw new Error("Invalid server catalogue size");
+    throw new Error("Invalid server catalog size");
   const seenIds = new Set<string>(),
     seenOrigins = new Set<string>();
   const servers = input.servers.map((raw, index): ServerEntry => {
@@ -134,7 +134,7 @@ export function validateSelection(
     new Set(ids).size !== ids.length ||
     ids.some((id) => !catalog.servers.some((server) => server.id === id))
   )
-    throw new Error("Select one to four catalogue servers");
+    throw new Error("Select one to four catalog servers");
 }
 export function selectedInCatalogOrder(
   catalog: ServerCatalog,
@@ -197,7 +197,7 @@ export function validateServerDiscovery(
     ].some((target) => !allowsServerOrigin(server, target.baseUrl))
   )
     throw new Error(
-      `${server.name} advertised an origin outside its catalogue entry`,
+      `${server.name} advertised an origin outside its catalog entry`,
     );
 }
 export function identity(server: ServerEntry): ServerIdentity {

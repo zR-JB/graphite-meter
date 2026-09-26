@@ -18,7 +18,7 @@ const long = {
 };
 
 const entry = ({ id, name, url }: Server) => ({ id, name, url });
-const catalogue = (...servers: Server[]) => ({
+const catalog = (...servers: Server[]) => ({
   GM_SERVER_CATALOG: JSON.stringify({ servers: servers.map(entry) }),
 });
 
@@ -32,7 +32,7 @@ async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
 test("a peer dropout keeps healthy transfers and persists its failure", async (page) => {
   const oslo = await spawnPeer("Oslo");
   const servers = [frankfurt, oslo.server];
-  const bergen = await spawnPeer("Bergen", catalogue(...servers));
+  const bergen = await spawnPeer("Bergen", catalog(...servers));
   try {
     await open(page, bergen.server.url, {
       servers: [{ id: "self", url: bergen.server.url }, ...servers],
@@ -71,7 +71,7 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
 
 test("losing every server ends Incomplete without an Aborted flash", async (page) => {
   const porto = await spawnPeer("Porto");
-  const lisbon = await spawnPeer("Lisbon", catalogue(porto.server));
+  const lisbon = await spawnPeer("Lisbon", catalog(porto.server));
   try {
     await open(page, lisbon.server.url, {
       servers: [{ id: "self", url: lisbon.server.url }, porto.server],

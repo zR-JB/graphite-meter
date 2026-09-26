@@ -979,7 +979,7 @@ test("returning to start releases the run so late events cannot reach the fresh 
   });
 });
 
-test("an approval in flight blocks Start; cancellation or a new catalogue ignores its grant", async () => {
+test("an approval in flight blocks Start; cancellation or a new catalog ignores its grant", async () => {
   let peerUrl = "https://peer.example";
   const discovered: string[] = [];
   const exchanges: { url: string; signal: AbortSignal }[] = [];
@@ -1025,7 +1025,7 @@ test("an approval in flight blocks Start; cancellation or a new catalogue ignore
         pending = controller.signInServer("peer");
         await until(() => exchanges.length === 2);
         peerUrl = "https://replacement.example";
-        await controller.retryCatalogue();
+        await controller.retryCatalog();
         expect(exchanges[1]).toMatchObject({
           url: "https://peer.example/auth/browser/token",
           signal: { aborted: true },

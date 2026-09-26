@@ -914,7 +914,7 @@ test("same-origin IPv6 discovery remains available through the page origin", asy
   }
 });
 
-test("catalogue preflight timing includes the complete response body without probing paths", async () => {
+test("catalog preflight timing includes the complete response body without probing paths", async () => {
   let now = 100;
   let requests = 0;
   const realNow = performance.now;

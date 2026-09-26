@@ -18,7 +18,7 @@ import { expect, test, type Page } from "./webview";
 interface Network {
   failed: string[];
   hanging: string[];
-  catalogues: string[];
+  catalogs: string[];
   preflights: Record<string, number>;
 }
 const origins = (...servers: Server[]) =>
@@ -35,7 +35,7 @@ async function limit(page: Page, failed: Server[], hanging: Server[]) {
           input instanceof Request ? input.url : String(input),
           location.href,
         );
-        if (url.pathname === "/servers") network.catalogues.push(url.origin);
+        if (url.pathname === "/servers") network.catalogs.push(url.origin);
         if (url.pathname === "/preflight")
           network.preflights[url.origin] =
             (network.preflights[url.origin] ?? 0) + 1;
@@ -51,7 +51,7 @@ async function limit(page: Page, failed: Server[], hanging: Server[]) {
     {
       failed: origins(...failed),
       hanging: origins(...hanging),
-      catalogues: [],
+      catalogs: [],
       preflights: {},
     },
   );
@@ -89,7 +89,7 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   const settled = (await network(page)).preflights;
   await Bun.sleep(1000);
   expect((await network(page)).preflights).toEqual(settled);
-  expect((await network(page)).catalogues).toEqual([home.url]);
+  expect((await network(page)).catalogs).toEqual([home.url]);
   expect(await selection(page)).toEqual(["self", "server-1"]);
 });
 

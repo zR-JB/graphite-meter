@@ -50,6 +50,7 @@ import type {
   StageKey,
 } from "../state/store.svelte";
 import { canonicalAdaptiveConfig } from "../state/defaults";
+import { readStored, writeStored } from "../state/persistence";
 import { buildSegments } from "./schedule";
 import {
   CONNECTION_FAILURE_REASONS,
@@ -76,16 +77,14 @@ interface ApplicationDependencies {
   createRunner: (servers: PreparedServer[], focus: string) => NetworkRunner;
   describe: () => EngineInfo;
 }
-type Operation<T> = {
-  abort: AbortController;
-  signal: AbortSignal;
-  promise: Promise<T>;
-};
 type Retry = { attempts: number; at: number; authentication: boolean };
-interface RoleState {
-  key: string;
+/** At most one cancellable job per slot, with its own failure backoff. */
+interface Slot<T> {
   retry: Retry;
-  task?: Operation<void>;
+  task?: { abort: AbortController; signal: AbortSignal; promise: Promise<T> };
+}
+interface RoleState extends Slot<void> {
+  key: string;
   idle?: NonNullable<ConnectionPreparation["idle"]>;
 }
 interface ServerState {
@@ -93,8 +92,7 @@ interface ServerState {
   credentials: ServerCredentials;
   config: RunnerConfig | null;
   discovery?: TransportDiscovery;
-  discoveryTask?: Operation<TransportDiscovery>;
-  discoveryRetry: Retry;
+  preflight: Slot<TransportDiscovery | null>;
   discoveryError?: unknown;
   validation: ConnectionValidation;
   roles: Record<ConnectionRole, RoleState>;
@@ -103,6 +101,8 @@ interface CheckOptions {
   ids?: string[];
   role?: ConnectionRole;
   force?: boolean;
+  /** Background retries check only roles whose backoff has elapsed. */
+  due?: boolean;
   signal?: AbortSignal;
 }
 
@@ -112,7 +112,7 @@ const retryState = (): Retry => ({ attempts: 0, at: 0, authentication: false });
 const aborted = () =>
   new DOMException("Connection selection changed", "AbortError");
 
-export function connectionFailureMessage(
+function connectionFailureMessage(
   cause: unknown,
   server?: ServerEntry,
 ): string {
@@ -170,7 +170,7 @@ async function loadServerCatalog(signal: AbortSignal): Promise<ServerCatalog> {
     cache: "no-store",
     signal,
   });
-  if (!response.ok) throw new Error("Could not load the server catalogue");
+  if (!response.ok) throw new Error("Could not load the server catalog");
   return parseCatalog(await readJSONResponse(response), location.origin);
 }
 
@@ -222,7 +222,9 @@ export function createApplicationController(
   const draftKey = (config: RunnerConfig) =>
     JSON.stringify([connectionDraftKey(config), selectionKey()]);
   const catalogSelected = () =>
-    selectedInCatalogOrder(store.serverCatalog!, store.selectedServers);
+    store.serverCatalog
+      ? selectedInCatalogOrder(store.serverCatalog, store.selectedServers)
+      : [];
   function serverConfig(id: string): RunnerConfig {
     const config = $state.snapshot(store.config);
     if (
@@ -250,14 +252,15 @@ export function createApplicationController(
   const expiredGrant = (state: ServerState) =>
     state.credentials.kind === "grant" &&
     (state.credentials.expiresAt ?? 0) <= Date.now();
-  const required = (state: ServerState): ConnectionRole[] =>
-    state.config
-      ? CONNECTION_ROLES.filter(
-          (role) => role !== "latency" || latencyPathNeeded(state.config!),
-        )
-      : [];
+  function required({ config }: ServerState): ConnectionRole[] {
+    if (!config) return [];
+    return CONNECTION_ROLES.filter(
+      (role) => role !== "latency" || latencyPathNeeded(config),
+    );
+  }
   const needsCheck = (state: ServerState, role: ConnectionRole) =>
-    roleNeedsValidation(state.config!, state.validation, role, state.discovery);
+    !!state.config &&
+    roleNeedsValidation(state.config, state.validation, role, state.discovery);
   const setRole = (
     state: ServerState,
     role: ConnectionRole,
@@ -272,17 +275,15 @@ export function createApplicationController(
     state: ServerState | undefined,
     maxAgeMs = CONNECTION_FRESH_MS,
   ): PreparedPaths | null {
-    const prepared =
-      state?.config &&
-      !expiredGrant(state) &&
-      !state.discoveryError &&
-      preparedPaths(
-        state.config,
-        state.discovery ?? null,
-        state.validation,
-        maxAgeMs,
-      );
-    return prepared ? { ...prepared, credentials: state!.credentials } : null;
+    if (!state?.config || expiredGrant(state) || state.discoveryError)
+      return null;
+    const prepared = preparedPaths(
+      state.config,
+      state.discovery ?? null,
+      state.validation,
+      maxAgeMs,
+    );
+    return prepared && { ...prepared, credentials: state.credentials };
   }
   const readySelected = (maxAgeMs = CONNECTION_FRESH_MS) =>
     !!store.serverCatalog &&
@@ -305,13 +306,14 @@ export function createApplicationController(
           (failed && state.validation[failed].message) ||
           undefined;
     let validation = state.validation;
-    if (state.discoveryTask || state.discoveryError)
+    const { config } = state;
+    if (config && (state.preflight.task || state.discoveryError))
       for (const role of roles)
         validation = {
           ...validation,
           [role]: {
-            selection: connectionSelection(state.config!, role),
-            state: state.discoveryTask ? "checking" : "failed",
+            selection: connectionSelection(config, role),
+            state: state.preflight.task ? "checking" : "failed",
             path: null,
             ...(message ? { message } : {}),
           },
@@ -320,15 +322,15 @@ export function createApplicationController(
       server: state.server,
       discovery: state.discovery ?? null,
       validation,
-      metadataChecking: !state.config && !!state.discoveryTask,
+      metadataChecking: !state.config && !!state.preflight.task,
       readiness:
         expired ||
-        (!!state.discoveryError && state.discoveryRetry.authentication) ||
+        (!!state.discoveryError && state.preflight.retry.authentication) ||
         roles.some((role) => state.roles[role].retry.authentication)
           ? "sign-in"
           : message
             ? "failed"
-            : state.discoveryTask ||
+            : state.preflight.task ||
                 roles.some((role) => state.roles[role].task)
               ? "checking"
               : paths(state)
@@ -379,8 +381,8 @@ export function createApplicationController(
       setRole(state, role, { state: "stale", path: null });
   }
   function cancelDiscovery(state: ServerState): void {
-    const task = state.discoveryTask;
-    state.discoveryTask = undefined;
+    const task = state.preflight.task;
+    state.preflight.task = undefined;
     task?.abort.abort(aborted());
   }
   function cancelServer(state: ServerState): void {
@@ -402,7 +404,7 @@ export function createApplicationController(
             ? { ...old.credentials, server }
             : serverCredentials(server),
         config: null,
-        discoveryRetry: retryState(),
+        preflight: { retry: retryState() },
         validation: emptyConnectionValidation(),
         roles: {
           throughput: { key: "", retry: retryState() },
@@ -460,7 +462,7 @@ export function createApplicationController(
         const unused = role === "latency" && !latencyPathNeeded(config);
         cancelRole(state, role, stale || unused);
         slot.retry = retryState();
-        if (state.discoveryError) state.discoveryRetry = retryState();
+        if (state.discoveryError) state.preflight.retry = retryState();
         const selection = connectionSelection(config, role);
         if (!unused && stale)
           state.validation = {
@@ -502,7 +504,7 @@ export function createApplicationController(
     const error = new ServerAuthenticationRequired(state.server);
     error.message = message;
     state.discoveryError = error;
-    failed(state.discoveryRetry, error);
+    failed(state.preflight.retry, error);
     state.validation = emptyConnectionValidation();
     publish(state);
     schedule();
@@ -514,67 +516,91 @@ export function createApplicationController(
     state.credentials = { ...credentials, server: state.server };
     state.discovery = undefined;
     state.discoveryError = undefined;
-    state.discoveryRetry = retryState();
+    state.preflight.retry = retryState();
     state.validation = emptyConnectionValidation();
     for (const role of CONNECTION_ROLES) state.roles[role].retry = retryState();
     publish(state);
     schedule();
   }
 
-  async function network<T>(
-    origin: string,
-    priority: () => number,
-    owner: AbortSignal,
-    timeoutMs: number,
-    run: (signal: AbortSignal) => Promise<T>,
+  /** Runs one origin-limited job in a slot; a failure is recorded by `fail`, never rethrown. */
+  function job<T>(
+    state: ServerState,
+    slot: Slot<T>,
+    options: { owner?: AbortSignal; priority: () => number; timeoutMs: number },
+    run: (signal: AbortSignal, live: () => boolean) => Promise<T>,
+    fail: (error: unknown) => T,
   ): Promise<T> {
-    const release = await limiter.acquire(origin, priority, owner);
-    try {
-      return await withinBudget(owner, timeoutMs, run);
-    } finally {
-      release();
-    }
-  }
-  function operation<T>(owner?: AbortSignal): Operation<T> {
     const abort = new AbortController();
+    const { owner } = options;
     const signal = owner
       ? AbortSignal.any([abort.signal, owner])
       : abort.signal;
-    return { abort, signal, promise: null! };
+    const live = () =>
+      current(state) && slot.task?.abort === abort && !signal.aborted;
+    const work = async () => {
+      const origin = new URL(state.server.url).origin;
+      const release = await limiter.acquire(origin, options.priority, signal);
+      try {
+        return await withinBudget(signal, options.timeoutMs, (inner) =>
+          run(inner, live),
+        );
+      } finally {
+        release();
+      }
+    };
+    const promise = work()
+      .catch((error) => fail(live() ? error : undefined))
+      .finally(() => {
+        if (slot.task?.abort !== abort) return;
+        slot.task = undefined;
+        publish(state);
+        schedule();
+      });
+    slot.task = { abort, signal, promise };
+    publish(state);
+    return promise;
   }
-  /** Matching checks join existing jobs; a caller can cancel only the jobs it creates. */
-  async function check(options: CheckOptions = {}): Promise<void> {
-    if (!booted) throw new DOMException("Runner is not active", "AbortError");
-    if (!store.serverCatalog)
-      throw new Error("The server catalogue is unavailable");
-    if (store.unresolvedServers.length || !store.selectedServers.length)
-      throw new Error("Review the saved server selection");
+  /** Starts or joins checks; outcomes land in each server's view and never reject. */
+  function refresh(options: CheckOptions = {}) {
+    if (!booted || !store.serverCatalog || store.unresolvedServers.length)
+      return { states: [], done: Promise.resolve() };
     selectIntent();
-    const states = (options.ids ?? [...store.selectedServers]).map((id) =>
-      servers.get(id)!,
-    );
-    if (states.some((state) => !state?.config)) throw aborted();
-    const keys = states.map(roleKeys);
+    const states = (options.ids ?? store.selectedServers).flatMap((id) => {
+      const state = servers.get(id);
+      return state?.config ? [state] : [];
+    });
     if (options.force)
       for (const state of states)
         for (const role of required(state))
           if (!options.role || role === options.role) cancelRole(state, role);
-    const work = Promise.allSettled(
+    const work = Promise.all(
       states.map((state) => checkServer(state, options)),
     );
-    const results = options.signal
-      ? await abortable(work, options.signal)
-      : await work;
-    for (const result of results)
-      if (result.status === "rejected" && result.reason?.name === "AbortError")
-        throw result.reason;
-    if (
-      states.some(
-        (state, i) =>
-          !current(state) || !state.config || keys[i] !== roleKeys(state),
-      )
-    )
-      throw aborted();
+    return { states, done: work.then(() => {}) };
+  }
+  /** A check whose own jobs were superseded rejects as aborted; otherwise any failure throws. */
+  async function validate(options: CheckOptions = {}): Promise<void> {
+    if (!booted) throw new DOMException("Runner is not active", "AbortError");
+    if (!store.serverCatalog)
+      throw new Error("The server catalog is unavailable");
+    if (store.unresolvedServers.length || !store.selectedServers.length)
+      throw new Error("Review the saved server selection");
+    const expected = (options.ids ?? store.selectedServers).length;
+    const { states, done } = refresh(options);
+    if (states.length !== expected) throw aborted();
+    const keys = states.map(roleKeys);
+    await (options.signal ? abortable(done, options.signal) : done);
+    const superseded = (state: ServerState, i: number) =>
+      !current(state) ||
+      !state.config ||
+      keys[i] !== roleKeys(state) ||
+      (!state.discoveryError &&
+        (!state.discovery ||
+          required(state).some((role) =>
+            ["checking", "stale"].includes(state.validation[role].state),
+          )));
+    if (states.some(superseded)) throw aborted();
     const maxAgeMs = options.signal ? CONNECTION_FRESH_MS : Infinity;
     const failures = states.filter((state) => !paths(state, maxAgeMs));
     if (failures.length)
@@ -596,47 +622,42 @@ export function createApplicationController(
     options: CheckOptions,
   ): Promise<void> {
     const keys = roleKeys(state);
-    const fresh = !!options.signal;
+    const { signal } = options;
     const discovery = await discoverOnce(
       state,
-      fresh,
+      !!signal,
       !!options.force,
-      options.signal,
+      signal,
     );
-    options.signal?.throwIfAborted();
-    if (!state.config || !current(state) || keys !== roleKeys(state))
-      throw aborted();
+    const config = state.config;
+    if (!discovery || !config || signal?.aborted || !current(state)) return;
+    if (keys !== roleKeys(state)) return;
+    const now = Date.now();
     const roles = required(state).filter((role) => {
+      const { state: status, path } = state.validation[role];
       if (options.force && (!options.role || role === options.role))
         return true;
-      if (
-        options.role &&
-        role !== options.role &&
-        state.validation[role].state === "failed"
-      )
+      if (options.role && role !== options.role && status === "failed")
         return false;
+      if (options.due && state.roles[role].retry.at > now) return false;
       return (
-        roleNeedsValidation(state.config!, state.validation, role, discovery) ||
-        (fresh &&
-          Date.now() - state.validation[role].path!.verifiedAt >
-            CONNECTION_FRESH_MS)
+        roleNeedsValidation(config, state.validation, role, discovery) ||
+        (!!signal && !!path && now - path.verifiedAt > CONNECTION_FRESH_MS)
       );
     });
-    const results = await Promise.allSettled(
-      roles.map((role) => probe(state, role, options.signal)),
+    await Promise.all(
+      roles.map((role) => probe(state, role, config, discovery, signal)),
     );
-    for (const result of results)
-      if (result.status === "rejected" && result.reason?.name === "AbortError")
-        throw result.reason;
   }
+  /** Resolves to null when discovery failed or was superseded; the view carries why. */
   async function discoverOnce(
     state: ServerState,
     fresh: boolean,
     force = false,
     owner?: AbortSignal,
-  ): Promise<TransportDiscovery> {
-    if (state.discoveryTask && !state.discoveryTask.signal.aborted)
-      return state.discoveryTask.promise;
+  ): Promise<TransportDiscovery | null> {
+    if (state.preflight.task && !state.preflight.task.signal.aborted)
+      return state.preflight.task.promise;
     if (
       state.discovery &&
       !state.discoveryError &&
@@ -644,17 +665,12 @@ export function createApplicationController(
       (!fresh || Date.now() - state.discovery.fetchedAt <= CONNECTION_FRESH_MS)
     )
       return state.discovery;
-    const task = operation<TransportDiscovery>(owner);
-    state.discoveryTask = task;
     state.discoveryError = undefined;
-    const live = () =>
-      current(state) && state.discoveryTask === task && !task.signal.aborted;
-    task.promise = network(
-      new URL(state.server.url).origin,
-      () => (state.config ? 0 : 1),
-      task.signal,
-      5000,
-      async (signal) => {
+    return job(
+      state,
+      state.preflight,
+      { owner, priority: () => (state.config ? 0 : 1), timeoutMs: 5000 },
+      async (signal, live) => {
         const discovery = await discover(signal, state.credentials);
         signal.throwIfAborted();
         if (!live()) throw aborted();
@@ -663,7 +679,7 @@ export function createApplicationController(
           state.discovery.generation !== discovery.generation;
         state.discovery = discovery;
         state.discoveryError = undefined;
-        state.discoveryRetry = retryState();
+        state.preflight.retry = retryState();
         state.server = {
           ...state.server,
           name: discovery.server.name || state.server.name,
@@ -683,36 +699,25 @@ export function createApplicationController(
         }
         return discovery;
       },
-    )
-      .catch((error) => {
-        if (live()) {
+      (error) => {
+        if (error !== undefined) {
           state.discoveryError = error;
-          failed(state.discoveryRetry, error);
+          failed(state.preflight.retry, error);
         }
-        throw error;
-      })
-      .finally(() => {
-        if (state.discoveryTask === task) {
-          state.discoveryTask = undefined;
-          publish(state);
-          schedule();
-        }
-      });
-    publish(state);
-    return task.promise;
+        return null;
+      },
+    );
   }
   function probe(
     state: ServerState,
     role: ConnectionRole,
+    config: RunnerConfig,
+    discovery: TransportDiscovery,
     owner?: AbortSignal,
   ): Promise<void> {
     const slot = state.roles[role];
     if (slot.task && !slot.task.signal.aborted) return slot.task.promise;
-    const config = state.config!;
-    const discovery = state.discovery!;
     const key = slot.key;
-    const task = operation<void>(owner);
-    slot.task = task;
     stopIdle(slot);
     state.validation = {
       ...state.validation,
@@ -722,19 +727,15 @@ export function createApplicationController(
         path: null,
       },
     };
-    const live = () =>
-      current(state) &&
+    const matches = () =>
       !!state.config &&
-      slot.task === task &&
       slot.key === key &&
-      state.discovery?.generation === discovery.generation &&
-      !task.signal.aborted;
-    task.promise = network(
-      new URL(state.server.url).origin,
-      () => 0,
-      task.signal,
-      12000,
-      async (signal) => {
+      state.discovery?.generation === discovery.generation;
+    return job(
+      state,
+      slot,
+      { owner, priority: () => 0, timeoutMs: 12000 },
+      async (signal, live) => {
         const result = await prepare(
           config,
           state.validation,
@@ -743,7 +744,7 @@ export function createApplicationController(
           state.credentials,
           discovery,
         );
-        if (signal.aborted || !live()) {
+        if (signal.aborted || !live() || !matches()) {
           result.idle?.stop();
           throw signal.reason ?? aborted();
         }
@@ -759,55 +760,50 @@ export function createApplicationController(
         }
         slot.retry = retryState();
         // Only this server's idle latency is shown before a run.
-        if (role === "latency" && result.idle && state.server.id === "self") {
-          const monitor = result.idle;
-          slot.idle = monitor;
-          const id = state.server.id;
-          monitor.onEvent = (event) => {
-            if (
-              slot.idle !== monitor ||
-              !state.config ||
-              idleServer() !== id ||
-              !current(state)
-            )
-              return;
-            if (event.type === "latency")
-              return store.ingest({
-                type: "serverLatency",
-                serverId: id,
-                sample: event.sample,
-              });
-            store.connectivity = event.state;
-            if (event.state === "offline") offline(id);
-            else onlineAgain(id);
-          };
-        } else result.idle?.stop();
+        if (role === "latency" && result.idle && state.server.id === "self")
+          adoptIdle(state, slot, result.idle);
+        else result.idle?.stop();
       },
-    )
-      .catch((error) => {
-        if (live()) {
-          failed(slot.retry, error);
-          state.validation = {
-            ...state.validation,
-            [role]: {
-              selection: connectionSelection(config, role),
-              state: "failed",
-              path: null,
-              message: connectionFailureMessage(error, state.server),
-            },
-          };
-        }
-        throw error;
-      })
-      .finally(() => {
-        if (slot.task === task) {
-          slot.task = undefined;
-          publish(state);
-          schedule();
-        }
-      });
-    publish(state);
-    return task.promise;
+      (error) => {
+        if (error === undefined || !matches()) return;
+        failed(slot.retry, error);
+        state.validation = {
+          ...state.validation,
+          [role]: {
+            selection: connectionSelection(config, role),
+            state: "failed",
+            path: null,
+            message: connectionFailureMessage(error, state.server),
+          },
+        };
+      },
+    );
+  }
+  function adoptIdle(
+    state: ServerState,
+    slot: RoleState,
+    monitor: NonNullable<RoleState["idle"]>,
+  ): void {
+    slot.idle = monitor;
+    const id = state.server.id;
+    monitor.onEvent = (event) => {
+      if (
+        slot.idle !== monitor ||
+        !state.config ||
+        idleServer() !== id ||
+        !current(state)
+      )
+        return;
+      if (event.type === "latency")
+        return store.ingest({
+          type: "serverLatency",
+          serverId: id,
+          sample: event.sample,
+        });
+      store.connectivity = event.state;
+      if (event.state === "offline") offline(id);
+      else onlineAgain(id);
+    };
   }
 
   const idleServer = () =>
@@ -834,19 +830,20 @@ export function createApplicationController(
   }
   function dueAt(state: ServerState): number {
     let at =
-      state.credentials.kind === "grant" && !state.discoveryRetry.authentication
+      state.credentials.kind === "grant" &&
+      !state.preflight.retry.authentication
         ? (state.credentials.expiresAt ?? 0)
         : Infinity;
-    if (state.discoveryTask) return at;
+    if (state.preflight.task) return at;
     if (!state.config) {
       if (
         metadataWanted &&
         (!state.discovery ||
           Date.now() - state.discovery.fetchedAt > CONNECTION_FRESH_MS)
       )
-        at = Math.min(at, state.discoveryRetry.at);
+        at = Math.min(at, state.preflight.retry.at);
     } else if (!state.discovery || state.discoveryError)
-      at = Math.min(at, state.discoveryRetry.at);
+      at = Math.min(at, state.preflight.retry.at);
     else
       for (const role of required(state))
         if (!state.roles[role].task && needsCheck(state, role))
@@ -868,23 +865,13 @@ export function createApplicationController(
     const now = Date.now();
     for (const state of servers.values()) {
       if (dueAt(state) > now) continue;
-      if (expiredGrant(state) && !state.discoveryRetry.authentication)
+      if (expiredGrant(state) && !state.preflight.retry.authentication)
         requireAuthentication(
           state.server.id,
           new ServerAuthenticationRequired(state.server).message,
         );
-      else if (!state.config || !state.discovery || state.discoveryError)
-        void (
-          state.config ? checkServer(state, {}) : discoverOnce(state, true)
-        ).catch(() => {});
-      else
-        for (const role of required(state))
-          if (
-            !state.roles[role].task &&
-            state.roles[role].retry.at <= now &&
-            needsCheck(state, role)
-          )
-            void probe(state, role).catch(() => {});
+      else if (!state.config) void discoverOnce(state, true);
+      else void checkServer(state, { due: true });
     }
     schedule();
   }
@@ -916,13 +903,10 @@ export function createApplicationController(
       signal.throwIfAborted();
       store.servers.clear();
       store.serverCatalog = catalog;
-      let saved: unknown;
-      try {
-        saved = JSON.parse(localStorage.getItem(SAVED_SELECTION_KEY) ?? "null");
-      } catch {
-        saved = null;
-      }
-      const selection = reconcileSelection(catalog, saved);
+      const selection = reconcileSelection(
+        catalog,
+        readStored(SAVED_SELECTION_KEY),
+      );
       store.selectedServers = selection.ids;
       store.unresolvedServers = selection.unresolved;
       // A shared preference must resolve within each selected server.
@@ -965,11 +949,11 @@ export function createApplicationController(
       }
     }
   }
-  async function retryCatalogue() {
+  async function retryCatalog() {
     if (!booted || store.isRunning || store.preparing) return;
     try {
       await loadCatalog();
-      await check({ force: true });
+      await validate({ force: true });
     } catch (cause) {
       if (!lifetime.signal.aborted)
         store.startError =
@@ -997,12 +981,10 @@ export function createApplicationController(
     store.selectedServers = next;
     store.unresolvedServers = [];
     selectIntent();
-    try {
-      localStorage.setItem(
-        SAVED_SELECTION_KEY,
-        JSON.stringify(catalogSelected().map(({ id, url }) => ({ id, url }))),
-      );
-    } catch {}
+    writeStored(
+      SAVED_SELECTION_KEY,
+      catalogSelected().map(({ id, url }) => ({ id, url })),
+    );
     return true;
   }
   function cancelServerApproval() {
@@ -1038,7 +1020,7 @@ export function createApplicationController(
       authorize(context);
       store.serverApproval = null;
       // Approval owns the grant exchange; validation owns later path errors.
-      void check().catch(() => {});
+      void refresh().done;
     } catch (cause) {
       if (!task.signal.aborted) {
         requireAuthentication(
@@ -1121,7 +1103,7 @@ export function createApplicationController(
     for (const state of servers.values()) {
       if (typeof serverId === "string" && state.server.id !== serverId)
         continue;
-      if (!state.discoveryRetry.authentication) state.discoveryRetry.at = 0;
+      if (!state.preflight.retry.authentication) state.preflight.retry.at = 0;
       for (const role of CONNECTION_ROLES)
         if (!state.roles[role].retry.authentication)
           state.roles[role].retry.at = 0;
@@ -1145,7 +1127,7 @@ export function createApplicationController(
     signal?: AbortSignal,
   ): Promise<void> {
     if (force && pendingStart) cancelPendingStart();
-    return check({ force, role, signal });
+    return validate({ force, role, signal });
   }
   function onAuthenticationRequired(event: Event) {
     if (!booted) return;
@@ -1200,7 +1182,7 @@ export function createApplicationController(
     window.addEventListener("offline", offline);
     document.addEventListener("visibilitychange", visibilityChanged);
     if (hidden()) selectIntent();
-    else await check().catch(() => {});
+    else await refresh().done;
   }
 
   function blockStart(message: string) {
@@ -1268,23 +1250,24 @@ export function createApplicationController(
       }
       store.reset();
       store.preparationStatus = "checking";
-      await check({ signal: abort.signal });
+      await validate({ signal: abort.signal });
       if (!live()) return;
-      const prepared = catalogSelected().map((server) => ({
-        server,
-        paths: paths(servers.get(server.id))!,
-      }));
+      const prepared = catalogSelected().flatMap((server) => {
+        const verified = paths(servers.get(server.id));
+        return verified ? [{ server, paths: verified }] : [];
+      });
+      if (prepared.length !== store.selectedServers.length) throw aborted();
       const focus =
-        store.latencySelection.mode === "primary"
-          ? prepared.find(
-              (server) => server.server.id === store.primaryLatencyServer,
-            )!
-          : prepared.reduce((best, next) =>
-              (next.paths.latency?.rttMs ?? Infinity) <
-              (best.paths.latency?.rttMs ?? Infinity)
-                ? next
-                : best,
-            );
+        (store.latencySelection.mode === "primary" &&
+          prepared.find(
+            (server) => server.server.id === store.primaryLatencyServer,
+          )) ||
+        prepared.reduce((best, next) =>
+          (next.paths.latency?.rttMs ?? Infinity) <
+          (best.paths.latency?.rttMs ?? Infinity)
+            ? next
+            : best,
+        );
       store.preparationStatus = "launching";
       store.latencyFocus = focus.server.id;
       releaseRunner();
@@ -1450,7 +1433,7 @@ export function createApplicationController(
   return {
     boot,
     dispose,
-    retryCatalogue,
+    retryCatalog,
     loadServerMetadata() {
       if (booted && store.serverCatalog && !store.isRunning && !store.preparing)
         setMetadata(true);
@@ -1469,7 +1452,7 @@ export function createApplicationController(
         store.preparing
       )
         return Promise.resolve();
-      return check({ ids: [id], force: true }).catch(() => {});
+      return refresh({ ids: [id], force: true }).done;
     },
     toggleRun,
     cancelPendingStart,

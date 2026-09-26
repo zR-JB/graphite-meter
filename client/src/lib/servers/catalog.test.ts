@@ -88,7 +88,7 @@ const catalog = parseCatalog(
   },
   "https://home.example",
 );
-test("operator defaults, saved overrides, and deselecting self retain catalogue order", () => {
+test("operator defaults, saved overrides, and deselecting self retain catalog order", () => {
   expect(reconcileSelection(catalog, null)).toEqual({
     ids: ["b"],
     unresolved: [],
@@ -136,7 +136,7 @@ test("transport ports stay within the selected deployment's named origins", () =
   ])
     expect(allowsServerOrigin(server, origin)).toBe(false);
 });
-test("catalogues reject ambiguous IDs, duplicate origins, and oversized populations", () => {
+test("catalogs reject ambiguous IDs, duplicate origins, and oversized populations", () => {
   for (const servers of [
     [...catalog.servers, { id: "bad!", url: "https://x.example", name: "X" }],
     [

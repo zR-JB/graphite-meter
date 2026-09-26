@@ -94,12 +94,21 @@ function deepMergeOverDefaults<T>(base: T, source: unknown): T {
   ) as T;
 }
 
-function safeParse(raw: string | null): unknown {
-  if (raw == null) return null;
+/** Storage can be absent, blocked or full; a preference then lasts for this page only. */
+export function readStored(key: string): unknown {
   try {
-    return JSON.parse(raw);
+    return JSON.parse(window.localStorage.getItem(key) ?? "null");
   } catch {
     return null;
+  }
+}
+
+export function writeStored(key: string, value: unknown): boolean {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -122,14 +131,7 @@ function oneOf<T extends string>(
 
 export function loadPersisted(): PersistedState {
   const defaults = defaultPersisted();
-  if (typeof window === "undefined") return defaults;
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return defaults;
-  }
-  const parsed = safeParse(raw);
+  const parsed = readStored(STORAGE_KEY);
   if (!isPlainObject(parsed)) return defaults;
   const merged = deepMergeOverDefaults(defaults, parsed);
   if (
@@ -177,18 +179,10 @@ export function loadPersisted(): PersistedState {
   return merged;
 }
 
-export function savePersisted(snapshot: PersistedState): void {
-  if (typeof window === "undefined") return;
-  try {
-    const safe = structuredClone(snapshot);
-    const adaptive = canonicalAdaptiveConfig(snapshot.config.adaptive);
-    const serialized = {
-      ...safe,
-      config: {
-        ...safe.config,
-        adaptive: { enabled: adaptive.enabled },
-      },
-    };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
-  } catch {}
+export function savePersisted(snapshot: PersistedState): boolean {
+  const { enabled } = canonicalAdaptiveConfig(snapshot.config.adaptive);
+  return writeStored(STORAGE_KEY, {
+    ...snapshot,
+    config: { ...snapshot.config, adaptive: { enabled } },
+  });
 }

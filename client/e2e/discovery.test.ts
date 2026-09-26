@@ -12,7 +12,7 @@ import { expect, test, type Page } from "./webview";
 
 interface Activity {
   requests: string[];
-  catalogues: string[];
+  catalogs: string[];
   inFlight: number;
   peak: number;
   probes: number;
@@ -33,7 +33,7 @@ async function observe(page: Page, hold: string[] = []) {
       window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(String(input), location.href);
         if (url.pathname === "/probe") activity.probes++;
-        if (url.pathname === "/servers") activity.catalogues.push(url.origin);
+        if (url.pathname === "/servers") activity.catalogs.push(url.origin);
         if (url.pathname !== "/preflight") return original(input, init);
         activity.requests.push(url.origin);
         activity.peak = Math.max(activity.peak, ++activity.inFlight);
@@ -68,7 +68,7 @@ async function observe(page: Page, hold: string[] = []) {
     },
     {
       requests: [],
-      catalogues: [],
+      catalogs: [],
       inFlight: 0,
       peak: 0,
       probes: 0,
@@ -141,7 +141,7 @@ test("settings discovery is bounded, reused and cancelled on close", async (page
   await expect.poll(async () => (await activity.read()).inFlight).toBe(1);
   await closeSettings(page);
   await expect.poll(async () => (await activity.read()).aborted).toBe(1);
-  expect((await activity.read()).catalogues).toEqual([home.url]);
+  expect((await activity.read()).catalogs).toEqual([home.url]);
 });
 
 test("metadata timeouts back off without starving later servers", async (page) => {
@@ -172,7 +172,7 @@ test("metadata timeouts back off without starving later servers", async (page) =
   ).toBeVisible();
 });
 
-test("an origin-only catalogue discovers peer identity without traversal", async (page) => {
+test("an origin-only catalog discovers peer identity without traversal", async (page) => {
   const activity = await observe(page);
   await open(page, helsinki.url);
   const settings = await openSettings(page);
@@ -182,5 +182,5 @@ test("an origin-only catalogue discovers peer identity without traversal", async
   expect(await peer.evaluate((input) => input.checked)).toBe(false);
   await choices.locator("label", { hasText: "Frankfurt" }).hover();
   await expect(page.getByRole("tooltip")).toContainText("Loopback fixture");
-  expect((await activity.read()).catalogues).toEqual([helsinki.url]);
+  expect((await activity.read()).catalogs).toEqual([helsinki.url]);
 });

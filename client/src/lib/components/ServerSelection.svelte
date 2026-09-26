@@ -183,7 +183,7 @@
       class="btn"
       type="button"
       disabled={locked || store.catalogLoading}
-      onclick={() => void controller.retryCatalogue()}>Retry servers</button
+      onclick={() => void controller.retryCatalog()}>Retry servers</button
     >
   </div>
 {/if}
