@@ -24,7 +24,6 @@ type setupRow struct {
 	inert              bool
 }
 
-// setting is one setup row: a flag or duration field, or custom view and action functions.
 type setting struct {
 	label, note string
 	flag        func(*goclient.Config) *bool
@@ -330,7 +329,6 @@ func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m.updateEdit(msg)
 }
 
-// updateEdit copies the edit state so earlier models keep their own input.
 func (m model) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next := *m.edit
 	next.err = ""
@@ -527,7 +525,6 @@ func (m model) selectedThroughputPath() *wire.ThroughputTarget {
 	return &pf.Capabilities.ThroughputTargets[i]
 }
 
-// defaultScheme assumes HTTPS for a bare host, except a loopback server under local development.
 func defaultScheme(raw string) string {
 	u, err := url.Parse("//" + raw)
 	if err != nil {

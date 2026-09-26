@@ -45,7 +45,6 @@ type TransferStreamPolicy struct {
 	Forced       int
 }
 
-// Named probe cadences; PingMedium is the default.
 const (
 	PingFast   = 80 * time.Millisecond
 	PingMedium = 250 * time.Millisecond

@@ -277,7 +277,6 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// quit lets a running test stop and report before the program exits.
 func (m model) quit() (tea.Model, tea.Cmd) {
 	if m.running() {
 		m.controller.CancelRun()

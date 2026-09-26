@@ -40,7 +40,6 @@ func NewController(parent context.Context) *Controller {
 	return &Controller{ctx: ctx, cancel: cancel, grants: map[string]string{}}
 }
 
-// Preparation captures the configuration and cancellation scope of delayed UI commands.
 type Preparation struct {
 	owner *Controller
 	ctx   context.Context
@@ -223,7 +222,6 @@ func Run(ctx context.Context, cfg Config, emit func(Event)) error {
 	return err
 }
 
-// CancelRun stops measurement while retaining its final results and terminal event.
 func (c *Controller) CancelRun() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -232,7 +230,6 @@ func (c *Controller) CancelRun() {
 	}
 }
 
-// Close abandons queued delivery and joins started work, including work from replaced scopes.
 func (c *Controller) Close() {
 	c.mu.Lock()
 	c.cancel()

@@ -39,7 +39,6 @@ func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Prefl
 	return pf, nil
 }
 
-// getJSONProbe validates the target's probe evidence and returns the protocol this client negotiated.
 func getJSONProbe(ctx context.Context, hc *http.Client, origin, path string) (string, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {

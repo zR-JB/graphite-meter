@@ -73,10 +73,8 @@ type coordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-// checkpointBudget bounds one concurrent batch of receiver checkpoints.
 const checkpointBudget = 1500 * time.Millisecond
 
-// runSelection measures a prepared selection and always ends with one EventDone.
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) {
 	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
 	err := c.start(ctx, teardown)
@@ -554,7 +552,6 @@ func (s *sampler) stop() {
 	s.work.Wait()
 }
 
-// dropsServer counts consecutive checkpoint misses; a refused grant or a third miss removes the server.
 func (s *sampler) dropsServer(id string, err error, final bool) bool {
 	if err == nil {
 		s.misses[id] = 0
@@ -616,7 +613,6 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	return false, nil
 }
 
-// capture reads every participant's counters; upload stages add a receiver checkpoint per server.
 func (c *coordinator) capture(
 	ctx context.Context,
 	stage StagePlan,

@@ -152,7 +152,6 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 	})
 }
 
-// close runs after every lane has stopped.
 func (w *wtStageSession) close() { w.sess.close() }
 
 func runWTLane(

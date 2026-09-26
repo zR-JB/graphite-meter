@@ -27,7 +27,6 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg { return prepareDueMsg{seq: seq} })
 }
 
-// invalidatePreparation cancels in-flight preparation and sign-in polling.
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil

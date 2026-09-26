@@ -54,7 +54,6 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 	}
 }
 
-// refusal is a server's answer that no retry can change.
 type refusal struct{ error }
 
 func (r refusal) Unwrap() error { return r.error }

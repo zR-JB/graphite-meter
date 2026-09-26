@@ -80,7 +80,6 @@ func (s *latencyStats) snapshot() LatencyStats {
 	return out
 }
 
-// median is the midpoint of the two central observations for an even-sized sorted population.
 func median(xs []time.Duration) time.Duration {
 	if len(xs) == 0 {
 		return 0
@@ -92,7 +91,6 @@ func median(xs []time.Duration) time.Duration {
 	return xs[mid-1] + (xs[mid]-xs[mid-1])/2
 }
 
-// percentile selects the nearest rank from a sorted observation population.
 func percentile(xs []time.Duration, p float64) time.Duration {
 	if len(xs) == 0 {
 		return 0

@@ -61,7 +61,6 @@ func dialLatencyBus(ctx context.Context, cfg Config, client *http.Client, target
 	return wsBus{conn: conn}, nil
 }
 
-// verifyLatency proves the bus answers probe 0 and returns that warm round trip.
 func verifyLatency(
 	ctx context.Context,
 	cfg Config,
@@ -245,7 +244,6 @@ type probe struct {
 }
 
 // probeLedger owns probes and the measured population; until is zero until the window opens.
-// Deadlines come from an RFC 6298 estimate; a full in-flight window skips a send, never a timeout.
 type probeLedger struct {
 	mu           sync.Mutex
 	pending      map[uint32]probe
@@ -295,7 +293,6 @@ func (l *probeLedger) ended(now time.Time) bool {
 	return !l.until.IsZero() && !now.Before(l.until)
 }
 
-// drained reports whether no measured probe still awaits its reply or deadline.
 func (l *probeLedger) drained(now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -356,7 +353,6 @@ func (l *probeLedger) reply(id uint32, at time.Time, handlingNanos uint64) (time
 	return rtt, timedOut, true
 }
 
-// expire resolves probes past their deadline; a late reply still teaches the estimator.
 func (l *probeLedger) expire(now time.Time) []time.Time {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -403,7 +399,6 @@ func (l *probeLedger) finish(now time.Time, duration time.Duration) LatencyStats
 	return out
 }
 
-// closePending separates known deadline expirations from probes interrupted before their deadline.
 func (l *probeLedger) closePending(now time.Time) {
 	for _, p := range l.pending {
 		switch {

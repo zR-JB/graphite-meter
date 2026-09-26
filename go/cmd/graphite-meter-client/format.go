@@ -14,7 +14,6 @@ import (
 
 const missing = "—"
 
-// errorText applies the wire text policy: error messages may carry a remote peer's words.
 func errorText(err error) string { return wire.CleanText(err.Error(), 320) }
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
@@ -115,7 +114,6 @@ func directionLabel(r goclient.Result) string {
 	return "Bi-dir ↓"
 }
 
-// latencyCells gives median, added latency, p95, jitter, and probe timeouts; missing data stays "—".
 func latencyCells(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
 	cells := []string{missing, "", missing, missing, missing}
 	if s.Count > 0 {

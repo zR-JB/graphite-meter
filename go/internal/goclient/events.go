@@ -122,7 +122,6 @@ type LatencyStats struct {
 }
 
 // ReflectorTimingStats contains means over one paired population of successful in-window replies.
-// Adjusted RTT removes only the instrumented server application handling interval.
 type ReflectorTimingStats struct {
 	Count                                     int
 	MeanRawRTT, MeanHandling, MeanAdjustedRTT time.Duration

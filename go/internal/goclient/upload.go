@@ -212,7 +212,6 @@ func (p *uploadProgress) signalReady(err error) {
 	}
 }
 
-// attach reads feed until it ends; with reopen, a replacement follows within redialWindow or the progress fails.
 func (p *uploadProgress) attach(feed io.ReadCloser, reopen func(context.Context) (io.ReadCloser, error)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -296,7 +295,6 @@ func (r *runner) followUploadFeed(ctx context.Context, p *uploadProgress, target
 	return err
 }
 
-// openUploadFeed bounds the request by recovery but lets the open feed live as long as lifetime.
 func (r *runner) openUploadFeed(lifetime, recovery context.Context, target string) (io.ReadCloser, error) {
 	ctx, cancel := context.WithCancel(lifetime)
 	defer context.AfterFunc(recovery, cancel)()

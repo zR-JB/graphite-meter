@@ -37,7 +37,6 @@ func (s styles) panel(title, body string, w, h int) string {
 	return top + "\n" + box.Render(fit(body, inner))
 }
 
-// overlay draws box centred over base and returns its top-left cell.
 func overlay(base, box string, w, h int) (string, int, int) {
 	x := max((w-lipgloss.Width(box))/2, 0)
 	y := max((h-lipgloss.Height(box))/2, 0)

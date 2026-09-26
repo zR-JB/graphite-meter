@@ -15,7 +15,6 @@ type ReceiverSnapshot struct {
 	Bytes, Nanos uint64
 }
 
-// ComponentWindow is one server's share; upload durations come from the receiver clock.
 type ComponentWindow struct {
 	ServerID    string
 	Bytes       uint64
@@ -68,7 +67,6 @@ type uploadLedger struct {
 	maximum uint64
 }
 
-// aggregateMeasurements is single-owner: it never adds receiver durations or independent peaks.
 type aggregateMeasurements struct {
 	intervals   []AggregationInterval
 	omitted     int
