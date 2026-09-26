@@ -29,7 +29,7 @@ func TestVersionCommandAliases(t *testing.T) {
 func TestAdmissionFlagsOverrideDefaults(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
+	config.RegisterFlags(fs, &cfg)
 	err := fs.Parse([]string{"-max-active-measurements", "80", "-max-active-measurements-per-client", "20", "-max-active-sessions", "24", "-max-sessions-per-client", "3", "-max-connections", "160", "-max-connections-per-client", "40", "-max-operation-duration", "2m", "-max-session-duration", "3h"})
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestExplicitAuthFlagsAreRejectedWhileOff(t *testing.T) {
 	} {
 		cfg := config.Default()
 		fs := flag.NewFlagSet("test", flag.ContinueOnError)
-		registerFlags(fs, &cfg)
+		config.RegisterFlags(fs, &cfg)
 		if err := fs.Parse(args); err != nil {
 			t.Fatal(err)
 		}
@@ -85,7 +85,7 @@ func TestFlagsCompleteEnvironmentConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
+	config.RegisterFlags(fs, &cfg)
 	if err := fs.Parse([]string{"-tls-cert", "/cert.pem", "-tls-key", "/key.pem"}); err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestHashPasswordRejectsMismatch(t *testing.T) {
 func TestListAndOriginFlagsPopulateConfig(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
+	config.RegisterFlags(fs, &cfg)
 	err := fs.Parse([]string{
 		"-advertised-native-endpoints", "none",
 		"-public-origins", "https://a.example, https://b.example",
@@ -195,26 +195,16 @@ func TestListAndOriginFlagsPopulateConfig(t *testing.T) {
 	if !slices.Equal(cfg.Auth.OIDCAllowedGroups, []string{"admins", "ops"}) {
 		t.Fatalf("Auth.OIDCAllowedGroups = %v, want %v", cfg.Auth.OIDCAllowedGroups, []string{"admins", "ops"})
 	}
-	if cfg.AdvertiseAllNative {
-		t.Fatalf("AdvertiseAllNative = true, want false for %q", "none")
+	if cfg.AdvertisedNative == nil || len(cfg.AdvertisedNative) != 0 {
+		t.Fatalf("AdvertisedNative = %#v, want the empty selection for %q", cfg.AdvertisedNative, "none")
 	}
 }
 
 func TestAdvertisedNativeEndpointsRejectsGarbage(t *testing.T) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	registerFlags(fs, &cfg)
+	config.RegisterFlags(fs, &cfg)
 	if err := fs.Parse([]string{"-advertised-native-endpoints", "nonsense"}); err == nil {
 		t.Fatal("accepted an invalid advertised-native-endpoints value")
-	}
-}
-
-func TestSplitFlagListTrimsAndDropsEmpties(t *testing.T) {
-	want := []string{"a", "b", "c"}
-	if got := splitFlagList(" a , ,b,  ,c "); !slices.Equal(got, want) {
-		t.Fatalf("splitFlagList = %v, want %v", got, want)
-	}
-	if got := splitFlagList(""); got != nil {
-		t.Fatalf("splitFlagList(\"\") = %v, want nil", got)
 	}
 }

@@ -2,11 +2,14 @@
 package config
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"maps"
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,13 +30,11 @@ const (
 	NativeH3      = "http3"
 )
 
-// NativeListeners holds the listen address of each native endpoint; an empty address disables that endpoint.
-type NativeListeners struct {
-	H1, H1TLS, H2, H3 string
-}
+var nativeNames = []string{NativeH1Clear, NativeH1TLS, NativeH2, NativeH3}
 
-// NativeOrigins holds the externally reachable origin advertised for each native listener.
-type NativeOrigins struct {
+// NativeEndpoints holds one value per native endpoint: a listen address, where
+// empty disables the endpoint, or the externally reachable origin it advertises.
+type NativeEndpoints struct {
 	H1, H1TLS, H2, H3 string
 }
 
@@ -60,11 +61,11 @@ type AuthConfig struct {
 
 // Config is the resolved server configuration.
 type Config struct {
-	ServerCatalog                             wire.ServerCatalog
-	Native                                    NativeListeners
-	NativePublic                              NativeOrigins
+	ServerCatalog wire.ServerCatalog
+	Native        NativeEndpoints // listen addresses
+	NativePublic  NativeEndpoints // advertised origins
+	// AdvertisedNative selects the enabled native endpoints preflight advertises; nil advertises all of them.
 	AdvertisedNative                          map[string]bool
-	AdvertiseAllNative                        bool
 	Public                                    PublicOrigins
 	TLSCert, TLSKey                           string
 	ServerName, ServerLocation, EngineVersion string
@@ -85,10 +86,9 @@ type Config struct {
 
 func Default() Config {
 	return Config{
-		ServerCatalog:    wire.SingletonCatalog(),
-		Native:           NativeListeners{H1: ":7246"},
-		AdvertisedNative: map[string]bool{}, AdvertiseAllNative: true,
-		ServerName: "graphite-meter", EngineVersion: EngineVersion,
+		ServerCatalog: wire.SingletonCatalog(),
+		Native:        NativeEndpoints{H1: ":7246"},
+		ServerName:    "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
 		MaxActiveSessions: 64, MaxSessionsPerClient: 16,
 		MaxConnections: 512, MaxConnectionsPerClient: 64,
@@ -98,106 +98,186 @@ func Default() Config {
 	}
 }
 
+// setting is one operator setting: its environment variable, its command-line
+// flag when it has one, and how a value applies. Secrets have no flag.
+type setting struct {
+	env, flag, usage string
+	boolean          bool
+	apply            func(*Config, string) error
+	show             func(*Config) string
+}
+
+// field binds a setting to one Config field. Values are trimmed; unless
+// empty is meaningful, an empty value leaves the field at its default.
+func field[T any](env, flag, usage string, at func(*Config) *T, parse func(string) (T, error), emptyMeaningful bool) setting {
+	return setting{env: env, flag: flag, usage: usage,
+		apply: func(c *Config, raw string) error {
+			value := strings.TrimSpace(raw)
+			if value == "" && !emptyMeaningful {
+				return nil
+			}
+			parsed, err := parse(value)
+			if err == nil {
+				*at(c) = parsed
+			}
+			return err
+		},
+		show: func(c *Config) string {
+			var zero T
+			if s := fmt.Sprint(*at(c)); s != fmt.Sprint(zero) {
+				return s
+			}
+			return ""
+		},
+	}
+}
+
+func text(env, flag, usage string, at func(*Config) *string) setting {
+	return field(env, flag, usage, at, func(v string) (string, error) { return v, nil }, true)
+}
+
+func list(env, flag, usage string, at func(*Config) *[]string) setting {
+	return field(env, flag, usage, at, func(v string) ([]string, error) { return splitList(v), nil }, true)
+}
+
+func number(env, flag, usage string, at func(*Config) *int) setting {
+	return field(env, flag, usage, at, func(v string) (int, error) {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return 0, errors.New("must be an integer")
+		}
+		return n, nil
+	}, false)
+}
+
+func duration(env, flag, usage string, at func(*Config) *time.Duration) setting {
+	return field(env, flag, usage, at, time.ParseDuration, false)
+}
+
+func boolean(env, flag, usage string, at func(*Config) *bool) setting {
+	s := field(env, flag, usage, at, func(v string) (bool, error) {
+		b, err := strconv.ParseBool(strings.ToLower(v))
+		if err != nil {
+			return false, errors.New("must be true/false or 1/0")
+		}
+		return b, nil
+	}, false)
+	s.boolean = true
+	return s
+}
+
+var settings = []setting{
+	text("GM_H1_ADDR", "h1-addr", "clear HTTP/1.1 listen `address`", func(c *Config) *string { return &c.Native.H1 }),
+	text("GM_H1_TLS_ADDR", "h1-tls-addr", "HTTPS HTTP/1.1 listen `address`; empty disables it", func(c *Config) *string { return &c.Native.H1TLS }),
+	text("GM_H2_ADDR", "h2-addr", "HTTP/2 TLS listen `address`; empty disables it", func(c *Config) *string { return &c.Native.H2 }),
+	text("GM_H3_ADDR", "h3-addr", "HTTP/3 UDP and bootstrap TCP listen `address`; empty disables it", func(c *Config) *string { return &c.Native.H3 }),
+	text("GM_TLS_CERT", "tls-cert", "TLS certificate PEM `path`", func(c *Config) *string { return &c.TLSCert }),
+	text("GM_TLS_KEY", "tls-key", "TLS private key PEM `path`", func(c *Config) *string { return &c.TLSKey }),
+	text("GM_H1_PUBLIC_ORIGIN", "h1-public-origin", "public `origin` of the native clear HTTP/1.1 listener", func(c *Config) *string { return &c.NativePublic.H1 }),
+	text("GM_H1_TLS_PUBLIC_ORIGIN", "h1-tls-public-origin", "public `origin` of the native HTTPS HTTP/1.1 listener", func(c *Config) *string { return &c.NativePublic.H1TLS }),
+	text("GM_H2_PUBLIC_ORIGIN", "h2-public-origin", "public `origin` of the native HTTP/2 listener", func(c *Config) *string { return &c.NativePublic.H2 }),
+	text("GM_H3_PUBLIC_ORIGIN", "h3-public-origin", "public `origin` of the native HTTP/3 listener", func(c *Config) *string { return &c.NativePublic.H3 }),
+	{env: "GM_ADVERTISED_NATIVE_ENDPOINTS", flag: "advertised-native-endpoints", usage: "all, none, or comma-separated native endpoint `names`",
+		apply: func(c *Config, v string) (err error) {
+			c.AdvertisedNative, err = ParseAdvertisedNative(v)
+			return err
+		}, show: func(*Config) string { return "" }},
+	list("GM_PUBLIC_ORIGINS", "public-origins", "comma-separated negotiated `origins` providing throughput and latency", func(c *Config) *[]string { return &c.Public.Both }),
+	list("GM_PUBLIC_THROUGHPUT_ORIGINS", "public-throughput-origins", "comma-separated negotiated throughput `origins`", func(c *Config) *[]string { return &c.Public.Throughput }),
+	list("GM_PUBLIC_LATENCY_ORIGINS", "public-latency-origins", "comma-separated WebSocket latency `origins`", func(c *Config) *[]string { return &c.Public.Latency }),
+	text("GM_SERVER_NAME", "name", "server `name` advertised in /preflight", func(c *Config) *string { return &c.ServerName }),
+	text("GM_SERVER_LOCATION", "location", "server `location` label", func(c *Config) *string { return &c.ServerLocation }),
+	boolean("GM_RESULT_HISTORY_DEFAULT", "result-history-default", "save completed browser results on this device by default", func(c *Config) *bool { return &c.ResultHistoryDefault }),
+	boolean("GM_VERBOSE", "verbose", "log per-second download/upload throughput", func(c *Config) *bool { return &c.Verbose }),
+	number("GM_MAX_ACTIVE_MEASUREMENTS", "max-active-measurements", "maximum `number` of concurrent measurement handlers", func(c *Config) *int { return &c.MaxActiveMeasurements }),
+	number("GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", "max-active-measurements-per-client", "maximum `number` of concurrent measurement handlers per client", func(c *Config) *int { return &c.MaxActiveMeasurementsPerClient }),
+	number("GM_MAX_ACTIVE_SESSIONS", "max-active-sessions", "maximum `number` of concurrent WebTransport sessions, a share of the measurement pool", func(c *Config) *int { return &c.MaxActiveSessions }),
+	number("GM_MAX_SESSIONS_PER_CLIENT", "max-sessions-per-client", "maximum `number` of concurrent WebTransport sessions per client", func(c *Config) *int { return &c.MaxSessionsPerClient }),
+	number("GM_MAX_CONNECTIONS", "max-connections", "maximum `number` of concurrent TCP and QUIC connections", func(c *Config) *int { return &c.MaxConnections }),
+	number("GM_MAX_CONNECTIONS_PER_CLIENT", "max-connections-per-client", "maximum `number` of concurrent connections per direct client", func(c *Config) *int { return &c.MaxConnectionsPerClient }),
+	duration("GM_MAX_OPERATION_DURATION", "max-operation-duration", "maximum measurement operation `duration`", func(c *Config) *time.Duration { return &c.MaxOperationDuration }),
+	duration("GM_MAX_SESSION_DURATION", "max-session-duration", "maximum WebTransport session `duration`", func(c *Config) *time.Duration { return &c.MaxSessionDuration }),
+	{env: "GM_TRUSTED_PROXIES", apply: parseTrustedProxies},
+	text("GM_AUTH_MODE", "auth-mode", "authentication `mode`: off, password, oidc, or hybrid", func(c *Config) *string { return &c.Auth.Mode }),
+	text("GM_AUTH_PUBLIC_URL", "auth-public-url", "canonical HTTPS UI `origin`", func(c *Config) *string { return &c.Auth.PublicURL }),
+	text("GM_AUTH_PASSWORD_HASH", "", "", func(c *Config) *string { return &c.Auth.PasswordHash }),
+	text("GM_AUTH_PASSWORD_HASH_FILE", "auth-password-hash-file", "`file` containing the operator Argon2id PHC hash", func(c *Config) *string { return &c.Auth.PasswordHashFile }),
+	text("GM_AUTH_OIDC_ISSUER", "auth-oidc-issuer", "OIDC issuer `URL`", func(c *Config) *string { return &c.Auth.OIDCIssuer }),
+	text("GM_AUTH_OIDC_CLIENT_ID", "auth-oidc-client-id", "OIDC client `ID`", func(c *Config) *string { return &c.Auth.OIDCClientID }),
+	text("GM_AUTH_OIDC_CLIENT_SECRET", "", "", func(c *Config) *string { return &c.Auth.OIDCClientSecret }),
+	text("GM_AUTH_OIDC_CLIENT_SECRET_FILE", "auth-oidc-client-secret-file", "`file` containing the OIDC client secret", func(c *Config) *string { return &c.Auth.OIDCSecretFile }),
+	list("GM_AUTH_OIDC_ALLOWED_GROUPS", "auth-oidc-allowed-groups", "comma-separated case-sensitive OIDC `groups`", func(c *Config) *[]string { return &c.Auth.OIDCAllowedGroups }),
+	text("GM_AUTH_OIDC_PROVIDER_NAME", "auth-oidc-provider-name", "OIDC provider `label`", func(c *Config) *string { return &c.Auth.OIDCProviderName }),
+}
+
+// set applies a value from either source. Any authentication setting but the
+// mode marks authentication explicit, even when it restates a default.
+func (s *setting) set(c *Config, value string) error {
+	if strings.HasPrefix(s.env, "GM_AUTH_") && s.env != "GM_AUTH_MODE" {
+		c.Auth.Explicit = true
+	}
+	return s.apply(c, value)
+}
+
+// Load reads every setting from its environment variable over the defaults.
 func Load() (Config, error) {
 	c := Default()
-	for _, env := range []struct {
-		name string
-		dst  *string
-	}{
-		{"GM_H1_ADDR", &c.Native.H1}, {"GM_H1_TLS_ADDR", &c.Native.H1TLS}, {"GM_H2_ADDR", &c.Native.H2}, {"GM_H3_ADDR", &c.Native.H3},
-		{"GM_TLS_CERT", &c.TLSCert}, {"GM_TLS_KEY", &c.TLSKey},
-		{"GM_H1_PUBLIC_ORIGIN", &c.NativePublic.H1}, {"GM_H1_TLS_PUBLIC_ORIGIN", &c.NativePublic.H1TLS}, {"GM_H2_PUBLIC_ORIGIN", &c.NativePublic.H2}, {"GM_H3_PUBLIC_ORIGIN", &c.NativePublic.H3},
-		{"GM_SERVER_NAME", &c.ServerName}, {"GM_SERVER_LOCATION", &c.ServerLocation},
-		{"GM_AUTH_MODE", &c.Auth.Mode}, {"GM_AUTH_PUBLIC_URL", &c.Auth.PublicURL},
-		{"GM_AUTH_PASSWORD_HASH", &c.Auth.PasswordHash}, {"GM_AUTH_PASSWORD_HASH_FILE", &c.Auth.PasswordHashFile},
-		{"GM_AUTH_OIDC_ISSUER", &c.Auth.OIDCIssuer}, {"GM_AUTH_OIDC_CLIENT_ID", &c.Auth.OIDCClientID},
-		{"GM_AUTH_OIDC_CLIENT_SECRET", &c.Auth.OIDCClientSecret}, {"GM_AUTH_OIDC_CLIENT_SECRET_FILE", &c.Auth.OIDCSecretFile},
-		{"GM_AUTH_OIDC_PROVIDER_NAME", &c.Auth.OIDCProviderName},
-	} {
-		if v, ok := os.LookupEnv(env.name); ok {
-			*env.dst = strings.TrimSpace(v)
-			if marksAuthExplicit(env.name) {
-				c.Auth.Explicit = true
+	for i := range settings {
+		s := &settings[i]
+		if v, ok := os.LookupEnv(s.env); ok {
+			if err := s.set(&c, v); err != nil {
+				return Config{}, fmt.Errorf("%s: %w", s.env, err)
 			}
-		}
-	}
-	if v, ok := os.LookupEnv("GM_AUTH_OIDC_ALLOWED_GROUPS"); ok {
-		c.Auth.Explicit = true
-		c.Auth.OIDCAllowedGroups = splitList(v)
-	}
-	if v, ok := os.LookupEnv("GM_ADVERTISED_NATIVE_ENDPOINTS"); ok {
-		set, err := ParseAdvertisedNative(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS: %w", err)
-		}
-		c.AdvertisedNative = set
-		c.AdvertiseAllNative = strings.TrimSpace(v) == "all"
-	}
-	for _, env := range []struct {
-		name string
-		dst  *[]string
-	}{
-		{"GM_PUBLIC_ORIGINS", &c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", &c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", &c.Public.Latency},
-	} {
-		if v, ok := os.LookupEnv(env.name); ok {
-			*env.dst = splitList(v)
 		}
 	}
 	var err error
 	if c.ServerCatalog, err = loadServerCatalog(); err != nil {
 		return Config{}, err
 	}
-	if c.Verbose, err = envBool("GM_VERBOSE", false); err != nil {
-		return Config{}, err
-	}
-	if c.ResultHistoryDefault, err = envBool("GM_RESULT_HISTORY_DEFAULT", false); err != nil {
-		return Config{}, err
-	}
-	for _, env := range []struct {
-		name string
-		dst  *int
-	}{
-		{"GM_MAX_ACTIVE_MEASUREMENTS", &c.MaxActiveMeasurements}, {"GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT", &c.MaxActiveMeasurementsPerClient},
-		{"GM_MAX_ACTIVE_SESSIONS", &c.MaxActiveSessions}, {"GM_MAX_SESSIONS_PER_CLIENT", &c.MaxSessionsPerClient},
-		{"GM_MAX_CONNECTIONS", &c.MaxConnections}, {"GM_MAX_CONNECTIONS_PER_CLIENT", &c.MaxConnectionsPerClient},
-	} {
-		if *env.dst, err = envInt(env.name, *env.dst); err != nil {
-			return Config{}, err
-		}
-	}
-	for _, env := range []struct {
-		name string
-		dst  *time.Duration
-	}{
-		{"GM_MAX_OPERATION_DURATION", &c.MaxOperationDuration}, {"GM_MAX_SESSION_DURATION", &c.MaxSessionDuration},
-	} {
-		if v := os.Getenv(env.name); v != "" {
-			if *env.dst, err = time.ParseDuration(v); err != nil {
-				return Config{}, fmt.Errorf("%s: %w", env.name, err)
-			}
-		}
-	}
-	if v := os.Getenv("GM_TRUSTED_PROXIES"); v != "" {
-		for raw := range strings.SplitSeq(v, ",") {
-			prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
-			if err != nil {
-				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q: %w", raw, err)
-			}
-			if isDefaultRoute(prefix) {
-				return Config{}, fmt.Errorf("GM_TRUSTED_PROXIES: %q trusts every address; list the proxy's actual CIDR instead", raw)
-			}
-			c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
-		}
-	}
 	return c, nil
 }
 
-func marksAuthExplicit(name string) bool {
-	return strings.HasPrefix(name, "GM_AUTH_") && name != "GM_AUTH_MODE"
+// RegisterFlags binds every setting that has a flag to fs, over c's current values.
+func RegisterFlags(fs *flag.FlagSet, c *Config) {
+	for i := range settings {
+		if s := &settings[i]; s.flag != "" {
+			fs.Var(flagValue{c, s}, s.flag, s.usage)
+		}
+	}
 }
 
-func isDefaultRoute(prefix netip.Prefix) bool {
-	return prefix.Bits() == 0
+type flagValue struct {
+	c *Config
+	s *setting
+}
+
+func (v flagValue) String() string {
+	if v.s == nil {
+		return ""
+	}
+	return v.s.show(v.c)
+}
+
+func (v flagValue) Set(value string) error { return v.s.set(v.c, value) }
+
+func (v flagValue) IsBoolFlag() bool { return v.s != nil && v.s.boolean }
+
+func parseTrustedProxies(c *Config, v string) error {
+	c.TrustedProxies = nil
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	for raw := range strings.SplitSeq(v, ",") {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return fmt.Errorf("%q: %w", raw, err)
+		}
+		if prefix.Bits() == 0 {
+			return fmt.Errorf("%q trusts every address; list the proxy's actual CIDR instead", raw)
+		}
+		c.TrustedProxies = append(c.TrustedProxies, prefix.Masked())
+	}
+	return nil
 }
 
 func splitList(raw string) []string {
@@ -210,24 +290,20 @@ func splitList(raw string) []string {
 	return out
 }
 
+// ParseAdvertisedNative resolves "all" to nil (every enabled endpoint) and "none" or "" to an empty selection.
 func ParseAdvertisedNative(raw string) (map[string]bool, error) {
-	set := map[string]bool{}
 	switch strings.TrimSpace(raw) {
-	case "", "none":
-		return set, nil
 	case "all":
-		for _, name := range []string{NativeH1Clear, NativeH1TLS, NativeH2, NativeH3} {
-			set[name] = true
-		}
-		return set, nil
+		return nil, nil
+	case "", "none":
+		return map[string]bool{}, nil
 	}
+	set := map[string]bool{}
 	for _, name := range splitList(raw) {
-		switch name {
-		case NativeH1Clear, NativeH1TLS, NativeH2, NativeH3:
-			set[name] = true
-		default:
+		if !slices.Contains(nativeNames, name) {
 			return nil, fmt.Errorf("unknown endpoint %q", name)
 		}
+		set[name] = true
 	}
 	return set, nil
 }
@@ -248,42 +324,13 @@ func (c Config) nativeEnabled(name string) bool {
 
 // NativeAdvertised reports whether the named native endpoint is both enabled and selected for advertisement.
 func (c Config) NativeAdvertised(name string) bool {
-	return c.nativeEnabled(name) && (c.AdvertiseAllNative || c.AdvertisedNative[name])
+	return c.nativeEnabled(name) && (c.AdvertisedNative == nil || c.AdvertisedNative[name])
 }
 
-func envBool(name string, fallback bool) (bool, error) {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return fallback, nil
-	}
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true":
-		return true, nil
-	case "0", "false":
-		return false, nil
-	default:
-		return false, fmt.Errorf("%s must be true/false or 1/0", name)
-	}
-}
-
-func envInt(name string, fallback int) (int, error) {
-	v, ok := os.LookupEnv(name)
-	if !ok {
-		return fallback, nil
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(v))
-	if err != nil {
-		return 0, fmt.Errorf("%s must be an integer", name)
-	}
-	return n, nil
-}
-
-func validOrigin(value, scheme string, allowSelf bool) bool {
-	if allowSelf && value == "self" {
-		return true
-	}
-	u, err := url.Parse(value)
-	return err == nil && (scheme == "" || u.Scheme == scheme) && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.Path == "" && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == ""
+// validOrigin accepts exactly what clients accept as an origin, optionally of one scheme.
+func validOrigin(value, scheme string) bool {
+	canonical, err := wire.CanonicalOrigin(value)
+	return err == nil && (scheme == "" || strings.HasPrefix(canonical, scheme+"://"))
 }
 
 // Validate returns the first inconsistency in the configuration, or nil.
@@ -357,11 +404,9 @@ func (c Config) validateListeners() error {
 			}
 		}
 	}
-	if !c.AdvertiseAllNative {
-		for name := range maps.Keys(c.AdvertisedNative) {
-			if !c.nativeEnabled(name) {
-				return fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint %q", name)
-			}
+	for name := range maps.Keys(c.AdvertisedNative) {
+		if !c.nativeEnabled(name) {
+			return fmt.Errorf("GM_ADVERTISED_NATIVE_ENDPOINTS includes disabled endpoint %q", name)
 		}
 	}
 	return nil
@@ -369,7 +414,7 @@ func (c Config) validateListeners() error {
 
 func (c Config) validatePublicOrigins() error {
 	for _, native := range []struct{ name, value, scheme string }{{"GM_H1_PUBLIC_ORIGIN", c.NativePublic.H1, "http"}, {"GM_H1_TLS_PUBLIC_ORIGIN", c.NativePublic.H1TLS, "https"}, {"GM_H2_PUBLIC_ORIGIN", c.NativePublic.H2, "https"}, {"GM_H3_PUBLIC_ORIGIN", c.NativePublic.H3, "https"}} {
-		if native.value != "" && !validOrigin(native.value, native.scheme, false) {
+		if native.value != "" && !validOrigin(native.value, native.scheme) {
 			return fmt.Errorf("%s must be an origin with %s scheme", native.name, native.scheme)
 		}
 	}
@@ -378,7 +423,7 @@ func (c Config) validatePublicOrigins() error {
 		values []string
 	}{{"GM_PUBLIC_ORIGINS", c.Public.Both}, {"GM_PUBLIC_THROUGHPUT_ORIGINS", c.Public.Throughput}, {"GM_PUBLIC_LATENCY_ORIGINS", c.Public.Latency}} {
 		for _, value := range list.values {
-			if !validOrigin(value, "", true) {
+			if value != "self" && !validOrigin(value, "") {
 				return fmt.Errorf("%s contains invalid origin %q", list.name, value)
 			}
 		}
@@ -447,7 +492,7 @@ func (a AuthConfig) configured() bool {
 }
 
 func (a AuthConfig) validatePublicURL() (*url.URL, error) {
-	if !validOrigin(a.PublicURL, "https", false) {
+	if !validOrigin(a.PublicURL, "https") {
 		return nil, fmt.Errorf("GM_AUTH_PUBLIC_URL must be an HTTPS origin with no path, query, or fragment")
 	}
 	// validOrigin already parsed this value, so the error cannot recur.

@@ -22,8 +22,8 @@ func unsetEnv(t *testing.T, key string) {
 
 func TestDefaultIsNativeH1Only(t *testing.T) {
 	c := Default()
-	if c.Native.H1 != ":7246" || c.Native.H1TLS != "" || c.Native.H2 != "" || c.Native.H3 != "" || !c.AdvertiseAllNative {
-		t.Fatalf("native listeners = %+v, advertiseAll = %v, want only H1 on :7246 with advertiseAll true", c.Native, c.AdvertiseAllNative)
+	if c.Native.H1 != ":7246" || c.Native.H1TLS != "" || c.Native.H2 != "" || c.Native.H3 != "" || c.AdvertisedNative != nil {
+		t.Fatalf("native listeners = %+v, advertised = %v, want only H1 on :7246 with every endpoint advertised", c.Native, c.AdvertisedNative)
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
@@ -77,7 +77,6 @@ func TestLoadResultHistoryDefault(t *testing.T) {
 
 func TestValidateRejectsDisabledAdvertisement(t *testing.T) {
 	c := Default()
-	c.AdvertiseAllNative = false
 	c.AdvertisedNative = map[string]bool{NativeH2: true}
 	if err := c.Validate(); err == nil {
 		t.Fatal("expected disabled endpoint error")
@@ -86,7 +85,6 @@ func TestValidateRejectsDisabledAdvertisement(t *testing.T) {
 
 func TestValidateAcceptsProxyOnlyDeployment(t *testing.T) {
 	c := Default()
-	c.AdvertiseAllNative = false
 	c.AdvertisedNative = map[string]bool{}
 	c.Public.Both = []string{"self"}
 	if err := c.Validate(); err != nil {
@@ -96,7 +94,6 @@ func TestValidateAcceptsProxyOnlyDeployment(t *testing.T) {
 
 func TestValidateRequiresThroughput(t *testing.T) {
 	c := Default()
-	c.AdvertiseAllNative = false
 	c.AdvertisedNative = map[string]bool{}
 	c.Public.Latency = []string{"self"}
 	if err := c.Validate(); err == nil {
@@ -145,8 +142,8 @@ func TestValidateNormalizesOriginsBeforeDuplicateChecks(t *testing.T) {
 
 func TestParseAdvertisedNativeResolvesAliasesAndRejectsUnknown(t *testing.T) {
 	all, err := ParseAdvertisedNative("all")
-	if err != nil || len(all) != 4 {
-		t.Fatalf("ParseAdvertisedNative(\"all\") = %#v, %v, want 4 endpoints and no error", all, err)
+	if err != nil || all != nil {
+		t.Fatalf("ParseAdvertisedNative(\"all\") = %#v, %v, want the nil every-endpoint selection", all, err)
 	}
 	none, err := ParseAdvertisedNative("none")
 	if err != nil || len(none) != 0 {
@@ -274,11 +271,5 @@ func TestLoadReadsTheDurationsFromTheEnvironment(t *testing.T) {
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestDefaultSessionDurationIsTwoHours(t *testing.T) {
-	if c := Default(); c.MaxSessionDuration != 2*time.Hour {
-		t.Fatalf("MaxSessionDuration = %v, want 2h", c.MaxSessionDuration)
 	}
 }

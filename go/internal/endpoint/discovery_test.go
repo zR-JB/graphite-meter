@@ -14,7 +14,7 @@ import (
 func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
-	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
+	cfg.NativePublic = config.NativeEndpoints{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
 	pf := NewDiscovery(&cfg).preflightFor("internal")
 	// The preflight includes fetch, WebTransport stream, and WebTransport datagram targets.
 	if len(pf.Capabilities.ThroughputTargets) != 6 || len(pf.Capabilities.LatencyTargets) != 3 {
@@ -58,7 +58,6 @@ func TestPreflightAdvertisesWebTransportUnderAuth(t *testing.T) {
 
 func TestPreflightProxyOnlyAndRoles(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"self", "https://meter.example"}
 	cfg.Public.Throughput = []string{"https://download.example"}
@@ -74,7 +73,6 @@ func TestPreflightProxyOnlyAndRoles(t *testing.T) {
 
 func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"self"}
 	cfg.Public.Throughput = []string{"self"}
@@ -87,7 +85,6 @@ func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 
 func TestPreflightMergesEquivalentDefaultPortOrigins(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"https://meter.example"}
 	cfg.Public.Throughput = []string{"https://meter.example:443"}
@@ -109,7 +106,6 @@ func TestPreflightNativeOriginFromBracketedIPv6Host(t *testing.T) {
 
 func TestConnectOriginsListsCrossOriginTargetsAndSkipsSelf(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"self", "https://meter.example"}
 	cfg.Public.Throughput = []string{"https://download.example"}
@@ -139,7 +135,6 @@ func TestConnectOriginsListsCrossOriginTargetsAndSkipsSelf(t *testing.T) {
 
 func TestConnectOriginsEmptyWhenEverythingIsSelf(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"self"}
 	if got := NewDiscovery(&cfg).ConnectOrigins("meter.example"); len(got) != 0 {
@@ -149,7 +144,6 @@ func TestConnectOriginsEmptyWhenEverythingIsSelf(t *testing.T) {
 
 func TestConnectOriginsCarriesWebSocketSchemes(t *testing.T) {
 	cfg := config.Default()
-	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Latency = []string{"https://ping.example", "http://plain.example:7246"}
 

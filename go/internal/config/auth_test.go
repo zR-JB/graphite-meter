@@ -5,7 +5,7 @@ import "testing"
 func passwordAuthConfig(t *testing.T) Config {
 	t.Helper()
 	c := Default()
-	c.AdvertiseAllNative = false
+	c.AdvertisedNative = map[string]bool{}
 	c.Auth = AuthConfig{Mode: "password", PublicURL: "https://meter.example", PasswordHash: "hash", OIDCProviderName: "Authelia"}
 	c.Public.Throughput = []string{"https://meter.example"}
 	return c
@@ -19,7 +19,7 @@ func TestValidateRejectsInconsistentAuthConfiguration(t *testing.T) {
 		{"clear public URL", func(c *Config) { c.Auth.PublicURL = "http://meter.example" }},
 		{"explicit default port", func(c *Config) { c.Auth.PublicURL = "https://meter.example:443" }},
 		{"dual password sources", func(c *Config) { c.Auth.PasswordHashFile = "/secret" }},
-		{"clear advertised listener", func(c *Config) { c.AdvertiseAllNative = true }},
+		{"clear advertised listener", func(c *Config) { c.AdvertisedNative = nil }},
 		{"alternate hostname", func(c *Config) { c.Public.Throughput = []string{"https://other.example"} }},
 	}
 	for _, tt := range tests {
