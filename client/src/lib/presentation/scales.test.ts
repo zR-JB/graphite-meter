@@ -26,11 +26,13 @@ const ticks = (from: number, rates: number[]): ThroughputSample[] =>
 const scales = (series: ThroughputSample[], result = NO_RESULT) =>
   throughputScales(series, result, "auto", "base10", "bits");
 
-test("a rate sets the throughput axes only once it has held for 700 ms", () => {
-  const spike = ticks(0, [1e6, 1e6, 1e8, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6]);
+test("a brief spike never sets the throughput axes; a first sample does", () => {
+  const spike = ticks(0, [1e6, 1e6, 2e8, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6]);
   expect(scales(spike).chartBytesPerSec).toBe(1.25e6);
   const held = ticks(0, Array(9).fill(5e6));
-  expect(scales(held.slice(0, 7)).chartBytesPerSec).toBe(12.5e6);
+  // Before 700 ms exist the lowest rate so far sets them, so a first sample never sits off the scale.
+  expect(scales(held.slice(0, 1)).gaugeBytesPerSec).toBe(125e6);
+  expect(scales(held.slice(0, 1)).chartBytesPerSec).toBe(6.25e6);
   expect(scales(held).chartBytesPerSec).toBe(6.25e6);
   const download = {
     peakBytesPerSec: null,
@@ -44,8 +46,9 @@ test("a rate sets the throughput axes only once it has held for 700 ms", () => {
     { ...sample, dir: "up" as const },
   ]);
   expect(scales(bidirectional).chartBytesPerSec).toBe(6.25e6);
-  // From the mega tier up, the gauge keeps a 1 Gbit/s floor.
+  // From the mega tier up, the gauge keeps a 1 Gbit/s floor, and no rate ever sits off its scale.
   expect(scales(held).gaugeBytesPerSec).toBe(125e6);
+  expect(scales(spike).gaugeBytesPerSec).toBe(1.25e9);
   expect(throughputScales(spike, NO_RESULT, 2e6, "base10", "bits")).toEqual({
     chartBytesPerSec: 2e6,
     gaugeBytesPerSec: 12.5e6,

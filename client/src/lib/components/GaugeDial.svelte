@@ -77,10 +77,16 @@
 
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
+  // The needle follows the readout's own smoothed value; only a change of phase, scale or evidence glides it.
   const sweep = new Smoothed();
+  let course = "";
   $effect(() => {
     const next = target * 270;
-    const snap = !motion || !input.showValue || completed;
+    const { phase, scaleBytesPerSec, latencyScaleMs, throughputEvidence } =
+      input;
+    const current = `${phase}:${scaleBytesPerSec}:${latencyScaleMs}:${throughputEvidence}`;
+    const snap = !motion || !input.showValue || completed || current === course;
+    course = current;
     untrack(() => sweep.set(next, { snap }));
   });
   // Each half ring turns through its own 180°, so both clips meet at the crossing.

@@ -26,7 +26,7 @@ const LATENCY_LADDER_MS = [20, 40, 100, 200, 400, 1_000, 2_000, 4_000];
 let times = new Float64Array(256);
 let rates = new Float64Array(256);
 
-/** The highest combined rate held for 700 ms, and the highest one seen at all. */
+/** The highest combined rate held for 700 ms (or since the series began), and the highest one seen at all. */
 function peaks(series: readonly ThroughputSample[]) {
   if (times.length < series.length) {
     times = new Float64Array(series.length * 2);
@@ -44,7 +44,6 @@ function peaks(series: readonly ThroughputSample[]) {
   for (let i = 0, start = 0; i < n; i++) {
     raw = Math.max(raw, rates[i]);
     while (start < i && times[start + 1] <= times[i] - SUSTAIN_MS) start++;
-    if (times[start] > times[i] - SUSTAIN_MS) continue;
     let low = rates[i];
     for (let j = start; j < i; j++) low = Math.min(low, rates[j]);
     sustained = Math.max(sustained, low);
@@ -88,13 +87,13 @@ export function throughputScales(
     base,
     kind,
   );
-  // From the mega tier up the gauge starts at 1 Gbit/s; below, a brief peak may still widen it.
+  // The dial never shows a rate off its scale; from the mega tier up it starts at 1 Gbit/s.
+  const floor = unitIndex >= 2 ? 1_000_000_000 : 0;
   return {
     chartBytesPerSec: chartThroughputScale(peak),
-    gaugeBytesPerSec:
-      unitIndex >= 2
-        ? gaugeScaleForPeak(peak, { minimumBitsPerSec: 1_000_000_000 })
-        : gaugeScaleForPeak(Math.max(peak, raw)),
+    gaugeBytesPerSec: gaugeScaleForPeak(Math.max(peak, raw), {
+      minimumBitsPerSec: floor,
+    }),
     unitIndex,
   };
 }

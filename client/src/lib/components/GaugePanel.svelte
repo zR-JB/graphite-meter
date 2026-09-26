@@ -155,14 +155,14 @@
         ? 0
         : p === "complete" && headlineArc
           ? headlineArc.bytesPerSec
-          : liveTarget
-            ? liveTarget.down + liveTarget.up
+          : liveRates
+            ? liveRates.down + liveRates.up
             : 0,
       scaleBytesPerSec: scale,
       throughputEvidence:
         p === "complete" ? terminalArcs.length > 0 : !!liveTarget,
       latencyScaleMs: gaugeLatency.scaleMs,
-      rtt: gaugeLatency.rttMs,
+      rtt: liveReadout.rtt.current,
       completedKind,
       resultArcs:
         p === "complete"
