@@ -162,7 +162,7 @@ func openBrowser(target string) {
 	default:
 		cmd = exec.Command("xdg-open", target)
 	}
-	if cmd.Start() == nil && cmd.Process != nil {
-		_ = cmd.Process.Release()
+	if cmd.Start() == nil {
+		go cmd.Wait() //nolint:errcheck // reaps the opener; the browser owns the outcome
 	}
 }

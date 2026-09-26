@@ -376,7 +376,10 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	m.auth = &signIn{pending: pending, since: time.Now()}
 	m.prepare = prepareSignIn
 	for _, k := range []string{"enter", "space", "o", "enter"} {
-		m, _ = modelAndCmd(m.Update(press(k)))
+		var launch tea.Cmd
+		if m, launch = modelAndCmd(m.Update(press(k))); launch != nil {
+			launch()
+		}
 	}
 	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened {
 		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit != nil, m.auth)

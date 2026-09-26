@@ -228,9 +228,13 @@ func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.openSignIn):
-		m.openApproval(m.auth.pending)
+		launch, pending := m.openApproval, m.auth.pending
 		m.auth.opened = true
 		m.notice = "Sign-in page opened in the browser."
+		return m, func() tea.Msg {
+			launch(pending)
+			return nil
+		}
 	case key.Matches(msg, keys.cancelSignIn):
 		m.invalidatePreparation()
 		m.prepare, m.prepareErr = prepareSignIn, ""
