@@ -92,7 +92,6 @@ type point struct {
 
 const historyPoints, traceStep = 480, 0.05
 
-// trace bins samples per time step and doubles the step when full, so any run fits a bounded history.
 type trace struct {
 	points []point
 	step   float64
@@ -100,11 +99,13 @@ type trace struct {
 
 func (tr trace) add(t, v float64) trace {
 	tr.step = max(tr.step, traceStep)
-	if n := len(tr.points); n > 0 && t-tr.points[n-1].t < tr.step && !math.IsNaN(v) && !math.IsNaN(tr.points[n-1].v) {
+	if n := len(tr.points); n > 0 {
 		last := &tr.points[n-1]
-		last.n++
-		last.v += (v - last.v) / float64(last.n)
-		return tr
+		if t-last.t < tr.step && !math.IsNaN(v) && !math.IsNaN(last.v) {
+			last.n++
+			last.v += (v - last.v) / float64(last.n)
+			return tr
+		}
 	}
 	if len(tr.points) == historyPoints {
 		tr.points, tr.step = coarsen(tr.points), tr.step*2
@@ -142,7 +143,6 @@ type mark struct {
 	label string
 }
 
-// axis converts stored values to display units and names a rounded display value.
 type axis struct {
 	scale float64
 	label func(float64) string
@@ -173,7 +173,6 @@ func niceCeil(v float64) float64 {
 
 var brailleDots = [4][2]rune{{0x01, 0x08}, {0x02, 0x10}, {0x04, 0x20}, {0x40, 0x80}}
 
-// chartAxis is fixed so stacked charts and stage changes keep one plot origin.
 const chartAxis = 11
 
 func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h int) string {
