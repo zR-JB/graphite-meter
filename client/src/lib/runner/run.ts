@@ -687,7 +687,7 @@ export class Run {
     this.#latencyOpen = false;
     for (const server of this.#servers) {
       this.#flushLatency(server);
-      const summary = server.latency.stages[activity.stage].summary();
+      const summary = server.latency.summary(activity.stage);
       this.#emit({
         type: "serverLatencySummary",
         serverId: server.server.id,
@@ -856,7 +856,7 @@ export class Run {
     const now = this.#clock.read();
     if (now - server.summaryAt >= SUMMARY_CADENCE_MS) {
       server.summaryAt = now;
-      const summary = server.latency.stages[stage].summary();
+      const summary = server.latency.summary(stage);
       this.#emit({
         type: "serverLatencySummary",
         serverId: id,

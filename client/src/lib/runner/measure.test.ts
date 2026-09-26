@@ -179,12 +179,18 @@ test("stage populations stay separate and added latency is the signed worst load
   expect(loadedOnly.result()).toBeNull();
 });
 
-test("a failed idle population needs three outcomes and never selects a stable window", () => {
+test("a failed population shows its median only after three outcomes", () => {
   const latency = new ServerLatency();
   latency.failed.add("latency");
+  latency.failed.add("download");
   latency.observe("latency", reply(10), 0, 0);
   latency.observe("latency", reply(20, true), 0, 0);
+  latency.observe("download", reply(40), 0, 0);
   expect(latency.result()).toBeNull();
+  expect(latency.summaries().download).toMatchObject({
+    p50Ms: null,
+    probeCount: 1,
+  });
   latency.observe("latency", reply(30), 0, 0);
   expect(latency.result()).toMatchObject({ reportedMs: 20 });
 });

@@ -397,35 +397,40 @@ export class ServerLatency {
     this.#head = 0;
   }
 
-  /** The idle headline is the full stage median, as in the native client; a failed population needs three outcomes. */
+  /** The idle headline is the full stage median, as in the native client. */
   result(): LatencyResult | null {
-    const idle = this.stages.latency;
-    const summary = idle.summary();
-    if (
-      summary?.p50Ms == null ||
-      (this.failed.has("latency") && idle.count < MIN_PARTIAL_LATENCY_OUTCOMES)
-    )
-      return null;
+    const summary = this.summary("latency");
+    if (summary?.p50Ms == null) return null;
     return {
       reportedMs: summary.p50Ms,
       jitterMs: summary.jitterMs,
     };
   }
 
+  /** A failed population shows its median only after three outcomes. */
+  summary(stage: TransportRole): StageLatencySummary | null {
+    const population = this.stages[stage];
+    const summary = population.summary();
+    return summary &&
+      this.failed.has(stage) &&
+      population.count < MIN_PARTIAL_LATENCY_OUTCOMES
+      ? { ...summary, p50Ms: null }
+      : summary;
+  }
+
   summaries(): Record<TransportRole, StageLatencySummary | null> {
-    const s = this.stages;
     return {
-      latency: s.latency.summary(),
-      download: s.download.summary(),
-      upload: s.upload.summary(),
-      bidirectional: s.bidirectional.summary(),
+      latency: this.summary("latency"),
+      download: this.summary("download"),
+      upload: this.summary("upload"),
+      bidirectional: this.summary("bidirectional"),
     };
   }
 
   /** Each loaded median against the full idle median; a negative difference stays negative. */
   bufferbloat(): BufferbloatGrade | null {
     const loaded = (["download", "upload", "bidirectional"] as const).map(
-      (stage) => [stage, this.stages[stage].summary()?.p50Ms ?? null] as const,
+      (stage) => [stage, this.summary(stage)?.p50Ms ?? null] as const,
     );
     const medians = loaded.flatMap(([, p50]) => (p50 == null ? [] : [p50]));
     const idleMs = this.stages.latency.summary()?.p50Ms;
