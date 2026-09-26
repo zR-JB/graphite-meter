@@ -363,6 +363,7 @@
               <span
                 >{counts.exceptions.join(" · ") ||
                   "No timeouts"}{#if lane.accountingComplete === false}<em
+                    class="term"
                     use:tooltip={PARTIAL_ACCOUNTING_HELP}
                     >· partial accounting</em
                   >{/if}</span

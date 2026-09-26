@@ -23,12 +23,10 @@
   });
 </script>
 
-<div
-  class="pulse"
-  role="status"
-  aria-label={`Connection: ${store.effectiveConnectivity}`}
-  use:tooltip={`Connection: ${store.effectiveConnectivity}`}
->
+<div class="pulse" use:tooltip={`Connection: ${store.effectiveConnectivity}`}>
+  <span class="sr-only" role="status"
+    >Connection: {store.effectiveConnectivity}</span
+  >
   <span class="dot" data-state={store.effectiveConnectivity}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
     <polyline {points} />

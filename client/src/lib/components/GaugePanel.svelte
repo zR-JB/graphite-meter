@@ -26,6 +26,7 @@
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
   import { ICON } from "../constants";
+  import { tooltip } from "../actions/tooltip";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -270,10 +271,7 @@
   <div class="instrument">
     <div class="well stage">
       {#if indicatedServers.length > 1}
-        <div
-          class="server-indicator"
-          title={indicatedServers.map((server) => server.name).join(", ")}
-        >
+        <div class="server-indicator">
           <svg viewBox="0 0 20 20" aria-hidden="true"
             ><rect x="2.5" y="3" width="15" height="5" rx="1.5" /><rect
               x="2.5"
@@ -283,7 +281,12 @@
               rx="1.5"
             /><path d="M6 5.5h.01M6 14.5h.01M10 8v4" /></svg
           >
-          <span>{serverIndicator}</span>
+          <span
+            class="term"
+            use:tooltip={indicatedServers
+              .map((server) => server.name)
+              .join(", ")}>{serverIndicator}</span
+          >
         </div>
       {/if}
       <div

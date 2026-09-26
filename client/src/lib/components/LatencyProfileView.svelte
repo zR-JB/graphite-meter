@@ -191,6 +191,11 @@
 >
   {#each lanes as lane (lane.key)}
     {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
+    {@const metrics = entries(lane)}
+    {@const selected =
+      hover?.key === lane.key
+        ? metrics.findIndex((entry) => entry.metric === hover!.metric)
+        : -1}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="tone-icon lane-icon" aria-hidden="true"
@@ -236,11 +241,18 @@
         </span>
       </div>
 
-      <button
-        type="button"
+      <div
         class="track"
+        role="slider"
+        tabindex={metrics.length ? 0 : -1}
         aria-label={accessibleLane(lane)}
-        disabled={entries(lane).length === 0}
+        aria-disabled={!metrics.length}
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, metrics.length - 1)}
+        aria-valuenow={Math.max(0, selected)}
+        aria-valuetext={selected >= 0 && hover && hoverValue != null
+          ? `${metricLabel(lane, hover.metric)} ${fmtMs(hoverValue)} milliseconds`
+          : undefined}
         onpointermove={(event) => onTrackMove(event, lane)}
         onpointerleave={() => {
           if (keyboardLane !== lane.key) hover = null;
@@ -320,7 +332,7 @@
             {/if}
           </span>
         {/if}
-      </button>
+      </div>
     </div>
   {/each}
   <div class="ticks" aria-hidden="true">
@@ -453,7 +465,7 @@
     cursor: crosshair;
     isolation: isolate;
   }
-  .track:disabled {
+  .track[aria-disabled="true"] {
     cursor: default;
   }
   .profile-artwork {

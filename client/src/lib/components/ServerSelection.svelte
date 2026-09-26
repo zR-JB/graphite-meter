@@ -124,8 +124,9 @@
           </span>
           {#if preflightMs != null && !["failed", "sign-in", "checking"].includes(readiness ?? "")}<small
               class="server-preflight"
-              aria-label={`Preflight request ${fmtMs(preflightMs)} milliseconds`}
-              >{fmtMs(preflightMs)}<span>ms</span></small
+              ><span class="sr-only">Preflight request </span>{fmtMs(
+                preflightMs,
+              )}<span>ms</span></small
             >{/if}
         </label>
       {/each}

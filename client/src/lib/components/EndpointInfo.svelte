@@ -141,11 +141,6 @@
       .join(" · ");
     return `${carrier} over ${over}`;
   });
-  const serverInstance = $derived.by(() => {
-    const value = discovery?.generation;
-    if (!value) return "—";
-    return `${value.slice(0, 8)}…`;
-  });
   const serverLoad = $derived(
     serverLoadSummary(
       (activePaths?.throughput ?? validation.throughput.path)?.probe.load,
@@ -266,7 +261,7 @@
       <article class="surface-inset card path">
         <header>
           <h3 class="caps">{role} path</h3>
-          <mark
+          <span
             class="badge"
             data-tone={BADGE_TONE[
               role === "latency" && !latencyRequested ? "used" : status.tone
@@ -275,7 +270,7 @@
               ? pathMode === "live"
                 ? "Not selected"
                 : "Not in test"
-              : status.label}</mark
+              : status.label}</span
           >
         </header>
         <dl class="kv">
@@ -353,9 +348,7 @@
       <dl class="kv">
         <div>
           <dt>Server instance</dt>
-          <dd title={discovery?.generation ?? undefined}>
-            {serverInstance}
-          </dd>
+          <dd>{discovery?.generation || "—"}</dd>
         </div>
         <div>
           <dt>Server version</dt>

@@ -53,11 +53,10 @@
           {#if card.quality}
             {@const pct = `Measurement stability: ${Math.round(card.quality.pct)}%`}
             <span
-              class="badge"
+              class="badge term"
               data-tone={QUALITY_TONE[card.quality.band]}
               use:tooltip={pct}
-              aria-label={`${pct}, ${card.quality.band}`}
-              >{card.quality.band}</span
+              >{card.quality.band}<span class="sr-only">, {pct}</span></span
             >
           {:else if card.status !== "complete"}
             <span class="badge" data-tone="err"

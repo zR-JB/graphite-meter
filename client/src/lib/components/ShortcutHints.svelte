@@ -13,7 +13,7 @@
   );
 </script>
 
-<div class="command-hints" aria-label="Keyboard shortcuts">
+<div class="command-hints" role="group" aria-label="Keyboard shortcuts">
   <span><kbd>Space</kbd>{primary}</span>
   <span><kbd>S</kbd>Settings</span>
   <span><kbd>D</kbd>Details</span>

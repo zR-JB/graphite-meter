@@ -284,7 +284,7 @@
     <div class="section-heading">
       <h3 class="caps">Connection paths</h3>
       <span
-        class="badge"
+        class="badge term"
         data-readiness={readiness}
         data-tone={readiness === "verified"
           ? "ok"
