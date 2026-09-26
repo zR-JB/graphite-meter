@@ -51,16 +51,11 @@ Then open <http://localhost:7246>.
 
 ### 1. Edit the build unit
 
-Quadlet units must live in a systemd search directory, **not** in the repo, so
-relative paths to the checkout don't work. Set the context to your checkout's
-absolute path in `graphite-meter.build`:
-
-```ini
-SetWorkingDirectory=/home/youruser/source/graphite-meter
-```
-
-(Keep `File=container/Dockerfile` - it's relative to that context. Also check
-`Arch=` - the unit defaults to arm64, e.g. for a Raspberry Pi.)
+Quadlet units live in a systemd search directory, not in the repo, so replace
+both `/path/to/graphite-meter` occurrences in `graphite-meter.build` with your
+checkout's absolute path: `SetWorkingDirectory=` (the build context) and the
+`cd` in `ExecStartPre=` (which stamps the source revision). Keep
+`File=container/Dockerfile`, and check `Arch=` (default arm64).
 
 ### 2. Install the units
 
@@ -83,31 +78,17 @@ Authentication is off by default. Uncomment the `GM_AUTH_*` block in
 `graphite-meter.container`, point `GM_AUTH_PUBLIC_URL` at the exact public HTTPS
 origin (no path, and no `:443`), and create the podman secrets the unit mounts.
 
-For the operator password, print the Argon2id hash on a terminal and store the
-single line it prints:
-
 ```sh
 podman run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
 printf '%s' 'PASTE_THE_HASH_HERE' | podman secret create gm-auth-password-hash -
+printf '%s' 'OIDC_CLIENT_SECRET' | podman secret create gm-auth-oidc-client-secret -  # OIDC or hybrid
 ```
 
-For OIDC, store the client secret the same way, as
-`gm-auth-oidc-client-secret`, and register
-`${GM_AUTH_PUBLIC_URL}/auth/oidc/callback` as a confidential authorization-code
-client using PKCE S256, `client_secret_basic`, and the scopes
-`openid profile groups`. Discovery, token exchange, UserInfo, and JWKS are
-outbound HTTPS calls; the published image carries
-`/etc/ssl/certs/ca-certificates.crt`, so no CA bundle has to be mounted.
-
-The server refuses to start unless clear HTTP/1.1 is left unadvertised and
-every advertised origin is HTTPS on the `GM_AUTH_PUBLIC_URL` hostname. The
-commented block covers a reverse-proxy deployment with
-`GM_ADVERTISED_NATIVE_ENDPOINTS=none` and `GM_PUBLIC_ORIGINS=self`; serving the
-native TLS listeners directly instead means advertising `http1-tls,http2,http3`
-and giving each `GM_H*_PUBLIC_ORIGIN` that same hostname.
-
-See [DEPLOYMENT.md](../../docs/DEPLOYMENT.md) for every variable, the
-terminal-client grant flow, and the headers a trusted proxy must set.
+The commented block assumes a reverse proxy (`GM_ADVERTISED_NATIVE_ENDPOINTS=none`,
+`GM_PUBLIC_ORIGINS=self`); for direct native TLS advertise `http1-tls,http2,http3`
+with each `GM_H*_PUBLIC_ORIGIN` on the same hostname. The image carries CA roots
+for outbound OIDC calls. OIDC client registration, every variable and the proxy
+headers are in [DEPLOYMENT.md](../../docs/DEPLOYMENT.md#authentication).
 
 ## Verify and maintain
 
@@ -121,13 +102,14 @@ sections make the generated services start with the user manager; lingering keep
 available after logout. Do not run `systemctl enable` on generated Quadlet services.
 See [Podman's Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html#enabling-unit-files).
 
-When upgrading to 0.7, update native clients too and reload browser tabs;
-see [upgrade notes](../../docs/DEPLOYMENT.md#upgrading-to-07).
+Upgrade native clients with the server and reload browser tabs; see
+[upgrading](../../docs/DEPLOYMENT.md#upgrading).
 
 ## Build and networking
 
-- Override client build knobs (version / label) by uncommenting
-  the `BuildArg=` lines in `graphite-meter.build`.
+- Override the build identity (`VERSION`, `CLIENT_VERSION`,
+  `GM_CLIENT_REVISION`) with the commented `BuildArg=` lines in
+  `graphite-meter.build`.
 - On rootless Podman, pasta user-mode networking can significantly limit
   measured throughput - uncomment `Network=host` in the `.container` unit for
   LAN tests that need to avoid that overhead. Host networking gives up the container network
