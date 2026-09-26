@@ -284,11 +284,13 @@ func acceptUploadProgressWT(ctx context.Context, sess *wtSession) (*webtransport
 	return str, nil
 }
 
-func wtProgressFeed(stream *webtransport.ReceiveStream) *uploadFeed {
-	return &uploadFeed{ReadCloser: io.NopCloser(stream), interrupt: func() {
+func wtProgressFeed(lifetime context.Context, stream *webtransport.ReceiveStream) io.ReadCloser {
+	interrupt := func() {
 		stream.CancelRead(0)
 		_ = stream.SetReadDeadline(time.Now())
-	}}
+	}
+	stop := context.AfterFunc(lifetime, interrupt)
+	return progressFeed{stream, func() { stop(); interrupt() }}
 }
 
 func laneStopError(ctx context.Context, err error) error {

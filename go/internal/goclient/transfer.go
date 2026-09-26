@@ -101,19 +101,6 @@ func (r *runner) laneStaggerStep(streams int) time.Duration {
 	return min(adaptiveWarmup(r.cfg.Warmup, r.idleRTT)/2/time.Duration(streams-1), laneStagger)
 }
 
-func (g *laneGroup) wait(ctx context.Context, until <-chan struct{}, progressErr <-chan error) error {
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case err := <-g.errs:
-		return err
-	case err := <-progressErr:
-		return err
-	case <-until:
-		return nil
-	}
-}
-
 func (g *laneGroup) stop() {
 	g.cancel()
 	g.wg.Wait()
@@ -133,23 +120,35 @@ func (r *runner) runLanes(
 			gate.cancel(failure)
 		}
 	}()
+	var progressFailed <-chan struct{}
+	wait := func(until <-chan struct{}) error {
+		select {
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case err := <-lanes.errs:
+			return err
+		case <-progressFailed:
+			return context.Cause(progress.ctx)
+		case <-until:
+			return nil
+		}
+	}
 	for range cap(lanes.ready) {
-		if err := lanes.wait(ctx, lanes.ready, nil); err != nil {
+		if err := wait(lanes.ready); err != nil {
 			return err
 		}
 	}
-	var progressErr <-chan error
 	if progress != nil {
-		progressErr = progress.errs
-		if err := progress.waitNext(ctx, progress.seq.Load(), lanes.errs); err != nil {
+		progressFailed = progress.ctx.Done()
+		if err := wait(progress.advanced()); err != nil {
 			return err
 		}
 	}
 	gate.reportReady()
-	if err := lanes.wait(ctx, gate.start, progressErr); err != nil {
+	if err := wait(gate.start); err != nil {
 		return err
 	}
-	return lanes.wait(ctx, nil, progressErr)
+	return wait(nil)
 }
 
 func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {

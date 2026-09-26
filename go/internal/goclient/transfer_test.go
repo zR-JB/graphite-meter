@@ -77,6 +77,36 @@ func TestMintUploadID(t *testing.T) {
 	}
 }
 
+func TestUploadSessionIsReleasedWhenSetupFails(t *testing.T) {
+	t.Parallel()
+	released := make(chan string, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"uploadId":"minted"}`)
+	})
+	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			released <- r.URL.Query().Get("id")
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	r := testRunner(srv)
+	r.teardown = t.Context()
+	if err := r.measureUpload(t.Context(), testStageGate(make(chan struct{}))); err == nil {
+		t.Fatal("upload measured without a progress feed")
+	}
+	select {
+	case id := <-released:
+		if id != "minted" {
+			t.Fatalf("released upload %q, want the minted session", id)
+		}
+	default:
+		t.Fatal("a failed setup left the minted upload session open")
+	}
+}
+
 func lane(r *runner, dir Direction, base string) func(context.Context) error {
 	if dir == Down {
 		var total atomic.Uint64
