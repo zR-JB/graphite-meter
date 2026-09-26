@@ -5,7 +5,8 @@ import {
   authenticationRequired,
 } from "./request-auth";
 
-let pendingClassification: Promise<boolean> | null = null;
+/* Held in a record so the owner that clears it compares records, never the in-flight promise itself. */
+let pendingClassification: { required: Promise<boolean> } | null = null;
 
 /** The server marks authenticated pages; the document stays the only owner of that fact. */
 export function authEnabled(): boolean {
@@ -148,11 +149,11 @@ export async function classifyAuthenticationFailure(
 ): Promise<boolean> {
   if (!authEnabled() || localSignal?.aborted) return false;
   // Parallel transfer workers share one probe: a single expiry must not fan out into a burst of /auth/session requests.
-  const pending = (pendingClassification ??= sessionAuthenticationRequired(
-    location.origin,
-  ));
+  const pending = (pendingClassification ??= {
+    required: sessionAuthenticationRequired(location.origin),
+  });
   try {
-    const required = await pending;
+    const required = await pending.required;
     if (required && !localSignal?.aborted) reportAuthenticationRequired();
     return required;
   } finally {
