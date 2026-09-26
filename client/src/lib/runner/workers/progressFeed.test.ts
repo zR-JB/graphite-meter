@@ -52,7 +52,7 @@ function parseRefusalPin(text: string): Record<string, string> {
 
 const refusals = parseRefusalPin(await Bun.file(refusalPinPath).text());
 
-// The error record the server sends a refused lane, which is all a WebTransport lane gets: no status line, so the.
+// A refused WebTransport lane gets only this error record: no status line, so the message is the whole signal.
 function refusalRecord(name: string, message: string): string {
   return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
 }
@@ -117,7 +117,7 @@ test("blank heartbeats and truncated lines are not measurements", async () => {
   expect(end).toBe("eof");
 });
 
-// The parse attempt can: heartbeats arrive at the server's keep-warm cadence for the whole stage, and only the.
+// Heartbeats and truncated records emit alike; only the truncated line is one the parser has to reject.
 test("a blank heartbeat never reaches the parser", async () => {
   const parsed: string[] = [];
   JSON.parse = ((text: string) => {
