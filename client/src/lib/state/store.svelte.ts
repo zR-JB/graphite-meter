@@ -75,7 +75,11 @@ import { BUILD } from "../buildenv";
 import { buildHistoryRecord, type HistoryRecord } from "../history/types";
 import { serverWireEstimate } from "../servers/wireEstimates";
 import type { MultiServerResult } from "../servers/measurement";
-import type { ServerCatalog, SavedSelection } from "../servers/catalog";
+import {
+  selectedInCatalogOrder,
+  type ServerCatalog,
+  type SavedSelection,
+} from "../servers/catalog";
 import type { PreparedServer } from "../servers/coordinator";
 
 type PreparationStatus =
@@ -96,6 +100,9 @@ type LatencySummaries = Partial<
   Record<TransportRole, StageLatencySummary | null>
 >;
 
+const UNCHECKED: ConnectionValidation = Object.freeze(
+  emptyConnectionValidation(),
+);
 const EMPTY_STAGE_RESULTS: StageResults = Object.freeze({
   download: null,
   upload: null,
@@ -313,7 +320,30 @@ class AppStore {
   runSeq = $state(0);
 
   connectivity = $state<ConnectivityState>("connected");
-  transportDiscovery = $state.raw<TransportDiscovery | null>(null);
+  /** The selected server single-path views describe: the latency primary, else this server. */
+  representativeServerId = $derived.by(() => {
+    if (!this.serverCatalog || !this.selectedServers.length) return null;
+    const selected = selectedInCatalogOrder(
+      this.serverCatalog,
+      this.selectedServers,
+    );
+    const preferred =
+      this.latencySelection.mode === "primary"
+        ? this.primaryLatencyServer
+        : "self";
+    return (selected.find((server) => server.id === preferred) ?? selected[0])
+      .id;
+  });
+  transportDiscovery = $derived(
+    (this.representativeServerId &&
+      this.serverDiscoveries.get(this.representativeServerId)) ||
+      null,
+  );
+  connectionValidation = $derived(
+    (this.representativeServerId &&
+      this.serverValidation.get(this.representativeServerId)) ||
+      UNCHECKED,
+  );
   engineInfo = $state.raw<EngineInfo | null>(null);
   result = $state.raw<RunResult | null>(null);
   stageResults = $state.raw<StageResults>(EMPTY_STAGE_RESULTS);
@@ -326,9 +356,6 @@ class AppStore {
   activeConfig = $state.raw<RunnerConfig | null>(null);
   activePaths = $state.raw<PreparedPaths | null>(null);
   activeServers = $state.raw<PreparedServer[]>([]);
-  connectionValidation = $state.raw<ConnectionValidation>(
-    emptyConnectionValidation(),
-  );
   connections = $derived(
     presentConnections(
       this.config,

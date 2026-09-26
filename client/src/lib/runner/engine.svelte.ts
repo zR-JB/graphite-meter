@@ -52,14 +52,11 @@ import {
   CONNECTION_ROLES,
   connectionDraftKey,
   connectionDraftRoleKey,
-  emptyConnectionValidation,
   latencyPathNeeded,
   uploadCapabilityFailure,
 } from "./connectionModel";
 
 export { connectionFailureMessage } from "../servers/connections";
-
-const UNCHECKED = Object.freeze(emptyConnectionValidation());
 
 interface ApplicationDependencies {
   loadCatalog: (signal: AbortSignal) => Promise<ServerCatalog>;
@@ -270,8 +267,6 @@ export function createApplicationController(
         )
           makeTransportPortable(role);
       }
-      store.transportDiscovery = null;
-      store.connectionValidation = emptyConnectionValidation();
       connections.reset(catalog.servers);
       syncIntent();
       if (selection.unresolved.length)
@@ -295,21 +290,8 @@ export function createApplicationController(
           cause instanceof Error ? cause.message : "Could not load servers";
     }
   }
-  function representativeServer() {
-    if (!store.serverCatalog || !store.selectedServers.length) return null;
-    const selected = catalogSelected();
-    return store.latencySelection.mode === "primary"
-      ? (selected.find((server) => server.id === store.primaryLatencyServer) ??
-          selected[0])
-      : (selected.find((server) => server.id === "self") ?? selected[0]);
-  }
+  /** A verified selection clears an offline verdict. */
   function adoptSelectedEvidence() {
-    const first = representativeServer();
-    store.transportDiscovery = first
-      ? (store.serverDiscoveries.get(first.id) ?? null)
-      : null;
-    store.connectionValidation =
-      (first && store.serverValidation.get(first.id)) || UNCHECKED;
     if (readySelected(false)) store.connectivity = "connected";
     refreshIdle();
   }
@@ -462,7 +444,7 @@ export function createApplicationController(
         !store.isRunning &&
         !pendingStart &&
         !hidden(),
-      representativeServer()?.id === "self" && latencyPathNeeded(store.config)
+      store.representativeServerId === "self" && latencyPathNeeded(store.config)
         ? "self"
         : null,
     );
@@ -849,8 +831,6 @@ export function createApplicationController(
     window.removeEventListener("offline", offline);
     document.removeEventListener("visibilitychange", visibilityChanged);
     store.reset();
-    store.transportDiscovery = null;
-    store.connectionValidation = emptyConnectionValidation();
   }
   function toggleStage(stage: StageKey): boolean {
     if (!store.canToggleStage(stage)) return false;
