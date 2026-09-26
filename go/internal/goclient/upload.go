@@ -114,7 +114,8 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		}
 		_, _ = io.CopyN(io.Discard, res.Body, maxControlBytes)
 		_ = res.Body.Close()
-		if res.StatusCode != http.StatusOK {
+		idle := res.StatusCode == http.StatusRequestTimeout && res.Header.Get("X-Graphite-Upload-Refusal") == "idle"
+		if res.StatusCode != http.StatusOK && !idle {
 			return false, refusal{unexpectedStatus(res)}
 		}
 		return body.moved.Load(), nil

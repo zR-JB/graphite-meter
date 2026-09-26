@@ -278,6 +278,31 @@ func TestUploadLaneDrainsABoundedResponse(t *testing.T) {
 	})
 }
 
+func TestAnIdleUploadLaneRedialsInsteadOfFailing(t *testing.T) {
+	t.Parallel()
+	for _, refusal := range []string{"idle", ""} {
+		synctest.Test(t, func(t *testing.T) {
+			requests := 0
+			transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if requests++; requests > 1 {
+					<-req.Context().Done()
+					return nil, req.Context().Err()
+				}
+				_, _ = io.CopyN(io.Discard, req.Body, 1024)
+				header := http.Header{"X-Graphite-Upload-Refusal": {refusal}}
+				return &http.Response{StatusCode: http.StatusRequestTimeout, Header: header, Body: http.NoBody,
+					Request: req}, nil
+			})
+			r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			if err := lane(r, Up, "")(ctx); (err == nil) != (refusal == "idle") || (requests > 1) != (err == nil) {
+				t.Errorf("408 %q: lane ended with %v after %d requests", refusal, err, requests)
+			}
+		})
+	}
+}
+
 type readerFunc func([]byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
