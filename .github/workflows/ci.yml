@@ -81,6 +81,7 @@ jobs:
           | Core | \`$CORE\` |
           | Go race/coverage | \`$GO\` |
           | Experimental Rust | \`$RUST\` |
+          | Experimental Rust interoperability | \`$RUST_INTEROP\` |
           | Browser | \`$BROWSER\` |
           | TUI cross-build | \`$TUI\` |
           | Integration | \`$INTEGRATION\` |
@@ -127,20 +128,34 @@ jobs:
   rust:
     name: Experimental Rust checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
     needs: plan
     if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Go and Python interoperability tools
+      - name: Set up Python tools
         uses: ./.github/actions/setup-project
-        with: {go: 'true', cache: 'false', go-cache: 'false'}
       - name: Install pinned experimental Rust toolchain
         run: |
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+      - name: Cache Cargo downloads, audit tool and build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/cargo-audit
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+            rust/target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
       - name: Check experimental Rust implementation
         run: mise run rust-check
       - name: Check optional Rust AWS-LC provider
@@ -150,6 +165,36 @@ jobs:
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit --deny warnings
+
+  rust-interop:
+    name: Experimental Rust interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Go and Python interoperability tools
+        uses: ./.github/actions/setup-project
+        with: {go: 'true'}
+      - name: Install pinned experimental Rust toolchain
+        run: |
+          version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+          rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+      - name: Cache Cargo downloads and build output
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            rust/target
+          key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
       - name: Rust server with unchanged Go clients
         run: python3 rust/tests/server_interop.py
       - name: Rust client with unchanged Go server
@@ -333,7 +378,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, rust, browser, tui, integration, smoke, release, security, secret-scan]
+    needs: [plan, core, go, rust, rust-interop, browser, tui, integration, smoke, release, security, secret-scan]
     steps:
       - name: Summarize and require all selected jobs
         env:
@@ -341,6 +386,7 @@ jobs:
           CORE: ${{ needs.core.result }}
           GO: ${{ needs.go.result }}
           RUST: ${{ needs.rust.result }}
+          RUST_INTEROP: ${{ needs.rust-interop.result }}
           BROWSER: ${{ needs.browser.result }}
           TUI: ${{ needs.tui.result }}
           INTEGRATION: ${{ needs.integration.result }}
@@ -359,6 +405,7 @@ jobs:
           | Core | \`$CORE\` |
           | Go | \`$GO\` |
           | Experimental Rust | \`$RUST\` |
+          | Experimental Rust interoperability | \`$RUST_INTEROP\` |
           | Browser | \`$BROWSER\` |
           | TUI | \`$TUI\` |
           | Integration | \`$INTEGRATION\` |
@@ -368,7 +415,7 @@ jobs:
           | Secret scan | \`$SECRET_SCAN\` |
           EOF_SUMMARY
           failed=0
-          for result in "$PLAN" "$CORE" "$GO" "$RUST" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
+          for result in "$PLAN" "$CORE" "$GO" "$RUST" "$RUST_INTEROP" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
             case "$result" in success|skipped) ;; *) failed=1 ;; esac
           done
           if [ "$failed" -ne 0 ]; then
