@@ -337,9 +337,11 @@ func getOnce(t *testing.T, client *http.Client, url string) {
 // may first spend five seconds offering close_notify to a peer that stopped reading.
 func awaitSlots(t *testing.T, connections *connectionAdmission, want int) {
 	t.Helper()
+	// A TLS close waits up to 5 s to send close_notify to a peer that stopped reading.
+	const bound = 5*time.Second + 5*time.Second
 	start := time.Now()
 	for connections.stats().active != want {
-		if time.Since(start) > 7*time.Second {
+		if time.Since(start) > bound {
 			t.Fatalf("%d connection slots held after %v, want %d", connections.stats().active, time.Since(start), want)
 		}
 		time.Sleep(10 * time.Millisecond)
