@@ -262,10 +262,12 @@ export function buildHistoryRecord(
 type Plain = Record<string, unknown>;
 const object = (value: unknown): value is Plain =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+/** Saved counts, bytes, rates and durations are never negative. */
 const numbers = (value: Plain, keys: readonly string[], nullable = false) =>
   keys.every(
     (key) =>
-      typeof value[key] === "number" || (nullable && value[key] === null),
+      (typeof value[key] === "number" && value[key] >= 0) ||
+      (nullable && value[key] === null),
   );
 const time = (value: unknown) =>
   typeof value === "number" && !Number.isNaN(new Date(value).getTime());
@@ -292,6 +294,20 @@ const throughputShape = (value: unknown): boolean =>
       "fullAverageBytesPerSec",
       "totalBytes",
     ]));
+const wireShape = (value: unknown): boolean => {
+  if (!object(value) || !object(value.breakdown)) return false;
+  const breakdown = value.breakdown;
+  return (
+    HISTORY_FAILURE_STAGES.slice(1).every(
+      (stage) => breakdown[stage] === null || object(breakdown[stage]),
+    ) &&
+    numbers(
+      value,
+      ["downloadBytesPerSec", "uploadBytesPerSec", "bidirectionalBytesPerSec"],
+      true,
+    )
+  );
+};
 const lanes = (value: unknown): boolean =>
   object(value) &&
   HISTORY_FAILURE_STAGES.every(
@@ -330,11 +346,12 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     typeof value.id !== "string" ||
     !time(value.startedAt) ||
     !time(value.completedAt) ||
+    (value.startedAt as number) > (value.completedAt as number) ||
     !numbers(value, ["durationMs", "totalBytes"]) ||
     !objects(value, ["stages", "server", "transport", "client"]) ||
     !Array.isArray(value.failures) ||
     (value.multiServer !== undefined && !serverDetails(value.multiServer)) ||
-    (value.wireEstimates !== null && !object(value.wireEstimates))
+    (value.wireEstimates !== null && !wireShape(value.wireEstimates))
   )
     return false;
   const stages = value.stages as Plain;
@@ -345,7 +362,10 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
   return (
     lanes(latency.lanes) &&
     (latency.result === null ||
-      (object(latency.result) && numbers(latency.result, ["reportedMs"]))) &&
+      (object(latency.result) &&
+        numbers(latency.result, ["reportedMs"]) &&
+        numbers(latency.result, ["probeTimeoutPct"], true) &&
+        !((latency.result.probeTimeoutPct as number) > 100))) &&
     throughputShape((stages.download as Plain).result) &&
     throughputShape((stages.upload as Plain).result) &&
     throughputShape(bidirectional.down) &&
