@@ -28,7 +28,7 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   const saved = await run(page);
   expect(isHistoryRecord(saved)).toBe(true);
   expect(saved.outcome).toBe("complete");
-  expect(saved.failures).toEqual([]);
+  expect(saved.multiServer?.failures).toEqual([]);
   const preflight = await fetch(`${home.http}/preflight`);
   const identity = await preflight.json();
   expect(saved.server.name).toBe(identity.server.name);

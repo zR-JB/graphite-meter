@@ -1,24 +1,23 @@
 // Formatting and scale helpers for speeds, bytes, latency, and chart domains.
-import type { TerminationReason } from "./runner/contract";
+import type { FailureReason, TerminationReason } from "./runner/contract";
 
-export function reasonLabel(reason: TerminationReason): string {
-  switch (reason) {
-    case "preflight-failed":
-      return "Couldn't reach the server";
-    case "connection-lost":
-      return "Connection lost";
-    case "timeout":
-      return "Connection timed out";
-    case "protocol-error":
-      return "Unexpected server response";
-    case "transport-unavailable":
-      return "Couldn't establish a connection";
-    case "user-abort":
-      return "Stopped";
-    case "internal-error":
-      return "Runner needs attention";
-  }
-}
+const REASON: Record<FailureReason | TerminationReason, string> = {
+  "preflight-failed": "Couldn't reach the server",
+  "preparation-failed": "Couldn't prepare the connection",
+  "connection-lost": "Connection lost",
+  timeout: "Stopped delivering data",
+  "sign-in-required": "Sign-in required",
+  "server-busy": "Server at capacity",
+  "protocol-error": "Unexpected server response",
+  "insufficient-evidence": "Too little measured time",
+  "transport-unavailable": "Couldn't establish a connection",
+  "user-abort": "Stopped",
+  "internal-error": "Runner needs attention",
+};
+
+/** Saved records may carry a reason this build no longer names. */
+export const reasonLabel = (reason: FailureReason | TerminationReason) =>
+  REASON[reason] ?? "Measurement issue";
 
 export function fmtSpeed(value: number): string {
   if (value >= 1000) return value.toFixed(0);

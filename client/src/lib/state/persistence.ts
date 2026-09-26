@@ -1,6 +1,13 @@
 import type { PingCadence, RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/paths";
-import { canonicalAdaptiveConfig, DEFAULT_CONFIG } from "./defaults";
+import {
+  canonicalAdaptiveConfig,
+  clampDuration,
+  DEFAULT_CONFIG,
+  DURATION_LIMITS,
+} from "./defaults";
+
+type DurationKey = keyof RunnerConfig["duration"];
 
 const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
@@ -176,6 +183,11 @@ export function loadPersisted(): PersistedState {
   merged.config.transferStreams.count = normalizeStreamCount(
     merged.config.transferStreams.count,
   );
+  for (const key of Object.keys(DURATION_LIMITS) as DurationKey[])
+    merged.config.duration[key] = clampDuration(
+      key,
+      merged.config.duration[key],
+    );
   return merged;
 }
 

@@ -71,6 +71,12 @@ function result(): RunResult {
       ],
     },
     outcome: "incomplete",
+    stages: {
+      latency: "not-run",
+      download: "complete",
+      upload: "failed",
+      bidirectional: "not-run",
+    },
     startedAt: 100,
     durationMs: 2_500,
   });
@@ -135,9 +141,8 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.ingest({ type: "complete", result: completed });
     const candidate = store.historyCandidate;
     expect(candidate?.stages.upload.status).toBe("failed");
-    expect(candidate?.failures[0]).toEqual({
+    expect(candidate?.multiServer?.failures[0]).toMatchObject({
       stage: "upload",
-      direction: null,
       reason: "timeout",
     });
     completed.download!.reportedBytesPerSec = 1;

@@ -31,7 +31,6 @@ export function historyRecord(index = 1): HistoryRecord {
     },
     ipVersion: null,
     client: { build: "b" },
-    failures: [],
     wireEstimates: null,
   };
 }

@@ -30,6 +30,24 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
+type DurationKey = keyof RunnerConfig["duration"];
+/** Bounds in ms; a transfer stage leaves room for the 800 ms evidence floor. */
+export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
+  warmupMs: [0, 4_000],
+  latencyMs: [500, 60_000],
+  downloadMs: [1_000, 120_000],
+  uploadMs: [1_000, 120_000],
+  bidirectionalMs: [1_000, 120_000],
+};
+
+/** Zero skips a stage; any other value is bounded. */
+export function clampDuration(key: DurationKey, value: unknown): number {
+  const [min, max] = DURATION_LIMITS[key];
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return DEFAULT_CONFIG.duration[key];
+  return value <= 0 ? 0 : Math.min(max, Math.max(min, Math.round(value)));
+}
+
 /** Adaptive thresholds are runner policy; persistence owns only the switch. */
 export function canonicalAdaptiveConfig(
   value: unknown = DEFAULT_CONFIG.adaptive.enabled,

@@ -203,23 +203,16 @@
           },
         ],
   );
-  const issues = $derived([
-    ...record.failures.map((failure) =>
-      [
-        STAGE[failure.stage].label +
-          (failure.direction ? ` ${failure.direction}` : ""),
-        reasonLabel(failure.reason),
-      ].join(" · "),
-    ),
-    ...(record.multiServer?.failures ?? []).map((failure) =>
+  const issues = $derived(
+    (record.multiServer?.failures ?? []).map((failure) =>
       [
         serverName(record.multiServer!.selection, failure.serverId),
         STAGE[failure.stage].label +
           (failure.scope === "latency" ? " latency" : ""),
-        failure.message,
+        reasonLabel(failure.reason),
       ].join(" · "),
     ),
-  ]);
+  );
   const environment = $derived(
     [
       ["IP family", record.ipVersion ? `IPv${record.ipVersion}` : null],

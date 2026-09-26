@@ -1,6 +1,7 @@
 // One schedule drives every selected server; one server is the same run with one participant.
 import type {
   EngineInfo,
+  FailureReason,
   FlowDirection,
   LatencyObservation,
   LatencyResult,
@@ -14,6 +15,7 @@ import type {
   RunnerConfig,
   RunnerError,
   RunnerEvent,
+  StageStatus,
   StallInfo,
   ThroughputResult,
   TransportRole,
@@ -30,6 +32,7 @@ import {
   pathEvidence,
   ServerLatency,
   shouldExitPhase,
+  STAGES,
   ThroughputAggregate,
   type Boundary,
   type ConfidenceScore,
@@ -50,6 +53,7 @@ import { LatencyPresentationBuckets } from "./series";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { findCause, isNetworkFailure } from "./abortable";
 import {
+  DIRECTION_PROGRESS_WINDOW_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
@@ -71,7 +75,7 @@ const STABILITY_CADENCE_MS = 100;
 const PROGRESS_CADENCE_MS = 250;
 const TIMER_GAP_MS = 1500;
 const SUMMARY_CADENCE_MS = 1000;
-export const STAGE_RECOVERY_BUDGET_MS =
+const LATENCY_RECOVERY_BUDGET_MS =
   2 * (ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS) + LANE_RESTART_BACKOFF_MS;
 
 interface Participant extends PreparedServer {
@@ -84,6 +88,8 @@ interface Participant extends PreparedServer {
   down: number;
   /** Latest measured receiver evidence in the current stage. */
   up: ReceiverCheckpoint | null;
+  /** Page time of the latest measured progress per direction. */
+  progressAt: Record<FlowDirection, number>;
   recovery: {
     abort: AbortController;
     timer: ReturnType<typeof setTimeout>;
@@ -99,6 +105,14 @@ const isTransfer = (phase: Phase): phase is TransferStage =>
   phase === "download" || phase === "upload" || phase === "bidirectional";
 const isMeasured = (phase: Phase): phase is TransportRole =>
   phase === "latency" || isTransfer(phase);
+
+/** Network failures lose the connection and deadlines time out; anything else is the caller's fallback. */
+const classify = <T>(cause: unknown, fallback: T) =>
+  navigator.onLine === false || isNetworkFailure(cause)
+    ? "connection-lost"
+    : findCause(cause, DOMException)?.name === "TimeoutError"
+      ? "timeout"
+      : fallback;
 
 export function engineInfo(): EngineInfo {
   const wt = transportRunnable("webtransport");
@@ -137,6 +151,7 @@ export class Run implements NetworkRunner {
   #epoch = 0;
   #early = { index: -1, at: 0 };
   #completedEarly = new Set<TransportRole>();
+  #entered = new Set<TransportRole>();
   #progressKey = "";
   #progressAt = -Infinity;
   #stabilityAt = -Infinity;
@@ -186,6 +201,7 @@ export class Run implements NetworkRunner {
       rotated: false,
       down: 0,
       up: null,
+      progressAt: { down: 0, up: 0 },
       recovery: null,
       latencyTimer: null,
       gaps: 0,
@@ -244,6 +260,7 @@ export class Run implements NetworkRunner {
     this.#pending = this.#ending = this.#endRequested = false;
     this.#hasMeasured = this.#completed = this.#stalled = false;
     this.#completedEarly.clear();
+    this.#entered.clear();
     this.#progressKey = "";
     this.#aggregate = new ThroughputAggregate();
     this.#results = { download: null, upload: null, latency: null };
@@ -418,26 +435,35 @@ export class Run implements NetworkRunner {
     const enter = () => {
       this.#finalize(this.#phase);
       this.#active = segment;
-      this.#transition(segment.phase, segment.activity.stage, segment.start);
+      const show = () =>
+        this.#transition(segment.phase, segment.activity.stage, segment.start);
       this.#cancelEarly();
       this.#stabilityAt = -Infinity;
       this.#continuity++;
-      if (sameStage) return this.#measureStage();
+      if (sameStage) {
+        show();
+        return this.#measureStage();
+      }
       const generation = ++this.#generation;
       this.#pending = true;
-      this.#emit({
-        type: "progress",
-        phase: segment.phase,
-        fraction: 0,
-        phaseElapsedMs: 0,
-        phaseBudgetMs: segment.end - segment.start,
-        measuring: true,
-      });
+      // The first stage keeps showing connection checks; later ones show no countdown until ready.
+      if (previous) {
+        show();
+        this.#emit({
+          type: "progress",
+          phase: segment.phase,
+          fraction: 0,
+          phaseElapsedMs: 0,
+          phaseBudgetMs: 0,
+          measuring: true,
+        });
+      }
       this.#beginStage(segment.activity).then(
         () => {
           if (generation !== this.#generation || !this.#running) return;
           this.#pending = false;
           this.#lastRealNow = performance.now();
+          if (!previous) show();
           if (segment.phase !== "warmup") this.#measureStage();
           this.#tick();
           this.#arm();
@@ -446,11 +472,7 @@ export class Run implements NetworkRunner {
           if (generation !== this.#generation) return;
           this.#pending = false;
           this.#fail(
-            navigator.onLine === false || isNetworkFailure(cause)
-              ? "connection-lost"
-              : findCause(cause, DOMException)?.name === "TimeoutError"
-                ? "timeout"
-                : "protocol-error",
+            classify(cause, "protocol-error"),
             cause instanceof Error ? cause.message : "Stage preparation failed",
             cause,
           );
@@ -465,9 +487,8 @@ export class Run implements NetworkRunner {
     this.#activity = activity;
     this.#measuring = this.#latencyOpen = false;
     const epoch = ++this.#epoch;
-    // When no server remains, the next stage starts again with every selected server.
-    if (!this.#participants().length)
-      for (const server of this.#servers) server.removed = false;
+    this.#entered.add(activity.stage);
+    if (this.#servers.length === 1) this.#servers[0].removed = false;
     const participants = this.#stageParticipants(activity);
     this.#streams = planServerStreams(
       this.#cfg!,
@@ -499,20 +520,15 @@ export class Run implements NetworkRunner {
       }),
     );
     if (epoch !== this.#epoch) return;
-    for (const [index, result] of results.entries()) {
-      if (result.status !== "rejected") continue;
-      const server = participants[index];
-      const message =
-        result.reason instanceof Error
-          ? result.reason.message
-          : "Measurement preparation failed";
-      if (!this.#hasMeasured)
-        throw new Error(
-          `${server.server.name}: ${message}. Resolve the selection before starting.`,
-          { cause: result.reason },
+    for (const [index, result] of results.entries())
+      if (result.status === "rejected")
+        this.#remove(
+          participants[index],
+          classify(result.reason, "preparation-failed"),
+          result.reason instanceof Error
+            ? result.reason.message
+            : "Measurement preparation failed",
         );
-      this.#remove(server, "preparation-failed", message);
-    }
   }
 
   #measureStage(): void {
@@ -533,6 +549,8 @@ export class Run implements NetworkRunner {
         fixedPingIntervalMs(cadence),
       );
       if (activity.stage === "latency") server.latency.resetStability();
+      const now = performance.now();
+      server.progressAt = { down: now, up: now };
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
@@ -650,7 +668,7 @@ export class Run implements NetworkRunner {
       if (server.recovery || server.latencyTimer)
         this.#remove(
           server,
-          "connection-lost",
+          server.recovery?.info.reason ?? "connection-lost",
           server.recovery?.info.detail ??
             "Server stopped delivering measured data",
         );
@@ -735,10 +753,13 @@ export class Run implements NetworkRunner {
         )
           return;
         server.down += bytes;
+        server.progressAt.down = performance.now();
         run.#aggregate.addDownload(stage, id, bytes);
       },
       receiver(checkpoint) {
         if (!run.#measuring || !live()) return;
+        if (checkpoint.bytes > (server.up?.bytes ?? -1))
+          server.progressAt.up = performance.now();
         server.up = checkpoint;
         if (!run.#stalled)
           run.#live.receiver(id, checkpoint, performance.now());
@@ -850,14 +871,23 @@ export class Run implements NetworkRunner {
     if (activity.stage === "latency")
       return this.#stallLatency(server, info.detail ?? "Latency interrupted");
     const abort = new AbortController();
-    const timer = setTimeout(() => {
-      if (server.recovery?.abort === abort)
-        this.#remove(
-          server,
-          "connection-lost",
-          info.detail ?? "Server stopped delivering measured data",
-        );
-    }, STAGE_RECOVERY_BUDGET_MS);
+    const now = performance.now();
+    // Silence across a page timer gap is the page's, not the server's.
+    const quietMs =
+      now - this.#lastRealNow > TIMER_GAP_MS
+        ? 0
+        : now - server.progressAt[info.direction ?? activity.transfer[0]];
+    const timer = setTimeout(
+      () => {
+        if (server.recovery?.abort === abort)
+          this.#remove(
+            server,
+            info.reason,
+            info.detail ?? "Server stopped delivering measured data",
+          );
+      },
+      Math.max(0, DIRECTION_PROGRESS_WINDOW_MS - quietMs),
+    );
     server.recovery = { abort, timer, info };
     this.#live.restart(server.server.id, server.down);
     this.#cancelEarly();
@@ -889,7 +919,7 @@ export class Run implements NetworkRunner {
       server.latency.stages[stage].markIncomplete();
       this.#failure(server, "latency", "connection-lost", detail);
       this.#updateStalled();
-    }, STAGE_RECOVERY_BUDGET_MS);
+    }, LATENCY_RECOVERY_BUDGET_MS);
     this.#updateStalled();
   }
 
@@ -940,13 +970,23 @@ export class Run implements NetworkRunner {
   #failure(
     server: Participant,
     scope: ServerFailure["scope"],
-    reason: string,
+    reason: FailureReason,
     message: string,
   ): void {
-    const stage = this.#activity?.stage;
-    if (!stage) return;
-    const serverId = server.server.id;
+    const failure = this.#record(server.server.id, scope, reason, message);
+    if (failure)
+      this.#emit({ type: "serverFailure", failure, participants: this.#ids() });
+  }
+
+  #record(
+    serverId: string,
+    scope: ServerFailure["scope"],
+    reason: FailureReason,
+    message: string,
+    stage = this.#activity?.stage,
+  ): ServerFailure | undefined {
     if (
+      !stage ||
       this.#failures.some(
         (old) =>
           old.serverId === serverId &&
@@ -965,17 +1005,12 @@ export class Run implements NetworkRunner {
       message: message.slice(0, 256),
     };
     this.#failures.push(failure);
-    this.#emit({ type: "serverFailure", failure, participants: this.#ids() });
+    return failure;
   }
 
-  #remove(server: Participant, reason: string, message: string): void {
+  #remove(server: Participant, reason: FailureReason, message: string): void {
     if (server.removed || this.#completed || !this.#running) return;
     const activity = this.#activity;
-    if (!this.#hasMeasured)
-      return this.#fail(
-        "connection-lost",
-        `${server.server.name}: ${message}. Resolve the selection before starting.`,
-      );
     if (activity?.stage === "latency") {
       server.latency.failed.add("latency");
       server.latency.stages.latency.markIncomplete();
@@ -996,7 +1031,18 @@ export class Run implements NetworkRunner {
     this.#epoch++;
     const survivors = this.#ids();
     this.#updateStalled();
-    if (!survivors.length) return this.#skipStage();
+    // A sole server skips to its next stage; several that all fail end the run as incomplete.
+    if (!survivors.length && this.#hasMeasured)
+      return this.#servers.length === 1 ? this.#skipStage() : this.finish();
+    if (!survivors.length)
+      return this.#fail(
+        reason === "connection-lost" ||
+          reason === "timeout" ||
+          reason === "protocol-error"
+          ? reason
+          : "transport-unavailable",
+        `All selected servers failed. ${server.server.name}: ${message}`,
+      );
     // Survivors start a fresh fixed-membership interval.
     if (activity && this.#measuring && isTransfer(activity.stage))
       this.#aggregate.begin(activity.stage, survivors, this.#now(), "dropout");
@@ -1024,12 +1070,17 @@ export class Run implements NetworkRunner {
     );
   }
 
-  /** A timer gap revokes adaptive confirmation and presentation continuity. */
+  /** A timer gap starts a new interval, so no headline, early finish or live rate spans it. */
   #resetInterval(): void {
     this.#cancelEarly();
     this.#resetStability();
     this.#live.reset(this.#counts());
     this.#breakContinuity();
+    const stage = this.#activity?.stage;
+    if (!this.#measuring || !stage || !isTransfer(stage)) return;
+    for (const server of this.#participants()) server.up = null;
+    this.#aggregate.begin(stage, this.#ids(), this.#now(), "evidence-resumed");
+    this.#boundary();
   }
 
   #resetStability(): void {
@@ -1082,7 +1133,7 @@ export class Run implements NetworkRunner {
   #canComplete(phase: TransportRole): boolean {
     if (phase !== "latency")
       return (
-        !!this.#aggregate.current?.complete &&
+        this.#aggregate.sufficient &&
         this.#participants().every((server) => !server.recovery)
       );
     const servers = this.#latencyParticipants();
@@ -1162,6 +1213,35 @@ export class Run implements NetworkRunner {
     if (result) this.#emit({ type: "stageResult", stage: phase, result });
   }
 
+  /** A configured stage without every result lane has failed and names why. */
+  #status(stage: TransportRole, lanes: unknown[]): StageStatus {
+    const cfg = this.#cfg!;
+    if (!cfg.stages[stage] || !(cfg.duration[`${stage}Ms`] > 0))
+      return "not-run";
+    const scope = stage === "latency" ? "latency" : "throughput";
+    const failed = () =>
+      this.#failures.some(
+        (failure) => failure.stage === stage && failure.scope === scope,
+      );
+    if (lanes.every(Boolean)) return failed() ? "partial" : "complete";
+    if (!this.#entered.has(stage) || failed()) return "failed";
+    const ids =
+      stage === "latency"
+        ? [this.#latencySource.server.id]
+        : (this.#aggregate.intervals.findLast(
+            (interval) => interval.stage === stage,
+          )?.participants ?? this.#ids());
+    for (const id of ids)
+      this.#record(
+        id,
+        scope,
+        "insufficient-evidence",
+        "Too little measured evidence for a result",
+        stage,
+      );
+    return "failed";
+  }
+
   #complete(): void {
     this.#running = false;
     this.#completed = true;
@@ -1169,29 +1249,38 @@ export class Run implements NetworkRunner {
     this.#finalize(this.#phase);
     const durationMs = Math.max(0, performance.now() - this.#t0);
     const source = this.#latencySource.latency;
-    const stable = this.#completedEarly.has("bidirectional");
+    const bidirectional = cfg.stages.bidirectional
+      ? this.#aggregate.result(
+          "bidirectional",
+          this.#completedEarly.has("bidirectional"),
+        )
+      : null;
+    const lanes = {
+      ...this.#results,
+      bidirectional: bidirectional && [bidirectional.down, bidirectional.up],
+    };
+    const stages = Object.fromEntries(
+      STAGES.map((stage) => [
+        stage,
+        this.#status(stage, [lanes[stage]].flat()),
+      ]),
+    ) as RunResult["stages"];
+    const statuses = Object.values(stages);
     const result: RunResult = {
       ...this.#results,
-      bidirectional: cfg.stages.bidirectional
-        ? this.#aggregate.result("bidirectional", stable)
-        : null,
+      bidirectional,
+      stages,
       bufferbloat: source.bufferbloat(),
       latencyByStage: source.summaries(),
       multiServer: this.details(),
-      outcome: "complete",
+      outcome: statuses.includes("failed")
+        ? "incomplete"
+        : this.#failures.length
+          ? "partial"
+          : "complete",
       startedAt: Date.now() - durationMs,
       durationMs,
     };
-    // A stage that ended without its result makes the run incomplete.
-    const missing = (["latency", "download", "upload"] as const).some(
-      (stage) => cfg.stages[stage] && !result[stage],
-    );
-    const bidirectional =
-      result.bidirectional &&
-      (result.bidirectional.down ?? result.bidirectional.up);
-    if (missing || (cfg.stages.bidirectional && !bidirectional))
-      result.outcome = "incomplete";
-    else if (this.#failures.length) result.outcome = "partial";
     this.#release();
     this.#phase = "complete";
     this.#emit({ type: "complete", result });

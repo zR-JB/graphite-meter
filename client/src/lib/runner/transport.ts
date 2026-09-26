@@ -1,6 +1,7 @@
 // One owner per server stage: its byte lanes, upload receiver and ping channel.
 import type {
   ConnectionRole,
+  FailureReason,
   FlowDirection,
   LatencyObservation,
   PhaseActivity,
@@ -64,7 +65,7 @@ export interface ParticipantHost {
   stallLatency(detail: string): void;
   resumeLatency(): void;
   /** A terminal failure of this server's current stage resources. */
-  fail(reason: string, message: string): void;
+  fail(reason: FailureReason, message: string): void;
   authenticationRequired(role: ConnectionRole): void;
   /** A locally timed upload completion, for presentation only. */
   uploadHint(lane: number, bytes: number, elapsedMs: number): void;
@@ -242,10 +243,15 @@ class LaneSet {
     for (const lane of this.#lanes) lane?.measure(this.#seq);
   }
 
-  setStalled(stalled: boolean, detail?: string, cause?: RecoveryCause): void {
+  setStalled(
+    stalled: boolean,
+    detail?: string,
+    cause?: RecoveryCause,
+    reason: FailureReason = "connection-lost",
+  ): void {
     if (this.stalled === stalled) return;
     this.stalled = stalled;
-    this.stage.stallChanged(detail, cause, this.dir);
+    this.stage.stallChanged(reason, detail, cause, this.dir);
   }
 
   /** Measured progress re-arms one timer; silence past the window stalls this direction alone. */
@@ -263,7 +269,13 @@ class LaneSet {
       const quietMs = performance.now() - this.#progressAt;
       if (quietMs < DIRECTION_PROGRESS_WINDOW_MS)
         this.#check(DIRECTION_PROGRESS_WINDOW_MS - quietMs);
-      else this.setStalled(true, `${this.dir} direction carried no data`);
+      else
+        this.setStalled(
+          true,
+          `${this.dir} direction carried no data`,
+          undefined,
+          "timeout",
+        );
     }, delayMs);
   }
 
@@ -306,7 +318,7 @@ class LaneSet {
       return this.setStalled(true, detail, cause);
     if (!recoverable)
       return this.stage.host.fail(
-        "protocol-error",
+        /\bHTTP (429|503)\b/.test(detail) ? "server-busy" : "protocol-error",
         `${this.dir} stream ${index} failed: ${detail}`,
       );
     if (this.measuring) this.setStalled(true, detail);
@@ -445,7 +457,7 @@ export class ServerStage implements StageTransport {
     } catch (cause) {
       if (!signal.aborted && !this.#abort.signal.aborted)
         this.host.fail(
-          "protocol-error",
+          "preparation-failed",
           cause instanceof Error ? cause.message : String(cause),
         );
       return;
@@ -457,6 +469,7 @@ export class ServerStage implements StageTransport {
   }
 
   stallChanged(
+    reason: FailureReason,
     detail?: string,
     recoveryCause?: RecoveryCause,
     direction?: FlowDirection,
@@ -467,7 +480,7 @@ export class ServerStage implements StageTransport {
     if (!stalled) return this.host.resume();
     const transport = this.#paths.throughput.target.transport;
     this.host.stall({
-      reason: "connection-lost",
+      reason,
       transport,
       detail,
       recoveryCause,
@@ -479,7 +492,7 @@ export class ServerStage implements StageTransport {
     this.discard();
     reportServerAuthentication(this.#paths.credentials, this.host, role);
     this.host.fail(
-      "connection-lost",
+      "sign-in-required",
       `Sign in again to measure ${role === "throughput" ? "throughput" : "latency"}`,
     );
   }
@@ -727,7 +740,10 @@ class UploadReceiver {
           event.cause,
         )
       )
-        this.stage.host.fail("protocol-error", event.detail);
+        this.stage.host.fail(
+          event.cause === "capacity-refusal" ? "server-busy" : "protocol-error",
+          event.detail,
+        );
       else lanes!.setStalled(true, event.detail, event.cause);
     } else if (event.type === "stall") {
       if (measuring && performance.now() - this.#checkpointAt >= 500)

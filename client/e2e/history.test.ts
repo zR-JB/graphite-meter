@@ -74,7 +74,6 @@ function record(index: number, completedAt = base - index * 60_000) {
     },
     ipVersion: 6,
     client: { build: "e2e" },
-    failures: [],
     wireEstimates: null,
   };
   return value;

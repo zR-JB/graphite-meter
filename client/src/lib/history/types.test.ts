@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { buildHistoryRecord, isHistoryRecord } from "./types";
+import { buildHistoryRecord, incoherence, isHistoryRecord } from "./types";
+import { DEFAULT_CONFIG } from "../state/defaults";
 import type { RunResult } from "../runner/contract";
 import { testPreparedPaths } from "../runner/test-helpers.testutil";
 
@@ -74,10 +75,24 @@ const result: RunResult = {
         reason: "timeout",
         message: "HTTP 503",
       },
+      {
+        serverId: "a",
+        stage: "bidirectional",
+        atMs: 9,
+        scope: "throughput",
+        reason: "insufficient-evidence",
+        message: "Too little measured evidence for a result",
+      },
     ],
     servers: [],
   },
-  outcome: "partial",
+  outcome: "incomplete",
+  stages: {
+    latency: "complete",
+    download: "complete",
+    upload: "failed",
+    bidirectional: "partial",
+  },
   startedAt: 100,
   durationMs: 80,
 };
@@ -175,12 +190,39 @@ test("round-trips current records, including per-server details, and rejects oth
     expect(isHistoryRecord({ ...record, schemaVersion })).toBe(false);
 });
 
+test("a record cannot claim more than its stages and evidence support", () => {
+  const record = serverHistoryRecord();
+  const config = {
+    stages: {
+      latency: true,
+      download: true,
+      upload: true,
+      bidirectional: false,
+    },
+    duration: { ...DEFAULT_CONFIG.duration, downloadMs: 2_000 },
+    adaptive: DEFAULT_CONFIG.adaptive,
+  };
+  expect(incoherence(record, config)).toEqual([
+    "download is complete without 800 ms of evidence",
+    "download covers 0 of 2000 ms",
+    "bidirectional is partial but planned false",
+  ]);
+  const silent = structuredClone(record);
+  silent.multiServer!.failures = [];
+  silent.outcome = "complete";
+  expect(incoherence(silent)).toContain(
+    "upload is failed without a stated reason",
+  );
+  expect(incoherence(silent)).toContain(
+    "outcome complete should be incomplete",
+  );
+});
+
 test("corrupted saved shapes are skipped before they reach rendering", () => {
   const valid = serverHistoryRecord();
   const lanes = valid.stages.latency.lanes;
   const cases: unknown[] = [
     { ...valid, stages: null },
-    { ...valid, failures: {} },
     { ...valid, durationMs: "1" },
     { ...valid, completedAt: 1e20 },
     {

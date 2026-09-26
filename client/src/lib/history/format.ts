@@ -64,7 +64,6 @@ export function historyOutcome(record: HistoryRecord): Outcome {
   if (record.outcome === "incomplete") return "incomplete";
   const { latency, download, upload, bidirectional } = record.stages;
   return record.outcome === "partial" ||
-    record.failures.length > 0 ||
     (record.multiServer?.failures.length ?? 0) > 0 ||
     [latency, download, upload, bidirectional].some(
       ({ status }) => status === "partial" || status === "failed",

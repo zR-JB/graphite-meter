@@ -1,36 +1,30 @@
 import type { WireEstimates } from "./wire";
-import type {
-  PreparedPaths,
-  RunResult,
-  ThroughputResult,
-  LatencyResult,
-  TerminationReason,
-  TransportKind,
+import {
+  FAILURE_REASONS,
+  type PreparedPaths,
+  type RunResult,
+  type RunnerConfig,
+  type StageStatus,
+  type ThroughputResult,
+  type LatencyResult,
+  type TransportKind,
+  type TransportRole,
 } from "../runner/contract";
 import { createUuid } from "../uuid";
 import {
   latencyLanes,
+  MIN_EVIDENCE_MS,
+  STAGES,
   type LatencyLaneSnapshot,
   type MultiServerResult,
-  type ServerFailure,
 } from "../runner/measure";
+
+export type { StageStatus };
 
 const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
-const HISTORY_FAILURE_STAGES = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const;
 const MAX_HISTORY_TEXT_LENGTH = 256;
 
-export type StageStatus = "complete" | "partial" | "failed" | "not-run";
-interface FailureSnapshot {
-  stage: "latency" | "download" | "upload" | "bidirectional";
-  direction: "down" | "up" | null;
-  reason: Exclude<TerminationReason, "user-abort">;
-}
 export interface ThroughputSnapshot {
   reportedBytesPerSec: number;
   peakBytesPerSec: number;
@@ -107,7 +101,6 @@ export interface HistoryRecord {
   };
   ipVersion: 4 | 6 | null;
   client: { build: string };
-  failures: FailureSnapshot[];
   wireEstimates: WireEstimates | null;
 }
 
@@ -140,34 +133,6 @@ function latency(value: LatencyResult | null): LatencySnapshot | null {
   const { idleMs: _headline, ...snapshot } = value;
   return snapshot;
 }
-function status(result: unknown, failure: unknown): StageStatus {
-  return result
-    ? failure
-      ? "partial"
-      : "complete"
-    : failure
-      ? "failed"
-      : "not-run";
-}
-function bidirectionalStatus(
-  result: RunResult["bidirectional"],
-  failure: unknown,
-): StageStatus {
-  const lanes = result ? [result.down, result.up].filter(Boolean).length : 0;
-  if (lanes === 2 && !failure) return "complete";
-  if (lanes > 0) return "partial";
-  return failure ? "failed" : "not-run";
-}
-/** The first failure of each stage in that stage's own scope. */
-function stageFailures(
-  failures: readonly ServerFailure[],
-): Partial<Record<FailureSnapshot["stage"], ServerFailure>> {
-  const byStage: Partial<Record<FailureSnapshot["stage"], ServerFailure>> = {};
-  for (const failure of failures)
-    if ((failure.scope === "latency") === (failure.stage === "latency"))
-      byStage[failure.stage] ??= failure;
-  return byStage;
-}
 function historyText(value: string): string {
   return value.slice(0, MAX_HISTORY_TEXT_LENGTH);
 }
@@ -186,13 +151,8 @@ export function buildHistoryRecord(
   context: HistoryBuildContext,
   completedAt = Date.now(),
 ): HistoryRecord {
-  const failures = stageFailures(result.multiServer.failures);
-  const bidi = result.bidirectional;
-  const down = throughput(result.download);
-  const upload = throughput(result.upload);
-  const bidiDown = throughput(bidi?.down ?? null);
-  const bidiUp = throughput(bidi?.up ?? null);
-  return {
+  const { stages } = result;
+  const record: HistoryRecord = {
     schemaVersion: HISTORY_SCHEMA_VERSION,
     multiServer: structuredClone(result.multiServer),
     outcome: result.outcome,
@@ -202,22 +162,19 @@ export function buildHistoryRecord(
     durationMs: result.durationMs,
     stages: {
       latency: {
-        status: status(result.latency, failures.latency),
+        status: stages.latency,
         result: latency(result.latency),
         lanes: latencyLanes(result.latencyByStage),
       },
       download: {
-        status: status(result.download, failures.download),
-        result: down,
+        status: stages.download,
+        result: throughput(result.download),
       },
-      upload: {
-        status: status(result.upload, failures.upload),
-        result: upload,
-      },
+      upload: { status: stages.upload, result: throughput(result.upload) },
       bidirectional: {
-        status: bidirectionalStatus(bidi, failures.bidirectional),
-        down: bidiDown,
-        up: bidiUp,
+        status: stages.bidirectional,
+        down: throughput(result.bidirectional?.down ?? null),
+        up: throughput(result.bidirectional?.up ?? null),
       },
     },
     bufferbloat: result.bufferbloat && structuredClone(result.bufferbloat),
@@ -252,15 +209,83 @@ export function buildHistoryRecord(
     },
     ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
     client: { build: historyText(context.clientBuild) },
-    failures: Object.values(failures).map((failure) => ({
-      stage: failure.stage,
-      direction: null,
-      reason: failure.reason as FailureSnapshot["reason"],
-    })),
     wireEstimates: context.wireEstimates
       ? structuredClone(context.wireEstimates)
       : null,
   };
+  const problems = incoherence(record);
+  if (problems.length && record.outcome !== "incomplete") {
+    console.error("Incoherent result saved as incomplete:", problems);
+    record.outcome = "incomplete";
+  }
+  return record;
+}
+
+const lanesOf = (stage: HistoryRecord["stages"][TransportRole]) =>
+  "down" in stage ? [stage.down, stage.up] : [stage.result];
+
+/** Invariants a saved record must hold; with the run's config, planned stages must also be covered. */
+export function incoherence(
+  record: HistoryRecord,
+  config?: Pick<RunnerConfig, "stages" | "duration" | "adaptive">,
+): string[] {
+  const problems: string[] = [];
+  const failures = record.multiServer?.failures ?? [];
+  const intervals = record.multiServer?.intervals ?? [];
+  for (const failure of failures)
+    if (!FAILURE_REASONS.includes(failure.reason))
+      problems.push(`unknown failure reason ${failure.reason}`);
+  for (const name of STAGES) {
+    const { status } = record.stages[name];
+    const lanes = lanesOf(record.stages[name]);
+    const scope = name === "latency" ? "latency" : "throughput";
+    const explained = failures.some(
+      (f) => f.stage === name && f.scope === scope,
+    );
+    const spans = intervals.filter((i) => i.stage === name);
+    const planned = !!config?.stages[name] && config.duration[`${name}Ms`] > 0;
+    if (config && planned === (status === "not-run"))
+      problems.push(`${name} is ${status} but planned ${planned}`);
+    if ((status === "failed" || status === "partial") && !explained)
+      problems.push(`${name} is ${status} without a stated reason`);
+    if (status === "complete" && (explained || !lanes.every(Boolean)))
+      problems.push(
+        `${name} is complete without every result or with a failure`,
+      );
+    if (status === "not-run" && (lanes.some(Boolean) || spans.length))
+      problems.push(`${name} is not-run but has evidence`);
+    if (name !== "latency" && status === "complete") {
+      const window = spans.at(-1)?.headline;
+      const clocks = [...(window?.down ?? []), ...(window?.up ?? [])];
+      if (
+        !window ||
+        !clocks.length ||
+        clocks.some((c) => c.durationMs < MIN_EVIDENCE_MS)
+      )
+        problems.push(`${name} is complete without 800 ms of evidence`);
+      const plannedMs = config?.duration[`${name}Ms`] ?? 0;
+      const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);
+      const floor = config?.adaptive.enabled
+        ? Math.max(
+            config.adaptive.minCoverageRatio,
+            1 - config.adaptive.maxPhaseReductionRatio,
+          )
+        : 0.75;
+      if (config && covered < plannedMs * floor)
+        problems.push(
+          `${name} covers ${Math.round(covered)} of ${plannedMs} ms`,
+        );
+    }
+  }
+  const statuses = STAGES.map((name) => record.stages[name].status);
+  const expected = statuses.includes("failed")
+    ? "incomplete"
+    : failures.length
+      ? "partial"
+      : "complete";
+  if (record.outcome !== expected)
+    problems.push(`outcome ${record.outcome} should be ${expected}`);
+  return problems;
 }
 
 type Plain = Record<string, unknown>;
@@ -302,7 +327,7 @@ const wireShape = (value: unknown): boolean => {
   if (!object(value) || !object(value.breakdown)) return false;
   const breakdown = value.breakdown;
   return (
-    HISTORY_FAILURE_STAGES.slice(1).every(
+    STAGES.slice(1).every(
       (stage) => breakdown[stage] === null || object(breakdown[stage]),
     ) &&
     numbers(
@@ -314,7 +339,7 @@ const wireShape = (value: unknown): boolean => {
 };
 const lanes = (value: unknown): boolean =>
   object(value) &&
-  HISTORY_FAILURE_STAGES.every(
+  STAGES.every(
     (stage) =>
       value[stage] == null ||
       (object(value[stage]) && numbers(value[stage], ["count"])),
@@ -353,7 +378,6 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     (value.startedAt as number) > (value.completedAt as number) ||
     !numbers(value, ["durationMs", "totalBytes"]) ||
     !objects(value, ["stages", "server", "transport", "client"]) ||
-    !Array.isArray(value.failures) ||
     (value.multiServer !== undefined && !serverDetails(value.multiServer)) ||
     (value.wireEstimates !== null && !wireShape(value.wireEstimates))
   )

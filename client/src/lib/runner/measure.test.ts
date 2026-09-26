@@ -330,7 +330,7 @@ test("download sums consumed bytes and upload sums receiver means, never receive
   });
 });
 
-test("measured zero is valid, and one missing or unchanged receiver skips only its boundary", () => {
+test("a window that moved nothing has no headline; one missing or unchanged receiver skips only its boundary", () => {
   const m = new ThroughputAggregate();
   m.begin("upload", ["a", "b"], 0);
   m.observe(
@@ -343,7 +343,7 @@ test("measured zero is valid, and one missing or unchanged receiver skips only i
       { a: receiver("a", 0, 1e9 + 1), b: receiver("b", 0, 1e9 + 1) },
     ),
   );
-  expect(m.result("upload", false).up?.reportedBytesPerSec).toBe(0);
+  expect(m.result("upload", false).up).toBeNull();
   expect(
     m.observe(
       boundary(1_250, {}, { a: receiver("a", 0, 1_250e6 + 1), b: null }),
@@ -385,13 +385,19 @@ test("measured zero is valid, and one missing or unchanged receiver skips only i
   expect(m.result("upload", false).up).toBeNull();
 });
 
-test("a whole stage reports what it measured; later intervals and stable windows need 800 ms in every clock", () => {
+test("every headline needs 800 ms in every clock and moved bytes", () => {
   const m = new ThroughputAggregate();
   m.begin("download", ["a", "b"], 0);
   m.observe(boundary(0, { a: 0, b: 0 }));
   m.observe(boundary(500, { a: 500, b: 2_000 }));
-  expect(m.result("download", false).down?.reportedBytesPerSec).toBe(5_000);
+  expect(m.result("download", false).down).toBeNull();
+  const idle = new ThroughputAggregate();
+  idle.begin("download", ["a"], 0);
+  idle.observe(boundary(0, { a: 0 }));
+  idle.observe(boundary(1_000, { a: 0 }));
+  expect(idle.result("download", false).down).toBeNull();
   m.observe(boundary(2_000, { a: 2_000, b: 8_000 }));
+  expect(m.result("download", false).down?.reportedBytesPerSec).toBe(5_000);
   m.begin("download", ["a"], 2_000, "dropout");
   m.observe(boundary(2_000, { a: 2_000 }));
   m.observe(boundary(2_500, { a: 3_500 }));

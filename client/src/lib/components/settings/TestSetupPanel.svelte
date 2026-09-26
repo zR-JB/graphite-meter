@@ -1,7 +1,11 @@
 <script lang="ts">
   import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
-  import { DURATION_PRESETS } from "../../state/defaults";
+  import {
+    clampDuration,
+    DURATION_LIMITS,
+    DURATION_PRESETS,
+  } from "../../state/defaults";
   import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
@@ -119,7 +123,6 @@
       controller.configureRun({ duration: { ...DURATION_PRESETS[preset] } });
     }
   }
-  const TRANSFER_MIN_MS = 1000;
   let rejected = $state<"duration" | "gauge" | "streams" | null>(null);
   function commitNumber(
     event: Event,
@@ -140,13 +143,11 @@
     store.startError || "This change cannot apply to the current run.",
   );
   function setDuration(key: DurationKey, event: Event) {
-    const transfer = key !== "warmupMs" && key !== "latencyMs";
     commitNumber(
       event,
       "duration",
       store.config.duration[key],
-      (value) =>
-        value <= 0 ? 0 : transfer ? Math.max(TRANSFER_MIN_MS, value) : value,
+      (value) => clampDuration(key, value),
       (value) =>
         controller.configureRun({
           duration: { ...store.config.duration, [key]: value },
@@ -274,7 +275,8 @@
             <span>{label} ms</span>
             <input
               type="number"
-              min="0"
+              min={DURATION_LIMITS[key][0]}
+              max={DURATION_LIMITS[key][1]}
               step="500"
               disabled={store.preparing}
               value={store.config.duration[key]}

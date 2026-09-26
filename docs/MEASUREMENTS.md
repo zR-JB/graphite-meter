@@ -53,12 +53,17 @@ native client measures the full window.
 - **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
   zero-duration component skips that boundary; the next valid boundary spans the gap on each receiver's clock. A
   replaced or regressing receiver starts a fresh interval.
-- **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, evidence stopped for 1.5 s
-  without recovery within its budget, or a refused grant (which asks for sign-in) remove that server. A missed final boundary alone never does. The
-  interval ends, survivors start a new one and stability resets. A latency-only failure keeps throughput.
+- **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, measured evidence that stops
+  for 1.5 s (browser) or 2 s (native), or a refused grant (which asks for sign-in) remove that server in the stage
+  where it happened. A missed final boundary alone never does. The interval ends, survivors start a new one and
+  stability resets. A server that cannot prepare a stage is removed the same way; the run fails only when no server
+  survives. A removed server stays out for the rest of the run, except that a sole server retries at the next
+  stage. A latency-only failure keeps throughput.
 - **Final headline** needs at least 800 ms of client evidence in the latest interval and, for upload, 800 ms in
-  every receiver clock; otherwise it is unavailable. Earlier intervals and failed servers' measurements remain in
-  per-server results.
+  every receiver clock, and a window that moved no bytes has none; otherwise the stage fails with a stated reason
+  and the run is Incomplete. Transfer stages last at least 1 s, and early finish waits for that evidence. Earlier
+  intervals and failed servers' measurements remain in per-server results.
+- **Live duration changes** set the active stage's end: a shortened stage ends at once and keeps its evidence.
 - **Byte ledgers** count unique measured bytes once, independent of window selection.
 - **Wire-rate estimates** are computed per component from the chosen window's protocol and IP-family evidence;
   missing evidence makes the estimate unavailable.
@@ -72,7 +77,8 @@ server never retargets probes or changes saved statistics. The native client pro
 
 A hidden run continues: workers keep timing bytes and probes while page timers may be throttled. The schedule still
 enters every warmup and stage in order; one late tick never skips past the current segment. A timer gap over 1.5 s
-restarts stability confirmation, so early finish never relies on evidence across the gap.
+starts a new interval and restarts stability confirmation, so no headline or early finish spans the gap; a stage
+whose remaining evidence is too short fails.
 
 ## Latency probing
 

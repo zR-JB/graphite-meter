@@ -14,14 +14,22 @@ import { buildHistoryRecord, isHistoryRecord } from "../history/types";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 
 let restore: () => void;
+const clock = performance.now;
 beforeEach(() => {
   restore = stubGlobals(TEST_BUILD_TOKENS);
   jest.useFakeTimers();
 });
 afterEach(() => {
+  performance.now = clock;
   jest.useRealTimers();
   restore();
 });
+
+/** Page timers stop while the monotonic clock runs on. */
+function suspend(ms: number): void {
+  const now = performance.now.bind(performance);
+  performance.now = () => now() + ms;
+}
 
 async function advance(ms: number): Promise<void> {
   for (let elapsed = 0; elapsed < ms; elapsed += 5) {
@@ -290,7 +298,7 @@ test("a late dropout leaves the headline unavailable while the failed stage keep
   ]);
 });
 
-test("when every server fails a stage it ends at once and the next stage starts again with all of them", async () => {
+test("several servers that all fail end the run; a sole server skips to its next stage", async () => {
   let downloadFailures = 0;
   const drop = {
     measure: (host: ParticipantHost, activity: PhaseActivity) => {
@@ -310,12 +318,27 @@ test("when every server fails a stage it ends at once and the next stage starts 
   const result = await h.result();
   expect(downloadFailures).toBe(2);
   expect(h.phases()).not.toContain("aborted");
-  expect(h.phases()).toContain("upload");
-  expect(result.download).toBeNull();
-  near(result.upload?.reportedBytesPerSec, 4_000);
+  expect(h.phases()).not.toContain("upload");
+  expect(result.stages).toMatchObject({ download: "failed", upload: "failed" });
   expect(result.outcome).toBe("incomplete");
-  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  expect(result.multiServer.participants).toEqual([]);
   expect(h.events.filter((event) => event.type === "complete")).toHaveLength(1);
+
+  const sole = await harness(
+    [{ id: "self", ...drop }],
+    {
+      download: true,
+      upload: true,
+    },
+    { downloadMs: 1_400, uploadMs: 1_400 },
+  );
+  sole.start();
+  const skipped = await sole.result();
+  expect(skipped.stages).toMatchObject({
+    download: "failed",
+    upload: "complete",
+  });
+  expect(skipped.outcome).toBe("incomplete");
 });
 
 test("a latency-only failure keeps both throughput participants", async () => {
@@ -365,27 +388,48 @@ test("a throughput dropout reports discarded loaded probes before the participan
   near(result.download?.reportedBytesPerSec, 3_000);
 });
 
-test("preparation fails the run before measurement, and later removes only its server", async () => {
+test("a server that cannot prepare is dropped; the run fails only when none survive", async () => {
+  const refuse = { prepare: () => Promise.reject(new Error("fixture")) };
   const early = await harness(
-    two({ prepare: () => Promise.reject(new Error("fixture")) }),
+    two(refuse),
     { download: true },
     {
       downloadMs: 1_000,
     },
   );
   early.start();
-  await expect(early.result()).rejects.toMatchObject({
-    reason: "protocol-error",
-    message: expect.stringMatching(/^a: fixture/),
+  expect(early.phases()).toEqual(["connecting"]);
+  const survived = await early.result();
+  near(survived.download?.reportedBytesPerSec, 3_000);
+  expect(survived.outcome).toBe("partial");
+  expect(survived.multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "download", reason: "preparation-failed" },
+  ]);
+  const none = await harness(
+    two(refuse, refuse),
+    { download: true },
+    {
+      downloadMs: 1_000,
+    },
+  );
+  none.start();
+  await expect(none.result()).rejects.toMatchObject({
+    reason: "transport-unavailable",
+    message: expect.stringMatching(/^All selected servers failed/),
   });
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],
     [new DOMException("late", "TimeoutError"), "timeout"],
   ] as const) {
+    const reject = {
+      prepare: () => Promise.reject(new Error("no", { cause })),
+    };
     const refused = await harness(
-      two({ prepare: () => Promise.reject(new Error("no", { cause })) }),
+      two(reject, reject),
       { download: true },
-      { downloadMs: 1_000 },
+      {
+        downloadMs: 1_000,
+      },
     );
     refused.start();
     await expect(refused.result()).rejects.toMatchObject({ reason });
@@ -590,6 +634,19 @@ test("evidence that stops late in a stage fails that stage, and a sole server st
   expect(result.multiServer.participants).toEqual(["b"]);
   expect(h.events.some((event) => event.type === "stall")).toBe(false);
 
+  // Evidence silent past the recovery window leaves the interval within the stage.
+  const early = await harness(
+    two({ measure: stall }),
+    { download: true },
+    { downloadMs: 3_500 },
+  );
+  early.start();
+  const dropped = await early.result();
+  const [, survivors] = dropped.multiServer.intervals;
+  expect(survivors).toMatchObject({ reason: "dropout", participants: ["b"] });
+  expect(survivors.startMs).toBeLessThan(2_300);
+  near(dropped.download?.reportedBytesPerSec, 3_000);
+
   const sole = await harness(
     [{ id: "self", measure: stall }],
     { download: true },
@@ -604,16 +661,36 @@ test("evidence that stops late in a stage fails that stage, and a sole server st
   await sole.result();
 });
 
-test("a suspended page enters every segment in order", async () => {
+test("a suspended page enters every segment in order and never folds the gap into evidence", async () => {
+  const frozen = await harness(
+    [{ id: "self" }],
+    { download: true },
+    {
+      downloadMs: 4_000,
+    },
+  );
+  frozen.start();
+  await advance(500);
+  suspend(4_000);
+  const lost = await frozen.result();
+  expect(lost.stages.download).toBe("failed");
+  expect(lost.multiServer.failures).toMatchObject([
+    { stage: "download", reason: "insufficient-evidence" },
+  ]);
+  expect(lost.multiServer.intervals.map((i) => i.reason)).toEqual([
+    "stage-start",
+    "evidence-resumed",
+  ]);
+
   const h = await harness(
     [{ id: "self" }],
     { download: true, upload: true },
-    { warmupMs: 200, downloadMs: 500, uploadMs: 500 },
+    { warmupMs: 200, downloadMs: 1_000, uploadMs: 1_000 },
   );
   h.start();
   await advance(20);
-  // One long timer gap never skips a segment.
-  jest.advanceTimersByTime(5_000);
+  // One long gap never skips a segment.
+  suspend(5_000);
   const result = await h.result();
   expect(h.phases()).toEqual([
     "connecting",

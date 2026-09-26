@@ -195,6 +195,12 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
       failures: [],
     },
     outcome: "complete",
+    stages: {
+      latency: "not-run",
+      download: "not-run",
+      upload: "not-run",
+      bidirectional: "not-run",
+    },
     startedAt: 0,
     durationMs: 0,
     ...overrides,

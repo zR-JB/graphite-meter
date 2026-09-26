@@ -1,6 +1,7 @@
 import type {
   AdaptiveDurationConfig,
   BufferbloatGrade,
+  FailureReason,
   FlowDirection,
   LatencyObservation,
   LatencyResult,
@@ -527,7 +528,7 @@ export interface ServerFailure {
   stage: TransportRole;
   atMs: number;
   scope: "throughput" | "latency";
-  reason: string;
+  reason: FailureReason;
   message: string;
 }
 export interface ServerMeasurementSummary {
@@ -622,6 +623,11 @@ export class ThroughputAggregate {
 
   get current(): AggregationInterval | null {
     return this.#open?.record ?? null;
+  }
+
+  /** The open interval could already report a headline. */
+  get sufficient(): boolean {
+    return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
 
   begin(
@@ -837,11 +843,9 @@ export class ThroughputAggregate {
     const window =
       stable && sufficient(record.headline) ? record.headline! : record.full;
     record.headline = window;
-    // An uninterrupted stage reports whatever it measured; a later interval needs the evidence floor.
-    const whole = record.reason === "stage-start" && window === record.full;
     const reduce = (dir: FlowDirection): ThroughputResult | null => {
       const rate = rateOf(window, dir);
-      if (rate === null || (!whole && !sufficient(window))) return null;
+      if (!rate || !sufficient(window)) return null;
       return {
         reportedBytesPerSec: rate,
         fullAverageBytesPerSec: rateOf(record.full!, dir)!,
@@ -871,7 +875,7 @@ export class ThroughputAggregate {
     );
     const component = record?.full?.[dir]?.find((c) => c.serverId === id);
     const open = record && this.#interval(record);
-    if (!component || !open || component.durationMs < MIN_EVIDENCE_MS)
+    if (!component?.bytes || !open || component.durationMs < MIN_EVIDENCE_MS)
       return null;
     const { rates } = open.servers.get(id)![dir];
     return {
