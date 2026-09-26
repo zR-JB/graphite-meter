@@ -42,7 +42,6 @@ type sampledBoundary struct {
 	misses   map[string]error
 }
 
-// sampler collects one interval's boundaries on its own clock; a restart replaces it.
 type sampler struct {
 	results chan sampledBoundary
 	finish  chan struct{}
@@ -369,8 +368,7 @@ func (s *stageRun) beginSampling(started time.Time, initial measurementBoundary)
 	}
 }
 
-// startSampler collects a boundary every tick and, once finished, a last one on the final budget. A tick read
-// late means the client itself stalled, so that boundary resumes evidence.
+// A tick read late means the client itself stalled, so its boundary resumes evidence.
 func (s *stageRun) startSampler() {
 	ctx, cancel := context.WithCancel(s.ctx)
 	own := &sampler{results: make(chan sampledBoundary), finish: make(chan struct{}), cancel: cancel}

@@ -30,7 +30,6 @@ func pause(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// restore replaces a lost resource through persist, before deadline.
 func restore(ctx context.Context, deadline time.Time, what string, attempt func(context.Context) error) error {
 	window := time.Until(deadline).Round(time.Millisecond)
 	windowCtx, cancel := context.WithDeadline(ctx, deadline)

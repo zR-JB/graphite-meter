@@ -6,7 +6,6 @@ import (
 	"unicode/utf8"
 )
 
-// unsafe marks C0, DEL and C1 controls and the bidi controls that reorder surrounding text.
 func unsafe(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }
 
 // SafeText reports whether s can reach a terminal as-is: valid UTF-8 without controls or bidi overrides.

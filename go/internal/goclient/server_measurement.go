@@ -304,7 +304,6 @@ func sumRates(components []ComponentWindow) *float64 {
 	return &sum
 }
 
-// evidence explains why components give no headline: under 800 ms on any clock, or no bytes moved at all.
 func evidence(components []ComponentWindow) error {
 	short := func(c ComponentWindow) bool { return c.Duration < minimumSurvivorEvidence }
 	switch {
@@ -316,8 +315,7 @@ func evidence(components []ComponentWindow) error {
 	return nil
 }
 
-// result is the headline of the stage's latest whole interval with enough evidence while a server is left, so a
-// late dropout keeps the interval before it.
+// result takes the latest whole interval with enough evidence, so a late dropout keeps the one before it.
 func (a *aggregateMeasurements) result(dir Direction) Result {
 	result := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	result.TotalBytes = a.total(dir)
@@ -353,7 +351,6 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 	return result
 }
 
-// serverResult is one server's share of the latest interval where its own component holds enough evidence.
 func (a *aggregateMeasurements) serverResult(id string, dir Direction) Result {
 	own := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	if server := a.servers[id]; server != nil {

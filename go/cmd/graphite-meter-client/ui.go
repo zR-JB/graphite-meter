@@ -98,7 +98,6 @@ type mark struct {
 
 var brailleDots = [4][2]rune{{0x01, 0x08}, {0x02, 0x10}, {0x04, 0x20}, {0x40, 0x80}}
 
-// chart draws each series as a braille line; NaN values leave gaps, never interpolated data.
 func (s styles) chart(lines []series, marks []mark, label func(float64) string, span float64, w, h int) string {
 	const axis = 13
 	cols, rows := max(w-axis, 4), max(h-2, 2)

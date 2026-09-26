@@ -187,7 +187,6 @@ func (c *coordinator) missingResults() bool {
 	return c.unavailable
 }
 
-// departure names why a removed server has no result of its own in stage.
 func (c *coordinator) departure(id string, stage Stage) error {
 	for _, f := range slices.Backward(c.failures) {
 		switch {

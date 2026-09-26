@@ -262,7 +262,6 @@ var laneRefusalStatus = map[string]int{
 	wire.LaneRevoked.Name: http.StatusForbidden,
 }
 
-// writeLaneRefusal answers an HTTP upload lane that ended as idle or revoked (api/uploadrefusals.txt).
 func writeLaneRefusal(w http.ResponseWriter, end wire.LaneEnd) {
 	w.Header().Set("X-Graphite-Upload-Refusal", end.Name)
 	http.Error(w, end.Reason, laneRefusalStatus[end.Name])

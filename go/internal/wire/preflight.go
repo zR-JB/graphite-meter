@@ -57,7 +57,6 @@ type LatencyTarget struct {
 	Protocol  string `json:"-"`
 }
 
-// TLS reports whether the target's origin is HTTPS.
 func (t ThroughputTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
 
 func (t LatencyTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
