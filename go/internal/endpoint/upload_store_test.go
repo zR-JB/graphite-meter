@@ -2,6 +2,8 @@ package endpoint
 
 import (
 	"encoding/base64"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -170,16 +172,65 @@ func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 	})
 }
 
+// At the global cap a new receiver displaces the oldest one that never received a byte, so clients that only
+// open feeds cannot hold the cap; receivers with bytes or a finish are never displaced.
+func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUploadStore()
+		fill := func(keep func(*uploadAgg)) []*uploadAgg {
+			var aggs []*uploadAgg
+			for i := range maxLiveUploads - int(s.live.Load()) {
+				id := s.Mint()
+				agg, access := s.getOrCreateFor(id, fmt.Sprint("watcher-", i%50))
+				if access != uploadAccessOK {
+					t.Fatalf("filler %d = %v", i, access)
+				}
+				keep(agg)
+				aggs = append(aggs, agg)
+				time.Sleep(time.Millisecond)
+			}
+			return aggs
+		}
+		watchers := fill(func(*uploadAgg) {})
+		upload := NewUpload(nil, s, nil)
+		if n, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err != nil || n != 4 {
+			t.Fatalf("lane at a cap of empty receivers = %d, %v", n, err)
+		}
+		select {
+		case <-watchers[0].expired:
+		default:
+			t.Fatal("the oldest empty receiver was not the one displaced")
+		}
+		for _, agg := range watchers[2:] {
+			agg.recordChunk(s.now(), 1)
+		}
+		watchers[1].finish()
+		if _, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err == nil {
+			t.Fatal("a receiver holding bytes or a finish was displaced")
+		}
+		select {
+		case <-watchers[1].expired:
+			t.Fatal("a finished receiver was displaced while its token could still recreate it")
+		default:
+		}
+	})
+}
+
+// fillStore holds the global cap with receivers that each accepted a byte.
+func fillStore(s *UploadStore) {
+	for range maxLiveUploads - int(s.live.Load()) {
+		agg, _ := s.getOrCreate(s.Mint())
+		agg.recordChunk(s.now(), 1)
+	}
+}
+
 func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := NewUploadStore()
-		s.getOrCreate(s.Mint())
+		agg, _ := s.getOrCreate(s.Mint())
+		agg.recordChunk(s.now(), 1)
 		time.Sleep(uploadIDTTL + time.Second)
-		for i := 1; i < maxLiveUploads; i++ {
-			if _, ok := s.getOrCreate(s.Mint()); !ok {
-				t.Fatalf("create %d below the cap was refused", i)
-			}
-		}
+		fillStore(s)
 		blocked := s.Mint()
 		if _, ok := s.getOrCreate(blocked); ok {
 			t.Fatal("create at the cap unexpectedly succeeded")

@@ -114,9 +114,7 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 				id = store.Mint()
 				store.getOrCreateFor(id, "different-owner")
 			case "over-cap":
-				for range maxLiveUploads {
-					store.getOrCreate(store.Mint())
-				}
+				fillStore(store)
 				id = store.Mint()
 			}
 			live := store.live.Load()
@@ -166,11 +164,7 @@ func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
 	}{
 		{"another client's lane", "other-owner", func(*UploadStore, string) {}, uploadAccessOwnerMismatch},
 		{"after finish", "owner", func(s *UploadStore, id string) { s.finishFor(id, "owner") }, uploadAccessInvalid},
-		{"over the global cap", "owner", func(s *UploadStore, _ string) {
-			for range maxLiveUploads {
-				s.getOrCreate(s.Mint())
-			}
-		}, uploadAccessGlobalFull},
+		{"over the global cap", "owner", func(s *UploadStore, _ string) { fillStore(s) }, uploadAccessGlobalFull},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewUploadStore()

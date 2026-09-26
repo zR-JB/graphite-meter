@@ -261,20 +261,22 @@ func (s *UploadStore) accessFor(id, owner string, join bool) (*uploadAgg, upload
 	if !s.validID(id) {
 		return nil, uploadAccessInvalid
 	}
-	if s.live.Add(1) > maxLiveUploads {
-		s.live.Add(-1)
-		return nil, uploadAccessGlobalFull
-	}
 	budget := uploadBudget(owner)
 	if budget != "" {
 		s.ownersMu.Lock()
-		if s.byOwner[budget] >= maxLiveUploadsPerClient {
-			s.ownersMu.Unlock()
-			s.live.Add(-1)
+		full := s.byOwner[budget] >= maxLiveUploadsPerClient
+		if !full {
+			s.byOwner[budget]++
+		}
+		s.ownersMu.Unlock()
+		if full {
 			return nil, uploadAccessClientFull
 		}
-		s.byOwner[budget]++
-		s.ownersMu.Unlock()
+	}
+	if s.live.Add(1) > maxLiveUploads && !s.evictEmptyLocked(sh) {
+		s.live.Add(-1)
+		s.releaseBudget(budget)
+		return nil, uploadAccessGlobalFull
 	}
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
 	agg.lastTouchMono.Store(s.now())
@@ -285,8 +287,46 @@ func (s *UploadStore) accessFor(id, owner string, join bool) (*uploadAgg, upload
 	return agg, uploadAccessOK
 }
 
-func (s *UploadStore) releaseOwner(agg *uploadAgg) {
-	budget := uploadBudget(agg.owner)
+// evictEmptyLocked reclaims the least recently touched receiver that has no bytes, lanes or finish, so
+// watchers alone cannot hold the global cap. It only tries shards other than the held one.
+func (s *UploadStore) evictEmptyLocked(held *uploadShard) bool {
+	var victim *uploadShard
+	var victimID string
+	var oldest int64
+	for i := range s.shards {
+		sh := &s.shards[i]
+		if sh != held && !sh.mu.TryLock() {
+			continue
+		}
+		for id, agg := range sh.m {
+			if touched := agg.lastTouchMono.Load(); agg.empty() && (victim == nil || touched < oldest) {
+				victim, victimID, oldest = sh, id, touched
+			}
+		}
+		if sh != held {
+			sh.mu.Unlock()
+		}
+	}
+	if victim == nil || victim != held && !victim.mu.TryLock() {
+		return false
+	}
+	agg, ok := victim.m[victimID]
+	evicted := ok && agg.empty()
+	if evicted {
+		delete(victim.m, victimID)
+		s.expire(agg)
+	}
+	if victim != held {
+		victim.mu.Unlock()
+	}
+	return evicted
+}
+
+func (a *uploadAgg) empty() bool {
+	return a.posts.Load() == 0 && a.bytes.Load() == 0 && !a.isFinished()
+}
+
+func (s *UploadStore) releaseBudget(budget string) {
 	if budget == "" {
 		return
 	}
@@ -330,7 +370,7 @@ func (s *UploadStore) get(id string) (*uploadAgg, bool) {
 func (s *UploadStore) expire(agg *uploadAgg) {
 	close(agg.expired)
 	s.live.Add(-1)
-	s.releaseOwner(agg)
+	s.releaseBudget(uploadBudget(agg.owner))
 }
 
 func (s *UploadStore) sweep(ttl time.Duration) {
