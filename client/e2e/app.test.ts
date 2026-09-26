@@ -94,6 +94,10 @@ test("a completed run fits every layout and theme without serious violations", a
   await open(page);
   await ready(page);
   await run(page);
+  // The completion toast fades on a timer; judge contrast after it has gone.
+  await expect(page.locator(".phase-toast.visible")).toHaveCount(0, {
+    timeout: 10_000,
+  });
   for (const [width, height] of viewports)
     for (const scheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });

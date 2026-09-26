@@ -149,10 +149,17 @@ test("metadata timeouts back off without starving later servers", async (page) =
   await open(page);
   const settings = await openSettings(page);
   const choices = settings.getByRole("group", { name: "Servers to test" });
+  const status = (name: string) =>
+    choices.locator("label", { hasText: name }).locator(".server-status");
   await expect(choices).toHaveAttribute("aria-busy", "true");
-  await expect(choices).toHaveAttribute("aria-busy", "false", {
-    timeout: 15_000,
-  });
+  await expect(
+    choices
+      .locator("label", { hasText: "Helsinki" })
+      .locator(".server-preflight"),
+  ).toHaveCount(1, { timeout: 15_000 });
+  await expect(status("Private")).toHaveText("Sign in", { timeout: 15_000 });
+  for (const held of [frankfurt.name, fleet[2].name])
+    await expect(status(held)).toHaveText("Unavailable", { timeout: 30_000 });
   const urls = fleet.map((server) => server.url);
   expect((await activity.read()).requests).toEqual(urls);
   await closeSettings(page);
