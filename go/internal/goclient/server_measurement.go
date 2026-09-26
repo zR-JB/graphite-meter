@@ -7,8 +7,11 @@ import (
 	"time"
 )
 
-const minimumSurvivorEvidence = 800 * time.Millisecond
-const maximumIntervals = 128
+const (
+	minimumSurvivorEvidence = 800 * time.Millisecond
+	minimumPeakWindow       = 500 * time.Millisecond
+	maximumIntervals        = 128
+)
 
 type ReceiverSnapshot struct {
 	ID           string
@@ -67,17 +70,24 @@ type uploadLedger struct {
 	maximum uint64
 }
 
+type componentKey struct {
+	server string
+	dir    Direction
+}
+
 type aggregateMeasurements struct {
-	intervals   []AggregationInterval
-	omitted     int
-	first, last *measurementBoundary
-	peaks       map[Direction]float64
-	samples     int
-	totals      map[string]byteLedger
-	stageTotals map[Stage]map[string]byteLedger
-	uploads     map[string]uploadLedger
-	downSeen    map[string]uint64
-	stage       Stage
+	intervals             []AggregationInterval
+	omitted               int
+	first, last, peakFrom *measurementBoundary
+	peaks                 map[Direction]float64
+	samples               int
+	serverPeaks           map[componentKey]float64
+	serverSamples         map[string]int
+	totals                map[string]byteLedger
+	stageTotals           map[Stage]map[string]byteLedger
+	uploads               map[string]uploadLedger
+	downSeen              map[string]uint64
+	stage                 Stage
 }
 
 func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duration, reason string) {
@@ -88,6 +98,8 @@ func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duratio
 	if reason == "stage-start" {
 		a.uploads = map[string]uploadLedger{}
 		a.downSeen = map[string]uint64{}
+		a.serverPeaks = map[componentKey]float64{}
+		a.serverSamples = map[string]int{}
 	}
 	a.stage = stage
 	if a.stageTotals[stage] == nil {
@@ -106,8 +118,7 @@ func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duratio
 		Complete:     true,
 		Reason:       reason,
 	})
-	a.first = nil
-	a.last = nil
+	a.first, a.last, a.peakFrom = nil, nil, nil
 	a.peaks = map[Direction]float64{}
 	a.samples = 0
 }
@@ -180,8 +191,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 		return nil
 	}
 	if a.first == nil {
-		a.first = new(b)
-		a.last = new(b)
+		a.first, a.last, a.peakFrom = new(b), new(b), new(b)
 		interval.Start = b.at
 		interval.End = b.at
 		return nil
@@ -200,13 +210,28 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 	interval.End = b.at
 	interval.Window = full
 	a.samples++
-	if sample.DownBytesPerSec != nil {
-		a.peaks[Down] = max(a.peaks[Down], *sample.DownBytesPerSec)
+	for _, id := range interval.Participants {
+		a.serverSamples[id]++
 	}
-	if sample.UpBytesPerSec != nil {
-		a.peaks[Up] = max(a.peaks[Up], *sample.UpBytesPerSec)
+	if peak, err := aggregateWindow(*a.peakFrom, b, *interval); err == nil && peak.End-peak.Start >= minimumPeakWindow {
+		a.peakFrom = new(b)
+		a.recordPeak(peak)
 	}
 	return sample
+}
+
+func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {
+	for dir, rate := range map[Direction]*float64{Down: w.DownBytesPerSec, Up: w.UpBytesPerSec} {
+		if rate != nil {
+			a.peaks[dir] = max(a.peaks[dir], *rate)
+		}
+	}
+	for dir, components := range map[Direction][]ComponentWindow{Down: w.Down, Up: w.Up} {
+		for _, c := range components {
+			key := componentKey{c.ServerID, dir}
+			a.serverPeaks[key] = max(a.serverPeaks[key], c.BytesPerSec)
+		}
+	}
 }
 
 // errStaleBoundary marks a boundary without new clock evidence; it is skipped, never a zero rate.
@@ -281,6 +306,12 @@ func (a *aggregateMeasurements) result(stage Stage, dir Direction) Result {
 	result.PeakBps = a.peaks[dir]
 	result.Samples = a.samples
 	result.Elapsed = interval.End - interval.Start
+	if dir == Up {
+		result.Elapsed = 0
+		for _, c := range components {
+			result.Elapsed = max(result.Elapsed, c.Duration)
+		}
+	}
 	result.Unavailable = false
 	return result
 }

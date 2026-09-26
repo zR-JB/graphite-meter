@@ -36,6 +36,26 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 	if sample.Up[0].Duration != time.Second || sample.Up[1].Duration != 2*time.Second {
 		t.Fatalf("receiver durations were combined: %+v", sample.Up)
 	}
+	if result.Elapsed != 2*time.Second {
+		t.Fatalf("receiver-timed elapsed = %v, want the receiver window", result.Elapsed)
+	}
+}
+
+func TestPeaksNeedAMinimumWindow(t *testing.T) {
+	t.Parallel()
+	a := aggregateMeasurements{}
+	a.begin("download", []string{"a", "b"}, 0, "stage-start")
+	for i, bytes := range []uint64{0, 0, 1000, 1000, 2000, 2000, 3000} {
+		a.observe(nativeBoundary(i*250, map[string]uint64{"a": bytes, "b": bytes / 2}, nil))
+	}
+	result := a.result("download", Down)
+	if result.PeakBps != 3000 || result.MeanBps != 3000 || result.Samples != 6 {
+		t.Fatalf("a burst inside a short window became the peak: %+v", result)
+	}
+	if a.serverPeaks[componentKey{"a", Down}] != 2000 || a.serverPeaks[componentKey{"b", Down}] != 1000 ||
+		a.serverSamples["a"] != 6 {
+		t.Fatalf("per-server peaks or samples = %v %v", a.serverPeaks, a.serverSamples)
+	}
 }
 func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	t.Parallel()
