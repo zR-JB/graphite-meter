@@ -73,10 +73,12 @@ release adds the third-party source archive and a source-availability note.
 OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
 keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
 custom frontend. Verification requires one runnable `linux/amd64` and
-`linux/arm64` manifest, each with one linked provenance attestation, and copies
-every blob inside a network-less Skopeo container whose only mount is the
-read-only archive. Build arguments carry no secrets because max provenance
-records them.
+`linux/arm64` manifest, each with one linked SLSA provenance statement whose
+source (the fetched commit, or the local checkout's revision) is the release
+commit of this repository, and copies every blob inside a network-less Skopeo
+container whose only mount is the read-only archive. The untrusted build writes
+that provenance, so it shows which source was built but does not authenticate
+it. Build arguments carry no secrets because max provenance records them.
 
 ### Owner setup
 

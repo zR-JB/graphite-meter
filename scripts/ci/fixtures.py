@@ -18,6 +18,7 @@ from verify_release_assets import TARGETS, TUI_FILES, tui_archives
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
+SLSA = "https://slsa.dev/provenance/v1"
 # Serves `gh api` from exact argv; a list answers successive calls, repeating its last item.
 GH = """import json, os, sys
 path = os.environ["FAKE_GH"]
@@ -123,8 +124,40 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
             descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM))
 
 
-def engine(directory: Path, repository: str, version: str, revision: str) -> dict[str, str]:
-    """Serve a valid two-platform image with provenance from a fake `docker` on PATH."""
+def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
+              tamper: bool = False) -> JsonObject:
+    """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
+    blobs: dict[str, bytes] = {}
+
+    def add(value: object) -> str:
+        data = json.dumps(value).encode()
+        digest = "sha256:" + hashlib.sha256(data).hexdigest()
+        blobs[digest] = data + (b" " if tamper else b"")
+        return digest
+
+    source: JsonObject = {"path": "Dockerfile"}
+    if remote:
+        source = {"uri": f"https://github.com/{repository}.git#{revision}",
+                  "digest": {"sha1": revision}, "path": "container/Dockerfile"}
+    vcs = {"source": f"https://github.com/{repository}", "revision": revision}
+    statement = add({"predicateType": SLSA, "subject": [], "predicate": {
+        "buildDefinition": {"externalParameters": {"configSource": source}},
+        "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
+    layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
+             "annotations": {"in-toto.io/predicate-type": SLSA}}
+    attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
+                for image in (AMD, ARM)]
+    with tarfile.open(path, "w") as archive:
+        for digest, data in blobs.items():
+            info = tarfile.TarInfo("blobs/sha256/" + digest.removeprefix("sha256:"))
+            info.size = len(data)
+            archive.addfile(info, io.BytesIO(data))
+    return index(*RUNNABLE, *attested)
+
+
+def engine(directory: Path, repository: str, version: str, revision: str,
+           oci: JsonObject | None = None) -> dict[str, str]:
+    """Serve a two-platform image, `oci` or one with placeholder provenance, from a fake `docker`."""
     script = directory / "bin" / "docker"
     script.parent.mkdir(exist_ok=True)
     script.write_text(ENGINE)
@@ -137,7 +170,8 @@ def engine(directory: Path, repository: str, version: str, revision: str) -> dic
         "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
         "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
         "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
-        "FAKE_INDEX": json.dumps(index(*RUNNABLE, *ATTESTED)), "FAKE_LABELS": json.dumps(labels),
+        "FAKE_INDEX": json.dumps(oci or index(*RUNNABLE, *ATTESTED)),
+        "FAKE_LABELS": json.dumps(labels),
         "FAKE_DIGEST": AMD, "REPOSITORY": repository,
     }
 

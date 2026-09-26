@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
 
 from github_api import (
@@ -24,6 +26,8 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
+SLSA = "https://slsa.dev/provenance/v1"
+BLOB_LIMIT = 4 * 1024 * 1024
 ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
 
@@ -32,12 +36,13 @@ class VerificationError(ControlPlaneError):
     pass
 
 
-def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
-    """Return the runnable digests, each of which needs exactly one linked provenance manifest."""
+def validate_index_descriptors(index: JsonObject) -> list[str]:
+    """Return the provenance manifest digests, exactly one linked to each runnable image."""
     if index.get("schemaVersion") != 2 or index.get("mediaType") != INDEX_TYPE:
         raise VerificationError(f"OCI index must be a schemaVersion 2 {INDEX_TYPE}")
     runnable: dict[str, str] = {}
     attested: list[str] = []
+    attestations: list[str] = []
     for position, value in enumerate(expect_array(index.get("manifests"), "OCI manifests")):
         context = f"OCI index.manifests[{position}]"
         manifest = expect_object(value, context)
@@ -54,13 +59,64 @@ def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
             if annotations.get("vnd.docker.reference.type") != "attestation-manifest":
                 raise VerificationError(f"{context} is not a provenance attestation manifest")
             attested.append(str_field(annotations, "vnd.docker.reference.digest", context))
+            attestations.append(digest)
         else:
             raise VerificationError(f"unexpected or duplicate OCI platform {system}/{arch}")
     if runnable.keys() != PLATFORMS:
         raise VerificationError(f"OCI archive needs linux/amd64 and linux/arm64, got {runnable}")
     if sorted(attested) != sorted(runnable.values()):
         raise VerificationError("OCI archive needs one provenance attestation per image")
-    return runnable
+    return attestations
+
+
+def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
+    """Decode a JSON blob of the OCI layout after checking its size and digest."""
+    if DIGEST_RE.fullmatch(digest) is None:
+        raise VerificationError(f"invalid OCI blob digest {digest!r}")
+    try:
+        member = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
+    except KeyError:
+        raise VerificationError(f"OCI archive lacks blob {digest}") from None
+    handle = archive.extractfile(member) if member.isfile() and member.size <= BLOB_LIMIT else None
+    if handle is None:
+        raise VerificationError(f"OCI blob {digest} is not a bounded regular file")
+    data = handle.read()
+    if hashlib.sha256(data).hexdigest() != digest.removeprefix("sha256:"):
+        raise VerificationError(f"OCI blob {digest} does not match its digest")
+    return expect_object(decode_json(data.decode(errors="replace"), digest), digest)
+
+
+def provenance_source(archive: tarfile.TarFile, attestation: str, repository: str) -> str:
+    """Return the commit that the SLSA provenance in `attestation` says BuildKit built."""
+    statements = []
+    for item in expect_array(blob(archive, attestation).get("layers"), attestation):
+        layer = expect_object(item, attestation)
+        annotations = object_field(layer, "annotations", attestation)
+        if annotations.get("in-toto.io/predicate-type") == SLSA:
+            statements.append(str_field(layer, "digest", attestation))
+    if len(statements) != 1:
+        raise VerificationError(f"{attestation} needs exactly one SLSA provenance statement")
+    statement = blob(archive, statements[0])
+
+    def nested(*keys: str) -> JsonObject:
+        value = statement
+        for key in keys:
+            value = object_field(value, key, "provenance")
+        return value
+
+    # A remote Git context records the commit it fetched; a local one records the checkout.
+    source = nested("predicate", "buildDefinition", "externalParameters", "configSource")
+    if "digest" in source:
+        commit = str_field(object_field(source, "digest", "configSource"), "sha1", "configSource")
+        origin = str_field(source, "uri", "configSource").removesuffix(f"#{commit}")
+        expected = f"https://github.com/{repository}.git"
+    else:
+        vcs = nested("predicate", "runDetails", "metadata", "buildkit_metadata", "vcs")
+        commit, origin = str_field(vcs, "revision", "vcs"), str_field(vcs, "source", "vcs")
+        expected = f"https://github.com/{repository}"
+    if statement.get("predicateType") != SLSA or origin != expected:
+        raise VerificationError(f"provenance built {origin!r}, not {expected!r}")
+    return commit
 
 
 def select_engine() -> str:
@@ -99,7 +155,14 @@ def verify(version: str, revision: str, archive: Path) -> str:
         output = skopeo(engine, image, "inspect", *args, ARCHIVE, archive=archive)
         return expect_object(decode_json(output, "skopeo inspect"), "skopeo inspect")
 
-    validate_index_descriptors(inspect("--raw"))
+    attestations = validate_index_descriptors(inspect("--raw"))
+    try:
+        with tarfile.open(archive, mode="r:") as tar:
+            sources = {provenance_source(tar, digest, repository) for digest in attestations}
+    except tarfile.TarError as exc:
+        raise VerificationError(f"cannot read OCI archive layout: {exc}") from exc
+    if sources != {revision}:
+        raise VerificationError(f"provenance records sources {sorted(sources)}, not {revision}")
     # Copying every blob proves the archive is complete; the copy stays inside the container.
     skopeo(engine, image, "copy", "--all", ARCHIVE, "oci:/tmp/graphite-meter-verified:verified",
            archive=archive)

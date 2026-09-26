@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError, confined_path, runner_path
-from fixtures import AMD, Answers, engine, fake, gh, git_head, pages, write_release_assets
+from github_api import ControlPlaneError, JsonObject, confined_path, runner_path
+from fixtures import (
+    AMD, Answers, engine, fake, gh, git_head, pages, write_oci, write_release_assets,
+)
 from release import (
     OCI,
     Release,
     assets_sha256,
+    file_sha256,
     command_prepare,
     command_recheck,
     command_verify,
@@ -486,7 +489,7 @@ class RequestTests(unittest.TestCase):
                             verify_request(root, api=api)
 
 
-def write_request(root: Path, stable: bool, mode: str) -> Path:
+def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject]:
     release = release_of(stable)
     request_dir = root / "request"
     candidate = request_dir / "release-request-4242"
@@ -495,12 +498,11 @@ def write_request(root: Path, stable: bool, mode: str) -> Path:
         "schemaVersion": 2, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
         "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
     }))
-    (candidate / OCI).write_bytes(b"oci archive")
-    (candidate / f"{OCI}.sha256").write_text(
-        f"{hashlib.sha256(b'oci archive').hexdigest()}  {OCI}\n")
+    oci = write_oci(candidate / OCI, REPO, release.sha, remote=not stable)
+    (candidate / f"{OCI}.sha256").write_text(f"{file_sha256(candidate / OCI)}  {OCI}\n")
     if stable:
         write_release_assets(request_dir / "release-assets-4242", "1.2.3")
-    return request_dir
+    return request_dir, oci
 
 
 def outputs(path: Path) -> dict[str, str]:
@@ -540,7 +542,7 @@ class CommandTests(unittest.TestCase):
         for stable, mode, edit, responses, env, error in rows:
             with self.subTest(stable=stable, mode=mode, error=error):
                 root = self.root / str(len(list(self.root.iterdir())))
-                request_dir = write_request(root, stable, mode)
+                request_dir, oci = write_request(root, stable, mode)
                 if edit is not None:
                     edit(request_dir)
                 release = release_of(stable)
@@ -551,7 +553,7 @@ class CommandTests(unittest.TestCase):
                     "HANDOFF_DIR": str(root / "handoff"),
                     "GITHUB_OUTPUT": str(root / "output"),
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
-                } | engine(root, REPO, release.version, release.sha) | git_head(root, MAIN) | gh(
+                } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | gh(
                     root, trusted(stable, mode) | responses) | env
                 limit = int(env.get("LIMIT", 1 << 30))
                 with patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit):
@@ -564,7 +566,7 @@ class CommandTests(unittest.TestCase):
                 result = outputs(root / "output")
                 self.assertEqual((result["digest"], result["publish"], result["sha"]),
                                  (AMD, str(mode == "publish").lower(), release.sha))
-                self.assertEqual((root / "handoff/image" / OCI).read_bytes(), b"oci archive")
+                self.assertEqual(file_sha256(root / "handoff/image" / OCI), result["oci_sha256"])
                 if stable:
                     self.assertEqual(result["assets_sha256"],
                                      assets_sha256(request_dir / "release-assets-4242"))

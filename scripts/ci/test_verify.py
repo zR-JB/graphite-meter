@@ -22,6 +22,7 @@ from fixtures import (
     source_members,
     write_checksums,
     write_release_assets,
+    write_oci,
     write_tar,
 )
 from verify_oci import (
@@ -195,7 +196,7 @@ class ReleaseAssetTests(unittest.TestCase):
 class OCITests(unittest.TestCase):
     def test_index_requires_linked_provenance_for_each_platform(self) -> None:
         self.assertEqual(validate_index_descriptors(index(*RUNNABLE, *ATTESTED)),
-                         {"amd64": AMD, "arm64": ARM})
+                         [item["digest"] for item in ATTESTED])
         stray = descriptor("unknown", "unknown", "sha256:" + "e" * 64, "sha256:" + "f" * 64)
         mistyped = descriptor("unknown", "unknown", "sha256:" + "d" * 64, ARM)
         mistyped["annotations"] = {"vnd.docker.reference.type": "other",
@@ -234,13 +235,13 @@ class OCITests(unittest.TestCase):
             with (tempfile.TemporaryDirectory() as directory,
                   self.subTest(change=change, version=version)):
                 root = Path(directory)
-                env = engine(root, "example/repo", "1.2.3", "f" * 40)
+                archive = root / "image.oci.tar"
+                oci = write_oci(archive, "example/repo", "f" * 40, remote=False)
+                env = engine(root, "example/repo", "1.2.3", "f" * 40, oci)
                 labels = json.loads(env["FAKE_LABELS"]) | change.pop("FAKE_LABELS", {})
                 env |= {"FAKE_LABELS": json.dumps(labels)} | {
                     key: value if isinstance(value, str) else json.dumps(value)
                     for key, value in change.items()}
-                archive = root / "image.oci.tar"
-                archive.write_bytes(b"placeholder")
                 with patch.dict(os.environ, env):
                     if error is None:
                         self.assertEqual(verify_oci(version, "f" * 40, archive), AMD)
@@ -255,6 +256,28 @@ class OCITests(unittest.TestCase):
                     self.assertIn(mounts, ([], [f"{archive}:/work/image.oci.tar:ro"]))
                 if error is None:
                     self.assertIn(" copy --all oci-archive:/work/image.oci.tar ", log)
+
+    def test_provenance_records_the_release_commit_of_this_repository(self) -> None:
+        for remote, repository, commit, tamper, error in (
+            (True, "example/repo", "f" * 40, False, None),
+            (False, "example/repo", "f" * 40, False, None),
+            (True, "example/repo", "e" * 40, False, "records sources \\['e"),
+            (False, "example/repo", "e" * 40, False, "records sources \\['e"),
+            (True, "example/fork", "f" * 40, False, "example/fork.git"),
+            (False, "example/fork", "f" * 40, False, "example/fork"),
+            (False, "example/repo", "f" * 40, True, "does not match its digest"),
+        ):
+            with (tempfile.TemporaryDirectory() as directory,
+                  self.subTest(remote=remote, repository=repository, error=error)):
+                archive = Path(directory) / "image.oci.tar"
+                oci = write_oci(archive, repository, commit, remote=remote, tamper=tamper)
+                env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
+                with patch.dict(os.environ, env):
+                    if error is None:
+                        verify_oci("1.2.3", "f" * 40, archive)
+                    else:
+                        with self.assertRaisesRegex(OCIError, error):
+                            verify_oci("1.2.3", "f" * 40, archive)
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
