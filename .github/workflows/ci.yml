@@ -194,9 +194,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up mise
+      - name: Set up pinned Gitleaks
         uses: ./.github/actions/setup-project
-      - name: Scan repository with pinned Gitleaks image
+        with: {gitleaks: 'true'}
+      - name: Scan repository with pinned Gitleaks
         run: mise run secret-scan-ci
 
   gate:

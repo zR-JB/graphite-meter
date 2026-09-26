@@ -22,7 +22,6 @@ TOOL_KEYS = {
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},
     "images": {
-        "gitleaks": r"ghcr\.io/gitleaks/gitleaks@sha256:[0-9a-f]{64}",
         "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+(?:-immutable)?@sha256:[0-9a-f]{64}",
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
         "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",

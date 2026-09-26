@@ -21,7 +21,6 @@ browser_chrome = "153.0.8010.52"
 
 codeql = "2.27.1"
 
-image_gitleaks = "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 image_skopeo = "quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"
 image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
 image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
@@ -75,17 +74,8 @@ run = [
 ]
 
 [tasks.secret-scan-ci]
-description = "Run the pinned CI Gitleaks container"
-env = { GM_GITLEAKS_IMAGE = "{{vars.image_gitleaks}}" }
-run = '''
-#!/usr/bin/env sh
-set -eu
-engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
-expected=$(python3 scripts/ci/toolchains.py get tools.gitleaks)
-actual=$("$engine" run --rm "$GM_GITLEAKS_IMAGE" version | tr -d '\r')
-[ "${actual#v}" = "${expected#v}" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
-"$engine" run --rm -v "$PWD:/repo:ro" "$GM_GITLEAKS_IMAGE" detect --source=/repo --no-banner --redact --exit-code 1
-'''
+description = "Scan the checked-out history with the pinned Gitleaks"
+run = "gitleaks git --no-banner --redact --verbose"
 
 # Ordered: generated assets, builds and legal scans must not race.
 [tasks.check]
