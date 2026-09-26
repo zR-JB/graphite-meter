@@ -66,7 +66,6 @@ const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
 const signedMs = (ms: number) =>
   `${ms < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`;
 
-/** Live and saved estimates share one rule: an overhead under 0.5% is not shown. */
 export const wireOverhead = (multiplier: number) =>
   multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
 

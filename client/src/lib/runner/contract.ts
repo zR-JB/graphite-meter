@@ -156,7 +156,6 @@ interface PhaseTransition {
 }
 
 /* ---------- Aggregate result (emitted on complete) ---------- */
-/** Why a server left a stage, or why a stage has no result. */
 export const FAILURE_REASONS = [
   "preparation-failed",
   "connection-lost",
@@ -172,7 +171,6 @@ export type StageStatus = "complete" | "partial" | "failed" | "not-run";
 export interface RunResult {
   multiServer: import("./measure").MultiServerResult;
   outcome: "complete" | "partial" | "incomplete";
-  /** Failure takes precedence; a configured stage without its result has failed. */
   stages: Record<TransportRole, StageStatus>;
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
@@ -227,9 +225,7 @@ export interface StageLatencySummary {
   jitterMs: number | null;
 }
 
-/** The idle headline; the full distribution stays in latencyByStage. */
 export interface LatencyResult {
-  /** The full idle median (p50). */
   reportedMs: number;
   jitterMs: number | null;
   stabilityScore: number;

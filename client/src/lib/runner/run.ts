@@ -88,7 +88,6 @@ interface Participant extends PreparedServer {
   down: number;
   /** Latest measured receiver evidence in the current stage. */
   up: ReceiverCheckpoint | null;
-  /** Page time of the latest measured progress per direction. */
   progressAt: Record<FlowDirection, number>;
   recovery: {
     abort: AbortController;
@@ -106,7 +105,6 @@ const isTransfer = (phase: Phase): phase is TransferStage =>
 const isMeasured = (phase: Phase): phase is TransportRole =>
   phase === "latency" || isTransfer(phase);
 
-/** Network failures lose the connection and deadlines time out; anything else is the caller's fallback. */
 const classify = <T>(cause: unknown, fallback: T) =>
   navigator.onLine === false || isNetworkFailure(cause)
     ? "connection-lost"
@@ -1213,7 +1211,6 @@ export class Run implements NetworkRunner {
     if (result) this.#emit({ type: "stageResult", stage: phase, result });
   }
 
-  /** A configured stage without every result lane has failed and names why. */
   #status(stage: TransportRole, lanes: unknown[]): StageStatus {
     const cfg = this.#cfg!;
     if (!cfg.stages[stage] || !(cfg.duration[`${stage}Ms`] > 0))

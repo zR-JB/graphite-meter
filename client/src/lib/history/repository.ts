@@ -92,7 +92,6 @@ export class HistoryRepository {
     );
   }
 
-  /** How many times history was cleared; a result queued before a later clear is never written. */
   async clears(): Promise<number> {
     const tx = await this.#transaction("readonly");
     const value = await request(

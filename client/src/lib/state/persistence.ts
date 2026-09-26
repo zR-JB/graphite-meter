@@ -120,7 +120,6 @@ const positive = <T>(value: unknown, fallback: T): number | T =>
     : fallback;
 const CADENCES = ["reply-driven", "fast", "medium", "slow"] as const;
 
-/** Every saved field is coerced on its own; anything else falls back to its default. */
 export function loadPersisted(): PersistedState {
   const defaults = defaultPersisted();
   const base = defaults.config;

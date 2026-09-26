@@ -23,7 +23,6 @@ export function naturalDescending(sort: HistorySort): boolean {
   return sort !== "idle" && sort !== "loaded";
 }
 
-/** Each column's number, shared by the rows and their sort; null when the record has none. */
 export function historyMetrics(
   record: HistoryRecord,
 ): Record<HistorySort, number | null> {

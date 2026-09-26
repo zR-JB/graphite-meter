@@ -15,11 +15,9 @@ const REASON: Record<FailureReason | TerminationReason, string> = {
   "internal-error": "Runner needs attention",
 };
 
-/** Saved records may carry a reason this build no longer names. */
 export const reasonLabel = (reason: FailureReason | TerminationReason) =>
   REASON[reason] ?? "Measurement issue";
 
-/** Decimals follow the rounded value, so 999.96 reads 1000 and 99.996 reads 100.0. */
 export function fmtSpeed(value: number): string {
   if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
   return Math.abs(Math.round(value * 10) / 10) < 1000

@@ -40,7 +40,6 @@ export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   bidirectionalMs: [1_000, 300_000],
 };
 
-/** Zero skips a stage; any other value is bounded. */
 export function clampDuration(key: DurationKey, value: unknown): number {
   const [min, max] = DURATION_LIMITS[key];
   if (typeof value !== "number" || !Number.isFinite(value))

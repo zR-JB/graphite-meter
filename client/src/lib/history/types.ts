@@ -25,7 +25,6 @@ const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const MAX_HISTORY_TEXT_LENGTH = 256;
 
-/** Records saved before the lean result also carry now-unread descriptors; readers ignore them. */
 export type ThroughputSnapshot = ThroughputResult;
 type LatencySnapshot = LatencyResult;
 type ThroughputTransportKind = Extract<

@@ -790,7 +790,6 @@ class AppStore {
         this.phase = to;
         this.phaseStage = stage;
         this.phaseStartedAtMs = t;
-        // A new phase starts its own clock, so timelines never add the previous phase's elapsed time.
         this.phaseFraction = this.phaseElapsedMs = 0;
         this.uploadPresentationBytesPerSec = null;
         if (to === "connecting") {

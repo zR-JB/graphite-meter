@@ -23,6 +23,7 @@ const WINDOW_MS = 4_000;
 const WINDOW_BUCKETS = WINDOW_MS / BUCKET_MS;
 const INTERVAL_LIMIT = 128;
 const PEAK_WINDOW_MS = 500;
+const COMBINED = "";
 export const STAGES = [
   "latency",
   "download",
@@ -135,7 +136,6 @@ function select(values: Float64Array, n: number, k: number): number {
   return values[k];
 }
 
-/** The midpoint median of the first n values, in linear time. */
 function selectMedian(values: Float64Array, n: number): number {
   const upper = select(values, n, n >> 1);
   if (n % 2) return upper;
@@ -597,9 +597,7 @@ interface OpenInterval {
   combined: RateBuckets;
   total: Series;
   servers: Map<string, Series>;
-  /** Peaks come from disjoint windows of at least 500 ms on every clock, from this boundary on. */
   peakFrom: Boundary | null;
-  /** Per server id, and "" for the combined rate. */
   peaks: Map<string, Partial<Record<FlowDirection, number>>>;
 }
 type Totals = Record<FlowDirection, number>;
@@ -628,7 +626,6 @@ export class ThroughputAggregate {
     return this.#open?.record ?? null;
   }
 
-  /** The open interval could already report a headline. */
   get sufficient(): boolean {
     return !!this.#open?.record.complete && sufficient(this.#open.record.full);
   }
@@ -794,7 +791,7 @@ export class ThroughputAggregate {
     if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
       open.peakFrom = boundary;
       for (const dir of dirs) {
-        raise(open.peaks, "", dir, rateOf(span, dir)!);
+        raise(open.peaks, COMBINED, dir, rateOf(span, dir)!);
         for (const c of span[dir]!)
           raise(open.peaks, c.serverId, dir, c.bytesPerSec);
       }
@@ -868,10 +865,11 @@ export class ThroughputAggregate {
     return { down: reduce("down"), up: reduce("up") };
   }
 
-  /** The latest interval's combined peak; null without a 500 ms window on every clock. */
   peak(stage: TransferStage, dir: FlowDirection): number | null {
     const record = this.intervals.findLast((i) => i.stage === stage);
-    return (record && this.#interval(record)?.peaks.get("")?.[dir]) ?? null;
+    return (
+      (record && this.#interval(record)?.peaks.get(COMBINED)?.[dir]) ?? null
+    );
   }
 
   /** One server's share from the latest interval it took part in, including before a dropout. */
