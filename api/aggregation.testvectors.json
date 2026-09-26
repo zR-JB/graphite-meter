@@ -72,5 +72,20 @@
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 2000}}
     ]
+  },
+  {
+    "name": "bytes that grow while receiver time stays the same are skipped as stale",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 2000000000}}},
+      {"atMs": 1500, "down": {}, "up": {"a": {"id": "r1", "bytes": 3500, "nanos": 2000000000}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 4000, "nanos": 3000000000}}}
+    ],
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1500}}
+    ]
   }
 ]

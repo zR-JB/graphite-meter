@@ -739,14 +739,10 @@ export class ThroughputAggregate {
       dirs.every((dir) => {
         if (dir === "down") return boundary.down[id] >= last.down[id];
         const [a, b] = [last.up[id]!, boundary.up[id]!];
-        return (
-          a.id === b.id &&
-          b.bytes >= a.bytes &&
-          (b.nanos > a.nanos || (b.nanos === a.nanos && b.bytes === a.bytes))
-        );
+        return a.id === b.id && b.bytes >= a.bytes && b.nanos >= a.nanos;
       }),
     );
-    // A final flush in the same tick, or an unchanged receiver clock, adds no window.
+    // A final flush in the same tick, or an unchanged receiver clock, is stale: the receiver clock is authoritative.
     const unchanged =
       boundary.atMs <= last.atMs ||
       (dirs.includes("up") &&
