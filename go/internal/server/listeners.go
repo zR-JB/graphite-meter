@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -147,6 +148,9 @@ func Run(ctx context.Context, cfg *config.Config) error {
 }
 
 func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) error {
+	// Background sweepers, pollers and loggers end with the services, whatever ended them.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	b, err := newListenerBuild(ctx, cfg, sockets)
 	if err != nil {
 		return err
@@ -352,9 +356,11 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		var wg sync.WaitGroup
 		for _, svc := range services {
-			_ = svc.stop(stopCtx)
+			wg.Go(func() { _ = svc.stop(stopCtx) })
 		}
+		wg.Wait()
 	}()
 	select {
 	case <-ctx.Done():

@@ -365,15 +365,23 @@ func TestWTOriginCheckPinsTheCanonicalOriginUnderAuthentication(t *testing.T) {
 	}
 }
 
+// Services drain concurrently: each has the whole shutdown budget rather than what the ones before it left.
 func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
+	var draining sync.WaitGroup
+	draining.Add(2)
+	stop := func(block chan struct{}) func(context.Context) error {
+		return func(context.Context) error {
+			draining.Done()
+			draining.Wait()
+			close(block)
+			return nil
+		}
+	}
 	blockA, blockB := make(chan struct{}), make(chan struct{})
-	stoppedA, stoppedB := false, false
 	services := []service{
-		{name: "a", addr: ":1", network: "tcp", run: func() error { <-blockA; return nil },
-			stop: func(context.Context) error { stoppedA = true; close(blockA); return nil }},
-		{name: "b", addr: ":2", network: "tcp", run: func() error { <-blockB; return nil },
-			stop: func(context.Context) error { stoppedB = true; close(blockB); return nil }},
+		{name: "a", addr: ":1", network: "tcp", run: func() error { <-blockA; return nil }, stop: stop(blockA)},
+		{name: "b", addr: ":2", network: "tcp", run: func() error { <-blockB; return nil }, stop: stop(blockB)},
 	}
 
 	done := make(chan error, 1)
@@ -386,10 +394,7 @@ func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
 			t.Fatalf("clean shutdown returned %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("runServices did not return after the context was cancelled")
-	}
-	if !stoppedA || !stoppedB {
-		t.Fatalf("stop not called on every service: a=%v b=%v", stoppedA, stoppedB)
+		t.Fatal("runServices did not stop its services together after the context was cancelled")
 	}
 }
 
