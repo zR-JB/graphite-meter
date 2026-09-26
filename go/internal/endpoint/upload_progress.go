@@ -6,22 +6,10 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
-	"net/netip"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
-
-// UploadProgress streams the selected throughput target's authoritative upload counter as NDJSON.
-type UploadProgress struct {
-	store   *UploadStore
-	trusted []netip.Prefix
-}
-
-// NewUploadProgress builds the progress endpoint over store.
-func NewUploadProgress(store *UploadStore, trusted ...[]netip.Prefix) *UploadProgress {
-	return &UploadProgress{store: store, trusted: optionalPrefixes(trusted)}
-}
 
 const (
 	uploadProgressTick      = 100 * time.Millisecond
@@ -45,31 +33,35 @@ func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	}
 }
 
-func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
+// ServeProgress streams the receiver's authoritative counter as NDJSON on GET
+// and marks the upload finished on DELETE.
+func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	// This request-shaped route derives its owner from the HTTP request key.
-	owner := UploadOwner(r, e.trusted)
-	if r.Method == http.MethodDelete {
-		if access := e.store.finishFor(id, owner); access != uploadAccessOK {
+	owner := UploadOwner(r, u.trusted)
+	switch r.Method {
+	case http.MethodDelete:
+		if access := u.store.finishFor(id, owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)
-			return nil
+			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-		return nil
-	}
-	if r.Method != http.MethodGet {
+		return
+	case http.MethodHead:
+		// GET's route also carries HEAD, which must neither create a receiver nor supersede its feed.
+		w.Header().Set("Allow", "GET, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
-		return nil
+		return
 	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return nil
+		return
 	}
-	agg, access := e.store.watchFor(id, owner)
+	agg, access := u.store.watchFor(id, owner)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)
-		return nil
+		return
 	}
 	// no-transform and X-Accel-Buffering tell intermediaries not to buffer or recode the stream.
 	w.Header().Set("Content-Type", "application/x-ndjson")
@@ -90,7 +82,6 @@ func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) erro
 		flusher.Flush()
 		return true
 	})
-	return nil
 }
 
 // streamProgress serves a resolved receiver's feed over a server-opened WebTransport stream.

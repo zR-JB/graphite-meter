@@ -23,36 +23,33 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-// HandleHTTP sets the response framing before streaming bytes.
-func (d *Download) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return nil
-	}
+// ServeHTTP sets the response framing before streaming bytes. HEAD stops at
+// the framing, so it generates and counts nothing.
+func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n := parseBytes(r.URL.Query().Get("bytes"))
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Length", strconv.FormatInt(n, 10))
-	if r.Method == http.MethodHead {
-		return nil
+	if r.Method != http.MethodHead {
+		_ = d.Stream(r.Context(), n, w)
 	}
-	return d.HandleDownload(r.Context(), n, w)
 }
 
-// HandleDownload repeats the shared random block into the supplied sink.
-func (d *Download) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
+// Stream repeats the shared random block into sink. A cancelled context or a
+// failed write is the client going away, not an error.
+func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) error {
 	d.meter.Open()
 	defer d.meter.Close()
 
 	block := d.block
 	blockLen := int64(len(block))
+	done := ctx.Done()
 	var off int64
 	for n > 0 {
 		select {
-		case <-ctx.Done():
-			return nil // client went away or request cancelled, not an error
+		case <-done:
+			return nil
 		default:
 		}
 		chunk := min(blockLen-off, n)
@@ -64,7 +61,7 @@ func (d *Download) HandleDownload(ctx context.Context, n int64, sink io.Writer) 
 			off = 0
 		}
 		if werr != nil {
-			return nil // client disconnect mid-stream is normal; stop quietly
+			return nil
 		}
 	}
 	return nil

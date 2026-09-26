@@ -11,7 +11,7 @@ import (
 func TestUploadCheckpointRequiresAnExistingOwnedReceiverWithoutExtendingLifetime(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	checkpoint := httpAdapter(NewUploadCheckpoint(store, nil))
+	checkpoint := http.HandlerFunc(NewUpload(nil, store, nil).ServeCheckpoint)
 	request := func(owner string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/upload/checkpoint?id="+id, nil)
 		r.RemoteAddr = owner + ":1234"

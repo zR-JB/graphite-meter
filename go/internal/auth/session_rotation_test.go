@@ -83,11 +83,11 @@ func TestPasswordLoginRotatesTheSuppliedSession(t *testing.T) {
 
 	token := "abcdefghijklmnopqrstuvwxyz0123456789"
 	form := url.Values{"csrf": {token}, "password": {"secret"}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/password", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/password", strings.NewReader(form))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: rawPrior})
 	rr := httptest.NewRecorder()
@@ -116,9 +116,9 @@ func TestLogoutEverywhereRevokesEverySubjectSession(t *testing.T) {
 	gh := addGrant(s, b, "b-grant-logout-b-grant-logout-bg")
 
 	form := url.Values{"csrf": {a.csrf}, "scope": {"all"}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/logout", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/logout", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: a.subject, session: a}))
 	rr := httptest.NewRecorder()
 	s.logout(rr, r)
@@ -145,9 +145,9 @@ func TestLogoutDefaultScopeSparesSiblingSessions(t *testing.T) {
 	_, b, _ := s.createSession("local-operator", "Local operator", "local")
 
 	form := url.Values{"csrf": {a.csrf}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/logout", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/logout", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: a.subject, session: a}))
 	rr := httptest.NewRecorder()
 	s.logout(rr, r)

@@ -13,7 +13,7 @@
 # (the Routes fields are json:"-"), so each site carries its own table and this
 # file is what keeps the tables byte-identical. Every route test loads THIS file
 # as its fixture:
-#   Go — go/internal/server/routes_test.go (listeners.go + wire/preflight.go)
+#   Go — go/internal/route/catalog_test.go (the catalog the server mounts from)
 #   Go — go/internal/auth/routes_test.go (credential and CORS boundaries)
 #   TS — client/src/lib/runner/real/routes.test.ts (backendPure.ts ROUTES)
 #

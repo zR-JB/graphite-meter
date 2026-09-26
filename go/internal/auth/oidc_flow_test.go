@@ -159,7 +159,7 @@ func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...strin
 	r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
 	r.Body = io.NopCloser(strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
@@ -319,7 +319,7 @@ func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
 	if !s.oidc.ready() {
 		t.Fatal("a mistyped optional metadata field disabled OIDC")
 	}
-	if s.oidc.responseIssuer {
+	if s.oidc.discovered.Load().responseIssuer {
 		t.Fatal("responseIssuer decoded from a mistyped field")
 	}
 }
@@ -366,7 +366,7 @@ func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
 		r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
 		r.Body = io.NopCloser(strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.Header.Set("Origin", s.public.String())
+		r.Header.Set("Origin", s.origin)
 		r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
 		rr := httptest.NewRecorder()
 		s.oidcStart(rr, r)

@@ -1,30 +1,15 @@
-// Package endpoint implements HTTP routes and shared measurement operations.
+// Package endpoint implements the measurement operations behind each route.
+// The server composes their handlers with authentication, admission and the
+// transport adapters; nothing here decides who may reach them.
 package endpoint
 
 import (
 	"context"
 	"io"
-	"net/http"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// HTTPHandler handles one request; the registry supplies common response headers and error reporting.
-type HTTPHandler interface {
-	HandleHTTP(http.ResponseWriter, *http.Request) error
-}
+// StreamFunc writes n bytes of download payload to w until ctx ends. The caller owns w's cancellation and closure.
+type StreamFunc func(ctx context.Context, n int64, w io.Writer) error
 
-// MessageHandler processes a transport-owned message channel until it closes.
-type MessageHandler interface {
-	HandleMessages(context.Context, transport.MessageBus) error
-}
-
-// DownloadHandler produces a bounded byte stream. The adapter owns stream cancellation and closure.
-type DownloadHandler interface {
-	HandleDownload(context.Context, int64, io.Writer) error
-}
-
-// UploadHandler counts received bytes for an explicitly identified owner. The adapter owns I/O cancellation.
-type UploadHandler interface {
-	HandleUpload(context.Context, string, string, io.Reader) (int64, error)
-}
+// ReceiveFunc counts src into the upload receiver id held by owner. The caller owns src's cancellation.
+type ReceiveFunc func(ctx context.Context, id, owner string, src io.Reader) (int64, error)

@@ -24,12 +24,10 @@ func randomBlock(n int) []byte {
 	return b
 }
 
-// newDownloadServer mounts /download over httpAdapter with a small block for wraparound tests.
+// newDownloadServer serves /download from a block of blockSize random bytes.
 func newDownloadServer(blockSize int) (*httptest.Server, []byte) {
 	block := randomBlock(blockSize)
-	mux := http.NewServeMux()
-	mux.Handle("/download", httpAdapter(NewDownload(block, nil)))
-	return httptest.NewServer(mux), block
+	return httptest.NewServer(NewDownload(block, nil)), block
 }
 
 func TestDownloadExactByteCount(t *testing.T) {
@@ -66,30 +64,12 @@ func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
 	download := NewDownload(randomBlock(4096), meter)
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil)
-	if err := download.HandleHTTP(response, request); err != nil {
-		t.Fatal(err)
-	}
+	download.ServeHTTP(response, request)
 	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
 		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
 	}
 	if response.Body.Len() != 0 || meter.bytes.Load() != 0 || meter.conns.Load() != 0 {
 		t.Fatalf("HEAD generated %d body bytes; meter bytes=%d conns=%d", response.Body.Len(), meter.bytes.Load(), meter.conns.Load())
-	}
-}
-
-func TestDownloadRejectsOtherMethodsBeforeGeneratingBytes(t *testing.T) {
-	meter := NewMeter("test:download")
-	download := NewDownload(randomBlock(4096), meter)
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/download?bytes=1048576", nil)
-	if err := download.HandleHTTP(response, request); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "GET, HEAD" {
-		t.Fatalf("POST status=%d allow=%q", response.Code, response.Header().Get("Allow"))
-	}
-	if meter.bytes.Load() != 0 {
-		t.Fatalf("POST generated %d download bytes", meter.bytes.Load())
 	}
 }
 
@@ -166,7 +146,7 @@ func BenchmarkDownloadBlockSize(b *testing.B) {
 			b.SetBytes(size)
 			b.ReportAllocs()
 			for b.Loop() {
-				if err := download.HandleDownload(b.Context(), size, io.Discard); err != nil {
+				if err := download.Stream(b.Context(), size, io.Discard); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -182,7 +162,7 @@ func TestDownloadContextCancel(t *testing.T) {
 	// The sink cancels the context after the first write and keeps counting.
 	sink := &cancelOnWrite{cancel: cancel}
 
-	if err := dl.HandleDownload(ctx, 10<<20, sink); err != nil {
+	if err := dl.Stream(ctx, 10<<20, sink); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
 	if sink.n >= int64(10<<20) {

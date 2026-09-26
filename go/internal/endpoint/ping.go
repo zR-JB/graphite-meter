@@ -1,34 +1,31 @@
 package endpoint
 
 import (
-	"context"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Ping echoes probes with their application handling duration.
-type Ping struct{}
-
-func NewPing() *Ping { return &Ping{} }
-
-// HandleMessages runs the stateless echo loop; the adapter owns the channel lifetime.
-func (p *Ping) HandleMessages(_ context.Context, bus transport.MessageBus) error {
+// ServePing echoes each probe with its application handling duration until
+// recv or send fails; the adapter owns the channel's lifetime. The measured
+// interval starts once recv has returned a message and ends before the reply
+// is encoded, so it excludes transport receive work and every queue before it.
+// recv's buffer may be reused on the next call; send must not retain its argument.
+func ServePing(recv func() ([]byte, error), send func([]byte) error) {
+	var reply [wire.MaxPongLen]byte
 	for {
-		message, err := bus.Recv()
+		message, err := recv()
 		if err != nil {
-			return nil
+			return
 		}
-		// The interval excludes adapter receive work and all queues before it returns.
 		receivedAt := time.Now()
-		id, err := wire.DecodePing(message)
+		id, err := wire.DecodePing(string(message))
 		if err != nil {
 			continue
 		}
 		handling := uint64(time.Since(receivedAt).Nanoseconds()) //nosec G115 -- monotonic elapsed duration
-		if err := bus.Send(wire.EncodePong(id, handling)); err != nil {
-			return nil
+		if send(wire.AppendPong(reply[:0], id, handling)) != nil {
+			return
 		}
 	}
 }

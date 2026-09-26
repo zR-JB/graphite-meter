@@ -88,17 +88,17 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	if p.BrowserOrigin != "" {
 		return origin == p.BrowserOrigin && browserGrantRoute(r.URL.Path)
 	}
-	if origin != "" && origin != s.public.String() {
+	if origin != "" && origin != s.origin {
 		return false
 	}
 	if p.Bearer {
 		return true
 	}
 	site := r.Header.Get("Sec-Fetch-Site")
-	if site != "" && (site != "same-origin" && site != "same-site" && site != "none" || site == "same-site" && origin != s.public.String()) {
+	if site != "" && (site != "same-origin" && site != "same-site" && site != "none" || site == "same-site" && origin != s.origin) {
 		return false
 	}
-	if p.session != nil && isMeasurementRoute(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) && origin != s.public.String() && site != "same-origin" {
+	if p.session != nil && isMeasurementRoute(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) && origin != s.origin && site != "same-origin" {
 		return false
 	}
 	if !s.wsPingOriginAllowed(r) {
@@ -107,11 +107,11 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 		return true
 	}
-	return origin == s.public.String() && (!isMeasurementRoute(r.URL.Path) || p.session != nil && constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token")))
+	return origin == s.origin && (!isMeasurementRoute(r.URL.Path) || p.session != nil && constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token")))
 }
 
 func (s *Service) wsPingOriginAllowed(r *http.Request) bool {
-	return r.URL.Path != route.Ping || r.Header.Get("Origin") == s.public.String()
+	return r.URL.Path != route.Ping || r.Header.Get("Origin") == s.origin
 }
 
 func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {
@@ -119,7 +119,7 @@ func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {
 	if origin == "" {
 		return reasonCSRFOriginMissing, false
 	}
-	if origin != s.public.String() {
+	if origin != s.origin {
 		return reasonCSRFOriginMismatch, false
 	}
 	c, err := r.Cookie(loginCookie)

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -106,7 +105,7 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	cors.Bearer(w.Header(), clientOrigin)
+	bearerCORS(w.Header(), clientOrigin)
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req struct {
 		Verifier string `json:"verifier"`
@@ -203,7 +202,7 @@ func (s *Service) browserPreflight(w http.ResponseWriter, r *http.Request) bool 
 			return true
 		}
 	}
-	cors.Bearer(w.Header(), clientOrigin)
+	bearerCORS(w.Header(), clientOrigin)
 	w.Header().Set("Access-Control-Allow-Methods", "POST")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	w.WriteHeader(http.StatusNoContent)

@@ -1,7 +1,11 @@
 // Package route describes the fixed measurement routes shared by server policy and clients.
 package route
 
-import "net/http"
+import (
+	"iter"
+	"net/http"
+	"slices"
+)
 
 const (
 	Servers          = "/servers"
@@ -37,36 +41,38 @@ const (
 	Session
 )
 
-// Spec is policy metadata, not an HTTP dispatcher. Concrete handlers retain their method behavior.
+// Spec is a route's fixed policy: how it is reached, which budget it
+// spends, and the methods it dispatches. A GET route also serves HEAD.
 type Spec struct {
-	Kind        Kind
-	Admission   Admission
-	corsMethods [2]string
+	Kind      Kind
+	Admission Admission
+	methods   []string
 }
 
-// AllowsCORSMethod checks preflight permission, not dispatch; HEAD and OPTIONS remain excluded.
-func (s Spec) AllowsCORSMethod(method string) bool {
-	return method != "" && (method == s.corsMethods[0] || method == s.corsMethods[1])
-}
+// Methods lists the methods the route dispatches, excluding the HEAD a GET implies and CORS preflight.
+func (s Spec) Methods() iter.Seq[string] { return slices.Values(s.methods) }
+
+// AllowsCORSMethod checks preflight permission for a requested method; HEAD and OPTIONS remain excluded.
+func (s Spec) AllowsCORSMethod(method string) bool { return slices.Contains(s.methods, method) }
 
 var catalog = map[string]Spec{
-	Servers:          {HTTP, Unmetered, [2]string{http.MethodGet}},
-	UploadCheckpoint: {HTTP, Unmetered, [2]string{http.MethodPost}},
-	Preflight:        {HTTP, Unmetered, [2]string{http.MethodGet}},
-	Probe:            {HTTP, Unmetered, [2]string{http.MethodGet}},
-	Download:         {HTTP, Request, [2]string{http.MethodGet}},
-	Upload:           {HTTP, Request, [2]string{http.MethodPost}},
-	UploadSession:    {HTTP, Unmetered, [2]string{http.MethodPost}},
-	UploadProgress:   {HTTP, Request, [2]string{http.MethodGet, http.MethodDelete}},
-	WTSession:        {HTTP, Unmetered, [2]string{http.MethodPost}},
-	WSSession:        {HTTP, Unmetered, [2]string{http.MethodPost}},
-	Ping:             {WebSocket, Request, [2]string{http.MethodGet}},
-	WTDownload:       {WebTransport, Session, [2]string{http.MethodConnect}},
-	WTUpload:         {WebTransport, Session, [2]string{http.MethodConnect}},
-	WTPing:           {WebTransport, Request, [2]string{http.MethodConnect}},
+	Servers:          {HTTP, Unmetered, []string{http.MethodGet}},
+	UploadCheckpoint: {HTTP, Unmetered, []string{http.MethodPost}},
+	Preflight:        {HTTP, Unmetered, []string{http.MethodGet}},
+	Probe:            {HTTP, Unmetered, []string{http.MethodGet}},
+	Download:         {HTTP, Request, []string{http.MethodGet}},
+	Upload:           {HTTP, Request, []string{http.MethodPost}},
+	UploadSession:    {HTTP, Unmetered, []string{http.MethodPost}},
+	UploadProgress:   {HTTP, Request, []string{http.MethodGet, http.MethodDelete}},
+	WTSession:        {HTTP, Unmetered, []string{http.MethodPost}},
+	WSSession:        {HTTP, Unmetered, []string{http.MethodPost}},
+	Ping:             {WebSocket, Request, []string{http.MethodGet}},
+	WTDownload:       {WebTransport, Session, []string{http.MethodConnect}},
+	WTUpload:         {WebTransport, Session, []string{http.MethodConnect}},
+	WTPing:           {WebTransport, Request, []string{http.MethodConnect}},
 }
 
-// Lookup matches an exact measurement path and returns a value copy of its fixed policy.
+// Lookup matches an exact measurement path and returns its fixed policy.
 func Lookup(path string) (Spec, bool) {
 	spec, ok := catalog[path]
 	return spec, ok

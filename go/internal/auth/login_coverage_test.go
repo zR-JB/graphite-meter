@@ -13,11 +13,11 @@ import (
 func passwordPost(s *Service, password string) *http.Request {
 	token := "abcdefghijklmnopqrstuvwxyz0123456789"
 	form := url.Values{"csrf": {token}, "password": {password}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/password", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/password", strings.NewReader(form))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
 	return r
 }
@@ -79,11 +79,11 @@ func TestPasswordLoginWrongModeIsNotFound(t *testing.T) {
 func TestOIDCStartProviderNotReady(t *testing.T) {
 	// In password mode the OIDC provider is absent, so a start request fails closed with the provider-unavailable notice.
 	s := testService(t)
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=x"))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/oidc/start", strings.NewReader("csrf=x"))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	loc, _ := url.Parse(rr.Header().Get("Location"))
@@ -94,11 +94,11 @@ func TestOIDCStartProviderNotReady(t *testing.T) {
 
 func TestOIDCStartRejectsBadCSRF(t *testing.T) {
 	s := newFakeOIDC(t).service(t)
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/oidc/start", strings.NewReader("csrf=nope"))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/oidc/start", strings.NewReader("csrf=nope"))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	if rr.Code != http.StatusSeeOther {

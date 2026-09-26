@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/sha256"
 	"maps"
 	"net/http"
@@ -138,8 +137,7 @@ func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Reques
 		s.writeAuthRequired(w, r, listener)
 		return
 	}
-	ctx, cancel := context.WithCancelCause(r.Context())
-	stop := context.AfterFunc(p.measurementContext(), func() { cancel(errSessionEnded) })
-	defer func() { stop(); cancel(nil) }()
-	next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, principalKey{}, p)))
+	r, end := withPrincipal(r, p)
+	defer end()
+	next.ServeHTTP(w, r)
 }

@@ -13,14 +13,7 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
 		return "principal:" + p.Subject
 	}
-	addr := transport.ResolveClientAddress(r, trusted).Addr.Unmap()
-	if !addr.IsValid() {
-		return "unknown"
-	}
-	if addr.Is6() {
-		return netip.PrefixFrom(addr, 64).Masked().String()
-	}
-	return addr.String()
+	return transport.AddressBucket(transport.ResolveClientAddress(r, trusted).Addr)
 }
 
 // UploadOwner separates delegated browser access without multiplying admission budgets.
@@ -33,19 +26,13 @@ func UploadOwner(r *http.Request, trusted []netip.Prefix) string {
 	return ClientKey(r, trusted)
 }
 
-// SessionKey buckets the per-client session budget.
-func SessionKey(r *http.Request, trusted []netip.Prefix) string {
+// SessionKey buckets the per-client session budget: by login when there is
+// one, otherwise by the request's client key.
+func SessionKey(r *http.Request, clientKey string) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {
 		return "login:" + p.LoginID()
 	}
-	return ClientKey(r, trusted)
-}
-
-func optionalPrefixes(values [][]netip.Prefix) []netip.Prefix {
-	if len(values) != 0 {
-		return values[0]
-	}
-	return nil
+	return clientKey
 }
 
 type uploadAccessInfo struct {
@@ -63,16 +50,9 @@ var uploadAccessInfos = [...]uploadAccessInfo{
 	uploadAccessOwnerMismatch: {message: "upload id belongs to another client", code: "ownerMismatch", status: http.StatusForbidden},
 }
 
-func (access uploadAccess) info() uploadAccessInfo {
-	if int(access) < len(uploadAccessInfos) {
-		return uploadAccessInfos[access]
-	}
-	return uploadAccessInfo{}
-}
+func uploadAccessMessage(access uploadAccess) string { return uploadAccessInfos[access].message }
 
-func uploadAccessMessage(access uploadAccess) string { return access.info().message }
-
-func uploadAccessCode(access uploadAccess) string { return access.info().code }
+func uploadAccessCode(access uploadAccess) string { return uploadAccessInfos[access].code }
 
 // uploadRefusalError preserves the classified refusal across transports that do not have an HTTP status line.
 type uploadRefusalError struct{ access uploadAccess }
@@ -82,11 +62,7 @@ func (e *uploadRefusalError) Error() string {
 }
 
 func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
-	info := access.info()
-	if info.code == "" {
-		http.Error(w, "upload refused", http.StatusInternalServerError)
-		return
-	}
+	info := uploadAccessInfos[access]
 	w.Header().Set("X-Graphite-Upload-Refusal", info.code)
 	if info.retry {
 		w.Header().Set("Retry-After", "1")

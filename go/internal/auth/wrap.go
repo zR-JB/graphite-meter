@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
@@ -98,14 +97,8 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 		forbidden(w)
 		return
 	}
-	if p.session != nil {
-		ctx, cancel := context.WithCancelCause(r.Context())
-		stop := context.AfterFunc(p.measurementContext(), func() { cancel(errSessionEnded) })
-		defer func() { stop(); cancel(nil) }()
-		r = r.WithContext(context.WithValue(ctx, principalKey{}, p))
-	} else {
-		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-	}
+	r, end := withPrincipal(r, p)
+	defer end()
 	if !s.validRequestOrigin(r, p) {
 		forbidden(w)
 		return
@@ -193,21 +186,16 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 
 func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
 	securityHeaders(w.Header())
-	if s.public != nil && r.Header.Get("Origin") == s.public.String() {
-		cors.Response(w.Header(), s.public.String())
-	}
-	if clientOrigin, valid := secureBrowserOrigin(r.Header.Get("Origin")); valid && isMeasurementRoute(r.URL.Path) && clientOrigin != s.public.String() {
-		cors.Bearer(w.Header(), clientOrigin)
-	}
+	s.MeasurementCORS(w.Header(), r)
 	w.Header().Set("Graphite-Meter-Auth", "required")
 	w.Header().Set("Graphite-Meter-Browser-Auth", "1")
-	w.Header().Set("Graphite-Meter-Auth-URL", s.public.String()+"/login")
+	w.Header().Set("Graphite-Meter-Auth-URL", s.origin+"/login")
 	if r.ProtoMajor == 1 && r.Body != nil {
 		w.Header().Set("Connection", "close")
 	}
 	if listener.UI && r.Method == http.MethodGet && r.URL.Path == "/" {
 		s.debugln("unauthenticated UI root redirected to login")
-		http.Redirect(w, r, s.public.String()+"/login", http.StatusTemporaryRedirect)
+		http.Redirect(w, r, s.origin+"/login", http.StatusTemporaryRedirect)
 		return
 	}
 	w.WriteHeader(http.StatusForbidden)
@@ -218,6 +206,17 @@ func forbidden(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusForbidden)
 }
 
+// withPrincipal carries p on r's context, which also ends, with
+// errSessionEnded as its cause, when p's login or browser grant does.
+func withPrincipal(r *http.Request, p Principal) (*http.Request, func()) {
+	if p.session == nil {
+		return r.WithContext(context.WithValue(r.Context(), principalKey{}, p)), func() {}
+	}
+	ctx, cancel := context.WithCancelCause(r.Context())
+	stop := context.AfterFunc(p.measurementContext(), func() { cancel(errSessionEnded) })
+	return r.WithContext(context.WithValue(ctx, principalKey{}, p)), func() { stop(); cancel(nil) }
+}
+
 func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
 	return p, ok
@@ -226,7 +225,7 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 func (s *Service) sessionFormPrincipal(r *http.Request) (Principal, bool) {
 	p, ok := PrincipalFromContext(r.Context())
 	return p, ok && p.session != nil &&
-		r.Header.Get("Origin") == s.public.String() && constantEqual(p.session.csrf, r.FormValue("csrf"))
+		r.Header.Get("Origin") == s.origin && constantEqual(p.session.csrf, r.FormValue("csrf"))
 }
 
 func SessionEnded(ctx context.Context) bool {

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zR-JB/graphite-meter/go/internal/cors"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
@@ -70,7 +69,7 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 }
 
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
-	if clientOrigin, valid := secureBrowserOrigin(r.Header.Get("Origin")); secure && valid && clientOrigin != s.public.String() && browserGrantRoute(r.URL.Path) {
+	if clientOrigin, valid := secureBrowserOrigin(r.Header.Get("Origin")); secure && valid && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
 		allowed := false
 		for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
 			h := strings.ToLower(strings.TrimSpace(raw))
@@ -85,13 +84,13 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 			forbidden(w)
 			return
 		}
-		cors.Bearer(w.Header(), clientOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		bearerCORS(w.Header(), clientOrigin)
+		w.Header().Set("Access-Control-Allow-Methods", measurementMethods)
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !secure || r.Header.Get("Origin") != s.public.String() {
+	if !secure || r.Header.Get("Origin") != s.origin {
 		forbidden(w)
 		return
 	}
@@ -107,7 +106,7 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 			return
 		}
 	}
-	cors.Measurement(w.Header(), s.public.String())
+	s.MeasurementCORS(w.Header(), r)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -15,7 +15,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -124,40 +123,6 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	}
 }
 
-// refusingLane is a lane whose peer resets it: every write is refused before a byte lands.
-type refusingLane struct{ closed bool }
-
-func (l *refusingLane) Write([]byte) (int, error)                { return 0, io.ErrClosedPipe }
-func (l *refusingLane) Close() error                             { l.closed = true; return nil }
-func (l *refusingLane) CancelWrite(webtransport.StreamErrorCode) {}
-func (l *refusingLane) SetWriteDeadline(time.Time) error         { return nil }
-
-// countingLanes counts how many lanes the loop asked for.
-type countingLanes struct {
-	opened int
-	limit  int
-}
-
-func (l *countingLanes) open() (laneStream, error) {
-	if l.opened >= l.limit {
-		return nil, io.ErrUnexpectedEOF
-	}
-	l.opened++
-	return &refusingLane{}, nil
-}
-
-// A download lane is replaced the moment it is exhausted, for as long as the session lives.
-func TestServeLaneStopsOnceAPeerRefusesALane(t *testing.T) {
-	lanes := &countingLanes{limit: 64}
-	h := &wtDownload{download: NewDownload(make([]byte, 4096), nil)}
-
-	h.serveLane(t.Context(), func(context.Context) (laneStream, error) { return lanes.open() }, url.Values{"bytes": {"4096"}}, nil)
-
-	if lanes.opened != 1 {
-		t.Fatalf("opened %d lanes against a peer that refused every one, want 1: the loop reopens streams for as long as the peer keeps refusing them", lanes.opened)
-	}
-}
-
 // deadlineRecordingStream records the read deadline armed before each read and advances a clock.
 type deadlineRecordingStream struct{ deadlines []time.Time }
 
@@ -196,7 +161,7 @@ func TestIdleTimeoutReaderReArmsItsDeadlineEveryRead(t *testing.T) {
 }
 
 // A mint refusal is two different answers.
-func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
+func TestSocketTokenSeparatesACappedMintFromARefusedOne(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		mint       auth.WTMint
@@ -208,13 +173,10 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mint := tc.mint
-			endpoint := NewWTSession(func(*http.Request) (string, time.Time, auth.WTMint) {
-				return "", time.Time{}, mint
-			})
 			rec := httptest.NewRecorder()
-			if err := endpoint.HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
-				t.Fatalf("handle: %v", err)
-			}
+			SocketToken(func(*http.Request) (string, time.Time, auth.WTMint) {
+				return "", time.Time{}, mint
+			}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
 			if rec.Code != tc.status {
 				t.Errorf("status = %d, want %d", rec.Code, tc.status)
 			}
@@ -229,14 +191,14 @@ func TestWTSessionSeparatesACappedMintFromARefusedOne(t *testing.T) {
 	}
 
 	// The control: a mint that succeeded still answers with its token.
-	endpoint := NewWTSession(func(*http.Request) (string, time.Time, auth.WTMint) {
-		return "gmw_minted", time.Unix(0, 0).Add(time.Hour), auth.WTMintOK
-	})
 	rec := httptest.NewRecorder()
-	if err := endpoint.HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
-		t.Fatalf("handle: %v", err)
+	SocketToken(func(*http.Request) (string, time.Time, auth.WTMint) {
+		return "gmw_minted", time.Unix(0, 0).Add(time.Hour), auth.WTMintOK
+	}).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
+	var minted struct {
+		Token   string `json:"token"`
+		Expires int64  `json:"expires"`
 	}
-	var minted wtSessionResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &minted); err != nil {
 		t.Fatalf("decode %q: %v", rec.Body.String(), err)
 	}
@@ -341,11 +303,9 @@ func datagramSizes(sent [][]byte) []int {
 	return sizes
 }
 
-func TestWTSessionWithoutAuthIncludesZeroExpiry(t *testing.T) {
+func TestSocketTokenWithoutAuthIncludesZeroExpiry(t *testing.T) {
 	rec := httptest.NewRecorder()
-	if err := NewWTSession(nil).HandleHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil)); err != nil {
-		t.Fatal(err)
-	}
+	SocketToken(nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
 	var response map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)

@@ -145,11 +145,7 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Client, string) {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	ctx := t.Context()
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := buildEndpoints(t.Context(), cfg)
 	p := &http.Protocols{}
 	clientProtocols := &http.Protocols{}
 	var alpn string
@@ -169,7 +165,7 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := baseServer(listenerMuxConfigured(ctx, e, topology, static.Handler(), nil), p)
+	srv := baseServer(publicMux(t, e, topology, static.Handler()), p)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: clientProtocols} //nolint:gosec
@@ -180,16 +176,12 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 func nativeHTTP3(t *testing.T) (*http.Client, string) {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	ctx := t.Context()
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := buildEndpoints(t.Context(), cfg)
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, static.Handler(), nil)}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: publicMux(t, e, muxTopology{transfers: true}, nil)}
 	go h3.Serve(pc)
 	t.Cleanup(func() { _ = h3.Close(); _ = pc.Close() })
 	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec

@@ -20,7 +20,18 @@ import (
 
 type fixtureHTTP func(http.ResponseWriter, *http.Request) error
 
-func (f fixtureHTTP) HandleHTTP(w http.ResponseWriter, r *http.Request) error { return f(w, r) }
+func (f fixtureHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) { _ = f(w, r) }
+
+// fixtureRoutes mounts each fixture handler on its exact path.
+type fixtureRoutes map[string]http.Handler
+
+func (routes fixtureRoutes) RegisterHTTP(path string, h http.Handler) { routes[path] = h }
+
+func (routes fixtureRoutes) Mount(_ context.Context, mux *http.ServeMux) {
+	for path, h := range routes {
+		mux.Handle(path, h)
+	}
+}
 
 type pacedBody struct {
 	io.ReadCloser
@@ -56,11 +67,12 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	t.Helper()
 	f := &serverFixture{}
 	store := endpoint.NewUploadStore()
-	registry := endpoint.NewRegistry()
-	registry.RegisterHTTP(route.UploadSession, endpoint.NewUploadSession(store))
-	registry.RegisterHTTP(route.UploadProgress, endpoint.NewUploadProgress(store))
-	registry.RegisterHTTP(route.UploadCheckpoint, endpoint.NewUploadCheckpoint(store, nil))
-	registry.RegisterHTTP(route.Upload, endpoint.NewUpload(nil, store))
+	upload := endpoint.NewUpload(nil, store, nil)
+	registry := fixtureRoutes{}
+	registry.RegisterHTTP(route.UploadSession, http.HandlerFunc(upload.ServeSession))
+	registry.RegisterHTTP(route.UploadProgress, http.HandlerFunc(upload.ServeProgress))
+	registry.RegisterHTTP(route.UploadCheckpoint, http.HandlerFunc(upload.ServeCheckpoint))
+	registry.RegisterHTTP(route.Upload, upload)
 	registry.RegisterHTTP(route.Preflight, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		return json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: name}, EngineVersion: "test", Generation: name, Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"}}, LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}}}})
 	}))

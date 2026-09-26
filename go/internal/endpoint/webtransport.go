@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -18,9 +17,14 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// WTHandler serves one accepted WebTransport session until it ends.
-type WTHandler interface {
-	HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request)
+// SessionHandler serves one accepted WebTransport session until it ends. The
+// adapter owns the session: ctx ends with it, and the session closes once the handler returns.
+type SessionHandler func(ctx context.Context, sess *webtransport.Session, r *http.Request)
+
+// datagramConn is the datagram half of a WebTransport session.
+type datagramConn interface {
+	SendDatagram(b []byte) error
+	ReceiveDatagram(ctx context.Context) ([]byte, error)
 }
 
 const wtDatagramPayload = 1000
@@ -29,6 +33,10 @@ const wtDatagramPayload = 1000
 // so an abandoned one holds its session slot only briefly.
 const wtVerifyLinger = 5 * time.Second
 
+// wtRefusalLinger lets a peer read a refusal record before the session closes under it.
+const wtRefusalLinger = 2 * time.Second
+
+// sessionActivity ends a session that carried no peer activity for about its idle bound.
 type sessionActivity struct {
 	n      atomic.Uint64
 	cancel context.CancelFunc
@@ -69,80 +77,63 @@ func (a *sessionActivity) watch(ctx context.Context, bound time.Duration) {
 	}
 }
 
-type wtPing struct {
-	ping      MessageHandler
-	idleBound time.Duration
-}
-
-// NewWTPing serves the latency bus over session datagrams, which measure application probe timeouts.
-func NewWTPing(ping MessageHandler, idleBound time.Duration) WTHandler {
-	return &wtPing{ping: ping, idleBound: idleBound}
-}
-
-func (h *wtPing) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
-	ctx, live := watchSession(ctx, h.idleBound)
-	bus := transport.NewWebTransportBus(ctx, liveDatagramConn{conn: sess, live: live})
-	_ = h.ping.HandleMessages(ctx, bus)
-}
-
-type liveDatagramConn struct {
-	conn transport.DatagramConn
-	live *sessionActivity
-}
-
-func (c liveDatagramConn) SendDatagram(b []byte) error { return c.conn.SendDatagram(b) }
-
-func (c liveDatagramConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
-	data, err := c.conn.ReceiveDatagram(ctx)
-	if err == nil {
-		c.live.bump()
+func lingerForPeer(ctx context.Context, sess *webtransport.Session, bound time.Duration) {
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-sess.Context().Done():
+	case <-timer.C:
 	}
-	return data, err
 }
 
-type wtDownload struct {
-	download  DownloadHandler
-	idleBound time.Duration
+// WTPing serves the latency bus over session datagrams, which measure application probe timeouts.
+func WTPing(idleBound time.Duration) SessionHandler {
+	return func(ctx context.Context, sess *webtransport.Session, _ *http.Request) {
+		ctx, live := watchSession(ctx, idleBound)
+		defer live.cancel()
+		ServePing(func() ([]byte, error) {
+			data, err := sess.ReceiveDatagram(ctx)
+			if err == nil {
+				live.bump()
+			}
+			return data, err
+		}, sess.SendDatagram)
+	}
 }
 
-// NewWTDownload serves byte lanes on server-opened WebTransport streams.
-func NewWTDownload(download DownloadHandler, idleBound time.Duration) WTHandler {
-	return &wtDownload{download: download, idleBound: idleBound}
-}
-
-func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
-	query := r.URL.Query()
-	// Parse rather than compare spellings: any zero request serves nothing.
-	if parseBytes(query.Get("bytes")) == 0 {
-		linger := time.NewTimer(wtVerifyLinger)
-		defer linger.Stop()
-		select {
-		case <-ctx.Done():
-		case <-linger.C:
+// WTDownload serves byte lanes on server-opened streams, or a datagram flood.
+func WTDownload(stream StreamFunc, idleBound time.Duration) SessionHandler {
+	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
+		query := r.URL.Query()
+		n := parseBytes(query.Get("bytes"))
+		// Parse rather than compare spellings: any zero request serves nothing.
+		if n == 0 {
+			lingerForPeer(ctx, sess, wtVerifyLinger)
+			return
 		}
-		return
-	}
-	ctx, live := watchSession(ctx, h.idleBound)
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer live.cancel()
-	if wtDatagramMode(query) {
-		// The flood is this server's own traffic, so it cannot be what keeps the session alive.
-		wg.Go(func() { bumpOnPeerDatagrams(ctx, sess, live) })
-		sink := &datagramSink{conn: sess, done: ctx.Done()}
-		for ctx.Err() == nil && !sink.failed {
-			_ = h.download.HandleDownload(ctx, parseBytes(query.Get("bytes")), sink)
+		ctx, live := watchSession(ctx, idleBound)
+		var wg sync.WaitGroup
+		defer wg.Wait()
+		defer live.cancel()
+		if wtDatagramMode(query) {
+			// The flood is this server's own traffic, so it cannot be what keeps the session alive.
+			wg.Go(func() { bumpOnPeerDatagrams(ctx, sess, live) })
+			sink := &datagramSink{conn: sess, done: ctx.Done()}
+			for ctx.Err() == nil && !sink.failed {
+				_ = stream(ctx, n, sink)
+			}
+			return
 		}
-		return
+		lanes := laneOpener(func(ctx context.Context) (laneStream, error) {
+			return sess.OpenUniStreamSync(ctx)
+		})
+		for range wtStreamCount(query) {
+			wg.Go(func() { serveDownloadLane(ctx, stream, lanes, n, live) })
+		}
+		// The session lasts as long as any lane is being served.
+		wg.Wait()
 	}
-	lanes := laneOpener(func(ctx context.Context) (laneStream, error) {
-		return sess.OpenUniStreamSync(ctx)
-	})
-	for range wtStreamCount(query) {
-		wg.Go(func() { h.serveLane(ctx, lanes, query, live) })
-	}
-	// The session lasts as long as any lane is being served.
-	wg.Wait()
 }
 
 type laneStream interface {
@@ -153,16 +144,15 @@ type laneStream interface {
 
 type laneOpener func(context.Context) (laneStream, error)
 
-func (h *wtDownload) serveLane(ctx context.Context, lanes laneOpener, query url.Values, live *sessionActivity) {
+// serveDownloadLane replaces each exhausted lane for as long as the peer keeps draining them.
+func serveDownloadLane(ctx context.Context, stream StreamFunc, lanes laneOpener, n int64, live *sessionActivity) {
 	for ctx.Err() == nil {
 		str, err := lanes(ctx)
 		if err != nil {
 			return
 		}
 		lane := &laneWriter{w: str, live: live}
-		withWTWriteStream(ctx, str, func() {
-			_ = h.download.HandleDownload(ctx, parseBytes(query.Get("bytes")), lane)
-		})
+		withWTWriteStream(ctx, str, func() { _ = stream(ctx, n, lane) })
 		if !lane.moved {
 			return
 		}
@@ -217,86 +207,70 @@ func wtStreamCount(query url.Values) int {
 	return min(n, wire.WTMaxStreams)
 }
 
-type wtUpload struct {
-	upload    UploadHandler
-	progress  *UploadProgress
-	trusted   []netip.Prefix
-	idleBound time.Duration
-}
-
-// NewWTUpload drains client-opened streams as upload lanes and serves the progress feed on one server-opened stream.
-func NewWTUpload(upload UploadHandler, progress *UploadProgress, trusted []netip.Prefix, idleBound time.Duration) WTHandler {
-	return &wtUpload{upload: upload, progress: progress, trusted: trusted, idleBound: idleBound}
-}
-
-func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
-	query := r.URL.Query()
-	id := query.Get("id")
-	// A stream carries no request, so its CONNECT identifies the upload owner.
-	owner := UploadOwner(r, h.trusted)
-	agg, access := h.progress.store.watchFor(id, owner)
-	if access != uploadAccessOK {
-		// The refusal is the whole answer, so the session and its admission slot end with it.
-		h.serveRefusal(ctx, sess, access)
-		lingerForPeer(ctx, sess, wtRefusalLinger)
-		return
-	}
-	// The progress feed is server-generated, so its heartbeat must not count as activity.
-	ctx, live := watchSession(ctx, h.idleBound)
-	// Every goroutine below ends with the session's context, and the session ends only once they have.
-	var wg sync.WaitGroup
-	defer wg.Wait()
-	defer live.cancel()
-	wg.Go(func() { h.serveProgress(ctx, sess, agg) })
-	if wtDatagramMode(query) {
-		wg.Go(func() { h.drainDatagrams(ctx, sess, agg, id, owner, live) })
-	}
-	// The client opens these, so the ceiling the download side applies to its own lanes applies here too.
-	lanes := make(chan struct{}, wire.WTMaxStreams)
-	for {
-		str, err := sess.AcceptUniStream(ctx)
-		if err != nil {
+// WTUpload drains client-opened streams as upload lanes into the session's
+// receiver and serves its progress feed on one server-opened stream. receive
+// counts each lane; it is upload.Receive unless a test observes the lanes.
+func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) SessionHandler {
+	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
+		query := r.URL.Query()
+		id := query.Get("id")
+		// A stream carries no request, so its CONNECT identifies the upload owner.
+		owner := UploadOwner(r, upload.trusted)
+		agg, access := upload.store.watchFor(id, owner)
+		if access != uploadAccessOK {
+			// The refusal is the whole answer, so the session and its admission slot end with it.
+			serveRefusal(ctx, sess, access)
+			lingerForPeer(ctx, sess, wtRefusalLinger)
 			return
 		}
-		select {
-		case lanes <- struct{}{}:
-			wg.Go(func() {
-				defer func() { <-lanes }()
-				h.serveLane(ctx, sess, str, id, owner, live)
-			})
-		default:
-			str.CancelRead(0)
+		// The progress feed is server-generated, so its heartbeat must not count as activity.
+		ctx, live := watchSession(ctx, idleBound)
+		// Every goroutine below ends with the session's context, and the session ends only once they have.
+		var wg sync.WaitGroup
+		defer wg.Wait()
+		defer live.cancel()
+		wg.Go(func() {
+			str, err := sess.OpenUniStreamSync(ctx)
+			if err == nil {
+				withWTWriteStream(ctx, str, func() { streamProgress(ctx, agg, str) })
+			}
+		})
+		if wtDatagramMode(query) {
+			wg.Go(func() { drainDatagrams(ctx, receive, sess, agg, id, owner, live) })
+		}
+		// The client opens these, so the ceiling the download side applies to its own lanes applies here too.
+		lanes := make(chan struct{}, wire.WTMaxStreams)
+		for {
+			str, err := sess.AcceptUniStream(ctx)
+			if err != nil {
+				return
+			}
+			select {
+			case lanes <- struct{}{}:
+				wg.Go(func() {
+					defer func() { <-lanes }()
+					serveUploadLane(ctx, receive, sess, str, id, owner, live)
+				})
+			default:
+				str.CancelRead(0)
+			}
 		}
 	}
 }
 
-// wtRefusalLinger lets a peer read a refusal record before the session closes under it.
-const wtRefusalLinger = 2 * time.Second
-
-func lingerForPeer(ctx context.Context, sess *webtransport.Session, bound time.Duration) {
-	timer := time.NewTimer(bound)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-	case <-sess.Context().Done():
-	case <-timer.C:
-	}
-}
-
-func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
+func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtransport.Session, str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
 	// A blocked read watches neither the session's end nor its idle bound.
 	defer transport.UnblockReadsOnDone(ctx, str)()
-	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live}
-	_, err := h.upload.HandleUpload(ctx, id, owner, src)
+	_, err := receive(ctx, id, owner, idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		// Stream uploads have no response headers.
-		h.serveRefusal(ctx, sess, refusal.access)
+		serveRefusal(ctx, sess, refusal.access)
 	}
 	// Whatever ended the lane — a refusal, the idle bound, or a clean end — the stream is reset.
 	str.CancelRead(0)
 }
 
-func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session, access uploadAccess) {
+func serveRefusal(ctx context.Context, sess *webtransport.Session, access uploadAccess) {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
 		return
@@ -304,7 +278,7 @@ func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session,
 	withWTWriteStream(ctx, str, func() { writeRefusalRecord(str, access) })
 }
 
-func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Session, agg *uploadAgg, id, owner string, live *sessionActivity) {
+func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn, agg *uploadAgg, id, owner string, live *sessionActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -314,16 +288,8 @@ func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Sessio
 		case <-ctx.Done():
 		}
 	}()
-	src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout, live)
-	_, _ = h.upload.HandleUpload(ctx, id, owner, src)
-}
-
-func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, agg *uploadAgg) {
-	str, err := sess.OpenUniStreamSync(ctx)
-	if err != nil {
-		return
-	}
-	withWTWriteStream(ctx, str, func() { streamProgress(ctx, agg, str) })
+	src := newIdleTimeoutSource(ctx, conn, uploadReadTimeout, live)
+	_, _ = receive(ctx, id, owner, src)
 }
 
 type idleTimeoutReader struct {
@@ -355,7 +321,7 @@ type idleTimeoutSource struct {
 	live    *sessionActivity
 }
 
-func newIdleTimeoutSource(parent context.Context, conn transport.DatagramConn, timeout time.Duration, live *sessionActivity) *idleTimeoutSource {
+func newIdleTimeoutSource(parent context.Context, conn datagramConn, timeout time.Duration, live *sessionActivity) *idleTimeoutSource {
 	ctx, cancel := context.WithCancel(parent)
 	s := &idleTimeoutSource{ctx: ctx, cancel: cancel, live: live}
 	s.src = datagramSource{conn: conn, ctx: ctx}
@@ -378,7 +344,7 @@ func (s *idleTimeoutSource) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func bumpOnPeerDatagrams(ctx context.Context, conn transport.DatagramConn, live *sessionActivity) {
+func bumpOnPeerDatagrams(ctx context.Context, conn datagramConn, live *sessionActivity) {
 	for {
 		if _, err := conn.ReceiveDatagram(ctx); err != nil {
 			return
@@ -388,7 +354,7 @@ func bumpOnPeerDatagrams(ctx context.Context, conn transport.DatagramConn, live 
 }
 
 type datagramSink struct {
-	conn   transport.DatagramConn
+	conn   datagramConn
 	done   <-chan struct{}
 	failed bool
 }
@@ -411,7 +377,7 @@ func (s *datagramSink) Write(p []byte) (int, error) {
 }
 
 type datagramSource struct {
-	conn transport.DatagramConn
+	conn datagramConn
 	ctx  context.Context
 }
 

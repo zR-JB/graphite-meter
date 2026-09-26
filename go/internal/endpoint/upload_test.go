@@ -14,11 +14,33 @@ import (
 	"time"
 )
 
+func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
+	store := NewUploadStore()
+	mint := func() string {
+		rec := httptest.NewRecorder()
+		NewUpload(nil, store, nil).ServeSession(rec, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
+		var body struct {
+			UploadID string `json:"uploadId"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("mint = %d %q: %v", rec.Code, rec.Body.String(), err)
+		}
+		return body.UploadID
+	}
+	a, b := mint(), mint()
+	if a == b || !store.validID(a) || !store.validID(b) {
+		t.Fatalf("minted %q and %q, want two distinct authenticated ids", a, b)
+	}
+	if store.live.Load() != 0 {
+		t.Fatalf("minting allocated %d live aggregates, want 0", store.live.Load())
+	}
+}
+
 func TestUploadCountsAndEchoes(t *testing.T) {
 	mux := http.NewServeMux()
 	store := NewUploadStore()
 	id := store.Mint()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	mux.Handle("/upload", NewUpload(nil, store, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -46,32 +68,12 @@ func TestUploadCountsAndEchoes(t *testing.T) {
 	}
 }
 
-func TestUploadRejectsGETWithoutReadingOrCreatingAggregate(t *testing.T) {
-	store := NewUploadStore()
-	id := store.Mint()
-	upload := NewUpload(nil, store)
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/upload?id="+id, strings.NewReader("not an upload"))
-	if err := upload.HandleHTTP(response, request); err != nil {
-		t.Fatal(err)
-	}
-	if response.Code != http.StatusMethodNotAllowed || response.Header().Get("Allow") != "POST" {
-		t.Fatalf("GET status=%d allow=%q", response.Code, response.Header().Get("Allow"))
-	}
-	if _, ok := store.get(id); ok {
-		t.Fatal("GET created an upload aggregate")
-	}
-	if store.live.Load() != 0 {
-		t.Fatalf("GET retained %d upload aggregates", store.live.Load())
-	}
-}
-
 func TestUploadAggregatesByID(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	mux.Handle("/upload", NewUpload(nil, store, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -100,7 +102,7 @@ func TestUploadAggregatesByID(t *testing.T) {
 func TestUploadForgedIDDoesNotAggregate(t *testing.T) {
 	store := NewUploadStore()
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	mux.Handle("/upload", NewUpload(nil, store, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -122,7 +124,7 @@ func TestUploadAbortKeepsPartialAggregateAndDecrementsPosts(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	src := &errReader{remaining: 4096}
-	if n, err := NewUpload(nil, store).HandleUpload(t.Context(), id, "", src); err == nil || n != 4096 {
+	if n, err := NewUpload(nil, store, nil).Receive(t.Context(), id, "", src); err == nil || n != 4096 {
 		t.Fatalf("expected partial count and read error, got: %v", err)
 	}
 
@@ -149,7 +151,7 @@ func TestUploadOverCapIDIsRejected(t *testing.T) {
 	id := store.Mint()
 
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	mux.Handle("/upload", NewUpload(nil, store, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -172,7 +174,7 @@ func TestUploadEmptyBodyIDCreatesZeroByteAggregate(t *testing.T) {
 	id := store.Mint()
 
 	mux := http.NewServeMux()
-	mux.Handle("/upload", httpAdapter(NewUpload(nil, store)))
+	mux.Handle("/upload", NewUpload(nil, store, nil))
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
@@ -206,7 +208,7 @@ func TestUploadStreamRefusalIsReturnedAsAnError(t *testing.T) {
 	// The stream boundary returns its refusal before consuming the reader.
 	src := bytes.NewReader(make([]byte, 4096))
 
-	_, err := NewUpload(nil, store).HandleUpload(t.Context(), id, "", src)
+	_, err := NewUpload(nil, store, nil).Receive(t.Context(), id, "", src)
 
 	if err == nil {
 		t.Fatal("a refused stream lane returned nil: the peer is never told and its bytes are never counted")
@@ -238,9 +240,7 @@ func TestUploadBoundsAStuckBodyRead(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096)))
 	before := time.Now()
 
-	if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
-		t.Fatalf("handle: %v", err)
-	}
+	NewUpload(nil, store, nil).ServeHTTP(rec, req)
 
 	if !rec.set {
 		t.Fatal("no read deadline was set: a stuck POST body would pin its goroutine and drain buffer indefinitely")
@@ -260,9 +260,7 @@ func TestUploadRespectsRequestDeadline(t *testing.T) {
 			store := NewUploadStore()
 			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/upload?id="+store.Mint(), nil)
 			before := time.Now()
-			if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
-				t.Fatal(err)
-			}
+			NewUpload(nil, store, nil).ServeHTTP(rec, req)
 			if !rec.set || rec.read.After(requestDeadline) {
 				t.Fatalf("read deadline %v exceeds request deadline %v", rec.read, requestDeadline)
 			}
@@ -274,12 +272,6 @@ func TestUploadRespectsRequestDeadline(t *testing.T) {
 				t.Fatalf("read deadline %v does not retain the upload timeout", rec.read)
 			}
 		})
-	}
-}
-
-func TestDiscardSinkHasNoReaderFrom(t *testing.T) {
-	if _, ok := io.Writer(discardSink{}).(io.ReaderFrom); ok {
-		t.Error("discardSink must not implement io.ReaderFrom")
 	}
 }
 
@@ -319,12 +311,12 @@ func (r *errReader) Read(p []byte) (int, error) {
 func TestUploadStreamOwnerCannotReadAnotherClientsLane(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	upload := NewUpload(nil, store)
-	if n, err := upload.HandleUpload(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
+	upload := NewUpload(nil, store, nil)
+	if n, err := upload.Receive(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
 		t.Fatalf("initial upload = %d, %v", n, err)
 	}
 	src := strings.NewReader("must not be read")
-	n, err := upload.HandleUpload(t.Context(), id, "other-owner", src)
+	n, err := upload.Receive(t.Context(), id, "other-owner", src)
 	refusal, ok := errors.AsType[*uploadRefusalError](err)
 	if !ok || refusal.access != uploadAccessOwnerMismatch || n != 0 || src.Len() != len("must not be read") {
 		t.Fatalf("refused upload = %d, %v; unread bytes = %d", n, err, src.Len())
@@ -338,15 +330,15 @@ func TestUploadStreamOwnerCannotReadAnotherClientsLane(t *testing.T) {
 func TestUploadFinishRejectsLateLaneWithoutChangingReceiverTotal(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	upload := NewUpload(nil, store)
-	if n, err := upload.HandleUpload(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
+	upload := NewUpload(nil, store, nil)
+	if n, err := upload.Receive(t.Context(), id, "owner", strings.NewReader("first")); err != nil || n != 5 {
 		t.Fatalf("initial upload = %d, %v", n, err)
 	}
 	if access := store.finishFor(id, "owner"); access != uploadAccessOK {
 		t.Fatal(access)
 	}
 	body := strings.NewReader("must not be drained")
-	n, err := upload.HandleUpload(t.Context(), id, "owner", body)
+	n, err := upload.Receive(t.Context(), id, "owner", body)
 	refusal, ok := errors.AsType[*uploadRefusalError](err)
 	if !ok || refusal.access != uploadAccessInvalid || n != 0 || body.Len() != len("must not be drained") {
 		t.Fatalf("late lane = %d, %v; unread bytes = %d", n, err, body.Len())
@@ -362,9 +354,7 @@ func TestUploadHTTPAbortDoesNotPublishCompleteBytes(t *testing.T) {
 	id := store.Mint()
 	req := httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096})
 	rec := httptest.NewRecorder()
-	if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
-		t.Fatal(err)
-	}
+	NewUpload(nil, store, nil).ServeHTTP(rec, req)
 	if rec.Body.Len() != 0 {
 		t.Fatalf("aborted upload published response %q", rec.Body.String())
 	}
@@ -388,9 +378,7 @@ func TestUploadHTTPRequiresOwnerBoundIDBeforeReading(t *testing.T) {
 			body := strings.NewReader("must not be drained")
 			req := httptest.NewRequest(http.MethodPost, "/upload?id="+id, body)
 			rec := httptest.NewRecorder()
-			if err := NewUpload(nil, store).HandleHTTP(rec, req); err != nil {
-				t.Fatal(err)
-			}
+			NewUpload(nil, store, nil).ServeHTTP(rec, req)
 			if rec.Code < 400 || body.Len() != len("must not be drained") {
 				t.Fatalf("refusal = %d, unread = %d", rec.Code, body.Len())
 			}

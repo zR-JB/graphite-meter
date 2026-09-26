@@ -777,11 +777,10 @@ func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
 // wtObservedSession is what one WebTransport session looked like from inside the endpoint it drove.
 type wtObservedSession struct{ lanes, live, peak int }
 
-// wtLaneCounter wraps a transfer endpoint and records what the server itself saw on the WebTransport side of it.
+// wtLaneCounter wraps a transfer operation and records what the server itself saw on the WebTransport side of it.
 type wtLaneCounter struct {
-	endpoint.HTTPHandler
-	download endpoint.DownloadHandler
-	upload   endpoint.UploadHandler
+	stream  endpoint.StreamFunc
+	receive endpoint.ReceiveFunc
 	// cut, when set, limits how long each WebTransport lane may carry bytes.
 	cut func(lane int) time.Duration
 
@@ -791,13 +790,13 @@ type wtLaneCounter struct {
 	lanes    int
 }
 
-func (c *wtLaneCounter) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
+func (c *wtLaneCounter) Stream(ctx context.Context, n int64, sink io.Writer) error {
 	obs, _ := c.enterLane(ctx)
 	defer c.leaveLane(obs)
-	return c.download.HandleDownload(ctx, n, sink)
+	return c.stream(ctx, n, sink)
 }
 
-func (c *wtLaneCounter) HandleUpload(ctx context.Context, id, owner string, src io.Reader) (int64, error) {
+func (c *wtLaneCounter) Receive(ctx context.Context, id, owner string, src io.Reader) (int64, error) {
 	obs, lane := c.enterLane(ctx)
 	defer c.leaveLane(obs)
 	if c.cut != nil {
@@ -805,7 +804,7 @@ func (c *wtLaneCounter) HandleUpload(ctx context.Context, id, owner string, src 
 			src = &deadlineSource{src: src, until: time.Now().Add(window)}
 		}
 	}
-	return c.upload.HandleUpload(ctx, id, owner, src)
+	return c.receive(ctx, id, owner, src)
 }
 
 func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int) {
@@ -867,7 +866,7 @@ func (r *deadlineSource) Read(p []byte) (int, error) {
 func closeSessionBudget(a *requestAdmission) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.sessionMax = 0
+	a.sessions.limit = 0
 }
 
 // wtClientConfig is the shipped client pointed at a test server over WebTransport.
@@ -948,9 +947,8 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		down.HTTPHandler, down.download = e.download, e.download
-		up.HTTPHandler, up.upload = e.upload, e.upload
-		e.download, e.upload = down, up
+		down.stream, e.stream = e.stream, down.Stream
+		up.receive, e.receive = e.receive, up.Receive
 	})
 
 	run := func(t *testing.T, streams int) map[string]goclient.Result {
@@ -1028,8 +1026,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 		return 700 * time.Millisecond
 	}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
-		up.HTTPHandler, up.upload = e.upload, e.upload
-		e.upload = up
+		up.receive, e.receive = e.receive, up.Receive
 	})
 
 	clientCfg := wtClientConfig(httpBase)

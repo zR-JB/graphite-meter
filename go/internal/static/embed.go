@@ -72,7 +72,7 @@ func resultHistoryMarker(enabled bool) []byte {
 
 // handlerForWithMarker serves the shell only at / and otherwise requires an embedded file.
 func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
-	fileServer := http.FileServer(http.FS(fsys))
+	fileServer := http.FileServerFS(fsys)
 	index, indexErr := fs.ReadFile(fsys, "index.html")
 	if len(marker) != 0 {
 		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)

@@ -3,8 +3,8 @@ package endpoint
 import (
 	"encoding/json/v2"
 	"net/http"
+	"net/netip"
 
-	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -14,31 +14,44 @@ type LoadFunc func() (active, max int)
 
 // Probe returns evidence for the actual selected connection.
 type Probe struct {
-	cfg           *config.Config
+	trusted       []netip.Prefix
 	bootstrapPort string
 	load          LoadFunc
 }
 
 // NewProbe builds the probe endpoint. bootstrapPort must be set only on the H3 TCP bootstrap listener.
-func NewProbe(cfg *config.Config, bootstrapPort string, load LoadFunc) *Probe {
-	return &Probe{cfg: cfg, bootstrapPort: bootstrapPort, load: load}
+func NewProbe(trusted []netip.Prefix, bootstrapPort string, load LoadFunc) *Probe {
+	return &Probe{trusted: trusted, bootstrapPort: bootstrapPort, load: load}
 }
 
-func (p *Probe) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
-	if p.bootstrapPort != "" && transport.HTTPProtocol(r) == transport.ProtoH1 {
+func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	protocol := httpProtocol(r)
+	if p.bootstrapPort != "" && r.ProtoMajor == 1 {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")
 	}
-	client := transport.ResolveClientAddress(r, p.cfg.TrustedProxies)
+	client := transport.ResolveClientAddress(r, p.trusted)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	probe := wire.Probe{
 		ClientIP: client.Addr.String(), ClientIPVersion: client.Version,
-		ClientIPSource: string(client.Source), ProtocolNegotiated: string(transport.HTTPProtocol(r)),
+		ClientIPSource: string(client.Source), ProtocolNegotiated: protocol,
 	}
 	if p.load != nil {
 		active, max := p.load()
 		probe.Load = &wire.ProbeLoad{Active: active, Max: max}
 	}
-	return json.MarshalWrite(w, probe)
+	_ = json.MarshalWrite(w, probe)
+}
+
+// httpProtocol names the HTTP wire protocol the request actually used.
+func httpProtocol(r *http.Request) string {
+	switch r.ProtoMajor {
+	case 3:
+		return "h3"
+	case 2:
+		return "h2"
+	default:
+		return "http/1.1"
+	}
 }

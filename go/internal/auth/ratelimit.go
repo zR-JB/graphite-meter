@@ -4,8 +4,9 @@ import (
 	"log"
 	"maps"
 	"net/http"
-	"net/netip"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 const (
@@ -20,16 +21,6 @@ const (
 
 type loginAttempt struct {
 	times []time.Time
-}
-
-func budgetKey(addr netip.Addr) string {
-	addr = addr.Unmap()
-	if addr.Is6() {
-		if p, err := addr.Prefix(64); err == nil {
-			return p.String()
-		}
-	}
-	return addr.String()
 }
 
 func (s *Service) attemptRoomLocked(store map[string]loginAttempt, name, key string, limit int, now time.Time) ([]time.Time, bool) {
@@ -59,7 +50,7 @@ func (s *Service) allowAddress(r *http.Request, store map[string]loginAttempt, n
 	if !ok {
 		return false
 	}
-	key := budgetKey(addr)
+	key := transport.AddressBucket(addr)
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()

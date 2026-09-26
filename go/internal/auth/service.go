@@ -25,6 +25,7 @@ type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial
 type Service struct {
 	cfg              config.AuthConfig
 	public           *url.URL
+	origin           string // public.String(), or "" when authentication is off
 	trusted          []netip.Prefix
 	passwordHash     string
 	argon            chan struct{}
@@ -86,6 +87,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 	if err != nil {
 		return nil, err
 	}
+	s.origin = s.public.String()
 	password, oidc := authModes(cfg.Mode)
 	if password {
 		s.passwordHash, err = readSecret(cfg.PasswordHash, cfg.PasswordHashFile, 4096)
@@ -108,7 +110,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 			if err != nil {
 				return nil, fmt.Errorf("OIDC discovery: %w", err)
 			}
-			s.oidc.install(discovery)
+			s.oidc.discovered.Store(discovery)
 			log.Printf("[gm:auth] OIDC provider ready")
 		} else {
 			s.oidc.startRetry(ctx, s.public)
@@ -153,11 +155,14 @@ func readSecret(inline, file string, limit int64) (string, error) {
 func (s *Service) Enabled() bool { return s.cfg.Mode != "off" }
 
 // PublicOrigin is the canonical origin the boundary accepts, or "" when authentication is off.
-func (s *Service) PublicOrigin() string {
+func (s *Service) PublicOrigin() string { return s.origin }
+
+// PublicHostname is the canonical origin's hostname, or "" when authentication is off.
+func (s *Service) PublicHostname() string {
 	if s.public == nil {
 		return ""
 	}
-	return s.public.String()
+	return s.public.Hostname()
 }
 
 func (s *Service) Mount(mux *http.ServeMux) {

@@ -3,7 +3,6 @@ package endpoint
 import (
 	"bufio"
 	"maps"
-	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
@@ -94,30 +93,5 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 		if _, ok := refusals[name]; !ok {
 			t.Errorf("%s is pinned but Go never produces it", name)
 		}
-	}
-}
-
-// A success carries no refusal text, so an accepted upload can never be mistaken for a refused one by a client.
-func TestUploadAccessOKCarriesNoMessage(t *testing.T) {
-	if got := uploadAccessMessage(uploadAccessOK); got != "" {
-		t.Errorf("uploadAccessMessage(uploadAccessOK) = %q, want empty", got)
-	}
-	if got := uploadAccessCode(uploadAccessOK); got != "" {
-		t.Errorf("uploadAccessCode(uploadAccessOK) = %q, want empty", got)
-	}
-}
-
-// writeUploadAccessError must never fall through silently.
-func TestWriteUploadAccessErrorFailsLoudlyOnAnUnknownAccess(t *testing.T) {
-	rec := httptest.NewRecorder()
-	writeUploadAccessError(rec, uploadAccess(200))
-	if rec.Code == http.StatusOK {
-		t.Fatal("an unhandled refusal wrote no status: the client would read the 200 as a successful upload")
-	}
-	if rec.Code < 500 {
-		t.Errorf("status = %d, want a 5xx: an unmapped refusal is a server bug, not the client's fault", rec.Code)
-	}
-	if strings.TrimSpace(rec.Body.String()) == "" {
-		t.Error("an unhandled refusal wrote no body")
 	}
 }

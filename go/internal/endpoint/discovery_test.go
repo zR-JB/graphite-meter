@@ -1,8 +1,10 @@
 package endpoint
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -13,7 +15,7 @@ func TestPreflightNativeEndpointsAreDeterministic(t *testing.T) {
 	cfg := config.Default()
 	cfg.Native.H1TLS, cfg.Native.H2, cfg.Native.H3 = ":7247", ":7248", ":7249"
 	cfg.NativePublic = config.NativeOrigins{H1: "http://meter.example:7246", H1TLS: "https://meter.example:7247", H2: "https://meter.example:7248", H3: "https://meter.example:7249"}
-	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	pf := NewDiscovery(&cfg).preflightFor("internal")
 	// The preflight includes fetch, WebTransport stream, and WebTransport datagram targets.
 	if len(pf.Capabilities.ThroughputTargets) != 6 || len(pf.Capabilities.LatencyTargets) != 3 {
 		t.Fatalf("capabilities = %+v, want 6 throughput and 3 latency targets", pf.Capabilities)
@@ -41,7 +43,7 @@ func TestPreflightAdvertisesWebTransportUnderAuth(t *testing.T) {
 	cfg.Native.H3 = ":7249"
 	cfg.NativePublic.H3 = "https://meter.example:7249"
 	cfg.Auth.Mode = "password"
-	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	pf := NewDiscovery(&cfg).preflightFor("internal")
 	throughput, latency := false, false
 	for _, target := range pf.Capabilities.ThroughputTargets {
 		throughput = throughput || target.Transport == wire.TransportWebTransport
@@ -61,7 +63,7 @@ func TestPreflightProxyOnlyAndRoles(t *testing.T) {
 	cfg.Public.Both = []string{"self", "https://meter.example"}
 	cfg.Public.Throughput = []string{"https://download.example"}
 	cfg.Public.Latency = []string{"https://ping.example"}
-	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	pf := NewDiscovery(&cfg).preflightFor("internal")
 	if got := pf.Capabilities.ThroughputTargets[0]; got.Origin != "." || got.Protocol != "negotiated" {
 		t.Fatalf("self throughput = %+v, want origin \".\" and protocol \"negotiated\"", got)
 	}
@@ -77,7 +79,7 @@ func TestPreflightMergesDuplicatePublicRoles(t *testing.T) {
 	cfg.Public.Both = []string{"self"}
 	cfg.Public.Throughput = []string{"self"}
 	cfg.Public.Latency = []string{"self"}
-	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	pf := NewDiscovery(&cfg).preflightFor("internal")
 	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
 		t.Fatalf("capabilities = %+v, want 1 throughput and 1 latency target", pf.Capabilities)
 	}
@@ -90,7 +92,7 @@ func TestPreflightMergesEquivalentDefaultPortOrigins(t *testing.T) {
 	cfg.Public.Both = []string{"https://meter.example"}
 	cfg.Public.Throughput = []string{"https://meter.example:443"}
 	cfg.Public.Latency = []string{"https://meter.example:443"}
-	pf := NewPreflight(&cfg).build(httptest.NewRequest("GET", "http://internal/preflight", nil))
+	pf := NewDiscovery(&cfg).preflightFor("internal")
 	if len(pf.Capabilities.ThroughputTargets) != 1 || len(pf.Capabilities.LatencyTargets) != 1 {
 		t.Fatalf("capabilities = %+v, want 1 throughput and 1 latency target", pf.Capabilities)
 	}
@@ -99,7 +101,7 @@ func TestPreflightMergesEquivalentDefaultPortOrigins(t *testing.T) {
 func TestPreflightNativeOriginFromBracketedIPv6Host(t *testing.T) {
 	cfg := config.Default()
 	req := httptest.NewRequest("GET", "http://[::1]/preflight", nil)
-	pf := NewPreflight(&cfg).build(req)
+	pf := NewDiscovery(&cfg).preflightFor(RequestHost(req))
 	if got, want := pf.Capabilities.ThroughputTargets[0].Origin, "http://[::1]:7246"; got != want {
 		t.Fatalf("native origin = %q, want %q", got, want)
 	}
@@ -113,7 +115,7 @@ func TestConnectOriginsListsCrossOriginTargetsAndSkipsSelf(t *testing.T) {
 	cfg.Public.Throughput = []string{"https://download.example"}
 	cfg.Public.Latency = []string{"https://ping.example"}
 
-	got := NewPreflight(&cfg).ConnectOrigins("meter.example")
+	got := NewDiscovery(&cfg).ConnectOrigins("meter.example")
 	// Latency targets carry a ws(s) form as well: the WebSocket URL scheme.
 	want := map[string]bool{
 		"https://meter.example":    true,
@@ -140,7 +142,7 @@ func TestConnectOriginsEmptyWhenEverythingIsSelf(t *testing.T) {
 	cfg.AdvertiseAllNative = false
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Both = []string{"self"}
-	if got := NewPreflight(&cfg).ConnectOrigins("meter.example"); len(got) != 0 {
+	if got := NewDiscovery(&cfg).ConnectOrigins("meter.example"); len(got) != 0 {
 		t.Fatalf("ConnectOrigins with only self = %v, want empty", got)
 	}
 }
@@ -151,10 +153,20 @@ func TestConnectOriginsCarriesWebSocketSchemes(t *testing.T) {
 	cfg.AdvertisedNative = map[string]bool{}
 	cfg.Public.Latency = []string{"https://ping.example", "http://plain.example:7246"}
 
-	got := NewPreflight(&cfg).ConnectOrigins("meter.example")
+	got := NewDiscovery(&cfg).ConnectOrigins("meter.example")
 	for _, want := range []string{"wss://ping.example", "ws://plain.example:7246"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("ConnectOrigins = %v, want it to contain %q", got, want)
 		}
+	}
+}
+
+func TestPublicConnectionPolicyKeepsSelfAndDNSSourcesForIPv6Page(t *testing.T) {
+	cfg := config.Default()
+	cfg.ServerCatalog = wire.SingletonCatalog()
+	cfg.ServerCatalog.Servers = append(cfg.ServerCatalog.Servers, wire.ServerEntry{ID: "remote", Name: "Remote", URL: "https://meter.example", AdditionalOrigins: []string{"https://[2001:db8::2]:7248"}})
+	policy := NewDiscovery(&cfg).ConnectPolicy(RequestHost(httptest.NewRequest(http.MethodGet, "http://[::1]:7246/", nil)))
+	if strings.Contains(policy, "[") || !strings.Contains(policy, "connect-src 'self' ") || !strings.Contains(policy, "https://meter.example:*") {
+		t.Fatalf("unexpected public connection policy: %s", policy)
 	}
 }

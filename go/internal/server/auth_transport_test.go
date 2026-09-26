@@ -19,6 +19,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -49,21 +50,18 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	}
 	origin := "https://" + uiLn.Addr().String()
 	authn := testPasswordAuth(t, origin)
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := buildEndpoints(ctx, cfg)
 
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
-	uiMux := listenerMuxConfigured(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, http.NotFoundHandler(), authn)
+	uiMux := newMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, http.NotFoundHandler(), authn)
 	ui := baseServer(authn.Enforce(uiMux, auth.Listener{UI: true}), h1p)
 	go serve(tls.NewListener(uiLn, cm.tlsConfig("http/1.1")), ui)
 	t.Cleanup(func() { _ = ui.Close() })
 
 	h2p := &http.Protocols{}
 	h2p.SetHTTP2(true)
-	h2Mux := listenerMuxConfigured(ctx, e, muxTopology{transfers: true, requiredProto: 2}, http.NotFoundHandler(), authn)
+	h2Mux := newMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}, nil, authn)
 	h2 := baseServer(authn.Enforce(h2Mux, auth.Listener{}), h2p)
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
@@ -346,9 +344,10 @@ func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
 func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
 	s := newAuthenticatedStack(t)
 	a := newRequestAdmission(1, 0, 1, 1, time.Minute, time.Hour)
+	download, _ := route.Lookup(route.Download)
 	h := s.authn.Enforce(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("admission dispatched despite zero client capacity")
-	}), nil, s.origin), auth.Listener{})
+	}), download, nil, s.authn), auth.Listener{})
 	for _, origin := range []string{s.origin, "https://evil.example", ""} {
 		r := httptest.NewRequest(http.MethodGet, s.origin+"/download", nil)
 		r.TLS = &tls.ConnectionState{}

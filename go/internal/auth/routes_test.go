@@ -127,7 +127,7 @@ func TestCORSPreflightPreservesExactRouteMethods(t *testing.T) {
 	for path, permitted := range allowed {
 		for _, method := range methods {
 			r := secureRequest(http.MethodOptions, path, nil)
-			r.Header.Set("Origin", s.public.String())
+			r.Header.Set("Origin", s.origin)
 			r.Header.Set("Access-Control-Request-Method", method)
 			w := httptest.NewRecorder()
 			s.corsPreflight(w, r, true)

@@ -89,3 +89,21 @@ func TestRepeatedForwardingFieldsUseFirstUntrustedHop(t *testing.T) {
 		})
 	}
 }
+
+// Every per-client budget buckets an IPv6 client by the /64 it controls.
+func TestAddressBucketCollapsesIPv6ToTheAllocation(t *testing.T) {
+	for _, tc := range []struct{ addr, want string }{
+		{"203.0.113.7", "203.0.113.7"},
+		{"::ffff:203.0.113.7", "203.0.113.7"},
+		{"2001:db8:1:2::1", "2001:db8:1:2::/64"},
+		{"2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:db8:1:2::/64"},
+		{"2001:db8:1:3::1", "2001:db8:1:3::/64"},
+	} {
+		if got := AddressBucket(netip.MustParseAddr(tc.addr)); got != tc.want {
+			t.Errorf("AddressBucket(%s) = %s, want %s", tc.addr, got, tc.want)
+		}
+	}
+	if got := AddressBucket(netip.Addr{}); got != "unknown" {
+		t.Errorf("AddressBucket(invalid) = %s, want unknown", got)
+	}
+}

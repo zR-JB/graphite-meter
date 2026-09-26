@@ -21,7 +21,7 @@ import (
 // UploadStore holds per-test state shared between POST /upload lanes and the /upload/progress stream.
 type UploadStore struct {
 	shards   [uploadShardCount]uploadShard
-	tokenKey func() ([sha256.Size]byte, bool)
+	tokenKey [sha256.Size]byte
 	live     atomic.Int32 // live aggregates retained through completion replay
 	ownersMu sync.Mutex
 	byOwner  map[string]int
@@ -145,14 +145,8 @@ const (
 
 // NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
-	s := &UploadStore{
-		byOwner: make(map[string]int),
-		tokenKey: sync.OnceValues(func() ([sha256.Size]byte, bool) {
-			var key [sha256.Size]byte
-			_, err := rand.Read(key[:])
-			return key, err == nil
-		}),
-	}
+	s := &UploadStore{byOwner: make(map[string]int)}
+	_, _ = rand.Read(s.tokenKey[:]) // crypto/rand.Read never fails
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
 	}
@@ -171,37 +165,31 @@ func (s *UploadStore) shard(id string) *uploadShard {
 
 // Mint generates a URL-safe, authenticated upload-session token without storing per-token state.
 func (s *UploadStore) Mint() string {
-	key, ok := s.tokenKey()
-	if !ok {
-		return ""
-	}
 	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return ""
-	}
-	return s.signID(monoNanos(), nonce, key)
+	_, _ = rand.Read(nonce[:])
+	return s.signID(monoNanos(), nonce)
 }
 
-func (s *UploadStore) signID(issued int64, nonce [16]byte, key [sha256.Size]byte) string {
+func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
 	var payload [8 + len(nonce)]byte
 	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
 	copy(payload[8:], nonce[:])
-	mac := hmac.New(sha256.New, key[:])
+	mac := hmac.New(sha256.New, s.tokenKey[:])
 	_, _ = mac.Write(payload[:])
 	return "gmu_" + base64.RawURLEncoding.EncodeToString(slices.Concat(payload[:], mac.Sum(nil)))
 }
 
 func (s *UploadStore) validID(id string) bool {
-	key, ok := s.tokenKey()
-	if len(id) < 4 || id[:4] != "gmu_" || !ok {
+	encoded, ok := strings.CutPrefix(id, "gmu_")
+	if !ok {
 		return false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(raw) != 8+16+sha256.Size {
 		return false
 	}
 	payload, tag := raw[:24], raw[24:]
-	mac := hmac.New(sha256.New, key[:])
+	mac := hmac.New(sha256.New, s.tokenKey[:])
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(tag, mac.Sum(nil)) {
 		return false

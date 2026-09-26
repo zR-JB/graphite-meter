@@ -246,7 +246,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	post.Host = "meter.example"
 	post.TLS = secureRequest(http.MethodGet, "/", nil).TLS
 	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	post.Header.Set("Origin", s.public.String())
+	post.Header.Set("Origin", s.origin)
 	post.AddCookie(&http.Cookie{Name: loginCookie, Value: formToken})
 	login := httptest.NewRecorder()
 	handler.ServeHTTP(login, post)
@@ -277,7 +277,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 
 	info := secureRequest(http.MethodGet, "/auth/session", nil)
 	info.AddCookie(session)
-	info.Header.Set("Origin", s.public.String())
+	info.Header.Set("Origin", s.origin)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, info)
 	if rr.Code != http.StatusOK {
@@ -300,7 +300,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			measurement := secureRequest(http.MethodPost, "/upload", nil)
 			measurement.AddCookie(session)
-			measurement.Header.Set("Origin", s.public.String())
+			measurement.Header.Set("Origin", s.origin)
 			if tc.header != "" {
 				measurement.Header.Set("X-CSRF-Token", tc.header)
 			}

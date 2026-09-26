@@ -14,9 +14,12 @@ import (
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"github.com/zR-JB/graphite-meter/go/internal/static"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
+
+func routeSpec(path string) route.Spec {
+	spec, _ := route.Lookup(path)
+	return spec
+}
 
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	a := newRequestAdmission(3, 2, 3, 4, time.Minute, time.Hour)
@@ -25,7 +28,7 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		entered <- struct{}{}
 		<-release
-	}), nil, "")
+	}), routeSpec(route.Download), nil, publicAuth(t))
 
 	var wg sync.WaitGroup
 	for range 2 {
@@ -60,19 +63,18 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 			name = "http2"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
 			store := endpoint.NewUploadStore()
-			upload := endpoint.NewUpload(nil, store)
+			upload := endpoint.NewUpload(nil, store, nil)
 			id := store.Mint()
 			finished := make(chan struct{})
 			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if (r.ProtoMajor == 2) != http2 {
 					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
 				}
-				if err := upload.HandleHTTP(w, r); err != nil {
-					t.Errorf("upload: %v", err)
-				}
-			}), nil, "")
+				upload.ServeHTTP(w, r)
+			}), routeSpec(route.Upload), nil, publicAuth(t))
 			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				h.ServeHTTP(w, r)
 				close(finished)
@@ -104,8 +106,8 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 			}()
 			select {
 			case <-finished:
-				if got := a.stats().active; got != 0 {
-					t.Fatalf("active uploads = %d after timeout, want 0", got)
+				if requests, _ := a.stats(); requests.active != 0 {
+					t.Fatalf("active uploads = %d after timeout, want 0", requests.active)
 				}
 			case <-ctx.Done():
 				t.Fatal("stalled upload retained its admission slot beyond the request lifetime")
@@ -124,19 +126,8 @@ func TestRequestAdmissionGlobalLimit(t *testing.T) {
 	if _, status := a.acquire("192.0.2.2", ""); status != http.StatusServiceUnavailable {
 		t.Fatalf("global rejection = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	stats := a.stats()
-	if stats.active != 1 || stats.peak != 1 || stats.rejectedGlobal != 1 {
-		t.Fatalf("stats = %+v, want 1 active, 1 peak, 1 global rejection", stats)
-	}
-}
-
-func TestClientKeyGroupsIPv6ByPrefix(t *testing.T) {
-	a := httptest.NewRequest(http.MethodGet, "/", nil)
-	b := httptest.NewRequest(http.MethodGet, "/", nil)
-	a.RemoteAddr = "[2001:db8:1::1]:1"
-	b.RemoteAddr = "[2001:db8:1::ffff]:2"
-	if endpoint.ClientKey(a, nil) != endpoint.ClientKey(b, nil) {
-		t.Fatalf("same /64 produced %q and %q", endpoint.ClientKey(a, nil), endpoint.ClientKey(b, nil))
+	if requests, _ := a.stats(); requests.active != 1 || requests.peak != 1 || requests.rejectedGlobal != 1 {
+		t.Fatalf("stats = %+v, want 1 active, 1 peak, 1 global rejection", requests)
 	}
 }
 
@@ -150,28 +141,28 @@ func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
 	}
 }
 
-func assertAdmissionLifetime(t *testing.T, path string, requestLifetime, sessionLifetime time.Duration) {
-	t.Helper()
-	a := newRequestAdmission(1, 1, 1, 4, requestLifetime, sessionLifetime)
-	done := make(chan struct{})
-	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		close(done)
-	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
-	select {
-	case <-done:
-	default:
-		t.Fatalf("handler did not observe %s lifetime deadline", path)
+// A request-shaped route and both ping buses take the request bound and budget; only the transfer sessions hold a test.
+func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
+	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
+	for path, session := range map[string]bool{
+		route.Download: false, route.Ping: false, route.WTPing: false, route.WTDownload: true, route.WTUpload: true,
+	} {
+		var lifetime time.Duration
+		var heldSession bool
+		a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			deadline, _ := r.Context().Deadline()
+			lifetime = time.Until(deadline)
+			_, sessions := a.stats()
+			heldSession = sessions.active == 1
+		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		want := time.Minute
+		if session {
+			want = time.Hour
+		}
+		if lifetime <= want-time.Second || lifetime > want || heldSession != session {
+			t.Errorf("%s lifetime = %v holding a session = %v, want %v and %v", path, lifetime, heldSession, want, session)
+		}
 	}
-}
-
-func TestRequestAdmissionLifetime(t *testing.T) {
-	assertAdmissionLifetime(t, "/", 10*time.Millisecond, time.Hour)
-}
-
-func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
-	assertAdmissionLifetime(t, "/wt/download", time.Minute, 10*time.Millisecond)
 }
 
 // Session routes carry their own per-client budget, since one holds a slot for a whole test rather than a request.
@@ -216,7 +207,7 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
 		t.Fatalf("session past the session budget = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	// The property the single global counter lost: the pool still admits the request-shaped routes while every session.
+	// The pool still admits the request-shaped routes while every session slot is taken.
 	for _, key := range []string{"client-c", "client-d"} {
 		release, status := a.acquire(key, "")
 		if status != 0 {
@@ -232,36 +223,28 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	release()
 	second()
 	// The refusal came from the session budget with the pool half empty, so it is counted there.
-	if stats := a.stats(); stats.active != 0 || stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
-		t.Fatalf("stats = %+v, want no active measurements and 1 session-budget rejection", stats)
+	if requests, sessions := a.stats(); requests.active != 0 || sessions.rejectedGlobal != 1 || requests.rejectedGlobal != 0 {
+		t.Fatalf("stats = %+v / %+v, want no active measurements and 1 session-budget rejection", requests, sessions)
 	}
 }
 
 // The session budget caps what sessions may occupy and reserves nothing for them.
 func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
-	sessionKeyFor := func(path, login string) string {
-		if isSessionRoute(path) {
-			return login
-		}
-		return ""
-	}
 	// Room for four measurements and four sessions, two per client either way.
 	a := newRequestAdmission(4, 2, 4, 2, time.Minute, time.Hour)
 	for i, key := range []string{"client-a", "client-a", "client-b", "client-b"} {
-		release, status := a.acquire(key, sessionKeyFor(route.WTPing, "login-"+key))
+		// The ping bus is request-shaped, so it spends no session key.
+		release, status := a.acquire(key, "")
 		if status != 0 {
 			t.Fatalf("ping bus %d from %s rejected with %d", i, key, status)
 		}
 		defer release()
 	}
-	if _, status := a.acquire("client-c", sessionKeyFor(route.WTDownload, "login-c")); status != http.StatusServiceUnavailable {
+	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
 		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	a.mu.Lock()
-	active := a.activeSessions
-	a.mu.Unlock()
-	if active != 0 {
-		t.Fatalf("activeSessions = %d, want 0: the refusal came from the pool, not from the session budget", active)
+	if _, sessions := a.stats(); sessions.active != 0 || sessions.rejectedGlobal != 0 {
+		t.Fatalf("sessions = %+v, want the refusal to come from the pool, not the session budget", sessions)
 	}
 }
 
@@ -277,14 +260,10 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	if _, status := a.acquire("client-b", "login-b"); status != http.StatusServiceUnavailable {
 		t.Fatalf("session past the budget = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	stats := a.stats()
-	if stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
-		t.Errorf("stats = %+v, want the refusal counted against the session budget and not the pool", stats)
+	requests, sessions := a.stats()
+	if sessions.rejectedGlobal != 1 || requests.rejectedGlobal != 0 || sessions.active != 1 || sessions.limit != 1 {
+		t.Errorf("stats = %+v / %+v, want the refusal counted against a 1-of-1 session budget and not the pool", requests, sessions)
 	}
-	if stats.activeSessions != 1 || stats.sessionMax != 1 {
-		t.Errorf("stats = %+v, want the session budget reported as 1 of 1 occupied", stats)
-	}
-
 	// Fill the rest of the pool with request-shaped routes and prove the other counter is the one that moves.
 	for i := range 3 {
 		release, status := a.acquire("client-c", "")
@@ -296,11 +275,8 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	if _, status := a.acquire("client-d", ""); status != http.StatusServiceUnavailable {
 		t.Fatalf("request against a full pool = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	if stats := a.stats(); stats.rejectedGlobal != 1 || stats.rejectedSessionBudget != 1 {
-		t.Errorf("stats = %+v, want one refusal on each counter", stats)
-	}
-	if stats := a.stats(); stats.active != 4 {
-		t.Errorf("stats = %+v, want the pool reported full", stats)
+	if requests, sessions := a.stats(); requests.rejectedGlobal != 1 || sessions.rejectedGlobal != 1 || requests.active != 4 {
+		t.Errorf("stats = %+v / %+v, want a full pool and one refusal on each counter", requests, sessions)
 	}
 }
 
@@ -328,36 +304,6 @@ func TestSessionBudgetIsPerLogin(t *testing.T) {
 	request()
 }
 
-// A principal with no login falls back to the address, so public mode keeps the per-client budget it had before logins.
-func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
-	r.RemoteAddr = "192.0.2.7:1234"
-	if got, want := endpoint.SessionKey(r, nil), endpoint.ClientKey(r, nil); got != want {
-		t.Fatalf("session key = %q, want the client key %q", got, want)
-	}
-}
-
-// The two ping buses are one thing under two mechanisms: neither holds a test.
-func TestPingBusesShareTheRequestBound(t *testing.T) {
-	a := newRequestAdmission(100, 100, 100, 1, time.Minute, time.Hour)
-	for _, path := range []string{route.Ping, route.WTPing} {
-		if got := a.lifetimeFor(path); got != a.requestLifetime {
-			t.Errorf("%s lifetime = %v, want the request bound %v", path, got, a.requestLifetime)
-		}
-		if isSessionRoute(path) {
-			t.Errorf("%s counts against the session budget", path)
-		}
-	}
-	for _, path := range []string{route.WTDownload, route.WTUpload} {
-		if got := a.lifetimeFor(path); got != a.sessionLifetime {
-			t.Errorf("%s lifetime = %v, want the session bound %v", path, got, a.sessionLifetime)
-		}
-		if !isSessionRoute(path) {
-			t.Errorf("%s does not count against the session budget", path)
-		}
-	}
-}
-
 // deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
 type deadlineRecordingWriter struct {
 	*httptest.ResponseRecorder
@@ -372,7 +318,7 @@ func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
 	armedFor := func(path string) int {
 		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
-		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil, "").
+		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), routeSpec(path), nil, publicAuth(t)).
 			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
 		return w.armed
 	}
@@ -398,7 +344,7 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	defer release()
 	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		t.Fatal("rejected WebSocket reached handler")
-	}), nil, ""))
+	}), routeSpec(route.Ping), nil, publicAuth(t)))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -408,31 +354,5 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	}
 	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
 		t.Fatalf("upgrade response = %#v, want 503 with Retry-After 1", res)
-	}
-}
-
-type deadlineEndpoint struct{}
-
-func (deadlineEndpoint) HandleMessages(ctx context.Context, _ transport.MessageBus) error {
-	<-ctx.Done()
-	return nil
-}
-
-func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
-	e := &endpoints{
-		ping:      deadlineEndpoint{},
-		admission: newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour),
-	}
-	srv := httptest.NewServer(listenerMuxConfigured(t.Context(), e, muxTopology{latency: true}, static.Handler(), nil))
-	defer srv.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/ping", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.CloseNow()
-	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-		t.Fatalf("WebSocket lifetime close = %v", err)
 	}
 }

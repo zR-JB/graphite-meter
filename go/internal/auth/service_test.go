@@ -105,7 +105,7 @@ func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
 			if rr.Code != tc.want {
 				t.Fatalf("code=%d, want %d", rr.Code, tc.want)
 			}
-			if want := s.public.String() + "/login"; tc.want == http.StatusTemporaryRedirect && rr.Header().Get("Location") != want {
+			if want := s.origin + "/login"; tc.want == http.StatusTemporaryRedirect && rr.Header().Get("Location") != want {
 				t.Fatalf("location=%q, want %q", rr.Header().Get("Location"), want)
 			}
 		})
@@ -247,7 +247,7 @@ func TestCookieMutationRequiresOriginAndCSRF(t *testing.T) {
 	for _, tc := range []struct {
 		name, origin, csrf string
 		want               int
-	}{{"missing origin", "", sess.csrf, 403}, {"missing csrf", s.public.String(), "", 403}, {"valid", s.public.String(), sess.csrf, 200}} {
+	}{{"missing origin", "", sess.csrf, 403}, {"missing csrf", s.origin, "", 403}, {"valid", s.origin, sess.csrf, 200}} {
 		t.Run(tc.name, func(t *testing.T) {
 			called = false
 			r := secureRequest("POST", "/upload", nil)
@@ -314,7 +314,8 @@ func TestAuthenticatedConnectSourcesExcludeIPv6Literals(t *testing.T) {
 
 func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	s := testService(t)
-	s.oidc = &oidcState{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://login.example:8443/oauth2/authorize"}}}
+	s.oidc = &oidcState{}
+	s.oidc.discovered.Store(&oidcDiscovery{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "https://login.example:8443/oauth2/authorize"}}})
 	h := http.Header{}
 	s.loginSecurityHeaders(h)
 	policy := h.Get("Content-Security-Policy")
@@ -325,7 +326,7 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 		t.Fatalf("authorization path leaked into CSP source: %q", policy)
 	}
 
-	s.oidc.oauth.Endpoint.AuthURL = "http://login.example/authorize"
+	s.oidc.discovered.Store(&oidcDiscovery{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: "http://login.example/authorize"}}})
 	h = http.Header{}
 	s.loginSecurityHeaders(h)
 	if strings.Contains(h.Get("Content-Security-Policy"), "login.example") {
@@ -391,7 +392,7 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 	token := "abcdefghijklmnopqrstuvwxyz0123456789"
 	request := func(origin, cookie, form string) *http.Request {
 		body := url.Values{"csrf": {form}}.Encode()
-		r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/password", strings.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/password", strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		if origin != "" {
 			r.Header.Set("Origin", origin)
@@ -413,10 +414,10 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 		{"missing origin", "", token, token, reasonCSRFOriginMissing, false},
 		{"null origin", "null", token, token, reasonCSRFOriginMismatch, false},
 		{"wrong origin", "https://wrong.example", token, token, reasonCSRFOriginMismatch, false},
-		{"missing cookie", s.public.String(), "", token, reasonCSRFCookieMissing, false},
-		{"missing token", s.public.String(), token, "", reasonCSRFTokenMissing, false},
-		{"wrong token", s.public.String(), token, "different", reasonCSRFTokenMismatch, false},
-		{"valid", s.public.String(), token, token, "", true},
+		{"missing cookie", s.origin, "", token, reasonCSRFCookieMissing, false},
+		{"missing token", s.origin, token, "", reasonCSRFTokenMissing, false},
+		{"wrong token", s.origin, token, "different", reasonCSRFTokenMismatch, false},
+		{"valid", s.origin, token, token, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok := s.checkCSRF(request(tc.origin, tc.cookie, tc.form), "csrf")
@@ -430,14 +431,14 @@ func TestCookieWebSocketRequiresExactOrigin(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("subject", "Name", "local")
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{})
-	for _, origin := range []string{"", "https://wrong.example", s.public.String()} {
+	for _, origin := range []string{"", "https://wrong.example", s.origin} {
 		r := secureRequest("GET", "/ws/ping", nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
 		r.Header.Set("Origin", origin)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, r)
 		want := 403
-		if origin == s.public.String() {
+		if origin == s.origin {
 			want = 204
 		}
 		if rr.Code != want {
@@ -452,7 +453,7 @@ func TestCookieMeasurementAllowsExactOriginFromAlternatePort(t *testing.T) {
 	r := secureRequest("GET", "/download", nil)
 	r.Host = "meter.example:7443"
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
-	r.Header.Set("Origin", s.public.String())
+	r.Header.Set("Origin", s.origin)
 	r.Header.Set("Sec-Fetch-Site", "same-site")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
@@ -549,7 +550,7 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *testing.T) {
 	s := testService(t)
 	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
-	for _, origin := range []string{s.public.String(), "https://other.example", "http://other.example", "null", ""} {
+	for _, origin := range []string{s.origin, "https://other.example", "http://other.example", "null", ""} {
 		r := secureRequest("GET", "/download", nil)
 		r.Header.Set("Origin", origin)
 		rr := httptest.NewRecorder()
@@ -561,7 +562,7 @@ func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *test
 			if rr.Header().Get("Access-Control-Allow-Origin") != origin || !strings.Contains(rr.Header().Get("Access-Control-Expose-Headers"), "Graphite-Meter-Auth") {
 				t.Fatalf("headers=%v", rr.Header())
 			}
-			if origin != s.public.String() && rr.Header().Get("Access-Control-Allow-Credentials") != "" {
+			if origin != s.origin && rr.Header().Get("Access-Control-Allow-Credentials") != "" {
 				t.Fatal("cross-origin session cookies were enabled")
 			}
 		} else if rr.Header().Get("Access-Control-Allow-Origin") != "" || rr.Header().Get("Access-Control-Allow-Credentials") != "" {
@@ -728,7 +729,7 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 			if tc.provider {
 				s.oidc = newOIDCState(s.cfg, "secret", false)
 				if tc.ready {
-					s.oidc.provider = &oidc.Provider{}
+					s.oidc.discovered.Store(&oidcDiscovery{provider: &oidc.Provider{}})
 				}
 			}
 			rr := httptest.NewRecorder()

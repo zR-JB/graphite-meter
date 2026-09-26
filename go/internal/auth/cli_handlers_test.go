@@ -129,7 +129,7 @@ func TestCliPageCapsApprovalsPerSession(t *testing.T) {
 
 func approveRequest(s *Service, sess *session, challenge, csrf, origin string) *http.Request {
 	form := url.Values{"csrf": {csrf}, "challenge": {challenge}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.public.String()+"/auth/cli/approve", strings.NewReader(form))
+	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/cli/approve", strings.NewReader(form))
 	r.Host = "meter.example"
 	r.TLS = &tls.ConnectionState{}
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -146,7 +146,7 @@ func TestCliApproveMarksApprovalApproved(t *testing.T) {
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 
 	rr := httptest.NewRecorder()
-	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.public.String()))
+	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve code=%d, want 200", rr.Code)
 	}
@@ -166,10 +166,10 @@ func TestCliApproveRejectsWrongCSRFOriginAndForeignSession(t *testing.T) {
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 
 	cases := map[string]*http.Request{
-		"wrong csrf":        approveRequest(s, sess, challenge, "not-the-token", s.public.String()),
+		"wrong csrf":        approveRequest(s, sess, challenge, "not-the-token", s.origin),
 		"wrong origin":      approveRequest(s, sess, challenge, sess.csrf, "https://evil.example"),
-		"foreign session":   approveRequest(s, other, challenge, other.csrf, s.public.String()),
-		"unknown challenge": approveRequest(s, sess, challengeFor("nope"), sess.csrf, s.public.String()),
+		"foreign session":   approveRequest(s, other, challenge, other.csrf, s.origin),
+		"unknown challenge": approveRequest(s, sess, challengeFor("nope"), sess.csrf, s.origin),
 	}
 	for name, r := range cases {
 		rr := httptest.NewRecorder()
@@ -196,7 +196,7 @@ func TestCliApproveRejectsExpiredApproval(t *testing.T) {
 	s.mu.Unlock()
 
 	rr := httptest.NewRecorder()
-	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.public.String()))
+	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("expired approval code=%d, want 403", rr.Code)
 	}
@@ -226,11 +226,11 @@ func TestCorsPreflight(t *testing.T) {
 	}
 
 	// Happy path: a same-origin GET preflight on a measurement route.
-	rr := preflight("/download", s.public.String(), http.MethodGet, "authorization,x-csrf-token", true)
+	rr := preflight("/download", s.origin, http.MethodGet, "authorization,x-csrf-token", true)
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("valid preflight code=%d, want 204", rr.Code)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != s.public.String() {
+	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != s.origin {
 		t.Errorf("Allow-Origin=%q, want the public origin", got)
 	}
 	if rr.Header().Get("Access-Control-Allow-Credentials") != "true" {
@@ -238,11 +238,11 @@ func TestCorsPreflight(t *testing.T) {
 	}
 
 	for name, rr := range map[string]*httptest.ResponseRecorder{
-		"insecure":          preflight("/download", s.public.String(), http.MethodGet, "", false),
+		"insecure":          preflight("/download", s.origin, http.MethodGet, "", false),
 		"wrong origin":      preflight("/download", "https://evil.example", http.MethodGet, "", true),
-		"disallowed method": preflight("/download", s.public.String(), http.MethodDelete, "", true),
-		"unlisted path":     preflight("/secret", s.public.String(), http.MethodGet, "", true),
-		"disallowed header": preflight("/download", s.public.String(), http.MethodGet, "x-evil", true),
+		"disallowed method": preflight("/download", s.origin, http.MethodDelete, "", true),
+		"unlisted path":     preflight("/secret", s.origin, http.MethodGet, "", true),
+		"disallowed header": preflight("/download", s.origin, http.MethodGet, "x-evil", true),
 	} {
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("%s: code=%d, want 403", name, rr.Code)

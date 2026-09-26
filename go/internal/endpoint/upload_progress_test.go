@@ -67,7 +67,7 @@ func waitProgressText(t *testing.T, r *progressRecorder, part string) {
 func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	h := httpAdapter(NewUploadProgress(store))
+	h := http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress)
 	ctx := t.Context()
 	req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil).WithContext(ctx)
 	rec := newProgressRecorder()
@@ -112,7 +112,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 
 func TestUploadProgressRejectsUnknownID(t *testing.T) {
 	rec := httptest.NewRecorder()
-	httpAdapter(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
+	http.HandlerFunc(NewUpload(nil, NewUploadStore(), nil).ServeProgress).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=forged", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
@@ -125,7 +125,7 @@ func TestUploadProgressRejectsUnknownID(t *testing.T) {
 func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	h := httpAdapter(NewUploadProgress(store))
+	h := http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress)
 	ctx := t.Context()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
@@ -231,7 +231,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+store.Mint(), nil)
 		req.RemoteAddr = owner + ":1234"
 		rec := httptest.NewRecorder()
-		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
+		http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusTooManyRequests {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusTooManyRequests)
@@ -253,7 +253,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil)
 		req.RemoteAddr = "192.0.2.2:1234"
 		rec := httptest.NewRecorder()
-		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
+		http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress).ServeHTTP(rec, req)
 
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want %d: another client's upload was readable", rec.Code, http.StatusForbidden)
@@ -265,7 +265,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 
 	t.Run("finalizing an unknown id is a 400", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		httpAdapter(NewUploadProgress(NewUploadStore())).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/upload/progress?id=forged", nil))
+		http.HandlerFunc(NewUpload(nil, NewUploadStore(), nil).ServeProgress).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/upload/progress?id=forged", nil))
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 		}
@@ -274,16 +274,13 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		}
 	})
 
-	// Only GET streams and only DELETE finalizes.
-	t.Run("any other method is a 405", func(t *testing.T) {
+	// GET's route also carries HEAD, which must neither create a receiver nor claim its feed.
+	t.Run("HEAD is a 405", func(t *testing.T) {
 		store := NewUploadStore()
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		req := httptest.NewRequest(http.MethodPut, "/upload/progress?id="+store.Mint(), nil).WithContext(ctx)
 		rec := httptest.NewRecorder()
-		httpAdapter(NewUploadProgress(store)).ServeHTTP(rec, req)
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+		http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress).ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/upload/progress?id="+store.Mint(), nil))
+		if rec.Code != http.StatusMethodNotAllowed || store.live.Load() != 0 {
+			t.Fatalf("status = %d with %d receivers, want %d and none", rec.Code, store.live.Load(), http.StatusMethodNotAllowed)
 		}
 	})
 }
@@ -291,7 +288,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
-	h := httpAdapter(NewUploadProgress(store))
+	h := http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress)
 	ctx := t.Context()
 	rec := newProgressRecorder()
 	done := make(chan struct{})
