@@ -18,7 +18,6 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
 
 // Pace encrypted upload writes so a large HTTP/2 DATA frame occupies the wire
@@ -178,91 +177,54 @@ func (b *observedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func TestH3BootstrapCannotServeTransfers(t *testing.T) {
+// Each listener mounts only its topology's routes; a dot segment never reaches the shell.
+func TestListenerTopologies(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{bootstrap: true}, static.Handler(false, false))
-	for _, path := range []string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s status = %d, want 404", path, rec.Code)
-		}
-	}
-}
-
-func TestH2ThroughputRoutesRequireHTTP2(t *testing.T) {
-	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(false, false))
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/download?bytes=1", nil)
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("h1 transfer status = %d, want 404", rec.Code)
-	}
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("H2 websocket status = %d, want 404", rec.Code)
-	}
-}
-
-func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
-	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{transfers: true, requiredProto: 2}, static.Handler(false, false))
-	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("%s status = %d, want 404", path, rec.Code)
-		}
-	}
-	for _, path := range []string{"/probe", "/download?bytes=1", "/upload/session", "/upload", "/upload/progress"} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Proto, req.ProtoMajor, req.ProtoMinor = "HTTP/2.0", 2, 0
-		mux.ServeHTTP(rec, req)
-		if rec.Code == http.StatusNotFound {
-			t.Errorf("%s is not mounted", path)
-		}
-	}
-}
-
-func TestH1MountsSPAAndDiscovery(t *testing.T) {
-	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true},
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		}))
-	for _, path := range []string{"/", "/preflight"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
-		if rec.Code != http.StatusOK {
-			t.Errorf("%s status = %d, want 200", path, rec.Code)
-		}
-	}
-}
-
-func TestH1RejectsDotSegmentsBeforeServeMuxCanonicalization(t *testing.T) {
-	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{spa: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("shell"))
-	}))
-	for _, path := range []string{
-		"/foo/..",
-		"/assets/..",
-		"/foo/%2e%2e",
-		`/foo\..\bar`,
+	shell := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("shell")) })
+	ui := muxTopology{spa: true, discovery: true, latency: true, transfers: true}
+	for _, tc := range []struct {
+		name    string
+		topo    muxTopology
+		proto   int
+		mounted []string
+		absent  []string
+	}{
+		{"h1 ui", ui, 1, []string{"/", "/preflight", "/ws/ping"},
+			[]string{"/foo/..", "/assets/..", "/foo/%2e%2e", `/foo\..\bar`}},
+		{"h1 tls", muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}, 1,
+			[]string{"/ws/ping", "/download?bytes=1"}, nil},
+		{"h2", muxTopology{transfers: true, requiredProto: 2}, 2,
+			[]string{"/probe", "/download?bytes=1", "/upload/session", "/upload", "/upload/progress"},
+			[]string{"/", "/assets/app.js", "/preflight", "/ws/ping"}},
+		{"h2 over h1", muxTopology{transfers: true, requiredProto: 2}, 1, nil, []string{"/download?bytes=1", "/ws/ping"}},
+		{"h3", muxTopology{transfers: true}, 3, []string{"/upload/progress?id=unknown"}, nil},
+		{"h3 bootstrap", muxTopology{bootstrap: true}, 1, []string{"/probe"},
+			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping"}},
 	} {
-		recorder := httptest.NewRecorder()
-		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
-		if recorder.Code != http.StatusNotFound {
-			t.Errorf("%s status = %d, want 404", path, recorder.Code)
-		}
-		if strings.Contains(recorder.Body.String(), "shell") {
-			t.Errorf("%s reached the SPA handler", path)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			var spa http.Handler
+			if tc.topo.spa {
+				spa = shell
+			}
+			mux := publicMux(t, e, tc.topo, spa)
+			serve := func(path string) *httptest.ResponseRecorder {
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest(http.MethodGet, path, nil)
+				req.ProtoMajor = tc.proto
+				mux.ServeHTTP(rec, req)
+				return rec
+			}
+			for _, path := range tc.mounted {
+				if rec := serve(path); rec.Code == http.StatusNotFound {
+					t.Errorf("%s is not mounted", path)
+				}
+			}
+			for _, path := range tc.absent {
+				if rec := serve(path); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "shell") {
+					t.Errorf("%s = %d %q, want 404", path, rec.Code, rec.Body.String())
+				}
+			}
+		})
 	}
 }
 
@@ -306,23 +268,6 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	}
 	if requests, _ := e.admission.stats(); requests.active != 0 || requests.peak != 0 {
 		t.Fatalf("unauthenticated requests reached admission: %+v", requests)
-	}
-}
-
-func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
-	e := testEndpoints(t)
-	h1 := publicMux(t, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1},
-		static.Handler(false, false))
-	rec := httptest.NewRecorder()
-	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
-	if rec.Code == http.StatusNotFound {
-		t.Fatal("H1 latency websocket is not mounted")
-	}
-	h3 := publicMux(t, e, muxTopology{transfers: true}, static.Handler(false, false))
-	rec = httptest.NewRecorder()
-	h3.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/upload/progress?id=unknown", nil))
-	if rec.Code == http.StatusNotFound {
-		t.Fatal("H3 upload progress is not mounted")
 	}
 }
 

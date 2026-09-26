@@ -117,18 +117,45 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 	}
 }
 
-func TestRequestAdmissionGlobalLimit(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, time.Minute, time.Hour)
-	release, status := a.acquire("192.0.2.1", "")
-	if status != 0 {
-		t.Fatal("first request rejected")
+// Requests spend the pool and a per-client share; sessions spend the pool and a per-login share of a session budget
+// that caps them without reserving anything.
+func TestRequestAdmissionBudgets(t *testing.T) {
+	type step struct {
+		key, login string
+		want       int
 	}
-	defer release()
-	if _, status := a.acquire("192.0.2.2", ""); status != http.StatusServiceUnavailable {
-		t.Fatalf("global rejection = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	if requests, _ := a.stats(); requests.active != 1 || requests.peak != 1 || requests.rejectedGlobal != 1 {
-		t.Fatalf("stats = %+v, want 1 active, 1 peak, 1 global rejection", requests)
+	for _, tc := range []struct {
+		name                          string
+		pool, client, sessions, login int
+		steps                         []step
+		poolRefusals, sessionRefusals uint64
+	}{
+		{"pool", 1, 1, 1, 4, []step{{"a", "", 0}, {"b", "", 503}}, 1, 0},
+		{"sessions per login", 100, 100, 100, 2,
+			[]step{{"c", "s", 0}, {"c", "s", 0}, {"c", "s", 429}, {"c", "", 0}}, 0, 0},
+		{"logins of one client", 100, 1, 100, 1,
+			[]step{{"c", "phone", 0}, {"c", "desktop", 0}, {"c", "phone", 429}, {"c", "", 0}}, 0, 0},
+		{"session budget", 10, 10, 2, 10,
+			[]step{{"a", "la", 0}, {"b", "lb", 0}, {"c", "lc", 503}, {"c", "", 0}, {"d", "", 0}}, 0, 1},
+		{"ceiling, not reservation", 4, 2, 4, 2,
+			[]step{{"a", "", 0}, {"a", "", 0}, {"b", "", 0}, {"b", "", 0}, {"c", "lc", 503}}, 1, 0},
+		{"separate refusal counters", 4, 4, 1, 4, []step{{"a", "la", 0}, {"b", "lb", 503},
+			{"c", "", 0}, {"c", "", 0}, {"c", "", 0}, {"d", "", 503}}, 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newRequestAdmission(tc.pool, tc.client, tc.sessions, tc.login, time.Minute, time.Hour)
+			for i, step := range tc.steps {
+				if release, status := a.acquire(step.key, step.login); status != step.want {
+					t.Fatalf("step %d %+v = %d", i, step, status)
+				} else if status == 0 {
+					defer release()
+				}
+			}
+			if requests, sessions := a.stats(); requests.rejectedGlobal != tc.poolRefusals ||
+				sessions.rejectedGlobal != tc.sessionRefusals {
+				t.Fatalf("refusals = %d pool / %d session", requests.rejectedGlobal, sessions.rejectedGlobal)
+			}
+		})
 	}
 }
 
@@ -166,149 +193,6 @@ func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
 				session)
 		}
 	}
-}
-
-// Session routes carry their own per-client budget, since one holds a slot for a whole test rather than a request.
-func TestRequestAdmissionBoundsSessionsPerClient(t *testing.T) {
-	a := newRequestAdmission(100, 100, 100, 2, time.Minute, time.Hour)
-	first, status := a.acquire("client", "session")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	second, status := a.acquire("client", "session")
-	if status != 0 {
-		t.Fatalf("second session rejected with %d", status)
-	}
-	if _, status := a.acquire("client", "session"); status != http.StatusTooManyRequests {
-		t.Fatalf("third session = %d, want %d", status, http.StatusTooManyRequests)
-	}
-	// The budget is the session routes' own: ordinary requests still pass.
-	if _, status := a.acquire("client", ""); status != 0 {
-		t.Fatalf("request rejected while sessions were full: %d", status)
-	}
-	first()
-	if release, status := a.acquire("client", "session"); status != 0 {
-		t.Fatalf("session rejected after release: %d", status)
-	} else {
-		release()
-	}
-	second()
-}
-
-// Session routes carry their own share of the global pool as well as their own per-client bucket.
-func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
-	// Room for ten measurements and ten sessions per client, but only two sessions overall.
-	a := newRequestAdmission(10, 10, 2, 10, time.Minute, time.Hour)
-	first, status := a.acquire("client-a", "login-a")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	second, status := a.acquire("client-b", "login-b")
-	if status != 0 {
-		t.Fatalf("second session rejected with %d", status)
-	}
-	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session past the session budget = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	// The pool still admits the request-shaped routes while every session slot is taken.
-	for _, key := range []string{"client-c", "client-d"} {
-		release, status := a.acquire(key, "")
-		if status != 0 {
-			t.Fatalf("request from %s rejected while the session budget was full: %d", key, status)
-		}
-		release()
-	}
-	first()
-	release, status := a.acquire("client-c", "login-c")
-	if status != 0 {
-		t.Fatalf("session rejected after a session slot was released: %d", status)
-	}
-	release()
-	second()
-	// The refusal came from the session budget with the pool half empty, so it is counted there.
-	if requests, sessions := a.stats(); requests.active != 0 || sessions.rejectedGlobal != 1 ||
-		requests.rejectedGlobal != 0 {
-		t.Fatalf("stats = %+v / %+v, want no active measurements and 1 session-budget rejection", requests, sessions)
-	}
-}
-
-// The session budget caps what sessions may occupy and reserves nothing for them.
-func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
-	// Room for four measurements and four sessions, two per client either way.
-	a := newRequestAdmission(4, 2, 4, 2, time.Minute, time.Hour)
-	for i, key := range []string{"client-a", "client-a", "client-b", "client-b"} {
-		// The ping bus is request-shaped, so it spends no session key.
-		release, status := a.acquire(key, "")
-		if status != 0 {
-			t.Fatalf("ping bus %d from %s rejected with %d", i, key, status)
-		}
-		defer release()
-	}
-	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status,
-			http.StatusServiceUnavailable)
-	}
-	if _, sessions := a.stats(); sessions.active != 0 || sessions.rejectedGlobal != 0 {
-		t.Fatalf("sessions = %+v, want the refusal to come from the pool, not the session budget", sessions)
-	}
-}
-
-// A full pool and a full session budget both answer 503 and are raised with different knobs.
-func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
-	// Room for four measurements but only one session.
-	a := newRequestAdmission(4, 4, 1, 4, time.Minute, time.Hour)
-	session, status := a.acquire("client-a", "login-a")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	defer session()
-	if _, status := a.acquire("client-b", "login-b"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session past the budget = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	requests, sessions := a.stats()
-	if sessions.rejectedGlobal != 1 || requests.rejectedGlobal != 0 || sessions.active != 1 || sessions.limit != 1 {
-		t.Errorf("stats = %+v / %+v, want the refusal counted against a 1-of-1 session budget and not the pool",
-			requests, sessions)
-	}
-	// Fill the rest of the pool with request-shaped routes and prove the other counter is the one that moves.
-	for i := range 3 {
-		release, status := a.acquire("client-c", "")
-		if status != 0 {
-			t.Fatalf("request %d rejected with %d while the pool had room", i, status)
-		}
-		defer release()
-	}
-	if _, status := a.acquire("client-d", ""); status != http.StatusServiceUnavailable {
-		t.Fatalf("request against a full pool = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	if requests, sessions := a.stats(); requests.rejectedGlobal != 1 || sessions.rejectedGlobal != 1 ||
-		requests.active != 4 {
-		t.Errorf("stats = %+v / %+v, want a full pool and one refusal on each counter", requests, sessions)
-	}
-}
-
-// The session budget is per login, not per person.
-func TestSessionBudgetIsPerLogin(t *testing.T) {
-	// Equal request and session limits are valid.
-	a := newRequestAdmission(100, 1, 100, 1, time.Minute, time.Hour)
-	first, status := a.acquire("client", "login:phone")
-	if status != 0 {
-		t.Fatalf("first login rejected with %d", status)
-	}
-	defer first()
-	second, status := a.acquire("client", "login:desktop")
-	if status != 0 {
-		t.Fatalf("second login rejected with %d while the first held its slot", status)
-	}
-	defer second()
-	if _, status := a.acquire("client", "login:phone"); status != http.StatusTooManyRequests {
-		t.Fatalf("same login past its budget = %d, want %d", status, http.StatusTooManyRequests)
-	}
-	request, status := a.acquire("client", "")
-	if status != 0 {
-		t.Fatalf("ordinary request rejected while session buckets were full: %d", status)
-	}
-	request()
 }
 
 // deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
