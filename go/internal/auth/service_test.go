@@ -466,6 +466,22 @@ func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *test
 	}
 }
 
+// Only an unauthenticated refusal or a browser grant's own origin is exposed to another origin.
+func TestAuthenticatedResponsesStayClosedToOtherOrigins(t *testing.T) {
+	s := testService(t)
+	_, sess, _ := s.createSession("subject", "Name", "local")
+	for name, bearer := range map[string]bool{"cookie": false, "native grant": true} {
+		r := secureRequest(http.MethodGet, "/download", nil)
+		r.Header.Set("Origin", requestingUI)
+		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, sessionPrincipal(sess, "local", bearer)))
+		h := http.Header{}
+		s.MeasurementCORS(h, r)
+		if h.Get("Access-Control-Allow-Origin") != "" {
+			t.Errorf("%s response exposed to %s: %v", name, requestingUI, h)
+		}
+	}
+}
+
 func TestLoginOffersOnlyConfiguredMethods(t *testing.T) {
 	for _, tc := range []struct {
 		mode               string

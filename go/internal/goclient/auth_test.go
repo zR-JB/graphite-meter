@@ -54,6 +54,7 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 	pf.Capabilities.ThroughputTargets = []wire.ThroughputTarget{
 		{Origin: "https://meter.example:7247"},
 		{Origin: "https://cdn.example"},
+		{Origin: "http://meter.example:8080"},
 	}
 	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
 	seen := ""
@@ -75,6 +76,7 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 		"https://evil-meter.example",
 		"https://meter.example.evil.example",
 		"http://meter.example",
+		"http://meter.example:8080",
 	} {
 		bad, _ := http.NewRequest("GET", origin+"/probe", nil)
 		if _, err := client.Do(bad); err == nil {
