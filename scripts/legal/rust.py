@@ -222,9 +222,9 @@ def main() -> None:
                                                        if (review.ecosystem, review.name) == (component.ecosystem, component.name))
         manifest['browserComponents'] = [component.json() for component in browser_components]
         (output / 'inventory.json').write_bytes(marshal(manifest))
-        source_assets = Path(os.environ['GM_RUST_ASSET_DIR'])
-        if not source_assets.is_absolute():
-            source_assets = repo / 'rust/server' / source_assets
+        source_assets = os.path.realpath(repo / 'rust/server' / os.environ['GM_RUST_ASSET_DIR'])
+        if not source_assets.startswith(str(repo) + os.sep):
+            raise LegalError('GM_RUST_ASSET_DIR must name a directory inside the repository')
         staged_assets = output / 'browser-assets'
         if staged_assets.exists():
             shutil.rmtree(staged_assets)
