@@ -69,11 +69,6 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     if !matches!(scheme.as_str(), "http" | "https") || authority.contains(['/', '@']) {
         return Err(OriginError);
     }
-    // Keep URL validation until the HTTP clients stop using WHATWG host parsing.
-    let parsed = url::Url::parse(raw).map_err(|_| OriginError)?;
-    if parsed.host_str().is_none() {
-        return Err(OriginError);
-    }
     let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
         let (host, suffix) = bracketed.split_once(']').ok_or(OriginError)?;
         host.parse::<std::net::Ipv6Addr>()
@@ -111,7 +106,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
 
 pub fn canonical_origin(raw: &str) -> Result<String, OriginError> {
     let origin = target_origin(raw)?.ok_or(OriginError)?;
-    if origin.port.as_deref() == Some("0") || origin.host.contains(['*', ';']) {
+    if origin.port_number() == 0 || origin.host.contains(['*', ';']) {
         return Err(OriginError);
     }
     Ok(origin.key())

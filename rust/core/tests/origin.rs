@@ -28,6 +28,7 @@ fn audiences_reject_paths_credentials_and_ambiguous_authorities() {
         "https://user@a",
         "https://a\\b",
         "https://a:0",
+        "https://a:000",
         "https://a:65536",
         "https://a:*",
         "https://*.example",
@@ -54,7 +55,6 @@ fn origins_reject_hosts_that_http_url_parsing_reinterprets() {
         "https://a..b",
         "https://.a",
         "https://a!b",
-        "https://xn--a.example",
     ] {
         assert!(canonical_origin(raw).is_err(), "accepted {raw:?}");
     }

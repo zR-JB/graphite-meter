@@ -756,7 +756,7 @@ mod tests {
         )
         .await;
         peer.abort();
-        assert!(result?.unwrap_err().is::<reqwest::Error>());
+        assert!(result?.unwrap_err().is::<hyper::Error>());
         Ok(())
     }
 
