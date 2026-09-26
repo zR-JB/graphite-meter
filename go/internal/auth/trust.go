@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"slices"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 type trust struct{ Secure, Canonical bool }
@@ -31,8 +31,12 @@ func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
 		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
 	}
-	peer, err := splitRemote(r.RemoteAddr)
-	if err != nil || !prefixContains(s.trusted, peer) {
+	remote, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remote = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(strings.Trim(remote, "[]"))
+	if err != nil || !transport.Trusted(peer, s.trusted) {
 		return trust{}
 	}
 	proto := singleHeader(r.Header, "X-Forwarded-Proto")
@@ -61,39 +65,11 @@ func requestHostname(host string) string {
 	return u.Hostname()
 }
 
-func splitRemote(raw string) (netip.Addr, error) {
-	host, _, err := net.SplitHostPort(raw)
-	if err != nil {
-		host = raw
-	}
-	return netip.ParseAddr(strings.Trim(host, "[]"))
-}
-
-func prefixContains(ps []netip.Prefix, a netip.Addr) bool {
-	if a.Is4In6() {
-		a = a.Unmap()
-	}
-	return slices.ContainsFunc(ps, func(p netip.Prefix) bool { return p.Contains(a) })
-}
-
-func (s *Service) authClientAddress(r *http.Request) (netip.Addr, bool) {
-	peer, err := splitRemote(r.RemoteAddr)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	peer = peer.Unmap()
-	if !prefixContains(s.trusted, peer) {
-		return peer, true
-	}
-	if r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-For") != "" {
-		return netip.Addr{}, false
-	}
-	raw := singleHeader(r.Header, "X-Real-IP")
-	addr, err := netip.ParseAddr(raw)
-	if err != nil {
-		return netip.Addr{}, false
-	}
-	return addr.Unmap(), true
+// clientBucket is the budget key of the client a request stands for; a trusted proxy's ambiguous
+// evidence is not resolved, so the request is refused rather than charged to the proxy.
+func (s *Service) clientBucket(r *http.Request) (string, bool) {
+	client, ok := transport.ResolveClientAddress(r, s.trusted)
+	return transport.AddressBucket(client.Addr), ok
 }
 
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {

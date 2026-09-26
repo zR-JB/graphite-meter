@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -102,11 +101,6 @@ func (s *Service) approvalRoomLocked(sess *session, client string, now time.Time
 	return bySession < maxSessionApprovals, byClient < maxClientApprovals && len(s.approvals) < maxApprovals
 }
 
-func (s *Service) approvalClient(r *http.Request) (string, bool) {
-	addr, ok := s.authClientAddress(r)
-	return transport.AddressBucket(addr), ok
-}
-
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
 	challenge := r.URL.Query().Get("challenge")
@@ -127,7 +121,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, challenge)
 		return
 	}
-	client, ok := s.approvalClient(r)
+	client, ok := s.clientBucket(r)
 	if !ok {
 		forbidden(w)
 		return
@@ -155,7 +149,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
 	challenge := r.URL.Query().Get("challenge")
 	clientOrigin, valid := secureBrowserOrigin(r.URL.Query().Get("client_origin"))
-	client, ok := s.approvalClient(r)
+	client, ok := s.clientBucket(r)
 	if !validChallenge(challenge) || !valid || !ok {
 		forbidden(w)
 		return

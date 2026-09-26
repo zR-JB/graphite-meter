@@ -186,11 +186,8 @@ func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 		}
 		ip = addrPort.Addr()
 	}
-	ip = ip.Unmap()
-	for _, prefix := range trusted {
-		if prefix.Contains(ip) {
-			return ""
-		}
+	if transport.Trusted(ip, trusted) {
+		return ""
 	}
 	return transport.AddressBucket(ip)
 }

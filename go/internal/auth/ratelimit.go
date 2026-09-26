@@ -5,8 +5,6 @@ import (
 	"maps"
 	"net/http"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 const (
@@ -21,11 +19,10 @@ const (
 
 func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
 	global *[]time.Time) bool {
-	addr, ok := s.authClientAddress(r)
+	key, ok := s.clientBucket(r)
 	if !ok {
 		return false
 	}
-	key := transport.AddressBucket(addr)
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()

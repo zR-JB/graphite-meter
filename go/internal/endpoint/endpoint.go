@@ -20,7 +20,8 @@ func ClientKey(r *http.Request, trusted []netip.Prefix) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
 		return "principal:" + p.Subject
 	}
-	return transport.AddressBucket(transport.ResolveClientAddress(r, trusted).Addr)
+	client, _ := transport.ResolveClientAddress(r, trusted)
+	return transport.AddressBucket(client.Addr)
 }
 
 // UploadOwner separates delegated browser access without multiplying admission budgets.

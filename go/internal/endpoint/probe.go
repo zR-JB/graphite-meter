@@ -29,7 +29,7 @@ func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")
 	}
-	client := transport.ResolveClientAddress(r, p.trusted)
+	client, _ := transport.ResolveClientAddress(r, p.trusted)
 	noStoreJSON(w)
 	probe := wire.Probe{
 		ClientIP: client.Addr.String(), ClientIPVersion: client.Version,

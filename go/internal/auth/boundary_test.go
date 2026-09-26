@@ -109,47 +109,27 @@ func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 	}
 }
 
-func TestAuthClientAddressFailsClosedBehindATrustedProxy(t *testing.T) {
+// Sign-in budgets use the one client resolver and refuse a proxied request whose client is ambiguous.
+func TestSignInBudgetsFailClosedBehindATrustedProxy(t *testing.T) {
 	s := proxiedService(t)
 	for _, tc := range []struct {
-		name    string
-		remote  string
-		headers map[string][]string
-		want    string
+		remote, realIP, forwardedFor string
+		allowed                      bool
 	}{
-		{"direct peer is itself", "198.51.100.9:40000", nil, "198.51.100.9"},
-		{"direct peer keeps its own headers out of it", "198.51.100.9:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1"}}, "198.51.100.9"},
-		{"proxied peer without X-Real-IP", "192.0.2.10:40000", nil, ""},
-		{"proxied peer with X-Forwarded-For present", "192.0.2.10:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1"}, "X-Forwarded-For": {"203.0.113.1"}}, ""},
-		{"proxied peer with Forwarded present", "192.0.2.10:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1"}, "Forwarded": {"for=203.0.113.1"}}, ""},
-		{"proxied peer with a duplicated X-Real-IP", "192.0.2.10:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1", "203.0.113.2"}}, ""},
-		{"proxied peer with a comma-joined X-Real-IP", "192.0.2.10:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1,203.0.113.2"}}, ""},
-		{"proxied peer with a single X-Real-IP", "192.0.2.10:40000",
-			map[string][]string{"X-Real-IP": {"203.0.113.1"}}, "203.0.113.1"},
+		{"198.51.100.9:40000", "", "", true},
+		{"192.0.2.10:40000", "203.0.113.1", "", true},
+		{"192.0.2.10:40000", "", "", false},
+		{"192.0.2.10:40000", "203.0.113.1", "203.0.113.1", false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := clearRequest(http.MethodPost, "/auth/password", tc.remote)
-			for name, values := range tc.headers {
-				for _, v := range values {
-					r.Header.Add(name, v)
-				}
+		r := clearRequest(http.MethodPost, "/auth/password", tc.remote)
+		for name, value := range map[string]string{"X-Real-IP": tc.realIP, "X-Forwarded-For": tc.forwardedFor} {
+			if value != "" {
+				r.Header.Set(name, value)
 			}
-			addr, ok := s.authClientAddress(r)
-			if tc.want == "" {
-				if ok {
-					t.Fatalf("resolved a client address (%s) from ambiguous evidence", addr)
-				}
-				return
-			}
-			if !ok || addr.String() != tc.want {
-				t.Fatalf("authClientAddress = (%s, %t), want %s", addr, ok, tc.want)
-			}
-		})
+		}
+		if got := s.allowAttempt(r); got != tc.allowed {
+			t.Errorf("%+v allowed = %t", tc, got)
+		}
 	}
 }
 

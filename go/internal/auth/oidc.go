@@ -19,7 +19,6 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"golang.org/x/oauth2"
 )
 
@@ -165,7 +164,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	addr, ok := s.authClientAddress(r)
+	client, ok := s.clientBucket(r)
 	if !ok {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
@@ -174,7 +173,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	tx := oidcTransaction{
 		state: randomToken(32), nonce: randomToken(32), verifier: oauth2.GenerateVerifier(),
 		browser: sha256.Sum256([]byte(browser)), expires: time.Now().Add(oidcTransactionLifetime),
-		client: transport.AddressBucket(addr), cliChallenge: challengeOrEmpty(r.FormValue("challenge")),
+		client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge")),
 	}
 	if c := uniqueCookie(r, sessionCookie); c != nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))

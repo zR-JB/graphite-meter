@@ -481,6 +481,9 @@ traffic policy at a trusted proxy or firewall.
 Meter sees them. Default routes such as `0.0.0.0/0` and `::/0` are rejected.
 
 Only trusted peers may supply forwarding information used for client identity and admission
-accounting. Configure the actual proxy network rather than a broad client network.
+accounting. Configure the actual proxy network rather than a broad client network. A trusted peer
+identifies its client by exactly one `X-Real-IP`; if that header is missing or repeated, or
+`Forwarded` or `X-Forwarded-For` accompanies it, the request counts as the proxy itself and
+sign-in refuses it.
 
 Return to the [project overview](../README.md).

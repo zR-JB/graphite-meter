@@ -159,10 +159,10 @@ func TestRequestAdmissionBudgets(t *testing.T) {
 	}
 }
 
-func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
+func TestClientKeyUsesTheTrustedProxysRealIP(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "10.0.0.2:1234"
-	r.Header.Set("X-Forwarded-For", "198.51.100.9")
+	r.Header.Set("X-Real-IP", "198.51.100.9")
 	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	if got := endpoint.ClientKey(r, trusted); got != "198.51.100.9" {
 		t.Fatalf("client key = %q, want %q", got, "198.51.100.9")
