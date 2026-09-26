@@ -8,7 +8,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 )
 
-type SocketTokenMinter func(r *http.Request) (token string, expires time.Time, mint auth.WTMint)
+type SocketTokenMinter func(r *http.Request) (token string, expires time.Time, mint auth.SocketMint)
 
 // SocketToken serves /wt/session or /ws/session; a nil mint (public mode) answers an empty token.
 func SocketToken(mint SocketTokenMinter) http.Handler {
@@ -20,15 +20,15 @@ func SocketToken(mint SocketTokenMinter) http.Handler {
 		if mint != nil {
 			token, expires, result := mint(r)
 			switch result {
-			case auth.WTMintInvalidTarget:
+			case auth.SocketMintInvalidTarget:
 				http.Error(w, "invalid socket target", http.StatusBadRequest)
 				return
-			case auth.WTMintAtCapacity:
+			case auth.SocketMintAtCapacity:
 				// Capacity, not permission: the login is intact and its oldest ticket expires soon.
 				w.Header().Set("Retry-After", "1")
-				http.Error(w, "webtransport token capacity reached", http.StatusTooManyRequests)
+				http.Error(w, "socket token capacity reached", http.StatusTooManyRequests)
 				return
-			case auth.WTMintNoSession:
+			case auth.SocketMintNoSession:
 				http.Error(w, "no session to bind a token to", http.StatusForbidden)
 				return
 			}

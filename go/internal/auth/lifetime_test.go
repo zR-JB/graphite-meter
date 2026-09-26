@@ -117,26 +117,26 @@ func TestSocketTicketsFreeTheirCapAndNeverOutliveTheLogin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		mint := func() (time.Time, WTMint) {
+		mint := func() (time.Time, SocketMint) {
 			r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 			r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{session: sess}))
 			_, expires, status := s.MintSocketToken(r, route.WebTransport)
 			return expires, status
 		}
-		for range maxSessionWTTokens {
-			if _, status := mint(); status != WTMintOK {
+		for range maxSessionSocketTokens {
+			if _, status := mint(); status != SocketMintOK {
 				t.Fatalf("mint under the cap = %d", status)
 			}
 		}
-		if _, status := mint(); status != WTMintAtCapacity {
-			t.Fatalf("mint at the cap = %d, want WTMintAtCapacity", status)
+		if _, status := mint(); status != SocketMintAtCapacity {
+			t.Fatalf("mint at the cap = %d, want SocketMintAtCapacity", status)
 		}
-		time.Sleep(wtTokenLifetime)
-		if _, status := mint(); status != WTMintOK {
-			t.Fatalf("mint after every ticket expired unspent = %d, want WTMintOK", status)
+		time.Sleep(socketTokenLifetime)
+		if _, status := mint(); status != SocketMintOK {
+			t.Fatalf("mint after every ticket expired unspent = %d, want SocketMintOK", status)
 		}
-		time.Sleep(time.Until(sess.expires) - wtTokenLifetime/2)
-		if expires, status := mint(); status != WTMintOK || !expires.Equal(sess.expires) {
+		time.Sleep(time.Until(sess.expires) - socketTokenLifetime/2)
+		if expires, status := mint(); status != SocketMintOK || !expires.Equal(sess.expires) {
 			t.Fatalf("ticket near the login's end expires %v (%d), want the login's %v", expires, status,
 				sess.expires)
 		}

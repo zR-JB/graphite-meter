@@ -100,7 +100,7 @@ func (m *mounter) minter(kind route.Kind) endpoint.SocketTokenMinter {
 	if !m.authn.Enabled() {
 		return nil
 	}
-	return func(r *http.Request) (string, time.Time, auth.WTMint) { return m.authn.MintSocketToken(r, kind) }
+	return func(r *http.Request) (string, time.Time, auth.SocketMint) { return m.authn.MintSocketToken(r, kind) }
 }
 
 // wsPingReadLimit bounds a probe frame; a valid PING is at most 15 bytes.

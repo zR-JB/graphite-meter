@@ -160,14 +160,14 @@ func TestSocketToken(t *testing.T) {
 		expires           int64
 	}{
 		{"public mode", nil, http.StatusOK, "", "", 0},
-		{"minted", func(*http.Request) (string, time.Time, auth.WTMint) {
-			return "gmw_minted", time.UnixMilli(3_600_000), auth.WTMintOK
+		{"minted", func(*http.Request) (string, time.Time, auth.SocketMint) {
+			return "gmw_minted", time.UnixMilli(3_600_000), auth.SocketMintOK
 		}, http.StatusOK, "", "gmw_minted", 3_600_000},
-		{"at capacity", func(*http.Request) (string, time.Time, auth.WTMint) {
-			return "", time.Time{}, auth.WTMintAtCapacity
+		{"at capacity", func(*http.Request) (string, time.Time, auth.SocketMint) {
+			return "", time.Time{}, auth.SocketMintAtCapacity
 		}, http.StatusTooManyRequests, "1", "", 0},
-		{"no session", func(*http.Request) (string, time.Time, auth.WTMint) {
-			return "", time.Time{}, auth.WTMintNoSession
+		{"no session", func(*http.Request) (string, time.Time, auth.SocketMint) {
+			return "", time.Time{}, auth.SocketMintNoSession
 		}, http.StatusForbidden, "", "", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

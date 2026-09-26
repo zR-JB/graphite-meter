@@ -235,7 +235,7 @@ func TestSessionLifetimeIsAbsolute(t *testing.T) {
 			t.Fatalf("path=%s status=%d cookies=%d", path, rr.Code, len(rr.Result().Cookies()))
 		}
 	}
-	if _, ok := s.consumeWebTransportToken(mintForSession(t, s, sess),
+	if _, ok := s.consumeSocketToken(mintForSession(t, s, sess),
 		secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("fresh reconnect token was refused")
 	}

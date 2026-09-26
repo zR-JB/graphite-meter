@@ -19,7 +19,7 @@ func mintForSession(t *testing.T, s *Service, sess *session) string {
 	p := Principal{Subject: sess.subject, session: sess}
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
 	token, expires, mint := s.MintSocketToken(r, route.WebTransport)
-	if mint != WTMintOK || token == "" || !expires.After(time.Now()) {
+	if mint != SocketMintOK || token == "" || !expires.After(time.Now()) {
 		t.Fatalf("mint = (%q, %v, %d), want a live token", token, expires, mint)
 	}
 	return token
@@ -56,7 +56,7 @@ func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 	s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), Listener{}).ServeHTTP(w, r)
 
 	// Unspent: the same token still authenticates on the listener that serves it.
-	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
+	if _, ok := s.consumeSocketToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a CONNECT to a listener without the session routes spent the token")
 	}
 }
@@ -96,12 +96,12 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 	token := mintForSession(t, s, sess)
 	s.mu.Lock()
 	s.deleteSessionLocked(sess)
-	_, listed := s.wtTokens[sha256.Sum256([]byte(token))]
+	_, listed := s.socketTokens[sha256.Sum256([]byte(token))]
 	s.mu.Unlock()
 	if listed {
 		t.Fatal("a revoked session's token stayed in the service map")
 	}
-	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
+	if _, ok := s.consumeSocketToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("token outlived its revoked session")
 	}
 }
@@ -117,31 +117,31 @@ func tokensExpireAndCapPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	stale := mintForSession(t, s, sess)
-	time.Sleep(wtTokenLifetime + time.Second)
-	if _, ok := s.consumeWebTransportToken(stale, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
+	time.Sleep(socketTokenLifetime + time.Second)
+	if _, ok := s.consumeSocketToken(stale, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("expired token accepted")
 	}
 
-	tokens := make([]string, 0, maxSessionWTTokens)
-	for range maxSessionWTTokens {
+	tokens := make([]string, 0, maxSessionSocketTokens)
+	for range maxSessionSocketTokens {
 		time.Sleep(time.Second)
 		tokens = append(tokens, mintForSession(t, s, sess))
 	}
-	if len(s.wtTokens) != maxSessionWTTokens {
-		t.Fatalf("session holds %d tokens, want the %d cap", len(s.wtTokens), maxSessionWTTokens)
+	if len(s.socketTokens) != maxSessionSocketTokens {
+		t.Fatalf("session holds %d tokens, want the %d cap", len(s.socketTokens), maxSessionSocketTokens)
 	}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
-	if _, _, mint := s.MintSocketToken(r, route.WebTransport); mint != WTMintAtCapacity {
-		t.Fatalf("mint at the cap = %d, want WTMintAtCapacity", mint)
+	if _, _, mint := s.MintSocketToken(r, route.WebTransport); mint != SocketMintAtCapacity {
+		t.Fatalf("mint at the cap = %d, want SocketMintAtCapacity", mint)
 	}
 	anonymous := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
-	if _, _, mint := s.MintSocketToken(anonymous, route.WebTransport); mint != WTMintNoSession {
-		t.Fatalf("mint without a principal = %d, want WTMintNoSession", mint)
+	if _, _, mint := s.MintSocketToken(anonymous, route.WebTransport); mint != SocketMintNoSession {
+		t.Fatalf("mint without a principal = %d, want SocketMintNoSession", mint)
 	}
 	// Every token the cap protected is still spendable.
 	for i, token := range tokens {
-		if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
+		if _, ok := s.consumeSocketToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 			t.Fatalf("token %d refused after a mint hit the cap", i)
 		}
 	}
@@ -149,10 +149,10 @@ func tokensExpireAndCapPerSession(t *testing.T) {
 	time.Sleep(time.Second)
 	mintForSession(t, s, sess)
 	// So does letting them expire unspent.
-	for range maxSessionWTTokens - 1 {
+	for range maxSessionSocketTokens - 1 {
 		mintForSession(t, s, sess)
 	}
-	time.Sleep(wtTokenLifetime)
+	time.Sleep(socketTokenLifetime)
 	mintForSession(t, s, sess)
 }
 
@@ -161,7 +161,7 @@ func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 	minted := false
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _, mint := s.MintSocketToken(r, route.WebTransport)
-		minted = mint == WTMintOK
+		minted = mint == SocketMintOK
 	})
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r.Header.Set("Authorization", "Bearer "+grant)
@@ -181,13 +181,13 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 	}
 	grant := grantFor(t, s, sess)
 
-	for i := range maxSessionWTTokens + 1 {
+	for i := range maxSessionSocketTokens + 1 {
 		if mintWithGrant(t, s, grant) {
 			t.Fatalf("mint %d from a bearer grant returned a token", i+1)
 		}
 	}
-	if len(s.wtTokens) != 0 {
-		t.Fatalf("a grant parked %d tokens on the login's session", len(s.wtTokens))
+	if len(s.socketTokens) != 0 {
+		t.Fatalf("a grant parked %d tokens on the login's session", len(s.socketTokens))
 	}
 	// The starvation the refusal prevents: the browser's own mint still lands.
 	if reached, status := wtConnect(t, s, "/wt/ping?token="+mintForSession(t, s, sess)); !reached {
@@ -221,12 +221,12 @@ func tokensDieWithAnExpiredSession(t *testing.T) {
 	}
 	h := sha256.Sum256([]byte(token))
 	s.mu.Lock()
-	_, listed := s.wtTokens[h]
+	_, listed := s.socketTokens[h]
 	s.mu.Unlock()
 	if !listed {
 		t.Fatal("the token was already swept, so this no longer covers the deadline")
 	}
-	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
+	if _, ok := s.consumeSocketToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("a token minted before the deadline authenticated after it")
 	}
 }
@@ -250,7 +250,7 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 		t.Fatalf("cleartext CONNECT: reached=%t status=%d, want a 403 refusal", reached, w.Code)
 	}
 	// Refused before the credential was read, so it is still spendable.
-	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
+	if _, ok := s.consumeSocketToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a cleartext CONNECT spent the token it was refused for")
 	}
 }
@@ -264,19 +264,19 @@ func TestSocketTicketTargetsNameOneRouteOnThePublicHostname(t *testing.T) {
 	for _, tc := range []struct {
 		target string
 		kind   route.Kind
-		want   WTMint
+		want   SocketMint
 	}{
-		{"https://meter.example/wt/ping", route.WebTransport, WTMintOK},
-		{"https://METER.example:8443/wt/upload", route.WebTransport, WTMintOK},
-		{"https://meter.example/ws/ping", route.WebSocket, WTMintOK},
-		{"https://meter.example/wt/ping", route.WebSocket, WTMintInvalidTarget},
-		{"https://meter.example/ws/ping", route.WebTransport, WTMintInvalidTarget},
-		{"https://other.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
-		{"https://meter.example.evil.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
-		{"http://meter.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
-		{"https://user@meter.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
-		{"https://meter.example/wt/ping?token=x", route.WebTransport, WTMintInvalidTarget},
-		{"https://meter.example/secret", route.WebTransport, WTMintInvalidTarget},
+		{"https://meter.example/wt/ping", route.WebTransport, SocketMintOK},
+		{"https://METER.example:8443/wt/upload", route.WebTransport, SocketMintOK},
+		{"https://meter.example/ws/ping", route.WebSocket, SocketMintOK},
+		{"https://meter.example/wt/ping", route.WebSocket, SocketMintInvalidTarget},
+		{"https://meter.example/ws/ping", route.WebTransport, SocketMintInvalidTarget},
+		{"https://other.example/wt/ping", route.WebTransport, SocketMintInvalidTarget},
+		{"https://meter.example.evil.example/wt/ping", route.WebTransport, SocketMintInvalidTarget},
+		{"http://meter.example/wt/ping", route.WebTransport, SocketMintInvalidTarget},
+		{"https://user@meter.example/wt/ping", route.WebTransport, SocketMintInvalidTarget},
+		{"https://meter.example/wt/ping?token=x", route.WebTransport, SocketMintInvalidTarget},
+		{"https://meter.example/secret", route.WebTransport, SocketMintInvalidTarget},
 	} {
 		r := secureRequest(http.MethodPost, "/wt/session?target="+url.QueryEscape(tc.target), nil)
 		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{session: sess}))
@@ -326,7 +326,7 @@ func TestWebTransportConnectCredentials(t *testing.T) {
 			if reached != tc.reached || !reached && w.Code != http.StatusForbidden {
 				t.Fatalf("reached=%t status=%d, want reached=%t", reached, w.Code, tc.reached)
 			}
-			_, unspent := s.consumeWebTransportToken(ticket, secureRequest(http.MethodGet, "/wt/ping", nil))
+			_, unspent := s.consumeSocketToken(ticket, secureRequest(http.MethodGet, "/wt/ping", nil))
 			if unspent == tc.spent {
 				t.Fatalf("ticket unspent=%t after the CONNECT, want spent=%t", unspent, tc.spent)
 			}

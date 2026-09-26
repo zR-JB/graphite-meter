@@ -51,7 +51,7 @@ type Service struct {
 	sessions         map[[32]byte]*session
 	grants           map[[32]byte]*grant
 	grantSeq         uint64
-	wtTokens         map[[32]byte]wtToken
+	socketTokens     map[[32]byte]socketToken
 	attempts         map[string][]time.Time
 	exchanges        map[string][]time.Time
 	approvalAttempts map[string][]time.Time
@@ -80,7 +80,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		trusted:          trusted,
 		sessions:         map[[32]byte]*session{},
 		grants:           map[[32]byte]*grant{},
-		wtTokens:         map[[32]byte]wtToken{},
+		socketTokens:     map[[32]byte]socketToken{},
 		attempts:         map[string][]time.Time{},
 		exchanges:        map[string][]time.Time{},
 		approvalAttempts: map[string][]time.Time{},

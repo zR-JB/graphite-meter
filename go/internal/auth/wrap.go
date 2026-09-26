@@ -81,7 +81,7 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 	ok := t.Secure
 	if ok && r.Method == http.MethodConnect && listener.WebTransport && isWebTransportRoute(r.URL.Path) {
 		// A CONNECT never uses the cookie and always spends its ticket.
-		ticket, spent := s.consumeWebTransportToken(r.URL.Query().Get("token"), r)
+		ticket, spent := s.consumeSocketToken(r.URL.Query().Get("token"), r)
 		if p, ok = s.authenticateBearer(r); !ok {
 			p, ok = ticket, spent
 		}
@@ -129,7 +129,7 @@ func (s *Service) rotateSuppliedSession(r *http.Request, sess *session) {
 func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 	if spec, ok := route.Lookup(r.URL.Path); ok && spec.Kind == route.WebSocket {
 		if query := r.URL.Query(); query.Has("token") {
-			return s.consumeWebTransportToken(query.Get("token"), r)
+			return s.consumeSocketToken(query.Get("token"), r)
 		}
 	}
 	if len(r.Header.Values("Authorization")) != 0 {

@@ -13,71 +13,71 @@ import (
 )
 
 const (
-	wtTokenLifetime    = 30 * time.Second
-	maxSessionWTTokens = 8
-	wtTokenPrefix      = "gmw_"
+	socketTokenLifetime    = 30 * time.Second
+	maxSessionSocketTokens = 8
+	socketTokenPrefix      = "gmw_"
 )
 
 // Socket tickets carry the authenticated principal, including its narrower grant lifetime.
-type wtToken struct {
+type socketToken struct {
 	principal      Principal
 	target, origin string
 	expires        time.Time
 }
 
-type WTMint int
+type SocketMint int
 
 const (
-	WTMintOK WTMint = iota
-	WTMintNoSession
-	WTMintAtCapacity
-	WTMintInvalidTarget
+	SocketMintOK SocketMint = iota
+	SocketMintNoSession
+	SocketMintAtCapacity
+	SocketMintInvalidTarget
 )
 
-func (s *Service) MintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, WTMint) {
+func (s *Service) MintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, SocketMint) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.session == nil || p.Bearer && p.browserOrigin() == "" {
-		return "", time.Time{}, WTMintNoSession
+		return "", time.Time{}, SocketMintNoSession
 	}
 	target, err := url.Parse(r.URL.Query().Get("target"))
 	if err != nil || target.User != nil || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
-		return "", time.Time{}, WTMintInvalidTarget
+		return "", time.Time{}, SocketMintInvalidTarget
 	}
 	spec, known := route.Lookup(target.Path)
 	origin, err := wire.CanonicalOrigin(target.Scheme + "://" + target.Host)
 	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), s.public.Hostname()) ||
 		!known || spec.Kind != kind {
-		return "", time.Time{}, WTMintInvalidTarget
+		return "", time.Time{}, SocketMintInvalidTarget
 	}
-	token := wtTokenPrefix + randomToken(32)
+	token := socketTokenPrefix + randomToken(32)
 	h := sha256.Sum256([]byte(token))
 	now := time.Now()
-	expires := now.Add(wtTokenLifetime)
+	expires := now.Add(socketTokenLifetime)
 	if p.session.expires.Before(expires) {
 		expires = p.session.expires
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p.measurementContext().Err() != nil {
-		return "", time.Time{}, WTMintNoSession
+		return "", time.Time{}, SocketMintNoSession
 	}
-	s.expireWTTokensLocked(now)
+	s.expireSocketTokensLocked(now)
 	held := 0
-	for t := range maps.Values(s.wtTokens) {
+	for t := range maps.Values(s.socketTokens) {
 		if t.principal.session == p.session {
 			held++
 		}
 	}
-	if held >= maxSessionWTTokens {
-		return "", time.Time{}, WTMintAtCapacity
+	if held >= maxSessionSocketTokens {
+		return "", time.Time{}, SocketMintAtCapacity
 	}
 	p.Bearer = true
-	s.wtTokens[h] = wtToken{principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"),
+	s.socketTokens[h] = socketToken{principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"),
 		expires: expires}
-	return token, expires, WTMintOK
+	return token, expires, SocketMintOK
 }
 
-func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Principal, bool) {
+func (s *Service) consumeSocketToken(raw string, r *http.Request) (Principal, bool) {
 	if raw == "" {
 		return Principal{}, false
 	}
@@ -85,11 +85,11 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.wtTokens[h]
+	t, ok := s.socketTokens[h]
 	if !ok {
 		return Principal{}, false
 	}
-	delete(s.wtTokens, h)
+	delete(s.socketTokens, h)
 	origin, err := wire.CanonicalOrigin("https://" + r.Host)
 	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) ||
 		t.principal.measurementContext().Err() != nil {
@@ -98,8 +98,8 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 	return t.principal, true
 }
 
-func (s *Service) expireWTTokensLocked(now time.Time) {
-	maps.DeleteFunc(s.wtTokens, func(_ [32]byte, t wtToken) bool {
+func (s *Service) expireSocketTokensLocked(now time.Time) {
+	maps.DeleteFunc(s.socketTokens, func(_ [32]byte, t socketToken) bool {
 		return !now.Before(t.expires) || t.principal.measurementContext().Err() != nil
 	})
 }

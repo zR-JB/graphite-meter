@@ -80,7 +80,7 @@ func (s *Service) deleteSessionLocked(sess *session) {
 	for g := range maps.Values(sess.grants) {
 		s.deleteGrantLocked(g)
 	}
-	maps.DeleteFunc(s.wtTokens, func(_ [32]byte, t wtToken) bool { return t.principal.session == sess })
+	maps.DeleteFunc(s.socketTokens, func(_ [32]byte, t socketToken) bool { return t.principal.session == sess })
 	maps.DeleteFunc(s.approvals, func(_ string, a *approval) bool { return a.session == sess })
 	sess.cancel()
 }
@@ -113,7 +113,7 @@ func (s *Service) expireLocked(now time.Time) {
 }
 
 func (s *Service) sweep(ctx context.Context) {
-	t := time.Tick(wtTokenLifetime)
+	t := time.Tick(socketTokenLifetime)
 	for {
 		select {
 		case <-ctx.Done():
@@ -122,7 +122,7 @@ func (s *Service) sweep(ctx context.Context) {
 			now := time.Now()
 			s.mu.Lock()
 			s.expireLocked(now)
-			s.expireWTTokensLocked(now)
+			s.expireSocketTokensLocked(now)
 			s.mu.Unlock()
 		}
 	}

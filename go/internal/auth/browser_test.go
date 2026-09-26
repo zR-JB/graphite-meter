@@ -434,8 +434,8 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 			if strings.HasPrefix(path, "/wt/") {
 				kind = route.WebTransport
 			}
-			var status WTMint
-			if token, _, status = s.MintSocketToken(r, kind); status != WTMintOK {
+			var status SocketMint
+			if token, _, status = s.MintSocketToken(r, kind); status != SocketMintOK {
 				t.Fatalf("mint: %d", status)
 			}
 		}), Listener{})
@@ -460,13 +460,13 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 			r := secureRequest(http.MethodGet, tc.path, nil)
 			r.Host = tc.host
 			r.Header.Set("Origin", tc.origin)
-			if _, ok := s.consumeWebTransportToken(token, r); ok != tc.want {
+			if _, ok := s.consumeSocketToken(token, r); ok != tc.want {
 				t.Fatalf("ticket accepted=%t", ok)
 			}
 			// Any presentation spends the ticket, so a refused one cannot be retried from the right place.
 			valid := secureRequest(http.MethodGet, "/ws/ping", nil)
 			valid.Header.Set("Origin", requestingUI)
-			if _, ok := s.consumeWebTransportToken(token, valid); ok {
+			if _, ok := s.consumeSocketToken(token, valid); ok {
 				t.Fatal("presented ticket accepted again")
 			}
 		})
@@ -524,7 +524,7 @@ func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 	p.grant = &grant{sess: sess, origin: requestingUI, ctx: ctx}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-	if _, _, status := s.MintSocketToken(r, route.WebTransport); status != WTMintNoSession {
+	if _, _, status := s.MintSocketToken(r, route.WebTransport); status != SocketMintNoSession {
 		t.Fatal("revoked grant minted a ticket")
 	}
 }
