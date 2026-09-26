@@ -83,6 +83,7 @@ interface LatencyChannelDeps {
     | "authenticationRequired"
   >;
   target: LatencyTarget;
+  ready?: () => void;
   /** Window-realm performance origin. Injectable only for deterministic cross-realm timestamp tests. */
   timeOriginMs?: number;
 }
@@ -274,6 +275,7 @@ export class LatencyChannel {
         this.#ready = true;
         // Warmup pongs stay in the worker, so waiting for a measured sample can outlive warmup.
         this.#clearEstablishTimer();
+        this.#deps.ready?.();
         break;
       case "open":
         break;

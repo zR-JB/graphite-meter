@@ -441,3 +441,19 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
     restore();
   }
 });
+
+test("stage readiness wakes on the first bytes of every download lane", async () => {
+  const server = await http();
+  const stage = server.stage(activity("download"));
+  await stage.prepare();
+  let ready = false;
+  const waiting = stage.ready(new AbortController().signal);
+  void waiting.then(() => (ready = true));
+  const [lane] = workers("download");
+  lane.emit({ type: "progress", bytes: 0 });
+  await Bun.sleep(5);
+  expect(ready).toBe(false);
+  lane.emit({ type: "progress", bytes: 10 });
+  await waiting;
+  stage.discard();
+});

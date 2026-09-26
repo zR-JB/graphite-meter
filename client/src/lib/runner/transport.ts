@@ -24,7 +24,7 @@ import {
   redirectForCredentials,
   sessionAuthenticationRequired,
 } from "../request-auth";
-import { abortable } from "./abortable";
+import { abortable, abortableDelay } from "./abortable";
 import {
   laneStaggerMs,
   laneUrl,
@@ -271,7 +271,10 @@ class LaneSet {
     if (!this.#live) return;
     const { host } = this.stage;
     if (msg.type === "progress") {
-      if (msg.bytes > 0) this.#ready.add(index);
+      if (msg.bytes > 0 && !this.#ready.has(index)) {
+        this.#ready.add(index);
+        this.stage.readinessChanged();
+      }
       if (this.dir !== "down" || !this.measuring || msg.seq !== this.#seq)
         return;
       host.download(msg.bytes);
@@ -344,6 +347,7 @@ export class ServerStage implements StageTransport {
   #checkpoint: Promise<ReceiverCheckpoint | null> | null = null;
   #latency: LatencyChannel | null = null;
   #stalled = false;
+  readinessChanged = () => {};
 
   constructor({ host, paths, activity, streams, seed }: StageOptions) {
     this.host = host;
@@ -362,6 +366,7 @@ export class ServerStage implements StageTransport {
         host: this.host,
         target: latency.target,
         credentials,
+        ready: () => this.readinessChanged(),
       });
       this.#latency.prime(idle ? cfg.pingCadence : cfg.loadedPingCadence, idle);
     } else if (this.#activity.stage === "latency")
@@ -377,20 +382,29 @@ export class ServerStage implements StageTransport {
       this.#abort.signal,
       AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS),
     ]);
-    while (!signal.aborted) {
-      if ((this.#lanes.down?.ready ?? true) && (this.#latency?.ready ?? true)) {
+    try {
+      for (;;) {
+        const changed = new Promise<void>(
+          (resolve) => (this.readinessChanged = resolve),
+        );
+        if (
+          !(this.#lanes.down?.ready ?? true) ||
+          !(this.#latency?.ready ?? true)
+        ) {
+          await abortable(changed, signal);
+          continue;
+        }
         if (!this.#activity.transfer.includes("up")) return;
         // Receiver evidence is checked last; a transient failure retries within this budget.
-        const checkpoint = await this.checkpoint(signal).catch(() =>
-          signal.throwIfAborted(),
-        );
+        const checkpoint = await this.checkpoint(signal).catch(() => null);
         if ((checkpoint?.nanos ?? 0) > 0) return;
+        await abortableDelay(50, signal);
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch {
+      throw new Error("Primed measurement connections did not become ready", {
+        cause: signal.reason,
+      });
     }
-    throw new Error("Primed measurement connections did not become ready", {
-      cause: signal.reason,
-    });
   }
 
   measure(): void {
