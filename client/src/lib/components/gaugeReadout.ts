@@ -31,29 +31,45 @@ const AWAITING = { value: MISSING, unit: "awaiting server windows" };
 const transfer = (phase: Phase) =>
   phase === "download" || phase === "upload" || phase === "bidirectional";
 
+function displayed(input: GaugeReadoutInput) {
+  const { phase, headline } = input;
+  const latency = { value: fmtMs(input.latencyMs), unit: "ms" };
+  if (input.unusable) return EMPTY;
+  if (phase === "latency")
+    return input.latencyTimeout
+      ? { value: MISSING, unit: "probe timeout" }
+      : latency;
+  if (phase === "complete") {
+    if (headline)
+      return {
+        value: input.rate(headline.bytesPerSec),
+        unit: `${input.unit} · ${headline.label}`,
+      };
+    return input.hasLatencyResult ? latency : EMPTY;
+  }
+  if (!transfer(phase)) return EMPTY;
+  if (!input.aggregateEvidence) return AWAITING;
+  return { value: input.rate(input.animatedBytesPerSec), unit: input.unit };
+}
+
+function terminalStatus({ phase, error }: GaugeReadoutInput) {
+  if (phase === "aborted")
+    return {
+      error: false,
+      headline: phaseLabel("aborted"),
+      action: "Press Run again to restart",
+    };
+  if (phase !== "error") return null;
+  return {
+    error: true,
+    headline: error ? reasonLabel(error.reason) : "Something went wrong",
+    action: "Press Run again to retry",
+  };
+}
+
 export function gaugeReadout(input: GaugeReadoutInput) {
   const { phase, preparation } = input;
-  const latency = { value: fmtMs(input.latencyMs), unit: "ms" };
-  const display = input.unusable
-    ? EMPTY
-    : phase === "latency"
-      ? input.latencyTimeout
-        ? { value: MISSING, unit: "probe timeout" }
-        : latency
-      : phase === "complete"
-        ? input.headline
-          ? {
-              value: input.rate(input.headline.bytesPerSec),
-              unit: `${input.unit} · ${input.headline.label}`,
-            }
-          : input.hasLatencyResult
-            ? latency
-            : EMPTY
-        : !transfer(phase)
-          ? EMPTY
-          : input.aggregateEvidence
-            ? { value: input.rate(input.animatedBytesPerSec), unit: input.unit }
-            : AWAITING;
+  const display = displayed(input);
   const announced =
     !input.aggregateEvidence && input.running
       ? AWAITING
@@ -67,22 +83,7 @@ export function gaugeReadout(input: GaugeReadoutInput) {
       ? "Checking sign-in"
       : phaseLabel("connecting");
   const failure = preparationFailurePresentation(preparation, input.startError);
-  const status =
-    phase === "aborted"
-      ? {
-          error: false,
-          headline: phaseLabel("aborted"),
-          action: "Press Run again to restart",
-        }
-      : phase === "error"
-        ? {
-            error: true,
-            headline: input.error
-              ? reasonLabel(input.error.reason)
-              : "Something went wrong",
-            action: "Press Run again to retry",
-          }
-        : null;
+  const status = terminalStatus(input);
   const hint = input.preparing
     ? preparationLabel
     : phase === "idle" || phase === "connecting" || phase === "warmup"
