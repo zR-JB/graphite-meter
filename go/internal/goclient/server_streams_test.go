@@ -23,7 +23,7 @@ func TestSelectedStreamBudgets(t *testing.T) {
 		})
 	}
 	plan, err := planRunStreams(cfg, servers)
-	if err != nil || plan["a"] != (streamCounts{6, 6}) || plan["b"] != (streamCounts{6, 6}) {
+	if err != nil || plan["a"] != (byDirection[int]{6, 6}) || plan["b"] != (byDirection[int]{6, 6}) {
 		t.Fatalf("a shared HTTP/1 origin rationed native lanes: %v %v", plan, err)
 	}
 	cfg.TransferStreams.Forced = 65

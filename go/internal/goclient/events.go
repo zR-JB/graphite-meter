@@ -13,6 +13,18 @@ const (
 	Up   Direction = "up"
 )
 
+// byDirection holds one value per transfer direction.
+type byDirection[T any] struct{ down, up T }
+
+func (b byDirection[T]) of(dir Direction) T { return *b.at(dir) }
+
+func (b *byDirection[T]) at(dir Direction) *T {
+	if dir == Up {
+		return &b.up
+	}
+	return &b.down
+}
+
 type Stage string
 
 const (

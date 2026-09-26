@@ -103,7 +103,7 @@ func testRunner(srv *httptest.Server) *runner {
 		http:          srv.Client(),
 		target:        fetchTarget(srv.URL),
 		latencyTarget: new(testChannel("test-ws", srv.URL, false)),
-		streams:       streamCounts{down: 1, up: 1},
+		streams:       byDirection[int]{down: 1, up: 1},
 		emit:          func(Event) {},
 	}
 }

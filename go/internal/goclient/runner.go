@@ -285,7 +285,7 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 type runner struct {
 	coordinated   *participantCounters
 	cfg           Config
-	streams       streamCounts
+	streams       byDirection[int]
 	http          *http.Client
 	websocketHTTP *http.Client
 	uploadHTTP    *http.Client

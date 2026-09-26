@@ -255,7 +255,7 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 	}))
 	defer srv.Close()
 	r := testRunner(srv)
-	r.streams = streamCounts{down: 1, up: 4}
+	r.streams = byDirection[int]{down: 1, up: 4}
 	if err := r.runTestStage(t.Context(), StageBidirectional, captureWindow); err != nil {
 		t.Fatalf("coordinated transfer stage: %v", err)
 	}

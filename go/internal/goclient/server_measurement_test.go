@@ -22,7 +22,7 @@ func nativeReceiver(id string, bytes uint64, ms int) *ReceiverSnapshot {
 func TestCoordinatedReceiverWindows(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
-	a.begin("upload", []string{"a", "b"}, 0, "stage-start")
+	a.beginStage("upload", []string{"a", "b"}, 0)
 	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{
 		"a": nativeReceiver("a", 100, 100),
 		"b": nativeReceiver("b", 200, 100),
@@ -34,7 +34,7 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 	if sample == nil || *sample.UpBytesPerSec != 4000 {
 		t.Fatalf("sum of receiver-window means = %+v, want 4000 B/s", sample)
 	}
-	result := a.result("upload", Up)
+	result := a.result(Up)
 	if result.Unavailable || result.MeanBps != 4000 || result.TotalBytes != 7000 {
 		t.Fatalf("result=%+v", result)
 	}
@@ -49,38 +49,37 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 func TestPeaksNeedAMinimumWindow(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
-	a.begin("download", []string{"a", "b"}, 0, "stage-start")
+	a.beginStage("download", []string{"a", "b"}, 0)
 	for i, bytes := range []uint64{0, 0, 1000, 1000, 2000, 2000, 3000} {
 		a.observe(nativeBoundary(i*250, map[string]uint64{"a": bytes, "b": bytes / 2}, nil))
 	}
-	result := a.result("download", Down)
+	result := a.result(Down)
 	if result.PeakBps != 3000 || result.MeanBps != 3000 || result.Samples != 6 {
 		t.Fatalf("a burst inside a short window became the peak: %+v", result)
 	}
-	if a.serverPeaks[componentKey{"a", Down}] != 2000 || a.serverPeaks[componentKey{"b", Down}] != 1000 ||
-		a.serverSamples["a"] != 6 {
-		t.Fatalf("per-server peaks or samples = %v %v", a.serverPeaks, a.serverSamples)
+	if a.servers["a"].peak.down != 2000 || a.servers["b"].peak.down != 1000 || a.servers["a"].samples != 6 {
+		t.Fatalf("per-server peaks or samples = %+v %+v", a.servers["a"], a.servers["b"])
 	}
 }
 func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
-	a.begin("download", []string{"a", "b"}, 0, "stage-start")
+	a.beginStage("download", []string{"a", "b"}, 0)
 	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, nil))
 	a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000, "b": 3000}, nil))
 	a.observe(nativeBoundary(2000, map[string]uint64{"a": 4000, "b": 4000}, nil))
-	result := a.result("download", Down)
+	result := a.result(Down)
 	if result.MeanBps != 4000 || result.PeakBps != 4000 || result.TotalBytes != 8000 {
 		t.Fatalf("independent peaks or durations leaked into aggregate: %+v", result)
 	}
-	a.begin("download", []string{"b"}, 2*time.Second, "dropout")
+	a.restart([]string{"b"}, 2*time.Second, ReasonDropout)
 	a.observe(nativeBoundary(2100, map[string]uint64{"b": 4200}, nil))
 	a.observe(nativeBoundary(2500, map[string]uint64{"b": 5000}, nil))
-	if result := a.result("download", Down); !result.Unavailable || result.TotalBytes != 9000 {
+	if result := a.result(Down); !result.Unavailable || result.TotalBytes != 9000 {
 		t.Fatalf("late dropout must revoke headline without losing bytes: %+v", result)
 	}
-	if len(a.peaks) != 0 || len(a.serverPeaks) != 0 || !reflect.DeepEqual(a.serverSamples, map[string]int{"b": 1}) {
-		t.Fatalf("peaks outlived their interval: %v %v %v", a.peaks, a.serverPeaks, a.serverSamples)
+	if a.peak.down != 0 || a.servers["a"].peak.down != 0 || a.servers["a"].samples != 0 || a.servers["b"].samples != 1 {
+		t.Fatalf("peaks outlived their interval: %+v %+v %+v", a.peak, a.servers["a"], a.servers["b"])
 	}
 	if a.intervals[0].Window == nil || *a.intervals[0].Window.DownBytesPerSec != 4000 {
 		t.Fatal("earlier evidence lost")
@@ -89,36 +88,36 @@ func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
-	a.begin("upload", []string{"a"}, 0, "stage-start")
+	a.beginStage("upload", []string{"a"}, 0)
 	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 100, 100)}))
 	a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 100, 1100)}))
-	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 0 {
+	if result := a.result(Up); result.Unavailable || result.MeanBps != 0 {
 		t.Fatalf("measured zero = %+v", result)
 	}
 	missing := nativeBoundary(1200, nil, map[string]*ReceiverSnapshot{"a": nil})
 	missing.observedUp = map[string]uploadLedger{"a": {"id", 500}}
 	a.observe(missing)
 	a.observe(nativeBoundary(1300, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 500, 1100)}))
-	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 0 || result.TotalBytes != 400 ||
+	if result := a.result(Up); result.Unavailable || result.MeanBps != 0 || result.TotalBytes != 400 ||
 		len(a.intervals) != 1 {
 		t.Fatalf("a missing or stale checkpoint must be skipped, keeping bytes and the window: %+v", result)
 	}
 	a.observe(nativeBoundary(1500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 700, 1600)}))
 	a.observe(nativeBoundary(2500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1700, 2600)}))
-	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 640 || result.TotalBytes != 1600 ||
+	if result := a.result(Up); result.Unavailable || result.MeanBps != 640 || result.TotalBytes != 1600 ||
 		len(a.intervals) != 1 {
 		t.Fatalf("the next valid boundary must span the gap in the receiver clock: %+v", result)
 	}
 	a.observe(nativeBoundary(3500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("new", 100, 100)}))
 	if len(a.intervals) != 2 || a.intervals[1].Reason != "evidence-resumed" ||
-		a.result("upload", Up).TotalBytes != 1700 {
+		a.result(Up).TotalBytes != 1700 {
 		t.Fatalf("a replaced receiver must start a fresh interval: %+v", a.intervals)
 	}
 }
 func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
-	a.begin("bidirectional", []string{"a", "b"}, 0, "stage-start")
+	a.beginStage("bidirectional", []string{"a", "b"}, 0)
 	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, map[string]*ReceiverSnapshot{
 		"a": nativeReceiver("a", 0, 100),
 		"b": nativeReceiver("b", 0, 100),
@@ -127,11 +126,11 @@ func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
 		"a": nativeReceiver("a", 1000, 1100),
 		"b": nativeReceiver("b", 6000, 2100),
 	}))
-	if a.result("bidirectional", Down).MeanBps != 3000 || a.result("bidirectional", Up).MeanBps != 4000 {
+	if a.result(Down).MeanBps != 3000 || a.result(Up).MeanBps != 4000 {
 		t.Fatal("bidirectional clocks were mixed")
 	}
-	a.begin("bidirectional", nil, time.Second, "dropout")
-	if !a.result("bidirectional", Down).Unavailable || !a.result("bidirectional", Up).Unavailable {
+	a.restart(nil, time.Second, ReasonDropout)
+	if !a.result(Down).Unavailable || !a.result(Up).Unavailable {
 		t.Fatal("all failed must not retain the earlier headline")
 	}
 }
@@ -139,11 +138,11 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
 	for i := range 140 {
-		a.begin("download", []string{"a"}, time.Duration(i)*time.Second, "stage-start")
+		a.beginStage("download", []string{"a"}, time.Duration(i)*time.Second)
 		a.observe(nativeBoundary(i*1000, map[string]uint64{"a": 0}, nil))
 		a.observe(nativeBoundary((i+1)*1000, map[string]uint64{"a": 1000}, nil))
 	}
-	if len(a.intervals) != maximumIntervals || a.omitted != 12 || math.IsNaN(a.result("download", Down).MeanBps) {
+	if len(a.intervals) != maximumIntervals || a.omitted != 12 || math.IsNaN(a.result(Down).MeanBps) {
 		t.Fatalf("bounds=%d omitted=%d", len(a.intervals), a.omitted)
 	}
 }
@@ -151,15 +150,15 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
 	t.Parallel()
 	var measurements aggregateMeasurements
-	measurements.begin("upload", []string{"a"}, 0, "stage-start")
+	measurements.beginStage("upload", []string{"a"}, 0)
 	measurements.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)}))
 	measurements.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 3000)}))
-	before := measurements.result("upload", Up)
+	before := measurements.result(Up)
 	if before.Unavailable || before.MeanBps != 1000 || before.TotalBytes != 2000 {
 		t.Fatalf("receiver clock was replaced by the client clock: %+v", before)
 	}
 	measurements.observe(nativeBoundary(1500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 1500)}))
-	after := measurements.result("upload", Up)
+	after := measurements.result(Up)
 	if !after.Unavailable || after.TotalBytes != before.TotalBytes || measurements.intervals[0].Window == nil {
 		t.Fatalf("regressed receiver clock retained a rate or lost earlier bytes: %+v", after)
 	}
@@ -204,7 +203,7 @@ func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
 		co := &coordinator{cfg: cfg, servers: []*participant{p}, emit: func(Event) {}}
 		for _, stage := range []StagePlan{{StageDownload, time.Second, []Direction{Down}},
 			{StageBidirectional, time.Second, []Direction{Down, Up}}} {
-			co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+			co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 			if c.window {
 				co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 0},
 					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 0, 0)}))
@@ -221,7 +220,8 @@ func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
 
 func TestReceiverWindowsNeedOneAdvancingReceiver(t *testing.T) {
 	t.Parallel()
-	interval := AggregationInterval{Stage: StageUpload, Participants: []string{"a"}}
+	var a aggregateMeasurements
+	a.beginStage(StageUpload, []string{"a"}, 0)
 	first := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)})
 	for _, c := range []struct {
 		name  string
@@ -232,8 +232,7 @@ func TestReceiverWindowsNeedOneAdvancingReceiver(t *testing.T) {
 		{"replaced receiver at the same clock", nativeReceiver("new", 5000, 1000), false},
 		{"bytes without receiver time", nativeReceiver("id", 5000, 1000), true},
 	} {
-		window, err := aggregateWindow(first, nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": c.next}),
-			interval)
+		window, err := a.window(first, nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": c.next}))
 		if window != nil || err == nil || errors.Is(err, errStaleBoundary) != c.stale {
 			t.Errorf("%s: window=%+v err=%v, want stale=%v", c.name, window, err, c.stale)
 		}
@@ -251,7 +250,7 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		p := &participant{prepared: server}
 		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
 		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
-		co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 		s := &sampler{c: co, stage: stage, results: make(chan sampledBoundary, 1)}
 		s.begin(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
 		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
@@ -286,7 +285,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			}
 		}
 		Intervals []struct {
-			Reason   string
+			Reason   IntervalReason
 			Complete bool
 			Window   *window
 		}
@@ -297,7 +296,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	}
 	for _, c := range cases {
 		var a aggregateMeasurements
-		a.begin(c.Stage, c.Participants, time.Duration(c.Boundaries[0].AtMs)*time.Millisecond, "stage-start")
+		a.beginStage(c.Stage, c.Participants, time.Duration(c.Boundaries[0].AtMs)*time.Millisecond)
 		for _, b := range c.Boundaries {
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
 			for id, r := range b.Up {
@@ -308,7 +307,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			a.observe(boundary)
 		}
 		peak := func(dir Direction) any {
-			if rate, ok := a.peaks[dir]; ok {
+			if rate := a.peak.of(dir); rate != 0 {
 				return rate
 			}
 			return nil
@@ -338,7 +337,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 func TestAClientStallResumesEvidence(t *testing.T) {
 	t.Parallel()
 	var a aggregateMeasurements
-	a.begin(StageDownload, []string{"a"}, 0, "stage-start")
+	a.beginStage(StageDownload, []string{"a"}, 0)
 	for _, at := range []int{0, 250, 500, 2500, 2750, 3000} {
 		a.observe(nativeBoundary(at, map[string]uint64{"a": uint64(at)}, nil))
 	}
@@ -355,7 +354,7 @@ func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {
 		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
 		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
 		initial := nativeBoundary(0, map[string]uint64{"a": 0}, nil)
-		co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 		co.aggregate.observe(initial)
 		s := &sampler{c: co, stage: stage}
 		s.begin(time.Now(), initial)
@@ -382,7 +381,7 @@ func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	co := &coordinator{servers: []*participant{p}, emit: func(e Event) { live = append(live, e.Throughput) }}
 	stage := StagePlan{Name: StageUpload, Directions: []Direction{Up}}
 	initial := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)})
-	co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+	co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 	co.aggregate.observe(initial)
 	s := &sampler{c: co, stage: stage}
 	s.begin(time.Now(), initial)

@@ -64,35 +64,26 @@ const (
 	expectContinueTimeout  = time.Second
 )
 
-type streamCounts struct{ down, up int }
-
-func (s streamCounts) of(dir Direction) int {
-	if dir == Up {
-		return s.up
-	}
-	return s.down
-}
-
-var multiplexedStreams = map[string]streamCounts{
+var multiplexedStreams = map[string]byDirection[int]{
 	"http2": {down: 1, up: 4},
 	"http3": {down: 1, up: 1},
 }
 
-func (p TransferStreamPolicy) lanes(protocol, transport string) streamCounts {
+func (p TransferStreamPolicy) lanes(protocol, transport string) byDirection[int] {
 	switch {
 	case transport == wire.TransportWebTransport:
 		n := 1
 		if p.Forced > 0 {
 			n = min(p.Forced, wire.WTMaxStreams)
 		}
-		return streamCounts{down: n, up: n}
+		return byDirection[int]{down: n, up: n}
 	case p.Forced > 0:
-		return streamCounts{down: p.Forced, up: p.Forced}
+		return byDirection[int]{down: p.Forced, up: p.Forced}
 	}
 	if lanes, ok := multiplexedStreams[protocol]; ok {
 		return lanes
 	}
-	return streamCounts{down: p.AutomaticMax, up: p.AutomaticMax}
+	return byDirection[int]{down: p.AutomaticMax, up: p.AutomaticMax}
 }
 
 func (p TransferStreamPolicy) Label(protocol, transport string) string {
@@ -264,9 +255,9 @@ func positive[T int | time.Duration](value, fallback T) T {
 	return fallback
 }
 
-func planRunStreams(cfg Config, servers []PreparedServer) (map[string]streamCounts, error) {
-	plan := map[string]streamCounts{}
-	var total streamCounts
+func planRunStreams(cfg Config, servers []PreparedServer) (map[string]byDirection[int], error) {
+	plan := map[string]byDirection[int]{}
+	var total byDirection[int]
 	for _, server := range servers {
 		target := server.Connection.ThroughputTarget
 		lanes := cfg.TransferStreams.lanes(target.Protocol, target.Transport)

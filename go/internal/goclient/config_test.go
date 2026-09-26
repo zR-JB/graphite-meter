@@ -18,33 +18,33 @@ func TestTransferStreamPolicy(t *testing.T) {
 	for _, c := range []struct {
 		policy              TransferStreamPolicy
 		protocol, transport string
-		lanes               streamCounts
+		lanes               byDirection[int]
 		label               string
 	}{
-		{auto, "http1", wire.TransportFetchStream, streamCounts{6, 6}, "Automatic · up to 6 per direction"},
-		{auto, "http2", wire.TransportFetchStream, streamCounts{1, 4}, "Automatic · 1 download / 4 upload"},
-		{auto, "http3", wire.TransportFetchStream, streamCounts{1, 1}, "Automatic · 1 download / 1 upload"},
+		{auto, "http1", wire.TransportFetchStream, byDirection[int]{6, 6}, "Automatic · up to 6 per direction"},
+		{auto, "http2", wire.TransportFetchStream, byDirection[int]{1, 4}, "Automatic · 1 download / 4 upload"},
+		{auto, "http3", wire.TransportFetchStream, byDirection[int]{1, 1}, "Automatic · 1 download / 1 upload"},
 		{
 			auto,
 			"h2",
 			wire.TransportFetchStream,
-			streamCounts{6, 6},
+			byDirection[int]{6, 6},
 			"Automatic · 1 download / 4 upload",
 		},
 		{
 			auto,
 			"http3",
 			wire.TransportWebTransport,
-			streamCounts{1, 1},
+			byDirection[int]{1, 1},
 			"Automatic · 1 continuous stream per direction",
 		},
-		{forced, "http2", wire.TransportFetchStream, streamCounts{9, 9}, "Forced · 9 per direction"},
-		{forced, "http3", wire.TransportWebTransport, streamCounts{9, 9}, "Forced · 9 per direction"},
+		{forced, "http2", wire.TransportFetchStream, byDirection[int]{9, 9}, "Forced · 9 per direction"},
+		{forced, "http3", wire.TransportWebTransport, byDirection[int]{9, 9}, "Forced · 9 per direction"},
 		{
 			TransferStreamPolicy{Forced: 99},
 			"http3",
 			wire.TransportWebTransport,
-			streamCounts{wire.WTMaxStreams, wire.WTMaxStreams},
+			byDirection[int]{wire.WTMaxStreams, wire.WTMaxStreams},
 			"Forced · 16 per direction (capped from 99 by the session)",
 		},
 	} {

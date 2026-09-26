@@ -57,7 +57,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			var mu sync.Mutex
 			var phases []Event
 			var samples int
-			r := &runner{cfg: cfg, streams: streamCounts{down: 2, up: 2}, http: srv.Client(), emit: func(e Event) {
+			r := &runner{cfg: cfg, streams: byDirection[int]{down: 2, up: 2}, http: srv.Client(), emit: func(e Event) {
 				mu.Lock()
 				defer mu.Unlock()
 				if e.Kind == EventStage {
@@ -144,7 +144,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			var results []Result
 			var measuredAt time.Time
 			var details *RunDetails
-			r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(e Event) {
+			r := &runner{cfg: cfg, streams: byDirection[int]{down: 1, up: 1}, http: srv.Client(), emit: func(e Event) {
 				mu.Lock()
 				defer mu.Unlock()
 				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
@@ -254,7 +254,7 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 	defer srv.Close()
 	cfg := Config{BaseURL: srv.URL, Warmup: 4 * time.Second}.normalized()
 	var measuring atomic.Bool
-	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
+	r := &runner{cfg: cfg, streams: byDirection[int]{up: 1}, http: srv.Client(), emit: func(e Event) {
 		if e.Kind == EventStage && e.Phase == PhaseWarmup {
 			rejectProgress.Store(true)
 		}
@@ -315,7 +315,7 @@ func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 	var measured bool
 	var details *RunDetails
 	cfg := Config{BaseURL: srv.URL, Warmup: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
+	r := &runner{cfg: cfg, streams: byDirection[int]{up: 1}, http: srv.Client(), emit: func(e Event) {
 		if e.Kind == EventStage && e.Phase == PhaseWarmup {
 			close(warmup)
 		}
@@ -373,7 +373,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 				var details *RunDetails
 				r := &runner{
 					cfg:     Config{BaseURL: srv.URL}.normalized(),
-					streams: streamCounts{down: 1, up: 1},
+					streams: byDirection[int]{down: 1, up: 1},
 					http:    srv.Client(),
 					emit: func(e Event) {
 						if e.Servers != nil {
@@ -421,7 +421,7 @@ func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
 				var active atomic.Int64
 				r := &runner{
 					cfg:     Config{BaseURL: "http://fixture.invalid"}.normalized(),
-					streams: streamCounts{down: 1},
+					streams: byDirection[int]{down: 1},
 					http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 						active.Add(1)
 						defer func() { active.Add(-1) }()
@@ -482,7 +482,7 @@ func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
 		var details *RunDetails
 		r := &runner{
 			cfg:     Config{BaseURL: "http://fixture.invalid", Warmup: 100 * time.Millisecond}.normalized(),
-			streams: streamCounts{down: 1},
+			streams: byDirection[int]{down: 1},
 			http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
 				if requests == 1 {

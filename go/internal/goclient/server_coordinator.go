@@ -375,7 +375,7 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan, handover bool)
 		c.failure(outcome.server, stage, outcome.role, outcome.err, outcome.at)
 		if len(c.ids()) == 0 {
 			if measuring && transfer {
-				c.aggregate.begin(stage.Name, nil, time.Since(c.started), "dropout")
+				c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
 			}
 			return fmt.Errorf("%w: %w", errNoSurvivors, outcome.err)
 		}
@@ -507,7 +507,7 @@ func (c *coordinator) openWindow(
 		initial.down[p.id()] = p.transport.coordinated.down.Load()
 	}
 	if len(stage.Directions) > 0 {
-		c.aggregate.begin(stage.Name, c.ids(), initial.at, "stage-start")
+		c.aggregate.beginStage(stage.Name, c.ids(), initial.at)
 		c.aggregate.observe(initial)
 	}
 	return started, initial, nil
@@ -523,16 +523,16 @@ type sampler struct {
 	ending       bool
 	cancel       context.CancelFunc
 	work         sync.WaitGroup
-	lastBytes    map[string]byteLedger
+	lastBytes    map[string]byDirection[uint64]
 	lastMovement map[string]map[Direction]time.Time
 	misses       map[string]int
 }
 
 func (s *sampler) begin(started time.Time, initial measurementBoundary) {
-	s.lastBytes, s.misses = map[string]byteLedger{}, map[string]int{}
+	s.lastBytes, s.misses = map[string]byDirection[uint64]{}, map[string]int{}
 	s.lastMovement = map[string]map[Direction]time.Time{}
 	for _, p := range s.c.active() {
-		bytes := byteLedger{down: initial.down[p.id()]}
+		bytes := byDirection[uint64]{down: initial.down[p.id()]}
 		if snapshot := initial.up[p.id()]; snapshot != nil {
 			bytes.up = snapshot.Bytes
 		}
@@ -565,7 +565,7 @@ func (s *sampler) reset() {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	s.c.aggregate.begin(s.stage.Name, s.c.ids(), time.Since(s.c.started), "dropout")
+	s.c.aggregate.restart(s.c.ids(), time.Since(s.c.started), ReasonDropout)
 	s.c.emitRates(s.stage, nil)
 	s.capture(s.ending)
 }
@@ -605,7 +605,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 			removed = true
 			continue
 		}
-		bytes := byteLedger{down: sample.boundary.down[id]}
+		bytes := byDirection[uint64]{down: sample.boundary.down[id]}
 		if snapshot := sample.boundary.up[id]; snapshot != nil {
 			bytes.up = snapshot.Bytes
 		} else {
@@ -627,13 +627,13 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	}
 	// A final boundary where a direction stood still ends the result at the last good boundary.
 	if stalled {
-		c.aggregate.ledger(sample.boundary)
+		c.aggregate.credit(sample.boundary)
 	} else if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
 		c.emitRates(s.stage, window)
 	}
 	switch {
 	case len(c.ids()) == 0:
-		c.aggregate.begin(s.stage.Name, nil, time.Since(c.started), "dropout")
+		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
 		return true, c.noSurvivors()
 	case removed:
 		s.reset()
@@ -689,17 +689,11 @@ func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
 	for _, dir := range stage.Directions {
 		sample := ThroughputSample{Unavailable: true}
 		if window != nil {
-			rate := window.DownBytesPerSec
-			if dir == Up {
-				rate = window.UpBytesPerSec
-			}
+			_, rate := window.direction(dir)
 			if rate == nil {
 				continue
 			}
-			sample = ThroughputSample{BytesPerSec: *rate}
-			for _, bytes := range c.aggregate.stageTotals[stage.Name] {
-				sample.TotalBytes += bytes.of(dir)
-			}
+			sample = ThroughputSample{BytesPerSec: *rate, TotalBytes: c.aggregate.total(dir)}
 		}
 		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: sample})
 	}
@@ -707,41 +701,16 @@ func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
 
 func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
-		result := c.aggregate.result(stage.Name, dir)
+		result := c.aggregate.result(dir)
 		c.unavailable = c.unavailable || result.Unavailable
 		if stageErr != nil {
 			result.Err = stageErr
 		}
 		c.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage.Name, Direction: dir, Result: new(result)})
 		for _, server := range c.servers {
-			own := Result{Stage: stage.Name, Direction: dir, Unavailable: true}
-			total := c.aggregate.stageTotals[stage.Name][server.id()]
-			own.TotalBytes = total.of(dir)
-			latest := len(c.aggregate.intervals) - 1
-			for n, interval := range slices.Backward(c.aggregate.intervals) {
-				if interval.Stage != stage.Name || interval.Window == nil {
-					continue
-				}
-				components := interval.Window.Down
-				if dir == Up {
-					components = interval.Window.Up
-				}
-				mine := func(w ComponentWindow) bool { return w.ServerID == server.id() }
-				if i := slices.IndexFunc(components, mine); i >= 0 {
-					own.MeanBps, own.Elapsed = components[i].BytesPerSec, components[i].Duration
-					own.Unavailable = components[i].Duration < minimumSurvivorEvidence
-					if n == latest {
-						own.PeakBps = c.aggregate.serverPeaks[componentKey{server.id(), dir}]
-						own.Samples = c.aggregate.serverSamples[server.id()]
-					}
-					break
-				}
-			}
-			switch {
-			case server.removed:
+			own := c.aggregate.serverResult(server.id(), dir)
+			if server.removed {
 				own.Err = errors.New("earlier partial measurement")
-			case own.Unavailable:
-				own.Err = errInsufficientEvidence
 			}
 			server.results = append(server.results, own)
 		}
