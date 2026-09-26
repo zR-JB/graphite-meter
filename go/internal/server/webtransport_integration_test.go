@@ -419,6 +419,40 @@ func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	}
 }
 
+// Browsers keep a closed session's QUIC connection open, so the server closes it once its sessions end; otherwise
+// sequential sessions from one client would run into the per-client connection cap.
+func TestSequentialWebTransportSessionsDoNotHoldConnectionSlots(t *testing.T) {
+	t.Parallel()
+	base, _, wtTransport := wtTestServer(t, nil, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}} //nolint:gosec
+	for i := range 2 * maxClientQUICConnections {
+		conn, err := quic.DialAddr(ctx, strings.TrimPrefix(base, "https://"), tlsConfig, transport.NewQUICConfig())
+		if err != nil {
+			t.Fatalf("connection %d refused: %v", i, err)
+		}
+		client, err := wtTransport.NewClientConn(conn)
+		if err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		_, sess, err := client.Dial(ctx, base+"/wt/ping", nil)
+		if err != nil {
+			t.Fatalf("session %d: %v", i, err)
+		}
+		_ = sess.CloseWithError(0, "")
+		select {
+		case <-conn.Context().Done():
+			closed, ok := errors.AsType[*quic.ApplicationError](context.Cause(conn.Context()))
+			if !ok || !closed.Remote || closed.ErrorCode != quic.ApplicationErrorCode(http3.ErrCodeNoError) {
+				t.Fatalf("connection %d closed with %v, want the server's H3_NO_ERROR", i, context.Cause(conn.Context()))
+			}
+		case <-ctx.Done():
+			t.Fatalf("the server kept connection %d open after its only session ended", i)
+		}
+	}
+}
+
 // A stream download's liveness is the peer draining its lanes, and that is the only thing keeping the session open.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	if testing.Short() {

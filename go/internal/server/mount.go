@@ -143,12 +143,14 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 			http.Error(w, "webtransport upgrade failed", http.StatusBadRequest)
 			return
 		}
+		ended := webTransportSession(r)
 		ctx, cancel := linkedContext(m.ctx, r.Context(), sess.Context())
 		defer cancel()
 		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)
 		defer func() {
 			end := endpoint.EndOf(ctx, m.ctx)
 			_ = sess.CloseWithError(webtransport.SessionErrorCode(end.WT), end.Reason)
+			ended(end.WT == 0)
 		}()
 		serve(ctx, sess, r, live)
 	})
