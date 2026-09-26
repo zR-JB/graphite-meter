@@ -1,20 +1,26 @@
 """Approve a disposable native-client challenge in the Go interop fixture."""
 
 import http.cookiejar
+import re
 import ssl
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-base, approval_url, ca_path = sys.argv[1:]
-source = urllib.parse.urlparse(base)
+origin, approval_url, ca_path = sys.argv[1:]
+source = urllib.parse.urlparse(origin)
 approval = urllib.parse.urlparse(approval_url)
-if source.scheme != "https" or approval.scheme != "https" or source.netloc != approval.netloc:
-    raise SystemExit("approval fixture received an unexpected browser origin")
+port = source.netloc.removeprefix("127.0.0.1:")
+if (source.scheme, source.hostname, approval.path) != ("https", "127.0.0.1", "/auth/cli") \
+        or approval.netloc != source.netloc:
+    raise SystemExit("approval fixture only approves its own loopback server")
+if not port.isdigit():
+    raise SystemExit("approval fixture received no loopback port")
+base = f"https://127.0.0.1:{port}"
 challenge = urllib.parse.parse_qs(approval.query).get("challenge", [""])[0]
-if not challenge:
-    raise SystemExit("approval fixture received no challenge")
+if not re.fullmatch(r"[A-Za-z0-9_-]{43}", challenge):
+    raise SystemExit("approval fixture received no valid challenge")
 
 cookies = http.cookiejar.CookieJar()
 context = ssl.create_default_context(cafile=ca_path)
@@ -66,5 +72,5 @@ request(
 csrf = cookie("__Host-gm_csrf")
 if not cookie("__Host-gm_session") or not csrf:
     raise SystemExit("password fixture received no session or CSRF cookie")
-request("GET", approval_url)
+request("GET", base + "/auth/cli?" + urllib.parse.urlencode({"challenge": challenge}))
 request("POST", base + "/auth/cli/approve", {"csrf": csrf, "challenge": challenge})
