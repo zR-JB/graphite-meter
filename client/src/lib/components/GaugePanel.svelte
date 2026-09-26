@@ -38,13 +38,6 @@
   // The instrument presents the phase it hands off to, never a flash of one it passes through.
   const view = handoff(() => store.phase);
   const phase = $derived(view.shown);
-  const results = handoff((): "none" | "partial" | "final" =>
-    store.phase === "complete"
-      ? "final"
-      : store.phase === "idle"
-        ? "none"
-        : "partial",
-  );
   let resultsBody = $state(0);
   const resultsHeight = new Smoothed();
   $effect(() => {
@@ -305,17 +298,9 @@
     {/if}
   </div>
 
-  <div
-    class="results-slot"
-    style:opacity={results.opacity}
-    style:height={`${resultsHeight.current}px`}
-  >
+  <div class="results-slot" style:height={`${resultsHeight.current}px`}>
     <div class="results-body" bind:clientHeight={resultsBody}>
-      {#if results.shown === "partial"}
-        <ResultCards compact live={liveReadout} />
-      {:else if results.shown === "final"}
-        <ResultCards />
-      {/if}
+      {#if phase !== "idle"}<ResultCards live={liveReadout} />{/if}
     </div>
   </div>
 </section>
@@ -588,7 +573,6 @@
   .gauge-status.preparation {
     color: var(--brand-strong);
   }
-  /* The slot glides to its content's height, so the chart below never jumps. */
   .results-slot {
     flex: none;
     overflow: clip;

@@ -40,7 +40,6 @@
       };
     }),
   );
-  // Status tags hand off together; a warmup shorter than the fade never shows.
   const track = handoff(
     () => segments,
     (list) => list.map((s) => `${s.state}:${s.reason}`).join(),

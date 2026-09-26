@@ -177,7 +177,6 @@ export class Handoff<T> {
   };
 }
 
-/** A Handoff that follows `get`, for the component being initialised. */
 export function handoff<T>(
   get: () => T,
   keyOf?: (value: T) => unknown,

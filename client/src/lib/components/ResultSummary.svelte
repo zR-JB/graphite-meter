@@ -53,23 +53,32 @@
   {/if}
   <div class="result-cards">
     {#each cards as card (card.key)}
-      <Disclosure class="surface result-card enter" tone={card.key} bind:open>
+      <Disclosure
+        class="surface result-card enter {card.status}"
+        tone={card.key}
+        bind:open
+      >
         {#snippet summary()}
           <span class="head">
             <span class="tone-icon" aria-hidden="true"
               ><Icon name={card.icon} /></span
             >
             <span class="label">{card.label}</span>
-            {#if card.status !== "complete"}
+            {#if card.status === "partial" || card.status === "failed"}
               <span class="badge" data-tone="err">{STATUS[card.status]}</span>
             {/if}
           </span>
           {#key scope}
             <span class="readout enter">
-              <span class="val">
+              <span
+                class="val"
+                aria-hidden={card.accessible ? "true" : undefined}
+              >
                 <span class="num">{card.num}</span>
                 <span class="unit">{card.unit}</span>
               </span>
+              {#if card.accessible}<span class="sr-only">{card.accessible}</span
+                >{/if}
               {#each card.rows as row (row.label + row.stage)}
                 {@render line(row)}
               {/each}
@@ -130,6 +139,10 @@
   }
   .result-cards > :global(.result-card) {
     --disclosure-pad: var(--space-3);
+    transition: var(--transition-control);
+  }
+  .result-cards > :global(.active) {
+    border-color: var(--brand-line);
   }
   .head {
     display: flex;

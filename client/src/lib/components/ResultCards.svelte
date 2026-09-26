@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
@@ -10,15 +9,12 @@
     CARD_ORDER,
     summaryCards,
     summaryEvidence,
+    type SummaryCard,
   } from "../presentation/resultSummary";
 
-  let {
-    compact = false,
-    live,
-  }: {
-    compact?: boolean;
-    live?: LiveReadout;
-  } = $props();
+  type Stage = (typeof CARD_ORDER)[number];
+
+  let { live }: { live: LiveReadout } = $props();
 
   const controller = getApplicationController();
   let shown = $state("");
@@ -33,14 +29,15 @@
     num: fmtSpeed(store.toUnit(bytesPerSec)),
     unit: store.unitLabel,
   });
+  const status = (key: Stage) => store.stagePresentation[key].status;
 
+  // Every stage holds its card from the start; a settled stage fills in its values.
   const cards = $derived.by(() => {
-    if (compact) return [];
-    const stages = Object.fromEntries(
-      CARD_ORDER.map((key) => [key, store.stagePresentation[key].status]),
-    ) as Record<(typeof CARD_ORDER)[number], string>;
     const evidence = summaryEvidence(
-      stages,
+      Object.fromEntries(CARD_ORDER.map((key) => [key, status(key)])) as Record<
+        Stage,
+        string
+      >,
       {
         download: store.stageResults.download,
         upload: store.stageResults.upload,
@@ -52,140 +49,51 @@
       shown,
       details?.latencyFocus,
     );
-    return summaryCards(
+    const settled = summaryCards(
       evidence,
       rate,
       store.unitBase,
       store.showWireEstimates,
     );
+    if (!store.isRunning) return settled;
+    return CARD_ORDER.flatMap((key) =>
+      status(key) === "disabled"
+        ? []
+        : [settled.find((card) => card.key === key) ?? liveCard(key)],
+    );
   });
 
-  // Animated rates are visual only; accessible values use receiver accounting.
-  function chipValues(
-    key: (typeof CARD_ORDER)[number],
-    active: boolean,
-  ): [shown: number | null, accessible: number | null] {
-    if (key === "latency") {
-      if (!active) {
-        const ms = store.stageResults.latency?.reportedMs ?? null;
-        return [ms, ms];
-      }
-      return [
-        (live?.rtt.current ?? store.liveRtt) || null,
-        store.liveRtt || null,
-      ];
-    }
-    if (active) {
-      const { down = null, up = null } = store.live ?? {};
-      const measured =
-        down == null && up == null ? null : (down ?? 0) + (up ?? 0);
-      const rates = live?.rates;
-      return [rates ? rates.down + rates.up : null, measured];
-    }
-    const bidi = store.result?.bidirectional;
-    const result =
-      key !== "bidirectional"
-        ? (store.stageResults[key]?.reportedBytesPerSec ?? null)
-        : bidi?.down && bidi.up
-          ? bidi.down.reportedBytesPerSec + bidi.up.reportedBytesPerSec
-          : null;
-    return [result, result];
+  // Animated values are visual only; the accessible value uses receiver accounting.
+  function liveCard(key: Stage): SummaryCard {
+    const active = status(key) === "active" || status(key) === "recovering";
+    const timeout = key === "latency" && active && store.liveLatencyLost;
+    const { down = null, up = null } = store.live ?? {};
+    const [value, accessible] = !active
+      ? [null, null]
+      : key === "latency"
+        ? [(live.rtt.current ?? store.liveRtt) || null, store.liveRtt || null]
+        : [
+            live.rates ? live.rates.down + live.rates.up : null,
+            down == null && up == null ? null : (down ?? 0) + (up ?? 0),
+          ];
+    const format = (n: number | null) =>
+      n === null ? MISSING : key === "latency" ? fmtMs(n) : rate(n).num;
+    const unit =
+      key === "latency" ? (timeout ? "timeout" : "ms") : store.unitLabel;
+    return {
+      key,
+      label: STAGE[key].short,
+      icon: STAGE[key].icon,
+      status: active ? "active" : "pending",
+      num: timeout ? MISSING : format(value),
+      unit,
+      rows: [],
+      details: [],
+      accessible: active
+        ? `${timeout ? "probe timeout" : format(accessible)} ${unit}`
+        : undefined,
+    };
   }
-
-  // Live chips hold a row for every stage from the start, so none appears later.
-  const chips = $derived.by(() =>
-    CARD_ORDER.flatMap((key) => {
-      const { status } = store.stagePresentation[key];
-      if (status === "disabled") return [];
-      const active = status === "active" || status === "recovering";
-      const [value, authoritative] = chipValues(key, active);
-      const timeout = key === "latency" && active && store.liveLatencyLost;
-      const format = (n: number | null) =>
-        n === null ? MISSING : key === "latency" ? fmtMs(n) : rate(n).num;
-      return [
-        {
-          key,
-          active,
-          label: STAGE[key].short,
-          icon: STAGE[key].icon,
-          num: timeout ? MISSING : format(value),
-          accessibleNum: timeout ? "probe timeout" : format(authoritative),
-          unit:
-            key === "latency" ? (timeout ? "timeout" : "ms") : store.unitLabel,
-        },
-      ];
-    }),
-  );
 </script>
 
-{#if compact}
-  <div class="result-chips">
-    {#each chips as c (c.key)}
-      <div class="result-chip enter" class:active={c.active} data-tone={c.key}>
-        <span class="tone-icon"><Icon name={c.icon} /></span>
-        <span class="chip-label">{c.label}</span>
-        <span class="chip-val" aria-hidden={c.active ? "true" : undefined}>
-          <span class="num">{c.num}</span>
-          <span class="unit">{c.unit}</span>
-        </span>
-        {#if c.active}
-          <span class="sr-only">{c.label}: {c.accessibleNum} {c.unit}</span>
-        {/if}
-      </div>
-    {/each}
-  </div>
-{:else}
-  <ResultSummary {cards} {details} scope={shown} onscope={selectScope} />
-{/if}
-
-<style>
-  .result-chips {
-    display: grid;
-    gap: var(--space-1);
-    max-width: 600px;
-    margin-inline: auto;
-  }
-  .result-chip {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: 28px;
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    transition: var(--transition-control);
-  }
-  .result-chip.active {
-    border-color: var(--brand-line);
-  }
-  .result-chip .tone-icon {
-    width: 20px;
-    height: 20px;
-  }
-  .chip-label {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--text-soft);
-    font-size: var(--type-xs);
-    font-weight: var(--w-heavy);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .chip-val {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-1);
-  }
-  .chip-val .num {
-    min-width: 5ch;
-    font: var(--w-heavy) var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    text-align: end;
-  }
-  .chip-val .unit {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
-  }
-</style>
+<ResultSummary {cards} {details} scope={shown} onscope={selectScope} />

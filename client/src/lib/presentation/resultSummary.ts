@@ -11,6 +11,7 @@ import type { IconName } from "./icons";
 import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
 
 export type SummaryStatus = "complete" | "partial" | "failed";
+type LiveStatus = "active" | "pending";
 export interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
@@ -30,11 +31,12 @@ export interface SummaryCard {
   key: TransportRole;
   label: string;
   icon: IconName;
-  status: SummaryStatus;
+  status: SummaryStatus | LiveStatus;
   num: string;
   unit: string;
   rows: SummaryRow[];
   details: SummaryRow[];
+  accessible?: string;
 }
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
 

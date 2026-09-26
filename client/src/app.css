@@ -336,7 +336,6 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  /* Rings answer the keyboard: a choice label rings for its control, a focused region not at all. */
   label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
     outline: var(--focus-ring);
     outline-offset: var(--ring-offset, 2px);
