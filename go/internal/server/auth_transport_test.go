@@ -316,8 +316,18 @@ func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
-	for _, path := range []string{"/auth/session", "/auth/cli", "/"} {
-		req, _ := http.NewRequest(http.MethodGet, s.origin+path, nil)
+	challenge := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	for _, tc := range []struct {
+		path, location string
+		want           int
+	}{
+		{"/preflight", "", http.StatusOK},
+		{"/auth/session", "", http.StatusForbidden},
+		{"/", "", http.StatusForbidden},
+		// A grant is not the login that confirms an approval, so the page asks for one.
+		{"/auth/cli?challenge=" + challenge, "/login?challenge=" + challenge, http.StatusSeeOther},
+	} {
+		req, _ := http.NewRequest(http.MethodGet, s.origin+tc.path, nil)
 		req.Header.Set("Authorization", "Bearer "+bearer)
 		res, err := s.uiClient.Do(req)
 		if err != nil {
@@ -325,8 +335,9 @@ func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
 		res.Body.Close()
-		if res.StatusCode == http.StatusOK {
-			t.Fatalf("bearer grant reached %s", path)
+		if res.StatusCode != tc.want || res.Header.Get("Location") != tc.location {
+			t.Errorf("bearer %s = %d %q, want %d %q", tc.path, res.StatusCode, res.Header.Get("Location"), tc.want,
+				tc.location)
 		}
 	}
 }
