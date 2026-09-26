@@ -18,6 +18,7 @@
     stageStatusLabel,
   } from "../history/format";
   import {
+    historyMetrics,
     HISTORY_SORT_LABEL,
     naturalDescending,
     prepareHistorySort,
@@ -213,27 +214,23 @@
 
   function metric(record: HistoryRecord, column: HistoryColumn): string {
     const { stages } = record;
-    if (column === "download" || column === "upload")
-      return stages[column].result
-        ? formatHistoryRate(stages[column].result.reportedBytesPerSec, units)
-        : stageStatusLabel(stages[column].status);
-    if (column === "bidirectional") {
-      const model = bidirectionalResultPresentation(
-        stages.bidirectional.down?.reportedBytesPerSec,
-        stages.bidirectional.up?.reportedBytesPerSec,
-      );
-      if (model.combinedBytesPerSec != null)
-        return formatHistoryRate(model.combinedBytesPerSec, units);
-      return model.survivingDirection
-        ? `${model.survivingDirection === "down" ? "Down" : "Up"} only`
-        : stageStatusLabel(stages.bidirectional.status);
-    }
+    const value = historyMetrics(record)[column];
+    if (column === "loaded")
+      return value == null ? MISSING : formatLatency(value);
     if (column === "idle")
-      return stages.latency.result
-        ? formatLatency(stages.latency.result.reportedMs)
-        : stageStatusLabel(stages.latency.status);
-    if (record.bufferbloat) return formatLatency(record.bufferbloat.loadedMs);
-    return stages.latency.status === "not-run" ? "Skipped" : MISSING;
+      return value == null
+        ? stageStatusLabel(stages.latency.status)
+        : formatLatency(value);
+    if (value != null) return formatHistoryRate(value, units);
+    if (column !== "bidirectional")
+      return stageStatusLabel(stages[column].status);
+    const { survivingDirection } = bidirectionalResultPresentation(
+      stages.bidirectional.down?.reportedBytesPerSec,
+      stages.bidirectional.up?.reportedBytesPerSec,
+    );
+    return survivingDirection
+      ? `${survivingDirection === "down" ? "Down" : "Up"} only`
+      : stageStatusLabel(stages.bidirectional.status);
   }
 
   function historyRow(record: HistoryRecord) {

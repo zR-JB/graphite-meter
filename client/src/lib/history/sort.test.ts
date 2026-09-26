@@ -92,18 +92,24 @@ test("each history field sorts in its natural direction and keeps nulls last", (
       stabilityScore: 1,
       band: "high",
     };
-  values[0].bufferbloat = {
-    idleMs: 1,
-    loadedMs: 80,
-    increaseMs: 79,
-    grade: "B",
-  };
-  values[1].bufferbloat = {
-    idleMs: 1,
-    loadedMs: 20,
-    increaseMs: 19,
-    grade: "A",
-  };
+  const loaded = (center: number) => ({
+    min: center,
+    max: center,
+    p10: center,
+    p90: center,
+    center,
+    jitter: 0,
+    timeoutRatio: 0,
+    accountingComplete: true,
+    timeoutCount: 0,
+    unresolvedCount: 0,
+    sendFailureCount: 0,
+    count: 1,
+  });
+  // Loaded latency sorts by the highest loaded median, even without idle latency.
+  values[0].stages.latency.lanes.upload = loaded(80);
+  values[1].stages.latency.lanes.download = loaded(20);
+  values[1].stages.latency.lanes.bidirectional = loaded(5);
   const prepared = prepareHistorySort(values);
   const natural: [Parameters<typeof sortPreparedHistory>[1], string[]][] = [
     ["date", ["c", "b", "a"]],

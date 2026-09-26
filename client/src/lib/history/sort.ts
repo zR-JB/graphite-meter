@@ -23,20 +23,26 @@ export function naturalDescending(sort: HistorySort): boolean {
   return sort !== "idle" && sort !== "loaded";
 }
 
-function value(record: HistoryRecord, sort: HistorySort): number | null {
-  if (sort === "date") return record.completedAt;
-  if (sort === "download")
-    return record.stages.download.result?.reportedBytesPerSec ?? null;
-  if (sort === "upload")
-    return record.stages.upload.result?.reportedBytesPerSec ?? null;
-  if (sort === "bidirectional")
-    return bidirectionalResultPresentation(
-      record.stages.bidirectional.down?.reportedBytesPerSec,
-      record.stages.bidirectional.up?.reportedBytesPerSec,
-    ).combinedBytesPerSec;
-  if (sort === "idle") return record.stages.latency.result?.reportedMs ?? null;
-  // The highest loaded median, the same statistic the detail lanes centre on.
-  return record.bufferbloat?.loadedMs ?? null;
+/** Each column's number, shared by the rows and their sort; null when the record has none. */
+export function historyMetrics(
+  record: HistoryRecord,
+): Record<HistorySort, number | null> {
+  const { stages } = record;
+  // The highest loaded median, as the detail lanes centre on it, with or without idle latency.
+  const loaded = (["download", "upload", "bidirectional"] as const).flatMap(
+    (stage) => stages.latency.lanes[stage]?.center ?? [],
+  );
+  return {
+    date: record.completedAt,
+    download: stages.download.result?.reportedBytesPerSec ?? null,
+    upload: stages.upload.result?.reportedBytesPerSec ?? null,
+    bidirectional: bidirectionalResultPresentation(
+      stages.bidirectional.down?.reportedBytesPerSec,
+      stages.bidirectional.up?.reportedBytesPerSec,
+    ).combinedBytesPerSec,
+    idle: stages.latency.result?.reportedMs ?? null,
+    loaded: loaded.length ? Math.max(...loaded) : null,
+  };
 }
 
 interface PreparedHistoryRecord {
@@ -54,9 +60,7 @@ export function prepareHistorySort(
     record,
     id: record.id,
     completedAt: record.completedAt,
-    keys: Object.fromEntries(
-      HISTORY_SORTS.map((sort) => [sort, value(record, sort)]),
-    ) as Record<HistorySort, number | null>,
+    keys: historyMetrics(record),
   }));
 }
 
