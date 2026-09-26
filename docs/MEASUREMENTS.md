@@ -35,22 +35,26 @@ Warmup bytes are excluded.
 
 ### Coordinated servers
 
-One coordinator owns the stage schedule, readiness, warmup, boundaries, cancellation and membership for one to
-four servers; each server keeps its own resources and credentials. Per-server contributions share the client's
+One schedule owns stages, readiness, warmup, boundaries, cancellation and membership for one to four servers; a
+single server is the same run with one participant. Each server keeps its own resources and credentials. Per-server contributions share the client's
 connection and are not independent capacity tests. The browser uses adaptive completion where configured; the
 native client measures the full window.
 
 - **Intervals** have fixed membership. Downloads sum client-consumed byte deltas over a common client monotonic
-  window. Uploads take fresh `POST /upload/checkpoint` snapshots concurrently at each boundary, divide each
-  receiver's byte delta by its own elapsed time and add the rates. Receiver durations are never added; each stays
-  in the result.
+  window. Uploads use each receiver's latest record (browser: pushed progress feed, backed by
+  `POST /upload/checkpoint` while quiet; native: checkpoints; the final boundary always requests fresh ones),
+  divide each receiver's byte delta by its own elapsed time and add the rates. Receiver durations are never added;
+  each stays in the result. The receiver clock is authoritative: bytes growing without receiver time are stale.
+- **Live rates** are shown per server and summed, so an irregular receiver never freezes the others; while it is
+  quiet, lane completions bridge its shown rate within 25% of its last receiver rate. Saved results stay
+  receiver-timed.
 - **Headline and peak** come from the combined boundary samples, never from independently chosen per-server
   windows. Per-server headlines must not be summed to rebuild the aggregate.
 - **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
   zero-duration component skips that boundary; the next valid boundary spans the gap on each receiver's clock. A
   replaced or regressing receiver starts a fresh interval.
-- **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, a terminal throughput failure
-  after bounded recovery, or a refused grant remove that server. A missed final boundary alone never does. The
+- **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, evidence stopped for 1.5 s
+  without recovery within its budget, or a refused grant (which asks for sign-in) remove that server. A missed final boundary alone never does. The
   interval ends, survivors start a new one and stability resets. A latency-only failure keeps throughput.
 - **Final headline** needs at least 800 ms of client evidence in the latest interval and, for upload, 800 ms in
   every receiver clock; otherwise it is unavailable. Earlier intervals and failed servers' measurements remain in
