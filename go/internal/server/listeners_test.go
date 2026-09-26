@@ -250,6 +250,9 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, _ = io.Copy(io.Discard, res.Body)
+			if strings.HasPrefix(request, "GET") && res.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s with a body = %d, want it refused before any handler", request, res.StatusCode)
+			}
 			// The FIN precedes the server's lingering close, so it arrives with the drain deadline.
 			_, err = conn.Read(make([]byte, 1))
 			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 450*time.Millisecond {

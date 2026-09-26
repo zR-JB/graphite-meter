@@ -86,11 +86,6 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 			http.NotFound(w, r)
 			return
 		}
-		// An unread body holds its connection or stream window while the handler runs and after it returns.
-		if r.Method != http.MethodPost && (r.ContentLength > 0 || r.ContentLength < 0 && r.ProtoMajor < 3) {
-			http.Error(w, "request body not accepted", http.StatusBadRequest)
-			return
-		}
 		h.ServeHTTP(w, r)
 	}))
 	// Public-mode preflight; authentication answers its own.
