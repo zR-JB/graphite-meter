@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed all:dist
@@ -77,7 +78,6 @@ func handler(fsys fs.FS, authenticated, resultHistoryDefault bool) http.Handler 
 	fileServer := http.FileServerFS(fsys)
 	index, indexErr := fs.ReadFile(fsys, "index.html")
 	index = bytes.Replace(index, []byte("</head>"), []byte(meta+"</head>"), 1)
-	indexLength := strconv.Itoa(len(index))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -87,10 +87,7 @@ func handler(fsys fs.FS, authenticated, resultHistoryDefault bool) http.Handler 
 		if r.URL.Path == "/" && indexErr == nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Length", indexLength)
-			if r.Method != http.MethodHead {
-				_, _ = w.Write(index)
-			}
+			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
