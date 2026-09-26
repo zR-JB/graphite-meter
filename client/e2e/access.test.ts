@@ -108,9 +108,11 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
     const state = (window as any).network as Network;
     state.failed.push(...state.hanging.splice(0));
   });
-  await runButton(page, "Start test").click();
-  await expect(page.locator(".gauge-status.error")).toBeVisible();
-  await expect(page.locator(".gauge-notes")).toContainText("Frankfurt");
+  const { multiServer } = (await run(page)).result;
+  expect(multiServer.participants).toEqual(["self"]);
+  expect(multiServer.failures).toMatchObject([
+    { serverId: "server-1", reason: "preparation-failed" },
+  ]);
   const settings = await openSettings(page);
   const retry = settings.getByRole("button", { name: "Retry Frankfurt" });
   await expect(settings.locator(".server-feedback")).toContainText(

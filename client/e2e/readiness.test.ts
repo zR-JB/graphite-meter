@@ -29,7 +29,7 @@ async function regainPage(page: Page) {
     });
 }
 
-test("a verified peer that dies fails its check when the page returns, and Start refuses it", async (page) => {
+test("a verified peer that dies fails its check when the page returns, and Start leaves it out", async (page) => {
   const oslo = await spawnPeer("Oslo");
   const bergen = await spawnPeer("Bergen", catalog(oslo.server));
   try {
@@ -43,11 +43,12 @@ test("a verified peer that dies fails its check when the page returns, and Start
     await expect(
       settings.locator(`.server-status[data-state="failed"]`),
     ).toHaveCount(1, { timeout: 10_000 });
-    await runButton(page, "Start test").click();
-    await expect(footer(page)).toHaveText("Test could not start", {
-      timeout: 10_000,
-    });
-    await expect(phase(page, "idle")).toHaveCount(1);
+    await closeSettings(page);
+    const { multiServer } = (await run(page)).result;
+    expect(multiServer.participants).toEqual(["self"]);
+    expect(multiServer.failures).toMatchObject([
+      { serverId: "oslo", reason: "preparation-failed" },
+    ]);
   } finally {
     oslo.kill();
     bergen.kill();
