@@ -463,8 +463,11 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 			if _, ok := s.consumeWebTransportToken(token, r); ok != tc.want {
 				t.Fatalf("ticket accepted=%t", ok)
 			}
-			if _, ok := s.consumeWebTransportToken(token, r); ok {
-				t.Fatal("replayed ticket accepted")
+			// Any presentation spends the ticket, so a refused one cannot be retried from the right place.
+			valid := secureRequest(http.MethodGet, "/ws/ping", nil)
+			valid.Header.Set("Origin", requestingUI)
+			if _, ok := s.consumeWebTransportToken(token, valid); ok {
+				t.Fatal("presented ticket accepted again")
 			}
 		})
 	}

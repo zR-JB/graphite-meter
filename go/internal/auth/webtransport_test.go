@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -110,7 +111,7 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 }
 
 func tokensExpireAndCapPerSession(t *testing.T) {
-	s := testService(t)
+	s := quietService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
@@ -146,6 +147,12 @@ func tokensExpireAndCapPerSession(t *testing.T) {
 	}
 	// Consuming them frees the cap, so a client that finishes its dials can mint.
 	time.Sleep(time.Second)
+	mintForSession(t, s, sess)
+	// So does letting them expire unspent.
+	for range maxSessionWTTokens - 1 {
+		mintForSession(t, s, sess)
+	}
+	time.Sleep(wtTokenLifetime)
 	mintForSession(t, s, sess)
 }
 
@@ -201,7 +208,12 @@ func tokensDieWithAnExpiredSession(t *testing.T) {
 		t.Fatalf("create session: %v", err)
 	}
 	time.Sleep(sessionLifetime - 10*time.Second)
-	token := mintForSession(t, s, sess)
+	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
+	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{session: sess}))
+	token, expires, _ := s.MintSocketToken(r, route.WebTransport)
+	if !expires.Equal(sess.expires) {
+		t.Fatalf("ticket expires %v, after its login's %v", expires, sess.expires)
+	}
 	time.Sleep(11 * time.Second)
 	synctest.Wait()
 	if sess.ctx.Err() == nil {
@@ -240,5 +252,84 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 	// Refused before the credential was read, so it is still spendable.
 	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a cleartext CONNECT spent the token it was refused for")
+	}
+}
+
+func TestSocketTicketTargetsNameOneRouteOnThePublicHostname(t *testing.T) {
+	s := testService(t)
+	_, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		target string
+		kind   route.Kind
+		want   WTMint
+	}{
+		{"https://meter.example/wt/ping", route.WebTransport, WTMintOK},
+		{"https://METER.example:8443/wt/upload", route.WebTransport, WTMintOK},
+		{"https://meter.example/ws/ping", route.WebSocket, WTMintOK},
+		{"https://meter.example/wt/ping", route.WebSocket, WTMintInvalidTarget},
+		{"https://meter.example/ws/ping", route.WebTransport, WTMintInvalidTarget},
+		{"https://other.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
+		{"https://meter.example.evil.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
+		{"http://meter.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
+		{"https://user@meter.example/wt/ping", route.WebTransport, WTMintInvalidTarget},
+		{"https://meter.example/wt/ping?token=x", route.WebTransport, WTMintInvalidTarget},
+		{"https://meter.example/secret", route.WebTransport, WTMintInvalidTarget},
+	} {
+		r := secureRequest(http.MethodPost, "/wt/session?target="+url.QueryEscape(tc.target), nil)
+		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{session: sess}))
+		if _, _, got := s.MintSocketToken(r, tc.kind); got != tc.want {
+			t.Errorf("mint %s for %s = %d, want %d", tc.kind, tc.target, got, tc.want)
+		}
+	}
+}
+
+// A CONNECT spends any ticket it carries, and every credential still answers to the request's origin.
+func TestWebTransportConnectCredentials(t *testing.T) {
+	s := testService(t)
+	raw, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := grantFor(t, s, sess)
+	browser, _ := approveBrowser(t, s, raw, sess)
+	for _, tc := range []struct {
+		name           string
+		authorization  []string
+		origin         string
+		reached, spent bool
+	}{
+		{"ticket", nil, "", true, true},
+		{"native grant beside a ticket", []string{native}, "", true, true},
+		{"native grant from another origin", []string{native}, requestingUI, false, true},
+		{"browser grant from its origin", []string{browser}, requestingUI, true, true},
+		{"browser grant from another origin", []string{browser}, "https://other.example", false, true},
+		{"native grant repeated beside a ticket", []string{native, "Bearer invalid"}, "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ticket := mintForSession(t, s, sess)
+			r := secureRequest(http.MethodGet, "/wt/ping?token="+ticket, nil)
+			r.Method = http.MethodConnect
+			r.Header.Set("Origin", tc.origin)
+			for i, value := range tc.authorization {
+				if i == 0 {
+					value = "Bearer " + value
+				}
+				r.Header.Add("Authorization", value)
+			}
+			reached := false
+			w := httptest.NewRecorder()
+			s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }),
+				Listener{WebTransport: true}).ServeHTTP(w, r)
+			if reached != tc.reached || !reached && w.Code != http.StatusForbidden {
+				t.Fatalf("reached=%t status=%d, want reached=%t", reached, w.Code, tc.reached)
+			}
+			_, unspent := s.consumeWebTransportToken(ticket, secureRequest(http.MethodGet, "/wt/ping", nil))
+			if unspent == tc.spent {
+				t.Fatalf("ticket unspent=%t after the CONNECT, want spent=%t", unspent, tc.spent)
+			}
+		})
 	}
 }

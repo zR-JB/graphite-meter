@@ -27,11 +27,25 @@ import (
 
 func testService(t *testing.T) *Service {
 	t.Helper()
+	return serviceWithin(t, t.Context())
+}
+
+// quietService never sweeps, so each request's own expiry check is the only one that can refuse.
+func quietService(t *testing.T) *Service {
+	t.Helper()
+	ctx, stop := context.WithCancel(t.Context())
+	s := serviceWithin(t, ctx)
+	stop()
+	return s
+}
+
+func serviceWithin(t *testing.T, ctx context.Context) *Service {
+	t.Helper()
 	h, err := HashPassword("secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(t.Context(), config.AuthConfig{
+	s, err := New(ctx, config.AuthConfig{
 		Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia",
 	}, nil, false)
 	if err != nil {
@@ -262,6 +276,9 @@ func TestRequestEvidencePolicy(t *testing.T) {
 			403},
 		{"same-origin page read", "GET", "/", "", "", "same-origin", "", false, 204},
 		{"page read without fetch metadata", "GET", "/", "", "", "", "", false, 204},
+		{"cookie at another hostname", "GET", "/download", "other.example", "", "same-origin", "", false, 403},
+		{"grant at the public hostname", "GET", "/download", "", "", "", "", true, 204},
+		{"grant at another hostname", "GET", "/download", "other.example", "", "", "", true, 403},
 		{"account route on another port", "GET", "/auth/session", "meter.example:7443", "", "", "", false, 403},
 		{"account route with a grant", "GET", "/auth/session", "", "", "", "", true, 403},
 	} {
