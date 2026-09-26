@@ -45,6 +45,7 @@ export interface ConnectionHost {
   idle(id: string): boolean;
   publish(view: ServerView): void;
   idleEvent(id: string, event: IdleEvent): void;
+  idleEnded(id: string): void;
 }
 export interface CheckOptions {
   force?: boolean;
@@ -248,6 +249,8 @@ export class ServerConnection {
   }
 
   close(): void {
+    if (this.#watched) this.host.idleEnded(this.server.id);
+    this.#watched = false;
     this.#cancelAll();
     clearTimeout(this.#timer);
     this.#closed = true;
@@ -452,14 +455,16 @@ export class ServerConnection {
       this.host.publish(view);
     }
     const idle = this.#roles.latency.idle;
-    this.#watched =
+    const watched =
       !!idle &&
       !!this.config &&
       this.host.idle(this.server.id) &&
       !this.#expired() &&
       !this.#error &&
       !this.#needsCheck("latency");
-    if (this.#watched) idle?.start();
+    if (this.#watched && !watched) this.host.idleEnded(this.server.id);
+    this.#watched = watched;
+    if (watched) idle?.start();
     else idle?.stop();
     clearTimeout(this.#timer);
     const at = this.host.active() ? this.dueAt() : Infinity;

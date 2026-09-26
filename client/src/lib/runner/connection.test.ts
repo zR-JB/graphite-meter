@@ -70,6 +70,7 @@ function connect(
       idle: () => false,
       publish() {},
       idleEvent() {},
+      idleEnded() {},
       ...options,
     },
   );
@@ -343,6 +344,27 @@ test("equivalent intent reuses fresh paths; an expired reselection refreshes dis
   } finally {
     clock.mockRestore();
   }
+});
+
+test("idle evidence ends when its monitor stops watching and when the connection closes", async () => {
+  let idle = true;
+  let ended = 0;
+  const connection = connect({
+    active: () => true,
+    idle: () => idle,
+    idleEnded: () => void ended++,
+    prepare: async (config) => ({ ...preparation(config), idle: monitor() }),
+  });
+  await connection.check();
+  connection.wake();
+  expect(ended).toBe(0);
+  idle = false;
+  connection.wake();
+  expect(ended).toBe(1);
+  idle = true;
+  connection.wake();
+  connection.close();
+  expect(ended).toBe(2);
 });
 
 test("closing discards a pending check and stops its late monitor", async () => {

@@ -20,6 +20,7 @@ import type {
 import {
   emptyConnectionValidation,
   latencyPathNeeded,
+  needsPings,
   validatePlan,
   type ConnectionValidation,
   type ConnectionValidationState,
@@ -31,6 +32,7 @@ import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
 import {
+  activityFor,
   adaptWarmup,
   buildSegments,
   planned,
@@ -411,8 +413,15 @@ class AppStore {
         ? "checking"
         : "degraded";
     }
-    if (this.isRunning) return connectionQuality(this.latency);
-    // Completed-run samples stay on the chart, but cannot classify a new idle connection.
+    // Run evidence ages on the run's timeline; idle evidence ends with its monitor.
+    if (this.isRunning)
+      return this.phaseStage &&
+        needsPings(activityFor(this.phaseStage, this.runConfig))
+        ? connectionQuality(
+            this.latency,
+            this.phaseStartedAtMs + this.phaseElapsedMs,
+          )
+        : "connected";
     if (this.connectivity === "offline" && this.idleLatency.length)
       return "offline";
     return connectionQuality(this.idleLatency);

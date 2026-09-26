@@ -106,7 +106,6 @@ export function createApplicationController(
   let runRttMs = 0;
   /** Selection validation when a Start was refused; the refusal lapses once that selection verifies. */
   let refusedUnder: string | null = null;
-  let idleEvidenceKey = "";
   let signingOut = false;
 
   const hidden = () => document.visibilityState === "hidden";
@@ -160,6 +159,7 @@ export function createApplicationController(
       if (event.state === "offline") offline(id);
       else onlineAgain(id);
     },
+    idleEnded: () => (store.idleLatency = []),
   };
   const wake = () => {
     for (const connection of connections.values()) connection.wake();
@@ -187,15 +187,6 @@ export function createApplicationController(
   }
   /** Every writer of selection or settings calls this; it hands each server its new intent. */
   function selectIntent(): void {
-    const key = JSON.stringify([
-      store.selectedServers,
-      store.latencySelection,
-      store.config.transports.latencyTarget,
-    ]);
-    if (key !== idleEvidenceKey) {
-      idleEvidenceKey = key;
-      store.idleLatency = [];
-    }
     for (const [id, connection] of connections)
       connection.select(
         store.serverCatalog && store.selectedServers.includes(id)

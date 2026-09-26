@@ -6,15 +6,22 @@ type HealthBucket = Pick<
   "startT" | "endT" | "pingCount" | "timeoutCount" | "medianRttMs"
 >;
 
-/** A live indicator, not the run's timeout or jitter statistic. */
+const STALE_MS = 3_000;
+const WINDOW_MS = 4_000;
+
+/** A live indicator, not the run's timeout or jitter statistic; evidence older than 3 s at `nowT` is stale. */
 export function connectionQuality(
   buckets: readonly HealthBucket[],
-): ConnectivityState {
+  nowT = -Infinity,
+): ConnectivityState | "checking" {
   const latest = buckets.at(-1);
-  if (!latest) return "connected";
-  const recent = buckets.filter(
-    (bucket) => bucket.endT >= latest.endT - 4000 && bucket.pingCount > 0,
-  );
+  if (!latest || nowT - latest.endT > STALE_MS) return "checking";
+  const recent = buckets
+    .slice(
+      buckets.findLastIndex((bucket) => bucket.endT < latest.endT - WINDOW_MS) +
+        1,
+    )
+    .filter((bucket) => bucket.pingCount > 0);
   const replies = recent.flatMap((bucket) =>
     bucket.medianRttMs === null ? [] : [bucket.medianRttMs],
   );
