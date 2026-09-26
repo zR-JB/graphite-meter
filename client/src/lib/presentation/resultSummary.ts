@@ -2,16 +2,17 @@ import {
   compensationTooltip,
   type CompensationEstimate,
 } from "../compensation";
-import { fixedMs, fmtBytes, fmtMs } from "../format";
+import { fmtAddedMs, fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
-import { MISSING, STAGE } from "./vocabulary";
+import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
 
 type Band = "low" | "medium" | "high";
 type Throughput = {
   reportedBytesPerSec: number;
+  peakBytesPerSec?: number | null;
   totalBytes: number;
   stabilityPct: number;
 };
@@ -57,9 +58,6 @@ type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
 const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
-
-const signedMs = (ms: number) =>
-  `${ms < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`;
 
 export const wireOverhead = (multiplier: number) =>
   multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
@@ -190,11 +188,18 @@ export function summaryCards(
       const result = evidence[key];
       value = result?.reportedBytesPerSec ?? null;
       stabilityPct = result?.stabilityPct ?? null;
-      if (result)
-        card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
+      if (result) {
+        const { unit } = rate(result.reportedBytesPerSec);
+        const peak = result.peakBytesPerSec;
+        card.detail = [
+          ...(peak == null ? [] : [`peak ${inUnit(rate, peak, unit)}`]),
+          `${fmtBytes(result.totalBytes, base)} transferred`,
+          ...(key === "upload" ? [RECEIVER_TIMED] : []),
+        ].join(" · ");
+      }
     }
     const added = evidence.added?.addedMs?.[key];
-    if (added != null) card.added = signedMs(added);
+    if (added != null) card.added = fmtAddedMs(added);
     if (value === null) return [card];
     const shown = rate(value);
     const wire = evidence.wire[key];
