@@ -55,6 +55,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "write permission"),
     (W + "release.yml", "on:\n", "on:\n  push:\n    tags: ['v*']\n", "triggered only by"),
     (W + "release.yml", "on:\n", "on:\n  workflow_dispatch:\n", "triggered only by"),
+    (W + "release.yml", "head_branch == 'main'", "head_branch != ''", "head_branch == 'main'"),
     (W + "extra.yml", None, "on:\n  push:\n", "unreviewed workflow set"),
     (W + "ci.yml", "permissions:\n  contents: read\n\nenv:", "env:", "top-level permissions"),
     (REQUEST, "  contents: read", "  contents: write", "write permission"),

@@ -46,6 +46,9 @@ ORDERED = {
         "source-sha: ${{ steps.request.outputs.remote_sha }}",
     ),
     "workflows/release.yml": (
+        "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
+        "&& github.event.workflow_run.head_branch == 'main'\n",
+        "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
         "run: python3 scripts/ci/release.py verify", "environment: ghcr-release",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
         "TARGET_SHA: ${{ github.sha }}", "run: scripts/ci/publish.sh release",
