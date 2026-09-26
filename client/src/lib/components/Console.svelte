@@ -74,7 +74,6 @@
   const panelInvokers: Partial<Record<PanelSurface, HTMLElement>> = {};
 
   let resetConfirmOpen = $state(false);
-  let legalInvoker = $state<HTMLElement | null>(null);
   let currentRoute = $state<Route>(
     parseRoute(typeof window === "undefined" ? "#/" : window.location.hash),
   );
@@ -333,7 +332,7 @@
     if (invoker) panelInvokers[panel] = invoker;
     backOrReplace(closePanel(currentRoute, panel));
   }
-  function togglePanelFromPointer(panel: PanelSurface, invoker: HTMLElement) {
+  function togglePanel(panel: PanelSurface, invoker?: HTMLElement) {
     const open = panel === "settings" ? settingsOpen : telemetryOpen;
     if (open) dismissPanel(panel, invoker);
     else panelRoute(panel, invoker);
@@ -345,8 +344,7 @@
     routeTo(appRoute());
   }
 
-  function openLegal(invoker: HTMLElement) {
-    legalInvoker = invoker;
+  function openLegal() {
     routeTo(openDialog(currentRoute, "legal"));
   }
 
@@ -378,32 +376,16 @@
       workspaceFocusIntent = null;
       return;
     }
-    if (!workspaceFocusIntent && previous.kind === "app") {
-      let invoker: HTMLElement | null | undefined;
-      let closedSurface = false;
-      if (
-        previous.dialog === "legal" &&
-        (next.kind !== "app" || next.dialog !== "legal")
-      ) {
-        invoker = legalInvoker;
-        legalInvoker = null;
-        closedSurface = true;
-      } else {
-        const nextPanels = next.kind === "app" ? next.panels : [];
-        const removedPanel = [...previous.panels]
-          .reverse()
-          .find((panel) => !nextPanels.includes(panel));
-        if (removedPanel) {
-          invoker = panelInvokers[removedPanel];
-          delete panelInvokers[removedPanel];
-          closedSurface = true;
-        }
-      }
-      if (closedSurface) {
-        if (canFocus(invoker)) focusElement(invoker, workspace);
-        else focusWorkspace(workspace);
-        return;
-      }
+    const nextPanels = next.kind === "app" ? next.panels : [];
+    const removedPanel =
+      previous.kind === "app" &&
+      previous.panels.findLast((panel) => !nextPanels.includes(panel));
+    if (!workspaceFocusIntent && removedPanel) {
+      const invoker = panelInvokers[removedPanel];
+      delete panelInvokers[removedPanel];
+      if (canFocus(invoker)) focusElement(invoker, workspace);
+      else focusWorkspace(workspace);
+      return;
     }
     if (
       fromHistory &&
@@ -478,15 +460,11 @@
 
     switch (e.key.toLowerCase()) {
       case "s":
-        if (settingsOpen) {
-          dismissPanel("settings");
-        } else panelRoute("settings");
+        togglePanel("settings");
         e.preventDefault();
         break;
       case "d":
-        if (telemetryOpen) {
-          dismissPanel("endpoint");
-        } else panelRoute("endpoint");
+        togglePanel("endpoint");
         e.preventDefault();
         break;
       case "h":
@@ -514,7 +492,7 @@
         dockWidth: $state.snapshot(store.dockWidth),
       });
   }
-  function onHashChange() {
+  function onNavigate() {
     const next = panelsForLayout(parseRoute(window.location.hash));
     if (serializeRoute(next) !== window.location.hash)
       window.history.replaceState(
@@ -526,7 +504,7 @@
   }
 
   onMount(() => {
-    onHashChange();
+    onNavigate();
     if (authEnabled)
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
@@ -539,8 +517,7 @@
 
 <svelte:window
   onpagehide={saveDockWidths}
-  onhashchange={onHashChange}
-  onpopstate={onHashChange}
+  onpopstate={onNavigate}
   onkeydown={onKeydown}
   onbeforeunload={onBeforeUnload}
 />
@@ -584,7 +561,7 @@
       aria-expanded={settingsOpen}
       use:tooltip={"Settings — test and display (S)"}
       onclick={(event) =>
-        togglePanelFromPointer("settings", event.currentTarget as HTMLElement)}
+        togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
     >
     <span class="chrome-divider" aria-hidden="true"></span>
@@ -634,7 +611,7 @@
       aria-expanded={telemetryOpen}
       use:tooltip={"Details — server and connection (D)"}
       onclick={(event) =>
-        togglePanelFromPointer("endpoint", event.currentTarget as HTMLElement)}
+        togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
     >
     <div class="topbar-more">
@@ -644,8 +621,7 @@
         endpointActive={telemetryOpen}
         theme={store.theme}
         onHistory={toggleHistoryFromPointer}
-        onEndpoint={(invoker: HTMLElement) =>
-          togglePanelFromPointer("endpoint", invoker)}
+        onEndpoint={(invoker: HTMLElement) => togglePanel("endpoint", invoker)}
         onTheme={toggleTheme}
       />
     </div>

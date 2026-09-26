@@ -23,8 +23,7 @@
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
-  let { onOpenLegal }: { onOpenLegal: (invoker: HTMLElement) => void } =
-    $props();
+  let { onOpenLegal }: { onOpenLegal: () => void } = $props();
   let inspectedServer = $state("");
   const availableServers = $derived(
     store.run?.servers.map((entry) => entry.server) ??
@@ -372,10 +371,7 @@
   </details>
   <p class="license">
     <span>Legal</span>
-    <button
-      class="btn-link"
-      type="button"
-      onclick={(event) => onOpenLegal(event.currentTarget)}
+    <button class="btn-link" type="button" onclick={onOpenLegal}
       >About &amp; legal</button
     >
   </p>
