@@ -116,8 +116,8 @@ their measurements; other servers continue. Grant, approval and socket-ticket li
 
 ## Results and failure
 
-Before measurement starts, every selected server must be ready. Afterwards a server that fails is dropped for the
-rest of the run while the others continue; see [coordinated servers](MEASUREMENTS.md#coordinated-servers) for
+A server that cannot be prepared, before or during the run, or that fails later is dropped for the rest of the run
+while the others continue; the run fails only when none survives. See [coordinated servers](MEASUREMENTS.md#coordinated-servers) for
 intervals, dropouts, headlines and missing data. Each server's own result uses its window under the shared load;
 per-server headlines do not add up to the Combined value. Saved records keep failure times and reasons, up to 128
 recent intervals and whole-run byte totals ([history](MEASUREMENTS.md#saved-history)).

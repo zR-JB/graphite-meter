@@ -164,22 +164,27 @@ func (s *stageRun) handle(outcome resourceOutcome) error {
 		outcome.role == roleLatency && outcome.server.latencyFailed {
 		return nil
 	}
-	if !c.hasMeasured {
-		name := outcome.server.prepared.Server.Name
-		return fmt.Errorf("%s: %w; resolve the selection before starting", name, outcome.err)
-	}
 	before := len(c.ids())
 	s.fail(outcome.server, outcome.role, outcome.err, outcome.at)
-	switch {
-	case len(c.ids()) == 0:
-		if s.measuring && s.transfer() {
-			c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
-		}
-		return fmt.Errorf("%w: %w", errNoSurvivors, outcome.err)
-	case s.measuring && s.transfer() && len(c.ids()) != before:
+	if err := s.lost(); err != nil {
+		return err
+	}
+	if s.measuring && s.transfer() && len(c.ids()) != before {
 		s.reset()
 	}
 	return nil
+}
+
+// lost ends the stage once no server is left in it.
+func (s *stageRun) lost() error {
+	c := s.c
+	if len(c.ids()) > 0 {
+		return nil
+	}
+	if s.measuring && s.transfer() {
+		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
+	}
+	return c.noSurvivors()
 }
 
 func (s *stageRun) ready() error {
@@ -198,16 +203,13 @@ func (s *stageRun) ready() error {
 		case now := <-timer.C:
 			failure := fmt.Errorf("server resources were not ready within %v: %w", stageReadyTimeout,
 				context.DeadlineExceeded)
-			if !s.c.hasMeasured {
-				return failure
-			}
 			for _, server := range s.servers {
 				for _, role := range s.missing(server) {
 					s.fail(server, role, failure, now)
 				}
 			}
-			if len(s.c.ids()) == 0 {
-				return s.c.noSurvivors()
+			if err := s.lost(); err != nil {
+				return err
 			}
 		}
 	}
@@ -305,15 +307,11 @@ func (s *stageRun) open() (time.Time, measurementBoundary, error) {
 	if slices.Contains(s.plan.Directions, Up) {
 		for _, server := range s.servers {
 			if !server.removed && initial.up[server.id()] == nil {
-				failure := errors.New("receiver checkpoint unavailable before measurement")
-				if !c.hasMeasured {
-					return time.Time{}, initial, fmt.Errorf("%s: %w", server.prepared.Server.Name, failure)
-				}
-				s.fail(server, string(Up), failure, time.Now())
+				s.fail(server, string(Up), errors.New("receiver checkpoint unavailable before measurement"), time.Now())
 			}
 		}
-		if len(c.ids()) == 0 {
-			return time.Time{}, initial, c.noSurvivors()
+		if err := s.lost(); err != nil {
+			return time.Time{}, initial, err
 		}
 	}
 	for drained := false; !drained; {
@@ -434,10 +432,10 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	} else if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
 		s.emitRates(window)
 	}
+	if err := s.lost(); err != nil {
+		return true, err
+	}
 	switch {
-	case len(c.ids()) == 0:
-		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
-		return true, c.noSurvivors()
 	case removed:
 		s.reset()
 	case sample.final:

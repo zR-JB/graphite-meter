@@ -221,3 +221,37 @@ func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
 		t.Fatalf("later preparation discarded healthy server: %v %+v %+v", err, upload, details)
 	}
 }
+
+func TestAServerThatCannotPrepareIsDroppedWhileAnotherSurvives(t *testing.T) {
+	t.Parallel()
+	for _, before := range []string{"run", "stage"} {
+		t.Run(before, func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Upload: true}
+			cfg.UploadDuration = time.Second
+			if before == "run" {
+				b.server.Close()
+			} else {
+				b.checkpointFailed.Store(true)
+			}
+			a.catalog = wire.ServerCatalog{DefaultSelection: []string{"self", "b"}, Servers: []wire.ServerEntry{
+				{ID: "self", URL: ".", Name: "A"}, {ID: "b", URL: b.server.URL, Name: "B"}}}
+			var details *RunDetails
+			var upload Result
+			err := Run(t.Context(), cfg, func(e Event) {
+				if e.Kind == EventDone {
+					details = e.Servers
+				}
+				if e.Kind == EventResult && e.Direction == Up {
+					upload = *e.Result
+				}
+			})
+			if err != nil || details == nil || details.Outcome != OutcomePartial || upload.Unavailable ||
+				!slices.Equal(details.Participants, []string{"self"}) || len(details.Failures) != 1 {
+				t.Fatalf("a failing server before measurement ended the run: %v %+v %+v", err, details, upload)
+			}
+		})
+	}
+}

@@ -68,10 +68,20 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 
 func (c *coordinator) start(ctx, teardown context.Context) error {
 	prepared := c.prepared
-	if !prepared.Ready() {
-		return errors.New("resolve every selected server before starting")
+	if !prepared.runnable() {
+		return errors.New("no selected server is ready")
 	}
 	for _, server := range prepared.Servers {
+		if !server.ready() {
+			c.servers = append(c.servers, &participant{prepared: server, removed: true})
+			failure := ServerFailure{ServerID: server.Server.ID, Scope: ScopeThroughput, Err: server.Err}
+			failure.Reason = failureReason(server.Err)
+			if plan := c.cfg.Plan(); len(plan) > 0 {
+				failure.Stage = plan[0].Name
+			}
+			c.failures = append(c.failures, failure)
+			continue
+		}
 		connection := server.Connection
 		target := connection.ThroughputTarget
 		downLanes, upLanes := c.cfg.TransferStreams.Lanes(target.Protocol, target.Transport)
@@ -128,13 +138,11 @@ func (c *coordinator) details(outcome Outcome) *RunDetails {
 		details.LatencyFocus = c.prepared.LatencyFocus
 	}
 	for _, server := range c.servers {
-		connection := server.prepared.Connection
-		details.Servers = append(details.Servers, ServerRunSummary{
-			Server:        server.prepared.Server,
-			Throughput:    connection.ThroughputTarget,
-			LatencyTarget: connection.LatencyTarget,
-			Results:       slices.Clone(server.results),
-		})
+		summary := ServerRunSummary{Server: server.prepared.Server, Results: slices.Clone(server.results)}
+		if connection := server.prepared.Connection; connection != nil {
+			summary.Throughput, summary.LatencyTarget = connection.ThroughputTarget, connection.LatencyTarget
+		}
+		details.Servers = append(details.Servers, summary)
 	}
 	return details
 }

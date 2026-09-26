@@ -154,7 +154,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 			var err error
 			prepared, err = prepareRun(ctx, cfg, prepared, grants)
 			cancelPreparation()
-			if err != nil {
+			if err != nil && !prepared.runnable() {
 				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
 				return
 			}

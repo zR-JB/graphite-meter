@@ -33,9 +33,17 @@ type PreparedRun struct {
 
 const PreparationFreshness = 30 * time.Second
 
+func (s PreparedServer) ready() bool { return s.Err == nil && s.Connection != nil }
+
 func (p *PreparedRun) Ready() bool {
-	failed := func(s PreparedServer) bool { return s.Err != nil || s.Connection == nil }
-	return p != nil && p.Err == nil && len(p.Servers) > 0 && !slices.ContainsFunc(p.Servers, failed)
+	unready := func(s PreparedServer) bool { return !s.ready() }
+	return p != nil && p.Err == nil && len(p.Servers) > 0 && !slices.ContainsFunc(p.Servers, unready)
+}
+
+// runnable holds a ready server, and every other one failed on its own.
+func (p *PreparedRun) runnable() bool {
+	return p != nil && slices.ContainsFunc(p.Servers, PreparedServer.ready) &&
+		!slices.ContainsFunc(p.Servers, func(s PreparedServer) bool { return !s.ready() && s.Err == nil })
 }
 
 func (p *PreparedRun) SelectedIDs() []string {
