@@ -1,5 +1,6 @@
 // Anchored tooltips for jargon, controls and chart points; the words live in vocabulary.ts.
 import { fromAction } from "svelte/attachments";
+import { nextFrame } from "../presentation/motion.svelte";
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
   text: string;
@@ -54,7 +55,7 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
       "aria-describedby",
       prevDescribedBy ? `${prevDescribedBy} ${id}` : id,
     );
-    requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
+    nextFrame(() => bubble?.setAttribute("data-show", "true"));
     for (const [target, type, listener, capture] of dismissListeners)
       target.addEventListener(type, listener as EventListener, capture);
   }
@@ -109,6 +110,7 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
       return;
     }
     clearHoverTimer();
+    // Not motion: a hovered tip waits before it opens.
     hoverTimer = window.setTimeout(() => {
       hoverTimer = 0;
       show();
@@ -136,6 +138,7 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
     show();
     if (!bubble) return;
     touchOpen = true;
+    // Not motion: a touch tip closes itself.
     autoDismissTimer = window.setTimeout(hide, TOUCH_DISMISS_MS);
   }
   function onPointerDown(event: PointerEvent) {

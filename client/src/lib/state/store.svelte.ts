@@ -32,6 +32,7 @@ import {
 } from "../compensation";
 import { rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
+import { Smoothed } from "../presentation/motion.svelte";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
 import { adaptWarmup, buildSegments } from "../runner/schedule";
 import {
@@ -339,7 +340,6 @@ class AppStore {
         failures[failure.stage] ??= failure;
     return failures;
   });
-  startEpoch = $state(0);
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   /** The current or last run's own inputs; live settings patch its config. */
@@ -441,9 +441,10 @@ class AppStore {
     return connectionQuality(this.idleLatency);
   });
 
-  phaseRemainingMs = $derived(
-    Math.max(0, this.phaseBudgetMs - this.phaseElapsedMs),
-  );
+  /** Phase time on the frame clock: progress events correct it, measuring keeps it moving. */
+  readonly phaseClock = new Smoothed();
+  /** Wall time since the run started, on the frame clock. */
+  readonly runClock = new Smoothed();
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
 
@@ -584,6 +585,7 @@ class AppStore {
 
   #complete(result: RunResult): void {
     this.live = null;
+    this.runClock.set(result.durationMs);
     this.result = result;
     this.stageResults = {
       download: result.download,
@@ -605,7 +607,7 @@ class AppStore {
                 : null,
             ),
           },
-          Date.now(),
+          result.startedAt + result.durationMs,
         )
       : null;
     this.phase = "complete";
@@ -667,14 +669,20 @@ class AppStore {
         this.phaseStage = stage;
         this.phaseStartedAtMs = t;
         this.phaseFraction = this.phaseElapsedMs = 0;
+        this.phaseClock.set(0, { snap: true });
         this.live = null;
         if (to === "connecting") {
           this.preparationStatus = "idle";
-          this.startEpoch = event.transition.startedAt ?? Date.now();
-        }
+          this.runClock.set(0, { rate: 1, snap: true });
+        } else if (to === "aborted") this.runClock.hold();
         break;
       }
       case "progress":
+        this.runClock.sync();
+        this.phaseClock.set(event.phaseElapsedMs, {
+          rate: event.measuring && event.phaseBudgetMs > 0 ? 1 : 0,
+          max: event.phaseBudgetMs,
+        });
         this.phaseFraction = event.fraction;
         this.phaseElapsedMs = event.phaseElapsedMs;
         this.phaseBudgetMs = event.phaseBudgetMs;
@@ -702,6 +710,7 @@ class AppStore {
         break;
       case "error": {
         this.live = null;
+        this.runClock.hold();
         this.error = event.error;
         this.measuring = true;
         this.stallInfo = null;
@@ -716,6 +725,8 @@ class AppStore {
     this.summariesByServer.clear();
     this.#latencyTail++;
     this.#summaryTail++;
+    this.phaseClock.set(0, { snap: true });
+    this.runClock.set(0, { snap: true });
     Object.assign(this, {
       startError: "",
       preparationStatus: "idle",
@@ -737,7 +748,6 @@ class AppStore {
       result: null,
       error: null,
       run: null,
-      startEpoch: 0,
       historyCandidate: null,
     });
     this.runSeq++;
@@ -815,6 +825,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         dockWidth: $state.snapshot(store.dockWidth),
       };
       clearTimeout(timer);
+      // Not motion: settings save once edits pause.
       timer = setTimeout(() => savePersisted(snapshot), SAVE_DEBOUNCE_MS);
       return () => clearTimeout(timer);
     });

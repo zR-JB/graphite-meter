@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { inView } from "../actions/inView";
+  import { Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -17,7 +19,6 @@
     nearestMetric,
     pos,
     profileDomain,
-    rangeWidth,
     type LatencyProfileViewLane,
     type MetricKey,
   } from "./latencyProfile";
@@ -156,14 +157,41 @@
     (lane.accountingComplete === false
       ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} `
       : "") + probeAccountingDetails(lane);
+  // Markers glide between summaries on the shared frame clock; saved and unseen lanes snap.
+  const GLIDED = ["min", "max", "p10", "p90", "center", "current"] as const;
+  const glides = new Map<string, Smoothed>();
+  $effect(() => {
+    const snap = !motion;
+    const targets = lanes.flatMap((lane) =>
+      GLIDED.flatMap((metric) =>
+        lane[metric] == null
+          ? []
+          : [
+              [
+                `${lane.key}:${metric}`,
+                pos(lane[metric] ?? null, scale),
+              ] as const,
+            ],
+      ),
+    );
+    untrack(() => {
+      for (const [key, target] of targets) {
+        const glide = glides.get(key) ?? new Smoothed();
+        if (!glides.has(key)) glides.set(key, glide);
+        if (glide.target !== target) glide.set(target, { snap });
+      }
+    });
+  });
+  const at = (lane: LatencyProfileViewLane, metric: (typeof GLIDED)[number]) =>
+    glides.get(`${lane.key}:${metric}`)?.current ??
+    pos(lane[metric] ?? null, scale);
   const spanTransform = (from: number, to: number) =>
-    `translateX(${pos(from, scale)}%) scaleX(${rangeWidth(from, to, scale) / 100})`;
+    `translateX(${from}%) scaleX(${Math.max(0, to - from) / 100})`;
 </script>
 
 <div
   class="lanes"
   data-latency-profile
-  data-motion={motion && live}
   {@attach live && inView((seen) => (motion = seen))}
   data-variant={variant}
   role="group"
@@ -252,36 +280,36 @@
           {#if lane.min != null && lane.max != null}
             <span
               class="range"
-              style:transform={spanTransform(lane.min, lane.max)}
+              style:transform={spanTransform(at(lane, "min"), at(lane, "max"))}
             ></span>
             <span
               class="position"
-              style:transform={`translateX(${pos(lane.min, scale)}%)`}
+              style:transform={`translateX(${at(lane, "min")}%)`}
               ><i class="range-cap"></i></span
             >
             <span
               class="position"
-              style:transform={`translateX(${pos(lane.max, scale)}%)`}
+              style:transform={`translateX(${at(lane, "max")}%)`}
               ><i class="range-cap"></i></span
             >
           {/if}
           {#if lane.p10 != null && lane.p90 != null}
             <span
               class="band"
-              style:transform={spanTransform(lane.p10, lane.p90)}
+              style:transform={spanTransform(at(lane, "p10"), at(lane, "p90"))}
             ></span>
           {/if}
           {#if lane.center != null}
             <span
               class="position"
-              style:transform={`translateX(${pos(lane.center, scale)}%)`}
+              style:transform={`translateX(${at(lane, "center")}%)`}
               ><i class="center-marker"></i></span
             >
           {/if}
           {#if live && lane.current != null}
             <span
               class="position"
-              style:transform={`translateX(${pos(lane.current, scale)}%)`}
+              style:transform={`translateX(${at(lane, "current")}%)`}
               ><i class="current-marker"></i></span
             >
           {/if}
@@ -483,9 +511,6 @@
   }
   .position {
     inset-block: 0;
-  }
-  .lanes[data-motion="true"] :is(.range, .band, .position) {
-    transition: transform var(--dur-graph) var(--ease-out);
   }
   .range {
     top: calc(50% - 2px);

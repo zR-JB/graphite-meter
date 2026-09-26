@@ -1,19 +1,19 @@
 import type { Attachment } from "svelte/attachments";
-import { browserEnvironment } from "../canvas/presentation";
 
+/** Reports whether the node is on screen in a visible page. */
 export function inView(report: (seen: boolean) => void): Attachment {
   return (node) => {
-    const environment = browserEnvironment();
     let intersecting = false;
-    const update = () => report(intersecting && !environment.hidden());
-    const unobserve = environment.observe(node, (visible) => {
-      intersecting = visible;
+    const update = () => report(intersecting && !document.hidden);
+    const observer = new IntersectionObserver(([entry]) => {
+      intersecting = entry.isIntersecting;
       update();
     });
-    const unlisten = environment.onVisibilityChange(update);
+    observer.observe(node);
+    document.addEventListener("visibilitychange", update);
     return () => {
-      unobserve();
-      unlisten();
+      observer.disconnect();
+      document.removeEventListener("visibilitychange", update);
     };
   };
 }

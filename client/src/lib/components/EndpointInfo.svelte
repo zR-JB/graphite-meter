@@ -159,6 +159,7 @@
     try {
       await navigator.clipboard.writeText(diagnosticReport());
       copied = true;
+      // Not motion: the copy confirmation lingers briefly.
       copiedTimer = setTimeout(() => (copied = false), 1500);
       announce("Diagnostic report copied");
     } catch {

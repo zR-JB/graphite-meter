@@ -3,6 +3,7 @@
   import type { IconName } from "../presentation/icons";
   import { onMount, tick, untrack } from "svelte";
   import { tooltip } from "../actions/tooltip";
+  import { wallNow } from "../presentation/motion.svelte";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { createUuid } from "../uuid";
   import {
@@ -57,7 +58,7 @@
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
   let pages = $state(1);
-  let renderedAt = $state(Date.now());
+  let renderedAt = $state(wallNow());
   let workspace = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
   let previousSelectedId: string | null = null;
@@ -140,7 +141,7 @@
       const result = await repository.listWithDiagnostics();
       if (generation !== loadGeneration) return;
       records = result.records;
-      renderedAt = Date.now();
+      renderedAt = wallNow();
       malformedCount = result.malformedCount;
       loadState = "ready";
       await resolveSelection(selectedId, generation);
@@ -297,8 +298,9 @@
 
   onMount(() => {
     void load();
+    // Not motion: relative completion times read in minutes.
     const relativeRefresh = window.setInterval(() => {
-      if (document.visibilityState === "visible") renderedAt = Date.now();
+      if (document.visibilityState === "visible") renderedAt = wallNow();
     }, 60_000);
     const stopChanges = onHistoryChanged(() => void load(false), changeSource);
     return () => {

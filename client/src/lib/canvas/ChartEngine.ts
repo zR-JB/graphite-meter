@@ -7,7 +7,7 @@ import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
 import { upsertThroughputSample } from "../runner/series";
 import { latencyBucketExceedsScale } from "../presentation/scales";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
-import { presentation, type PresentationHandle } from "./presentation";
+import { animate, Smoothed, still } from "../presentation/motion.svelte";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
 import {
@@ -22,8 +22,8 @@ const throughputSamplesContinuous = (
   left: ThroughputSample,
   right: ThroughputSample,
 ) => left.continuityId === right.continuityId;
-const CHART_TIME_CAMERA_TAU_MS = 120;
-const CHART_TIME_CAMERA_EPSILON_MS = 4;
+const RESULT_GLIDE_MS = 400;
+const TERMINAL: readonly Phase[] = ["idle", "complete", "aborted", "error"];
 const LATENCY_GLYPH_ENTER_MS = 90;
 const LATENCY_ANIMATION_WINDOW = 32;
 export interface ChartData {
@@ -38,8 +38,8 @@ export interface ChartData {
   phase: Phase;
   /** Exact phase boundary on the runner's measured timeline. */
   phaseStartedAtMs: number;
-  /** Current runner measured timeline in ms. Presentation-only camera input. */
-  timelineT: number;
+  /** The run timeline at a frame time, in ms; the live camera follows it. */
+  timelineAt: (now: number) => number;
   /** Monotonic run counter. A change resets all per-run engine state. */
   runSeq: number;
   /** Linear chart throughput ceiling; the gauge has its own perceptual scale. */
@@ -185,7 +185,8 @@ export class ChartEngine {
   #sceneTMax = 0;
   #latencyAnimating = new Set<LatencyBucket>();
   #dirty = true;
-  #presentation: PresentationHandle | null = null;
+  #stopFrames: (() => void) | null = null;
+  #visible = true;
   #dpr = 1;
   #w = 0;
   #h = 0;
@@ -197,11 +198,9 @@ export class ChartEngine {
     rttMax: 50,
   };
   #layout = chartLayout(1, 1, this.#vp);
-  #targetTMax = 4_000;
-  #displayTMax = 4_000;
-  #lastCameraAt = 0;
-  #cameraInitialized = false;
-  #reducedMotion = false;
+  /** The result-mode time axis; a live run follows its timeline instead. */
+  #camera = new Smoothed();
+  #cameraTarget = 4_000;
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -259,10 +258,10 @@ export class ChartEngine {
   get viewport(): ChartViewport {
     return this.#vp;
   }
-  set reducedMotion(value: boolean) {
-    if (value === this.#reducedMotion) return;
-    this.#reducedMotion = value;
-    this.#wake();
+  /** An offscreen chart draws nothing until it is seen again. */
+  set visible(value: boolean) {
+    this.#visible = value;
+    if (value) this.#retarget();
   }
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
@@ -271,7 +270,6 @@ export class ChartEngine {
     this.#sceneCtx = this.#scene.getContext("2d");
     canvas.addEventListener("contextrestored", this.#restoreSurface);
     this.#scene.addEventListener("contextrestored", this.#restoreSurface);
-    this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
   #restoreSurface = (): void => this.invalidateTheme();
@@ -281,11 +279,15 @@ export class ChartEngine {
   }
   #retarget(): void {
     this.#dirty = true;
-    this.#presentation?.invalidate();
+    this.#stopFrames ??= animate((now) => {
+      const more = this.#visible && this.render(now);
+      if (!more) this.#stopFrames = null;
+      return more;
+    });
   }
   destroy(): void {
-    this.#presentation?.destroy();
-    this.#presentation = null;
+    this.#stopFrames?.();
+    this.#stopFrames = null;
     this.#canvas?.removeEventListener("contextrestored", this.#restoreSurface);
     this.#scene?.removeEventListener("contextrestored", this.#restoreSurface);
     this.#canvas = null;
@@ -427,16 +429,19 @@ export class ChartEngine {
   render = (now: number): boolean => {
     const dirty = this.#dirty;
     if (dirty) {
-      this.#update();
+      this.#update(now);
       this.#dirty = false;
     }
-    const previousDisplayTMax = this.#displayTMax;
-    const cameraMoving = this.#stepCamera(now);
-    const cameraChanged = this.#displayTMax !== previousDisplayTMax;
-    if (cameraChanged) {
-      this.#vp = { ...this.#vp, tMin: 0, tMax: this.#displayTMax };
+    const tMax = this.#result
+      ? this.#camera.at(now)
+      : Math.max(this.#data.timelineAt(now) + 2_000, 4_000);
+    const cameraMoving = this.#result
+      ? tMax !== this.#cameraTarget
+      : !TERMINAL.includes(this.#data.phase);
+    if (tMax !== this.#vp.tMax) {
+      this.#vp = { ...this.#vp, tMin: 0, tMax };
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
-      this.#onTimeScale?.(this.#displayTMax);
+      this.#onTimeScale?.(tMax);
       this.#publishPresentation(this.#data, !cameraMoving);
     }
     if (this.#sceneDirty) {
@@ -460,10 +465,7 @@ export class ChartEngine {
   #resetRunState(): void {
     this.#spans = [];
     this.#lastPhase = null;
-    this.#targetTMax = 4_000;
-    this.#displayTMax = 4_000;
-    this.#lastCameraAt = 0;
-    this.#cameraInitialized = false;
+    this.#vp = { ...this.#vp, tMax: 4_000 };
     this.#result = false;
     this.#hasThroughputScale = false;
     this.#indexedThroughput = 0;
@@ -476,7 +478,7 @@ export class ChartEngine {
     this.#sceneTMax = 0;
     this.#sceneDirty = true;
   }
-  #update(): void {
+  #update(now: number): void {
     const d = this.#data;
     if (d.runSeq !== this.#runSeq) {
       this.#runSeq = d.runSeq;
@@ -494,14 +496,21 @@ export class ChartEngine {
       this.#spans.push({ phase: d.phase, t0: phaseStart, t1: Infinity });
       this.#lastPhase = d.phase;
     }
-    const latest = this.#latestT(d);
     const complete =
       d.phase === "complete" || d.phase === "aborted" || d.phase === "error";
+    if (complete) {
+      // A finished run glides from the live axis to its own span; a loaded record starts there.
+      if (!this.#result) this.#camera.set(this.#vp.tMax, { snap: true, now });
+      this.#cameraTarget = Math.max(this.#latestT(d) * 1.02, 1_000);
+      const snap = !this.#spans.some((span) => span.phase !== d.phase);
+      this.#camera.set(this.#cameraTarget, {
+        over: RESULT_GLIDE_MS,
+        snap,
+        now,
+      });
+    }
     this.#result = complete;
     const tMin = 0;
-    const targetTMax = complete
-      ? Math.max(latest * 1.02, 1_000)
-      : Math.max(Math.max(latest, d.timelineT) + 2_000, 4_000);
     const bytesPerSecMax =
       d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
@@ -509,50 +518,15 @@ export class ChartEngine {
       d.throughput.length > 0;
     const rttMin = 0;
     const rttMax = d.latencyScaleMs;
-    this.#targetTMax = targetTMax;
-    if (!this.#cameraInitialized) {
-      this.#displayTMax = this.#targetTMax;
-      this.#cameraInitialized = true;
-    }
     this.#vp = {
       tMin,
-      tMax: this.#displayTMax,
+      tMax: this.#vp.tMax,
       bytesPerSecMax,
       rttMin,
       rttMax,
     };
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#publishPresentation(d);
-  }
-  #stepCamera(now: number): boolean {
-    if (!this.#cameraInitialized) {
-      this.#displayTMax = this.#targetTMax;
-      this.#cameraInitialized = true;
-      this.#lastCameraAt = now;
-      return false;
-    }
-    if (this.#reducedMotion) {
-      const changed =
-        Math.abs(this.#targetTMax - this.#displayTMax) >
-        CHART_TIME_CAMERA_EPSILON_MS;
-      this.#displayTMax = this.#targetTMax;
-      this.#lastCameraAt = now;
-      return changed;
-    }
-    const delta = this.#targetTMax - this.#displayTMax;
-    if (Math.abs(delta) <= CHART_TIME_CAMERA_EPSILON_MS) {
-      this.#displayTMax = this.#targetTMax;
-      this.#lastCameraAt = now;
-      return false;
-    }
-    const dt =
-      this.#lastCameraAt > 0
-        ? Math.max(0, Math.min(100, now - this.#lastCameraAt))
-        : 0;
-    this.#lastCameraAt = now;
-    const alpha = dt > 0 ? 1 - Math.exp(-dt / CHART_TIME_CAMERA_TAU_MS) : 1;
-    this.#displayTMax += delta * alpha;
-    return true;
   }
   #publishPresentation(data: ChartData, force = false): void {
     if (!this.#onPresentation) return;
@@ -847,9 +821,7 @@ export class ChartEngine {
       const s = all[i];
       let p = 1;
       const animate =
-        !this.#reducedMotion &&
-        !this.#result &&
-        i >= hi - LATENCY_ANIMATION_WINDOW;
+        !still() && !this.#result && i >= hi - LATENCY_ANIMATION_WINDOW;
       if (animate) {
         let startedAt = this.#latencyGlyphStartedAt.get(s);
         if (startedAt == null) {

@@ -71,12 +71,16 @@
         {:else if s.state === "failed"}
           <span class="seg-fill seg-fill--failed"></span>
         {:else if s.state === "active" || s.state === "recovering" || s.state === "complete" || s.state === "partial"}
+          {@const live = s.state === "active" && store.phaseBudgetMs > 0}
           <span
             class="seg-fill"
             data-tone={s.key}
             class:is-done={s.state === "complete" || s.state === "partial"}
             class:is-stalled={s.state === "recovering"}
-            style="--progress:{s.fill / 100}"
+            class:is-live={live}
+            style:--progress={live
+              ? store.phaseClock.current / store.phaseBudgetMs
+              : s.fill / 100}
           ></span>
         {/if}
       </div>
@@ -165,6 +169,9 @@
     transform: scaleX(var(--progress, 0));
     transform-origin: left center;
     transition: transform var(--dur-graph) var(--ease-out);
+  }
+  .seg-fill.is-live {
+    transition: none;
   }
   .seg-fill.is-done {
     background: var(--ok);

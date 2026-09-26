@@ -1,8 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
-  import { onMount } from "svelte";
-  import { prefersReducedMotion } from "svelte/motion";
+  import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
@@ -17,15 +16,7 @@
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMsTick } from "../format";
   import { gaugeLatency as latencyGauge } from "../presentation/scales";
-  import {
-    LiveRateAnimator,
-    liveTargets,
-    type RatePair,
-  } from "../presentation/liveRateAnimator";
-  import {
-    presentation,
-    type PresentationHandle,
-  } from "../canvas/presentation";
+  import { LiveReadout, liveTargets } from "../presentation/liveReadout.svelte";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
   import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
@@ -61,12 +52,15 @@
         !store.result?.latency),
   );
 
-  let stageEl = $state<HTMLDivElement>();
   let gaugeWidth = $state(0);
   let gaugeHeight = $state(0);
-  const liveRateAnimator = new LiveRateAnimator();
-  let liveRateValues = $state.raw<RatePair | null>(null);
-  let liveRatePresentation: PresentationHandle | null = null;
+  const liveReadout = new LiveReadout();
+  $effect(() => {
+    const live = store.live;
+    const run = store.runSeq;
+    untrack(() => liveReadout.update(live, run));
+  });
+  const liveRates = $derived(liveReadout.rates);
 
   const completedKind = $derived<"speed" | "latency">(
     terminalArcs.length ? "speed" : "latency",
@@ -82,6 +76,11 @@
           ? (store.result?.latency?.reportedMs ?? null)
           : null,
     });
+  });
+
+  $effect(() => {
+    const ms = gaugeLatency.rttMs;
+    untrack(() => liveReadout.rtt.set(ms));
   });
 
   const msTicksActive = $derived(
@@ -116,23 +115,6 @@
       gaugeTicks.length > 1,
   );
 
-  function stepLiveRates(now: number): boolean {
-    const frame = liveRateAnimator.step(
-      store.live,
-      store.runSeq,
-      now,
-      prefersReducedMotion.current,
-    );
-    liveRateValues = frame.values;
-    return frame.active;
-  }
-
-  $effect(() => {
-    void store.live;
-    void prefersReducedMotion.current;
-    liveRatePresentation?.invalidate();
-  });
-
   const readout = $derived(
     gaugeReadout({
       phase: store.phase,
@@ -142,7 +124,7 @@
       startError: store.startError || store.startBlocker,
       error: store.error,
       latencyTimeout: store.liveLatencyLost,
-      latencyMs: gaugeLatency.rttMs,
+      latencyMs: liveReadout.rtt.current,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
       arcs: terminalArcs,
@@ -155,9 +137,9 @@
   announceChanges(() => readout.announcement);
   const display = $derived(
     readout.display ??
-      (liveRateValues
+      (liveRates
         ? {
-            value: fmtSpeed(gaugeRate(liveRateValues.down + liveRateValues.up)),
+            value: fmtSpeed(gaugeRate(liveRates.down + liveRates.up)),
             unit: gaugeUnit,
           }
         : { value: MISSING, unit: "" }),
@@ -207,14 +189,6 @@
           : [],
     };
   });
-
-  onMount(() => {
-    liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
-    return () => {
-      liveRatePresentation?.destroy();
-      liveRatePresentation = null;
-    };
-  });
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
@@ -240,7 +214,6 @@
         </div>
       {/if}
       <div
-        bind:this={stageEl}
         bind:clientWidth={gaugeWidth}
         bind:clientHeight={gaugeHeight}
         class="gauge-face"
@@ -327,7 +300,7 @@
 
   <div class="results-slot">
     {#if resultsView === "partial"}
-      <ResultCards compact liveRates={liveRateValues} />
+      <ResultCards compact live={liveReadout} />
     {:else if resultsView === "final"}
       <ResultCards />
     {/if}

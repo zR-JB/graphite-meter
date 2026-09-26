@@ -25,7 +25,8 @@ const catalog = (...servers: Server[]) => ({
 async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
   await runButton(page, "Start test").click();
   await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
-  await Bun.sleep(500);
+  // Measured evidence exists once the readout shows a rate.
+  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
   for (const peer of peers) peer.kill("SIGKILL");
 }
 

@@ -68,6 +68,7 @@
   function show(next: typeof toast, linger = 0) {
     clearTimeout(timer);
     toast = next;
+    // Not motion: a toast lingers for its reading time.
     if (next) timer = setTimeout(() => (toast = null), linger);
   }
   $effect(() => {

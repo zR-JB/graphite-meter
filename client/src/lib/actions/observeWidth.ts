@@ -1,4 +1,5 @@
 import type { Attachment } from "svelte/attachments";
+import { nextFrame } from "../presentation/motion.svelte";
 
 /** Width-driven state changes happen outside ResizeObserver delivery. */
 export function observeWidth(
@@ -6,12 +7,12 @@ export function observeWidth(
 ): Attachment<HTMLElement> {
   return (node) => {
     let width = node.clientWidth;
-    let frame = 0;
+    let stop: (() => void) | null = null;
     onWidth(width);
     const observer = new ResizeObserver(() => {
-      if (frame || node.clientWidth === width) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
+      if (stop || node.clientWidth === width) return;
+      stop = nextFrame(() => {
+        stop = null;
         if (node.clientWidth === width) return;
         width = node.clientWidth;
         onWidth(width);
@@ -20,7 +21,7 @@ export function observeWidth(
     observer.observe(node);
     return () => {
       observer.disconnect();
-      cancelAnimationFrame(frame);
+      stop?.();
     };
   };
 }

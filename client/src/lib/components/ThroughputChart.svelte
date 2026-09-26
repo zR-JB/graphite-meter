@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { prefersReducedMotion } from "svelte/motion";
+  import { inView } from "../actions/inView";
+  import { nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
@@ -62,7 +63,7 @@
       ? [at, ...rows.map((row) => `${row.label} ${row.value}`)].join(", ")
       : `${at}, no measurements at this position`;
   });
-  let pointerFrame = 0;
+  let stopPointerFrame: (() => void) | null = null;
   let pointerClientX = 0;
   let pointerClientY = 0;
   let pointerY = $state<number | null>(null);
@@ -121,6 +122,8 @@
       ),
     };
   });
+  const timelineAt = (now: number) =>
+    store.phaseStartedAtMs + store.phaseClock.at(now);
   const chartData = (): ChartData => ({
     throughput: store.throughput,
     throughputRevision: store.throughputRevision,
@@ -129,11 +132,7 @@
     latencyEnabled: store.latencyEnabled,
     phase: store.phase,
     phaseStartedAtMs: store.phaseStartedAtMs,
-    timelineT: Math.max(
-      store.phaseStartedAtMs + store.phaseElapsedMs,
-      store.throughput.at(-1)?.t ?? 0,
-      store.latency.at(-1)?.endT ?? 0,
-    ),
+    timelineAt,
     runSeq: store.runSeq,
     scaleBytesPerSec: store.scales.chartBytesPerSec,
     latencyScaleMs: store.latencyScaleMs,
@@ -157,18 +156,14 @@
     },
   );
   $effect(() => engine.update(chartData()));
-  $effect(() => {
-    engine.reducedMotion = prefersReducedMotion.current;
-  });
 
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
     pointerClientX = e.clientX;
     pointerClientY = e.clientY;
-    if (pointerFrame) return;
     // Coalesce pointer events into one small DOM update. The cached chart stays parked.
-    pointerFrame = requestAnimationFrame(() => {
-      pointerFrame = 0;
+    stopPointerFrame ??= nextFrame(() => {
+      stopPointerFrame = null;
       if (!document.hidden && plotEl) {
         pointerY = pointerClientY - plotEl.getBoundingClientRect().top;
         selectX(pointerClientX - plotEl.getBoundingClientRect().left);
@@ -235,8 +230,8 @@
     hover = selectedT == null ? null : engine.inspectTime(selectedT);
   }
   function clearSelection() {
-    if (pointerFrame) cancelAnimationFrame(pointerFrame);
-    pointerFrame = 0;
+    stopPointerFrame?.();
+    stopPointerFrame = null;
     selectedT = null;
     hover = null;
   }
@@ -267,7 +262,7 @@
 
     return () => {
       engine.destroy();
-      if (pointerFrame) cancelAnimationFrame(pointerFrame);
+      stopPointerFrame?.();
       themeObserver.disconnect();
       resizeObserver.disconnect();
       stopWatchingPixelRatio();
@@ -298,7 +293,12 @@
     onfocus={onFocus}
     onblur={onBlur}
   >
-    <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+    <canvas
+      bind:this={canvasEl}
+      class="canvas"
+      aria-hidden="true"
+      {@attach inView((seen) => (engine.visible = seen))}
+    ></canvas>
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}

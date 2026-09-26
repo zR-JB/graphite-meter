@@ -1,12 +1,11 @@
+import "../state/runes.testutil";
 import { stubGlobals } from "../test-helpers.testutil";
 import { expect, test } from "bun:test";
-import {
-  ChartEngine,
-  type ChartData,
-  type ChartPresentation,
-} from "./ChartEngine";
+import type { ChartData, ChartPresentation } from "./ChartEngine";
 import type { LatencyBucket, ThroughputSample } from "../runner/contract";
 import { appendThroughputSample } from "../runner/series";
+
+const { ChartEngine } = await import("./ChartEngine");
 
 function data(overrides: Partial<ChartData> = {}): ChartData {
   return {
@@ -17,7 +16,7 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
     latencyEnabled: false,
     phase: "latency",
     phaseStartedAtMs: 0,
-    timelineT: 0,
+    timelineAt: () => 0,
     runSeq: 1,
     scaleBytesPerSec: 125_000,
     latencyScaleMs: 50,
@@ -26,68 +25,45 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
   };
 }
 
-test("camera keeps a run-wide origin and eases a large live time advance", () => {
-  let current = data();
+test("the live axis follows the run timeline every frame; a finished run glides to its span", () => {
+  let current = data({ phase: "download", timelineAt: (now) => now });
   let published!: ChartPresentation;
-  let publishes = 0;
   let timeScale = 0;
   const engine = new ChartEngine(
     current,
-    (next) => {
-      published = next;
-      publishes++;
-    },
+    (next) => (published = next),
     (tMax) => (timeScale = tMax),
   );
+  expect(engine.render(1_000)).toBe(true);
+  expect(published.layout.viewport).toMatchObject({ tMin: 0, tMax: 4_000 });
+  engine.render(5_000);
+  expect(timeScale).toBe(7_000);
+  engine.render(5_016);
+  expect(timeScale).toBe(7_016);
 
-  expect(engine.render(100)).toBe(false);
-  expect(published.layout.viewport.tMin).toBe(0);
-
-  current = { ...current, phase: "download", timelineT: 5_000 };
+  const throughput = [0, 5_000].map((t) => ({
+    t,
+    bytesPerSec: 100_000,
+    bytesCumulative: t,
+    dir: "down" as const,
+    phase: "download" as const,
+    continuityId: 1,
+  }));
+  current = { ...current, phase: "complete", throughput };
   engine.update(current);
-  expect(engine.render(116)).toBe(true);
-  expect(published.layout.viewport.tMin).toBe(0);
-  expect(timeScale).toBeGreaterThan(4_000);
-  expect(timeScale).toBeLessThan(7_000);
-
-  current = { ...current, phase: "upload", timelineT: 8_000 };
-  engine.update(current);
-  expect(engine.render(132)).toBe(true);
-  expect(published.layout.viewport.tMin).toBe(0);
-
-  let now = 148;
-  let active = true;
-  let frames = 0;
-  publishes = 0;
-  for (let i = 0; i < 200 && active; i++) {
-    active = engine.render(now);
-    now += 16;
-    frames++;
-  }
-  expect(active).toBe(false);
-  expect(publishes).toBeLessThan(frames / 2);
-  expect(published.layout.viewport.tMax).toBe(10_000);
-  expect(timeScale).toBe(10_000);
-
-  const throughput = current.throughput;
-  const latency = current.latency;
-  current = {
-    ...current,
-    phase: "complete",
-    timelineT: 8_000,
-    throughput,
-    latency,
-  };
-  engine.update(current);
-  active = engine.render(now);
-  for (let i = 0; i < 400 && active; i++) {
+  let now = 5_032;
+  let active = engine.render(now);
+  expect(timeScale).toBe(7_016);
+  const glide: number[] = [];
+  for (let i = 0; i < 100 && active; i++) {
     now += 16;
     active = engine.render(now);
+    glide.push(timeScale);
   }
   expect(active).toBe(false);
-  expect(published.layout.viewport.tMin).toBe(0);
-  expect(throughput).toEqual([]);
-  expect(latency).toEqual([]);
+  expect(glide.every((t, i) => i === 0 || t <= glide[i - 1])).toBe(true);
+  expect(timeScale).toBe(5_100);
+  expect(published.layout.viewport.tMax).toBe(5_100);
   engine.destroy();
 });
 
@@ -147,12 +123,11 @@ test("saved duplicate terminal points render and hover at the last value without
   }));
   let published!: ChartPresentation;
   const engine = new ChartEngine(
-    data({ throughput, phase: "complete", timelineT: 500 }),
+    data({ throughput, phase: "complete", timelineAt: () => 500 }),
     (next) => (published = next),
   );
   try {
     engine.attach(canvas);
-    engine.reducedMotion = true;
     engine.render(0);
     expect(engine.inspect(published.layout.x(500))?.bytesPerSec).toBeCloseTo(
       500,
@@ -198,7 +173,6 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
   const engine = new ChartEngine(current, (next) => (published = next));
   try {
     engine.attach(canvas);
-    engine.reducedMotion = true;
     engine.render(0);
     expect(
       engine.inspect(published.layout.x(1000))?.downBytesPerSec,
@@ -220,48 +194,6 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
     );
   } finally {
     engine.destroy();
-    restore();
-  }
-});
-
-test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
-  const { canvas, restore } = canvasEnvironment();
-
-  try {
-    let current = data();
-    let published!: ChartPresentation;
-    const engine = new ChartEngine(current, (next) => (published = next));
-    engine.attach(canvas);
-    engine.reducedMotion = true;
-    expect(engine.render(100)).toBe(false);
-    current = { ...current, phase: "download", timelineT: 5_000 };
-    engine.update(current);
-    expect(engine.render(116)).toBe(true);
-    expect(published.layout.viewport.tMax).toBe(7_000);
-    expect(engine.render(132)).toBe(false);
-    current = {
-      ...current,
-      latencyEnabled: true,
-      latency: [
-        {
-          t: 100,
-          startT: 0,
-          endT: 200,
-          medianRttMs: 20,
-          p95RttMs: 20,
-          maxRttMs: 20,
-          pingCount: 1,
-          timeoutCount: 0,
-          underLoad: true,
-          phase: "download",
-          continuityId: 1,
-        },
-      ],
-    };
-    engine.update(current);
-    expect(engine.render(148)).toBe(false);
-    engine.destroy();
-  } finally {
     restore();
   }
 });
@@ -301,7 +233,7 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       throughput,
       latency,
       latencyEnabled: true,
-      timelineT: 4_000,
+      timelineAt: () => 4_000,
     });
     const engine = new ChartEngine(current);
     engine.attach(canvas);
@@ -320,10 +252,8 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     expect(counts.paths).toBe(beforeHover);
 
     const beforeClock = counts.paths;
-    for (let now = 216; now <= 520; now += 16) {
-      engine.update({ ...current, timelineT: 4_000 + now * 20 });
-      engine.render(now);
-    }
+    engine.update({ ...current, timelineAt: (now) => 4_000 + now * 20 });
+    for (let now = 216; now <= 520; now += 16) engine.render(now);
     const clockPaths = counts.paths - beforeClock;
     const beforeData = counts.paths;
     engine.update({ ...current, latencyRevision: 1 });
@@ -338,7 +268,7 @@ test("long history is cached across camera, hover, and glyph frames", () => {
 test("equal simultaneous result labels retain distinct lane identities", () => {
   let current = data({
     phase: "complete",
-    timelineT: 2_000,
+    timelineAt: () => 2_000,
     throughput: (["down", "up"] as const).flatMap((dir) =>
       [500, 1_500].map((t) => ({
         t,
@@ -383,7 +313,6 @@ test("inspection retains a time position through gaps without inventing latency"
     let published!: ChartPresentation;
     const engine = new ChartEngine(current, (next) => (published = next));
     engine.attach(canvas);
-    engine.reducedMotion = true;
     engine.render(0);
     expect(engine.inspect(100)).toBeNull();
     current = {
@@ -433,7 +362,6 @@ test("canvas sizing ignores entry transforms and recovers after a layout resize"
     ({ width: 591, height: 236.4 }) as DOMRect;
   try {
     engine.attach(canvas);
-    engine.reducedMotion = true;
     engine.render(0);
     expect(canvas.width).toBe(600);
     expect(canvas.height).toBe(240);

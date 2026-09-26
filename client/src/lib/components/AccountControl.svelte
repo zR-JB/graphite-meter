@@ -17,6 +17,7 @@
 
   onMount(() => {
     const controller = new AbortController();
+    // Not motion: the session request gives up after three seconds.
     const timeout = setTimeout(() => controller.abort(), 3000);
     void (async () => {
       try {

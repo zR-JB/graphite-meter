@@ -256,10 +256,6 @@ test("one server runs every stage in order and its saved record describes the ru
   expect(result.outcome).toBe("complete");
   expect(result.multiServer.participants).toEqual(["self"]);
   expect(h.events.filter((event) => event.type === "complete")).toHaveLength(1);
-  const [start] = h.events.flatMap((event) =>
-    event.type === "phase" ? [event.transition] : [],
-  );
-  expect(result.startedAt).toBe(start.startedAt!);
   const saved = buildHistoryRecord(result, { paths: null, clientBuild: "t" });
   expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
 });

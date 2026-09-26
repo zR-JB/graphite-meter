@@ -60,9 +60,31 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   await expect(phase(page, "aborted")).toHaveCount(1);
   const elapsed = page.locator(".elapsed");
   const frozen = await elapsed.textContent();
-  await Bun.sleep(600);
+  // A running clock would redraw its 0.1 s readout within eight frames.
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 8; frame++)
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
   expect(await elapsed.textContent()).toBe(frozen);
   const saved = await run(page);
+  expect(saved.outcome).toBe("complete");
+});
+
+test("reduced motion still updates every readout and completes", async (page) => {
+  await page.cdp("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+  });
+  await open(page);
+  await ready(page);
+  await runButton(page, "Start test").click();
+  await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
+  const elapsed = page.locator(".elapsed .readout");
+  const first = await elapsed.textContent();
+  await expect
+    .poll(async () => (await elapsed.textContent()) !== first)
+    .toBe(true);
+  await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  const saved = await savedResult(page);
   expect(saved.outcome).toBe("complete");
 });
 

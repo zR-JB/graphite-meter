@@ -5,13 +5,12 @@
   import { BUILD } from "../buildenv";
   import { statusLabel } from "../presentation/vocabulary";
 
-  // Progress events pace the wall clock, so elapsed and left update together.
-  const elapsedMs = $derived.by(() => {
-    if (store.result) return store.result.durationMs;
-    if (!store.startEpoch) return 0;
-    void store.phaseElapsedMs;
-    return Date.now() - store.startEpoch;
-  });
+  const elapsedMs = $derived(
+    store.result?.durationMs ?? store.runClock.current,
+  );
+  const remainingMs = $derived(
+    Math.max(0, store.phaseBudgetMs - store.phaseClock.current),
+  );
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const { status } = $derived(store.preparation);
@@ -45,10 +44,10 @@
 >
 {#if showRemaining}
   <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}<span class="readout"
-        >{fmtDuration(store.phaseRemainingMs)}</span
-      > left{:else}Paused<span class="caption">
-        · {fmtDuration(store.phaseRemainingMs)} left</span
+    {#if store.measuring}<span class="readout">{fmtDuration(remainingMs)}</span> left{:else}Paused<span
+        class="caption"
+      >
+        · {fmtDuration(remainingMs)} left</span
       >{/if}
   </span>
 {/if}

@@ -1,4 +1,4 @@
-import { prefersReducedMotion } from "svelte/motion";
+import { still } from "../presentation/motion.svelte";
 
 // Stays "pending" inside a 10px slop radius so a tap never nudges the sheet.
 function gestureIntent(deltaX: number, deltaY: number, scrollTop: number) {
@@ -40,7 +40,7 @@ export function sheetDrag(onDismiss: () => void) {
     const bottomSheet = () =>
       matchMedia("(max-width: 759px) and (orientation: portrait)").matches;
     const slideMs = () =>
-      prefersReducedMotion.current
+      still()
         ? 0
         : parseFloat(getComputedStyle(node).getPropertyValue("--dur-slide"));
     function reset() {
@@ -125,7 +125,7 @@ export function sheetDrag(onDismiss: () => void) {
       gesture = undefined;
       const ms = slideMs();
       animate(dismiss ? node.offsetHeight : 0, ms);
-      // Dismiss as the slide-out lands, so the sheet never flashes back on screen.
+      // Not motion: CSS slides the sheet; this dismisses it as the slide lands.
       settle = setTimeout(() => {
         if (dismiss) onDismiss();
         reset();

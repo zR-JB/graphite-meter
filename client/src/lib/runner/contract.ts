@@ -146,8 +146,6 @@ interface PhaseTransition {
   to: Phase;
   stage: TransportRole | null;
   t: number; // exact boundary on the run's measured timeline
-  /** Epoch ms of the run's start, on "connecting" only; the result keeps the same value. */
-  startedAt?: number;
 }
 
 export const FAILURE_REASONS = [

@@ -81,16 +81,6 @@ export function pos(
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }
 
-// Exact interval width as a percentage. Fixed caps keep a flat range visible.
-export function rangeWidth(
-  min: number | null,
-  max: number | null,
-  domain: LatencyProfileDomain,
-): number {
-  if (min == null || max == null) return 0;
-  return Math.max(0, pos(max, domain) - pos(min, domain));
-}
-
 // Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
 export function timeoutLabel(ratio: number): string {
   if (ratio <= 0) return "";

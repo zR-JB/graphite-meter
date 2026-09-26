@@ -5,7 +5,7 @@
   import { store } from "../state/store.svelte";
   import { fmtSpeed, fmtMs } from "../format";
   import { MISSING, STAGE } from "../presentation/vocabulary";
-  import type { RatePair } from "../presentation/liveRateAnimator";
+  import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
     liveWire,
     summaryCards,
@@ -14,10 +14,10 @@
 
   let {
     compact = false,
-    liveRates,
+    live,
   }: {
     compact?: boolean;
-    liveRates?: RatePair | null;
+    live?: LiveReadout;
   } = $props();
 
   const controller = getApplicationController();
@@ -69,16 +69,21 @@
     active: boolean,
   ): [shown: number | null, accessible: number | null] {
     if (key === "latency") {
-      const ms = active
-        ? store.liveRtt || null
-        : (store.stageResults.latency?.reportedMs ?? null);
-      return [ms, ms];
+      if (!active) {
+        const ms = store.stageResults.latency?.reportedMs ?? null;
+        return [ms, ms];
+      }
+      return [
+        (live?.rtt.current ?? store.liveRtt) || null,
+        store.liveRtt || null,
+      ];
     }
     if (active) {
       const { down = null, up = null } = store.live ?? {};
       const measured =
         down == null && up == null ? null : (down ?? 0) + (up ?? 0);
-      return [liveRates ? liveRates.down + liveRates.up : null, measured];
+      const rates = live?.rates;
+      return [rates ? rates.down + rates.up : null, measured];
     }
     const bidi = store.result?.bidirectional;
     const result =

@@ -14,7 +14,8 @@
 
 <script lang="ts">
   import { inView } from "../actions/inView";
-  import { prefersReducedMotion } from "svelte/motion";
+  import { untrack } from "svelte";
+  import { Smoothed, still } from "../presentation/motion.svelte";
   import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
@@ -23,9 +24,9 @@
   let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
     $props();
   const shadeId = $props.id();
-  // CSS owns interpolation; only suppress motion when this instrument is unseen.
+  // An unseen dial snaps rather than animating.
   let seen = $state(true);
-  const motion = $derived(seen && !prefersReducedMotion.current);
+  const motion = $derived(seen && !still());
   const completed = $derived(
     input.phase === "complete" && input.resultArcs.length > 0,
   );
@@ -74,49 +75,17 @@
         : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
   );
 
-  let surface = $state<HTMLDivElement>();
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  let flight: { from: number; to: number; animation?: Animation } | undefined;
-  const ease = (progress: number) => 1 - (1 - progress) ** 3;
+  const sweep = new Smoothed();
   $effect(() => {
-    const node = surface;
     const next = target * 270;
-    const visible = input.showValue && !completed;
-    const animate = motion && visible;
-    if (!node || (animate && flight && Math.abs(next - flight.to) < 1)) return;
-    const current = flight
-      ? flight.from +
-        (flight.to - flight.from) *
-          ease(Math.min(1, Number(flight.animation?.currentTime ?? 600) / 600))
-      : next;
-    flight = { from: animate ? current : next, to: next };
-    const rotors = node.querySelectorAll<HTMLElement>(".rotor, .live-head");
-    const rotation = (angle: number, index: number) =>
-      index === 0
-        ? Math.min(180, angle)
-        : index === 1
-          ? Math.max(0, angle - 180)
-          : angle + 135;
-    // One sampled ease drives all three surfaces, with the half-ring crossing so both clips meet.
-    const offsets = Array.from({ length: 31 }, (_, i) => i / 30);
-    const crossing = (180 - current) / (next - current);
-    if (crossing > 0 && crossing < 1) offsets.push(1 - Math.cbrt(1 - crossing));
-    offsets.sort((a, b) => a - b);
-    rotors.forEach((rotor, index) => {
-      rotor.getAnimations().forEach((animation) => animation.cancel());
-      rotor.style.transform = `rotate(${rotation(next, index)}deg)`;
-      if (!animate || Math.abs(current - next) < 0.01) return;
-      const animation = rotor.animate(
-        offsets.map((offset) => ({
-          offset,
-          transform: `rotate(${rotation(current + (next - current) * ease(offset), index)}deg)`,
-        })),
-        { duration: 600, easing: "linear" },
-      );
-      if (index === 2) flight!.animation = animation;
-    });
+    const snap = !motion || !input.showValue || completed;
+    untrack(() => sweep.set(next, { snap }));
   });
+  // Each half ring turns through its own 180°, so both clips meet at the crossing.
+  const halfAngle = (half: number) =>
+    half ? Math.max(0, sweep.current - 180) : Math.min(180, sweep.current);
   const halfRing = (sweep: number) => {
     const r = layout.radius;
     return `M ${extent} ${extent - r} A ${r} ${r} 0 0 ${sweep} ${extent} ${extent + r}`;
@@ -179,7 +148,6 @@
 
 <div
   {@attach inView((value) => (seen = value))}
-  bind:this={surface}
   class="gauge-dial"
   class:motion
   role={completed ? "group" : undefined}
@@ -327,6 +295,7 @@
             class="rotor"
             style:width={`${diameter}px`}
             style:height={`${diameter}px`}
+            style:transform={`rotate(${halfAngle(half)}deg)`}
           >
             <svg
               width={diameter}
@@ -361,6 +330,7 @@
       class="live-head"
       style:left={`${layout.center.x}px`}
       style:top={`${layout.center.y}px`}
+      style:transform={`rotate(${sweep.current + 135}deg)`}
     >
       <svg
         style:left={`${layout.radius - headExtent}px`}

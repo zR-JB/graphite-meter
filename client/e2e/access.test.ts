@@ -87,7 +87,9 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
     timeout: 10_000,
   });
   const settled = (await network(page)).preflights;
-  await Bun.sleep(1000);
+  await closeSettings(page);
+  await openSettings(page);
+  await expect(choices).toHaveAttribute("aria-busy", "false");
   expect((await network(page)).preflights).toEqual(settled);
   expect((await network(page)).catalogs).toEqual([home.url]);
   expect(await selection(page)).toEqual(["self", "server-1"]);

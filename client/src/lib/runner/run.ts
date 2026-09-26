@@ -253,7 +253,7 @@ export class Run {
       });
     this.#t0 = this.#lastRealNow = performance.now();
     this.#startedAt = Date.now();
-    this.#transition("connecting", null, 0, this.#startedAt);
+    this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
     this.#running = true;
@@ -331,14 +331,9 @@ export class Run {
     }
   }
 
-  #transition(
-    to: Phase,
-    stage: TransportRole | null,
-    t: number,
-    startedAt?: number,
-  ): void {
+  #transition(to: Phase, stage: TransportRole | null, t: number): void {
     this.#phase = to;
-    this.#emit({ type: "phase", transition: { to, stage, t, startedAt } });
+    this.#emit({ type: "phase", transition: { to, stage, t } });
   }
 
   #arm(): void {
