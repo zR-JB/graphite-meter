@@ -1,7 +1,7 @@
 import "../state/runes.testutil";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
-const { Smoothed } = await import("./motion.svelte");
+const { Handoff, Smoothed } = await import("./motion.svelte");
 
 test("a sample glides in over the interval between samples, never stepping", () => {
   const value = new Smoothed();
@@ -43,4 +43,31 @@ test("the first sample and non-finite samples never make the value non-finite", 
     value.set(bad, { now: 1_100 });
   expect(value.at(1_100)).toBe(42);
   expect(value.current).toBe(42);
+});
+
+test("a handoff never shows a key shorter than its fade-out and follows a held key live", () => {
+  const frames: FrameRequestCallback[] = [];
+  const raf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (task) => frames.push(task);
+  let clock = 0;
+  const now = spyOn(performance, "now").mockImplementation(() => clock);
+  const tick = (ms: number) => {
+    clock += ms;
+    for (const task of frames.splice(0)) task(clock);
+  };
+  const view = new Handoff({ phase: "latency", ms: 1 }, (v) => v.phase);
+  const shown = new Set<string>();
+  view.set({ phase: "warmup", ms: 1 });
+  tick(16);
+  view.set({ phase: "download", ms: 1 });
+  for (let frame = 0; frame < 30; frame++) {
+    tick(16);
+    shown.add(view.shown.phase);
+  }
+  expect([...shown]).toEqual(["latency", "download"]);
+  expect(view.opacity).toBe(1);
+  view.set({ phase: "download", ms: 2 });
+  expect(view.shown.ms).toBe(2);
+  now.mockRestore();
+  globalThis.requestAnimationFrame = raf;
 });

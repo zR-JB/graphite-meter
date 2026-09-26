@@ -7,7 +7,12 @@ import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
 import { upsertThroughputSample } from "../runner/series";
 import { latencyBucketExceedsScale } from "../presentation/scales";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
-import { animate, Smoothed, still } from "../presentation/motion.svelte";
+import {
+  animate,
+  frameTime,
+  Smoothed,
+  still,
+} from "../presentation/motion.svelte";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
 import {
@@ -313,6 +318,8 @@ export class ChartEngine {
     }
     this.#resolveColors();
     this.#wake();
+    // Resizing clears the bitmap; drawing now keeps a gliding layout from flashing an empty chart.
+    if (this.#visible) this.render(frameTime());
   }
   inspectTime(t: number): HoverInfo | null {
     return this.inspect(this.#layout.x(t));
