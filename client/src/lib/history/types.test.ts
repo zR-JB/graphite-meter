@@ -248,16 +248,6 @@ test("corrupted saved shapes are skipped before they reach rendering", () => {
     { ...valid, startedAt: valid.completedAt + 1 },
     { ...valid, durationMs: -1 },
     { ...valid, totalBytes: -5 },
-    {
-      ...valid,
-      stages: {
-        ...valid.stages,
-        latency: {
-          ...valid.stages.latency,
-          result: { ...valid.stages.latency.result, probeTimeoutPct: 150 },
-        },
-      },
-    },
     { ...valid, multiServer: { ...valid.multiServer, servers: [null] } },
     { ...valid, server: { name: "x".repeat(4096) } },
     { ...valid, failures: Array.from({ length: 600 }, () => null) },

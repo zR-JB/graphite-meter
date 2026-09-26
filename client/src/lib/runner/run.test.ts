@@ -252,7 +252,6 @@ test("one server runs every stage in order and its saved record describes the ru
   ]);
   expect(result.latency?.reportedMs).toBe(10);
   near(result.download?.reportedBytesPerSec, 2_000);
-  expect(result.upload).toMatchObject({ serverAuthoritative: true });
   near(result.upload?.reportedBytesPerSec, 2_000);
   expect(result.outcome).toBe("complete");
   expect(result.multiServer.participants).toEqual(["self"]);
@@ -491,7 +490,7 @@ test("a stable feed completes early and each result arrives before the next stag
   const started = performance.now();
   const result = await h.result();
   expect(performance.now() - started).toBeLessThan(11_000);
-  expect(result.download?.method).toBe("stable-window");
+  expect(result.stages.download).toBe("complete");
   near(result.upload?.reportedBytesPerSec, 4_000);
   const stageResult = h.events.findIndex(
     (event) => event.type === "stageResult" && event.stage === "download",

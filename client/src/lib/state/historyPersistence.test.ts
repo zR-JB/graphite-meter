@@ -16,13 +16,8 @@ import { singleLatencyBucket } from "../runner/series";
 const throughput: ThroughputResult = {
   reportedBytesPerSec: 12_500_000,
   peakBytesPerSec: 13_000_000,
-  fullAverageBytesPerSec: 12_000_000,
-  method: "full-average",
   totalBytes: 25_000_000,
   stabilityPct: 4,
-  stabilityScore: 0.96,
-  band: "high",
-  serverAuthoritative: true,
 };
 
 function result(): RunResult {

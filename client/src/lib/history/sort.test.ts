@@ -83,12 +83,7 @@ test("each history field sorts in its natural direction and keeps nulls last", (
   for (const value of values)
     value.stages.latency.result = {
       reportedMs: value.completedAt === 1 ? 20 : 10,
-      minMs: 1,
-      p50Ms: 2,
-      p95Ms: 3,
       jitterMs: 1,
-      probeTimeoutPct: 0,
-      method: "full-average",
       stabilityScore: 1,
       band: "high",
     };

@@ -189,9 +189,6 @@ export interface RunResult {
   durationMs: number;
 }
 
-/** Throughput uses a stable plateau when adaptive completion is enabled, otherwise the full measured phase. */
-type ResultMethod = "stable-window" | "full-average";
-
 export interface ThroughputResult {
   /** The fastest disjoint window of at least 500 ms on every clock; null without one. */
   peakBytesPerSec: number | null;
@@ -200,13 +197,6 @@ export interface ThroughputResult {
   totalBytes: number;
   /** Headline bytes/second from the selected full or stable measurement window. */
   reportedBytesPerSec: number;
-  /** Effective bytes/second across the full measurement window, including pre-plateau evidence. */
-  fullAverageBytesPerSec: number;
-  method: ResultMethod;
-  stabilityScore: number; // stability (0..1) at the moment the phase ends
-  band: StabilityBand;
-  /** True when bytes and time came from the server upload receiver. */
-  serverAuthoritative?: boolean;
 }
 
 /** Diagnostic means over the same successful, in-window replies with valid
@@ -238,15 +228,11 @@ export interface StageLatencySummary {
   jitterMs: number | null;
 }
 
+/** The idle headline; the full distribution stays in latencyByStage. */
 export interface LatencyResult {
-  idleMs: number; // median unloaded over the chosen window, the headline
-  minMs: number | null;
-  p50Ms: number | null;
-  p95Ms: number | null;
-  jitterMs: number | null; // mean absolute consecutive-success RTT difference
-  probeTimeoutPct: number | null;
-  reportedMs: number; // == idleMs, the headline value, named for symmetry
-  method: ResultMethod;
+  /** The full idle median (p50). */
+  reportedMs: number;
+  jitterMs: number | null;
   stabilityScore: number;
   band: StabilityBand;
 }

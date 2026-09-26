@@ -45,12 +45,7 @@ function record(index: number, completedAt = base - index * 60_000) {
         status: "complete",
         result: {
           reportedMs: 12.4,
-          minMs: 8.9,
-          p50Ms: 12.4,
-          p95Ms: 27.8,
           jitterMs: 2.2,
-          probeTimeoutPct: 0.4,
-          method: "full-average",
           stabilityScore: 0.91,
           band: "high",
         },

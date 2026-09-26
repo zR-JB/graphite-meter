@@ -395,15 +395,8 @@ export class ServerLatency {
     )
       return null;
     return {
-      idleMs: summary.p50Ms,
       reportedMs: summary.p50Ms,
-      minMs: summary.minMs,
-      p50Ms: summary.p50Ms,
-      p95Ms: summary.p95Ms,
       jitterMs: summary.jitterMs,
-      probeTimeoutPct:
-        idle.timeoutRatio === null ? null : idle.timeoutRatio * 100,
-      method: "full-average",
       stabilityScore: this.#score,
       band: bandForState(this.#stable, this.#score),
     };
@@ -602,7 +595,6 @@ interface OpenInterval {
   last: Boundary | null;
   stable: Boundary | null;
   wasStable: boolean;
-  score: number;
   combined: RateBuckets;
   total: Series;
   servers: Map<string, Series>;
@@ -672,7 +664,6 @@ export class ThroughputAggregate {
       last: null,
       stable: null,
       wasStable: false,
-      score: 0,
       combined: new RateBuckets(WINDOW_BUCKETS),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
@@ -835,7 +826,6 @@ export class ThroughputAggregate {
     const stable = isStillStable(open.wasStable, score, cfg);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
     open.wasStable = stable;
-    open.score = score;
     return stable;
   }
 
@@ -871,14 +861,9 @@ export class ThroughputAggregate {
       if (!rate || !sufficient(window)) return null;
       return {
         reportedBytesPerSec: rate,
-        fullAverageBytesPerSec: rateOf(record.full!, dir)!,
         totalBytes: this.#stageTotal(stage, dir),
         peakBytesPerSec: open.peaks.get("")?.[dir] ?? null,
         stabilityPct: stabilityPct(open.total[dir].rates),
-        method: window === record.full ? "full-average" : "stable-window",
-        stabilityScore: open.score,
-        band: bandForState(open.wasStable, open.score),
-        serverAuthoritative: dir === "up" || undefined,
       };
     };
     return { down: reduce("down"), up: reduce("up") };
@@ -903,14 +888,9 @@ export class ThroughputAggregate {
     const { rates } = open.servers.get(id)![dir];
     return {
       reportedBytesPerSec: component.bytesPerSec,
-      fullAverageBytesPerSec: component.bytesPerSec,
       totalBytes: this.#stageTotal(stage, dir, id),
       peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
       stabilityPct: stabilityPct(rates),
-      method: "full-average",
-      stabilityScore: 0,
-      band: "low",
-      serverAuthoritative: dir === "up" || undefined,
     };
   }
 }

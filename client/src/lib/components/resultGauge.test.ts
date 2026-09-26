@@ -13,10 +13,6 @@ const throughput = (reportedBytesPerSec: number): ThroughputResult => ({
   stabilityPct: 100,
   totalBytes: reportedBytesPerSec,
   reportedBytesPerSec,
-  fullAverageBytesPerSec: reportedBytesPerSec,
-  method: "full-average",
-  stabilityScore: 1,
-  band: "high",
 });
 
 const result = testRunResult;
@@ -58,14 +54,8 @@ test("terminal gauge skips unavailable stages in every combination", () => {
     resultGaugeArcs(
       result({
         latency: {
-          idleMs: 10,
-          minMs: 9,
-          p50Ms: 10,
-          p95Ms: 12,
           jitterMs: 1,
-          probeTimeoutPct: 0,
           reportedMs: 10,
-          method: "full-average",
           stabilityScore: 1,
           band: "high",
         },

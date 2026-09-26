@@ -12,14 +12,9 @@ function result(): RunResult {
   return testRunResult({
     download: {
       reportedBytesPerSec: 1_000_000,
-      fullAverageBytesPerSec: 1_000_000,
       peakBytesPerSec: 1_000_000,
       totalBytes: 1_000_000,
-      method: "full-average",
       stabilityPct: 100,
-      stabilityScore: 1,
-      band: "high",
-      serverAuthoritative: true,
     },
     startedAt: 100,
     durationMs: 1000,

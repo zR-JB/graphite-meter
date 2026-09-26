@@ -81,7 +81,7 @@ test("reply-driven accounting retains nine replies and one timeout regardless of
       0,
       0,
     );
-  expect(latency.result()!.probeTimeoutPct).toBe(10);
+  expect(latency.stages.latency.timeoutRatio).toBe(0.1);
 });
 
 test("a fast reply burst produces bounded batches without discarding outcomes", async () => {

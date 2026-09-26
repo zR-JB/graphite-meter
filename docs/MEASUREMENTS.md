@@ -30,7 +30,8 @@ Definitions used throughout:
 
 Download counts payload bytes consumed by the client. Upload counts bytes and elapsed time at the server's receiver
 (receiver-timed); sender-queued bytes are not delivery. The headline is an adaptive stable window where configured,
-otherwise the full-window mean; both and the peak stay distinct results, and chart smoothing affects none of them.
+otherwise the full-window mean (both windows stay in the saved intervals); the peak is distinct, and chart
+smoothing affects none of them.
 Warmup bytes are excluded.
 
 ### Coordinated servers
@@ -155,6 +156,6 @@ results are kept; Complete, Partial and Incomplete runs are saved when saving is
 
 A record holds the selected servers and survivors, per-server transport evidence, stage latency populations with
 exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent intervals,
-with an explicit omitted count), structured failures, unique byte totals, the headline (`reportedBytesPerSec`) with
-the full-window average and peak, and the latency focus. Missing measurements stay null. Grants and socket tickets
+with an explicit omitted count), structured failures, one status per stage, unique byte totals, the headline
+(`reportedBytesPerSec`) with its peak and stability, and the latency focus. Missing measurements stay null. Grants and socket tickets
 never enter history or preferences.

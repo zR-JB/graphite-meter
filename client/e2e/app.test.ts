@@ -37,7 +37,6 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
     expect(saved.stages[stage].status).toBe("complete");
   expect(saved.stages.latency.lanes.latency?.count).toBeGreaterThan(0);
   expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  expect(saved.stages.upload.result?.serverAuthoritative).toBe(true);
   expect(saved.transport.throughput.kind).toBe("fetch-stream");
   expect(saved.transport.latency.kind).toBe("websocket");
   expect(saved.multiServer?.servers[0].throughput?.origin).toBe(home.http);

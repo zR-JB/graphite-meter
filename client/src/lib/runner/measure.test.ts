@@ -133,12 +133,7 @@ test("stage populations stay separate and added latency is the signed worst load
   for (let i = 0; i < 100; i++) latency.observe("download", reply(20), 0, 0);
   latency.observe("upload", reply(300), 0, 0);
   latency.observe("upload", reply(250, true), 0, 0);
-  expect(latency.result()).toMatchObject({
-    minMs: 10,
-    p50Ms: 15,
-    p95Ms: 20,
-    reportedMs: 15,
-  });
+  expect(latency.result()).toMatchObject({ reportedMs: 15 });
   expect(latency.bufferbloat()).toEqual({
     addedMs: { download: 5, upload: 285, bidirectional: null },
     grade: "F",
@@ -167,10 +162,7 @@ test("a failed idle population needs three outcomes and never selects a stable w
   latency.observe("latency", reply(20, true), 0, 0);
   expect(latency.result()).toBeNull();
   latency.observe("latency", reply(30), 0, 0);
-  expect(latency.result()).toMatchObject({
-    reportedMs: 20,
-    method: "full-average",
-  });
+  expect(latency.result()).toMatchObject({ reportedMs: 20 });
 });
 
 test("the idle headline is the full median; stability only labels its band", () => {
@@ -178,12 +170,7 @@ test("the idle headline is the full median; stability only labels its band", () 
   for (const rtt of [90, 80, 70, 20, 20])
     latency.observe("latency", reply(rtt), 0, 0);
   latency.trackStable(1, DEFAULT_CONFIG.adaptive);
-  expect(latency.result()).toMatchObject({
-    reportedMs: 70,
-    method: "full-average",
-    p50Ms: 70,
-    band: "high",
-  });
+  expect(latency.result()).toMatchObject({ reportedMs: 70, band: "high" });
 });
 
 test("rate buckets split exact byte/time evidence independently of callback chunking", () => {
@@ -417,7 +404,6 @@ test("every headline needs 800 ms in every clock and moved bytes", () => {
   // The stable window spans 900 ms of client time but only 500 ms of receiver time.
   stable.observe(boundary(2_900, {}, { a: receiver("a", 3_000, 2.5e9 + 1) }));
   expect(stable.result("upload", true).up).toMatchObject({
-    method: "full-average",
     reportedBytesPerSec: 1_200,
   });
 });

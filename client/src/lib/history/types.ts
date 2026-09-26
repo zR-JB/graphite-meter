@@ -25,28 +25,9 @@ const HISTORY_SCHEMA_VERSION = 4 as const;
 export const HISTORY_LIMIT = 2_000 as const;
 const MAX_HISTORY_TEXT_LENGTH = 256;
 
-export interface ThroughputSnapshot {
-  reportedBytesPerSec: number;
-  peakBytesPerSec: number | null;
-  fullAverageBytesPerSec: number;
-  method: "stable-window" | "full-average";
-  totalBytes: number;
-  stabilityPct: number;
-  stabilityScore: number;
-  band: "low" | "medium" | "high";
-  serverAuthoritative: boolean;
-}
-interface LatencySnapshot {
-  reportedMs: number;
-  minMs: number | null;
-  p50Ms: number | null;
-  p95Ms: number | null;
-  jitterMs: number | null;
-  probeTimeoutPct: number | null;
-  method: "stable-window" | "full-average";
-  stabilityScore: number;
-  band: "low" | "medium" | "high";
-}
+/** Records saved before the lean result also carry now-unread descriptors; readers ignore them. */
+export type ThroughputSnapshot = ThroughputResult;
+type LatencySnapshot = LatencyResult;
 type ThroughputTransportKind = Extract<
   TransportKind,
   "fetch-stream" | "webtransport" | "webtransport-datagram"
@@ -120,19 +101,6 @@ function latencyTransportKind(
   return value === "websocket" || value === "webtransport" ? value : null;
 }
 
-function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
-  return (
-    value && {
-      ...value,
-      serverAuthoritative: value.serverAuthoritative === true,
-    }
-  );
-}
-function latency(value: LatencyResult | null): LatencySnapshot | null {
-  if (!value) return null;
-  const { idleMs: _headline, ...snapshot } = value;
-  return snapshot;
-}
 function historyText(value: string): string {
   return value.slice(0, MAX_HISTORY_TEXT_LENGTH);
 }
@@ -163,18 +131,18 @@ export function buildHistoryRecord(
     stages: {
       latency: {
         status: stages.latency,
-        result: latency(result.latency),
+        result: structuredClone(result.latency),
         lanes: latencyLanes(result.latencyByStage),
       },
       download: {
         status: stages.download,
-        result: throughput(result.download),
+        result: structuredClone(result.download),
       },
-      upload: { status: stages.upload, result: throughput(result.upload) },
+      upload: { status: stages.upload, result: structuredClone(result.upload) },
       bidirectional: {
         status: stages.bidirectional,
-        down: throughput(result.bidirectional?.down ?? null),
-        up: throughput(result.bidirectional?.up ?? null),
+        down: structuredClone(result.bidirectional?.down ?? null),
+        up: structuredClone(result.bidirectional?.up ?? null),
       },
     },
     bufferbloat: result.bufferbloat && structuredClone(result.bufferbloat),
@@ -317,11 +285,7 @@ function plain(value: unknown, depth = 0): boolean {
 const throughputShape = (value: unknown): boolean =>
   value === null ||
   (object(value) &&
-    numbers(value, [
-      "reportedBytesPerSec",
-      "fullAverageBytesPerSec",
-      "totalBytes",
-    ]) &&
+    numbers(value, ["reportedBytesPerSec", "totalBytes"]) &&
     numbers(value, ["peakBytesPerSec"], true));
 const wireShape = (value: unknown): boolean => {
   if (!object(value) || !object(value.breakdown)) return false;
@@ -390,10 +354,7 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
   return (
     lanes(latency.lanes) &&
     (latency.result === null ||
-      (object(latency.result) &&
-        numbers(latency.result, ["reportedMs"]) &&
-        numbers(latency.result, ["probeTimeoutPct"], true) &&
-        !((latency.result.probeTimeoutPct as number) > 100))) &&
+      (object(latency.result) && numbers(latency.result, ["reportedMs"]))) &&
     throughputShape((stages.download as Plain).result) &&
     throughputShape((stages.upload as Plain).result) &&
     throughputShape(bidirectional.down) &&
