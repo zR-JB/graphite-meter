@@ -10,7 +10,7 @@ use crate::{
         StageResult,
     },
     stream_plan::StageLanePlan,
-    transport::Transport,
+    transport::{TRANSFER_PROGRESS_TIMEOUT, Transport},
     upload::Upload,
 };
 use futures_util::{
@@ -21,7 +21,8 @@ use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     latency::LatencyAccumulator,
     measurement::{
-        AggregateMeasurements, Boundary, Direction, IntervalReason, Stage as TransferStage,
+        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, Direction, FINAL_CHECKPOINT_BUDGET,
+        IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
 use std::{
@@ -35,10 +36,18 @@ use tokio::{
     time::{Instant, MissedTickBehavior},
 };
 
+#[derive(Clone, Copy)]
+enum BoundaryKind {
+    Initial,
+    Sample,
+    Final,
+}
+
 struct Transfer {
     id: String,
     down: Option<Download>,
     up: Option<Upload>,
+    checkpoint_misses: u8,
 }
 
 struct StageResources {
@@ -71,11 +80,7 @@ impl std::error::Error for ParticipantFailure {
 struct AllParticipantsFailed(ParticipantFailure);
 impl std::fmt::Display for AllParticipantsFailed {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "all selected servers failed during stage preparation: {}",
-            self.0
-        )
+        write!(formatter, "all selected servers failed: {}", self.0)
     }
 }
 impl std::error::Error for AllParticipantsFailed {
@@ -232,11 +237,19 @@ impl StageResources {
         &mut self,
         completed: Result<Result<(), Error>, tokio::task::JoinError>,
         snapshots: &watch::Sender<Snapshot>,
+        latency_only: bool,
     ) -> Result<(), Error> {
         match completed? {
             Err(error) if error.is::<LatencyFailure>() => {
                 let failure = error.downcast::<LatencyFailure>()?;
                 self.record_latency_failure(&failure, snapshots);
+                if latency_only && self.stop_latency.values().all(|stop| *stop.borrow()) {
+                    return Err(AllParticipantsFailed(ParticipantFailure {
+                        id: failure.id,
+                        source: failure.source,
+                    })
+                    .into());
+                }
                 Ok(())
             }
             result => result,
@@ -256,7 +269,11 @@ impl StageResources {
             let failure = error.downcast::<LatencyFailure>()?;
             self.record_latency_failure(&failure, snapshots);
             if stage.is_none() && self.stop_latency.values().all(|stop| *stop.borrow()) {
-                return Err("all selected latency sessions failed".into());
+                return Err(AllParticipantsFailed(ParticipantFailure {
+                    id: failure.id,
+                    source: failure.source,
+                })
+                .into());
             }
             return Ok(());
         }
@@ -294,10 +311,10 @@ impl StageResources {
                 latency.latest_ms = None;
             }
         });
-        self.failed.push(failure.id);
+        self.failed.push(failure.id.clone());
         self.retired.spawn(transfer.close());
         if self.transfers.is_empty() {
-            return Err("all selected servers failed".into());
+            return Err(AllParticipantsFailed(*failure).into());
         }
         if measuring && let Some(stage) = stage {
             accounting.begin(
@@ -309,6 +326,7 @@ impl StageResources {
                 nanos(epoch.elapsed()),
                 IntervalReason::Dropout,
             );
+            accounting.observe(self.local_boundary(epoch));
         }
         Ok(())
     }
@@ -331,24 +349,52 @@ impl StageResources {
         boundary
     }
 
-    async fn boundary(&self, epoch: Instant) -> Result<Boundary, Error> {
+    async fn boundary(&mut self, epoch: Instant, kind: BoundaryKind) -> Result<Boundary, Error> {
         // Snapshot every local counter before waiting on any remote clock.
         // Parallel checkpoints prevent one server's RTT from shifting its peers.
         let mut boundary = self.local_boundary(epoch);
-        let checkpoints = self.transfers.iter().filter_map(|transfer| {
-            transfer.up.as_ref().map(|up| async move {
-                Ok::<_, Error>((
-                    transfer.id.clone(),
-                    up.checkpoint().await.map_err(|source| ParticipantFailure {
-                        id: transfer.id.clone(),
-                        source,
-                    })?,
-                ))
+        let budget = if matches!(kind, BoundaryKind::Final) {
+            FINAL_CHECKPOINT_BUDGET
+        } else {
+            CHECKPOINT_BUDGET
+        };
+        let checkpoints = self.transfers.iter_mut().filter_map(|transfer| {
+            let Transfer {
+                id,
+                up,
+                checkpoint_misses,
+                ..
+            } = transfer;
+            up.as_ref().map(|up| async move {
+                let result = up.checkpoint(budget).await;
+                match result {
+                    Ok(snapshot) => {
+                        *checkpoint_misses = 0;
+                        Ok::<_, Error>(Some((id.clone(), snapshot)))
+                    }
+                    Err(source) => {
+                        *checkpoint_misses += 1;
+                        if crate::net::authentication_required(source.as_ref()).is_some()
+                            || matches!(kind, BoundaryKind::Initial)
+                            || (matches!(kind, BoundaryKind::Sample) && *checkpoint_misses >= 3)
+                        {
+                            Err(ParticipantFailure {
+                                id: id.clone(),
+                                source,
+                            }
+                            .into())
+                        } else {
+                            Ok(None)
+                        }
+                    }
+                }
             })
         });
-        boundary
-            .up
-            .extend(futures_util::future::try_join_all(checkpoints).await?);
+        for result in futures_util::future::join_all(checkpoints).await {
+            if let Some(snapshot) = result? {
+                boundary.up.extend([snapshot]);
+            }
+        }
         Ok(boundary)
     }
 }
@@ -406,6 +452,7 @@ async fn start_transfer(
         id: server.entry.id.clone(),
         down: None,
         up: None,
+        checkpoint_misses: 0,
     };
     let started = tokio::time::timeout(timing.setup_timeout, async {
         if stage.downloads() || stage.uploads() {
@@ -704,7 +751,7 @@ pub(super) async fn measure(
                         task = resources.latency.join_next() => {
                             let task = task.ok_or("missing latency task")?;
                             if completed_stage {
-                                resources.latency_completion(task, snapshots)?;
+                                resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
                             } else {
                                 task??;
                                 return Err("latency session ended before readiness".into());
@@ -786,7 +833,7 @@ pub(super) async fn measure(
         if transfer_stage.is_some() {
             loop {
                 let result = {
-                    let checkpoint = resources.boundary(epoch);
+                    let checkpoint = resources.boundary(epoch, BoundaryKind::Initial);
                     tokio::pin!(checkpoint);
                     loop {
                         tokio::select! {
@@ -840,7 +887,12 @@ pub(super) async fn measure(
             );
             accounting.observe(boundary);
         }
-        let mut sample = tokio::time::interval(Duration::from_millis(500));
+        let mut progress: BTreeMap<String, (u64, Instant)> = resources
+            .transfers
+            .iter()
+            .map(|transfer| (transfer.id.clone(), (0, started)))
+            .collect();
+        let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
         sample.tick().await;
         snapshots.send_modify(|snapshot| {
@@ -869,7 +921,7 @@ pub(super) async fn measure(
                 _ = sample.tick() => {
                     let window = if transfer_stage.is_some() {
                         let boundary = {
-                            let checkpoint = resources.boundary(epoch);
+                            let checkpoint = resources.boundary(epoch, BoundaryKind::Sample);
                             tokio::pin!(checkpoint);
                             loop {
                                 tokio::select! {
@@ -886,7 +938,26 @@ pub(super) async fn measure(
                         };
                         let Some(boundary) = boundary else { break; };
                         match boundary {
-                            Ok(boundary) => accounting.observe(boundary),
+                            Ok(boundary) => {
+                                let stalled = resources.transfers.iter().find_map(|transfer| {
+                                    let bytes = boundary.down.get(&transfer.id).copied().unwrap_or_default()
+                                        .saturating_add(boundary.observed_up.get(&transfer.id).map_or(0, |up| up.maximum)
+                                            .max(boundary.up.get(&transfer.id).map_or(0, |up| up.bytes)));
+                                    let (previous, last_progress) = progress.get_mut(&transfer.id).unwrap();
+                                    if bytes != *previous {
+                                        *previous = bytes;
+                                        *last_progress = Instant::now();
+                                    }
+                                    (last_progress.elapsed() >= TRANSFER_PROGRESS_TIMEOUT).then(|| ParticipantFailure {
+                                        id: transfer.id.clone(), source: "stopped delivering bytes".into(),
+                                    })
+                                });
+                                let window = accounting.observe(boundary);
+                                if let Some(failure) = stalled {
+                                    resources.recover(failure.into(), &mut accounting, transfer_stage, true, epoch, snapshots)?;
+                                    None
+                                } else { window }
+                            },
                             Err(error) => {
                                 resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?;
                                 None
@@ -916,7 +987,7 @@ pub(super) async fn measure(
         resources.stop_all_latency();
         if transfer_stage.is_some() {
             loop {
-                match resources.boundary(epoch).await {
+                match resources.boundary(epoch, BoundaryKind::Final).await {
                     Ok(boundary) => {
                         accounting.observe(boundary);
                         break;
@@ -934,7 +1005,7 @@ pub(super) async fn measure(
         }
         resources.stop.send_replace(true);
         while let Some(result) = resources.latency.join_next().await {
-            resources.latency_completion(result, snapshots)?;
+            resources.latency_completion(result, snapshots, stage == Stage::Latency)?;
         }
         while let Some(Some(event)) = events.next().now_or_never() {
             latency.observe(event, started, end);
@@ -955,7 +1026,7 @@ pub(super) async fn measure(
     resources.stop_all_latency();
     let mut result = result;
     while let Some(joined) = resources.latency.join_next().await {
-        if let Err(error) = resources.latency_completion(joined, snapshots)
+        if let Err(error) = resources.latency_completion(joined, snapshots, stage == Stage::Latency)
             && result.is_ok()
         {
             result = Err(error);

@@ -38,7 +38,7 @@ impl Ui {
             usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
         let status_background = match self.snapshot.phase {
             Phase::Complete => self.theme.success,
-            Phase::Cancelled => self.theme.warning,
+            Phase::Cancelled | Phase::Partial => self.theme.warning,
             Phase::Failed => self.theme.error,
             _ => self.theme.brand_strong,
         };

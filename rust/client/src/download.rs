@@ -2,7 +2,7 @@
 use crate::{
     Error,
     net::Http,
-    transport::{TRANSFER_RETRY_BACKOFF, Transport},
+    transport::{TransferRetry, Transport},
     webtransport::{ConnectRejected, Session, SessionSlot},
 };
 use graphite_meter_core::{
@@ -199,48 +199,43 @@ async fn receive_http_lane(
     let lane = lane.to_string();
     let requested_bytes = HTTP_DOWNLOAD_BYTES.to_string();
     let mut announced = false;
+    let mut retry = TransferRetry::new();
     loop {
-        let response = transport
-            .receive(
-                Method::GET,
-                Route::Download,
-                &[("bytes", &requested_bytes), ("lane", &lane)],
-                HTTP_DOWNLOAD_BYTES,
-                duration,
-            )
-            .await;
-        let mut body = match response {
-            Ok(body) => body,
-            Err(error) if transport.retryable_transfer_error(&error) => {
-                tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
-                continue;
+        let mut moved = false;
+        let attempt = async {
+            let mut body = transport
+                .receive(
+                    Method::GET,
+                    Route::Download,
+                    &[("bytes", &requested_bytes), ("lane", &lane)],
+                    HTTP_DOWNLOAD_BYTES,
+                    duration,
+                )
+                .await?;
+            if !announced {
+                ready
+                    .send(())
+                    .await
+                    .map_err(|_| "download readiness receiver closed")?;
+                announced = true;
             }
-            Err(error) => return Err(error),
-        };
-        if !announced {
-            // A validated response proves the lane is established. Waiting
-            // for payload on every lane can deadlock preparation when QUIC
-            // shares a bounded send window across many large downloads.
-            ready
-                .send(())
-                .await
-                .map_err(|_| "download readiness receiver closed")?;
-            announced = true;
-        }
-        let mut received = 0_u64;
-        loop {
-            match body.chunk().await {
-                Ok(Some(chunk)) => {
-                    bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                    received += chunk.len() as u64;
-                }
-                Ok(None) => break,
-                Err(error) if transport.retryable_transfer_error(&error) => break,
-                Err(error) => return Err(error),
+            let mut received = 0;
+            while let Some(chunk) = body.chunk().await? {
+                bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+                received += chunk.len() as u64;
+                moved |= !chunk.is_empty();
             }
+            if received != HTTP_DOWNLOAD_BYTES {
+                return Err("download ended before its declared byte count".into());
+            }
+            Ok::<(), Error>(())
         }
-        if received != HTTP_DOWNLOAD_BYTES {
-            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
+        .await;
+        if let Err(error) = attempt {
+            let retryable = transport.retryable_transfer_error(&error);
+            retry.retry(error, moved, retryable).await?;
+        } else if moved {
+            retry.progressed();
         }
     }
 }
@@ -255,24 +250,30 @@ async fn receive_webtransport(
     datagrams: bool,
 ) -> Result<(), Error> {
     let mut announced = false;
+    let mut retry = TransferRetry::new();
     loop {
         let session = slot.current().await;
-        let result =
-            receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, datagrams).await;
+        let mut moved = false;
+        let result = receive_webtransport_chunk(
+            &session,
+            &bytes,
+            &ready,
+            &mut announced,
+            &mut moved,
+            datagrams,
+        )
+        .await;
         if let Err(error) = result {
-            if !session.retryable_failure(&error) {
-                return Err(error);
-            }
-            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
-            if !session.retryable_failure(&error) {
-                return Err(error);
-            }
+            let retryable = session.retryable_failure(&error);
+            retry.retry(error, moved, retryable).await?;
             if session.is_closed()
                 && let Err(error) = slot.reconnect(&session).await
                 && (error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>())
             {
                 return Err(error);
             }
+        } else if moved {
+            retry.progressed();
         }
     }
 }
@@ -282,10 +283,12 @@ async fn receive_webtransport_chunk(
     bytes: &AtomicU64,
     ready: &mpsc::Sender<()>,
     announced: &mut bool,
+    moved: &mut bool,
     datagrams: bool,
 ) -> Result<(), Error> {
     if datagrams {
         let chunk = session.recv_datagram().await?;
+        *moved |= !chunk.is_empty();
         record_webtransport(bytes, ready, announced, chunk.len())?;
         return Ok(());
     }
@@ -295,6 +298,7 @@ async fn receive_webtransport_chunk(
         received = received
             .checked_add(chunk.len() as u64)
             .ok_or("download byte count overflow")?;
+        *moved |= !chunk.is_empty();
         record_webtransport(bytes, ready, announced, chunk.len())?;
         if received > WT_STREAM_BYTES {
             return Err("WebTransport download exceeded its declared byte count".into());
@@ -325,11 +329,43 @@ fn record_webtransport(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::discovery::Protocol;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[tokio::test]
+    async fn http_lane_stops_retrying_when_responses_move_no_bytes() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let peer = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let _ = stream.read(&mut [0_u8; 4096]).await;
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n")
+                    .await;
+            }
+        });
+        let transport =
+            Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?;
+        let bytes = AtomicU64::new(0);
+        let (ready, _received) = mpsc::channel(1);
+        let result = timeout(
+            Duration::from_secs(3),
+            receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(30)),
+        )
+        .await?;
+        peer.abort();
+        assert!(result.unwrap_err().is::<reqwest::Error>());
+        assert_eq!(bytes.load(Ordering::Relaxed), 0);
+        Ok(())
+    }
 
     #[tokio::test]
     async fn http_lane_preserves_received_bytes_across_partial_responses() -> Result<(), Error> {

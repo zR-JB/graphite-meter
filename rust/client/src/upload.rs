@@ -1,7 +1,7 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    transport::{TRANSFER_RETRY_BACKOFF, Transport},
+    transport::{TransferRetry, Transport},
     webtransport::{ConnectRejected, SessionSlot},
 };
 use bytes::Bytes;
@@ -24,7 +24,6 @@ use tokio::{sync::watch, task::JoinSet, time::Instant};
 const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
-const CHECKPOINT_RECOVERY: Duration = Duration::from_secs(2);
 const MAX_LINE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -287,13 +286,13 @@ impl Upload {
         }
         Ok(())
     }
-    pub async fn checkpoint(&self) -> Result<ReceiverSnapshot, Error> {
+    pub async fn checkpoint(&self, budget: Duration) -> Result<ReceiverSnapshot, Error> {
         #[derive(Deserialize)]
         struct Count {
             bytes: u64,
             nanos: u64,
         }
-        let deadline = Instant::now() + CHECKPOINT_RECOVERY;
+        let deadline = Instant::now() + budget;
         loop {
             self.health()?;
             let requested_at_nanos = elapsed(self.epoch)?;
@@ -398,20 +397,24 @@ async fn send_lane(
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
     let lane = index.to_string();
+    let mut retry = TransferRetry::new();
     loop {
+        let moved = Arc::new(AtomicBool::new(false));
+        let moved_body = moved.clone();
         let active = active.clone();
         let block = block.clone();
         let body = futures_util::stream::unfold(
-            (block, REQUEST_BYTES, active),
-            |(block, remaining, active)| async move {
+            (block, REQUEST_BYTES, active, moved_body),
+            |(block, remaining, active, moved)| async move {
                 if remaining == 0 {
                     return None;
                 }
                 active.store(true, Ordering::Release);
+                moved.store(true, Ordering::Relaxed);
                 let size = remaining.min(block.len() as u64) as usize;
                 Some((
                     Ok::<_, Error>(block.slice(..size)),
-                    (block, remaining - size as u64, active),
+                    (block, remaining - size as u64, active, moved),
                 ))
             },
         );
@@ -424,17 +427,13 @@ async fn send_lane(
                 REQUEST_LIFETIME,
             )
             .await;
-        match result {
-            Ok(()) => {}
-            // A streaming HTTP request can end when its connection closes,
-            // including at a stage boundary. The upload session's receiver
-            // counter remains authoritative; a fresh request may continue it.
-            // HTTP status and local protocol errors stay fatal. HTTP/3
-            // reconnects through the transport's shared connection owner.
-            Err(error) if transport.retryable_transfer_error(&error) => {
-                tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
-            }
-            Err(error) => return Err(error),
+        if let Err(error) = result {
+            let retryable = transport.retryable_transfer_error(&error);
+            retry
+                .retry(error, moved.load(Ordering::Relaxed), retryable)
+                .await?;
+        } else {
+            retry.progressed();
         }
     }
 }
@@ -568,6 +567,7 @@ async fn send_wt_lane(
     datagrams: bool,
     block: Bytes,
     active: Arc<AtomicBool>,
+    moved: Arc<AtomicBool>,
 ) -> Result<(), Error> {
     if datagrams {
         let mut size = session
@@ -593,6 +593,7 @@ async fn send_wt_lane(
                 Err(error) => return Err(error),
             }
             active.store(true, Ordering::Release);
+            moved.store(true, Ordering::Relaxed);
             tokio::task::yield_now().await;
         }
     } else {
@@ -604,6 +605,7 @@ async fn send_wt_lane(
                 stream.write_chunk(block.slice(..size)).await?;
                 remaining -= size as u64;
                 active.store(true, Ordering::Release);
+                moved.store(true, Ordering::Relaxed);
             }
             stream.finish()?;
         }
@@ -616,19 +618,26 @@ async fn send_wt_reconnecting(
     block: Bytes,
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
+    let mut retry = TransferRetry::new();
     loop {
+        let moved = Arc::new(AtomicBool::new(false));
         let session = slot.current().await;
-        let error = match send_wt_lane(&session, datagrams, block.clone(), active.clone()).await {
+        let error = match send_wt_lane(
+            &session,
+            datagrams,
+            block.clone(),
+            active.clone(),
+            moved.clone(),
+        )
+        .await
+        {
             Ok(()) => return Ok(()),
             Err(error) => error,
         };
-        if !session.retryable_failure(&error) {
-            return Err(error);
-        }
-        tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
-        if !session.retryable_failure(&error) {
-            return Err(error);
-        }
+        let retryable = session.retryable_failure(&error);
+        retry
+            .retry(error, moved.load(Ordering::Relaxed), retryable)
+            .await?;
         if session.is_closed()
             && let Err(error) = slot.reconnect(&session).await
             && (error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>())
@@ -710,6 +719,7 @@ fn apply_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::TRANSFER_RETRY_BACKOFF;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -836,7 +846,9 @@ mod tests {
             progress: JoinSet::new(),
             session: None,
         };
-        let snapshot = upload.checkpoint().await?;
+        let snapshot = upload
+            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
+            .await?;
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(snapshot.received_at_nanos >= snapshot.requested_at_nanos);
         assert!(state_sender.borrow().latest.is_none());

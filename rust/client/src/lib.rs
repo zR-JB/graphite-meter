@@ -25,3 +25,7 @@ pub mod webtransport;
 pub mod ui;
 
 pub mod controller;
+
+#[cfg(test)]
+#[path = "../../test_identity.rs"]
+mod test_identity;

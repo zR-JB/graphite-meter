@@ -12,6 +12,8 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::test_identity;
+
 async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     download_peer_with_gate(None).await
 }
@@ -20,22 +22,62 @@ async fn download_peer_with_gate(
     gate: Option<Arc<Barrier>>,
 ) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{}", listener.local_addr()?);
+    let origin = format!("https://{}", listener.local_addr()?);
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    let (certificate, key) = test_identity::generate_identity()?;
+    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+        )?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
     let failed = Arc::new(AtomicU8::new(0));
     let flag = failed.clone();
     let first_request = Arc::new(AtomicBool::new(false));
+    let login_url = format!("{origin}/login");
     let server = tokio::spawn(async move {
         let mut clients = JoinSet::new();
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
-                    let Ok((mut stream, _)) = accepted else { break; };
+                    let Ok((stream, _)) = accepted else { break; };
                     let flag = flag.clone();
+                    let acceptor = acceptor.clone();
                     let gate = gate.clone();
                     let first_request = first_request.clone();
+                    let login_url = login_url.clone();
                     clients.spawn(async move {
+                        let Ok(mut stream) = acceptor.accept(stream).await else { return; };
                         let mut request = [0_u8; 4096];
-                        if stream.read(&mut request).await.is_err() { return; }
+                        let Ok(length) = stream.read(&mut request).await else { return; };
+                        let request = &request[..length];
+                        if request.starts_with(b"POST /upload/session") {
+                            let body = br#"{"uploadId":"test-session"}"#;
+                            let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                            let _ = stream.write_all(header.as_bytes()).await;
+                            let _ = stream.write_all(body).await;
+                            return;
+                        }
+                        if request.starts_with(b"GET /upload/progress") {
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
+                            while stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
+                            return;
+                        }
+                        if request.starts_with(b"POST /upload?") {
+                            while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {}
+                            return;
+                        }
+                        if request.starts_with(b"POST /upload/checkpoint") && flag.load(Ordering::SeqCst) == 0 {
+                            let body = br#"{"bytes":123,"nanos":456}"#;
+                            let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+                            let _ = stream.write_all(header.as_bytes()).await;
+                            let _ = stream.write_all(body).await;
+                            return;
+                        }
                         if !first_request.swap(true, Ordering::SeqCst)
                             && let Some(gate) = gate
                         {
@@ -45,13 +87,20 @@ async fn download_peer_with_gate(
                             tokio::time::sleep(Duration::from_secs(30)).await;
                             return;
                         }
+                        if flag.load(Ordering::SeqCst) == 3 {
+                            let _ = stream.write_all(format!("HTTP/1.1 403 Forbidden\r\nGraphite-Meter-Auth: required\r\nGraphite-Meter-Auth-Url: {login_url}\r\nContent-Length: 0\r\n\r\n").as_bytes()).await;
+                            return;
+                        }
                         if flag.load(Ordering::SeqCst) == 1 {
                             let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
                         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
                         let bytes = [0_u8; 65536];
-                        while stream.write_all(&bytes).await.is_ok() {
+                        while flag.load(Ordering::SeqCst) != 3 && stream.write_all(&bytes).await.is_ok() {
+                            if flag.load(Ordering::SeqCst) == 4 {
+                                std::future::pending::<()>().await;
+                            }
                             tokio::time::sleep(Duration::from_millis(5)).await;
                         }
                     });
@@ -69,7 +118,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     let gate = Arc::new(Barrier::new(2));
     let (near, _, near_task) = download_peer_with_gate(Some(gate.clone())).await?;
     let (far, _, far_task) = download_peer_with_gate(Some(gate)).await?;
-    let http = Http::new(false)?;
+    let http = Http::new(true)?;
     let servers = vec![
         prepared_download("near", &near, &http).await?,
         prepared_download("far", &far, &http).await?,
@@ -187,7 +236,7 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
             }
         }
     });
-    let http = Http::new(false)?;
+    let http = Http::new(true)?;
     let server = prepared_download("near", &origin, &http).await?;
     let config = Config {
         url: origin,
@@ -230,7 +279,7 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let _ = crate::crypto::provider().install_default();
     let (near, near_failed, near_task) = download_peer().await?;
     let (far, far_failed, far_task) = download_peer().await?;
-    let http = Http::new(false)?;
+    let http = Http::new(true)?;
     let servers = vec![
         prepared_download("near", &near, &http).await?,
         prepared_download("far", &far, &http).await?,
@@ -461,6 +510,7 @@ async fn latency_failure_preserves_payload_and_throughput_failure_stops_only_its
                 id: id.into(),
                 down: None,
                 up: None,
+                checkpoint_misses: 0,
             })
             .collect(),
         latency: JoinSet::new(),
@@ -530,6 +580,7 @@ async fn loaded_latency_failure_during_warmup_keeps_throughput_participant() {
             id: "near".into(),
             down: None,
             up: None,
+            checkpoint_misses: 0,
         }],
         latency: JoinSet::new(),
         stop,
@@ -578,4 +629,204 @@ fn requested_stop_does_not_hide_a_latency_error() {
     assert_eq!(failure.id, "near");
     assert_eq!(failure.source.to_string(), "observation queue full");
     assert!(latency_task_result("far".into(), Ok(()), false).is_err());
+}
+
+#[tokio::test]
+async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![prepared_download("peer", &origin, &http).await?];
+    let config = Config {
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(3),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let revoke = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        mode.store(3, Ordering::SeqCst);
+    };
+    let (result, ()) = tokio::join!(
+        measure(
+            Stage::Download,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled,
+            false
+        ),
+        revoke
+    );
+    peer.abort();
+    let error = result.unwrap_err();
+    assert!(
+        crate::net::authentication_required(error.as_ref()).is_some(),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (near, _, near_task) = download_peer().await?;
+    let (far, mode, far_task) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(4),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot {
+        servers: servers
+            .iter()
+            .map(|server| ServerSummary {
+                id: server.entry.id.clone(),
+                ..ServerSummary::default()
+            })
+            .collect(),
+        ..Snapshot::default()
+    });
+    let (_stop, cancelled) = watch::channel(false);
+    let stall = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        mode.store(4, Ordering::SeqCst);
+    };
+    let (result, ()) = tokio::join!(
+        measure(
+            Stage::Download,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled,
+            false
+        ),
+        stall
+    );
+    near_task.abort();
+    far_task.abort();
+    assert_eq!(result?, ["far"]);
+    let snapshot = observed.borrow();
+    let result = &snapshot.results[0];
+    assert!(!result.complete);
+    assert_eq!(
+        result.server_results[1].error.as_deref(),
+        Some("stopped delivering bytes")
+    );
+    assert!(result.down_bps.is_some());
+    assert!(result.server_results[0].down_bps.is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    let (healthy, _, healthy_peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let healthy_transport =
+        Arc::new(Transport::connect(http.clone(), &healthy, Protocol::Http1, true).await?);
+    let transport = Arc::new(Transport::connect(http, &origin, Protocol::Http1, true).await?);
+    let (stop, cancelled) = watch::channel(false);
+    let epoch = Instant::now();
+    let upload = Upload::start(transport, 1, epoch, cancelled.clone()).await?;
+    let healthy_upload = Upload::start(healthy_transport, 1, epoch, cancelled).await?;
+    let mut resources = StageResources {
+        transfers: vec![
+            Transfer {
+                id: "peer".into(),
+                down: None,
+                up: Some(upload),
+                checkpoint_misses: 0,
+            },
+            Transfer {
+                id: "healthy".into(),
+                down: None,
+                up: Some(healthy_upload),
+                checkpoint_misses: 0,
+            },
+        ],
+        latency: JoinSet::new(),
+        stop,
+        stop_latency: BTreeMap::new(),
+        retired: JoinSet::new(),
+        failed: Vec::new(),
+        latency_failed: false,
+    };
+    assert_eq!(
+        resources
+            .boundary(epoch, BoundaryKind::Initial)
+            .await?
+            .up
+            .len(),
+        2
+    );
+    mode.store(1, Ordering::SeqCst);
+    for _ in 0..2 {
+        assert!(
+            resources
+                .boundary(epoch, BoundaryKind::Sample)
+                .await?
+                .up
+                .contains_key("healthy")
+        );
+    }
+    mode.store(0, Ordering::SeqCst);
+    assert_eq!(
+        resources
+            .boundary(epoch, BoundaryKind::Sample)
+            .await?
+            .up
+            .len(),
+        2
+    );
+    mode.store(1, Ordering::SeqCst);
+    for _ in 0..2 {
+        assert!(
+            resources
+                .boundary(epoch, BoundaryKind::Sample)
+                .await?
+                .up
+                .contains_key("healthy")
+        );
+    }
+    assert!(
+        resources
+            .boundary(epoch, BoundaryKind::Final)
+            .await?
+            .up
+            .contains_key("healthy")
+    );
+    assert!(
+        resources
+            .boundary(epoch, BoundaryKind::Sample)
+            .await
+            .is_err()
+    );
+    mode.store(3, Ordering::SeqCst);
+    let error = resources
+        .boundary(epoch, BoundaryKind::Final)
+        .await
+        .unwrap_err();
+    assert!(crate::net::authentication_required(error.as_ref()).is_some());
+    drop(resources);
+    peer.abort();
+    healthy_peer.abort();
+    Ok(())
 }

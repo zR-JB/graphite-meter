@@ -376,21 +376,15 @@ pub async fn run(
         prepared.retain(|server| !failed.contains(&server.entry.id));
     }
     snapshots.send_modify(|snapshot| {
-        snapshot.phase = if *cancel.borrow() {
-            Phase::Cancelled
+        let partial = snapshot.servers.iter().any(|server| server.error.is_some())
+            || snapshot.results.iter().any(|result| !result.complete);
+        (snapshot.phase, snapshot.status) = if *cancel.borrow() {
+            (Phase::Cancelled, "Cancelled".into())
+        } else if partial {
+            (Phase::Partial, "Finished with partial results".into())
         } else {
-            Phase::Complete
+            (Phase::Complete, "Measurement complete".into())
         };
-        snapshot.status = if *cancel.borrow() {
-            "Cancelled"
-        } else if snapshot.servers.iter().any(|server| server.error.is_some())
-            || snapshot.results.iter().any(|result| !result.complete)
-        {
-            "Finished with partial results"
-        } else {
-            "Measurement complete"
-        }
-        .into();
     });
     Ok(())
 }

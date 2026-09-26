@@ -37,6 +37,7 @@ pub enum Phase {
     Warmup,
     Measuring,
     Complete,
+    Partial,
     Cancelled,
     Failed,
 }

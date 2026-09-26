@@ -18,7 +18,40 @@ use tokio::{
     time::{Instant, timeout_at},
 };
 
+pub(crate) const TRANSFER_PROGRESS_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+
+pub(crate) struct TransferRetry {
+    last_progress: Instant,
+}
+
+impl TransferRetry {
+    pub(crate) fn new() -> Self {
+        Self {
+            last_progress: Instant::now(),
+        }
+    }
+
+    pub(crate) fn progressed(&mut self) {
+        self.last_progress = Instant::now();
+    }
+
+    pub(crate) async fn retry(
+        &mut self,
+        error: Error,
+        moved: bool,
+        retryable: bool,
+    ) -> Result<(), Error> {
+        if moved {
+            self.last_progress = Instant::now();
+        }
+        if !retryable || self.last_progress.elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
+            return Err(error);
+        }
+        tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
+        Ok(())
+    }
+}
 
 pub struct Transport {
     http: Http,
@@ -50,6 +83,16 @@ impl Transport {
             return true;
         }
         if !self.is_http3() {
+            let mut cause = error.source();
+            while let Some(source) = cause {
+                if source
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
+                {
+                    return false;
+                }
+                cause = source.source();
+            }
             return error.is::<reqwest::Error>();
         }
         if let Some(stream) = error.downcast_ref::<h3::error::StreamError>() {
