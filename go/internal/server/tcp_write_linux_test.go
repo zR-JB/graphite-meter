@@ -7,23 +7,32 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// Model a receiver that drains TCP at a bounded rate. Keeping its receive
-// buffer small makes the server-side unsent queue the dominant source of delay.
-type pacedReadConn struct{ net.Conn }
+// pacedReadConn drains slowly through a small receive buffer, so the server's unsent queue fills; it counts
+// what it drained and closes drained at 4 MiB, by when the server has long filled any queue it keeps.
+type pacedReadConn struct {
+	net.Conn
+	read    *atomic.Int64
+	drained chan struct{}
+}
 
 func (c pacedReadConn) Read(p []byte) (int, error) {
-	time.Sleep(8 * time.Millisecond)
-	return c.Conn.Read(p[:min(len(p), 16<<10)])
+	time.Sleep(time.Millisecond)
+	n, err := c.Conn.Read(p[:min(len(p), 16<<10)])
+	if total := c.read.Add(int64(n)); total >= 4<<20 && total-int64(n) < 4<<20 {
+		close(c.drained)
+	}
+	return n, err
 }
 
 func TestHTTP2ControlIsNotTrappedBehindQueuedDownloads(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/download" {
-			_, _ = w.Write(make([]byte, 16<<20))
+			_, _ = w.Write(make([]byte, 64<<20))
 			return
 		}
 		_, _ = w.Write([]byte("ok"))
@@ -36,6 +45,8 @@ func TestHTTP2ControlIsNotTrappedBehindQueuedDownloads(t *testing.T) {
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	defer srv.Close()
+	var read atomic.Int64
+	drained := make(chan struct{})
 	tr := &http.Transport{
 		ForceAttemptHTTP2: true,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
@@ -50,7 +61,7 @@ func TestHTTP2ControlIsNotTrappedBehindQueuedDownloads(t *testing.T) {
 				c.Close()
 				return nil, err
 			}
-			return pacedReadConn{c}, nil
+			return pacedReadConn{c, &read, drained}, nil
 		},
 	}
 	defer tr.CloseIdleConnections()
@@ -71,21 +82,21 @@ func TestHTTP2ControlIsNotTrappedBehindQueuedDownloads(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); _, _ = io.Copy(io.Discard, download.Body) }()
 	defer func() { cancel(); download.Body.Close(); <-done }()
-	time.Sleep(200 * time.Millisecond)
-	control, stop := context.WithTimeout(t.Context(), 500*time.Millisecond)
-	defer stop()
-	req, err = http.NewRequestWithContext(control, http.MethodGet, srv.URL+"/control", nil)
+	<-drained
+	req, err = http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/control", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
+	before := read.Load()
 	response, err := client.Do(req)
 	if err != nil {
-		t.Fatalf("control delayed by queued download: %v", err)
+		t.Fatal(err)
 	}
 	defer response.Body.Close()
 	if _, err := io.Copy(io.Discard, response.Body); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("control completed in %v", time.Since(started))
+	if queued := read.Load() - before; queued > 1<<20 {
+		t.Fatalf("the control answer waited behind %d queued download bytes", queued)
+	}
 }
