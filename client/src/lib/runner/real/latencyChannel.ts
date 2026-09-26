@@ -117,7 +117,7 @@ export class LatencyChannel {
     this.teardown();
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
-    // Reply-driven uses this only for its deadline sweep; its sends are driven by PONGs and the worker's adaptive backup.
+    // Reply-driven uses this only for its deadline sweep; PONGs and the adaptive backup drive its sends.
     const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE_FLOOR_MS;
     // A loaded stage shares the link with the transfer, so its depth is the same either way; the idle stage goes.
     const maxInFlight = !isLatencyStage
@@ -150,7 +150,7 @@ export class LatencyChannel {
     this.#worker = worker;
   }
 
-  /* The worker owns RTT, probe deadlines and observation time; this channel translates only the cross-realm clock coordinate. */
+  /* The worker owns RTT, deadlines and observation time; this channel translates only the cross-realm clock. */
   measure(): void {
     this.#worker?.postMessage({ type: "measure" });
   }
