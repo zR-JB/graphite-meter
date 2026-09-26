@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,14 +139,14 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 
 	base := "http://" + addr
 	waitForOK(t, http.DefaultClient, base+"/preflight")
-
-	res, err := http.Get(base + "/preflight")
+	res, err := http.Get(base + "/")
 	if err != nil {
-		t.Fatalf("GET /preflight: %v", err)
+		t.Fatalf("GET /: %v", err)
 	}
 	defer res.Body.Close()
-	if ct := res.Header.Get("Content-Type"); ct == "" {
-		t.Fatal("preflight response carried no content type")
+	if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") ||
+		!strings.Contains(csp, "connect-src 'self'") || res.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("public page may be framed: %v", res.Header)
 	}
 }
 

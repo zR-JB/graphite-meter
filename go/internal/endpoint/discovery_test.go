@@ -97,7 +97,7 @@ func TestPublicConnectionPolicyKeepsSelfAndDNSSourcesForIPv6Page(t *testing.T) {
 	cfg := config.Default()
 	cfg.ServerCatalog.Servers = append(cfg.ServerCatalog.Servers, wire.ServerEntry{ID: "remote", Name: "Remote",
 		URL: "https://meter.example", AdditionalOrigins: []string{"https://[2001:db8::2]:7248"}})
-	policy := NewDiscovery(&cfg).ConnectPolicy(RequestHost(httptest.NewRequest(http.MethodGet, "http://[::1]:7246/",
+	policy := NewDiscovery(&cfg).PagePolicy(RequestHost(httptest.NewRequest(http.MethodGet, "http://[::1]:7246/",
 		nil)))
 	if strings.Contains(policy, "[") || !strings.Contains(policy, "connect-src 'self' ") ||
 		!strings.Contains(policy, "https://meter.example:*") {

@@ -31,7 +31,7 @@ type hostDiscovery struct {
 	servers    []byte
 	serversErr error
 	connect    []string // distinct cross-origin targets
-	csp        string   // the public page's connect-src policy
+	csp        string
 }
 
 // Request hostnames are untrusted, so the cache is bounded and cleared when full.
@@ -76,8 +76,8 @@ func (d *Discovery) ServeServers(w http.ResponseWriter, r *http.Request) {
 // ConnectOrigins lists distinct cross-origin measurement targets for host.
 func (d *Discovery) ConnectOrigins(host string) []string { return d.forHost(host).connect }
 
-// ConnectPolicy is the public page's connect-src policy for host.
-func (d *Discovery) ConnectPolicy(host string) string { return d.forHost(host).csp }
+// PagePolicy is the public page's Content-Security-Policy for host.
+func (d *Discovery) PagePolicy(host string) string { return d.forHost(host).csp }
 
 func (d *Discovery) build(host string) *hostDiscovery {
 	pf := d.preflightFor(host)
@@ -109,7 +109,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 			sources = append(sources, raw)
 		}
 	}
-	h.csp = "connect-src " + strings.Join(sources, " ")
+	h.csp = "frame-ancestors 'none'; connect-src " + strings.Join(sources, " ")
 	return h
 }
 

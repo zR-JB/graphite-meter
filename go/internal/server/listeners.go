@@ -175,7 +175,8 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		// Public pages use the same configured destination boundary as authenticated pages.
 		page := static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
 		spa = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Security-Policy", e.discovery.ConnectPolicy(endpoint.RequestHost(r)))
+			w.Header().Set("Content-Security-Policy", e.discovery.PagePolicy(endpoint.RequestHost(r)))
+			w.Header().Set("X-Frame-Options", "DENY")
 			page.ServeHTTP(w, r)
 		})
 	}
