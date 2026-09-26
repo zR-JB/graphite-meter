@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
@@ -19,15 +21,13 @@ func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
 			path := "/" + kind + "/ping"
 			mint := func() string {
 				t.Helper()
-				r := secureRequest(http.MethodPost, "/"+kind+"/session?target="+url.QueryEscape("https://meter.example"+path), nil)
+				r := secureRequest(http.MethodPost,
+					"/"+kind+"/session?target="+url.QueryEscape("https://meter.example"+path), nil)
 				r.Header.Set("Origin", "https://meter.example")
-				r = r.WithContext(context.WithValue(t.Context(), principalKey{}, sessionPrincipal(sess, "local", false)))
-				minter := s.MintWebSocketSessionToken
-				if kind == "wt" {
-					minter = s.MintWebTransportSessionToken
-				}
-				token, _, status := minter(r)
-				if status != WTMintOK {
+				r = r.WithContext(context.WithValue(t.Context(), principalKey{},
+					sessionPrincipal(sess, "local", false)))
+				token, _, status := s.mintSocketToken(r, route.Kind(kind))
+				if status != http.StatusOK {
 					t.Fatalf("mint status = %v", status)
 				}
 				return token
@@ -57,8 +57,10 @@ func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
 				t.Fatalf("downstream refusal = %d", response.Code)
 			}
 			refuse = false
-			if response := dial(token); response.Code != http.StatusForbidden || response.Header().Get("Graphite-Meter-Auth") != "required" {
-				t.Fatalf("replayed refused ticket = %d, auth = %q", response.Code, response.Header().Get("Graphite-Meter-Auth"))
+			if response := dial(token); response.Code != http.StatusForbidden ||
+				response.Header().Get("Graphite-Meter-Auth") != "required" {
+				t.Fatalf("replayed refused ticket = %d, auth = %q", response.Code,
+					response.Header().Get("Graphite-Meter-Auth"))
 			}
 			if dispatches != 1 {
 				t.Fatalf("spent ticket reached downstream handler: %d dispatches", dispatches)

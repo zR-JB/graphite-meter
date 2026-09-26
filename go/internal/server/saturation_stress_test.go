@@ -1,6 +1,6 @@
 //go:build stress && unix
 
-// The CPU column reads getrusage, so this harness is Unix-only; `just stress` is a measurement tool, never part of ci.
+// The CPU column reads getrusage, so this harness is Unix-only; `mise run stress` is a measurement tool, not CI.
 
 package server
 
@@ -30,19 +30,21 @@ func TestSaturationEnvelope(t *testing.T) {
 		c.MaxActiveSessions, c.MaxSessionsPerClient = 4096, 4096
 		c.MaxConnections, c.MaxConnectionsPerClient = 8192, 8192
 	}
-	h3Base, base := wtTestOrigins(t, liftCaps)
+	h3Base, base, _ := wtServer(t, liftCaps, nil)
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
-	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
-	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s", "cpu")
+	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); " +
+		"spammers are reply-driven ping chains")
+	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s",
+		"cpu")
 
-	// A second server whose sessions die every few seconds, so one scenario drives the redial and progress-handover paths.
-	_, redialBase := wtTestOrigins(t, func(c *config.Config) {
+	// A second server whose sessions die every few seconds drives the redial and progress-handover paths.
+	_, redialBase, _ := wtServer(t, func(c *config.Config) {
 		liftCaps(c)
 		// The session bound may not sit below the request bound, so both drop.
 		c.MaxOperationDuration = 5 * time.Second
 		c.MaxSessionDuration = 5 * time.Second
-	})
+	}, nil)
 
 	run := func(name string, mix loadMix) {
 		if mix.procs > 0 {
@@ -98,7 +100,8 @@ func TestSaturationEnvelope(t *testing.T) {
 			}
 			// Without this the row prints as a measurement taken under load when the load had in fact given up.
 			if exits := loaderExits.Load(); exits > 0 {
-				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names", name, bus.label, exits)
+				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names",
+					name, bus.label, exits)
 			}
 			t.Logf("%-28s %8s %8s %8s %5.1f%% %5.1f Gb %5.1f Gb %9.0f/s %5.0f%%",
 				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100,
@@ -143,7 +146,7 @@ func observe(t *testing.T, base, bus string) ([]time.Duration, float64) {
 	cfg.Stages = goclient.StageSet{Latency: true}
 	cfg.Warmup = 200 * time.Millisecond
 	cfg.LatencyDuration = 6 * time.Second
-	cfg.PingInterval = 20 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 20*time.Millisecond, 20*time.Millisecond
 	var rtts []time.Duration
 	var lost, total int
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -240,7 +243,8 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 		})
 }
 
-func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error, receive func(context.Context) (string, error)) error {
+func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error,
+	receive func(context.Context) (string, error)) error {
 	if err := send(); err != nil {
 		return err
 	}

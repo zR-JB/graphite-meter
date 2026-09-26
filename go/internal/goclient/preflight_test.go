@@ -1,183 +1,105 @@
 package goclient
 
 import (
+	"encoding/json/v2"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
-
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func TestHTTPEndpoint(t *testing.T) {
-	cases := []struct {
-		base, path, want string
-	}{
-		{"http://example.com", "/preflight", "http://example.com/preflight"},
-		{"http://example.com/", "/preflight", "http://example.com/preflight"},
-		{"http://example.com", "preflight", "http://example.com/preflight"},
-	}
-	for _, c := range cases {
-		got, err := httpEndpoint(c.base, c.path)
-		if err != nil {
-			t.Fatalf("httpEndpoint(%q, %q) error: %v", c.base, c.path, err)
-		}
-		if got != c.want {
-			t.Errorf("httpEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
-		}
-	}
-}
-
-func TestEndpointWithQueryReplacesGeneratedValues(t *testing.T) {
-	got, err := endpointWithQuery("https://meter.example/download?lane=old&keep=yes", url.Values{
-		"lane": {"2"}, "bytes": {"1024"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "https://meter.example/download?bytes=1024&keep=yes&lane=2"
-	if got != want {
-		t.Fatalf("endpointWithQuery() = %q, want %q", got, want)
-	}
-}
-
-func TestSelectTarget(t *testing.T) {
-	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
-	webTransport.Transport = wire.TransportWebTransport
-	h1 := testTransfer("http1-clear", "http://meter:7246", "http1", false)
-	h2 := testTransfer("http2", "https://meter:7248", "http2", true)
-	custom := testTransfer("edge-h2", "https://edge.example", "http2", true)
-	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{webTransport, h1, h2, custom}}}
-	for _, tc := range []struct{ selection, base, want string }{
-		{"auto", "https://meter:7248", "http2"},
-		{"auto", "http://meter:7246", "http1-clear"},
-		{"https://meter:7248", "http://discovery", "http2"},
-		{"https://edge.example", "http://discovery", "edge-h2"},
-	} {
-		got, err := selectTarget(Config{ThroughputTarget: tc.selection, BaseURL: tc.base, ThroughputTransport: wire.TransportFetchStream}, pf)
-		if err != nil || got.ID != tc.want {
-			t.Errorf("select %s = %+v, %v", tc.selection, got, err)
-		}
-	}
-	if _, err := selectTarget(Config{ThroughputTarget: "https://missing.example", ThroughputTransport: "auto"}, pf); err == nil {
-		t.Fatal("target absent from the catalog was selected")
-	}
-}
-
-func TestSelectTargetNormalizesDefaultPort(t *testing.T) {
-	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
-		testTransfer("native-h1", "https://meter.example:443", "http1", true),
-		testTransfer("native-h2", "https://meter.example:7248", "http2", true),
-	}}}
-	got, err := selectTarget(Config{ThroughputTarget: "auto", BaseURL: "https://meter.example", ThroughputTransport: "auto"}, pf)
-	if err != nil || got.ID != "native-h1" {
-		t.Fatalf("automatic default-port target = %+v, %v", got, err)
-	}
-}
-
-func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
-	pf := wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: []wire.ThroughputTarget{
-		testTransfer("native-h1", "https://meter.example:443", "http1", true),
-	}}}
-	throughput, err := selectTarget(Config{ThroughputTarget: "https://meter.example", ThroughputTransport: "auto"}, pf)
-	if err != nil || throughput.ID != "native-h1" {
-		t.Fatalf("explicit throughput target = %+v, %v", throughput, err)
-	}
-	latency, err := selectLatencyTarget(Config{LatencyTarget: "https://meter.example", BaseURL: "http://discovery", LatencyTransport: "auto"}, []wire.LatencyTarget{
-		testChannel("native-h1", "https://meter.example:443", true),
-	})
-	if err != nil || latency.ID != "native-h1" {
-		t.Fatalf("explicit latency target = %+v, %v", latency, err)
-	}
-}
-
-func TestTargetProtocolEvidence(t *testing.T) {
-	for protocol, want := range map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"} {
-		if got := targetProtocolEvidence(protocol); got != want {
-			t.Errorf("targetProtocolEvidence(%q) = %q, want %q", protocol, got, want)
-		}
-	}
-}
-
-func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
-	targets := []wire.LatencyTarget{
-		testChannel("ws-http1-clear", "http://meter:7246", false),
-		testChannel("ws-http1-tls", "https://meter:7247", true),
-	}
-	if auto, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter:7248", LatencyTransport: "auto"}, targets); err == nil || auto != nil {
-		t.Fatalf("ambiguous automatic target = %+v, %v", auto, err)
-	}
-	explicit, err := selectLatencyTarget(Config{LatencyTarget: "http://meter:7246", BaseURL: "http://meter:7246", LatencyTransport: "auto"}, targets)
-	if err != nil || explicit.ID != "ws-http1-clear" {
-		t.Fatalf("explicit target = %+v, %v", explicit, err)
-	}
-}
-
-func TestSelectLatencyTargetFindsLaterSameOriginInHybridCatalog(t *testing.T) {
-	targets := []wire.LatencyTarget{
-		testChannel("ws-http1-clear", "http://meter.example:7246", false),
-		testChannel("ws-http1-tls", "https://meter.example:7247", true),
-		testChannel("https://meter.example", "https://meter.example", true),
-	}
-	got, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter.example", LatencyTransport: "auto"}, targets)
-	if err != nil || got.ID != "https://meter.example" {
-		t.Fatalf("automatic hybrid latency target = %+v, %v", got, err)
-	}
-}
-
-func TestSelectLatencyTargetNormalizesDefaultPort(t *testing.T) {
-	targets := []wire.LatencyTarget{
-		testChannel("native-clear", "http://meter.example:7246", false),
-		testChannel("proxy", "https://meter.example:443", true),
-	}
-	got, err := selectLatencyTarget(Config{LatencyTarget: "auto", BaseURL: "https://meter.example", LatencyTransport: "auto"}, targets)
-	if err != nil || got.ID != "proxy" {
-		t.Fatalf("automatic default-port latency target = %+v, %v", got, err)
-	}
-}
-
-func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
-	return wire.ThroughputTarget{ID: id, Origin: origin, Transport: "fetch-stream", Protocol: protocol, TLS: tls, Routes: wire.DefaultThroughputRoutes()}
-}
-
-func testChannel(id, origin string, tls bool) wire.LatencyTarget {
-	return wire.LatencyTarget{ID: id, Origin: origin, Transport: "websocket", Protocol: "http1", TLS: tls, Routes: wire.DefaultLatencyRoutes()}
-}
-
-func attachTestLatencyTarget(r *runner, origin string) {
-	c := testChannel("test-ws", origin, false)
-	r.latencyTarget = new(c)
-}
-
-func TestWSEndpoint(t *testing.T) {
-	cases := []struct {
-		name, base, path, want string
-	}{
-		{"https scheme becomes wss", "https://example.com", "/ws/ping", "wss://example.com/ws/ping"},
-		{"http scheme becomes ws", "http://example.com", "/ws/ping", "ws://example.com/ws/ping"},
-		{"unrecognized scheme passed through", "ftp://example.com", "/ws/ping", "ftp://example.com/ws/ping"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := wsEndpoint(c.base, c.path)
-			if err != nil {
-				t.Fatalf("wsEndpoint error: %v", err)
-			}
-			if got != c.want {
-				t.Errorf("wsEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
-			}
+func ambiguousFetch(extra ...wire.ThroughputTarget) http.HandlerFunc {
+	targets := append([]wire.ThroughputTarget{
+		testTransfer("one", "http://one.example", "negotiated", false),
+		testTransfer("two", "http://two.example", "negotiated", false),
+	}, extra...)
+	return func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.MarshalWrite(w, wire.Preflight{
+			Generation:   "test",
+			Capabilities: wire.Capabilities{ThroughputTargets: targets},
 		})
 	}
 }
 
+func TestTargetSelection(t *testing.T) {
+	t.Parallel()
+	type throughput = []wire.ThroughputTarget
+	type latency = []wire.LatencyTarget
+	fetch, wt, ws := wire.TransportFetchStream, wire.TransportWebTransport, wire.TransportWebSocket
+	h1 := testTransfer("h1", "http://meter:7246", "http1", false)
+	h2 := testTransfer("h2", "https://meter:7248", "http2", true)
+	edge := testTransfer("edge", "https://edge.example", "http2", true)
+	fetch3 := testTransfer("fetch3", "https://meter:7249", "http3", true)
+	wt3 := testTransfer("wt3", "https://meter:7249", "http3", true)
+	wt3.Transport = wt
+	port443 := testTransfer("443", "https://meter.example:443", "http1", true)
+	port7248 := testTransfer("7248", "https://meter.example:7248", "http2", true)
+	for _, c := range []struct {
+		name, base, target, transport, protocol string
+		targets                                 []wire.ThroughputTarget
+		want                                    string
+	}{
+		{"base origin first", "https://meter:7248", "auto", fetch, "auto", throughput{wt3, h1, h2, edge}, "h2"},
+		{"explicit origin", "http://discovery", "https://edge.example", fetch, "auto", throughput{h1, edge}, "edge"},
+		{"absent origin", "http://discovery", "https://missing.example", "auto", "auto", throughput{h1}, ""},
+		{"ambiguous", "http://discovery", "auto", "auto", "auto", throughput{h1, h2}, ""},
+		{"protocol narrows", "http://discovery", "auto", "auto", "http2", throughput{h1, h2}, "h2"},
+		{"default port", "https://meter.example", "auto", "auto", "auto", throughput{port443, port7248}, "443"},
+		{"explicit default port", "http://discovery", "https://meter.example", "auto", "auto",
+			throughput{port443}, "443"},
+		{"fetch first", "https://meter:7249", "auto", "auto", "auto", throughput{fetch3, wt3}, "fetch3"},
+		{"WebTransport alone", "https://meter:7249", "auto", "auto", "auto", throughput{wt3}, "wt3"},
+		{"explicit WebTransport", "https://meter:7249", "auto", wt, "auto", throughput{fetch3, wt3}, "wt3"},
+		{"no silent fallback", "http://meter:7246", "auto", wt, "auto", throughput{h1}, ""},
+	} {
+		cfg := Config{BaseURL: c.base, ThroughputTarget: c.target, ThroughputTransport: c.transport,
+			ThroughputProtocol: c.protocol}
+		got, err := selectTarget(cfg, wire.Preflight{Capabilities: wire.Capabilities{ThroughputTargets: c.targets}})
+		if c.want == "" && err == nil || c.want != "" && (err != nil || got.ID != c.want) {
+			t.Errorf("throughput %s = %+v, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+
+	ws1 := testChannel("ws1", "http://meter:7246", false)
+	ws2 := testChannel("ws2", "https://meter:7247", true)
+	proxy := testChannel("proxy", "https://meter.example:443", true)
+	wtPing := testChannel("wtping", "https://meter:7249", true)
+	wtPing.Transport, wtPing.Protocol = wt, "http3"
+	for _, c := range []struct {
+		name, base, target, transport string
+		targets                       []wire.LatencyTarget
+		want                          string
+	}{
+		{"ambiguous", "https://meter:7248", "auto", "auto", latency{ws1, ws2}, ""},
+		{"explicit origin", "https://meter:7248", "http://meter:7246", "auto", latency{ws1, ws2}, "ws1"},
+		{"later base origin", "https://meter.example", "auto", "auto",
+			latency{ws1, ws2, testChannel("self", "https://meter.example", true)}, "self"},
+		{"default port", "https://meter.example", "auto", "auto",
+			latency{testChannel("clear", "http://meter.example:7246", false), proxy}, "proxy"},
+		{"explicit default port", "http://discovery", "https://meter.example", "auto", latency{proxy}, "proxy"},
+		{"WebTransport first", "https://meter:7249", "auto", "auto", latency{ws2, wtPing}, "wtping"},
+		{"explicit WebSocket", "https://meter:7249", "auto", ws, latency{ws2, wtPing}, "ws2"},
+		{"no silent fallback", "http://meter:7246", "auto", wt, latency{ws1}, ""},
+	} {
+		cfg := Config{BaseURL: c.base, LatencyTarget: c.target, LatencyTransport: c.transport}
+		got, err := selectLatencyTarget(cfg, c.targets)
+		if c.want == "" && err == nil || c.want != "" && (err != nil || got.ID != c.want) {
+			t.Errorf("latency %s = %+v, %v; want %q", c.name, got, err, c.want)
+		}
+	}
+}
+
 func TestGetPreflight(t *testing.T) {
+	t.Parallel()
 	t.Run("decodes valid JSON", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0","generation":"test","capabilities":{"throughput":[],"latency":[]}}`))
+			_, _ = io.WriteString(w, `{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0",`+
+				`"generation":"test","capabilities":{"throughput":[],"latency":[]}}`)
 		}))
 		defer srv.Close()
 
@@ -190,6 +112,28 @@ func TestGetPreflight(t *testing.T) {
 		}
 		if pf.EngineVersion != "1.0" {
 			t.Errorf("EngineVersion = %q", pf.EngineVersion)
+		}
+	})
+
+	t.Run("rejects terminal controls in server identity", func(t *testing.T) {
+		for _, name := range []string{`\u001b]52;c;cHduZWQ=\u0007`, `\u009b2J`} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, `{"server":{"name":"`+name+`"},"engineVersion":"1.0",`+
+					`"generation":"test","capabilities":{"throughput":[],"latency":[]}}`)
+			}))
+			_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
+			srv.Close()
+			if err == nil {
+				t.Fatalf("accepted server name %s", name)
+			}
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, `{"defaultSelection":["self"],"servers":[{"id":"self","url":".",`+
+				`"name":"Meter","location":"\u001b]0;owned\u0007"}]}`)
+		}))
+		defer srv.Close()
+		if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}, credential{}); err == nil {
+			t.Fatal("accepted a catalogue location with terminal controls")
 		}
 	})
 
@@ -223,11 +167,14 @@ func TestGetPreflight(t *testing.T) {
 	})
 }
 
-func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
+func TestVerifyLatencyRequiresMatchingProbeReply(t *testing.T) {
+	t.Parallel()
 	for _, matching := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unmatched", true: "matched"}[matching], func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{
+					CompressionMode: websocket.CompressionDisabled,
+				})
 				if err != nil {
 					return
 				}
@@ -250,9 +197,9 @@ func TestVerifyLatencyWebSocketRequiresMatchingProbeReply(t *testing.T) {
 			}))
 			defer server.Close()
 			target := testChannel(server.URL, server.URL, false)
-			err := verifyLatencyWebSocket(t.Context(), server.Client(), &target)
-			if (err == nil) != matching {
-				t.Fatalf("readiness error = %v, matching reply = %v", err, matching)
+			rtt, err := verifyLatency(t.Context(), credential{}, server.Client(), &target)
+			if (err == nil) != matching || matching && rtt <= 0 {
+				t.Fatalf("readiness = %v, %v; matching reply = %v", rtt, err, matching)
 			}
 		})
 	}

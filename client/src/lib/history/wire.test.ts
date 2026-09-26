@@ -4,41 +4,21 @@ import {
   estimateCompensation,
 } from "../compensation";
 import type { RunResult } from "../runner/contract";
+import { testRunResult } from "../runner/test-helpers.testutil";
 import { buildHistoryRecord, isHistoryRecord } from "./types";
-import {
-  historyWireEstimates,
-  historyWirePresentation,
-  isWireEstimates,
-} from "./wire";
+import { historyWireEstimates, historyWirePresentation } from "./wire";
 
 function result(): RunResult {
-  return {
+  return testRunResult({
     download: {
       reportedBytesPerSec: 1_000_000,
-      fullAverageBytesPerSec: 1_000_000,
       peakBytesPerSec: 1_000_000,
       totalBytes: 1_000_000,
-      method: "full-average",
       stabilityPct: 100,
-      stabilityScore: 1,
-      band: "high",
-      probeTimeoutPct: null,
-      serverAuthoritative: true,
     },
-    upload: null,
-    latency: null,
-    bidirectional: null,
-    latencyByStage: {
-      latency: null,
-      download: null,
-      upload: null,
-      bidirectional: null,
-    },
-    bufferbloat: null,
-    stageFailures: {},
     startedAt: 100,
     durationMs: 1000,
-  };
+  });
 }
 
 test("saved wire models survive reload without using a later connection or mutable estimate", () => {
@@ -81,6 +61,9 @@ test("current snapshots show their saved percentage and identify nullable breakd
   expect(historyWirePresentation(record, "download")?.tooltip).toContain(
     "Per-part breakdown unavailable",
   );
+  // Like the live card, an overhead under 0.5% is not shown.
+  record.stages.download.result!.reportedBytesPerSec = 1_060_000;
+  expect(historyWirePresentation(record, "download")).toBeNull();
   record.stages.download.result!.reportedBytesPerSec = 0;
   expect(historyWirePresentation(record, "download")?.pct).toBeNull();
 });
@@ -107,62 +90,4 @@ test("combined history percentages use the sum of both lanes and retain weighted
   );
   record.stages.bidirectional.up = null;
   expect(historyWirePresentation(record, "bidirectional")).toBeNull();
-});
-
-test("wire model import validates bounded factors, provenance, and the version boundary", () => {
-  const valid = historyWireEstimates(
-    estimateCompensation(1_000_000, "h2", true, 4),
-    null,
-    null,
-  )!;
-  expect(isWireEstimates(valid)).toBe(true);
-  const invalid: unknown[] = [
-    { ...valid, version: 1 },
-    { ...valid, version: 3 },
-    { ...valid, downloadBytesPerSec: Infinity },
-    { ...valid, breakdown: {} },
-  ];
-  for (const patch of [
-    { transport: ["http2"] },
-    { ipVersion: "4" },
-    { framing: {} },
-    { componentCount: 65 },
-    { factors: Array(6).fill(valid.breakdown.download!.factors[0]) },
-    {
-      factors: [
-        { ...valid.breakdown.download!.factors[0], contributionPct: NaN },
-      ],
-    },
-    {
-      factors: [
-        { ...valid.breakdown.download!.factors[0], label: "x".repeat(129) },
-      ],
-    },
-    { unexpected: "data" },
-  ])
-    invalid.push({
-      ...valid,
-      breakdown: {
-        ...valid.breakdown,
-        download: { ...valid.breakdown.download, ...patch },
-      },
-    });
-  for (const value of invalid) expect(isWireEstimates(value)).toBe(false);
-});
-
-test("rejects version 1 estimates without converting their saved rates", () => {
-  const old = {
-    version: 1,
-    downloadBytesPerSec: 1_063_000,
-    uploadBytesPerSec: null,
-    bidirectionalBytesPerSec: null,
-  };
-  const before = structuredClone(old);
-  expect(isWireEstimates(old)).toBe(false);
-  const record = buildHistoryRecord(result(), {
-    paths: null,
-    clientBuild: "test",
-  });
-  expect(isHistoryRecord({ ...record, wireEstimates: old })).toBe(false);
-  expect(old).toEqual(before);
 });

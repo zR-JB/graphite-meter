@@ -1,6 +1,10 @@
 // Own ping-worker lifetime and route observations into the active stage or idle view.
-import type { CoreHost } from "../core";
-import type { RunnerEvent, TransportKind } from "../contract";
+import type { ParticipantHost } from "../transport";
+import type {
+  ConnectivityState,
+  LatencyBucket,
+  PingCadence,
+} from "../contract";
 import type { LatencyTarget } from "../../api/endpoints";
 import { authEnabled } from "../../auth";
 import {
@@ -9,12 +13,11 @@ import {
   ServerAuthenticationRequired,
   type ServerCredentials,
 } from "../../servers/credentials";
-import { httpToWs } from "./backendPure";
-import { pingWorker } from "./workerPool";
-import { TransportUnavailableError } from "./transportError";
+import { httpToWs, ROUTES } from "../paths";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
-import { singleLatencyBucket } from "../latencyBuckets";
+import { singleLatencyBucket } from "../series";
 import { fixedPingIntervalMs } from "../pingCadence";
+import { PROBE_DEADLINE } from "../workers/rttEstimator";
 import {
   pingSampleContextTime,
   PING_STOP_MARGIN_MS,
@@ -23,8 +26,6 @@ import {
 } from "../workers/pingSample";
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_LOSS_K = 4;
-const PING_LOSS_FLOOR_MS = 250;
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
@@ -38,38 +39,56 @@ const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
-/* The bus URL for a target, or null when the target does not speak `kind`. */
-function pingUrl(
-  target: LatencyTarget | null,
-  kind: TransportKind,
-): string | null {
-  if (!target || target.transport !== kind) return null;
-  return target.transport === "webtransport"
-    ? target.origin + target.routes.wtPing
-    : httpToWs(target.origin) + target.routes.ping;
-}
-
-/* Token mint for a WebTransport ping dial, when authentication is on. */
-function pingMint(
-  target: LatencyTarget | null,
-  credentials?: ServerCredentials,
-) {
-  if (!target) return undefined;
-  return target.transport === "webtransport"
-    ? socketMint(credentials, target.origin, target.routes.wtPing, "wt")
-    : socketMint(credentials, target.origin, target.routes.ping, "ws");
+/** Starts a ping worker on the target's bus; `failed` hears a worker that cannot load. */
+function startPingWorker(
+  target: LatencyTarget,
+  credentials: ServerCredentials | undefined,
+  pacing: { intervalMs: number; replyDriven: boolean; maxInFlight: number },
+  on: (msg: PingWorkerEvent) => void,
+  failed: (detail: string) => void,
+): Worker {
+  const wt = target.transport === "webtransport";
+  const route = wt ? ROUTES.wtPing : ROUTES.ping;
+  const worker = new Worker(
+    new URL("../workers/ping-worker.ts", import.meta.url),
+    { type: "module" },
+  );
+  worker.onmessage = (e: MessageEvent<PingWorkerEvent>) => on(e.data);
+  worker.onerror = (e: ErrorEvent) => failed(e.message || "ping worker error");
+  worker.postMessage({
+    type: "start",
+    url: (wt ? target.origin : httpToWs(target.origin)) + route,
+    transport: target.transport,
+    mint: socketMint(credentials, target.origin, route, wt ? "wt" : "ws"),
+    ...pacing,
+    deadlineK: PROBE_DEADLINE.k,
+    deadlineFloorMs: PROBE_DEADLINE.floorMs,
+    checkAuthentication: credentials
+      ? credentials.kind === "session"
+      : authEnabled(),
+  });
+  return worker;
 }
 
 interface LatencyChannelDeps {
   credentials?: ServerCredentials;
-  host: CoreHost;
+  host: Pick<
+    ParticipantHost,
+    | "latency"
+    | "latencyInterrupted"
+    | "latencyIncomplete"
+    | "stallLatency"
+    | "resumeLatency"
+    | "authenticationRequired"
+  >;
   target: LatencyTarget;
-  /* Reconnect edges reported by the ping worker. */
-  stall: (detail: string) => void;
-  resume: () => void;
+  ready?: () => void;
   /** Window-realm performance origin. Injectable only for deterministic cross-realm timestamp tests. */
   timeOriginMs?: number;
 }
+export type IdleEvent =
+  | { type: "latency"; sample: LatencyBucket }
+  | { type: "connectivity"; state: ConnectivityState };
 
 /* The stage-owned ping channel: one per stage (idle latency, then each loaded transfer stage). */
 export class LatencyChannel {
@@ -94,20 +113,13 @@ export class LatencyChannel {
   }
 
   /* The ping worker owns the bus and the ping algorithm. */
-  prime(isLatencyStage = false): void {
+  prime(cadence: PingCadence, isLatencyStage = false): void {
     this.teardown();
-    const host = this.#deps.host;
-    const cfg = host.config!;
-    const channel = this.#deps.target;
-    const kind = channel.transport;
-    const url = pingUrl(channel, kind);
-    if (!url) throw new Error("latency target not resolved");
-    const cadence = isLatencyStage ? cfg.pingCadence : cfg.loadedPingCadence;
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
-    // Reply-driven uses this only for its loss sweep; its sends are driven by PONGs and the worker's adaptive backup.
-    const intervalMs = fixedIntervalMs ?? PING_LOSS_FLOOR_MS;
-    // A loaded stage shares the link with the transfer, so its depth is the same either way; the idle stage goes.
+    // Reply-driven uses this only for its deadline sweep; PONGs and the adaptive backup drive its sends.
+    const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE.floorMs;
+    // A loaded stage shares the link with its transfer, so its depth stays low at any cadence.
     const maxInFlight = !isLatencyStage
       ? PING_LOADED_MAX_IN_FLIGHT
       : replyDriven
@@ -116,43 +128,29 @@ export class LatencyChannel {
 
     this.#cutoffEpochMs = null;
     this.#active = true;
-    // A bus that never establishes reports nothing at all — a hung handshake produces no samples and no stall — so.
+    // A hung handshake yields no samples and no stall, so establishment has its own deadline.
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
-      const detail = "ping connection could not be established";
-      this.#deps.stall(detail);
+      this.#deps.host.stallLatency("ping connection could not be established");
     }, PING_ESTABLISH_TIMEOUT_MS);
-    const worker = pingWorker();
-    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
-      if (this.#worker === worker) this.#onMessage(e.data);
-    };
-    worker.onerror = (e: ErrorEvent): void => {
-      if (this.#worker !== worker) return;
-      this.#deps.host.ingestLatencyAccountingIncomplete();
-      this.#onMessage({
-        type: "stall",
-        detail: e.message || "ping worker error",
-      });
-      if (this.#worker === worker) this.teardown();
-    };
+    const worker: Worker = startPingWorker(
+      this.#deps.target,
+      this.#deps.credentials,
+      { intervalMs, replyDriven, maxInFlight },
+      (msg) => {
+        if (this.#worker === worker) this.#onMessage(msg);
+      },
+      (detail) => {
+        if (this.#worker !== worker) return;
+        this.#deps.host.latencyIncomplete();
+        this.#onMessage({ type: "stall", detail });
+        if (this.#worker === worker) this.teardown();
+      },
+    );
     this.#worker = worker;
-    worker.postMessage({
-      type: "start",
-      url,
-      transport: kind,
-      mint: pingMint(channel, this.#deps.credentials),
-      intervalMs,
-      replyDriven,
-      maxInFlight,
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: this.#deps.credentials
-        ? this.#deps.credentials.kind === "session"
-        : authEnabled,
-    });
   }
 
-  /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
+  /* The worker owns RTT, deadlines and observation time; this channel translates only the cross-realm clock. */
   measure(): void {
     this.#worker?.postMessage({ type: "measure" });
   }
@@ -174,16 +172,20 @@ export class LatencyChannel {
     });
     const timer = setTimeout(() => {
       if (this.#worker !== worker) return;
-      this.#deps.host.ingestLatencyAccountingIncomplete();
-      this.#deps.stall("ping worker did not finish its pending probes");
+      this.#deps.host.latencyIncomplete();
+      this.#deps.host.stallLatency(
+        "ping worker did not finish its pending probes",
+      );
       if (this.#worker === worker) this.teardown();
     }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
     this.#finishing = { promise, resolve, timer };
     try {
       worker.postMessage({ type: "stop", cutoffEpochMs: this.#cutoffEpochMs });
     } catch {
-      this.#deps.host.ingestLatencyAccountingIncomplete();
-      this.#deps.stall("ping worker could not finalize its pending probes");
+      this.#deps.host.latencyIncomplete();
+      this.#deps.host.stallLatency(
+        "ping worker could not finalize its pending probes",
+      );
       if (this.#worker === worker) this.teardown();
     }
     return promise;
@@ -191,7 +193,7 @@ export class LatencyChannel {
 
   /** Hard stage failure cannot establish which buffered or pending outcomes were discarded. */
   discard(): void {
-    if (this.#worker) this.#deps.host.ingestLatencyAccountingIncomplete();
+    if (this.#worker) this.#deps.host.latencyIncomplete();
     this.teardown();
   }
 
@@ -216,9 +218,13 @@ export class LatencyChannel {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
       this.teardown();
-      reportServerAuthentication(this.#deps.credentials);
-      this.#deps.host.ingestLatencyAccountingIncomplete();
-      this.#deps.stall("Sign in again to measure latency");
+      reportServerAuthentication(
+        this.#deps.credentials,
+        this.#deps.host,
+        "latency",
+      );
+      this.#deps.host.latencyIncomplete();
+      this.#deps.host.stallLatency("Sign in again to measure latency");
       return;
     }
     switch (msg.type) {
@@ -231,22 +237,22 @@ export class LatencyChannel {
             (sample.sentAtEpochMs ?? -Infinity) > this.#cutoffEpochMs
           )
             continue;
-          host.ingestLatency({
+          host.latency({
             rttMs: sample.rtt,
             reflectorHandlingMs: sample.reflectorHandlingMs,
-            lost: sample.lost,
+            timedOut: sample.timedOut,
             observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
             rttEligible:
               this.#cutoffEpochMs === null ||
               sample.observedAtEpochMs <= this.#cutoffEpochMs,
           });
         }
-        if (!this.#finishing && msg.samples.some((sample) => !sample.lost))
-          this.#deps.resume();
+        if (!this.#finishing && msg.samples.some((sample) => !sample.timedOut))
+          this.#deps.host.resumeLatency();
         break;
       }
       case "interrupted":
-        this.#deps.host.ingestLatencyInterruption(
+        this.#deps.host.latencyInterrupted(
           msg.sentAtEpochMs.filter(
             (sentAt) =>
               this.#cutoffEpochMs === null || sentAt <= this.#cutoffEpochMs,
@@ -259,7 +265,7 @@ export class LatencyChannel {
         break;
       case "stall":
         this.#ready = false;
-        this.#deps.stall(msg.detail);
+        this.#deps.host.stallLatency(msg.detail);
         break;
       case "resume":
         // Socket establishment alone does not restore latency evidence.
@@ -268,6 +274,7 @@ export class LatencyChannel {
         this.#ready = true;
         // Warmup pongs stay in the worker, so waiting for a measured sample can outlive warmup.
         this.#clearEstablishTimer();
+        this.#deps.ready?.();
         break;
       case "open":
         break;
@@ -284,13 +291,13 @@ export class LatencyChannel {
 
 // Idle monitoring owns a separate worker, stopped before any measured run.
 export class IdleKeepalive {
-  #emit: (event: RunnerEvent) => void = () => {};
-  set onEvent(handler: (event: RunnerEvent) => void) {
+  #emit: (event: IdleEvent) => void = () => {};
+  set onEvent(handler: (event: IdleEvent) => void) {
     this.#emit = handler;
     if (this.#active && this.#connectivity)
       handler({ type: "connectivity", state: this.#connectivity });
   }
-  get onEvent(): (event: RunnerEvent) => void {
+  get onEvent(): (event: IdleEvent) => void {
     return this.#emit;
   }
   #target: LatencyTarget;
@@ -319,37 +326,22 @@ export class IdleKeepalive {
   /* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     if (this.#active) return;
-    const channel = this.#target;
-    const url = pingUrl(channel, channel.transport)!;
     this.#active = true;
     this.#connectivity = null;
-    const worker = pingWorker();
-    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
-      if (this.#worker === worker) this.#onMessage(e.data);
-    };
-    worker.onerror = (e: ErrorEvent): void => {
-      if (this.#worker !== worker) return;
-      // A worker dying at load time has no in-worker reconnect loop, usually because the bundle-serving server is down.
-      this.#onMessage({
-        type: "stall",
-        detail: e.message || "idle ping worker error",
-      });
-      this.#scheduleRespawn(intervalMs);
-    };
-    worker.postMessage({
-      type: "start",
-      url,
-      transport: channel.transport,
-      mint: pingMint(channel, this.#credentials),
-      intervalMs,
-      replyDriven: false,
-      maxInFlight: 2,
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: this.#credentials
-        ? this.#credentials.kind === "session"
-        : authEnabled,
-    });
+    const worker: Worker = startPingWorker(
+      this.#target,
+      this.#credentials,
+      { intervalMs, replyDriven: false, maxInFlight: 2 },
+      (msg) => {
+        if (this.#worker === worker) this.#onMessage(msg);
+      },
+      (detail) => {
+        if (this.#worker !== worker) return;
+        // A worker that dies at load time has no reconnect loop of its own.
+        this.#onMessage({ type: "stall", detail });
+        this.#scheduleRespawn(intervalMs);
+      },
+    );
     // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });
     this.#worker = worker;
@@ -363,11 +355,7 @@ export class IdleKeepalive {
       this.#respawnTimer = null;
     }
     this.#probeCollect?.finish();
-    this.#probeReady?.finish(
-      new TransportUnavailableError("latency channel validation stopped", {
-        role: "latency",
-      }),
-    );
+    this.#probeReady?.finish(new Error("latency channel validation stopped"));
     if (this.#worker) {
       this.#worker.terminate();
       this.#worker = null;
@@ -414,14 +402,8 @@ export class IdleKeepalive {
       const aborted = (): void =>
         finish(new Error("latency channel validation aborted"));
       const timer = setTimeout(
-        () =>
-          finish(
-            new TransportUnavailableError(
-              "latency channel did not become ready",
-              { role: "latency" },
-            ),
-          ),
-        // The worker's own establish deadline plus its mint sit inside this one, so without the margin the owner.
+        () => finish(new Error("latency channel did not become ready")),
+        // The margin lets the worker's own establish deadline and mint report before this timeout.
         PING_ESTABLISH_TIMEOUT_MS,
       );
       this.#probeReady = { finish };
@@ -456,22 +438,22 @@ export class IdleKeepalive {
       case "samples": {
         let receivedPong = false;
         for (const sample of msg.samples) {
-          if (this.#probeCollect && !sample.lost) {
+          if (this.#probeCollect && !sample.timedOut) {
             this.#probeCollect.rtts.push(sample.rtt);
             if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
               this.#probeCollect.finish();
           }
-          if (!sample.lost) receivedPong = true;
+          if (!sample.timedOut) receivedPong = true;
           this.onEvent({
             type: "latency",
             sample: singleLatencyBucket(
               pingSampleContextTime(sample, this.#timeOriginMs),
               sample.rtt,
-              sample.lost,
+              sample.timedOut,
             ),
           });
         }
-        // A loss-only batch proves the worker is running, not that the server answered; recover only after a pong.
+        // A timeout-only batch proves the worker is running, not that the server answered; recover only after a pong.
         if (receivedPong && this.#connectivity !== "connected") {
           this.#connectivity = "connected";
           this.onEvent({ type: "connectivity", state: "connected" });

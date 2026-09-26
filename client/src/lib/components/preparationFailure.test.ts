@@ -34,11 +34,11 @@ test("path failure copy names only the affected paths", () => {
   ).toBe("Latency path is unavailable");
 });
 
-test("session coverage failure is not mislabeled as a path failure", () => {
+test("a failed start without a path failure says so, apart from a blocked one", () => {
   expect(
     preparationFailurePresentation(base, "Sign in to run this test"),
   ).toEqual({
-    headline: "Test cannot start",
+    headline: "Test could not start",
     detail: "Sign in to run this test",
   });
 });

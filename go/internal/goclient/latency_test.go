@@ -1,367 +1,238 @@
 package goclient
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func TestMeasureLatencyRecordsRTTSamples(t *testing.T) {
-	srv := newEchoPingServer(t)
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	var mu sync.Mutex
-	var latencyEvents int
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(e Event) {
-		if e.Kind == EventLatency && !e.Latency.TimedOut {
-			mu.Lock()
-			latencyEvents++
-			mu.Unlock()
-		}
-	}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
-	if err != nil {
-		t.Fatalf("measureLatency: %v", err)
+// Each population runs in virtual time, so its counts are exact rather than a scheduling-tolerant band.
+func TestMeasureLatencyPopulations(t *testing.T) {
+	t.Parallel()
+	everyThird := func(id uint32) bool { return id%3 != 2 }
+	ms := time.Millisecond
+	for _, c := range []struct {
+		name                        string
+		answer                      func(uint32) bool
+		delay, interval, window     time.Duration
+		count, timeouts, unresolved int
+		p50                         time.Duration
+	}{
+		{"answered", answerAll, ms, 20 * ms, captureWindow, 14, 0, 0, ms},
+		{"silent", answerNone, 0, 20 * ms, captureWindow, 0, 14, 0, 0},
+		{"every third dropped", everyThird, ms, 20 * ms, captureWindow, 9, 5, 0, ms},
+		{"silent probes drain to their deadline", answerNone, 0, 10 * ms, 80 * ms, 0, 7, 0, 0},
+		{"in-flight replies at window end", answerAll, 105 * ms, 20 * ms, 150 * ms, 7, 0, 0, 105 * ms},
+		{"slow replies above the cadence", answerAll, 395 * ms, 80 * ms, time.Second, 8, 4, 0, 395 * ms},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				r := pipedRunner(t, pingHandler(c.answer, c.delay))
+				r.cfg.PingInterval = c.interval
+				var replies atomic.Int64
+				r.emit = func(e Event) {
+					if e.Kind == EventLatency && !e.Latency.TimedOut {
+						replies.Add(1)
+					}
+				}
+				s, err := r.measureNow(t.Context(), c.window)
+				if err != nil || s.Count != c.count || s.Timeouts != c.timeouts || s.Unresolved != c.unresolved ||
+					s.P50 != c.p50 || replies.Load() != int64(s.Count) {
+					t.Fatalf("stats = %+v, %v; %d reply events", s, err, replies.Load())
+				}
+			})
+		})
 	}
-	if stats.Count == 0 {
-		t.Fatal("no RTT samples recorded")
-	}
-	if stats.Min <= 0 || stats.P50 <= 0 {
-		t.Errorf("want positive RTT stats, got %+v", stats)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if latencyEvents != stats.Count {
-		t.Errorf("returned %d replies but delivered %d events", stats.Count, latencyEvents)
-	}
-}
-
-func newSilentPingServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx := r.Context()
-		for {
-			if _, _, err := conn.Read(ctx); err != nil {
-				return
-			}
-		}
-	})
-	return httptest.NewServer(mux)
-}
-
-func TestMeasureLatencyRegistersTimeoutsWithoutResponse(t *testing.T) {
-	srv := newSilentPingServer(t)
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-
-	// timeoutAfter is max(4*PingInterval, 250ms) = 250ms here, well inside the window.
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
-	if err != nil {
-		t.Fatalf("measureLatency: %v", err)
-	}
-	if stats.Count != 0 {
-		t.Errorf("Count = %d, want 0 (no responses were ever sent)", stats.Count)
-	}
-	if timeoutRatio(t, stats) != 1 {
-		t.Errorf("TimeoutRatio = %v, want 1 (all resolved probes expired)", timeoutRatio(t, stats))
-	}
-}
-
-func newIntermittentTimeoutPingServer(t *testing.T, dropEvery uint32) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer conn.Close(websocket.StatusNormalClosure, "")
-		ctx := r.Context()
-		for {
-			_, msg, err := conn.Read(ctx)
-			if err != nil {
-				return
-			}
-			f, derr := wire.DecodePing(string(msg))
-			if derr != nil {
-				continue
-			}
-			if f%dropEvery == dropEvery-1 {
-				continue // silently drop this one; no PONG sent
-			}
-			pong := wire.EncodePong(f, 0)
-			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
-				return
-			}
-		}
-	})
-	return httptest.NewServer(mux)
-}
-
-func TestMeasureLatencyMixedTimeoutsComputeRatioAndRTT(t *testing.T) {
-	const dropEvery = 3 // every 3rd ping (by ID) goes unanswered
-	srv := newIntermittentTimeoutPingServer(t, dropEvery)
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
-	if err != nil {
-		t.Fatalf("measureLatency: %v", err)
-	}
-	if stats.Count == 0 {
-		t.Fatal("want some successful RTT samples in a mixed-outcome run")
-	}
-	if stats.Min <= 0 || stats.Mean <= 0 || stats.P50 <= 0 {
-		t.Errorf("want positive RTT stats from the responded pings, got %+v", stats)
-	}
-	if timeoutRatio(t, stats) <= 0 || timeoutRatio(t, stats) >= 1 {
-		t.Errorf("TimeoutRatio = %v, want a partial ratio strictly between 0 and 1 for a mixed hit/miss sequence", timeoutRatio(t, stats))
-	}
-	if timeoutRatio(t, stats) < 0.10 || timeoutRatio(t, stats) > 0.55 {
-		t.Errorf("TimeoutRatio = %v, want roughly 1/%d given the drop pattern", timeoutRatio(t, stats), dropEvery)
-	}
-}
-
-func newDroppingPingServer(t *testing.T, dropAfter int) (*httptest.Server, *atomic.Int64) {
-	t.Helper()
-	var accepted atomic.Int64
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		defer func() { _ = conn.CloseNow() }()
-		accepted.Add(1)
-		ctx := r.Context()
-		for sent := 0; sent < dropAfter; {
-			_, msg, err := conn.Read(ctx)
-			if err != nil {
-				return
-			}
-			f, derr := wire.DecodePing(string(msg))
-			if derr != nil {
-				continue
-			}
-			pong := wire.EncodePong(f, 0)
-			if err := conn.Write(ctx, websocket.MessageText, []byte(pong)); err != nil {
-				return
-			}
-			sent++
-		}
-	})
-	return httptest.NewServer(mux), &accepted
 }
 
 func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
+	t.Parallel()
 	const dropAfter = 3
-	srv, accepted := newDroppingPingServer(t, dropAfter)
-	defer srv.Close()
+	synctest.Test(t, func(t *testing.T) {
+		var accepted atomic.Int64
+		r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			disabled := &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled}
+			conn, err := websocket.Accept(w, r, disabled)
+			if err != nil {
+				return
+			}
+			defer conn.CloseNow()
+			accepted.Add(1)
+			for range dropAfter {
+				_, msg, err := conn.Read(r.Context())
+				if err != nil {
+					return
+				}
+				if id, err := wire.DecodePing(string(msg)); err == nil {
+					time.Sleep(time.Millisecond)
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(id, 0)))
+				}
+			}
+		}))
+		r.cfg.PingInterval = 20 * time.Millisecond
+		stats, err := r.measureNow(t.Context(), time.Second)
+		if err != nil || accepted.Load() < 2 || stats.Count <= dropAfter {
+			t.Fatalf("redial: %d connections, %+v, %v", accepted.Load(), stats, err)
+		}
+	})
+}
 
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{})
-	close(start)
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-
-	stats, err := r.measureLatency(ctx, "latency", false, captureWindow, testStageGate(start))
-	if err != nil {
-		t.Fatalf("measureLatency: %v", err)
-	}
-	if got := accepted.Load(); got < 2 {
-		t.Fatalf("server accepted %d connections, want the bus redialled at least once", got)
-	}
-	if stats.Count <= dropAfter {
-		t.Errorf("Count = %d, want more than the %d samples one bus answers before dropping", stats.Count, dropAfter)
-	}
-	if timeoutRatio(t, stats) == 1 {
-		t.Errorf("TimeoutRatio = %v, want the redialled bus's answers to count", timeoutRatio(t, stats))
+func TestLaneEndingsNameTheirReason(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		code     websocket.StatusCode
+		session  webtransport.SessionErrorCode
+		want     FailureReason
+		redialed bool
+	}{
+		{4001, 1, FailureTimeout, true},
+		{4002, 2, FailureTimeout, true},
+		{1001, 4, FailureConnectionLost, true},
+		{1008, 3, FailureSignIn, false},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			var accepted atomic.Int64
+			r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if accepted.Add(1) > 1 {
+					pingHandler(answerAll, time.Millisecond).ServeHTTP(w, r)
+					return
+				}
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				_, msg, _ := conn.Read(r.Context())
+				time.Sleep(time.Millisecond)
+				if id, err := wire.DecodePing(string(msg)); err == nil {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(id, 0)))
+				}
+				_ = conn.Close(c.code, "")
+			}))
+			r.cfg.PingInterval = 20 * time.Millisecond
+			_, err := r.measureNow(t.Context(), time.Second)
+			if (err == nil) != c.redialed || (accepted.Load() > 1) != c.redialed {
+				t.Errorf("close %d: %v after %d connections", c.code, err, accepted.Load())
+			}
+			closed := &webtransport.SessionError{Remote: true, ErrorCode: c.session}
+			if got := failureReason(laneEnding(websocket.CloseError{Code: c.code}), false); got != c.want ||
+				failureReason(laneEnding(closed), false) != c.want {
+				t.Errorf("close %d reads as %s, want %s", c.code, got, c.want)
+			}
+		})
 	}
 }
 
-func TestMeasureLatencyClosedConnectionDoesNotHang(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ws/ping", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		_ = conn.Close(websocket.StatusNormalClosure, "")
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized()
-	r := &runner{cfg: cfg, http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-
-	start := make(chan struct{}) // never closed: measurement never begins
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	defer cancel()
-
-	done := make(chan error, 1)
-	begin := time.Now()
-	go func() {
-		_, err := r.measureLatency(ctx, "latency", false, 5*time.Second, testStageGate(start))
-		done <- err
-	}()
-
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Error("want an error when the WebSocket closes before measurement starts")
-		}
-	case <-time.After(1 * time.Second):
-		t.Fatal("measureLatency hung after the peer closed the connection")
+func TestLaneEndingReadsEveryPinnedEnding(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../../api/laneendings.txt")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if elapsed := time.Since(begin); elapsed > 500*time.Millisecond {
-		t.Errorf("measureLatency took %v to notice the closed connection, want near-instant", elapsed)
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		name := strings.TrimSpace(fields[0])
+		ws, _ := strconv.Atoi(strings.TrimSpace(fields[1]))
+		wt, _ := strconv.Atoi(strings.TrimSpace(fields[2]))
+		for _, closed := range []error{websocket.CloseError{Code: websocket.StatusCode(ws)},
+			&webtransport.SessionError{Remote: true, ErrorCode: webtransport.SessionErrorCode(wt)}} {
+			got := laneEnding(closed)
+			end, ended := errors.AsType[laneEnd](got)
+			_, auth := errors.AsType[*AuthRequiredError](got)
+			wrong := !ended || end.Name != name
+			switch name {
+			case "finished":
+				wrong = got != closed
+			case "revoked":
+				wrong = !auth
+			}
+			if wrong {
+				t.Errorf("%s ending %v reads as %v", name, closed, got)
+			}
+		}
+	}
+}
+
+func TestMeasureLatencyFailsPromptlyOnAnUnprovenBus(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if conn, err := websocket.Accept(w, r, nil); err == nil {
+			_ = conn.Close(websocket.StatusNormalClosure, "")
+		}
+	}))
+	defer srv.Close()
+	r := testRunner(srv)
+	begin := time.Now()
+	_, err := r.measureLatency(t.Context(), StageLatency, false, 5*time.Second, testStageGate(make(chan struct{})))
+	if err == nil || time.Since(begin) > 500*time.Millisecond {
+		t.Fatalf("closed bus returned %v after %v", err, time.Since(begin))
 	}
 }
 
 func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
+	t.Parallel()
 	var requests atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
 		w.Header().Set("Graphite-Meter-Auth", "required")
-		w.Header().Set("Graphite-Meter-Auth-URL", "/auth/start")
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer srv.Close()
-
-	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-	_, err := r.redialPingBus(t.Context(), time.Now().Add(busRedialWindow))
-	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
-		t.Fatalf("redial error = %v, want AuthRequiredError", err)
-	}
-	if got := requests.Load(); got != 1 {
-		t.Fatalf("permanent auth refusal made %d requests, want one without retries", got)
+	_, err := testRunner(srv).redialPingBus(t.Context(), time.Now().Add(redialWindow))
+	if _, ok := errors.AsType[*AuthRequiredError](err); !ok || requests.Load() != 1 {
+		t.Fatalf("redial error = %v after %d requests, want AuthRequiredError after one", err, requests.Load())
 	}
 }
 
-func TestPendingProbeCutoffPreservesUnresolved(t *testing.T) {
+func TestProbeDeadlinesAdaptAndSeparateUnresolved(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
-	var stats latencyStats
-	stats.add(10*time.Millisecond, false, 0)
-	pending := map[uint32]time.Time{1: now.Add(-time.Second), 2: now.Add(-250 * time.Millisecond), 3: now.Add(-time.Millisecond)}
-	stats.closePending(pending, now, 250*time.Millisecond)
-	stats.add(100*time.Millisecond, false, 0)
-	got := stats.snapshot()
-	if len(pending) != 0 || got.Timeouts != 2 || got.Unresolved != 1 || got.JitterPairs != 0 {
-		t.Fatalf("cutoff summary: %+v, pending=%v", got, pending)
+	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
+	if l.timeout() != probeTimeoutFloor {
+		t.Fatalf("cold timeout = %v", l.timeout())
 	}
-}
-
-func TestMeasureLatencyShortWindowReportsUnresolvedInsteadOfZeroTimeoutCertainty(t *testing.T) {
-	srv := newSilentPingServer(t)
-	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 10 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-	start := make(chan struct{})
-	close(start)
-	stats, err := r.measureLatency(t.Context(), "latency", false, 80*time.Millisecond, testStageGate(start))
-	if err != nil {
-		t.Fatal(err)
+	for range 20 {
+		l.observe(2 * time.Second)
 	}
-	if stats.Count != 0 || stats.Timeouts != 0 || stats.Unresolved == 0 || stats.TimeoutAfter != 250*time.Millisecond {
-		t.Fatalf("short window: %+v", stats)
+	if got := l.timeout(); got < 2*time.Second || got > probeTimeoutCeil {
+		t.Fatalf("timeout after slow replies = %v, want at least the observed RTT", got)
 	}
-	if _, ok := stats.TimeoutRatio(); ok {
-		t.Fatal("unresolved probes manufactured a 0% timeout observation")
+	l.stats.add(10*time.Millisecond, false, 0)
+	l.pending = map[uint32]probe{
+		1: {sent: now.Add(-time.Second), deadline: now.Add(-time.Millisecond), measured: true},
+		2: {sent: now.Add(-time.Millisecond), deadline: now.Add(time.Second), measured: true},
+		3: {sent: now.Add(-time.Second), deadline: now.Add(-time.Millisecond)},
 	}
-}
-
-func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
-		if err != nil {
-			return
-		}
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		defer conn.CloseNow()
-		for {
-			_, msg, err := conn.Read(ctx)
-			if err != nil {
-				return
-			}
-			frame, err := wire.DecodePing(string(msg))
-			if err != nil {
-				continue
-			}
-			go func() {
-				timer := time.NewTimer(265 * time.Millisecond)
-				defer timer.Stop()
-				select {
-				case <-ctx.Done():
-					return
-				case <-timer.C:
-					_ = conn.Write(ctx, websocket.MessageText, []byte(wire.EncodePong(frame, 0)))
-				}
-			}()
-		}
-	}))
-	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond}.normalized(), http: srv.Client(), emit: func(Event) {}}
-	attachTestLatencyTarget(r, srv.URL)
-	start := make(chan struct{})
-	close(start)
-	stats, err := r.measureLatency(t.Context(), "latency", false, 600*time.Millisecond, testStageGate(start))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Count != 0 || stats.Timeouts == 0 || stats.JitterPairs != 0 || stats.ReflectorTiming != nil {
-		t.Fatalf("late replies became RTT observations: %+v", stats)
+	l.closePending(now)
+	l.stats.add(100*time.Millisecond, false, 0)
+	got := l.stats.snapshot()
+	if len(l.pending) != 0 || got.Timeouts != 1 || got.Unresolved != 1 || got.JitterPairs != 0 {
+		t.Fatalf("cutoff summary: %+v", got)
 	}
 }
 
 func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
-	for _, stage := range []string{"latency", "download"} {
+	t.Parallel()
+	for _, stage := range []Stage{StageLatency, StageDownload} {
 		for _, reply := range []bool{false, true} {
-			t.Run(stage+fmt.Sprint("/reply=", reply), func(t *testing.T) {
+			t.Run(string(stage)+fmt.Sprint("/reply=", reply), func(t *testing.T) {
+				t.Parallel()
 				var accepts atomic.Int64
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					if req.URL.Path == "/download" {
@@ -373,7 +244,7 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 						w.WriteHeader(http.StatusForbidden)
 						return
 					}
-					conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
+					conn, err := websocket.Accept(w, req, nil)
 					if err != nil {
 						return
 					}
@@ -387,60 +258,124 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 							return
 						}
 						f, err := wire.DecodePing(string(msg))
-						if !reply || err != nil || time.Since(started) > 100*time.Millisecond {
-							continue
+						if reply && err == nil && time.Since(started) <= 100*time.Millisecond {
+							_ = conn.Write(req.Context(), websocket.MessageText, []byte(wire.EncodePong(f, 0)))
 						}
-						_ = conn.Write(req.Context(), websocket.MessageText, []byte(wire.EncodePong(f, 0)))
 					}
 				}))
 				defer srv.Close()
-				var results []Result
+				var throughput *Result
 				var details *RunDetails
-				cfg := Config{
-					BaseURL:                srv.URL,
-					PingInterval:           20 * time.Millisecond,
-					LoadedLatency:          stage == "download",
-					DownloadBytesPerStream: 32 * 1024,
-				}.normalized()
-				r := &runner{
-					cfg:     cfg,
-					streams: streamCounts{down: 1},
-					http:    srv.Client(),
-					emit: func(e Event) {
-						if e.Kind == EventResult {
-							results = append(results, *e.Result)
-						}
-						if e.Kind == EventServers {
-							details = e.Servers
-						}
-					},
+				r := testRunner(srv)
+				r.cfg.PingInterval, r.cfg.LoadedLatency = 20*time.Millisecond, stage == StageDownload
+				r.cfg.LoadedPingInterval = r.cfg.PingInterval
+				r.emit = func(e Event) {
+					if e.Kind == EventResult {
+						throughput = e.Result
+					}
+					if e.Kind == EventDone {
+						details = e.Servers
+					}
 				}
-				attachTestLatencyTarget(r, srv.URL)
 				err := r.runTestStage(t.Context(), stage, time.Second)
-				wantResults := 1
-				if cfg.LoadedLatency {
-					wantResults++
+				failed := details != nil && len(details.Failures) == 1 && details.Failures[0].Scope == "latency"
+				outcome := OutcomePartial
+				if stage == StageLatency && !reply {
+					outcome = OutcomeIncomplete
 				}
-				if err != nil || len(results) != wantResults || results[0].Err == nil {
-					t.Fatalf("error=%v; partial results=%+v", err, results)
+				if err != nil || !failed || details.Outcome != outcome || len(details.Participants) != 1 {
+					t.Fatalf("latency failure removed throughput membership: %v %+v", err, details)
 				}
-				if details == nil || details.Outcome != "partial" || len(details.Participants) != 1 || len(details.Failures) != 1 || details.Failures[0].Scope != "latency" {
-					t.Fatalf("latency failure removed throughput membership: %+v", details)
+				results := details.Servers[0].Results
+				i := slices.IndexFunc(results, func(r Result) bool { return r.Direction == "" })
+				if i < 0 || results[i].Err == nil {
+					t.Fatalf("partial latency population = %+v", results)
 				}
-				stats := results[0].Latency
-				if (stats.Count > 0) != reply || stats.Timeouts == 0 || stats.Unresolved == 0 {
+				stats := results[i].Latency
+				if (stats.Count > 0) != reply || stats.Timeouts == 0 || stage == StageLatency && stats.Unresolved == 0 {
 					t.Fatalf("failure discarded probe outcomes: %+v", stats)
 				}
-				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[0].Elapsed != stats.Elapsed {
-					t.Fatalf("failure reports requested duration rather than measured window: %+v", results[0])
+				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[i].Elapsed != stats.Elapsed {
+					t.Fatalf("failure reports requested duration rather than measured window: %+v", results[i])
 				}
-				if cfg.LoadedLatency {
-					throughput := results[1]
-					if throughput.Direction != Down || throughput.Unavailable || throughput.TotalBytes == 0 || throughput.Err != nil {
-						t.Fatalf("latency failure discarded throughput: %+v", throughput)
-					}
+				if r.cfg.LoadedLatency && (throughput == nil || throughput.Direction != Down ||
+					throughput.Unavailable || throughput.TotalBytes == 0 || throughput.Err != nil) {
+					t.Fatalf("latency failure discarded throughput: %+v", throughput)
 				}
 			})
 		}
+	}
+}
+
+func TestLoadedProbesKeepTwoInFlight(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, pingHandler(answerNone, 0))
+		r.cfg.LoadedPingInterval = 10 * time.Millisecond
+		start := make(chan struct{})
+		close(start)
+		stats, err := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
+		if err != nil || stats.Timeouts != 2 || stats.Unresolved != 0 {
+			t.Fatalf("loaded window, want two unanswered probes: %+v, %v", stats, err)
+		}
+	})
+}
+
+func TestProbeLedgerMeasuresOnlyTheWindow(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
+	warm, _ := l.register(start)
+	l.open(start.Add(time.Second))
+	inside, _ := l.register(start.Add(900 * time.Millisecond))
+	late, _ := l.register(start.Add(950 * time.Millisecond))
+	if _, ok := l.register(start.Add(time.Second)); ok {
+		t.Fatal("a probe was sent after the window closed")
+	}
+	if _, _, counted := l.reply(warm, start.Add(200*time.Millisecond), 0); counted {
+		t.Fatal("a warmup probe that replied inside the window was measured")
+	}
+	if rtt, timedOut, counted := l.reply(inside, start.Add(1050*time.Millisecond), 0); !counted || timedOut ||
+		rtt != 150*time.Millisecond {
+		t.Fatalf("an in-window probe draining after the window = %v %v %v, want a reply", rtt, timedOut, counted)
+	}
+	if _, timedOut, counted := l.reply(late, start.Add(2*time.Second), 0); !counted || !timedOut {
+		t.Fatal("a reply after its deadline was not a timeout")
+	}
+	stats := l.finish(start.Add(3*time.Second), time.Second)
+	if stats.Count != 1 || stats.Timeouts != 1 || stats.Elapsed != time.Second {
+		t.Fatalf("window population = %+v", stats)
+	}
+}
+
+func TestReplyDrivenProbesFollowRepliesAndTheirDeadline(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name   string
+		answer func(uint32) bool
+		check  func(LatencyStats) bool
+	}{
+		{"answered", answerAll, func(s LatencyStats) bool { return s.Count >= 20 }},
+		{"silent", answerNone, func(s LatencyStats) bool { return s.Timeouts+s.Unresolved <= 5 }},
+	} {
+		r := testRunner(newPingServer(t, c.answer, 5*time.Millisecond))
+		r.cfg.PingInterval = PingReplyDriven
+		stats, err := r.measureNow(t.Context(), time.Second)
+		if err != nil || !c.check(stats) {
+			t.Errorf("%s: reply-driven window = %+v, %v", c.name, stats, err)
+		}
+	}
+}
+
+func TestIdleAndLoadedStagesKeepTheirOwnCadence(t *testing.T) {
+	t.Parallel()
+	r := testRunner(newPingServer(t, answerAll, 0))
+	r.cfg.PingInterval, r.cfg.LoadedPingInterval = PingSlow, 10*time.Millisecond
+	start := make(chan struct{})
+	close(start)
+	idle, err := r.measureLatency(t.Context(), StageLatency, false, captureWindow, testStageGate(start))
+	loaded, loadedErr := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
+	if err != nil || loadedErr != nil || idle.Count > 2 || loaded.Count < 10 {
+		t.Fatalf("idle %d replies (%v), loaded %d replies (%v)", idle.Count, err, loaded.Count, loadedErr)
 	}
 }

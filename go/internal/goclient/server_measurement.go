@@ -1,29 +1,25 @@
 package goclient
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
 )
 
-const minimumSurvivorEvidence = 800 * time.Millisecond
 const maximumIntervals = 128
 
-// ReceiverSnapshot retains one clock domain plus the client's request/response bracket.
 type ReceiverSnapshot struct {
-	ID                      string
-	Bytes, Nanos            uint64
-	RequestedAt, ReceivedAt time.Duration
+	ID           string
+	Bytes, Nanos uint64
 }
 
 type ComponentWindow struct {
-	ServerID                   string
-	Bytes                      uint64
-	Duration                   time.Duration
-	BytesPerSec                float64
-	Clock                      string
-	StartBytes, EndBytes       uint64
-	StartReceiver, EndReceiver *ReceiverSnapshot
+	ServerID    string
+	Bytes       uint64
+	Duration    time.Duration
+	BytesPerSec float64
 }
 
 type AggregateWindow struct {
@@ -32,257 +28,350 @@ type AggregateWindow struct {
 	DownBytesPerSec, UpBytesPerSec *float64
 }
 
+func (w *AggregateWindow) direction(dir Direction) ([]ComponentWindow, *float64) {
+	if dir == Up {
+		return w.Up, w.UpBytesPerSec
+	}
+	return w.Down, w.DownBytesPerSec
+}
+
+type IntervalReason string
+
+const (
+	ReasonStageStart      IntervalReason = "stage-start"
+	ReasonDropout         IntervalReason = "dropout"
+	ReasonEvidenceResumed IntervalReason = "evidence-resumed"
+)
+
 type AggregationInterval struct {
-	ID           int
-	Stage        string
+	Stage        Stage
 	Participants []string
 	Start, End   time.Duration
 	Complete     bool
-	Reason       string
+	Reason       IntervalReason
 	Window       *AggregateWindow
+	combined     windowStats
+	servers      map[string]*windowStats
 }
 
+type windowStats struct {
+	peak    byDirection[float64]
+	samples int
+}
+
+type FailureScope string
+
+const (
+	ScopeThroughput FailureScope = "throughput"
+	ScopeLatency    FailureScope = "latency"
+)
+
 type ServerFailure struct {
-	ServerID, Stage, Scope, Reason, Message string
-	At                                      time.Duration
+	ServerID string
+	Stage    Stage
+	Scope    FailureScope
+	Reason   FailureReason
+	Err      error
+	At       time.Duration
 }
 
 type measurementBoundary struct {
 	at         time.Duration
+	stalled    bool
+	final      bool
 	down       map[string]uint64
 	up         map[string]*ReceiverSnapshot
 	observedUp map[string]uploadLedger
 }
 
-type byteLedger struct{ down, up uint64 }
 type uploadLedger struct {
 	id      string
 	maximum uint64
 }
 
-// aggregateMeasurements is single-owner: it never adds receiver durations or independent peaks.
-type aggregateMeasurements struct {
-	intervals   []AggregationInterval
-	omitted     int
-	first, last *measurementBoundary
-	peaks       map[Direction]float64
-	samples     int
-	totals      map[string]byteLedger
-	stageTotals map[string]map[string]byteLedger
-	uploads     map[string]uploadLedger
-	downSeen    map[string]uint64
-	stage       string
+type serverLedger struct {
+	down   *uint64
+	upload *uploadLedger
+	bytes  byDirection[uint64]
 }
 
-func (a *aggregateMeasurements) begin(stage string, ids []string, at time.Duration, reason string) {
-	if a.totals == nil {
-		a.totals = map[string]byteLedger{}
-		a.stageTotals = map[string]map[string]byteLedger{}
+type aggregateMeasurements struct {
+	intervals             []AggregationInterval
+	omitted               int
+	stage                 Stage
+	servers               map[string]*serverLedger
+	first, last, peakFrom *measurementBoundary
+}
+
+func (a *aggregateMeasurements) beginStage(stage Stage, ids []string, at time.Duration) {
+	a.stage, a.servers = stage, map[string]*serverLedger{}
+	for _, id := range ids {
+		a.servers[id] = &serverLedger{}
 	}
-	if reason == "stage-start" {
-		a.uploads = map[string]uploadLedger{}
-		a.downSeen = map[string]uint64{}
-	}
-	a.stage = stage
-	if a.stageTotals[stage] == nil {
-		a.stageTotals[stage] = map[string]byteLedger{}
-	}
+	a.restart(ids, at, ReasonStageStart)
+}
+
+func (a *aggregateMeasurements) restart(ids []string, at time.Duration, reason IntervalReason) {
 	if len(a.intervals) == maximumIntervals {
 		a.intervals = a.intervals[1:]
 		a.omitted++
 	}
-	a.intervals = append(a.intervals, AggregationInterval{ID: a.omitted + len(a.intervals), Stage: stage, Participants: slices.Clone(ids), Start: at, End: at, Complete: true, Reason: reason})
-	a.first = nil
-	a.last = nil
-	a.peaks = map[Direction]float64{}
-	a.samples = 0
+	interval := AggregationInterval{Stage: a.stage, Participants: slices.Clone(ids), Start: at, End: at,
+		Complete: true, Reason: reason, servers: map[string]*windowStats{}}
+	for _, id := range ids {
+		interval.servers[id] = &windowStats{}
+	}
+	a.intervals = append(a.intervals, interval)
+	a.first, a.last, a.peakFrom = nil, nil, nil
 }
+
 func (a *aggregateMeasurements) current() *AggregationInterval {
 	if len(a.intervals) == 0 {
 		return nil
 	}
 	return &a.intervals[len(a.intervals)-1]
 }
-func (a *aggregateMeasurements) credit(id string, dir Direction, n uint64) {
-	total := a.totals[id]
-	stage := a.stageTotals[a.stage][id]
-	if dir == Down {
-		total.down += n
-		stage.down += n
-	} else {
-		total.up += n
-		stage.up += n
+
+func (a *aggregateMeasurements) total(dir Direction) uint64 {
+	var total uint64
+	for _, server := range a.servers {
+		total += server.bytes.of(dir)
 	}
-	a.totals[id] = total
-	a.stageTotals[a.stage][id] = stage
+	return total
 }
-func (a *aggregateMeasurements) ledger(boundary measurementBoundary) {
-	for id, count := range boundary.down {
-		previous, known := a.downSeen[id]
-		if known && count < previous {
-			continue
+
+func (a *aggregateMeasurements) credit(b measurementBoundary) {
+	for id, count := range b.down {
+		server := a.servers[id]
+		switch {
+		case server == nil:
+		case server.down == nil:
+			server.down = new(count)
+		case count >= *server.down:
+			server.bytes.down += count - *server.down
+			server.down = new(count)
 		}
-		if known && count >= previous {
-			a.credit(id, Down, count-previous)
-		}
-		a.downSeen[id] = count
 	}
-	for id, observation := range boundary.observedUp {
-		if snapshot := boundary.up[id]; snapshot != nil && snapshot.ID == observation.id && snapshot.Bytes >= observation.maximum {
-			continue
+	for id, observed := range b.observedUp {
+		if snapshot := b.up[id]; snapshot == nil || snapshot.ID != observed.id || snapshot.Bytes < observed.maximum {
+			a.creditUpload(id, observed)
 		}
-		previous, known := a.uploads[id]
-		if known && previous.id == observation.id && observation.maximum <= previous.maximum {
-			continue
-		}
-		if known {
-			if previous.id != observation.id {
-				previous.maximum = 0
-			}
-			if observation.maximum >= previous.maximum {
-				a.credit(id, Up, observation.maximum-previous.maximum)
-			}
-		}
-		a.uploads[id] = observation
 	}
-	for id, snapshot := range boundary.up {
-		if snapshot == nil {
-			continue
+	for id, snapshot := range b.up {
+		if snapshot != nil {
+			a.creditUpload(id, uploadLedger{snapshot.ID, snapshot.Bytes})
 		}
-		previous, known := a.uploads[id]
-		if known && previous.id == snapshot.ID && snapshot.Bytes <= previous.maximum {
-			continue
-		}
-		if known {
-			if previous.id != snapshot.ID {
-				previous.maximum = 0
-			}
-			if snapshot.Bytes >= previous.maximum {
-				a.credit(id, Up, snapshot.Bytes-previous.maximum)
-			}
-		}
-		a.uploads[id] = uploadLedger{snapshot.ID, snapshot.Bytes}
 	}
 }
-func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow {
+
+func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
+	server := a.servers[id]
+	switch {
+	case server == nil:
+		return
+	case server.upload == nil:
+	case server.upload.id != next.id:
+		server.bytes.up += next.maximum
+	case next.maximum <= server.upload.maximum:
+		return
+	default:
+		server.bytes.up += next.maximum - server.upload.maximum
+	}
+	server.upload = &next
+}
+
+func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow, bool) {
 	interval := a.current()
 	if interval == nil {
-		return nil
+		return nil, false
 	}
-	a.ledger(b)
-	valid := len(interval.Participants) > 0
-	for _, id := range interval.Participants {
-		if interval.Stage != "upload" {
-			_, ok := b.down[id]
-			valid = valid && ok
-		}
-		if interval.Stage != "download" {
-			valid = valid && b.up[id] != nil
-		}
+	a.credit(b)
+	if a.first != nil && b.stalled {
+		return nil, a.resume(interval, b)
 	}
-	if !valid {
-		interval.Complete = false
-		interval.End = b.at
-		return nil
-	}
-	if !interval.Complete {
-		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
-		return a.observe(b)
+	if len(interval.Participants) == 0 || slices.ContainsFunc(interval.Participants, func(id string) bool {
+		_, down := b.down[id]
+		return a.stage != StageUpload && !down || a.stage != StageDownload && b.up[id] == nil
+	}) {
+		return nil, false
 	}
 	if a.first == nil {
-		a.first = new(b)
-		a.last = new(b)
-		interval.Start = b.at
-		interval.End = b.at
-		return nil
+		a.first, a.last, a.peakFrom = new(b), new(b), new(b)
+		interval.Start, interval.End = b.at, b.at
+		return nil, false
 	}
-	sample, err := aggregateWindow(*a.last, b, *interval)
-	full, fullErr := aggregateWindow(*a.first, b, *interval)
+	// A final boundary where a direction stood still ends the result at the last good boundary.
+	if b.final && slices.ContainsFunc(interval.Participants, func(id string) bool {
+		return a.stage != StageUpload && b.down[id] <= a.last.down[id] ||
+			a.stage != StageDownload && b.up[id].ID == a.last.up[id].ID && b.up[id].Bytes <= a.last.up[id].Bytes
+	}) {
+		return nil, false
+	}
+	sample, err := a.window(*a.last, b)
+	if errors.Is(err, errStaleBoundary) {
+		return nil, false
+	}
+	full, fullErr := a.window(*a.first, b)
 	if err != nil || fullErr != nil {
-		interval.Complete = false
-		interval.End = b.at
-		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
-		return a.observe(b)
+		return nil, a.resume(interval, b)
 	}
 	a.last = new(b)
-	interval.End = b.at
-	interval.Window = full
-	a.samples++
-	if sample.DownBytesPerSec != nil {
-		a.peaks[Down] = max(a.peaks[Down], *sample.DownBytesPerSec)
+	interval.End, interval.Window = b.at, full
+	interval.combined.samples++
+	for _, id := range interval.Participants {
+		interval.servers[id].samples++
 	}
-	if sample.UpBytesPerSec != nil {
-		a.peaks[Up] = max(a.peaks[Up], *sample.UpBytesPerSec)
+	if peak, err := a.window(*a.peakFrom, b); err == nil && peak.shortest() >= minimumPeakWindow {
+		a.peakFrom = new(b)
+		interval.recordPeak(peak)
 	}
-	return sample
+	return sample, false
 }
-func aggregateWindow(first, last measurementBoundary, interval AggregationInterval) (*AggregateWindow, error) {
+
+func (w *AggregateWindow) shortest() time.Duration {
+	span := w.End - w.Start
+	for _, c := range w.Up {
+		span = min(span, c.Duration)
+	}
+	return span
+}
+
+func (a *aggregateMeasurements) resume(interval *AggregationInterval, b measurementBoundary) bool {
+	interval.Complete = false
+	a.restart(interval.Participants, b.at, ReasonEvidenceResumed)
+	a.observe(b)
+	return true
+}
+
+func (interval *AggregationInterval) recordPeak(w *AggregateWindow) {
+	for _, dir := range []Direction{Down, Up} {
+		components, rate := w.direction(dir)
+		if rate != nil {
+			interval.combined.peak.set(dir, max(interval.combined.peak.of(dir), *rate))
+		}
+		for _, c := range components {
+			server := interval.servers[c.ServerID]
+			server.peak.set(dir, max(server.peak.of(dir), c.BytesPerSec))
+		}
+	}
+}
+
+var errInsufficientEvidence = fmt.Errorf("the latest interval holds under %v of evidence", minimumSurvivorEvidence)
+
+var errStaleBoundary = errors.New("boundary did not advance")
+
+func (a *aggregateMeasurements) window(first, last measurementBoundary) (*AggregateWindow, error) {
 	elapsed := last.at - first.at
 	if elapsed <= 0 {
-		return nil, fmt.Errorf("non-advancing client boundary")
+		return nil, errStaleBoundary
 	}
 	window := &AggregateWindow{Start: first.at, End: last.at}
-	for _, id := range interval.Participants {
-		if interval.Stage != "upload" {
+	for _, id := range a.current().Participants {
+		if a.stage != StageUpload {
 			start, ok := first.down[id]
 			end, okEnd := last.down[id]
 			if !ok || !okEnd || end < start {
-				return nil, fmt.Errorf("missing or regressing download counter")
+				return nil, errors.New("missing or regressing download counter")
 			}
 			rate := float64(end-start) / elapsed.Seconds()
-			window.Down = append(window.Down, ComponentWindow{ServerID: id, Bytes: end - start, Duration: elapsed, BytesPerSec: rate, Clock: "client-monotonic", StartBytes: start, EndBytes: end})
-			if window.DownBytesPerSec == nil {
-				window.DownBytesPerSec = new(float64)
-			}
-			*window.DownBytesPerSec += rate
+			window.Down = append(window.Down, ComponentWindow{id, end - start, elapsed, rate})
 		}
-		if interval.Stage != "download" {
+		if a.stage != StageDownload {
 			start, end := first.up[id], last.up[id]
-			if start == nil || end == nil || start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos <= start.Nanos {
-				return nil, fmt.Errorf("missing or regressing receiver counter")
+			if start.ID == end.ID && end.Bytes >= start.Bytes && end.Nanos == start.Nanos {
+				return nil, errStaleBoundary
+			}
+			if start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos < start.Nanos {
+				return nil, errors.New("replaced or regressing receiver counter")
 			}
 			duration := time.Duration(end.Nanos - start.Nanos)
-			if duration <= 0 {
-				return nil, fmt.Errorf("invalid receiver duration")
-			}
 			rate := float64(end.Bytes-start.Bytes) / duration.Seconds()
-			window.Up = append(window.Up, ComponentWindow{ServerID: id, Bytes: end.Bytes - start.Bytes, Duration: duration, BytesPerSec: rate, Clock: "receiver", StartBytes: start.Bytes, EndBytes: end.Bytes, StartReceiver: start, EndReceiver: end})
-			if window.UpBytesPerSec == nil {
-				window.UpBytesPerSec = new(float64)
-			}
-			*window.UpBytesPerSec += rate
+			window.Up = append(window.Up, ComponentWindow{id, end.Bytes - start.Bytes, duration, rate})
 		}
 	}
+	window.DownBytesPerSec, window.UpBytesPerSec = sumRates(window.Down), sumRates(window.Up)
 	return window, nil
 }
-func (a *aggregateMeasurements) result(stage string, dir Direction) Result {
-	result := Result{Stage: stage, Direction: dir, ServerAuth: dir == Up, Unavailable: true}
-	for _, total := range a.stageTotals[stage] {
-		if dir == Down {
-			result.TotalBytes += total.down
-		} else {
-			result.TotalBytes += total.up
+
+func sumRates(components []ComponentWindow) *float64 {
+	if len(components) == 0 {
+		return nil
+	}
+	var sum float64
+	for _, c := range components {
+		sum += c.BytesPerSec
+	}
+	return &sum
+}
+
+func evidence(components []ComponentWindow) error {
+	short := func(c ComponentWindow) bool { return c.Duration < minimumSurvivorEvidence }
+	switch {
+	case len(components) == 0 || slices.ContainsFunc(components, short):
+		return errInsufficientEvidence
+	case !slices.ContainsFunc(components, func(c ComponentWindow) bool { return c.Bytes > 0 }):
+		return errNoBytes
+	}
+	return nil
+}
+
+// result takes the latest whole interval with enough evidence, so a late dropout keeps the one before it.
+func (a *aggregateMeasurements) result(dir Direction) Result {
+	result := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
+	result.TotalBytes = a.total(dir)
+	if latest := a.current(); latest == nil || len(latest.Participants) == 0 {
+		return result
+	}
+	for i := len(a.intervals) - 1; i >= 0 && a.intervals[i].Stage == a.stage; i-- {
+		interval := &a.intervals[i]
+		if interval.Window == nil || !interval.Complete {
+			continue
 		}
-	}
-	interval := a.current()
-	if interval == nil || interval.Stage != stage || !interval.Complete || interval.Window == nil || interval.End-interval.Start < minimumSurvivorEvidence {
-		result.Err = fmt.Errorf("latest survivor interval has insufficient evidence")
+		components, rate := interval.Window.direction(dir)
+		err := evidence(components)
+		if interval.End-interval.Start < minimumSurvivorEvidence {
+			err = errInsufficientEvidence
+		}
+		if err != nil {
+			if i == len(a.intervals)-1 {
+				result.Err = err
+			}
+			continue
+		}
+		stats := interval.combined
+		result.MeanBps, result.PeakBps, result.Samples = *rate, stats.peak.of(dir), stats.samples
+		result.Elapsed = interval.End - interval.Start
+		if dir == Up {
+			result.Elapsed = slices.MaxFunc(components, func(x, y ComponentWindow) int {
+				return cmp.Compare(x.Duration, y.Duration)
+			}).Duration
+		}
+		result.Unavailable, result.Err = false, nil
 		return result
 	}
-	components := interval.Window.Down
-	rate := interval.Window.DownBytesPerSec
-	if dir == Up {
-		components = interval.Window.Up
-		rate = interval.Window.UpBytesPerSec
-	}
-	if rate == nil || len(components) == 0 || slices.ContainsFunc(components, func(c ComponentWindow) bool { return c.Duration < minimumSurvivorEvidence }) {
-		result.Err = fmt.Errorf("latest receiver windows have insufficient evidence")
-		return result
-	}
-	result.MeanBps = *rate
-	result.PeakBps = a.peaks[dir]
-	result.Samples = a.samples
-	result.Elapsed = interval.End - interval.Start
-	result.Unavailable = false
 	return result
+}
+
+func (a *aggregateMeasurements) serverResult(id string, dir Direction) Result {
+	own := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
+	if server := a.servers[id]; server != nil {
+		own.TotalBytes = server.bytes.of(dir)
+	}
+	for i := len(a.intervals) - 1; i >= 0 && a.intervals[i].Stage == a.stage; i-- {
+		interval := &a.intervals[i]
+		if interval.Window == nil || !interval.Complete {
+			continue
+		}
+		components, _ := interval.Window.direction(dir)
+		j := slices.IndexFunc(components, func(c ComponentWindow) bool { return c.ServerID == id })
+		if j < 0 || evidence(components[j:j+1]) != nil {
+			continue
+		}
+		stats := interval.servers[id]
+		own.MeanBps, own.Elapsed = components[j].BytesPerSec, components[j].Duration
+		own.PeakBps, own.Samples = stats.peak.of(dir), stats.samples
+		own.Unavailable, own.Err = false, nil
+		return own
+	}
+	return own
 }

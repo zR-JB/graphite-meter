@@ -2,98 +2,54 @@ package goclient
 
 import (
 	"context"
-	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
-	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Preflight, error) {
-	u, err := url.JoinPath(strings.TrimRight(base, "/"), "/preflight")
+	u, err := httpEndpoint(base, "/preflight")
 	if err != nil {
 		return wire.Preflight{}, err
 	}
 	var pf wire.Preflight
-	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, http.Header{"Cache-Control": {"no-store"}}, &pf, httpStatusError("preflight"))
+	response, err := controlJSON(ctx, hc, http.MethodGet, u, "preflight", &pf)
 	if err != nil {
 		return wire.Preflight{}, err
 	}
 	if err := pf.Validate(); err != nil {
 		return wire.Preflight{}, err
 	}
-	baseOrigin := response.Request.URL.Clone()
-	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
-	resolveSelfOrigins(&pf, baseOrigin.String())
-	return pf, nil
-}
-
-func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
+	self := response.Request.URL.Clone()
+	self.Path, self.RawQuery, self.Fragment = "", "", ""
+	origin := self.String()
 	for i := range pf.Capabilities.ThroughputTargets {
-		if pf.Capabilities.ThroughputTargets[i].Origin == "." {
-			normalizeThroughputTarget(&pf.Capabilities.ThroughputTargets[i], resolved)
+		if t := &pf.Capabilities.ThroughputTargets[i]; t.Origin == "." {
+			t.ID, t.Origin = origin, origin
 		}
 	}
 	for i := range pf.Capabilities.LatencyTargets {
-		if pf.Capabilities.LatencyTargets[i].Origin == "." {
-			normalizeLatencyTarget(&pf.Capabilities.LatencyTargets[i], resolved)
+		if t := &pf.Capabilities.LatencyTargets[i]; t.Origin == "." {
+			t.ID, t.Origin = origin, origin
 		}
 	}
+	return pf, nil
 }
 
-func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultThroughputRoutes()
-}
-func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(origin, "https://"), wire.DefaultLatencyRoutes()
-}
-
-func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPrefix string) (wire.Probe, string, error) {
+func getJSONProbe(ctx context.Context, hc *http.Client, origin, path string) (string, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
-		return wire.Probe{}, "", err
+		return "", err
 	}
 	var p wire.Probe
-	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, nil, &p, httpStatusError(statusPrefix))
+	response, err := controlJSON(ctx, hc, http.MethodGet, u, "probe", &p)
 	if err != nil {
-		return wire.Probe{}, "", err
+		return "", err
 	}
-	if err := p.Validate(); err != nil {
-		return wire.Probe{}, "", err
-	}
-	return p, response.Proto, nil
-}
-
-func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.LatencyTarget) error {
-	u, err := wsEndpoint(target.Origin, target.Routes.Ping)
-	if err != nil {
-		return err
-	}
-	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	conn, response, err := websocket.Dial(verifyCtx, u, &websocket.DialOptions{HTTPClient: hc, CompressionMode: websocket.CompressionDisabled})
-	if err != nil {
-		if authErr := authResponseError(response); authErr != nil {
-			return authErr
-		}
-		return fmt.Errorf("latency WebSocket connection failed: %w", err)
-	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	if err := conn.Write(verifyCtx, websocket.MessageText, []byte(wire.EncodePing(0))); err != nil {
-		return fmt.Errorf("latency WebSocket probe failed: %w", err)
-	}
-	for {
-		_, message, err := conn.Read(verifyCtx)
-		if err != nil {
-			return fmt.Errorf("latency WebSocket readiness failed: %w", err)
-		}
-		if pong, err := wire.DecodePong(string(message)); err == nil && pong.ID == 0 {
-			return nil
-		}
-	}
+	return response.Proto, p.Validate()
 }
 
 func httpEndpoint(base, path string) (string, error) {
@@ -106,11 +62,7 @@ func endpointWithQuery(base string, query url.Values) (string, error) {
 		return "", err
 	}
 	values := u.Query()
-	for key, list := range query {
-		if len(list) > 0 {
-			values.Set(key, list[0])
-		}
-	}
+	maps.Copy(values, query)
 	u.RawQuery = values.Encode()
 	return u.String(), nil
 }

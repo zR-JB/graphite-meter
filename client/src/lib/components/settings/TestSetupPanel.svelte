@@ -1,144 +1,107 @@
 <script lang="ts">
+  import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
-  import { DURATION_PRESETS } from "../../state/defaults";
-  import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
-  import type {
-    FetchThroughputTarget,
-    LatencyTarget,
-    WebTransportThroughputTarget,
-  } from "../../api/endpoints";
+  import {
+    clampDuration,
+    DURATION_LIMITS,
+    DURATION_PRESETS,
+  } from "../../state/defaults";
+  import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import { describeTarget } from "../../runner/real/targetPresentation";
-  import { panelReadiness } from "../../runner/connectionModel";
-  import { JARGON, tooltip } from "../../actions/tooltip";
+  import { pathOptions } from "../../presentation/paths";
+  import { normalizeStreamCount } from "../../runner/paths";
+  import { tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
-  import { serverTransportOptions } from "../../servers/transportOptions";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
+  import {
+    JARGON,
+    phaseLabel,
+    PING_CADENCE,
+    READINESS,
+    STAGE,
+  } from "../../presentation/vocabulary";
+  import { fmtDuration } from "../../format";
+  import { untrack } from "svelte";
+  import {
+    announce,
+    announceChanges,
+  } from "../../presentation/announcer.svelte";
+  import ConfirmDialog from "../ConfirmDialog.svelte";
 
-  interface Props {
-    running?: boolean;
-    onOpenHistory?: (invoker: HTMLElement) => void;
+  let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
+    $props();
+  const running = $derived(store.isRunning);
+  let resetConfirmOpen = $state(false);
+  $effect(() => {
+    if (
+      store.serverCatalog &&
+      !store.catalogLoading &&
+      !store.isRunning &&
+      !store.preparing
+    ) {
+      untrack(() => controller.loadServerMetadata());
+      return () => controller.cancelServerMetadata();
+    }
+  });
+  function resetSettings() {
+    resetConfirmOpen = false;
+    controller.restoreDefaults();
+    customDuration = false;
   }
-  let { running = false, onOpenHistory }: Props = $props();
 
-  function targetOption(
-    target:
-      FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
-    observedProtocol?: ProtocolTarget,
-  ) {
-    return {
-      value: target.id,
-      label: describeTarget(store.transportDiscovery!, target, observedProtocol)
-        .label,
-    };
-  }
-  // The caution belongs to the selection, not the toggle: turning the toggle
-  // off keeps a selected datagram card, so it must keep its warning too.
+  // The caution follows the selected datagram card, not the toggle.
   const datagramSelected = $derived(
     store.connections.throughput.target?.transport === "webtransport-datagram",
   );
-  // One card per mechanism an origin advertises. The datagram path is the one
-  // gated on its setting, and stays visible while it is the current selection.
   const simultaneous = $derived(store.selectedServers.length > 1);
   const selectedServers = $derived(
-    store.serverCatalog?.servers.filter((server) =>
-      store.selectedServers.includes(server.id),
-    ) ?? [],
+    catalogSelection(store.serverCatalog, store.selectedServers),
   );
-  const globalThroughput = $derived(
-    store.config.transports.throughputTarget.startsWith("protocol:") ||
-      store.config.transports.throughputTarget.startsWith("transport:"),
-  );
-  const globalLatency = $derived(
-    store.config.transports.latencyTarget.startsWith("transport:"),
-  );
+  const throughputPath = $derived(store.connections.throughput);
   const throughputTargets = $derived(
-    simultaneous
-      ? serverTransportOptions(
-          "throughput",
-          selectedServers,
-          store.serverDiscoveries,
-          store.config.experimentalDatagramThroughput,
-          store.config.transports.throughputTarget,
-        )
-      : [
-          { value: "auto", label: "Automatic" },
-          ...(globalThroughput
-            ? serverTransportOptions(
-                "throughput",
-                selectedServers,
-                store.serverDiscoveries,
-                store.config.experimentalDatagramThroughput,
-                store.config.transports.throughputTarget,
-              ).filter(
-                (option) =>
-                  option.value === store.config.transports.throughputTarget,
-              )
-            : []),
-          ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
-            (entry) =>
-              entry.targets
-                .filter(
-                  (target) =>
-                    target.transport !== "webtransport-datagram" ||
-                    store.config.experimentalDatagramThroughput ||
-                    store.config.transports.throughputTarget === target.id,
-                )
-                .map((target) =>
-                  // The observed protocol only describes the path actually in use.
-                  targetOption(
-                    target,
-                    store.connections.throughput.target?.id === target.id
-                      ? store.connections.throughput.observedProtocol
-                      : undefined,
-                  ),
-                ),
-          ),
-        ],
+    pathOptions(
+      "throughput",
+      selectedServers,
+      store.servers,
+      store.config,
+      throughputPath.target
+        ? {
+            id: throughputPath.target.id,
+            protocol: throughputPath.observedProtocol,
+          }
+        : undefined,
+      simultaneous,
+    ),
   );
   const latencyTargets = $derived(
-    simultaneous
-      ? serverTransportOptions(
-          "latency",
-          store.latencySelection.mode === "primary"
-            ? selectedServers.filter(
-                (server) => server.id === store.primaryLatencyServer,
-              )
-            : selectedServers,
-          store.serverDiscoveries,
-          false,
-          store.config.transports.latencyTarget,
-        )
-      : [
-          { value: "auto", label: "Automatic" },
-          ...(globalLatency
-            ? serverTransportOptions(
-                "latency",
-                selectedServers,
-                store.serverDiscoveries,
-                false,
-                store.config.transports.latencyTarget,
-              ).filter(
-                (option) =>
-                  option.value === store.config.transports.latencyTarget,
-              )
-            : []),
-          ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
-            (entry) => entry.targets.map((target) => targetOption(target)),
-          ),
-        ],
+    pathOptions(
+      "latency",
+      store.latencySelection.mode === "primary"
+        ? selectedServers.filter(
+            (server) => server.id === store.primaryLatencyServer,
+          )
+        : selectedServers,
+      store.servers,
+      store.config,
+      undefined,
+      simultaneous,
+    ),
   );
 
+  const CADENCES = [
+    ["pingCadence", "Idle latency cadence"],
+    ["loadedPingCadence", "Loaded latency cadence"],
+  ] as const;
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
   const DURATION_FIELDS = [
-    ["warmupMs", "Warmup"],
-    ["latencyMs", "Latency"],
-    ["downloadMs", "Download"],
-    ["uploadMs", "Upload"],
-    ["bidirectionalMs", "Bidirectional"],
+    ["warmupMs", phaseLabel("warmup")],
+    ["latencyMs", STAGE.latency.label],
+    ["downloadMs", STAGE.download.label],
+    ["uploadMs", STAGE.upload.label],
+    ["bidirectionalMs", STAGE.bidirectional.label],
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   function sameDuration(
@@ -147,34 +110,54 @@
   ) {
     return DURATION_FIELDS.every(([key]) => a[key] === b[key]);
   }
-  function presetFromDuration(): Preset {
+  let customDuration = $state(false);
+  const durationMode = $derived.by((): Preset => {
+    if (customDuration) return "custom";
     for (const key of ["short", "medium", "long"] as const)
       if (sameDuration(store.config.duration, DURATION_PRESETS[key]))
         return key;
     return "custom";
-  }
-  let durationMode = $state<Preset>(presetFromDuration());
+  });
   function setPreset(preset: Preset) {
-    durationMode = preset;
+    customDuration = preset === "custom";
     if (preset !== "custom") {
       controller.configureRun({ duration: { ...DURATION_PRESETS[preset] } });
     }
   }
+  let rejected = $state<"duration" | "gauge" | "streams" | null>(null);
+  function commitNumber(
+    event: Event,
+    field: NonNullable<typeof rejected>,
+    current: number,
+    normalize: (value: number) => number,
+    commit: (value: number) => boolean,
+  ) {
+    const input = event.currentTarget as HTMLInputElement;
+    const raw = input.valueAsNumber;
+    const value = Number.isFinite(raw) ? normalize(raw) : current;
+    const accepted = value === current || commit(value);
+    input.value = String(accepted ? value : current);
+    rejected = accepted ? null : field;
+    if (!accepted) announce(rejection);
+  }
+  const rejection = $derived(
+    store.startError || "This change cannot apply to the current run.",
+  );
   function setDuration(key: DurationKey, event: Event) {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (!Number.isFinite(value) || value < 0) return;
-    controller.configureRun({
-      duration: { ...store.config.duration, [key]: value },
-    });
+    commitNumber(
+      event,
+      "duration",
+      store.config.duration[key],
+      (value) => clampDuration(key, value),
+      (value) =>
+        controller.configureRun({
+          duration: { ...store.config.duration, [key]: value },
+        }),
+    );
   }
   function setBidirectional(enabled: boolean) {
     controller.configureRun({
       stages: { ...store.config.stages, bidirectional: enabled },
-    });
-  }
-  function setAdaptiveEnabled(enabled: boolean) {
-    controller.configureRun({
-      adaptive: { ...store.config.adaptive, enabled },
     });
   }
   const activeDurationFields = $derived(
@@ -187,13 +170,16 @@
     if (preset === "custom") return [];
     return activeDurationFields.map(([key, label]) => ({
       label,
-      value: `${+(DURATION_PRESETS[preset][key] / 1000).toFixed(1)}s`,
+      value: fmtDuration(DURATION_PRESETS[preset][key]),
     }));
   });
 
-  function setForcedStreams(forced: boolean) {
-    store.config.transferStreams.mode = forced ? "forced" : "auto";
-  }
+  const streams = (patch: Partial<RunnerConfig["transferStreams"]>) =>
+    controller.configureRun({
+      transferStreams: { ...store.config.transferStreams, ...patch },
+    });
+  const gaugeMax = (throughputMaxBytesPerSec: number | "auto") =>
+    controller.configureRun({ visualization: { throughputMaxBytesPerSec } });
 
   const vizAuto = $derived(
     store.config.visualization.throughputMaxBytesPerSec === "auto",
@@ -206,47 +192,47 @@
         ),
   );
   function setVizAuto(auto: boolean) {
-    store.config.visualization.throughputMaxBytesPerSec = auto
-      ? "auto"
-      : Math.max(1, Math.round(store.chartScaleBytesPerSec));
+    gaugeMax(
+      auto ? "auto" : Math.max(1, Math.round(store.scales.chartBytesPerSec)),
+    );
   }
   function setVizMax(event: Event) {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    if (Number.isFinite(value) && value > 0)
-      store.config.visualization.throughputMaxBytesPerSec = Math.max(
-        1,
-        Math.round(store.fromUnit(value)),
-      );
+    const current = Number(vizDisplay.toFixed(2));
+    commitNumber(
+      event,
+      "gauge",
+      current,
+      (value) => (value > 0 ? value : current),
+      (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
+    );
   }
 
-  const readiness = $derived(
-    store.selectedServers.length > 1 || store.unresolvedServers.length
-      ? store.selectionValidation
-      : panelReadiness(store.connections, store.latencyEnabled),
-  );
-  const READINESS_LABEL = {
-    verified: "Ready",
-    checking: "Checking paths",
-    failed: "Path failed",
-    stale: "Recheck needed",
-  } as const;
+  const readiness = $derived(store.selectionValidation);
+  announceChanges(() => `Connection paths: ${READINESS[readiness].label}`);
 </script>
 
-<div class="setup-grid">
-  <h2 class="tier-label">Test</h2>
+{#snippet rejectedHint(field: typeof rejected)}
+  {#if rejected === field}<p class="notice" data-tone="warn">
+      {rejection}
+    </p>{/if}
+{/snippet}
 
-  <section class="panel wide primary">
+<div class="setup-grid">
+  <h2 class="caps tier-label">Test</h2>
+  <section class="surface-inset panel wide primary">
     <div class="section-heading">
-      <h3>Connection paths</h3>
+      <h3 class="caps">Connection paths</h3>
       <span
-        class="readiness-badge"
-        data-state={readiness}
-        aria-live="polite"
-        use:tooltip={readiness === "verified"
-          ? "Recent successful checks are reused while the required server and path are unchanged. Expired checks are refreshed before a test starts."
-          : READINESS_LABEL[readiness]}
+        class="badge term"
+        data-readiness={readiness}
+        data-tone={READINESS[readiness].tone}
+        {@attach tooltip(() =>
+          readiness === "verified"
+            ? JARGON.checkReuse
+            : READINESS[readiness].label,
+        )}
       >
-        {READINESS_LABEL[readiness]}
+        {READINESS[readiness].label}
       </span>
     </div>
     <ServerSelection />
@@ -261,14 +247,12 @@
       locked={running || store.preparing}
     />
   </section>
-
-  <section class="panel">
-    <h3>Duration &amp; stages</h3>
-    <div class="seg" role="group" aria-label="Duration preset">
+  <section class="surface-inset panel">
+    <h3 class="caps">Duration &amp; stages</h3>
+    <div class="segmented presets" role="group" aria-label="Duration preset">
       {#each PRESETS as preset}
         <button
           type="button"
-          class:active={durationMode === preset}
           aria-pressed={durationMode === preset}
           disabled={store.preparing}
           onclick={() => setPreset(preset)}>{preset}</button
@@ -285,106 +269,103 @@
     {#if durationMode === "custom"}
       <div class="duration-fields">
         {#each activeDurationFields as [key, label]}
-          <label>
+          <label class="field">
             <span>{label} ms</span>
             <input
               type="number"
               min="0"
+              max={DURATION_LIMITS[key][1]}
               step="500"
               disabled={store.preparing}
               value={store.config.duration[key]}
-              oninput={(event) => setDuration(key, event)}
+              onchange={(event) => setDuration(key, event)}
             />
           </label>
         {/each}
       </div>
+      <p class="hint">Stages run 1 s to 5 min; 0 skips a stage.</p>
     {:else}
       <div class="dur-summary">
         {#each presetCells as cell}
           <div class="dur-cell">
-            <span>{cell.label}</span>
+            <span class="caps">{cell.label}</span>
             <strong>{cell.value}</strong>
           </div>
         {/each}
       </div>
     {/if}
+    {@render rejectedHint("duration")}
     {#if running}
       <p class="hint">
         Active and future durations, plus unstarted stages, update this run.
       </p>
     {/if}
   </section>
-
-  <h2 class="tier-label">Results</h2>
-
-  <section class="panel">
-    <h3>Display units</h3>
+  <h2 class="caps tier-label">Results</h2>
+  <section class="surface-inset panel">
+    <h3 class="caps">Display units</h3>
     <div class="two">
       <div class="field">
         <span>Rate</span>
-        <div class="seg" role="group" aria-label="Rate unit">
+        <div class="segmented" role="group" aria-label="Rate unit">
           <button
             type="button"
-            class:active={store.unitKind === "bits"}
             aria-pressed={store.unitKind === "bits"}
-            use:tooltip={JARGON.unitBits}
-            onclick={() => (store.unitKind = "bits")}>Bits</button
+            {@attach tooltip(() => JARGON.unitBits)}
+            onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
           >
           <button
             type="button"
-            class:active={store.unitKind === "bytes"}
             aria-pressed={store.unitKind === "bytes"}
-            use:tooltip={JARGON.unitBytes}
-            onclick={() => (store.unitKind = "bytes")}>Bytes</button
+            {@attach tooltip(() => JARGON.unitBytes)}
+            onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
           >
         </div>
       </div>
       <div class="field">
         <span>Prefix</span>
-        <div class="seg" role="group" aria-label="Prefix scale">
+        <div class="segmented" role="group" aria-label="Prefix scale">
           <button
             type="button"
-            class:active={store.unitBase === "base10"}
             aria-pressed={store.unitBase === "base10"}
-            use:tooltip={JARGON.unitDecimal}
-            onclick={() => (store.unitBase = "base10")}>Decimal</button
+            {@attach tooltip(() => JARGON.unitDecimal)}
+            onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
           >
           <button
             type="button"
-            class:active={store.unitBase === "base2"}
             aria-pressed={store.unitBase === "base2"}
-            use:tooltip={JARGON.unitBinary}
-            onclick={() => (store.unitBase = "base2")}>Binary</button
+            {@attach tooltip(() => JARGON.unitBinary)}
+            onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
           >
         </div>
       </div>
     </div>
     <p class="hint">Applies to all displayed rates.</p>
   </section>
-
-  <section class="panel wide">
-    <h3>Result history</h3>
+  <section class="surface-inset panel wide">
+    <h3 class="caps">Result history</h3>
     <Switch
       checked={store.savingResults}
       onToggle={(enabled) =>
-        (store.resultHistoryPreference = enabled ? "enabled" : "disabled")}
+        store.prefer({
+          resultHistoryPreference: enabled ? "enabled" : "disabled",
+        })}
       label="Save completed results on this device"
     />
     <a
-      class="history-link"
+      class="btn-link"
       href="#/history"
       onclick={(event) => {
-        if (!onOpenHistory) return;
         event.preventDefault();
         onOpenHistory(event.currentTarget as HTMLElement);
       }}>View History</a
     >
   </section>
-
-  <section class="panel wide">
-    <h3>Wire-rate estimates</h3>
+  <section class="surface-inset panel wide">
+    <h3 class="caps">Wire-rate estimates</h3>
     <Switch
-      bind:checked={store.showWireEstimates}
+      checked={store.showWireEstimates}
+      onToggle={(showWireEstimates) => store.prefer({ showWireEstimates })}
       label="Show estimated wire rate"
       tooltip={JARGON.wireRate}
     />
@@ -393,25 +374,25 @@
       connection details.
     </p>
   </section>
-
-  <section class="panel">
-    <h3>Gauge scale</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Gauge scale</h3>
     <Switch
       checked={vizAuto}
       onToggle={setVizAuto}
       label="Scale throughput automatically"
     />
     {#if !vizAuto}
-      <label>
+      <label class="field">
         <span>Maximum {store.unitLabel}</span>
         <input
           type="number"
           min="1"
           value={Number(vizDisplay.toFixed(2))}
-          oninput={setVizMax}
+          onchange={setVizMax}
         />
       </label>
     {/if}
+    {@render rejectedHint("gauge")}
     <p class="hint">
       {#if vizAuto}
         The chart follows the measured peak. The gauge starts at 1 Gbit/s and
@@ -421,60 +402,48 @@
       {/if}
     </p>
   </section>
-
-  <h2 class="tier-label">Advanced</h2>
-
-  <section class="panel">
-    <h3>Early finish</h3>
+  <h2 class="caps tier-label">Advanced</h2>
+  <section class="surface-inset panel">
+    <h3 class="caps">Early finish</h3>
     <Switch
-      checked={store.config.adaptive.enabled}
-      onToggle={setAdaptiveEnabled}
+      checked={store.config.adaptive}
+      onToggle={(adaptive) => controller.configureRun({ adaptive })}
       disabled={store.preparing}
       label="Finish stable stages early"
     />
   </section>
-
-  <section class="panel">
-    <h3>Latency timing</h3>
-    <label>
-      <span>Unloaded ping cadence</span>
-      <select
-        bind:value={store.config.pingCadence}
-        disabled={running || store.preparing}
-      >
-        <option value="reply-driven">Reply-driven</option>
-        <option value="fast">Fast (80 ms)</option>
-        <option value="medium">Medium (250 ms)</option>
-        <option value="slow">Slow (600 ms)</option>
-      </select>
-    </label>
-    <label>
-      <span>Loaded ping cadence</span>
-      <select
-        bind:value={store.config.loadedPingCadence}
-        disabled={running || store.preparing}
-      >
-        <option value="reply-driven">Reply-driven</option>
-        <option value="fast">Fast (80 ms)</option>
-        <option value="medium">Medium (250 ms)</option>
-        <option value="slow">Slow (600 ms)</option>
-      </select>
-    </label>
+  <section class="surface-inset panel">
+    <h3 class="caps">Latency timing</h3>
+    {#each CADENCES as [key, label] (key)}
+      <label class="field">
+        <span>{label}</span>
+        <select
+          value={store.config[key]}
+          onchange={(event) =>
+            controller.configureRun({
+              [key]: event.currentTarget.value as PingCadence,
+            })}
+          disabled={running || store.preparing}
+        >
+          {#each Object.entries(PING_CADENCE) as [value, name] (value)}
+            <option {value}>{name}</option>
+          {/each}
+        </select>
+      </label>
+    {/each}
     <Switch
-      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      checked={store.config.skipLoadedLatencyWhenStageOff}
+      onToggle={(skipLoadedLatencyWhenStageOff) =>
+        controller.configureRun({ skipLoadedLatencyWhenStageOff })}
       disabled={running || store.preparing}
       label="Skip loaded latency when latency is off"
     />
   </section>
-
-  <section class="panel">
-    <h3>Datagram throughput</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Datagram throughput</h3>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <!-- Above the toggle: this panel ends a long scroll, and a note past the
-           control that summoned it is a note nobody reads. Announced as a
-           status rather than an alert — nothing has gone wrong — and its point
-           is carried by the leading sentence, not only by the warn colour. -->
-      <p class="caution" role="status">
+      <!-- Above the toggle, where a long scroll ends; a status, not an alert. -->
+      <p class="notice" data-tone="warn" role="status">
         <strong>Measures application datagram delivery.</strong> Datagrams are not
         retransmitted. Missing deliveries can come from network or endpoint queues;
         they do not identify physical packet loss. Expect a lower received rate than
@@ -482,7 +451,9 @@
       </p>
     {/if}
     <Switch
-      bind:checked={store.config.experimentalDatagramThroughput}
+      checked={store.config.experimentalDatagramThroughput}
+      onToggle={(experimentalDatagramThroughput) =>
+        controller.configureRun({ experimentalDatagramThroughput })}
       disabled={running || store.preparing}
       label="Datagram throughput (experimental)"
     />
@@ -490,17 +461,16 @@
       Adds the WebTransport datagram card to the connection picker.
     </p>
   </section>
-
-  <section class="panel">
-    <h3>Transfer streams</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Transfer streams</h3>
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
-      onToggle={setForcedStreams}
+      onToggle={(forced) => streams({ mode: forced ? "forced" : "auto" })}
       disabled={running || store.preparing}
       label="Force exact stream count"
-      tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
+      tooltip={JARGON.forcedStreams}
     />
-    <label>
+    <label class="field">
       <span
         >{store.config.transferStreams.mode === "forced"
           ? "Streams per server and direction"
@@ -512,9 +482,23 @@
         max="128"
         step="1"
         disabled={running || store.preparing}
-        bind:value={store.config.transferStreams.count}
+        value={store.config.transferStreams.count}
+        onchange={(event) =>
+          commitNumber(
+            event,
+            "streams",
+            store.config.transferStreams.count,
+            normalizeStreamCount,
+            (count) => streams({ count }),
+          )}
       />
     </label>
+    {@render rejectedHint("streams")}
+    {#if store.streamPlanError}
+      <p class="notice" data-tone="warn" role="status">
+        {store.streamPlanError}
+      </p>
+    {/if}
     {#if store.config.transferStreams.mode === "forced"}
       <p class="hint">
         Starts exactly {store.config.transferStreams.count} requests per server and
@@ -528,34 +512,45 @@
       </p>
     {/if}
   </section>
+  <div class="settings-reset wide">
+    <button
+      class="btn btn-danger"
+      type="button"
+      disabled={running || store.preparing}
+      onclick={() => (resetConfirmOpen = true)}>Reset settings</button
+    >
+  </div>
 </div>
+
+<ConfirmDialog
+  open={resetConfirmOpen}
+  id="settings-reset-confirm"
+  title="Reset settings?"
+  description={JARGON.resetSettings}
+  cancelLabel="Keep settings"
+  confirmLabel="Reset settings"
+  onCancel={() => (resetConfirmOpen = false)}
+  onConfirm={resetSettings}
+/>
 
 <style>
   .setup-grid {
     display: grid;
-    /* Connection choice cards inherit this exact breakpoint so the Settings
-       surface reflows as one system when its dock is manually widened. */
+    /* Connection cards share this breakpoint so a widened dock reflows as one. */
     --settings-card-min: 180px;
     grid-template-columns: repeat(
       auto-fit,
       minmax(min(100%, var(--settings-card-min)), 1fr)
     );
     gap: var(--space-3);
-    container-type: inline-size;
-    container-name: settings-grid;
+    container: settings-grid / inline-size;
   }
   .panel {
     display: grid;
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(180deg, var(--surface-2), transparent),
-      var(--surface-inset);
     padding: var(--space-3);
-    box-shadow: var(--elev-recess);
   }
   .wide,
   .tier-label {
@@ -565,23 +560,10 @@
     border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
   }
   .tier-label {
-    margin: 4px 0 -4px;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    margin-top: var(--space-1);
   }
   .tier-label:first-child {
     margin-top: 0;
-  }
-  h3 {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
   }
   .section-heading {
     display: flex;
@@ -589,129 +571,21 @@
     justify-content: space-between;
     gap: var(--space-3);
   }
-  .readiness-badge {
-    flex: none;
-    padding: 3px 7px;
-    border-radius: var(--r-full);
-    background: var(--warn-soft);
-    color: var(--warn);
-    font-size: 9px;
-    font-weight: 750;
-  }
-  .readiness-badge[data-state="verified"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  .readiness-badge[data-state="failed"] {
-    background: var(--err-soft);
-    color: var(--err);
-  }
-  label,
-  .field {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-  }
-  label > span,
-  .field > span {
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  input[type="number"],
-  select {
-    width: 100%;
-    min-height: 36px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 7px 9px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    outline: none;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
-  }
-  input:focus-visible,
-  select:focus-visible {
-    border-color: color-mix(in srgb, var(--brand) 56%, var(--border));
-    box-shadow: 0 0 0 3px var(--brand-soft);
-  }
-  .seg {
-    display: flex;
-    gap: 3px;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-  }
-  button {
-    flex: 1;
-    min-height: 30px;
-    border: 0;
-    border-radius: var(--r-well);
-    background: transparent;
-    color: var(--text-soft);
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
+  .presets > button {
     text-transform: capitalize;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
   }
-  .seg button {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .btn-link {
+    justify-self: start;
   }
-  button:hover {
-    color: var(--text);
+  .settings-reset {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
   }
-  button.active {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-  .two {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 10px;
-  }
-  .hint {
-    margin: 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.55;
-  }
-  .history-link {
-    color: var(--brand-strong);
-    font-size: 12px;
-  }
-  .caution {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
-    border-radius: var(--r-well);
-    background: var(--warn-soft);
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.55;
-  }
-  .caution strong {
-    color: var(--warn);
-  }
+  .two,
   .duration-fields {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    gap: var(--space-2) var(--space-3);
   }
   .dur-summary {
     display: grid;
@@ -722,31 +596,18 @@
     display: grid;
     gap: 2px;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 6px var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-1);
   }
   .dur-cell span {
     overflow: hidden;
-    color: var(--text-soft);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .dur-cell strong {
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 12px;
+    font: var(--w-strong) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
-  }
-  @container (max-width: 360px) {
-    .two {
-      grid-template-columns: 1fr;
-      gap: var(--space-1);
-    }
   }
 </style>

@@ -5,6 +5,7 @@ import type {
   StagePresentationStatus,
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
+import { STATUS } from "../presentation/vocabulary";
 
 type SegState = StagePresentationStatus | "warmup";
 
@@ -21,7 +22,7 @@ interface StageTrackModel extends Segment {
   execution: StagePresentation;
 }
 
-export function segmentState(stage: StagePresentation): Segment {
+function segmentState(stage: StagePresentation): Segment {
   return {
     state: stage.warming ? "warmup" : stage.status,
     fill: stage.fill,
@@ -40,11 +41,11 @@ export function stageTrackModel(input: {
       ? { state: "pending" as const, fill: 0 }
       : segmentState(execution);
   const tag = !selected
-    ? "skipped"
+    ? STATUS["not-run"]
     : execution.status === "disabled"
-      ? "next run"
+      ? STATUS.next
       : execution.status === "partial" || execution.status === "failed"
-        ? execution.status
+        ? STATUS[execution.status]
         : null;
   return {
     selected,
@@ -55,6 +56,13 @@ export function stageTrackModel(input: {
   };
 }
 
+/** Bidirectional shows while Settings includes it or the retained run executed it. */
+export const stageShown = (
+  stage: StageKey,
+  selected: boolean,
+  execution: StagePresentation,
+) => stage !== "bidirectional" || selected || execution.status !== "disabled";
+
 // Why a locked segment cannot be toggled, or null when it can.
 export function lockReason(
   canToggle: boolean,
@@ -64,8 +72,8 @@ export function lockReason(
   state: SegState,
 ): string | null {
   if (canToggle) return null;
-  if (state === "complete" || state === "partial") return "done";
+  if (state === "complete" || state === "partial") return STATUS[state];
   if (phaseStage === stage)
-    return state === "recovering" ? "recovering" : "running";
-  return phase === "complete" ? "done" : "upcoming";
+    return state === "recovering" ? STATUS.recovering : STATUS.running;
+  return phase === "complete" ? STATUS.complete : STATUS.upcoming;
 }

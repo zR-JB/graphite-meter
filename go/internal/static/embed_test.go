@@ -3,18 +3,25 @@ package static
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
 )
 
-// testFS is a small in-memory dist fixture for embedded asset routing.
 func testFS() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html":             {Data: []byte("index page")},
+		"index.html":             {Data: []byte("<html><head></head><body>index page</body></html>")},
+		"version.json":           {Data: []byte("{}")},
 		"assets/app.js":          {Data: []byte("console.log('app')")},
 		"assets/sub/dir/file.js": {Data: []byte("console.log('nested')")},
 	}
+}
+
+func serve(h http.Handler, method, path string) *httptest.ResponseRecorder {
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(method, path, nil))
+	return rr
 }
 
 func TestHandlerRoutes(t *testing.T) {
@@ -23,103 +30,106 @@ func TestHandlerRoutes(t *testing.T) {
 		fs                   fstest.MapFS
 		wantStatus           int
 	}{
-		{name: "serves known asset", path: "/assets/app.js", wantStatus: http.StatusOK, wantBody: "console.log('app')"},
+		{name: "known asset", path: "/assets/app.js", wantStatus: http.StatusOK, wantBody: "console.log('app')"},
 		{name: "root serves index", path: "/", wantStatus: http.StatusOK, wantBody: "index page"},
-		{name: "unknown extensionless route is not an SPA fallback", path: "/results", wantStatus: http.StatusNotFound},
-		{name: "missing asset with extension is 404", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
-		{name: "serves nested asset path", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "console.log('nested')"},
-		{name: "cleaned traversal cannot reach a second shell route", path: "/assets/../index.html", wantStatus: http.StatusNotFound},
-		{name: "dot-segment path is not the shell", path: "/foo/..", wantStatus: http.StatusNotFound},
-		{name: "asset dot-segment path is not the shell", path: "/assets/..", wantStatus: http.StatusNotFound},
-		{name: "encoded dot-segment path is not the shell", path: "/foo/%2e%2e", wantStatus: http.StatusNotFound},
-		{name: "backslash path is not the shell", path: `/foo\..\bar`, wantStatus: http.StatusNotFound},
-		{name: "deep path traversal is not an SPA fallback", path: "/../../../etc/passwd", wantStatus: http.StatusNotFound},
-		{name: "unknown trailing slash route is 404", path: "/settings/", wantStatus: http.StatusNotFound},
-		{name: "index file is not a second shell route", path: "/index.html", wantStatus: http.StatusNotFound},
-		{name: "empty FS falls back to 404", fs: fstest.MapFS{}, path: "/", wantStatus: http.StatusNotFound},
+		{name: "no SPA fallback", path: "/results", wantStatus: http.StatusNotFound},
+		{name: "missing asset", path: "/assets/missing.js", wantStatus: http.StatusNotFound},
+		{name: "nested asset", path: "/assets/sub/dir/file.js", wantStatus: http.StatusOK, wantBody: "nested"},
+		{name: "cleaned traversal", path: "/assets/../index.html", wantStatus: http.StatusNotFound},
+		{name: "dot segment", path: "/foo/..", wantStatus: http.StatusNotFound},
+		{name: "asset dot segment", path: "/assets/..", wantStatus: http.StatusNotFound},
+		{name: "encoded dot segment", path: "/foo/%2e%2e", wantStatus: http.StatusNotFound},
+		{name: "backslash", path: `/foo\..\bar`, wantStatus: http.StatusNotFound},
+		{name: "deep traversal", path: "/../../../etc/passwd", wantStatus: http.StatusNotFound},
+		{name: "trailing slash", path: "/settings/", wantStatus: http.StatusNotFound},
+		{name: "directory", path: "/assets", wantStatus: http.StatusNotFound},
+		{name: "directory listing", path: "/assets/", wantStatus: http.StatusNotFound},
+		{name: "index file is not a second shell", path: "/index.html", wantStatus: http.StatusNotFound},
+		{name: "empty FS", fs: fstest.MapFS{}, path: "/", wantStatus: http.StatusNotFound},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			files := test.fs
 			if files == nil {
 				files = testFS()
 			}
-			rr := httptest.NewRecorder()
-			handlerForWithMarker(files, resultHistoryMarker(false)).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, test.path, nil))
-			status, body := rr.Code, rr.Body.String()
-			if status != test.wantStatus {
-				t.Fatalf("status = %d, want %d", status, test.wantStatus)
-			}
-			if status == http.StatusNotFound && strings.Contains(body, "index page") {
-				t.Fatal("missing path served the shell body")
-			}
-			if test.wantBody != "" && !strings.Contains(body, test.wantBody) {
-				t.Fatalf("body = %q, want %q", body, test.wantBody)
+			rr := serve(handler(files, false, false), http.MethodGet, test.path)
+			body := rr.Body.String()
+			if rr.Code != test.wantStatus || rr.Code == http.StatusNotFound && strings.Contains(body, "index page") ||
+				!strings.Contains(body, test.wantBody) {
+				t.Fatalf("status = %d body = %q, want %d %q", rr.Code, body, test.wantStatus, test.wantBody)
 			}
 		})
 	}
 }
 
-func TestHandlerHeadRequestMatchesGetHeaders(t *testing.T) {
-	rr := httptest.NewRecorder()
-	handlerForWithMarker(testFS(), resultHistoryMarker(false)).ServeHTTP(rr, httptest.NewRequest(http.MethodHead, "/assets/app.js", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
-	}
-	if rr.Body.Len() != 0 {
-		t.Fatalf("HEAD body = %q, want empty", rr.Body.String())
-	}
-	if got := rr.Header().Get("Content-Length"); got != "18" {
-		t.Fatalf("Content-Length = %q, want 18 (matching the GET body size)", got)
-	}
-}
-
-func TestHandlerRejectsNonReadMethods(t *testing.T) {
-	rr := httptest.NewRecorder()
-	handlerForWithMarker(testFS(), resultHistoryMarker(false)).ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/", nil))
-	if rr.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST / status = %d, want %d", rr.Code, http.StatusMethodNotAllowed)
-	}
-	if got := rr.Header().Get("Allow"); got != "GET, HEAD" {
-		t.Fatalf("Allow = %q, want %q", got, "GET, HEAD")
+// Hashed bundle files never change under their name; the shell and unhashed files must revalidate.
+func TestOnlyHashedAssetsAreImmutable(t *testing.T) {
+	for path, want := range map[string]string{
+		"/assets/app.js": "public, max-age=31536000, immutable",
+		"/version.json":  "",
+		"/":              "no-store",
+	} {
+		if rr := serve(handler(testFS(), false, false), http.MethodGet, path); rr.Code != http.StatusOK ||
+			rr.Header().Get("Cache-Control") != want {
+			t.Errorf("GET %s = %d Cache-Control %q, want 200 %q", path, rr.Code, rr.Header().Get("Cache-Control"), want)
+		}
 	}
 }
 
-func TestScriptCSPHash(t *testing.T) {
-	// The exact inline pre-paint script the client build emits.
-	const inline = `try{e=localStorage.getItem("graphite-meter:v1"),t=e?JSON.parse(e).theme:null,r=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark",document.documentElement.setAttribute("data-theme",r)}catch(c){}var e,t,r;`
-	html := []byte(`<!doctype html><head><style>x</style> <script>` + inline +
-		`</script> <script type="module" src="/assets/app.js"></script></head>`)
-	if got := scriptCSPHash(html); got != "i18M9x6p8PNJSBUDdO2pX/7us3FTrwpVfsQ1eUfPYqw=" {
-		t.Fatalf("scriptCSPHash = %q, want the cross-checked digest", got)
+func TestHandlerMethods(t *testing.T) {
+	h := handler(testFS(), false, true)
+	for _, path := range []string{"/assets/app.js", "/"} {
+		get, head := serve(h, http.MethodGet, path), serve(h, http.MethodHead, path)
+		if head.Code != http.StatusOK || head.Body.Len() != 0 || get.Header().Get("Content-Length") == "" ||
+			head.Header().Get("Content-Length") != get.Header().Get("Content-Length") {
+			t.Fatalf("HEAD %s = %d with %d body bytes and length %q, GET length %q", path, head.Code, head.Body.Len(),
+				head.Header().Get("Content-Length"), get.Header().Get("Content-Length"))
+		}
+	}
+	rr := serve(h, http.MethodPost, "/")
+	if rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != "GET, HEAD" {
+		t.Fatalf("POST / = %d Allow %q, want 405 GET, HEAD", rr.Code, rr.Header().Get("Allow"))
 	}
 }
 
-func TestScriptCSPHashHandlesNoInlineScript(t *testing.T) {
-	// The tracked placeholder has no inline script, so the caller omits script-src.
-	if got := scriptCSPHash([]byte(`<html><body>no scripts</body></html>`)); got != "" {
-		t.Fatalf("scriptCSPHash without an inline script = %q, want empty", got)
-	}
-	// A module-only build (src attribute) must not match the bare delimiter.
-	if got := scriptCSPHash([]byte(`<script src="/a.js"></script>`)); got != "" {
-		t.Fatalf("scriptCSPHash of a src-only script = %q, want empty", got)
+// Only the shell carries the authentication marker and the operator's result-history default.
+func TestShellMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		authenticated, history bool
+		want                   []string
+	}{
+		{false, false, []string{`content="false"`}},
+		{true, true, []string{`name="graphite-meter-auth"`, `content="true"`}},
+	} {
+		h := handler(testFS(), tc.authenticated, tc.history)
+		shell := serve(h, http.MethodGet, "/").Body.String()
+		for _, want := range append(tc.want, `name="graphite-meter-result-history-default"`) {
+			if !strings.Contains(shell, want) {
+				t.Errorf("shell %q lacks %s", shell, want)
+			}
+		}
+		if strings.Contains(shell, "graphite-meter-auth") != tc.authenticated {
+			t.Errorf("authenticated=%t shell = %q", tc.authenticated, shell)
+		}
+		asset := serve(h, http.MethodGet, "/assets/app.js").Body.String()
+		if strings.Contains(asset, "graphite-meter") {
+			t.Errorf("asset was marked: %q", asset)
+		}
 	}
 }
 
-func BenchmarkIndexResponse(b *testing.B) {
-	files := fstest.MapFS{
-		"index.html": {Data: []byte("<html><head></head><body>" + strings.Repeat("x", 16*1024) + "</body></html>")},
+// The browser suite fails on any violation of the permissive directives; only the restrictive ones need pinning.
+func TestPagePolicy(t *testing.T) {
+	built := strings.Split(pagePolicy("S", "T", []string{"https://meter.example:*"}), "; ")
+	for _, want := range []string{
+		"default-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
+	} {
+		if !slices.Contains(built, want) {
+			t.Errorf("policy lacks %q: %s", want, built)
+		}
 	}
-	h := handlerForWithMarker(files, resultHistoryMarker(true))
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := &indexBenchmarkWriter{header: make(http.Header)}
-	b.ReportAllocs()
-	for b.Loop() {
-		h.ServeHTTP(w, req)
+	if bare := pagePolicy("", "", nil); strings.Contains(bare, "sha256") ||
+		!strings.HasSuffix(bare, "; connect-src 'self'") {
+		t.Errorf("policy without a build = %s", bare)
 	}
 }
-
-type indexBenchmarkWriter struct{ header http.Header }
-
-func (w *indexBenchmarkWriter) Header() http.Header         { return w.header }
-func (w *indexBenchmarkWriter) WriteHeader(int)             {}
-func (w *indexBenchmarkWriter) Write(p []byte) (int, error) { return len(p), nil }

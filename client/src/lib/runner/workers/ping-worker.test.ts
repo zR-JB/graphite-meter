@@ -1,6 +1,6 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect, afterEach, beforeEach, jest } from "bun:test";
 import type { PingWorkerEvent } from "./pingSample";
-import { bootWorker, type WorkerRealm } from "./test-helpers.test";
+import { bootWorker, elapse, type WorkerRealm } from "./test-helpers.testutil";
 
 const globals = globalThis as Record<string, unknown>;
 
@@ -19,11 +19,11 @@ class Scenario {
   }
 
   get pingUrl(): string {
-    return `https://meter.test/${this.id}/wt/ping`;
+    return `https://${this.id}.meter.test/wt/ping`;
   }
 
   get mintUrl(): string {
-    return `https://meter.test/${this.id}/wt/token`;
+    return `https://${this.id}.meter.test/wt/session`;
   }
 
   outcomeFor(index: number): Outcome {
@@ -39,7 +39,7 @@ class Scenario {
 
 const scenarios = new Map<string, Scenario>();
 const scenarioOf = (url: string): Scenario => {
-  const id = new URL(url).pathname.split("/")[1];
+  const id = new URL(url).hostname.split(".")[0];
   const found = scenarios.get(id);
   if (!found) throw new Error(`unexpected url ${url}`);
   return found;
@@ -151,8 +151,8 @@ async function start(scenario: Scenario): Promise<Realm> {
     intervalMs: 250,
     replyDriven: false,
     maxInFlight: 16,
-    lossK: 4,
-    lossFloorMs: 250,
+    deadlineK: 4,
+    deadlineFloorMs: 250,
     checkAuthentication: true,
   });
   return realm;
@@ -160,10 +160,12 @@ async function start(scenario: Scenario): Promise<Realm> {
 
 async function halt(scenario: Scenario): Promise<void> {
   scenario.halted = true;
-  await Bun.sleep(250);
+  await elapse(250);
 }
 
+beforeEach(() => jest.useFakeTimers());
 afterEach(() => {
+  jest.useRealTimers();
   globalThis.fetch = realFetch;
   globals.postMessage = realPost;
   globalThis.onmessage = null;
@@ -177,7 +179,7 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   const scenario = new Scenario("refused");
   scenario.outcomes = ["refuse"];
   await start(scenario);
-  await Bun.sleep(200);
+  await elapse(200);
   await halt(scenario);
 
   expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
@@ -190,11 +192,11 @@ test("a dial the server accepted never offers its token again", async () => {
   const scenario = new Scenario("accepted");
   scenario.outcomes = ["accept"];
   await start(scenario);
-  await Bun.sleep(50);
+  await elapse(50);
   expect(scenario.dials.length).toBe(1);
 
   scenario.sessions[0].drop();
-  await Bun.sleep(250);
+  await elapse(250);
   await halt(scenario);
 
   expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
@@ -206,7 +208,7 @@ test("a pending dial times out and retries with the same unspent token", async (
   const scenario = new Scenario("pending");
   scenario.outcomes = ["pending", "accept"];
   await start(scenario);
-  await Bun.sleep(3_300);
+  await elapse(3_300);
 
   expect(scenario.dials).toHaveLength(2);
   expect(scenario.tokens()[1]).toBe(scenario.tokens()[0]);
@@ -214,15 +216,15 @@ test("a pending dial times out and retries with the same unspent token", async (
 
   scenario.halted = true;
   scenario.sessions.at(-1)?.drop();
-  await Bun.sleep(250);
-}, 10_000);
+  await elapse(250);
+});
 
 async function waitUntil(predicate: () => boolean) {
   const deadline = performance.now() + 2_000;
   while (!predicate()) {
     if (performance.now() > deadline)
       throw new Error("worker transition did not settle");
-    await Bun.sleep(5);
+    await elapse(5);
   }
 }
 
@@ -269,7 +271,7 @@ test("WebTransport reconnect ignores stale datagrams and retains fresh reply tim
       event.type === "samples" ? event.samples : [],
     );
     expect(samples.map((sample) => sample.reflectorHandlingMs)).toEqual([0, 0]);
-    expect(samples.every((sample) => !sample.lost)).toBe(true);
+    expect(samples.every((sample) => !sample.timedOut)).toBe(true);
   } finally {
     realm.send({
       type: "stop",
@@ -296,7 +298,7 @@ test("a closed WebTransport dial becoming ready cannot restart the replacement b
       (event) => event.type === "open",
     ).length;
     first.accept();
-    await Bun.sleep(10);
+    await elapse(10);
     expect(first.sent).toEqual([]);
     expect(realm.posted.filter((event) => event.type === "open")).toHaveLength(
       openCount,
@@ -315,10 +317,13 @@ test("a ticket spent by a temporary downstream refusal can recover within readin
   scenario.refuseFirstTicket = true;
   const realm = await start(scenario);
   try {
-    await Bun.sleep(3_400);
+    await elapse(3_400);
     expect(realm.posted.some((message) => message.type === "open")).toBe(true);
     expect(scenario.mints).toBeGreaterThanOrEqual(2);
   } finally {
-    realm.send({ type: "stop" });
+    realm.send({
+      type: "stop",
+      cutoffEpochMs: performance.timeOrigin + performance.now(),
+    });
   }
-}, 5_000);
+});

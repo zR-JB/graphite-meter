@@ -2,24 +2,14 @@
   import { store } from "../../state/store.svelte";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import {
-    summarizeRoleValidation,
-    type ConnectionRole,
-  } from "../../runner/connectionModel";
-  import {
-    latencyOptionView,
-    throughputOptionView,
-  } from "../../runner/real/transportViewModel";
+  import { summarizeRoleValidation } from "../../runner/paths";
+  import type { ConnectionRole } from "../../runner/contract";
+  import type { PathOption } from "../../presentation/paths";
+  import { READINESS } from "../../presentation/vocabulary";
 
-  interface Option {
-    value: string;
-    label: string;
-    disabled?: boolean;
-    detail?: string;
-  }
   interface Props {
     role: ConnectionRole;
-    options: readonly Option[];
+    options: readonly PathOption[];
     locked?: boolean;
   }
   let { role, options, locked = false }: Props = $props();
@@ -37,13 +27,7 @@
   );
   const simultaneous = $derived(serverIds.length > 1);
   const roleSummary = $derived(
-    summarizeRoleValidation(
-      store.config,
-      role,
-      serverIds,
-      store.serverDiscoveries,
-      store.serverValidation,
-    ),
+    summarizeRoleValidation(role, serverIds, store.servers),
   );
   const validation = $derived(
     simultaneous
@@ -60,74 +44,61 @@
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
   );
-  const status = $derived(
-    validation === "verified"
-      ? "Ready"
-      : validation[0].toUpperCase() + validation.slice(1),
+  const offerAutomatic = $derived(
+    selected !== "auto" &&
+      !locked &&
+      (validation === "failed" ||
+        !!options.find((option) => option.value === selected)?.disabled),
   );
-
   function select(value: string) {
     controller.selectConnection(role, value);
-  }
-
-  function optionView(value: string) {
-    return role === "throughput"
-      ? throughputOptionView(store.transportDiscovery, value)
-      : latencyOptionView(store.transportDiscovery, value);
   }
 </script>
 
 <fieldset>
-  <legend>{title}</legend>
+  <legend class="caps">{title}</legend>
   <div class="options">
     {#each options as option (option.value)}
-      {@const view =
-        option.detail !== undefined
-          ? { disabled: option.disabled ?? false, detail: option.detail }
-          : optionView(option.value)}
       <label
         class="choice"
         class:selected={selected === option.value}
-        class:unavailable={view.disabled || locked}
+        class:unavailable={option.disabled || locked}
       >
         <input
           type="radio"
           name={`${role}-target`}
           value={option.value}
           checked={selected === option.value}
-          disabled={view.disabled || locked}
+          disabled={option.disabled || locked}
           onchange={() => select(option.value)}
         />
         <span class="radio-dot" aria-hidden="true"></span>
         <span class="copy">
           <strong>{option.label}</strong>
-          <small>{view.detail}</small>
+          <small>{option.detail}</small>
         </span>
       </label>
     {/each}
   </div>
-  {#if selected !== "auto" && !locked && (options.find((option) => option.value === selected)?.disabled || validation === "failed")}
-    <button type="button" onclick={() => select("auto")}>Use Automatic</button>
+  {#if offerAutomatic}
+    <button class="btn" type="button" onclick={() => select("auto")}
+      >Use Automatic</button
+    >
   {/if}
-  <div
-    class="validation"
-    class:error={validation === "failed"}
-    aria-live="polite"
-  >
-    <span class="dot" data-state={validation}></span>
+  <div class="validation">
+    <span class="dot" data-tone={READINESS[validation].tone}></span>
     <span class="validation-copy">
-      <strong>{locked ? "In use" : status}</strong>
+      <strong>{locked ? "In use" : READINESS[validation].label}</strong>
       <small>{summary}</small>
     </span>
     {#if !locked && (validation === "failed" || validation === "stale")}
       <!-- Both pickers mount at once and a <legend> does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
       <button
+        class="btn"
         type="button"
         aria-label={`Retry ${title}`}
-        onclick={() =>
-          void controller.validateConnections(true, role).catch(() => {})}
-        >Retry</button
+        onclick={() => void controller.retry({ role })}>Retry</button
       >
     {/if}
   </div>
@@ -136,28 +107,18 @@
 <style>
   fieldset {
     display: grid;
-    gap: 7px;
+    gap: 6px;
     min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: 0;
   }
   legend {
-    margin-bottom: 7px;
-    padding: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    margin-bottom: 6px;
   }
   .options {
     display: grid;
-    grid-template-columns: 1fr;
     gap: 6px;
   }
-  /* Settings cards are 180px minimum with a 12px normal-density grid gap:
-     180 + 12 + 180 = 372px, the exact outer-grid two-column breakpoint. */
+  /* Settings cards are 180px minimum with a 12px grid gap: 180 + 12 + 180 =
+     372px, the exact outer-grid two-column breakpoint. */
   @container settings-grid (min-width: 372px) {
     .options {
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
@@ -171,24 +132,20 @@
     gap: var(--space-2);
     min-height: 52px;
     min-width: 0;
-    padding: 8px 9px;
+    padding: var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
+    transition: var(--transition-control);
   }
-  .choice:hover:not(.unavailable) {
-    border-color: color-mix(in srgb, var(--brand) 38%, var(--border));
+  @media (hover: hover) {
+    .choice:hover:not(.unavailable) {
+      border-color: var(--brand-line);
+    }
   }
   .choice.selected {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
+    border-color: var(--brand-line);
     background: var(--brand-soft);
-    box-shadow: inset 0 0 0 1px
-      color-mix(in srgb, var(--brand) 18%, transparent);
   }
   .choice.unavailable {
     opacity: 0.56;
@@ -196,111 +153,76 @@
   }
   .choice input {
     position: absolute;
-    width: 1px;
-    height: 1px;
     opacity: 0;
     pointer-events: none;
   }
   .choice:focus-within {
-    border-color: color-mix(in srgb, var(--brand) 62%, var(--border));
-    box-shadow: 0 0 0 3px var(--brand-soft);
+    border-color: var(--brand-line);
+    box-shadow: var(--ring-halo);
   }
   .radio-dot {
-    grid-column: 1;
-    box-sizing: border-box;
     width: 14px;
     height: 14px;
     border: 1px solid var(--text-soft);
-    border-radius: 50%;
+    border-radius: var(--r-full);
   }
   .choice.selected .radio-dot {
     border: 4px solid var(--brand-strong);
     background: var(--surface-1);
   }
   .copy {
-    grid-column: 2;
     display: grid;
     gap: 2px;
     min-width: 0;
   }
   .copy strong {
-    color: var(--text);
-    font-size: 11px;
-    font-weight: 780;
+    font-size: var(--type-xs);
+    font-weight: var(--w-heavy);
     overflow-wrap: anywhere;
   }
   .copy small {
     display: -webkit-box;
     overflow: hidden;
     color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 500;
-    line-height: 1.35;
-    line-clamp: 2;
-    text-overflow: ellipsis;
+    font: var(--type-2xs) / 1.35 var(--font-mono);
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
-    white-space: normal;
+    line-clamp: 2;
+  }
+  .btn {
+    justify-self: start;
   }
   .validation {
     display: grid;
     grid-template-columns: 7px minmax(0, 1fr) auto;
-    gap: var(--space-2);
     align-items: center;
+    gap: var(--space-2);
     min-height: 28px;
-    padding: 2px 3px;
+    padding-inline: 3px;
+    font-size: var(--type-2xs);
   }
   .validation-copy {
     display: flex;
-    min-width: 0;
-    gap: 6px;
     align-items: baseline;
+    gap: 6px;
+    min-width: 0;
   }
   .validation-copy strong {
     flex: none;
-    color: var(--text);
-    font-size: 10px;
-    font-weight: 750;
+    font-weight: var(--w-heavy);
   }
   .validation-copy small {
     overflow: hidden;
     min-width: 0;
     color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.4;
+    font-size: inherit;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .dot {
     width: 7px;
     height: 7px;
-    border-radius: 50%;
-    background: var(--text-soft);
-  }
-  .dot[data-state="verified"] {
-    background: var(--ok);
-  }
-  .dot[data-state="checking"] {
-    background: var(--brand);
-  }
-  .dot[data-state="failed"] {
-    background: var(--warn);
-  }
-  button {
-    min-height: 28px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 4px 9px;
-    font-family: var(--font-sans);
-    font-size: 10px;
-    font-weight: 700;
-    cursor: pointer;
-  }
-  button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
+    border-radius: var(--r-full);
+    background: var(--tone);
   }
 </style>

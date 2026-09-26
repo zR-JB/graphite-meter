@@ -12,45 +12,28 @@ permissions:
 
 env:
   MISE_AUTO_INSTALL: '0'
-  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4
-  SKOPEO_VERSION: 1.22.2
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plan:
-    name: Plan and repository safety
+    name: Plan
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      core: ${{ steps.filter.outputs.core }}
-      go: ${{ steps.filter.outputs.go }}
-      browser: ${{ steps.filter.outputs.browser }}
-      tui: ${{ steps.filter.outputs.tui }}
-      integration: ${{ steps.filter.outputs.integration }}
-      smoke: ${{ steps.filter.outputs.smoke }}
-      release: ${{ steps.filter.outputs.release }}
-      security: ${{ steps.filter.outputs.security }}
+      code: ${{ github.event_name == 'push' || steps.filter.outputs.code == 'true' }}
+      go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
+      deps: ${{ github.event_name == 'push' || steps.filter.outputs.deps == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Set up Python verification tools
-        uses: ./.github/actions/setup-project
-        with: {python: 'true'}
-
-      - name: Enforce repository and workflow security policy
-        run: python3 scripts/ci/workflow_policy.py
-
-      - name: Type-check tooling and test pipeline and legal boundaries
-        run: mise run pipeline-test
 
       - id: filter
         name: Determine affected CI areas
@@ -60,50 +43,44 @@ jobs:
 
       - name: Summarize CI plan
         env:
-          CORE: ${{ steps.filter.outputs.core }}
-          GO: ${{ steps.filter.outputs.go }}
-          BROWSER: ${{ steps.filter.outputs.browser }}
-          TUI: ${{ steps.filter.outputs.tui }}
-          INTEGRATION: ${{ steps.filter.outputs.integration }}
-          SMOKE: ${{ steps.filter.outputs.smoke }}
-          RELEASE: ${{ steps.filter.outputs.release }}
-          SECURITY: ${{ steps.filter.outputs.security }}
+          CHANGES: ${{ github.event_name == 'push' && 'every area on main' || steps.filter.outputs.changes }}
         run: |
-          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
-          ### CI execution plan
+          printf '### CI plan for `%s`\n\nSelected: `%s`; tooling and the secret scan always run.\n' \
+            "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"
 
-          Source: \`${GITHUB_SHA}\`
-
-          | Area | Selected |
-          |---|---|
-          | Core | \`$CORE\` |
-          | Go race/coverage | \`$GO\` |
-          | Browser | \`$BROWSER\` |
-          | TUI cross-build | \`$TUI\` |
-          | Integration | \`$INTEGRATION\` |
-          | Container smoke | \`$SMOKE\` |
-          | Release package checks | \`$RELEASE\` |
-          | Vulnerability scan | \`$SECURITY\` |
-          | Secret scan | always |
-          EOF_SUMMARY
+  tooling:
+    name: Workflow policy and pipeline tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Set up Python verification tools
+        uses: ./.github/actions/setup-project
+        with: {python: 'true'}
+      - name: Enforce repository and workflow security policy
+        run: mise run workflow-check
+      - name: Type-check and test tooling, pipeline and legal boundaries
+        run: mise run pipeline-test
 
   core:
     name: Core checks
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
-    if: needs.plan.outputs.core == 'true'
+    if: needs.plan.outputs.code == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
       - name: Set up core toolchain
         uses: ./.github/actions/setup-project
-        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true', python: 'true'}
-      - name: Refresh reviewed legal metadata
-        run: mise run legal-generate
-      - name: Run deterministic repository gate
-        run: mise run check
+        with: {go: 'true', bun: 'true', client-deps: 'true', staticcheck: 'true'}
+      - name: Check legal outputs for drift
+        run: mise run legal-check
+      - name: Run component checks
+        run: mise run core-check
 
   go:
     name: Go race and coverage
@@ -121,73 +98,12 @@ jobs:
       - name: Run race detector and coverage floor
         run: mise run server-race
 
-  browser:
-    name: Browser (Chromium WebView)
+  e2e:
+    name: Browser E2E
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
-    if: needs.plan.outputs.browser == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - id: toolchain
-        name: Set up browser test toolchain
-        uses: ./.github/actions/setup-project
-        with: {bun: 'true', client-deps: 'true'}
-      - id: chrome
-        name: Install pinned Chrome for Testing
-        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
-        with:
-          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
-          install-dependencies: true
-      - name: Verify pinned Chromium WebView launch
-        env:
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: cd client && bun run check:webview
-      - name: Run Chromium WebView browser suite
-        env:
-          # Chrome for Testing is an unpacked archive without a setuid sandbox;
-          # this read-only, secret-free job therefore uses Chromium's CI mode.
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: mise run client-browser
-      - name: Upload WebView failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: webview-browser-failures
-          path: client/test-results/webview
-          if-no-files-found: ignore
-
-  tui:
-    name: TUI cross-build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    needs: plan
-    if: needs.plan.outputs.tui == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - name: Set up Go
-        uses: ./.github/actions/setup-project
-        with: {go: 'true'}
-      - name: Cross-build all supported TUI targets
-        run: mise run tui-cross-build
-
-  integration:
-    name: Browser/server E2E (${{ matrix.suite }})
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [connections, measurement, authentication, performance]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    needs: plan
-    if: needs.plan.outputs.integration == 'true'
+    if: needs.plan.outputs.code == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,25 +118,22 @@ jobs:
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
           install-dependencies: true
-      - name: Verify pinned Chromium WebView launch
+      - name: Run Chromium against one local server fleet
         env:
+          # Chrome for Testing is an unpacked archive without a setuid sandbox;
+          # this read-only, secret-free job therefore uses Chromium's CI mode.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: cd client && bun run check:webview
-      - name: Run browser/server transport E2E
-        env:
-          GM_E2E_SUITE: ${{ matrix.suite }}
-          # See the browser job: the archive has no usable setuid sandbox.
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: mise run client-e2e
-      - name: Upload WebView failure diagnostics
+        run: mise run e2e
+      - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: webview-e2e-failures-${{ matrix.suite }}
-          path: client/test-results/webview
+          name: e2e-failures
+          path: |
+            client/test-results/webview
+            client/test-results/servers
           if-no-files-found: ignore
 
   smoke:
@@ -228,7 +141,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
-    if: needs.plan.outputs.smoke == 'true'
+    if: needs.plan.outputs.code == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -243,7 +156,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: plan
-    if: needs.plan.outputs.release == 'true'
+    if: needs.plan.outputs.code == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -251,22 +164,15 @@ jobs:
       - name: Set up release test toolchain
         uses: ./.github/actions/setup-project
         with: {go: 'true', bun: 'true', client-deps: 'true'}
-      - name: Refresh reviewed legal metadata
-        run: mise run legal-generate
       - name: Build and verify representative release packages
         run: mise run release-check
-      - name: Verify pinned Skopeo runtime contract
-        env:
-          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
-          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
-        run: python3 scripts/ci/verify_oci.py --check-skopeo
 
   security:
     name: Security scan
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: plan
-    if: needs.plan.outputs.security == 'true'
+    if: needs.plan.outputs.deps == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -288,53 +194,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up mise
+      - name: Set up pinned Gitleaks
         uses: ./.github/actions/setup-project
-      - name: Scan repository with pinned Gitleaks image
+        with: {gitleaks: 'true'}
+      - name: Scan repository with pinned Gitleaks
         run: mise run secret-scan-ci
 
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan]
     steps:
-      - name: Summarize and require all selected jobs
+      - name: Require every selected job
         env:
-          PLAN: ${{ needs.plan.result }}
-          CORE: ${{ needs.core.result }}
-          GO: ${{ needs.go.result }}
-          BROWSER: ${{ needs.browser.result }}
-          TUI: ${{ needs.tui.result }}
-          INTEGRATION: ${{ needs.integration.result }}
-          SMOKE: ${{ needs.smoke.result }}
-          RELEASE: ${{ needs.release.result }}
-          SECURITY: ${{ needs.security.result }}
-          SECRET_SCAN: ${{ needs.secret-scan.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           set -eu
-          cat >>"$GITHUB_STEP_SUMMARY" <<EOF_SUMMARY
-          ### CI Gate
-
-          | Job | Result |
-          |---|---|
-          | Plan | \`$PLAN\` |
-          | Core | \`$CORE\` |
-          | Go | \`$GO\` |
-          | Browser | \`$BROWSER\` |
-          | TUI | \`$TUI\` |
-          | Integration | \`$INTEGRATION\` |
-          | Container smoke | \`$SMOKE\` |
-          | Release packages | \`$RELEASE\` |
-          | Security | \`$SECURITY\` |
-          | Secret scan | \`$SECRET_SCAN\` |
-          EOF_SUMMARY
-          failed=0
-          for result in "$PLAN" "$CORE" "$GO" "$BROWSER" "$TUI" "$INTEGRATION" "$SMOKE" "$RELEASE" "$SECURITY" "$SECRET_SCAN"; do
-            case "$result" in success|skipped) ;; *) failed=1 ;; esac
-          done
-          if [ "$failed" -ne 0 ]; then
+          {
+            printf '### CI Gate\n\n| Job | Result |\n|---|---|\n'
+            jq -r 'to_entries[] | "| \(.key) | `\(.value.result)` |"' <<<"$NEEDS"
+          } >>"$GITHUB_STEP_SUMMARY"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null || {
             echo "::error::CI Gate failed; inspect the summary table for the failing job"
             exit 1
-          fi
-          echo "::notice::CI Gate passed for $GITHUB_SHA"
+          }

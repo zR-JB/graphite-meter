@@ -8,10 +8,7 @@ open a receiver-progress stream. The plain request/response HTTP endpoints (`/pr
 normal HTTP (query params, status codes, streaming bodies).
 
 The Go server/native client and TypeScript browser client share the conformance
-corpus `api/wire.testvectors.txt`. Version 0.8 adds coordinated receiver checkpoints
-and requires explicit destinations when minting socket tickets. Deploy matching
-client and server versions. The 0.7 PING/PONG handling-time contract remains in use;
-version 0.6 framing is incompatible.
+corpus `api/wire.testvectors.txt`. Deploy matching client and server versions.
 
 Related contracts: [discovery and control responses](discovery.md),
 [upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
@@ -97,13 +94,27 @@ carries nothing the **peer** sent for about **30 seconds** is closed, ping buses
 server-generated progress heartbeat is not traffic, and neither is a server-generated datagram
 flood, so a `/wt/download?datagrams=` session the peer never speaks on closes on the same bound),
 and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its answer is the
-handshake — is closed after a **30-second linger**. A client MUST treat a bound-driven close as a
+handshake — is closed after a **5-second linger**. A client MUST treat a bound-driven close as a
 reconnect rather than a stage failure, and re-dial against the same upload `id`: the server keeps
 one aggregate per id, so the counters carry across.
 
-**Discovery contract.** `transport` is required on every throughput and latency target.
-A missing value is invalid; clients never infer a transport from its absence. Upgrade
-clients and servers together for the 0.8 contract.
+### Lane endings
+
+Every lane shares one **30-second** idle bound: WebTransport sessions and the WebSocket bus close
+after about that long without peer traffic, an HTTP upload that stops sending is answered `408`, and
+an HTTP download the peer stops draining is closed. A server-ended bus or session names its cause;
+clients may ignore it and treat any close as a reconnect.
+
+| Cause                        | WebSocket close                | WebTransport close          |
+| ---------------------------- | ------------------------------ | --------------------------- |
+| Peer closed or lane finished | `1000`                         | `0`                         |
+| Idle                         | `4001 idle`                    | `1 idle`                    |
+| Lifetime bound               | `4002 lifetime`                | `2 lifetime`                |
+| Sign-out or grant revocation | `1008 authentication required` | `3 authentication required` |
+| Server shutdown              | `1001 shutdown`                | `4 shutdown`                |
+
+**Discovery contract.** `transport` is required on every throughput and latency target;
+clients never infer a transport from its absence.
 
 ## Socket credentials
 
@@ -114,10 +125,9 @@ URL uses WSS. Targets contain no user information, query, or fragment and must u
 the issuing server's configured hostname. The ticket binds the precise origin,
 port, route, requesting Origin header, principal and grant lifetime.
 
-Both return `{ "token": "…", "expires": <epoch milliseconds> }`. Tickets expire
-after at most 30 seconds, are consumed once, and share the parent login's limit of
-eight outstanding tickets. A wrong destination or requesting origin cannot consume
-a ticket successfully. Logout cancels associated work. With authentication off,
+Both return `{ "token": "…", "expires": <epoch milliseconds> }`. Tickets are single-use
+and short-lived ([limits](discovery.md#browser-measurement-authorization)). A wrong
+destination or requesting origin cannot consume a ticket. Logout cancels associated work. With authentication off,
 minting returns exactly `{ "token": "", "expires": 0 }`.
 
 The existing same-origin browser session or an authorized browser measurement grant
@@ -139,19 +149,13 @@ rules; they do not use the browser-grant mint path.
 ## RTT, probe timeouts, and reply-driven pacing (client behavior)
 
 - On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>,<handling-ns>` it computes
-  `rtt = now() − pending[id]` and resolves that probe once. Sending policy is separate:
-  browser fixed cadence is start-to-start and a reply never advances the next scheduled send.
-  A full in-flight window waits for a slot, then sends once without a catch-up burst.
-- Browser reply-driven pacing sends immediately after its chain-head reply and uses a bounded
-  RTT-based backup timer when that reply does not arrive. Its reply-dependent sampling density
-  differs from a fixed cadence; neither mode changes which attempted probes enter accounting.
-- A WebSocket ping that exceeds its adaptive timeout represents a stalled reliable channel or queue,
-  not physical packet loss because TCP retransmits. A timeout on the WT-datagram channel also
-  includes possible endpoint queueing or drops; neither identifies physical or directional IP loss.
-  See [measurement definitions](../docs/MEASUREMENTS.md) for populations and statistics.
-- A bounded **in-flight window** (16 idle at a fixed cadence, 4 reply-driven, 2 under load) limits
-  pending work. Pauses, a saturated window, and scheduling gaps create unsent opportunities,
-  not timeout or unresolved attempts. Requested cadence alone cannot establish a coverage percentage.
+  `rtt = now() − pending[id]` and resolves that probe once.
+- Fixed cadences are start-to-start; a reply never advances the next send. Reply-driven pacing sends on
+  the reply, with a backup timer when it does not arrive. Neither changes which probes enter accounting.
+- Both clients bound the **in-flight window**: 16 idle at a fixed cadence, 4 reply-driven, 2 under load.
+  A full window leaves an unsent opportunity, never a timeout.
+- A timeout means a stalled channel or queue (WebSocket retransmits; datagrams may also be dropped by
+  endpoints), not physical or directional IP loss. See [latency probing](../docs/MEASUREMENTS.md#latency-probing).
 
 ## Text representation
 

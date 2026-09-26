@@ -80,8 +80,8 @@ implementations can behave differently on the same path.
 
 ## Updates and measurement scope
 
-Update the Graphite Meter image and native clients together for 0.7; see the
-[upgrade notes](../../../docs/DEPLOYMENT.md#upgrading-to-07). The Tailscale identity and certificate
+Update the Graphite Meter image and native clients together; see
+[upgrading](../../../docs/DEPLOYMENT.md#upgrading). The Tailscale identity and certificate
 state live in the supplied volumes and are separate from browser-local result history.
 
 Results include the tailnet path and its tunnel overhead. They should not be read as direct

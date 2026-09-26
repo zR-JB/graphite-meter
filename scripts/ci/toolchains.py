@@ -16,13 +16,16 @@ TOOL_KEYS = {
     "staticcheck": "aqua:dominikh/go-tools/staticcheck",
     "govulncheck": "go:golang.org/x/vuln/cmd/govulncheck",
     "ty": "aqua:astral-sh/ty",
+    "actionlint": "aqua:rhysd/actionlint",
+    "zizmor": "aqua:zizmorcore/zizmor",
 }
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},
     "images": {
-        "gitleaks": r"ghcr\.io/gitleaks/gitleaks@sha256:[0-9a-f]{64}",
         "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+(?:-immutable)?@sha256:[0-9a-f]{64}",
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
+        "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+        "golang": r"docker\.io/library/golang:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
     },
 }
 
@@ -53,16 +56,15 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
                 raise ValueError(f"mise.toml {section}.{name} must be an exact version or image digest")
             pins[section][name] = value
     pins["runtime"] = {name: pins["tools"][name] for name in ("bun", "python", "go")}
+    for name, runtime in (("bun", "bun"), ("golang", "go")):
+        if pins["images"][name].split(":")[1].split("@")[0] != pins["runtime"][runtime]:
+            raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
     return pins
 
 
 def pin(name: str, root: Path = ROOT) -> str:
     section, key = name.split(".", 1)
     return load_pins(root)[section][key]
-
-
-def skopeo_version(root: Path = ROOT) -> str:
-    return pin("images.skopeo", root).split(":v", 1)[1].split("@", 1)[0].removesuffix("-immutable")
 
 
 def runtime_pins(root: Path = ROOT) -> dict[str, str]:
@@ -75,22 +77,18 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     replacements = {
         "go/go.mod": [(r"(?m)^go \S+$", f"go {runtimes['go']}")],
         "container/Dockerfile": [
-            (r"(?m)^ARG BUN_VERSION=\S+$", f"ARG BUN_VERSION={runtimes['bun']}"),
-            (r"(?m)^FROM docker.io/library/golang:\S+ AS server$", f"FROM docker.io/library/golang:{runtimes['go']} AS server"),
+            (r"(?m)^FROM docker\.io/oven/bun:\S+ AS client$",
+             f"FROM {pins['images']['bun']} AS client"),
+            (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
+             f"FROM {pins['images']['golang']} AS server"),
         ],
         ".github/actions/build-oci/action.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
         ],
     }
-    for name in ("ci", "release", "prerelease-publish", "_publish-oci", "_promote-oci"):
-        replacements[f".github/workflows/{name}.yml"] = [
-            (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$", rf"\g<1>{pins['images']['skopeo']}"),
-        ]
-        if name in ("ci", "release", "prerelease-publish"):
-            version = skopeo_version(root)
-            replacements[f".github/workflows/{name}.yml"].append(
-                (r"(?m)^(\s*SKOPEO_VERSION: )\d+\.\d+\.\d+$", rf"\g<1>{version}")
-            )
+    replacements[".github/workflows/release.yml"] = [
+        (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$", rf"\g<1>{pins['images']['skopeo']}"),
+    ]
     # Mise must bootstrap before Python can read project metadata. Keep this
     # unavoidable literal checked and synced in every direct action invocation.
     for path in (root / ".github").rglob("*.yml"):

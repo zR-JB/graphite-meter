@@ -1,7 +1,6 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { observeWidth } from "../actions/observeWidth";
-  // Main console shell: owns top-level panels, shortcuts,
-  // theme toggle, and docked/flyout layout state.
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -10,18 +9,19 @@
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
-  import SettingsPanel from "./settings/SettingsPanel.svelte";
-  import TelemetryPanel from "./TelemetryPanel.svelte";
+  import SidePanel from "./SidePanel.svelte";
+  import TestSetupPanel from "./settings/TestSetupPanel.svelte";
+  import EndpointInfo from "./EndpointInfo.svelte";
   import PhaseToast from "./PhaseToast.svelte";
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
-  import { ICON } from "../constants";
+  import { resolvedPhase, THEME } from "../presentation/vocabulary";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
-  import { mediaQuery } from "../actions/mediaQuery.svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import {
     resolveDockWidths,
     MIN_DOCK_WIDTH,
@@ -33,8 +33,10 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
-  import { authEnabled } from "../auth";
+  import { authEnabled as pageAuthEnabled } from "../auth";
+  const authEnabled = pageAuthEnabled();
   import { returnToLiveIndicator } from "../history/returnToLive";
+  import { announcements } from "../presentation/announcer.svelte";
   import {
     activatePanel,
     appRoute,
@@ -54,7 +56,8 @@
     onNavigate: (id: string | null) => void;
     onClose: () => void;
   }> | null>(null);
-  let historyChunkState = $state<"idle" | "loading" | "error">("idle");
+  let historyChunkFailed = $state(false);
+  let historyChunk: Promise<unknown> | undefined;
   let historyInvoker: HTMLElement | null = null;
   let workspaceFocusIntent = $state<
     | {
@@ -71,7 +74,6 @@
   const panelInvokers: Partial<Record<PanelSurface, HTMLElement>> = {};
 
   let resetConfirmOpen = $state(false);
-  let legalInvoker = $state<HTMLElement | null>(null);
   let currentRoute = $state<Route>(
     parseRoute(typeof window === "undefined" ? "#/" : window.location.hash),
   );
@@ -83,18 +85,10 @@
       currentRoute.workspace.kind === "measurement",
   );
   function loadHistoryWorkspace() {
-    if (HistoryWorkspace || historyChunkState === "loading") return;
-    historyChunkState = "loading";
-    void import("./HistoryWorkspace.svelte")
-      .then((module) => {
-        HistoryWorkspace = module.default;
-        historyChunkState = "idle";
-      })
-      .catch(() => (historyChunkState = "error"));
+    historyChunk ??= import("./HistoryWorkspace.svelte")
+      .then((module) => (HistoryWorkspace = module.default))
+      .catch(() => (historyChunkFailed = true));
   }
-  $effect(() => {
-    if (historyOpen) loadHistoryWorkspace();
-  });
   $effect(() => {
     const intent = workspaceFocusIntent;
     void currentRoute;
@@ -141,63 +135,12 @@
   let consoleWidth = $state(
     typeof window === "undefined" ? 0 : window.innerWidth,
   );
-  const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const allowMultiplePanels = $derived(dockQuery.matches);
+  const dockQuery = new MediaQuery("(min-width: 1200px)");
+  const allowMultiplePanels = $derived(dockQuery.current);
   $effect(() => {
     const next = panelsForLayout(currentRoute);
     if (next !== currentRoute) routeTo(next, true);
   });
-  let topbar: HTMLElement;
-  let directActions = $state(3);
-  $effect(() => {
-    const resize = new ResizeObserver(measure);
-    const mutations = new MutationObserver(measure);
-    function measure() {
-      const style = getComputedStyle(topbar);
-      const gap = parseFloat(style.columnGap) || 0;
-      const fixed = Array.from(topbar.children).filter(
-        (child) =>
-          !child.matches("[data-topbar-action], .more-control, .topbar-spacer"),
-      );
-      for (const child of fixed) resize.observe(child);
-      const fixedWidth = fixed.reduce((sum, child) => {
-        const itemStyle = getComputedStyle(child);
-        return (
-          sum +
-          child.getBoundingClientRect().width +
-          parseFloat(itemStyle.marginLeft) +
-          parseFloat(itemStyle.marginRight)
-        );
-      }, 0);
-      const button = topbar
-        .querySelector(".icon-btn")!
-        .getBoundingClientRect().width;
-      const available =
-        topbar.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight);
-      const total = store.savingResults ? 3 : 2;
-      let count = total;
-      while (count > 0) {
-        const slots = count + (count < total ? 1 : 0);
-        if (
-          fixedWidth + slots * button + (fixed.length + slots) * gap <=
-          available
-        )
-          break;
-        count--;
-      }
-      directActions = count;
-    }
-    resize.observe(topbar);
-    mutations.observe(topbar, { childList: true });
-    measure();
-    return () => {
-      resize.disconnect();
-      mutations.disconnect();
-    };
-  });
-  const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
     const recovering = store.phaseStage
@@ -224,43 +167,21 @@
   const legalOpen = $derived(
     currentRoute.kind === "app" && currentRoute.dialog === "legal",
   );
-  const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
-
-  const showHistoryDirect = $derived(directActions >= 3);
-  const showEndpointDirect = $derived(directActions >= 2);
-  const showThemeDirect = $derived(directActions >= 1);
-  const historyInMore = $derived(store.savingResults && !showHistoryDirect);
-  const endpointInMore = $derived(!showEndpointDirect);
-  const themeInMore = $derived(!showThemeDirect);
-  const moreAvailable = $derived(
-    historyInMore || endpointInMore || themeInMore,
-  );
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
-  const THEME_ICON: Record<(typeof THEME_CYCLE)[number], string> = {
-    light: ICON.sun,
-    dark: ICON.moon,
-    auto: ICON.contrast,
-  };
-  const THEME_LABEL: Record<(typeof THEME_CYCLE)[number], string> = {
-    light: "Light",
-    dark: "Dark",
-    auto: "Auto",
-  };
 
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
-    store.theme = next;
+    store.prefer({ theme: next });
   }
 
-  // Preferences survive viewport changes; the grid and resize controls share
-  // the resolved widths, preserving room for the measurement instruments.
+  // The grid and resize controls share one resolution of the saved widths.
   const docks = $derived(
     resolveDockWidths(
       consoleWidth,
-      dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
-      dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
+      dockQuery.current && settingsOpen ? store.dockWidth.left : 0,
+      dockQuery.current && telemetryOpen ? store.dockWidth.right : 0,
     ),
   );
   const stageMinimum = $derived(
@@ -281,17 +202,20 @@
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
-    // Freeze the visible sibling during an intentional resize so the handle
-    // follows the pointer even when saved preferences were constrained.
-    store.dockWidth = {
-      ...store.dockWidth,
-      ...(docks[other] ? { [other]: docks[other] } : {}),
-      [side]: px,
-    };
+    // Freeze the visible sibling so the handle tracks the pointer.
+    store.prefer({
+      dockWidth: {
+        ...store.dockWidth,
+        ...(docks[other] ? { [other]: docks[other] } : {}),
+        [side]: px,
+      },
+    });
   }
   function resetDockWidth(side: "left" | "right") {
     resizedDock = true;
-    store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
+    store.prefer({
+      dockWidth: { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] },
+    });
   }
 
   function requestReturnToStart() {
@@ -363,7 +287,7 @@
     return (
       route.kind === "app" &&
       (route.dialog === "legal" ||
-        (!dockQuery.matches && route.panels.length > 0))
+        (!dockQuery.current && route.panels.length > 0))
     );
   }
   function toggleHistoryFromPointer(invoker: HTMLElement) {
@@ -408,7 +332,7 @@
     if (invoker) panelInvokers[panel] = invoker;
     backOrReplace(closePanel(currentRoute, panel));
   }
-  function togglePanelFromPointer(panel: PanelSurface, invoker: HTMLElement) {
+  function togglePanel(panel: PanelSurface, invoker?: HTMLElement) {
     const open = panel === "settings" ? settingsOpen : telemetryOpen;
     if (open) dismissPanel(panel, invoker);
     else panelRoute(panel, invoker);
@@ -420,8 +344,7 @@
     routeTo(appRoute());
   }
 
-  function openLegal(invoker: HTMLElement) {
-    legalInvoker = invoker;
+  function openLegal() {
     routeTo(openDialog(currentRoute, "legal"));
   }
 
@@ -436,6 +359,7 @@
     const nextHistory =
       next.kind === "app" && next.workspace.kind === "history";
     currentRoute = next;
+    if (nextHistory) loadHistoryWorkspace();
     const workspace = nextHistory ? "history" : "measurement";
     if (workspaceFocusIntent && workspaceFocusIntent.workspace !== workspace)
       workspaceFocusIntent = null;
@@ -443,7 +367,7 @@
       next.kind === "app" &&
       ((next.dialog === "legal" &&
         (previous.kind !== "app" || previous.dialog !== "legal")) ||
-        (!dockQuery.matches &&
+        (!dockQuery.current &&
           next.panels.some(
             (panel) =>
               previous.kind !== "app" || !previous.panels.includes(panel),
@@ -452,32 +376,16 @@
       workspaceFocusIntent = null;
       return;
     }
-    if (!workspaceFocusIntent && previous.kind === "app") {
-      let invoker: HTMLElement | null | undefined;
-      let closedSurface = false;
-      if (
-        previous.dialog === "legal" &&
-        (next.kind !== "app" || next.dialog !== "legal")
-      ) {
-        invoker = legalInvoker;
-        legalInvoker = null;
-        closedSurface = true;
-      } else {
-        const nextPanels = next.kind === "app" ? next.panels : [];
-        const removedPanel = [...previous.panels]
-          .reverse()
-          .find((panel) => !nextPanels.includes(panel));
-        if (removedPanel) {
-          invoker = panelInvokers[removedPanel];
-          delete panelInvokers[removedPanel];
-          closedSurface = true;
-        }
-      }
-      if (closedSurface) {
-        if (canFocus(invoker)) focusElement(invoker, workspace);
-        else focusWorkspace(workspace);
-        return;
-      }
+    const nextPanels = next.kind === "app" ? next.panels : [];
+    const removedPanel =
+      previous.kind === "app" &&
+      previous.panels.findLast((panel) => !nextPanels.includes(panel));
+    if (!workspaceFocusIntent && removedPanel) {
+      const invoker = panelInvokers[removedPanel];
+      delete panelInvokers[removedPanel];
+      if (canFocus(invoker)) focusElement(invoker, workspace);
+      else focusWorkspace(workspace);
+      return;
     }
     if (
       fromHistory &&
@@ -494,35 +402,25 @@
     e.returnValue = "";
   }
 
-  function isEditable(el: EventTarget | null): boolean {
-    if (!(el instanceof HTMLElement)) return false;
-    const tag = el.tagName;
-    return (
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      tag === "SELECT" ||
-      el.isContentEditable
-    );
-  }
+  // Keys belong to text entry; a focused toggle leaves them to the page.
+  const isEditable = (el: EventTarget | null) =>
+    el instanceof HTMLElement &&
+    (el.isContentEditable ||
+      el.matches("textarea, select, input:not([type=checkbox], [type=radio])"));
 
-  // Space and Enter already activate these natively.
-  function selfActivating(el: EventTarget | null): boolean {
-    if (!(el instanceof HTMLElement)) return false;
-    const tag = el.tagName;
+  // Space and Enter belong to whatever control holds focus.
+  function unownedTarget(el: EventTarget | null): boolean {
     return (
-      tag === "BUTTON" ||
-      tag === "A" ||
-      tag === "SUMMARY" ||
-      el.getAttribute("role") === "button"
+      el === document.body ||
+      (el instanceof HTMLElement && el.classList.contains("measurement-stage"))
     );
   }
 
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
       return;
-    if (document.querySelector(":popover-open")) return;
-    if (isEditable(e.target)) return;
-    if (resetConfirmOpen) return;
+    if (document.querySelector(":popover-open:not(.tooltip)")) return;
+    if (isEditable(e.target) || activeModal()) return;
 
     if (e.key === "Escape") {
       if (
@@ -530,32 +428,17 @@
         currentRoute.workspace.kind === "history" &&
         currentRoute.workspace.selectedId
       ) {
-        const detailClose = document.querySelector<HTMLButtonElement>(
-          ".result-detail .close-detail",
-        );
-        if (detailClose) detailClose.click();
-        else closeHistoryDetail();
+        closeHistoryDetail();
       } else if (historyOpen) {
         dismissHistory();
       } else if (!measurementOpen) {
         return;
+      } else if (lastPanel) {
+        dismissPanel(lastPanel);
       } else if (store.isRunning) {
         toggleRun();
       } else if (hasPendingStart()) {
         cancelPendingStart();
-      } else if (settingsOpen || telemetryOpen) {
-        const requested = dockQuery.matches
-          ? lastOpened === "left"
-            ? "settings"
-            : "endpoint"
-          : currentRoute.kind === "app"
-            ? currentRoute.panels.at(-1)
-            : undefined;
-        if (requested === "settings" && settingsOpen) dismissPanel("settings");
-        else if (requested === "endpoint" && telemetryOpen)
-          dismissPanel("endpoint");
-        else if (settingsOpen) dismissPanel("settings");
-        else if (telemetryOpen) dismissPanel("endpoint");
       } else {
         return;
       }
@@ -564,7 +447,7 @@
     }
 
     if (e.key === " " || e.key === "Enter") {
-      if (!measurementOpen || selfActivating(e.target)) return;
+      if (!measurementOpen || !unownedTarget(e.target)) return;
       toggleRun();
       e.preventDefault();
       return;
@@ -572,15 +455,11 @@
 
     switch (e.key.toLowerCase()) {
       case "s":
-        if (settingsOpen) {
-          dismissPanel("settings");
-        } else panelRoute("settings");
+        togglePanel("settings");
         e.preventDefault();
         break;
       case "d":
-        if (telemetryOpen) {
-          dismissPanel("endpoint");
-        } else panelRoute("endpoint");
+        togglePanel("endpoint");
         e.preventDefault();
         break;
       case "h":
@@ -588,7 +467,7 @@
         e.preventDefault();
         break;
       case "r":
-        if (measurementOpen && RESOLVED_PHASES.includes(store.phase)) {
+        if (measurementOpen && resolvedPhase(store.phase)) {
           toggleRun();
           e.preventDefault();
         }
@@ -600,73 +479,63 @@
     }
   }
 
+  // Save a deliberate resize even if the page unloads before the debounced save.
+  function saveDockWidths() {
+    if (resizedDock)
+      savePersisted({
+        ...loadPersisted(),
+        dockWidth: $state.snapshot(store.dockWidth),
+      });
+  }
+  function onNavigate() {
+    const next = panelsForLayout(parseRoute(window.location.hash));
+    if (serializeRoute(next) !== window.location.hash)
+      window.history.replaceState(
+        { graphiteRoute: false },
+        "",
+        serializeRoute(next),
+      );
+    commitRoute(next, true);
+  }
+
   onMount(() => {
-    // Preserve an intentional dock resize even if reload beats the normal
-    // debounced preference save. Leave other persisted preferences untouched.
-    const saveDockWidths = () => {
-      if (resizedDock)
-        savePersisted({
-          ...loadPersisted(),
-          dockWidth: $state.snapshot(store.dockWidth),
-        });
-    };
-    window.addEventListener("pagehide", saveDockWidths);
-    const onHashChange = () => {
-      const next = panelsForLayout(parseRoute(window.location.hash));
-      if (serializeRoute(next) !== window.location.hash)
-        window.history.replaceState(
-          { graphiteRoute: false },
-          "",
-          serializeRoute(next),
-        );
-      commitRoute(next, true);
-    };
-    window.addEventListener("hashchange", onHashChange);
-    window.addEventListener("popstate", onHashChange);
-    onHashChange();
-    window.addEventListener("keydown", onKeydown);
-    window.addEventListener("beforeunload", onBeforeUnload);
+    onNavigate();
     if (authEnabled)
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
         .catch(() => {
-          // The optional account control may be unavailable with an offline
-          // lazy chunk; the measurement UI remains usable without it.
+          // Offline lazy chunk: the meter works without the account control.
           AccountControl = null;
         });
-
-    return () => {
-      window.removeEventListener("pagehide", saveDockWidths);
-      window.removeEventListener("keydown", onKeydown);
-      window.removeEventListener("hashchange", onHashChange);
-      window.removeEventListener("popstate", onHashChange);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-    };
   });
 </script>
 
+<svelte:window
+  onpagehide={saveDockWidths}
+  onpopstate={onNavigate}
+  onkeydown={onKeydown}
+  onbeforeunload={onBeforeUnload}
+/>
+
 <main
   id="console"
-  use:observeWidth={(width) => (consoleWidth = width)}
+  {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
-  class="bg-bg text-text"
 >
-  <!-- TOPBAR -->
-  <header
-    bind:this={topbar}
-    class="zone topbar flex items-center gap-3 border-b border-border px-4"
-    class:authenticated={authEnabled}
-  >
+  <!-- Container queries move direct actions into More as the bar narrows. -->
+  <header class="topbar" class:saving={store.savingResults}>
     <button
       type="button"
-      class="brand-btn font-mono text-sm font-bold tracking-tight"
+      class="brand-btn"
       aria-label={measurementOpen
         ? "Graphite Meter — return to a fresh, blank test"
         : "Graphite Meter — return to live meter"}
-      use:tooltip={measurementOpen
-        ? "Return to a fresh, blank test"
-        : "Return to live meter"}
+      {@attach tooltip(() =>
+        measurementOpen
+          ? "Return to a fresh, blank test"
+          : "Return to live meter",
+      )}
       onclick={requestReturnToStart}
       ><svg class="brand-glyph" viewBox="0 0 24 24" aria-hidden="true"
         ><path
@@ -684,104 +553,92 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="ghost-btn icon-btn"
+      class="btn btn-icon"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — test and display (S)"}
+      {@attach tooltip(() => "Settings — test and display (S)")}
       onclick={(event) =>
-        togglePanelFromPointer("settings", event.currentTarget as HTMLElement)}
-      >{@html ICON.settings}</button
+        togglePanel("settings", event.currentTarget as HTMLElement)}
+      ><Icon name="settings" /></button
     >
     <span class="chrome-divider" aria-hidden="true"></span>
     <div class="connectivity"><ConnectivityIndicator /></div>
-    <div class="topbar-spacer flex-1"></div>
+    <div class="topbar-spacer"></div>
     {#if awayRunIndicator}<button
-        class="return-live"
+        class="btn return-live"
         data-tone={awayRunIndicator.tone}
         type="button"
         aria-label={`${awayRunIndicator.label}. Return to live meter.`}
-        use:tooltip={`${awayRunIndicator.label} — return to live meter`}
+        {@attach tooltip(
+          () => `${awayRunIndicator.label} — return to live meter`,
+        )}
         onclick={() => {
           focusWorkspace("measurement");
           routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
         }}
       >
-        <span class="run-icon">{@html ICON[awayRunIndicator.icon]}</span>
+        <span class="run-icon"><Icon name={awayRunIndicator.icon} /></span>
         <span class="live-copy">
           <strong>Live</strong>
-          <span class="live-separator" aria-hidden="true">·</span>
-          <span class="live-phase">{awayRunIndicator.label}</span>
+          <span aria-hidden="true">·</span>
+          <span>{awayRunIndicator.label}</span>
         </span>
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
-    {#if store.savingResults && showHistoryDirect}<button
-        data-topbar-action
-        class="ghost-btn icon-btn"
+    {#if store.savingResults}<button
+        class="btn btn-icon direct-history"
         type="button"
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
-        use:tooltip={historyOpen ? "Close History" : "History — saved results"}
+        {@attach tooltip(() =>
+          historyOpen ? "Close History" : "History — saved results (H)",
+        )}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
-        >{@html ICON.history}</button
+        ><Icon name="history" /></button
       >{/if}
-    {#if showThemeDirect}
-      <button
-        data-topbar-action
-        class="ghost-btn icon-btn"
-        aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
-        use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
-        onclick={toggleTheme}>{@html THEME_ICON[store.theme]}</button
-      >
-    {/if}
-    {#if showEndpointDirect}
-      <button
-        data-topbar-action
-        class="ghost-btn icon-btn"
-        aria-label="Toggle endpoint info"
-        aria-expanded={telemetryOpen}
-        use:tooltip={"Endpoint info"}
-        onclick={(event) =>
-          togglePanelFromPointer(
-            "endpoint",
-            event.currentTarget as HTMLElement,
-          )}>{@html ICON.info}</button
-      >
-    {/if}
-    {#if moreAvailable}
+    <button
+      class="btn btn-icon direct-theme"
+      aria-label={`Theme: ${THEME[store.theme].label}`}
+      {@attach tooltip(
+        () =>
+          `Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`,
+      )}
+      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
+    >
+    <button
+      class="btn btn-icon direct-endpoint"
+      aria-label="Details"
+      aria-expanded={telemetryOpen}
+      {@attach tooltip(() => "Details — server and connection (D)")}
+      onclick={(event) =>
+        togglePanel("endpoint", event.currentTarget as HTMLElement)}
+      ><Icon name="info" /></button
+    >
+    <div class="topbar-more">
       <TopbarMore
-        showHistory={historyInMore}
-        showEndpoint={endpointInMore}
-        showTheme={themeInMore}
+        showHistory={store.savingResults}
         historyActive={historyOpen}
         endpointActive={telemetryOpen}
         theme={store.theme}
         onHistory={toggleHistoryFromPointer}
-        onEndpoint={(invoker: HTMLElement) =>
-          togglePanelFromPointer("endpoint", invoker)}
+        onEndpoint={(invoker: HTMLElement) => togglePanel("endpoint", invoker)}
         onTheme={toggleTheme}
       />
-    {/if}
+    </div>
   </header>
 
-  <!-- Center stage: a height-bounded flex column. The gauge hero takes most of
-       it, the chart stays compact so the default fits the viewport without
-       vertical scroll. Advancing a phase never resizes this section. -->
   {#if currentRoute.kind === "not-found"}
-    <section
-      class="zone stage history-stage flex min-w-0 flex-col overflow-y-auto"
-    >
-      <div class="route-not-found">
+    <section class="stage history-stage">
+      <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
-        <a href="#/">Return to measurement</a>
+        <a class="btn btn-accent" href="#/">Return to measurement</a>
       </div>
     </section>
   {:else if historyOpen}
-    <section
-      class="zone stage history-stage flex min-w-0 flex-col overflow-y-auto"
-    >
+    <section class="stage history-stage">
       {#if HistoryWorkspace}<HistoryWorkspace
           selectedId={currentRoute.kind === "app" &&
           currentRoute.workspace.kind === "history"
@@ -790,20 +647,27 @@
           onNavigate={(id: string | null) =>
             id ? historyRoute(id) : closeHistoryDetail()}
           onClose={dismissHistory}
-        />{:else if historyChunkState === "error"}<div
-          class="history-loading error"
+        />{:else if historyChunkFailed}<div
+          class="empty-state"
+          data-tone="err"
           role="alert"
         >
-          <span>!</span>
+          <span class="empty-icon">!</span>
           <p>History could not be opened.</p>
-          <button type="button" onclick={loadHistoryWorkspace}>Retry</button>
-        </div>{:else}<div class="history-loading" role="status">
-          <span>{@html ICON.history}</span>Opening local archive…
+          <!-- Chromium keeps a failed module in its module map until the page reloads. -->
+          <button
+            class="btn btn-accent"
+            type="button"
+            onclick={() => location.reload()}>Retry</button
+          >
+        </div>{:else}<div class="empty-state" role="status">
+          <span class="empty-icon"><Icon name="history" /></span>Opening
+          History…
         </div>{/if}
     </section>
   {:else}
     <section
-      class="zone stage measurement-stage flex min-w-0 flex-col overflow-y-auto"
+      class="stage measurement-stage"
       aria-label="Measurement workspace"
       tabindex="-1"
     >
@@ -811,42 +675,44 @@
     </section>
   {/if}
 
-  <!-- STATUS BAR -->
-  <footer
-    class="zone status flex items-center gap-4 border-t border-border bg-surface-1 px-4 font-mono text-soft"
-  >
+  <footer class="status">
     <StatusBar />
     <ShortcutHints />
   </footer>
 
-  <!-- Auxiliary panels: one shared base, opposite sides. They dock on wide
-       screens (pushing the stage) and overlay as flyouts below that. Docked
-       panels resize from their inner edge, persisted via store.dockWidth. -->
-  <SettingsPanel
+  <!-- Panels dock on wide screens and overlay below; docked widths persist. -->
+  <SidePanel
     open={settingsOpen}
-    docked={dockQuery.matches}
-    raised={lastOpened === "left"}
+    docked={dockQuery.current}
     dockWidth={docks.left}
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
     onClose={() => dismissPanel("settings")}
-    onOpenHistory={(invoker: HTMLElement) => historyRoute(null, invoker)}
-  />
-  <TelemetryPanel
+    side="left"
+    title="Settings"
+    kicker="Test & Display"
+  >
+    <TestSetupPanel onOpenHistory={(invoker) => historyRoute(null, invoker)} />
+  </SidePanel>
+  <SidePanel
     open={telemetryOpen}
-    docked={dockQuery.matches}
-    raised={lastOpened === "right"}
+    docked={dockQuery.current}
     dockWidth={docks.right}
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
     onClose={() => dismissPanel("endpoint")}
-    onOpenLegal={openLegal}
-  />
+    title="Details"
+    kicker="Server & connection"
+  >
+    <EndpointInfo onOpenLegal={openLegal} />
+  </SidePanel>
 
-  <!-- Transient phase-change toast, pinned bottom-right. -->
   <PhaseToast />
+  <div class="sr-only" aria-live="polite">
+    {#each announcements as { id, text } (id)}<p>{text}</p>{/each}
+  </div>
 
   <ConfirmDialog
     open={resetConfirmOpen}
@@ -863,17 +729,13 @@
 </main>
 
 <style>
-  /* Console grid: the stage owns the middle, the dock columns are 0-width
-     until a panel docks on a wide screen. A docked <SidePanel> reaches
-     leftdock/rightdock through display:contents and pushes the stage. Below
-     the dock breakpoint the panels are flyout overlays. */
+  /* Dock columns stay 0 until a docked panel fills them via display: contents. */
   #console {
     display: grid;
-    /* One shared width budget reserves the instrument stage. */
-    grid-template-columns:
-      var(--dock-left, 0px)
-      minmax(0, 1fr)
-      var(--dock-right, 0px);
+    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
+        --dock-right,
+        0px
+      );
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
       calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
@@ -882,125 +744,46 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    gap: 0;
+    background: var(--bg);
+    color: var(--text);
   }
 
   .topbar {
     grid-area: topbar;
+    display: flex;
+    align-items: center;
     gap: var(--space-2);
+    padding-inline: var(--space-4);
+    border-bottom: 1px solid var(--border);
+    container: topbar / inline-size;
   }
   .topbar > :global(*) {
     flex-shrink: 0;
   }
   .topbar-spacer {
+    flex: 1;
     min-width: 0;
   }
-  .stage {
-    grid-area: stage;
-    /* The hero gauge flexes to fill, chart and chips keep their compact
-       intrinsic height. This is the flat faceplate, the wells carry the depth. */
-    padding: var(--space-2) var(--space-3);
-    gap: var(--space-3);
-    /* Keep stage scrolling from chaining out to the document (anchored bars). */
-    overscroll-behavior: contain;
-  }
-  .history-stage {
-    overflow: hidden;
-  }
-  /* The gauge owns its mode-stable intrinsic height. Any viewport too short
-     for the complete stage scrolls this center column beneath anchored chrome. */
-  .stage > :global(.gauge-panel) {
-    flex: 0 0 auto;
-    min-height: 0;
-  }
-  .stage > :global(.gauge-panel),
-  .stage > :global(.chart) {
-    width: 100%;
-    max-width: 1920px;
-    align-self: center;
-  }
-  /* Let the timeline use spare height while the gauge remains mode-stable. */
-  .stage > :global(.chart) {
-    flex: 1 0 160px;
-    min-height: 160px;
-    max-height: 360px;
-  }
-  @media (max-height: 800px) {
-    .measurement-stage {
-      padding-block: var(--space-1);
-      gap: var(--space-2);
-    }
-    .stage > :global(.chart) {
-      flex-basis: 120px;
-      min-height: 120px;
-    }
-  }
-  .status {
-    grid-area: status;
-    font-size: 11px;
-    container: status / inline-size;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    gap: var(--space-3);
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  /* The logo doubles as a "home" action: it reads as the wordmark, with a
-     hover/focus affordance to signal it is clickable. */
   .brand-btn {
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 4px 6px;
+    padding: var(--space-1) 6px;
     margin-left: -6px;
-    border: 0;
     border-radius: var(--r-chrome);
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
+    font: var(--w-heavy) var(--type-md) / 1.4 var(--font-mono);
+    letter-spacing: var(--track-tight);
     transition: color var(--dur-hover) var(--ease-out);
   }
-  /* The lattice-needle glyph (see public/favicon.svg): hexagon in the brand
-     accent, needle in the current text color so hover tints it with the
-     wordmark. */
-  .brand-btn .brand-glyph {
+  @media (hover: hover) {
+    .brand-btn:hover {
+      color: var(--brand-strong);
+    }
+  }
+  /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
+  .brand-glyph {
     width: 18px;
     height: 18px;
-    flex: none;
-  }
-  .brand-btn:hover {
-    color: var(--brand-strong);
-  }
-  .brand-btn:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-
-  /* Flat chrome on the faceplate: a milled top edge-highlight gives the
-     button a tactile lift without a floating drop shadow. */
-  .ghost-btn {
-    display: grid;
-    place-items: center;
-    min-width: 32px;
-    height: 32px;
-    padding: 0 var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-md);
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .ghost-btn:hover {
-    border-color: var(--border-strong);
-    color: var(--text);
-  }
-  .icon-btn :global(svg) {
-    width: 16px;
-    height: 16px;
   }
   .chrome-divider {
     width: 1px;
@@ -1013,210 +796,141 @@
     place-items: center;
   }
   .return-live {
-    --run-tone: var(--phase-warmup);
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-    height: 32px;
-    padding: 0 10px 0 8px;
-    border: 1px solid color-mix(in srgb, var(--run-tone) 52%, var(--border));
-    border-radius: var(--r-chrome);
-    background: color-mix(in srgb, var(--run-tone) 9%, var(--surface-2));
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
+    --btn-line: var(--tone-line);
+    padding-inline: var(--space-2) 10px;
+    background-color: color-mix(in srgb, var(--tone) 9%, var(--surface-2));
   }
-  .return-live[data-tone="latency"] {
-    --run-tone: var(--phase-latency);
-  }
-  .return-live[data-tone="download"] {
-    --run-tone: var(--phase-download);
-  }
-  .return-live[data-tone="upload"] {
-    --run-tone: var(--phase-upload);
-  }
-  .return-live[data-tone="bidirectional"] {
-    --run-tone: var(--phase-bidirectional);
-  }
-  .return-live:hover {
-    border-color: var(--run-tone);
-    background: color-mix(in srgb, var(--run-tone) 14%, var(--surface-2));
-    color: var(--text);
+  @media (hover: hover) {
+    .return-live:hover {
+      --btn-line: var(--tone);
+    }
   }
   .run-icon {
     display: grid;
-    place-items: center;
-    flex: none;
-    color: var(--run-tone);
-  }
-  .run-icon :global(svg) {
-    width: 15px;
-    height: 15px;
+    color: var(--tone);
   }
   .live-copy {
     display: inline-flex;
     align-items: baseline;
-    gap: 4px;
-    min-width: 0;
-    white-space: nowrap;
+    gap: var(--space-1);
   }
   .live-copy strong {
-    color: var(--run-tone);
-    font-weight: 800;
+    color: var(--tone);
+    font-weight: var(--w-heavy);
   }
-  .history-loading,
-  .route-not-found {
-    display: grid;
-    justify-items: center;
-    align-content: center;
-    flex: 1;
-    min-height: 280px;
+  /* 44px coarse targets fit three direct actions to ~320px, one to ~260px. */
+  .topbar-more,
+  .topbar :global([data-more]) {
+    display: none;
+  }
+  @container topbar (max-width: 319px) {
+    .saving :is(.direct-history, .direct-endpoint) {
+      display: none;
+    }
+    .saving .topbar-more {
+      display: block;
+    }
+    .saving :global(:is([data-more="history"], [data-more="endpoint"])) {
+      display: grid;
+    }
+  }
+  @container topbar (max-width: 259px) {
+    .direct-history,
+    .direct-endpoint,
+    .direct-theme {
+      display: none;
+    }
+    .topbar-more {
+      display: block;
+    }
+    .topbar :global([data-more]) {
+      display: grid;
+    }
+  }
+
+  .stage {
+    grid-area: stage;
+    display: flex;
+    flex-direction: column;
     gap: var(--space-3);
-    color: var(--text-muted);
-    text-align: center;
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow-y: auto;
+    /* Keep stage scrolling from chaining out to the document. */
+    overscroll-behavior: contain;
   }
-  .history-loading > span {
-    display: grid;
-    place-items: center;
-    width: 42px;
-    height: 42px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    color: var(--brand);
-  }
-  .history-loading > span :global(svg) {
-    width: 20px;
-    height: 20px;
-  }
-  .history-loading.error > span {
-    color: var(--err);
-    font-weight: 800;
-  }
-  .history-loading p,
-  .route-not-found p {
-    margin: 0;
+  .history-stage {
+    overflow: hidden;
   }
   .measurement-stage:focus {
     outline: none;
   }
-  .history-loading button,
-  .route-not-found a {
-    min-height: 30px;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--brand-strong);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    text-decoration: none;
+  /* A viewport too short for the instruments scrolls this column. */
+  .stage > :global(:is(.gauge-panel, .chart)) {
+    width: 100%;
+    max-width: 1920px;
+    align-self: center;
   }
-  .route-not-found h1 {
-    margin: 0;
-    font-size: var(--type-xl);
+  .stage > :global(.gauge-panel) {
+    flex: none;
+  }
+  /* The timeline uses spare height while the gauge remains stable. */
+  .stage > :global(.chart) {
+    flex: 1 0 160px;
+    min-height: 160px;
+    max-height: 360px;
+  }
+  @media (max-height: 800px) {
+    .measurement-stage {
+      gap: var(--space-2);
+      padding-block: var(--space-1);
+    }
+    .stage > :global(.chart) {
+      flex-basis: 120px;
+      min-height: 120px;
+    }
+  }
+  .status {
+    grid-area: status;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font: var(--type-xs) var(--font-mono);
+    container: status / inline-size;
   }
 
   @media (max-width: 759px) {
-    .brand-label {
-      display: none;
-    }
-    .brand-btn {
-      width: 44px;
-      padding: 0;
-      margin: 0;
-      justify-content: center;
-    }
-  }
-  @media (max-width: 759px), (pointer: coarse) {
-    .brand-btn {
-      min-width: 44px;
-      min-height: 44px;
-    }
     .topbar {
-      gap: 2px;
+      gap: var(--space-1);
       padding-inline: 6px;
     }
-    .chrome-divider {
-      display: none;
-    }
-    .topbar .icon-btn,
-    .topbar :global(.more-trigger),
-    .topbar :global(.signout),
-    .return-live {
-      width: 44px;
-      min-width: 44px;
-      height: 44px;
-      min-height: 44px;
-      padding: 0;
-      justify-content: center;
-      position: relative;
-      isolation: isolate;
-      border-color: transparent;
-      background: transparent;
-      box-shadow: none;
-    }
-    .topbar .icon-btn::before,
-    .topbar :global(.more-trigger)::before,
-    .topbar :global(.signout)::before,
-    .return-live::before {
-      content: "";
-      position: absolute;
-      inset: 5px;
-      z-index: -1;
-      border: 1px solid var(--border);
-      border-radius: var(--r-chrome);
-      background: var(--surface-2);
-      box-shadow: inset 0 1px 0 var(--edge-light);
-    }
-    .topbar .icon-btn:hover::before,
-    .topbar :global(.more-trigger:hover)::before,
-    .topbar :global(.signout:hover)::before {
-      border-color: var(--border-strong);
-    }
-    .topbar .icon-btn :global(svg),
-    .topbar :global(.more-trigger svg),
-    .topbar :global(.signout svg),
-    .run-icon :global(svg) {
-      width: 16px;
-      height: 16px;
-    }
-    .topbar :global(.account) {
-      width: 44px;
-      min-width: 44px;
-      height: 44px;
-      border: 0;
-      background: transparent;
-      box-shadow: none;
-    }
-    .topbar :global(.account .identity),
-    .topbar :global(.account .everywhere),
+    .brand-label,
+    .chrome-divider,
     .live-copy {
       display: none;
     }
-    .return-live {
-      color: var(--run-tone);
+    .brand-btn {
+      justify-content: center;
+      min-width: var(--hit);
+      min-height: var(--hit);
+      margin: 0;
+      padding: 0;
     }
-    .return-live::before {
-      border-color: color-mix(in srgb, var(--run-tone) 52%, var(--border));
-      background: color-mix(in srgb, var(--run-tone) 9%, var(--surface-2));
+    .return-live {
+      width: calc(var(--control-h) + 2 * var(--hit-pad));
+      padding: 0;
     }
     .connectivity {
       width: 24px;
-      height: 44px;
     }
     .connectivity :global(.spark) {
       display: none;
-    }
-    .topbar-spacer {
-      flex-shrink: 1;
     }
   }
 </style>

@@ -14,7 +14,8 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strings"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -23,38 +24,35 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
-	downloadBlockSize                = 256 * 1024
-	h3MaxTransferStreamsPerDirection = 128
-	h3UploadProgressStreams          = 1
-	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
-	browserH3UniStreams              = 3
-	wtLaneCreditHeadroom             = 4
+	downloadBlockSize            = 256 * 1024
+	h3ControlStreams             = 4
+	browserH3UniStreams          = 3
+	wtLaneCreditHeadroom         = 4
+	h2ReceiveWindowPerConnection = 16 << 20
+	h2ReceiveWindowPerStream     = 8 << 20
+	// Each open request stream may hold a HEADERS buffer this large before any deadline applies.
+	h3MaxHeaderBytes = 4 << 10
+	// A client's QUIC connections each carry that many request streams, so they have their own small share.
+	maxClientQUICConnections = 8
+	// controlTimeout bounds an idle connection, a handshake and every exchange outside measurement admission.
+	controlTimeout = 15 * time.Second
 )
 
 type endpoints struct {
-	preflight, probe, bootstrapProbe endpoint.HTTPHandler
-	catalog, uploadCheckpoint        endpoint.HTTPHandler
-	uploadSession                    endpoint.HTTPHandler
-	download                         interface {
-		endpoint.HTTPHandler
-		endpoint.DownloadHandler
-	}
-	upload interface {
-		endpoint.HTTPHandler
-		endpoint.UploadHandler
-	}
-	ping           endpoint.MessageHandler
-	uploadProgress *endpoint.UploadProgress
-	admission      *requestAdmission
-	trustedProxies []netip.Prefix
-	wtIdleBound    time.Duration
+	discovery             *endpoint.Discovery
+	probe, bootstrapProbe *endpoint.Probe
+	download              *endpoint.Download
+	upload                *endpoint.Upload
+	admission             *requestAdmission
+	trusted               []netip.Prefix
+	idleBound             time.Duration
+	controlTimeout        time.Duration
 }
 
 type service struct {
@@ -78,30 +76,31 @@ func (systemListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
 	return net.ListenPacket("udp", addr)
 }
 
-func buildEndpoints(ctx context.Context, cfg *config.Config) (*endpoints, error) {
+func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 	block := make([]byte, downloadBlockSize)
-	if _, err := rand.Read(block); err != nil {
-		return nil, err
-	}
+	_, _ = rand.Read(block) // crypto/rand.Read never fails
 	var downloadMeter, uploadMeter *endpoint.Meter
 	if cfg.Verbose {
 		downloadMeter, uploadMeter = endpoint.NewMeter("server:download"), endpoint.NewMeter("server:upload")
 		go downloadMeter.Run(ctx)
 		go uploadMeter.Run(ctx)
 	}
-	store := endpoint.NewUploadStore()
-	go store.RunSweeper(ctx)
-	h3Port := publicH3Port(cfg)
-	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxActiveSessions, cfg.MaxSessionsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
+
+	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient,
+		cfg.MaxActiveSessions, cfg.MaxSessionsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
+	download, upload := endpoint.NewDownload(block, downloadMeter), endpoint.NewUpload(uploadMeter, cfg.TrustedProxies)
+	go upload.RunSweeper(ctx)
 	return &endpoints{
-		catalog: endpoint.NewServerCatalog(cfg), uploadCheckpoint: endpoint.NewUploadCheckpoint(store, cfg.TrustedProxies),
-		preflight: endpoint.NewPreflight(cfg), probe: endpoint.NewProbe(cfg, "", admission.load), bootstrapProbe: endpoint.NewProbe(cfg, h3Port, admission.load),
-		download: endpoint.NewDownload(block, downloadMeter), uploadSession: endpoint.NewUploadSession(store), upload: endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies),
-		ping: endpoint.NewPing(), uploadProgress: endpoint.NewUploadProgress(store, cfg.TrustedProxies),
+		discovery:      endpoint.NewDiscovery(cfg),
+		probe:          endpoint.NewProbe(cfg.TrustedProxies, "", admission.load),
+		bootstrapProbe: endpoint.NewProbe(cfg.TrustedProxies, publicH3Port(cfg), admission.load),
+		download:       download,
+		upload:         upload,
 		admission:      admission,
-		trustedProxies: cfg.TrustedProxies,
-		wtIdleBound:    wire.WTIdleBound,
-	}, nil
+		trusted:        cfg.TrustedProxies,
+		idleBound:      wire.IdleBound,
+		controlTimeout: controlTimeout,
+	}
 }
 
 func publicH3Port(cfg *config.Config) string {
@@ -115,161 +114,39 @@ func publicH3Port(cfg *config.Config) string {
 	return port
 }
 
-type muxTopology struct {
-	spa, discovery, latency, transfers, bootstrap bool
-	requiredProto                                 int
-	wt                                            *webtransport.Server
-}
-
-type protocolEndpoint struct {
-	endpoint.HTTPHandler
-	major int
-}
-
-func (e protocolEndpoint) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
-	if r.ProtoMajor != e.major {
-		http.NotFound(w, r)
-		return nil
-	}
-	return e.HTTPHandler.HandleHTTP(w, r)
-}
-
-func buildRegistry(e *endpoints, topology muxTopology, authn *auth.Service) *endpoint.Registry {
-	reg := endpoint.NewRegistry()
-	if topology.discovery {
-		reg.RegisterHTTP(route.Preflight, e.preflight)
-		reg.RegisterHTTP(route.Servers, e.catalog)
-	}
-	if topology.bootstrap {
-		reg.RegisterHTTP(route.Probe, e.bootstrapProbe)
-	} else {
-		reg.RegisterHTTP(route.Probe, e.probe)
-	}
-	if topology.transfers {
-		register := func(path string, h endpoint.HTTPHandler) {
-			if topology.requiredProto != 0 {
-				h = protocolEndpoint{HTTPHandler: h, major: topology.requiredProto}
+func baseServer(handler http.Handler, protocols *http.Protocols, timeout time.Duration) *http.Server {
+	return &http.Server{Handler: boundedRequest(handler, timeout), ReadTimeout: timeout, WriteTimeout: timeout,
+		IdleTimeout: timeout, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
+			// Bound upload DATA frames so control requests can share a saturated connection.
+			MaxReadFrameSize: 16 << 10,
+			// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
+			MaxReceiveBufferPerConnection: h2ReceiveWindowPerConnection,
+			MaxReceiveBufferPerStream:     h2ReceiveWindowPerStream,
+		}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if encrypted, ok := c.(*tls.Conn); ok {
+				c = encrypted.NetConn()
 			}
-			reg.RegisterHTTP(path, h)
-		}
-		register(route.Download, e.download)
-		register(route.UploadSession, e.uploadSession)
-		register(route.UploadCheckpoint, e.uploadCheckpoint)
-		var minter endpoint.WTTokenMinter
-		if authn != nil && authn.Enabled() {
-			minter = authn.MintWebTransportSessionToken
-		}
-		register(route.WTSession, endpoint.NewWTSession(minter))
-		register(route.Upload, e.upload)
-		register(route.UploadProgress, e.uploadProgress)
-	}
-	if topology.latency {
-		var minter endpoint.WTTokenMinter
-		if authn != nil && authn.Enabled() {
-			minter = authn.MintWebSocketSessionToken
-		}
-		reg.RegisterHTTP(route.WSSession, endpoint.NewWTSession(minter))
-		reg.RegisterWS(route.Ping, e.ping)
-	}
-	if topology.wt != nil {
-		reg.RegisterWT(route.WTDownload, endpoint.NewWTDownload(e.download, e.wtIdleBound))
-		reg.RegisterWT(route.WTUpload, endpoint.NewWTUpload(e.upload, e.uploadProgress, e.trustedProxies, e.wtIdleBound))
-		reg.RegisterWT(route.WTPing, endpoint.NewWTPing(e.ping, e.wtIdleBound))
-	}
-	return reg
-}
-
-func listenerMuxConfigured(ctx context.Context, e *endpoints, topology muxTopology, spa http.Handler, authn *auth.Service) http.Handler {
-	reg := buildRegistry(e, topology, authn)
-	inner := http.NewServeMux()
-	if authn != nil && authn.Enabled() {
-		reg.MountWithOrigin(ctx, inner, authn.PublicOrigin())
-	} else {
-		reg.Mount(ctx, inner)
-	}
-	if topology.wt != nil {
-		reg.MountWebTransport(ctx, inner, topology.wt)
-	}
-	if topology.spa && authn != nil {
-		authn.Mount(inner)
-	}
-	if topology.spa {
-		inner.Handle("/", spa)
-	}
-	if e.admission == nil {
-		return rejectDotSegments(inner)
-	}
-	var publicOrigin string
-	if authn != nil {
-		publicOrigin = authn.PublicOrigin()
-	}
-	m := http.NewServeMux()
-	for path := range reg.Kinds() {
-		if spec, ok := route.Lookup(path); ok && spec.Admission != route.Unmetered {
-			m.Handle(path, e.admission.wrap(inner, e.trustedProxies, publicOrigin))
-		}
-	}
-	m.Handle("/", inner)
-	return rejectDotSegments(m)
-}
-
-func rejectDotSegments(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, `\`) {
-			http.NotFound(w, r)
-			return
-		}
-		for _, segment := range strings.Split(r.URL.Path, "/") {
-			if segment == "." || segment == ".." {
-				http.NotFound(w, r)
-				return
+			if admitted, ok := c.(*admittedConn); ok {
+				c = admitted.Conn
 			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
-	enabled := authn != nil && authn.Enabled()
-	pinned := ""
-	if enabled {
-		pinned = authn.PublicOrigin()
-	}
-	return func(r *http.Request) bool {
-		if approved := auth.BrowserOrigin(r); enabled && approved != "" {
-			return r.Header.Get("Origin") == approved
-		}
-		return !enabled || r.Header.Get("Origin") == "" || r.Header.Get("Origin") == pinned
-	}
-}
-
-func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
-		// Bound upload DATA frames so control requests can share a saturated connection.
-		MaxReadFrameSize: 16 << 10,
-	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-		if encrypted, ok := c.(*tls.Conn); ok {
-			c = encrypted.NetConn()
-		}
-		if admitted, ok := c.(*admittedConn); ok {
-			c = admitted.Conn
-		}
-		if tc, ok := c.(*net.TCPConn); ok {
-			_ = tc.SetNoDelay(true)
-			if protocols != nil && protocols.HTTP2() {
-				configureHTTP2TCP(tc)
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetNoDelay(true)
+				if protocols != nil && protocols.HTTP2() {
+					configureHTTP2TCP(tc)
+				}
 			}
-		}
-		return ctx
-	}}
+			return ctx
+		}}
 }
 
-// Run validates the config and certificate, binds every configured listener.
 func Run(ctx context.Context, cfg *config.Config) error {
 	return runWithSockets(ctx, cfg, systemListenerSockets{})
 }
 
 func runWithSockets(ctx context.Context, cfg *config.Config, sockets listenerSockets) error {
+	// Background sweepers, pollers and loggers end with the services, whatever ended them.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	b, err := newListenerBuild(ctx, cfg, sockets)
 	if err != nil {
 		return err
@@ -289,30 +166,34 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		return nil, err
 	}
 	var cm *certificateManager
-	if cfg.Native.H1TLS != "" || cfg.Native.H2 != "" || cfg.Native.H3 != "" {
+	if cfg.TLSEnabled() {
 		if cm, err = newCertificateManager(cfg); err != nil {
 			return nil, err
 		}
 		go cm.run(ctx)
 	}
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
+	e := buildEndpoints(ctx, cfg)
 	connections := newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)
-	var spa http.Handler
 	if authn.Enabled() {
-		spa = static.AuthenticatedHandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
-		if u, err := url.Parse(cfg.Auth.PublicURL); err == nil {
-			authn.SetConnectOrigins(append(endpoint.NewPreflight(cfg).ConnectOrigins(u.Hostname()), cfg.ServerCatalog.ConnectSources()...))
-		}
-	} else {
-		spa = publicConnectionPolicy(cfg, static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault))
+		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
+			cfg.ServerCatalog.ConnectSources()))
 	}
+	page := static.Handler(authn.Enabled(), cfg.ResultHistoryDefault)
+	spa := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		policy := authn.PagePolicy()
+		if policy == "" {
+			policy = e.discovery.PagePolicy(endpoint.RequestHost(r))
+		}
+		w.Header().Set("Content-Security-Policy", policy)
+		w.Header().Set("X-Frame-Options", "DENY")
+		auth.HardeningHeaders(w.Header())
+		page.ServeHTTP(w, r)
+	})
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
-	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa, sockets: sockets}, nil
+	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa,
+		sockets: sockets}, nil
 }
 
 type listenerBuild struct {
@@ -328,63 +209,77 @@ type listenerBuild struct {
 	sockets     listenerSockets
 }
 
-func (b *listenerBuild) closeOpened() {
-	for _, c := range b.opened {
-		_ = c.Close()
-	}
+type tcpListener struct {
+	name, addr, alpn string
+	listener         auth.Listener
+	topo             muxTopology
 }
 
-func (b *listenerBuild) addTCP(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
-	mux := listenerMuxConfigured(b.ctx, b.e, topo, handler, b.authn)
-	s := baseServer(b.authn.Enforce(mux, l), proto)
-	ln, err := b.sockets.listenTCP(addr)
-	if err != nil {
-		b.closeOpened()
-		return err
-	}
-	b.opened = append(b.opened, ln)
-	var served net.Listener = admittedListener{Listener: ln, admission: b.connections}
-	if alpn != "" {
-		served = tls.NewListener(served, b.cm.tlsConfig(alpn))
-	}
-	b.services = append(b.services, service{
-		name: name, addr: addr, network: "tcp",
-		run: func() error { return serve(served, s) }, stop: s.Shutdown,
-	})
-	return nil
-}
-
-func h1Protocols() *http.Protocols {
-	p := &http.Protocols{}
-	p.SetHTTP1(true)
-	return p
-}
-
-func (b *listenerBuild) assemble() error {
-	spa := b.spa
+func (b *listenerBuild) assemble() (err error) {
+	defer func() {
+		if err != nil {
+			for _, c := range b.opened {
+				_ = c.Close()
+			}
+		}
+	}()
+	cfg := b.cfg
+	ui := muxTopology{spa: true, discovery: true, latency: true, transfers: true}
+	uiTLS := ui
+	uiTLS.requiredProto = 1
 	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
 	if b.authn.Enabled() {
 		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
-	if err := b.addTCP(h1Name, b.cfg.Native.H1, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, ""); err != nil {
+	for _, l := range []tcpListener{
+		{h1Name, cfg.Native.H1, "", auth.Listener{UI: true}, ui},
+		{"HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", cfg.Native.H1TLS, "http/1.1",
+			auth.Listener{UI: true}, uiTLS},
+		{"HTTPS HTTP/2: measurement probe, transfers, progress only", cfg.Native.H2, "h2",
+			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}},
+		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", cfg.Native.H3, "http/1.1",
+			auth.Listener{}, muxTopology{bootstrap: true}},
+	} {
+		if l.addr == "" {
+			continue
+		}
+		if err := b.addTCP(l); err != nil {
+			return err
+		}
+	}
+	if cfg.Native.H3 == "" {
+		return nil
+	}
+	return b.addH3()
+}
+
+func (b *listenerBuild) addTCP(l tcpListener) error {
+	protocols := &http.Protocols{}
+	protocols.SetHTTP1(l.alpn != "h2")
+	protocols.SetHTTP2(l.alpn == "h2")
+	var spa http.Handler
+	if l.topo.spa {
+		spa = b.spa
+	}
+	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener), protocols,
+		b.e.controlTimeout)
+	ln, err := b.sockets.listenTCP(l.addr)
+	if err != nil {
 		return err
 	}
-
-	if b.cfg.Native.H1TLS != "" {
-		if err := b.addTCP("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, "http/1.1"); err != nil {
+	b.opened = append(b.opened, ln)
+	var served net.Listener = admittedListener{Listener: ln, admission: b.connections}
+	if l.alpn != "" {
+		served = tls.NewListener(served, b.cm.tlsConfig(l.alpn))
+	}
+	b.services = append(b.services, service{name: l.name, addr: l.addr, network: "tcp",
+		run: func() error { return serve(served, s) }, stop: func(ctx context.Context) error {
+			err := s.Shutdown(ctx)
+			if err != nil {
+				_ = s.Close()
+			}
 			return err
-		}
-	}
-	if b.cfg.Native.H2 != "" {
-		p := &http.Protocols{}
-		p.SetHTTP2(true)
-		if err := b.addTCP("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p, auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, static.Handler(), "h2"); err != nil {
-			return err
-		}
-	}
-	if b.cfg.Native.H3 != "" {
-		return b.assembleH3()
-	}
+		}})
 	return nil
 }
 
@@ -402,50 +297,52 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-func h3QUICConfig() *quic.Config {
-	cfg := transport.NewQUICConfig()
-	cfg.HandshakeIdleTimeout = 5 * time.Second
-	cfg.MaxIdleTimeout = 30 * time.Second
-	cfg.MaxIncomingStreams = h3MaxIncomingStreams
-	cfg.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
-	return cfg
+func h3QUICConfig(cfg *config.Config) *quic.Config {
+	q := transport.NewQUICConfig()
+	q.HandshakeIdleTimeout = 5 * time.Second
+	q.MaxIdleTimeout = wire.IdleBound
+	// A request stream past the client's admission shares would pin its headers only to be refused.
+	q.MaxIncomingStreams = int64(cfg.MaxActiveMeasurementsPerClient + cfg.MaxSessionsPerClient + h3ControlStreams)
+	// Credit past the lane cap, so an excess lane is reset rather than parked (api/wire.md).
+	q.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
+	return q
 }
 
-func (b *listenerBuild) assembleH3() error {
-	if err := b.addTCP("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, static.Handler(), "http/1.1"); err != nil {
-		return err
-	}
-	quicConfig := h3QUICConfig()
-	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
-	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
+func (b *listenerBuild) addH3() error {
+	quicConfig := h3QUICConfig(b.cfg)
+	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig,
+		IdleTimeout: b.e.controlTimeout}
+	// Enforce has already bound a CONNECT's origin to its principal.
+	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
 	webtransport.ConfigureHTTP3Server(h3)
-	h3.Handler = b.authn.Enforce(listenerMuxConfigured(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, static.Handler(), b.authn), auth.Listener{WebTransport: true})
-	h3.MaxHeaderBytes = 32 << 10
+	h3.Handler = boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil,
+		b.authn), auth.Listener{WebTransport: true}), b.e.controlTimeout)
+	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
-		b.closeOpened()
 		return err
 	}
 	b.opened = append(b.opened, pc)
-	quicTransport := &quic.Transport{Conn: pc, ConnContext: b.connections.connContext}
+	quicTransport := b.connections.quicTransport(pc)
 	quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
 	if err != nil {
-		b.closeOpened()
 		return err
 	}
-	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
-		run: func() error {
-			err := serveWebTransport(b.ctx, wt, quicListener)
-			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		}, stop: func(context.Context) error {
-			err := wt.Close()
-			_ = quicListener.Close()
-			_ = quicTransport.Close()
-			return err
-		}})
+	b.services = append(b.services,
+		service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
+			run: func() error {
+				err := serveWebTransport(b.ctx, wt, quicListener)
+				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) ||
+					errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return err
+			}, stop: func(context.Context) error {
+				err := wt.Close()
+				_ = quicListener.Close()
+				_ = quicTransport.Close()
+				return err
+			}})
 	return nil
 }
 
@@ -464,9 +361,11 @@ func runServices(ctx context.Context, cfg *config.Config, services []service) er
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		var wg sync.WaitGroup
 		for _, svc := range services {
-			_ = svc.stop(stopCtx)
+			wg.Go(func() { _ = svc.stop(stopCtx) })
 		}
+		wg.Wait()
 	}()
 	select {
 	case <-ctx.Done():
@@ -483,16 +382,16 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 		case <-ctx.Done():
 			return
 		case <-ticker:
-			log.Print(admissionLogLine(requests.stats(), connections.stats()))
+			r, s := requests.stats()
+			c := connections.stats()
+			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; "+
+				"sessions %d active / %d max, %d per client, rejected %d budget + %d client; "+
+				"connections %d active / %d peak, rejected %d global + %d client",
+				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
+				s.active, s.limit, s.clientLimit, s.rejectedGlobal, s.rejectedClient,
+				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 		}
 	}
-}
-
-func admissionLogLine(r requestAdmissionStats, c admissionStats) string {
-	return fmt.Sprintf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, %d per client, rejected %d budget + %d client; connections %d active / %d peak, rejected %d global + %d client",
-		r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
-		r.activeSessions, r.sessionMax, r.sessionClientMax, r.rejectedSessionBudget, r.rejectedSessionClient,
-		c.active, c.peak, c.rejectedGlobal, c.rejectedClient)
 }
 
 func serve(ln net.Listener, srv *http.Server) error {

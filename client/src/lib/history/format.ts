@@ -1,52 +1,34 @@
+import { MISSING, type Outcome } from "../presentation/vocabulary";
 import {
-  fmtBytes,
   fmtMs,
   fmtSpeed,
-  rateScaleIndex,
   rateUnit,
   rateValueAt,
+  throughputUnitIndex,
 } from "../format";
-import type { StageStatus } from "./types";
+import type { HistoryRecord } from "./types";
 
 interface HistoryUnits {
   base: "base10" | "base2";
   kind: "bits" | "bytes";
 }
 
+/** Saved rates choose their own unit tier by the live rule; a live run's tier never applies. */
+export function historyRate(bytesPerSec: number, units: HistoryUnits) {
+  const tier = throughputUnitIndex(bytesPerSec, units.base, units.kind);
+  return {
+    num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
+    unit: rateUnit(units.base, units.kind, tier),
+  };
+}
+
 export function formatHistoryRate(
   bytesPerSec: number | null | undefined,
   units: HistoryUnits,
 ): string {
-  if (bytesPerSec == null) return "Unavailable";
-  const baseUnits = units.kind === "bits" ? bytesPerSec * 8 : bytesPerSec;
-  const tier = rateScaleIndex(baseUnits, units.base);
-  return `${fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier))} ${rateUnit(units.base, units.kind, tier)}`;
-}
-
-export function formatHistoryBytes(
-  bytes: number,
-  base: HistoryUnits["base"],
-): string {
-  return fmtBytes(bytes, base);
-}
-
-export function formatDuration(durationMs: number): string {
-  const ms = Math.max(0, durationMs);
-  if (ms < 1_000) return `${Math.round(ms)} ms`;
-  if (ms < 60_000) {
-    const seconds = ms / 1_000;
-    return `${seconds < 10 ? seconds.toFixed(1) : seconds.toFixed(0)} s`;
-  }
-  const totalSeconds = Math.round(ms / 1_000);
-  if (totalSeconds < 3_600) {
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return seconds ? `${minutes} min ${seconds} s` : `${minutes} min`;
-  }
-  const totalMinutes = Math.round(ms / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
+  if (bytesPerSec == null) return MISSING;
+  const { num, unit } = historyRate(bytesPerSec, units);
+  return `${num} ${unit}`;
 }
 
 const RELATIVE_TIME_LIMIT_MS = 60 * 60 * 1_000;
@@ -63,26 +45,18 @@ export function formatRecentCompletion(
 }
 
 export function formatLatency(value: number | null | undefined): string {
-  return value == null ? "Unavailable" : `${fmtMs(value)} ms`;
+  return value == null ? MISSING : `${fmtMs(value)} ms`;
 }
 
-export function formatPercent(
-  value: number | null | undefined,
-  fractionDigits = 1,
-): string {
-  if (value == null) return "Unavailable";
-  return `${value.toFixed(Number.isInteger(value) ? 0 : fractionDigits)}%`;
-}
-
-export function stageStatusLabel(status: StageStatus): string {
-  switch (status) {
-    case "complete":
-      return "Measured";
-    case "partial":
-      return "Partial";
-    case "failed":
-      return "Unavailable";
-    case "not-run":
-      return "Not run";
-  }
+/** One completeness rule for the list badge and the detail. */
+export function historyOutcome(record: HistoryRecord): Outcome {
+  if (record.outcome === "incomplete") return "incomplete";
+  const { latency, download, upload, bidirectional } = record.stages;
+  return record.outcome === "partial" ||
+    (record.multiServer?.failures.length ?? 0) > 0 ||
+    [latency, download, upload, bidirectional].some(
+      ({ status }) => status === "partial" || status === "failed",
+    )
+    ? "partial"
+    : "complete";
 }

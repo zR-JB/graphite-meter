@@ -1,14 +1,13 @@
 // Shared runner contract for phases, config, events, results, and backend interfaces.
 
 import type { ServerCredentials } from "../servers/credentials";
-import type { Probe } from "../api/probe";
+import type { Probe } from "../api/decode";
 import type {
   FetchThroughputTarget,
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 
-/* ---------- Lifecycle ---------- */
 /* Phase sequence, all stages on. */
 export type Phase =
   | "idle"
@@ -26,8 +25,6 @@ export type Phase =
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
-/** Advertised transfer target id or automatic/grouped target selection. */
-export type ThroughputTargetSelection = string;
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
 /* Warmup and measurement share one activity object, so preparation primes the connections measurement reuses. */
@@ -46,8 +43,6 @@ export type ConnectivityState =
   | "unstable" // frequent probe timeouts
   | "offline";
 
-/* Automatic wire estimates ---------- Forward-direction physical link occupancy from application bytes. */
-
 /** Browser-facing wire transport, detected from Resource Timing and security. */
 export type CompensationTransport =
   | "http1-clear" // HTTP/1.1, no TLS
@@ -55,37 +50,12 @@ export type CompensationTransport =
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
-/* ---------- Adaptive duration ---------- */
-/** Confidence-based early exit; disabled adaptive mode runs each phase for its full configured duration. */
-export interface AdaptiveDurationConfig {
-  enabled: boolean;
-  minCoverageRatio: number; // require ≥ this fraction of nominal duration first
-  stabilityThreshold: number; // stability-score gate (0..1) to exit early
-  maxPhaseReductionRatio: number; // never cut a phase by more than this fraction
-  minLatencySamples: number; // sample floor for a latency phase's early exit
-  minTransferSamples: number; // sample floor for a transfer phase's early exit
-  confirmationMs: number; // stability must remain eligible for this real interval
-}
-
-/* ---------- Live measurement stability ---------- */
-/** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
-export type StabilityBand = "low" | "medium" | "high";
-
-/* Live stability snapshot drives the pip, revocable early-finish confirmation, and adaptive completion. */
-export interface StabilitySnapshot {
-  phase: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
-  score: number; // stability score 0..1 (adaptive.ts)
-  band: StabilityBand;
-  sampleCount: number; // usable samples in the confidence window
-}
-
 export interface TransferStreamPolicy {
   mode: "auto" | "forced";
   /** H1 per-direction ceiling in auto mode; exact count in forced mode. */
   count: number;
 }
 
-/* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   /** Enabled measured stages. */
   stages: {
@@ -113,25 +83,39 @@ export interface RunnerConfig {
   experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
-    throughputTarget: ThroughputTargetSelection;
+    throughputTarget: "auto" | string;
     latencyTarget: "auto" | string;
   };
-  /** Confidence-based early exit. */
-  adaptive: AdaptiveDurationConfig;
+  /** Confidence-based early exit; off runs each stage for its full duration. */
+  adaptive: boolean;
   /** Manual Y-axis ceiling for the gauge/chart; "auto" lets it self-scale. */
   visualization: { throughputMaxBytesPerSec: number | "auto" };
 }
 
-/* ---------- Raw samples emitted DURING a run ---------- */
 /** Authoritative in-run latency outcome in the window realm's monotonic clock domain. */
 export interface LatencyObservation {
   rttMs: number;
   /** Optional server application handling duration from this same reply. */
   reflectorHandlingMs?: number;
-  lost: boolean;
+  timedOut: boolean;
   observedAtMs: number;
   /** A reply after the stage cutoff resolves its probe but is outside the RTT measurement window. */
   rttEligible?: boolean;
+}
+
+/** One presentation tick of a transfer stage; a null rate has no evidence in this stage yet. */
+export interface LiveSample {
+  t: number; // ms since run start
+  phase: Extract<Phase, "download" | "upload" | "bidirectional">;
+  continuityId: number;
+  /** Measured bytes of the whole run so far. */
+  bytes: number;
+  down: number | null;
+  up: number | null;
+  /** Local upload timing while a receiver pauses irregularly, within 25% of its rate. */
+  bridgedUp: number | null;
+  /** Rates read zero while stalled; the display decides how they fade. */
+  stalled: boolean;
 }
 
 export interface ThroughputSample {
@@ -151,29 +135,35 @@ export interface LatencyBucket {
   medianRttMs: number | null;
   p95RttMs: number | null;
   maxRttMs: number | null;
-  /** Exact consecutive-success RTT variation retained through aggregation. */
-  firstRttMs: number | null;
-  lastRttMs: number | null;
-  rttDeltaSumMs: number;
-  rttDeltaCount: number;
   pingCount: number;
-  lossCount: number;
+  timeoutCount: number;
   underLoad: boolean; // True when captured during transfer load; phase carries the producer tag.
   phase: Phase;
   continuityId: number;
 }
 
-export interface PhaseTransition {
-  from: Phase;
+interface PhaseTransition {
   to: Phase;
   stage: TransportRole | null;
   t: number; // exact boundary on the run's measured timeline
 }
 
-/* ---------- Aggregate result (emitted on complete) ---------- */
+export const FAILURE_REASONS = [
+  "preparation-failed",
+  "connection-lost",
+  "timeout",
+  "sign-in-required",
+  "server-busy",
+  "protocol-error",
+  "insufficient-evidence",
+] as const;
+export type FailureReason = (typeof FAILURE_REASONS)[number];
+export type StageStatus = "complete" | "partial" | "failed" | "not-run";
+
 export interface RunResult {
-  multiServer?: import("../servers/measurement").MultiServerResult;
-  outcome?: "complete" | "partial" | "incomplete";
+  multiServer: import("./measure").MultiServerResult;
+  outcome: "complete" | "partial" | "incomplete";
+  stages: Record<TransportRole, StageStatus>;
   download: ThroughputResult | null;
   upload: ThroughputResult | null;
   /** The bidirectional phase's concurrent lanes, or null when that stage is off. */
@@ -185,40 +175,25 @@ export interface RunResult {
   latencyByStage: Record<TransportRole, StageLatencySummary | null>;
   /** Unavailable unless both idle and loaded latency evidence exist. */
   bufferbloat: BufferbloatGrade | null;
-  /** A usable result plus an entry here is a partial stage. */
-  stageFailures: Partial<Record<TransportRole, StageFailure>>;
   startedAt: number; // epoch ms
   durationMs: number;
 }
 
-/** Throughput uses a stable plateau when adaptive completion is enabled, otherwise the full measured phase. */
-type ResultMethod = "stable-window" | "full-average";
-
 export interface ThroughputResult {
-  peakBytesPerSec: number;
+  /** The fastest disjoint window of at least 500 ms on every clock; null without one. */
+  peakBytesPerSec: number | null;
   /** Fixed-time-bucket coefficient-of-variation descriptor (0..100). */
   stabilityPct: number;
   totalBytes: number;
   /** Headline bytes/second from the selected full or stable measurement window. */
   reportedBytesPerSec: number;
-  /** Effective bytes/second across the full measurement window, including pre-plateau evidence. */
-  fullAverageBytesPerSec: number;
-  method: ResultMethod;
-  stabilityScore: number; // stability (0..1) at the moment the phase ends
-  band: StabilityBand;
-  /** Under-load ping timeout percentage; a quality signal, not TCP packet loss. */
-  probeTimeoutPct: number | null;
-  /** True when bytes and time came from the server upload receiver. */
-  serverAuthoritative?: boolean;
 }
 
-/** Diagnostic means over the same successful, in-window replies with valid
- * negotiated timing. Missing timing is omitted from this population only. */
+/** Diagnostic means over in-window replies with negotiated timing; replies without it are left out. */
 export interface ReflectorTimingSummary {
   sampleCount: number;
   meanRawRttMs: number;
   meanHandlingMs: number;
-  meanAdjustedRttMs: number;
 }
 
 /** Full measured stage; percentiles use nearest rank, with the midpoint median for P50. */
@@ -242,37 +217,21 @@ export interface StageLatencySummary {
 }
 
 export interface LatencyResult {
-  idleMs: number; // median unloaded over the chosen window, the headline
-  minMs: number | null;
-  p50Ms: number | null;
-  p95Ms: number | null;
-  jitterMs: number | null; // mean absolute consecutive-success RTT difference
-  probeTimeoutPct: number | null;
-  reportedMs: number; // == idleMs, the headline value, named for symmetry
-  method: ResultMethod;
-  stabilityScore: number;
-  band: StabilityBand;
+  reportedMs: number;
+  jitterMs: number | null;
 }
 
+/** Added latency: loaded median − full idle median, signed, in ms. */
 export interface BufferbloatGrade {
-  grade: "A" | "B" | "C" | "D" | "F";
+  /** Per transfer stage; null without that stage's median. */
+  addedMs: Record<"download" | "upload" | "bidirectional", number | null>;
   idleMs: number;
+  /** The worst stage's median and its increase, which the secondary A–F grade labels. */
   loadedMs: number;
-  increaseMs: number; // loaded − idle
+  increaseMs: number;
+  grade: "A" | "B" | "C" | "D" | "F";
 }
 
-/* ---------- Structured termination ---------- */
-/* `user-abort` is the `"aborted"` phase instead, a deliberate stop; every other reason rides the `error` event. */
-export type TerminationReason =
-  | "user-abort"
-  | "preflight-failed" // the handshake never reaches, or a server rejects it
-  | "connection-lost" // transport failed mid-run (server close or network loss)
-  | "timeout" // a request/stream stalled past its deadline
-  | "protocol-error" // malformed/unexpected response or close handshake
-  | "internal-error" // a bug in the engine itself
-  | "transport-unavailable"; // every negotiated transport failed to establish
-
-/* ---------- Transport negotiation ---------- */
 /* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =
   "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
@@ -283,68 +242,24 @@ export type TransportRole = Extract<
   "latency" | "download" | "upload" | "bidirectional"
 >;
 
-/** A failed stage retains any usable measurements and identifies the affected direction when known. */
-export interface StageFailure {
-  stage: TransportRole;
-  /** The affected lane when a bidirectional stage keeps its other result. */
-  direction?: FlowDirection;
-  reason: Exclude<TerminationReason, "user-abort">;
-  message: string;
+/** A lane or feed ending: whether a reconnect may recover it, or a new upload id (`rotate`). */
+export interface LaneFailure {
+  reason: FailureReason;
+  retry: boolean;
+  rotate?: boolean;
 }
 
-/** Protocol evidence that determines how an upload stage may recover. */
-export type RecoveryCause =
-  | "transient-connection"
-  | "unknown-upload-id"
-  | "owner-mismatch"
-  | "authentication-failure"
-  | "capacity-refusal"
-  | "protocol-refusal";
-
-/* ---------- Transient link health ---------- */
 /* A NON-terminal stall: the link is quiet mid-phase and the runner starts a bounded recovery lifecycle. */
-export interface StallInfo {
-  reason: TerminationReason;
-  transport?: TransportKind; // the connection that dropped, when known
+export interface StallInfo extends Pick<LaneFailure, "reason" | "rotate"> {
   detail?: string;
-  /** Structural transport evidence; a generic disconnect stays transient. */
-  recoveryCause?: RecoveryCause;
   /** The lane that first established this stage-wide stall. */
   direction?: FlowDirection;
 }
 
-/** Terminal failure is distinct from user cancellation and may retain usable partial measurements. */
+/** Terminal failure; a user stop is the "aborted" phase and finished stages keep their results. */
 export interface RunnerError {
-  /** Failure category; `user-abort` is the `"aborted"` phase instead. */
-  reason: Exclude<TerminationReason, "user-abort">;
-  /** Human-readable detail for logs / the toast. */
+  reason: FailureReason;
   message: string;
-  /** The phase the run is in at the failure. */
-  phase: Phase;
-  /** Best-effort results from stages that already finished, so the UI can still show measured work. */
-  partial?: {
-    download: ThroughputResult | null;
-    upload: ThroughputResult | null;
-    bidirectional: {
-      down: ThroughputResult | null;
-      up: ThroughputResult | null;
-    } | null;
-    latency: LatencyResult | null;
-  };
-  /** The original thrown value, for logging (not for display). */
-  cause?: unknown;
-}
-
-/* Engine identity & capabilities ---------- Static self-description of a runner backend. */
-export interface EngineInfo {
-  /** Engine id, e.g. "real" | "dummy". */
-  name: string;
-  /* Per-engine version. */
-  version: string;
-  /* Transports this engine can drive for latency probing, preference order. */
-  latencyTransports: TransportKind[];
-  /* Transports this engine can drive for throughput transfer, preference order. */
-  throughputTransports: TransportKind[];
 }
 
 /** Verified connection values are immutable inputs to one run, separate from live sockets. */
@@ -368,11 +283,12 @@ export interface VerifiedLatencyPath {
   verifiedAt: number;
 }
 
+/** Receiver bytes and elapsed receiver time; a pushed feed record has no request time. */
 export interface ReceiverCheckpoint {
   id: string;
   bytes: number;
   nanos: number;
-  requestedAtMs: number;
+  requestedAtMs?: number;
   receivedAtMs: number;
 }
 
@@ -415,7 +331,6 @@ export interface TransportDiscovery {
   latency: Record<string, DiscoveredLatency>;
 }
 
-/* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
   | { type: "serverLatency"; serverId: string; sample: LatencyBucket }
   | {
@@ -426,26 +341,12 @@ export type RunnerEvent =
     }
   | {
       type: "serverFailure";
-      failure: import("../servers/measurement").ServerFailure;
+      failure: import("./measure").ServerFailure;
       participants: string[];
     }
-  | {
-      type: "serverDetails";
-      details: import("../servers/measurement").MultiServerResult;
-    }
+  | { type: "serverDetails"; details: import("./measure").MultiServerResult }
   | { type: "phase"; transition: PhaseTransition }
-  | { type: "throughput"; sample: ThroughputSample }
-  | { type: "aggregateEvidence"; available: boolean }
-  /* A short-lived upload-only visual target. */
-  | { type: "uploadPresentation"; bytesPerSec: number | null }
-  | { type: "latency"; sample: LatencyBucket }
-  | {
-      type: "latencySummary";
-      stage: TransportRole;
-      summary: StageLatencySummary | null;
-    }
-  // Reserved seam: a backend MAY push an explicit connectivity state.
-  | { type: "connectivity"; state: ConnectivityState }
+  | { type: "live"; sample: LiveSample }
   // Progress within the active wall-time budget.
   | {
       type: "progress";
@@ -455,11 +356,8 @@ export type RunnerEvent =
       phaseBudgetMs: number;
       measuring: boolean; // false while delivery is stalled
     }
-  | { type: "stability"; snapshot: StabilitySnapshot } // live stability; stalls report link health separately.
   | { type: "stall"; info: StallInfo }
   | { type: "resume" }
-  // Transport negotiation telemetry: which connection method a phase is trying, and whether it is negotiating /.
-  | { type: "stageSkipped"; failure: StageFailure }
   // Per-stage final result, emitted the instant each measured phase ends, so a finished stage shows its real result.
   | {
       type: "stageResult";
@@ -476,17 +374,3 @@ export type LiveRunConfig = Pick<
   RunnerConfig,
   "stages" | "duration" | "adaptive"
 >;
-
-/* ---------- The contract ---------- */
-export interface NetworkRunner {
-  /** Connection preparation belongs to the application; RTT only adjusts warmup. */
-  start(config: RunnerConfig, preTestPingMs: number): void;
-  abort(): void;
-  dispose(): void;
-  on(handler: (e: RunnerEvent) => void): () => void;
-  reconfigure(config: LiveRunConfig): void;
-  readonly phase: Phase;
-  focusServer?(id: string): void;
-}
-
-/* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

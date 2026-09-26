@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,7 @@ func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) f
 }
 
 func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
+	t.Parallel()
 	sockets := newTestListenerSockets(t)
 	addr := sockets.reserveTCP()
 	cfg := config.Default()
@@ -137,18 +139,21 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 
 	base := "http://" + addr
 	waitForOK(t, http.DefaultClient, base+"/preflight")
-
-	res, err := http.Get(base + "/preflight")
+	res, err := http.Get(base + "/")
 	if err != nil {
-		t.Fatalf("GET /preflight: %v", err)
+		t.Fatalf("GET /: %v", err)
 	}
 	defer res.Body.Close()
-	if ct := res.Header.Get("Content-Type"); ct == "" {
-		t.Fatal("preflight response carried no content type")
+	if csp := res.Header.Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'self'; ") ||
+		!strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "connect-src 'self'") ||
+		res.Header.Get("X-Frame-Options") != "DENY" || res.Header.Get("X-Content-Type-Options") != "nosniff" ||
+		res.Header.Get("Referrer-Policy") != "same-origin" {
+		t.Fatalf("public page lacks its hardening headers: %v", res.Header)
 	}
 }
 
 func TestRunServesTLSH1(t *testing.T) {
+	t.Parallel()
 	cert, key := runTestTLS(t)
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()

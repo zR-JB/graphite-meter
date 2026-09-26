@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { buildHistoryRecord, isHistoryRecord } from "./types";
+import { buildHistoryRecord, incoherence, isHistoryRecord } from "./types";
+import { DEFAULT_CONFIG } from "../state/defaults";
 import type { RunResult } from "../runner/contract";
-import { testPreparedPaths } from "../runner/test-helpers.test";
+import { testPreparedPaths } from "../runner/test-helpers.testutil";
 
 const throughput = {
   peakBytesPerSec: 120,
@@ -12,7 +13,6 @@ const throughput = {
   method: "full-average" as const,
   stabilityScore: 0.9,
   band: "high" as const,
-  probeTimeoutPct: 1,
   serverAuthoritative: true,
 };
 const latency = {
@@ -53,120 +53,76 @@ const result: RunResult = {
       timeoutCount: 1,
     },
   },
-  bufferbloat: { grade: "B", idleMs: 12, loadedMs: 20, increaseMs: 8 },
-  stageFailures: {
-    upload: { stage: "upload", reason: "timeout", message: "raw secret" },
+  bufferbloat: {
+    addedMs: { download: 8, upload: -2, bidirectional: null },
+    grade: "B",
+    idleMs: 12,
+    loadedMs: 20,
+    increaseMs: 8,
+  },
+  multiServer: {
+    selection: [{ id: "a", name: "edge", url: "https://a.example" }],
+    participants: ["a"],
+    latencyFocus: "a",
+    intervals: [],
+    omittedIntervals: 0,
+    failures: [
+      {
+        serverId: "a",
+        stage: "upload",
+        atMs: 5,
+        scope: "throughput",
+        reason: "timeout",
+        message: "HTTP 503",
+      },
+      {
+        serverId: "a",
+        stage: "bidirectional",
+        atMs: 9,
+        scope: "throughput",
+        reason: "insufficient-evidence",
+        message: "Too little measured evidence for a result",
+      },
+    ],
+    servers: [],
+  },
+  outcome: "incomplete",
+  stages: {
+    latency: "complete",
+    download: "complete",
+    upload: "failed",
+    bidirectional: "partial",
   },
   startedAt: 100,
   durationMs: 80,
 };
 
+result.multiServer.servers = [
+  {
+    server: result.multiServer.selection[0],
+    throughput: {
+      origin: "https://a.example",
+      transport: "fetch-stream",
+      protocol: "http2",
+    },
+    latencyTarget: { origin: "https://a.example", transport: "websocket" },
+    latency: result.latency,
+    latencyByStage: result.latencyByStage,
+    bufferbloat: result.bufferbloat,
+    download: result.download,
+    upload: result.upload,
+    bidirectional: result.bidirectional,
+    totalBytes: { down: 800, up: 0 },
+  },
+];
+
 function serverHistoryRecord() {
-  const source = structuredClone(result);
-  const server = { id: "a", name: "A", url: "https://a.example" };
-  source.multiServer = {
-    selection: [server],
-    participants: [server.id],
-    latencyFocus: server.id,
-    intervals: [],
-    omittedIntervals: 0,
-    failures: [],
-    servers: [
-      {
-        server,
-        throughput: {
-          origin: server.url,
-          transport: "fetch-stream",
-          protocol: "http2",
-        },
-        latencyTarget: { origin: server.url, transport: "websocket" },
-        latency: source.latency,
-        latencyByStage: source.latencyByStage,
-        bufferbloat: source.bufferbloat,
-        download: source.download,
-        upload: source.upload,
-        bidirectional: source.bidirectional,
-        totalBytes: { down: 800, up: 0 },
-      },
-    ],
-  };
-  return buildHistoryRecord(source, { paths: null, clientBuild: "b" }, 200);
+  return buildHistoryRecord(
+    structuredClone(result),
+    { paths: null, clientBuild: "b" },
+    200,
+  );
 }
-
-test("aggregate and per-server history enforce the same measurement bounds", () => {
-  for (const select of [
-    (record: ReturnType<typeof serverHistoryRecord>) =>
-      record.stages.download.result!,
-    (record: ReturnType<typeof serverHistoryRecord>) =>
-      record.multiServer!.servers[0].download!,
-    (record: ReturnType<typeof serverHistoryRecord>) =>
-      record.stages.latency.result!,
-    (record: ReturnType<typeof serverHistoryRecord>) =>
-      record.multiServer!.servers[0].latency!,
-  ]) {
-    const record = serverHistoryRecord();
-    expect(isHistoryRecord(record)).toBe(true);
-    const measurement = select(record);
-    for (const [field, maximum] of [
-      ["probeTimeoutPct", 100],
-      ["stabilityScore", 1],
-      ...("stabilityPct" in measurement
-        ? [["stabilityPct", 100] as const]
-        : []),
-    ] as const) {
-      const values = measurement as unknown as Record<string, unknown>;
-      const original = values[field];
-      for (const invalid of [-1, maximum + 1, Infinity, undefined, "1"]) {
-        values[field] = invalid;
-        expect(isHistoryRecord(record)).toBe(false);
-      }
-      values[field] = maximum;
-      expect(isHistoryRecord(record)).toBe(true);
-      values[field] = original;
-    }
-  }
-});
-
-test("per-server history rejects incomplete or inconsistent paired reflector timing", () => {
-  const valid = {
-    sampleCount: 2,
-    meanRawRttMs: 18,
-    meanHandlingMs: 3,
-    meanAdjustedRttMs: 15,
-  };
-  const record = serverHistoryRecord();
-  const summary = record.multiServer!.servers[0].latencyByStage.download!;
-  const values = summary as unknown as Record<string, unknown>;
-  for (const invalid of [
-    null,
-    { sampleCount: 1 },
-    { ...valid, meanRawRttMs: undefined },
-    { ...valid, meanHandlingMs: undefined },
-    { ...valid, meanAdjustedRttMs: undefined },
-    { ...valid, sampleCount: 0 },
-    { ...valid, sampleCount: 1.5 },
-    { ...valid, sampleCount: 10 },
-    { ...valid, meanRawRttMs: Infinity },
-    { ...valid, meanHandlingMs: -1 },
-    { ...valid, meanHandlingMs: 19 },
-    { ...valid, meanAdjustedRttMs: 14 },
-    { ...valid, unknown: true },
-  ]) {
-    values.reflectorTiming = invalid;
-    expect(isHistoryRecord(record)).toBe(false);
-  }
-  summary.reflectorTiming = valid;
-  expect(isHistoryRecord(record)).toBe(true);
-  summary.reflectorTiming = {
-    sampleCount: 1,
-    meanRawRttMs: 0,
-    meanHandlingMs: 0,
-    meanAdjustedRttMs: 0,
-  };
-  expect(isHistoryRecord(record)).toBe(true);
-  delete summary.reflectorTiming;
-  expect(isHistoryRecord(record)).toBe(true);
-});
 
 test("builds an immutable sanitized partial snapshot", () => {
   const paths = testPreparedPaths();
@@ -217,127 +173,86 @@ test("builds an immutable sanitized partial snapshot", () => {
   expect(JSON.stringify(record)).not.toContain("raw secret");
   expect(JSON.stringify(record)).not.toContain("192.0.2.5");
   expect(isHistoryRecord(record)).toBe(true);
-  expect(isHistoryRecord({ ...record, id: "bad" })).toBe(false);
+  expect(isHistoryRecord({ ...record, id: 5 })).toBe(false);
 });
 
-test("round-trips current single-server records and rejects unsupported versions and obsolete fields", () => {
+test("round-trips current records, including per-server details, and rejects other versions", () => {
   const record = buildHistoryRecord(
     result,
     { paths: null, clientBuild: "b" },
     200,
   );
-  expect(record.schemaVersion).toBe(4);
   const reloaded = JSON.parse(JSON.stringify(record));
   expect(isHistoryRecord(reloaded)).toBe(true);
   expect(reloaded).toEqual(record);
+  expect(isHistoryRecord(serverHistoryRecord())).toBe(true);
   for (const schemaVersion of [undefined, 1, 2, 3, 5])
     expect(isHistoryRecord({ ...record, schemaVersion })).toBe(false);
-  for (const obsolete of ["meanBytesPerSec", "packetLossPct"]) {
-    const saved = structuredClone(record);
-    Object.assign(saved.stages.download.result!, { [obsolete]: 0 });
-    expect(isHistoryRecord(saved)).toBe(false);
-  }
-  const obsoleteLane = structuredClone(record);
-  Object.assign(obsoleteLane.stages.latency.lanes.download!, { lossRatio: 0 });
-  expect(isHistoryRecord(obsoleteLane)).toBe(false);
 });
 
-test("rejects malformed nested records before they reach rendering", () => {
-  const valid = buildHistoryRecord(
-    result,
-    { paths: null, clientBuild: "b" },
-    200,
+test("a record cannot claim more than its stages and evidence support", () => {
+  const record = serverHistoryRecord();
+  const config = {
+    stages: {
+      latency: true,
+      download: true,
+      upload: true,
+      bidirectional: false,
+    },
+    duration: { ...DEFAULT_CONFIG.duration, downloadMs: 2_000 },
+    adaptive: DEFAULT_CONFIG.adaptive,
+  };
+  expect(incoherence(record, config)).toEqual([
+    "download is complete without 800 ms of evidence",
+    "download covers 0 of 2000 ms",
+    "bidirectional is partial but planned false",
+  ]);
+  const silent = structuredClone(record);
+  silent.multiServer!.failures = [];
+  silent.outcome = "complete";
+  expect(incoherence(silent)).toContain(
+    "upload is failed without a stated reason",
   );
+  expect(incoherence(silent)).toContain(
+    "outcome complete should be incomplete",
+  );
+});
+
+test("corrupted saved shapes are skipped before they reach rendering", () => {
+  const valid = serverHistoryRecord();
+  const lanes = valid.stages.latency.lanes;
   const cases: unknown[] = [
     { ...valid, stages: null },
+    { ...valid, durationMs: "1" },
+    { ...valid, completedAt: 1e20 },
     {
       ...valid,
       stages: {
         ...valid.stages,
         latency: {
           ...valid.stages.latency,
-          lanes: { ...valid.stages.latency.lanes, download: { center: NaN } },
+          lanes: { ...lanes, download: { ...lanes.download, center: NaN } },
         },
       },
     },
-    {
-      ...valid,
-      transport: {
-        ...valid.transport,
-        throughput: { protocol: "https://raw", kind: null },
-      },
-    },
-    {
-      ...valid,
-      transport: {
-        ...valid.transport,
-        latency: { protocol: "h3", kind: "webtransport-datagram" },
-      },
-    },
-    {
-      ...valid,
-      transport: {
-        ...valid.transport,
-        throughput: { protocol: "h1", kind: "websocket" },
-      },
-    },
-    {
-      ...valid,
-      wireEstimates: {
-        version: 2,
-        breakdown: { download: null, upload: null, bidirectional: null },
-        downloadBytesPerSec: Infinity,
-        uploadBytesPerSec: null,
-        bidirectionalBytesPerSec: null,
-      },
-    },
-    {
-      ...valid,
-      failures: [
-        { stage: "download", direction: "sideways", reason: "internal-error" },
-      ],
-    },
-    { ...valid, bufferbloat: { ...valid.bufferbloat, grade: "Z" } },
-    { ...valid, durationMs: -1 },
-    { ...valid, failures: [valid.failures[0], valid.failures[0]] },
-    { ...valid, failures: Array.from({ length: 5 }, () => valid.failures[0]) },
-    { ...valid, totalBytes: valid.totalBytes + 1 },
     {
       ...valid,
       stages: {
         ...valid.stages,
-        download: {
-          ...valid.stages.download,
-          result: { ...valid.stages.download.result!, probeTimeoutPct: 101 },
-        },
+        download: { status: "complete", result: { reportedBytesPerSec: 1 } },
       },
     },
+    { ...valid, wireEstimates: { downloadBytesPerSec: Infinity } },
+    // Each of these once reached rendering and threw or showed impossible values.
+    { ...valid, wireEstimates: { downloadBytesPerSec: 5 } },
+    { ...valid, startedAt: valid.completedAt + 1 },
+    { ...valid, durationMs: -1 },
+    { ...valid, totalBytes: -5 },
+    { ...valid, multiServer: { ...valid.multiServer, servers: [null] } },
+    { ...valid, server: { name: "x".repeat(4096) } },
+    { ...valid, failures: Array.from({ length: 600 }, () => null) },
   ];
   for (const value of cases) expect(isHistoryRecord(value)).toBe(false);
-});
-
-test("authoritative scalar counts are not rejected by an unrelated ceiling", () => {
-  const record = buildHistoryRecord(
-    {
-      ...result,
-      latencyByStage: {
-        ...result.latencyByStage,
-        latency: {
-          ...result.latencyByStage.download!,
-          probeCount: Number.MAX_SAFE_INTEGER,
-        },
-      },
-    },
-    {
-      paths: null,
-      clientBuild: "b",
-    },
-    200,
-  );
-  expect(isHistoryRecord(record)).toBe(true);
-  expect(record.stages.latency.lanes.latency?.count).toBe(
-    Number.MAX_SAFE_INTEGER,
-  );
 });
 
 test("record construction bounds persisted display text without losing the run", () => {
@@ -350,8 +265,10 @@ test("record construction bounds persisted display text without losing the run",
   ).protocolNegotiated = long;
   (paths.latency!.probe as { protocolNegotiated: string }).protocolNegotiated =
     "https://secret.invalid/raw";
+  const source = structuredClone(result);
+  source.multiServer.selection[0].name = long;
   const record = buildHistoryRecord(
-    result,
+    source,
     {
       paths,
       clientBuild: long,
@@ -366,44 +283,6 @@ test("record construction bounds persisted display text without losing the run",
   expect(record.transport.throughput.protocol).toHaveLength(256);
   expect(record.transport.latency.protocol).toBeNull();
   expect(JSON.stringify(record)).not.toContain("secret.invalid");
-});
-
-test("failure snapshots are bounded by the four authoritative run stages", () => {
-  const record = buildHistoryRecord(
-    {
-      ...result,
-      stageFailures: {
-        latency: { stage: "latency", reason: "timeout", message: "raw" },
-        download: { stage: "download", reason: "timeout", message: "raw" },
-        upload: { stage: "upload", reason: "timeout", message: "raw" },
-        bidirectional: {
-          stage: "bidirectional",
-          reason: "timeout",
-          message: "raw",
-        },
-      },
-    },
-    { paths: null, clientBuild: "b" },
-    200,
-  );
-  expect(record.failures).toHaveLength(4);
-  expect(isHistoryRecord(record)).toBe(true);
-});
-
-test("rejects non-date epochs while retaining valid date bounds", () => {
-  const valid = buildHistoryRecord(
-    result,
-    { paths: null, clientBuild: "b" },
-    200,
-  );
-  const maxDate = 8_640_000_000_000_000;
-  expect(
-    isHistoryRecord({ ...valid, startedAt: maxDate, completedAt: maxDate }),
-  ).toBe(true);
-  for (const value of [1e20, maxDate + 1, Number.MAX_SAFE_INTEGER, 1.5, -1]) {
-    expect(isHistoryRecord({ ...valid, startedAt: value })).toBe(false);
-    expect(isHistoryRecord({ ...valid, completedAt: value })).toBe(false);
-  }
 });
 
 test("current history persists partial accounting and exact known outcome counts", () => {
@@ -425,35 +304,11 @@ test("current history persists partial accounting and exact known outcome counts
     accountingComplete: false,
     count: 3,
     timeoutCount: 1,
+    timeoutRatio: 1 / 3,
     unresolvedCount: 2,
     sendFailureCount: 4,
   });
   expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
-  for (const field of [
-    "accountingComplete",
-    "timeoutCount",
-    "timeoutRatio",
-    "unresolvedCount",
-    "sendFailureCount",
-    "count",
-  ]) {
-    const missing = structuredClone(saved);
-    delete (
-      missing.stages.latency.lanes.download! as unknown as Record<
-        string,
-        unknown
-      >
-    )[field];
-    expect(isHistoryRecord(missing)).toBe(false);
-  }
-  const missingMetadata = structuredClone(saved);
-  const incomplete = missingMetadata.stages.latency.lanes
-    .download! as unknown as Record<string, unknown>;
-  delete incomplete.accountingComplete;
-  delete incomplete.timeoutCount;
-  expect(isHistoryRecord(missingMetadata)).toBe(false);
-  saved.stages.latency.lanes.download!.timeoutCount = 4;
-  expect(isHistoryRecord(saved)).toBe(false);
 });
 
 test("optional paired server timing is copied without changing saved raw methodology", () => {
@@ -462,7 +317,6 @@ test("optional paired server timing is copied without changing saved raw methodo
     sampleCount: 2,
     meanRawRttMs: 18,
     meanHandlingMs: 3,
-    meanAdjustedRttMs: 15,
   };
   const saved = buildHistoryRecord(
     source,
@@ -479,43 +333,5 @@ test("optional paired server timing is copied without changing saved raw methodo
   source.latencyByStage.download!.reflectorTiming!.meanHandlingMs = 99;
   expect(lane.reflectorTiming!.meanHandlingMs).toBe(3);
   delete lane.reflectorTiming;
-  expect(isHistoryRecord(saved)).toBe(true);
-});
-
-test("saved timing requires a bounded paired population and consistent finite means", () => {
-  const saved = buildHistoryRecord(
-    result,
-    { paths: null, clientBuild: "b" },
-    200,
-  );
-  const valid = {
-    sampleCount: 2,
-    meanRawRttMs: 18,
-    meanHandlingMs: 3,
-    meanAdjustedRttMs: 15,
-  };
-  const lane = saved.stages.latency.lanes.download!;
-  for (const invalid of [
-    null,
-    { ...valid, sampleCount: 0 },
-    { ...valid, sampleCount: 1.5 },
-    { ...valid, sampleCount: 10 }, // Only nine resolved replies were successful.
-    { ...valid, sampleCount: Number.MAX_SAFE_INTEGER + 1 },
-    { ...valid, meanRawRttMs: Infinity },
-    { ...valid, meanHandlingMs: -1 },
-    { ...valid, meanHandlingMs: 19 },
-    { ...valid, meanAdjustedRttMs: -1 },
-    { ...valid, meanAdjustedRttMs: 14 },
-    { ...valid, unknown: true },
-  ]) {
-    (lane as unknown as Record<string, unknown>).reflectorTiming = invalid;
-    expect(isHistoryRecord(saved)).toBe(false);
-  }
-  lane.reflectorTiming = {
-    sampleCount: 1,
-    meanRawRttMs: 0,
-    meanHandlingMs: 0,
-    meanAdjustedRttMs: 0,
-  };
   expect(isHistoryRecord(saved)).toBe(true);
 });

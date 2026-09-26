@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"context"
 	"crypto/sha256"
+	"encoding/json/v2"
 	"maps"
 	"net/http"
 	"net/url"
@@ -14,132 +14,114 @@ import (
 )
 
 const (
-	wtTokenLifetime    = 30 * time.Second
-	maxSessionWTTokens = 8
-	wtTokenPrefix      = "gmw_"
+	socketTokenLifetime    = 30 * time.Second
+	maxSessionSocketTokens = 8
+	socketTokenPrefix      = "gmw_"
 )
 
 // Socket tickets carry the authenticated principal, including its narrower grant lifetime.
-type wtToken struct {
-	sess           *session
+type socketToken struct {
 	principal      Principal
 	target, origin string
 	expires        time.Time
 }
 
-type WTMint int
-
-const (
-	WTMintOK WTMint = iota
-	WTMintNoSession
-	WTMintAtCapacity
-	WTMintInvalidTarget
-)
-
-func (s *Service) MintWebTransportSessionToken(r *http.Request) (string, time.Time, WTMint) {
-	return s.mintSocketToken(r, route.WebTransport)
+// SocketTokenHandler serves /wt/session or /ws/session; public mode answers an empty token.
+func (s *Service) SocketTokenHandler(kind route.Kind) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response struct {
+			Token   string `json:"token"`
+			Expires int64  `json:"expires"`
+		}
+		if s.Enabled() {
+			token, expires, status := s.mintSocketToken(r, kind)
+			if status != http.StatusOK {
+				// Capacity, not permission: the login is intact and its oldest ticket expires soon.
+				if status == http.StatusTooManyRequests {
+					w.Header().Set("Retry-After", "1")
+				}
+				http.Error(w, http.StatusText(status), status)
+				return
+			}
+			response.Token, response.Expires = token, expires.UnixMilli()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.MarshalWrite(w, response)
+	})
 }
 
-func (s *Service) MintWebSocketSessionToken(r *http.Request) (string, time.Time, WTMint) {
-	return s.mintSocketToken(r, route.WebSocket)
-}
-
-func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, WTMint) {
+func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, int) {
 	p, ok := PrincipalFromContext(r.Context())
-	if !ok || p.session == nil || p.Bearer && p.browserGrant == nil {
-		return "", time.Time{}, WTMintNoSession
+	if !ok || p.session == nil || p.Bearer && p.browserOrigin() == "" {
+		return "", time.Time{}, http.StatusForbidden
 	}
 	target, err := url.Parse(r.URL.Query().Get("target"))
 	if err != nil || target.User != nil || target.RawQuery != "" || target.ForceQuery || target.Fragment != "" {
-		return "", time.Time{}, WTMintInvalidTarget
+		return "", time.Time{}, http.StatusBadRequest
 	}
 	spec, known := route.Lookup(target.Path)
 	origin, err := wire.CanonicalOrigin(target.Scheme + "://" + target.Host)
-	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), s.public.Hostname()) || !known || spec.Kind != kind {
-		return "", time.Time{}, WTMintInvalidTarget
+	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), s.public.Hostname()) ||
+		!known || spec.Kind != kind {
+		return "", time.Time{}, http.StatusBadRequest
 	}
-	token := wtTokenPrefix + randomToken(32)
+	token := socketTokenPrefix + randomToken(32)
 	h := sha256.Sum256([]byte(token))
-	now := s.now()
-	expires := minTime(now.Add(wtTokenLifetime), p.session.expires)
+	now := time.Now()
+	expires := now.Add(socketTokenLifetime)
+	if p.session.expires.Before(expires) {
+		expires = p.session.expires
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p.measurementContext().Err() != nil {
-		return "", time.Time{}, WTMintNoSession
+		return "", time.Time{}, http.StatusForbidden
 	}
-	s.expireWTTokensLocked(now)
-	if len(p.session.wtTokens) >= maxSessionWTTokens {
-		return "", time.Time{}, WTMintAtCapacity
+	s.expireSocketTokensLocked(now)
+	held := 0
+	for t := range maps.Values(s.socketTokens) {
+		if t.principal.session == p.session {
+			held++
+		}
+	}
+	if held >= maxSessionSocketTokens {
+		return "", time.Time{}, http.StatusTooManyRequests
 	}
 	p.Bearer = true
-	p.session.wtTokens[h] = struct{}{}
-	s.wtTokens[h] = wtToken{sess: p.session, principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"), expires: expires}
-	return token, expires, WTMintOK
+	s.socketTokens[h] = socketToken{principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"),
+		expires: expires}
+	return token, expires, http.StatusOK
 }
 
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
-}
-
-func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Principal, bool) {
+func (s *Service) consumeSocketToken(raw string, r *http.Request) (Principal, bool) {
 	if raw == "" {
 		return Principal{}, false
 	}
 	h := sha256.Sum256([]byte(raw))
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t, ok := s.wtTokens[h]
+	t, ok := s.socketTokens[h]
 	if !ok {
 		return Principal{}, false
 	}
-	delete(s.wtTokens, h)
-	delete(t.sess.wtTokens, h)
+	delete(s.socketTokens, h)
 	origin, err := wire.CanonicalOrigin("https://" + r.Host)
-	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) || t.principal.measurementContext().Err() != nil {
+	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) ||
+		t.principal.measurementContext().Err() != nil {
 		return Principal{}, false
 	}
 	return t.principal, true
 }
 
-func (s *Service) expireWTTokensLocked(now time.Time) {
-	maps.DeleteFunc(s.wtTokens, func(h [32]byte, t wtToken) bool {
-		if now.Before(t.expires) && t.principal.measurementContext().Err() == nil {
-			return false
-		}
-		delete(t.sess.wtTokens, h)
-		return true
+func (s *Service) expireSocketTokensLocked(now time.Time) {
+	maps.DeleteFunc(s.socketTokens, func(_ [32]byte, t socketToken) bool {
+		return !now.Before(t.expires) || t.principal.measurementContext().Err() != nil
 	})
 }
 
 func isWebTransportRoute(path string) bool {
 	spec, ok := route.Lookup(path)
 	return ok && spec.Kind == route.WebTransport
-}
-
-func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
-	if !t.Secure {
-		s.writeAuthRequired(w, r, listener)
-		return
-	}
-	token := r.URL.Query().Get("token")
-	p, ok := s.authenticateNonAmbient(r)
-	if ok {
-		if token != "" {
-			s.consumeWebTransportToken(token, r)
-		}
-	} else {
-		p, ok = s.consumeWebTransportToken(token, r)
-	}
-	if !ok || p.session == nil || !s.validRequestOrigin(r, p) {
-		s.writeAuthRequired(w, r, listener)
-		return
-	}
-	ctx, cancel := context.WithCancelCause(r.Context())
-	stop := context.AfterFunc(p.measurementContext(), func() { cancel(errSessionEnded) })
-	defer func() { stop(); cancel(nil) }()
-	next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, principalKey{}, p)))
 }

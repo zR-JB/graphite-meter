@@ -1,9 +1,7 @@
 {
-  "extends": "@tsconfig/svelte/tsconfig.json",
   "compilerOptions": {
     "target": "ESNext",
     "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
-    "useDefineForClassFields": true,
     "module": "ESNext",
     "resolveJsonModule": true,
     "allowJs": true,

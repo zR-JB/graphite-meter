@@ -1,4 +1,4 @@
-import { withinBudget, abortableDelay } from "../abortable";
+import { abortableDelay, findCause, withinBudget } from "../abortable";
 import type {
   ConnectionRole,
   RunnerConfig,
@@ -11,7 +11,6 @@ import type {
   LatencyTarget,
   WebTransportThroughputTarget,
 } from "../../api/endpoints";
-import type { Probe } from "../../api/probe";
 import {
   readJSONResponse,
   parsePreflight,
@@ -30,22 +29,22 @@ import {
   validateServerDiscovery,
 } from "../../servers/catalog";
 import { BUILD } from "../../buildenv";
+import { median } from "../measure";
 import {
-  latencyPathNeeded,
-  type ConnectionValidation,
-} from "../connectionModel";
-import { median } from "../stats";
-import {
-  automaticThroughputTargets,
-  automaticLatencyTargets,
-  browserProtocolMatchesTarget,
   blockedSelectionReason,
+  browserProtocolMatchesTarget,
+  candidates,
   classifyTransportDiscovery,
+  connectionSelection,
   fetchViewOfOrigin,
+  latencyPathNeeded,
   protocolFromNextHop,
-  selectLatencyTarget,
-  selectThroughputTarget,
-} from "./backendPure";
+  ROUTES,
+  selectTarget,
+  type AnyTarget,
+  type ConnectionValidation,
+  type ThroughputTarget,
+} from "../paths";
 import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -54,12 +53,11 @@ import {
 } from "./budgets";
 import { IdleKeepalive } from "./latencyChannel";
 import { resourceProtocol } from "./resourceTiming";
-import {
-  PreflightUnavailableError,
-  BrowserOriginBlockedError,
-  TransportUnavailableError,
-} from "./transportError";
-import { transportRunnable } from "./transports";
+
+/** The shared discovery request failed before either role could be checked. */
+export class PreflightUnavailableError extends Error {}
+/** A browser policy restriction whose message gives a known configuration remedy. */
+export class BrowserOriginBlockedError extends Error {}
 
 export interface ConnectionPreparation {
   discovery: TransportDiscovery;
@@ -85,7 +83,7 @@ export async function discoverServer(
     const startedAt = performance.now();
     const response = await measurementFetch(
       credentials,
-      `${credentials?.server.url ?? ""}/preflight${ident}`,
+      `${credentials?.server.url ?? ""}${ROUTES.preflight}${ident}`,
       {
         cache: "no-store",
         signal,
@@ -98,28 +96,28 @@ export async function discoverServer(
     const pf = parsePreflight(data);
     if (credentials) validateServerDiscovery(credentials.server, pf);
     const origin = new URL(response.url, location.href).origin;
-    const protocol = (
-      performance.getEntriesByName(response.url, "resource").at(-1) as
-        PerformanceResourceTiming | undefined
-    )?.nextHopProtocol;
-    const discovery: TransportDiscovery = {
+    const timing = performance
+      .getEntriesByName(response.url, "resource")
+      .at(-1) as PerformanceResourceTiming | undefined;
+    const { throughput, latency, uploadCheckpoint } = pf.capabilities;
+    const secure = location.protocol === "https:";
+    signal.throwIfAborted();
+    return {
       ...classifyTransportDiscovery(
-        pf.capabilities.throughput,
-        pf.capabilities.latency,
+        throughput,
+        latency,
         origin,
-        location.protocol === "https:",
-        protocol,
+        secure,
+        timing?.nextHopProtocol,
         location.origin,
       ),
-      uploadCheckpoint: pf.capabilities.uploadCheckpoint,
+      uploadCheckpoint,
       generation: pf.generation,
       engineVersion: pf.engineVersion,
       server: pf.server,
       fetchedAt: Date.now(),
       preflightMs,
     };
-    signal.throwIfAborted();
-    return discovery;
   } catch (cause) {
     signal.throwIfAborted();
     await classifyServerAuthentication(credentials, signal);
@@ -145,25 +143,26 @@ export async function prepareConnections(
   };
   try {
     for (const role of roles) {
-      const selection =
-        role === "throughput"
-          ? config.transports.throughputTarget
-          : config.transports.latencyTarget;
+      const selection = connectionSelection(config, role);
       try {
         if (role === "throughput") {
-          const path = await prepareThroughput(
+          const path = await prepareRole(
             discovery,
+            role,
             selection,
             signal,
-            credentials,
+            (target: ThroughputTarget, attempt) =>
+              prepareThroughput(discovery, target, attempt, credentials),
           );
           result.validation.throughput = { selection, state: "verified", path };
         } else if (latencyPathNeeded(config)) {
-          const { path, idle } = await prepareLatency(
+          const { path, idle } = await prepareRole(
             discovery,
+            role,
             selection,
             signal,
-            credentials,
+            (target: LatencyTarget, attempt) =>
+              prepareLatency(discovery, target, attempt, credentials),
           );
           result.idle = idle;
           result.validation.latency = { selection, state: "verified", path };
@@ -174,14 +173,15 @@ export async function prepareConnections(
       } catch (cause) {
         signal.throwIfAborted();
         result.failure ??= cause;
+        const message =
+          cause instanceof BrowserOriginBlockedError
+            ? cause.message
+            : "Connection check failed";
         result.validation[role] = {
           selection,
           state: "failed",
           path: null,
-          message:
-            cause instanceof BrowserOriginBlockedError
-              ? cause.message
-              : "Connection check failed",
+          message,
         };
         if (role === "latency") result.idle = null;
       }
@@ -194,11 +194,58 @@ export async function prepareConnections(
   }
 }
 
+/** Automatic tries each candidate within its own budget; an explicit selection tries only itself. */
+async function prepareRole<
+  T extends AnyTarget,
+  R extends { path: { requested: unknown } } | { requested: unknown },
+>(
+  discovery: TransportDiscovery,
+  role: ConnectionRole,
+  selection: string,
+  signal: AbortSignal,
+  attempt: (target: T, signal: AbortSignal) => Promise<R>,
+): Promise<R> {
+  const requested = selectTarget(discovery, role, selection) as T | null;
+  if (!requested) {
+    const restriction = blockedSelectionReason(discovery, role, selection);
+    if (restriction) throw new BrowserOriginBlockedError(restriction);
+    const unsupported = selectTarget(discovery, role, selection, true);
+    throw new Error(
+      unsupported
+        ? `${unsupported.transport} is not supported by this client`
+        : `${selection} ${role} target unavailable`,
+    );
+  }
+  let failure: unknown;
+  for (const target of selection === "auto"
+    ? (candidates(discovery, role) as T[])
+    : [requested]) {
+    const budgetMs =
+      H3_PROBE_DEADLINE_MS +
+      (target.transport === "fetch-stream"
+        ? 0
+        : ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS);
+    try {
+      const result = await withinBudget(signal, budgetMs, (bounded) =>
+        attempt(target, bounded),
+      );
+      if ("path" in result) result.path.requested = requested;
+      else result.requested = requested;
+      return result;
+    } catch (cause) {
+      signal.throwIfAborted();
+      if (findCause(cause, ServerAuthenticationRequired)) throw cause;
+      failure = cause;
+    }
+  }
+  throw failure;
+}
+
 async function pathProbe(
   url: string,
   signal: AbortSignal,
   credentials?: ServerCredentials,
-): Promise<{ probe: Probe; response: Response }> {
+) {
   try {
     const response = await measurementFetch(credentials, url, {
       cache: "no-store",
@@ -213,69 +260,16 @@ async function pathProbe(
   }
 }
 
+/** HTTP/3 needs the browser to prove it used h3; WebTransport proves its own data path. */
 async function prepareThroughput(
   discovery: TransportDiscovery,
-  selection: string,
+  requested: ThroughputTarget,
   signal: AbortSignal,
   credentials?: ServerCredentials,
 ): Promise<VerifiedThroughputPath> {
-  const requested = selectThroughputTarget(discovery, selection, true);
-  const restriction = blockedSelectionReason(
-    discovery,
-    "throughput",
-    selection,
-  );
-  if (!requested && restriction)
-    throw new BrowserOriginBlockedError(restriction);
-  if (!requested)
-    throw new TransportUnavailableError(`${selection} target unavailable`, {
-      role: "throughput",
-    });
-  if (!transportRunnable(requested.transport))
-    throw new TransportUnavailableError(
-      `${requested.transport} is not supported by this client`,
-      { role: "throughput" },
-    );
-  const candidates =
-    selection === "auto"
-      ? automaticThroughputTargets(discovery, transportRunnable("webtransport"))
-      : [requested];
-  let failure: unknown;
-  for (const target of candidates) {
-    try {
-      const path = await withinBudget(
-        signal,
-        target.transport === "fetch-stream"
-          ? H3_PROBE_DEADLINE_MS
-          : H3_PROBE_DEADLINE_MS + ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
-        (attemptSignal) =>
-          prepareThroughputTarget(
-            discovery,
-            target,
-            attemptSignal,
-            credentials,
-          ),
-      );
-      return { ...path, requested };
-    } catch (cause) {
-      signal.throwIfAborted();
-      if (authenticationFailure(cause)) throw cause;
-      failure = cause;
-    }
-  }
-  throw failure;
-}
-
-async function prepareThroughputTarget(
-  discovery: TransportDiscovery,
-  requested: FetchThroughputTarget | WebTransportThroughputTarget,
-  signal: AbortSignal,
-  credentials?: ServerCredentials,
-): Promise<VerifiedThroughputPath> {
+  const wt = requested.transport !== "fetch-stream";
   const fetchTarget: FetchThroughputTarget = {
-    ...(requested.transport === "fetch-stream"
-      ? requested
-      : fetchViewOfOrigin(discovery, requested)),
+    ...(wt ? fetchViewOfOrigin(discovery, requested) : requested),
   };
   const deadline = new AbortController();
   const timeout =
@@ -283,22 +277,22 @@ async function prepareThroughputTarget(
       ? setTimeout(() => deadline.abort(), H3_PROBE_DEADLINE_MS)
       : undefined;
   const probeSignal = AbortSignal.any([signal, deadline.signal]);
-  let probe: Probe | undefined;
+  let probe: VerifiedThroughputPath["probe"] | undefined;
   let browserProtocol: string | undefined;
   try {
     const attempts =
-      requested.transport === "fetch-stream" && fetchTarget.protocol === "http3"
-        ? H3_PROBE_ATTEMPTS
-        : 1;
+      !wt && fetchTarget.protocol === "http3" ? H3_PROBE_ATTEMPTS : 1;
     for (let attempt = 0; attempt < attempts; attempt++) {
-      const response = await pathProbe(
-        `${fetchTarget.origin}${fetchTarget.routes.probe}?cb=${performance.now()}-${attempt}`,
-        probeSignal,
-        credentials,
-      );
-      probe = response.probe;
+      if (attempt)
+        await abortableDelay(
+          Math.min(250, 50 * 2 ** (attempt - 1)),
+          probeSignal,
+        );
+      const url = `${fetchTarget.origin}${ROUTES.probe}?cb=${performance.now()}-${attempt}`;
+      const answer = await pathProbe(url, probeSignal, credentials);
+      probe = answer.probe;
       browserProtocol = await resourceProtocol(
-        response.response.url,
+        answer.response.url,
         probeSignal,
       );
       if (
@@ -306,36 +300,24 @@ async function prepareThroughputTarget(
         browserProtocolMatchesTarget(fetchTarget, browserProtocol)
       )
         break;
-      if (attempt + 1 < attempts)
-        await abortableDelay(Math.min(250, 50 * 2 ** attempt), probeSignal);
     }
-    const protocolProven = browserProtocolMatchesTarget(
-      fetchTarget,
-      browserProtocol,
-    );
-    // WebTransport proves its own data path below; its HTTP probe is control traffic.
-    if (!probe || (requested.transport === "fetch-stream" && !protocolProven))
+    const proven = browserProtocolMatchesTarget(fetchTarget, browserProtocol);
+    if (!probe || (!wt && !proven))
       throw new Error(`${fetchTarget.protocol} transport unavailable`);
-    if (fetchTarget.protocol === "negotiated" || !protocolProven)
+    if (fetchTarget.protocol === "negotiated" || !proven)
       fetchTarget.protocol =
         protocolFromNextHop(browserProtocol) ?? "negotiated";
   } catch (cause) {
     signal.throwIfAborted();
-    throw new TransportUnavailableError(
-      `${fetchTarget.protocol} transport unavailable`,
-      { cause, role: "throughput" },
-    );
+    throw new Error(`${fetchTarget.protocol} transport unavailable`, { cause });
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    clearTimeout(timeout);
   }
-  const target =
-    requested.transport === "fetch-stream" ? fetchTarget : requested;
-  if (requested.transport !== "fetch-stream")
-    await verifyWtThroughput(requested, signal, credentials);
+  if (wt) await verifyWtThroughput(requested, signal, credentials);
   signal.throwIfAborted();
   return {
     requested,
-    target,
+    target: wt ? requested : fetchTarget,
     fetch: fetchTarget,
     probe: probe!,
     browserProtocol,
@@ -344,49 +326,8 @@ async function prepareThroughputTarget(
   };
 }
 
+/** Socket readiness, metadata and RTT collection are independent evidence, collected together. */
 async function prepareLatency(
-  discovery: TransportDiscovery,
-  selection: string,
-  signal: AbortSignal,
-  credentials?: ServerCredentials,
-): Promise<{ path: VerifiedLatencyPath; idle: IdleKeepalive }> {
-  const requested = selectLatencyTarget(
-    discovery,
-    selection,
-    transportRunnable("webtransport"),
-  );
-  const restriction = blockedSelectionReason(discovery, "latency", selection);
-  if (!requested && restriction)
-    throw new BrowserOriginBlockedError(restriction);
-  if (!requested)
-    throw new TransportUnavailableError(
-      `${selection} latency target unavailable`,
-      { role: "latency" },
-    );
-  const candidates =
-    selection === "auto"
-      ? automaticLatencyTargets(discovery, transportRunnable("webtransport"))
-      : [requested];
-  let failure: unknown;
-  for (const target of candidates) {
-    try {
-      const result = await withinBudget(
-        signal,
-        ESTABLISH_BUDGET_MS + H3_PROBE_DEADLINE_MS + ESTABLISH_MARGIN_MS,
-        (attemptSignal) =>
-          prepareLatencyTarget(discovery, target, attemptSignal, credentials),
-      );
-      return { ...result, path: { ...result.path, requested } };
-    } catch (cause) {
-      signal.throwIfAborted();
-      if (authenticationFailure(cause)) throw cause;
-      failure = cause;
-    }
-  }
-  throw failure;
-}
-
-async function prepareLatencyTarget(
   discovery: TransportDiscovery,
   target: LatencyTarget,
   signal: AbortSignal,
@@ -396,32 +337,25 @@ async function prepareLatencyTarget(
   const abort = () => idle.stop();
   signal.addEventListener("abort", abort, { once: true });
   try {
-    // Socket readiness, metadata and RTT collection are independent evidence.
-    // Collect from the first replies instead of discarding replies while the
-    // metadata request completes and then waiting for another five probes.
     const collecting = idle
       .verifyReady(signal)
       .then(() => idle.collectRtts(signal));
+    const url = `${target.origin}${ROUTES.probe}?cb=${performance.now()}`;
     const [{ probe }, rtts] = await Promise.all([
-      pathProbe(
-        `${target.origin}${target.routes.probe}?cb=${performance.now()}`,
-        signal,
-        credentials,
-      ),
+      pathProbe(url, signal, credentials),
       collecting,
     ]);
     signal.throwIfAborted();
-    return {
-      idle,
-      path: {
-        requested: target,
-        target,
-        probe,
-        rttMs: rtts.length ? median(rtts) : null,
-        generation: discovery.generation,
-        verifiedAt: Date.now(),
-      },
+    const rttMs = rtts.length ? median(rtts) : null;
+    const path = {
+      requested: target,
+      target,
+      probe,
+      rttMs,
+      generation: discovery.generation,
+      verifiedAt: Date.now(),
     };
+    return { idle, path };
   } catch (cause) {
     idle.stop();
     throw cause;
@@ -439,11 +373,11 @@ async function verifyWtThroughput(
   let established = false;
   try {
     const datagrams = target.transport === "webtransport-datagram";
-    let url = `${target.origin}${target.routes.wtDownload}?bytes=${16 * 1024}${datagrams ? "&datagrams=1" : ""}`;
+    let url = `${target.origin}${ROUTES.wtDownload}?bytes=${16 * 1024}${datagrams ? "&datagrams=1" : ""}`;
     const mint = socketMint(
       credentials,
       target.origin,
-      target.routes.wtDownload,
+      ROUTES.wtDownload,
       "wt",
     );
     if (mint) {
@@ -465,16 +399,13 @@ async function verifyWtThroughput(
     try {
       await session.ready;
       established = true;
-      let stream: ReadableStream<Uint8Array>;
-      if (datagrams) stream = session.datagrams.readable;
-      else {
-        const lane = await session.incomingUnidirectionalStreams
-          .getReader()
-          .read();
-        if (lane.done) throw new Error("no lane");
-        stream = lane.value as ReadableStream<Uint8Array>;
-      }
-      const chunk = await stream.getReader().read();
+      const lane = datagrams
+        ? { done: false, value: session.datagrams.readable }
+        : await session.incomingUnidirectionalStreams.getReader().read();
+      if (lane.done) throw new Error("no lane");
+      const chunk = await (lane.value as ReadableStream<Uint8Array>)
+        .getReader()
+        .read();
       if (chunk.done || !chunk.value.byteLength)
         throw new Error("empty carrier");
     } finally {
@@ -484,21 +415,9 @@ async function verifyWtThroughput(
     }
   } catch (cause) {
     signal.throwIfAborted();
-    throw new TransportUnavailableError(
-      established
-        ? "webtransport session carried no bytes"
-        : "webtransport session did not establish",
-      { cause, role: "throughput" },
-    );
+    const message = established
+      ? "webtransport session carried no bytes"
+      : "webtransport session did not establish";
+    throw new Error(message, { cause });
   }
-}
-
-function authenticationFailure(cause: unknown): boolean {
-  const seen = new Set<Error>();
-  while (cause instanceof Error && !seen.has(cause)) {
-    seen.add(cause);
-    if (cause instanceof ServerAuthenticationRequired) return true;
-    cause = cause.cause;
-  }
-  return false;
 }

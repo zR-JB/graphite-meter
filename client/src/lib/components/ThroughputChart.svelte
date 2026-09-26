@@ -1,76 +1,69 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { inView } from "../actions/inView";
+  import { nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
-    type ChartLabelPhase,
+    type ChartData,
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import { fmtSpeed, fmtMs } from "../format";
+  import { fmtDuration, fmtSpeed, fmtMs, fmtMsTick } from "../format";
+  import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
-  const PHASE_LABEL: Record<ChartLabelPhase, string> = {
-    warmup: "WARM-UP",
-    latency: "PING",
-    download: "DOWNLOAD",
-    upload: "UPLOAD",
-    bidirectional: "BI-DIR",
-  } as const;
-
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
-  let engine: ChartEngine;
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  let position = $state<number | null>(null);
+  let selectedT = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
   const instructionsId = `${componentId}-instructions`;
   const viewport = $derived(chartPresentation?.layout.viewport);
-  const selectedTime = $derived(
-    (viewport?.tMin ?? 0) +
-      (position ?? 0) * ((viewport?.tMax ?? 0) - (viewport?.tMin ?? 0)),
-  );
+  const selectedTime = $derived(selectedT ?? viewport?.tMin ?? 0);
   const hasData = $derived(
     store.throughput.length > 0 || store.latency.length > 0,
   );
+  const rows = $derived.by(() => {
+    if (!hover) return [];
+    const rate = (bytesPerSec: number) =>
+      `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`;
+    const rows: { label: string; value: string }[] = [];
+    if (hover.bytesPerSec != null)
+      rows.push({ label: "Rate", value: rate(hover.bytesPerSec) });
+    if (hover.downBytesPerSec != null)
+      rows.push({
+        label: STAGE.download.label,
+        value: rate(hover.downBytesPerSec),
+      });
+    if (hover.upBytesPerSec != null)
+      rows.push({
+        label: STAGE.upload.label,
+        value: rate(hover.upBytesPerSec),
+      });
+    if (chartPresentation?.latencyEnabled)
+      rows.push({
+        label: "Median",
+        value: hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`,
+      });
+    if (hover.timeoutCount > 0)
+      rows.push({
+        label: "Probe timeouts",
+        value: `${hover.timeoutCount} of ${hover.pingCount}`,
+      });
+    return rows;
+  });
   const selectionText = $derived.by(() => {
     if (!hasData) return "No measurements yet";
-    const details = [
-      `${((hover?.t ?? selectedTime) / 1000).toFixed(1)} seconds`,
-    ];
-    if (!hover) return `${details[0]}, no measurements at this position`;
-    if (hover.bytesPerSec != null)
-      details.push(
-        `rate ${fmtSpeed(store.toUnit(hover.bytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.downBytesPerSec != null)
-      details.push(
-        `download ${fmtSpeed(store.toUnit(hover.downBytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.upBytesPerSec != null)
-      details.push(
-        `upload ${fmtSpeed(store.toUnit(hover.upBytesPerSec))} ${store.unitLabel}`,
-      );
-    if (hover.rtt != null)
-      details.push(`RTT median ${fmtMs(hover.rtt)} milliseconds`);
-    if (hover.pingCount > 0)
-      details.push(
-        `probe timeouts ${hover.lossCount} of ${hover.pingCount} resolved probes in bucket`,
-      );
-    if (
-      hover.bytesPerSec == null &&
-      hover.downBytesPerSec == null &&
-      hover.upBytesPerSec == null &&
-      hover.rtt == null &&
-      hover.pingCount === 0
-    )
-      details.push("no measurements at this position");
-    return details.join(", ");
+    const at = fmtDuration(hover?.t ?? selectedTime);
+    return rows.some((row) => row.value !== MISSING)
+      ? [at, ...rows.map((row) => `${row.label} ${row.value}`)].join(", ")
+      : `${at}, no measurements at this position`;
   });
-  let pointerFrame = 0;
+  let stopPointerFrame: (() => void) | null = null;
   let pointerClientX = 0;
   let pointerClientY = 0;
   let pointerY = $state<number | null>(null);
@@ -129,37 +122,48 @@
       ),
     };
   });
-  // Invalidate only for state read by ChartEngine.
-  $effect(() => {
-    void store.phase;
-    void store.runSeq;
-    void store.throughput.length;
-    void store.throughputRevision;
-    void store.latency.length;
-    void store.latencyRevision;
-    void store.phaseElapsedMs;
-    void store.latencyEnabled;
-    void store.chartScaleBytesPerSec; // re-arm if the chart scale / pinned ceiling shifts while parked
-    void store.latencyScaleMs;
-    void store.stageResults.download;
-    void store.stageResults.upload;
-    void store.result?.bidirectional;
-    // Tick format only, but the loop parks after a run: tracking these re-arms
-    // it. unitLabel also moves with the raw peak's k/M/G/T prefix on its own.
-    void store.unitBase;
-    void store.unitKind;
-    void store.unitLabel;
-    engine?.wake();
+  const timelineAt = (now: number) =>
+    store.phaseStartedAtMs + store.phaseClock.at(now);
+  const chartData = (): ChartData => ({
+    throughput: store.throughput,
+    throughputRevision: store.throughputRevision,
+    latency: store.latency,
+    latencyRevision: store.latencyRevision,
+    latencyEnabled: store.latencyEnabled,
+    phase: store.phase,
+    phaseStartedAtMs: store.phaseStartedAtMs,
+    timelineAt,
+    runSeq: store.runSeq,
+    scaleBytesPerSec: store.scales.chartBytesPerSec,
+    latencyScaleMs: store.latencyScaleMs,
+    resultRates: {
+      download: store.stageResults.download?.reportedBytesPerSec,
+      upload: store.stageResults.upload?.reportedBytesPerSec,
+      bidiDown: store.result?.bidirectional?.down?.reportedBytesPerSec,
+      bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
+    },
   });
+  const engine = new ChartEngine(
+    chartData(),
+    (next) => {
+      chartPresentation = next;
+      setTimeScale(next.layout.viewport.tMax);
+      updateHover();
+    },
+    (tMax) => {
+      setTimeScale(tMax);
+      if (selectedT != null) updateHover();
+    },
+  );
+  $effect(() => engine.update(chartData()));
 
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
     pointerClientX = e.clientX;
     pointerClientY = e.clientY;
-    if (pointerFrame) return;
     // Coalesce pointer events into one small DOM update. The cached chart stays parked.
-    pointerFrame = requestAnimationFrame(() => {
-      pointerFrame = 0;
+    stopPointerFrame ??= nextFrame(() => {
+      stopPointerFrame = null;
       if (!document.hidden && plotEl) {
         pointerY = pointerClientY - plotEl.getBoundingClientRect().top;
         selectX(pointerClientX - plotEl.getBoundingClientRect().left);
@@ -168,19 +172,19 @@
   }
   function selectX(x: number) {
     if (!chartPresentation || !hasData) return;
-    const { plot } = chartPresentation.layout;
-    position =
-      (Math.max(plot.left, Math.min(plot.right, x)) - plot.left) /
-      (plot.right - plot.left);
-    updateHover();
+    hover = engine.inspect(x);
+    selectedT = hover?.t ?? null;
   }
   function selectTime(t: number) {
-    if (chartPresentation) selectX(chartPresentation.layout.x(t));
+    const { tMin, tMax } = engine.viewport;
+    selectedT = Math.max(tMin, Math.min(tMax, t));
+    updateHover();
   }
   function onKeyDown(e: KeyboardEvent) {
-    if (!viewport || !hasData) return;
+    if (!chartPresentation || !hasData) return;
     pointerY = null;
-    const step = (viewport.tMax - viewport.tMin) / 100;
+    const current = engine.viewport;
+    const step = (current.tMax - current.tMin) / 100;
     switch (e.key) {
       case "ArrowRight":
       case "ArrowUp":
@@ -191,10 +195,10 @@
         selectTime(selectedTime - step);
         break;
       case "Home":
-        selectTime(viewport.tMin);
+        selectTime(current.tMin);
         break;
       case "End":
-        selectTime(viewport.tMax);
+        selectTime(current.tMax);
         break;
       case "Escape":
         clearSelection();
@@ -208,7 +212,7 @@
   function onFocus() {
     pointerY = null;
     retainSelection = true;
-    selectTime(position == null ? (viewport?.tMin ?? 0) : selectedTime);
+    selectTime(selectedTime);
   }
   function onPointerUp(e: PointerEvent) {
     if (e.pointerType === "mouse") return;
@@ -223,16 +227,16 @@
     );
   }
   function updateHover() {
-    hover =
-      position == null || !chartPresentation
-        ? null
-        : engine.inspect(chartPresentation.layout.x(selectedTime));
+    hover = selectedT == null ? null : engine.inspectTime(selectedT);
   }
   function clearSelection() {
-    if (pointerFrame) cancelAnimationFrame(pointerFrame);
-    pointerFrame = 0;
-    position = null;
+    stopPointerFrame?.();
+    stopPointerFrame = null;
+    selectedT = null;
     hover = null;
+  }
+  function setTimeScale(tMax: number) {
+    plotEl?.style.setProperty("--t-max", String(tMax));
   }
   function onLeave() {
     if (!retainSelection) clearSelection();
@@ -243,35 +247,6 @@
   }
 
   onMount(() => {
-    engine = new ChartEngine(
-      () => ({
-        throughput: store.throughput,
-        throughputRevision: store.throughputRevision,
-        latency: store.latency, // raw event-time buckets drive glyphs, axes, and hover
-        latencyRevision: store.latencyRevision,
-        latencyEnabled: store.latencyEnabled,
-        phase: store.phase,
-        phaseStartedAtMs: store.phaseStartedAtMs,
-        timelineT: Math.max(
-          store.phaseStartedAtMs + store.phaseElapsedMs,
-          store.throughput.at(-1)?.t ?? 0,
-          store.latency.at(-1)?.endT ?? 0,
-        ),
-        runSeq: store.runSeq,
-        scaleBytesPerSec: store.chartScaleBytesPerSec,
-        latencyScaleMs: store.latencyScaleMs,
-        resultRates: {
-          download: store.stageResults.download?.reportedBytesPerSec,
-          upload: store.stageResults.upload?.reportedBytesPerSec,
-          bidiDown: store.result?.bidirectional?.down?.reportedBytesPerSec,
-          bidiUp: store.result?.bidirectional?.up?.reportedBytesPerSec,
-        },
-      }),
-      (next) => {
-        chartPresentation = next;
-        updateHover();
-      },
-    );
     engine.attach(canvasEl!);
 
     const themeObserver = new MutationObserver(() => engine.invalidateTheme());
@@ -287,7 +262,7 @@
 
     return () => {
       engine.destroy();
-      if (pointerFrame) cancelAnimationFrame(pointerFrame);
+      stopPointerFrame?.();
       themeObserver.disconnect();
       resizeObserver.disconnect();
       stopWatchingPixelRatio();
@@ -318,7 +293,12 @@
     onfocus={onFocus}
     onblur={onBlur}
   >
-    <canvas bind:this={canvasEl} class="canvas" aria-hidden="true"></canvas>
+    <canvas
+      bind:this={canvasEl}
+      class="canvas"
+      aria-hidden="true"
+      {@attach inView((seen) => (engine.visible = seen))}
+    ></canvas>
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}
@@ -344,7 +324,7 @@
               class="axis-label axis-label-right"
               style:left={`${presentation.layout.width - 4}px`}
               style:top={`${row.y}px`}
-              >{fmtMs(
+              >{fmtMsTick(
                 presentation.layout.viewport.rttMin +
                   (presentation.layout.viewport.rttMax -
                     presentation.layout.viewport.rttMin) *
@@ -354,27 +334,28 @@
           {/each}
         {/if}
         {#each presentation.layout.timeMajorTicks as tick (tick.t)}
+          {@const { left, right } = presentation.layout.plot}
           <span
             class="time-label"
-            style:left={`${tick.x}px`}
+            style:translate={`calc(${left}px + ${right - left}px * ${tick.t} / var(--t-max) - 50%) -100%`}
             style:top={`${presentation.layout.timeLabelY}px`}
-            >{tick.t % 1000 === 0
-              ? `${tick.t / 1000}s`
-              : `${(tick.t / 1000).toFixed(1)}s`}</span
+            >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
         {/each}
         {#each presentation.phaseLabels as label (label.phase + label.x)}
           <span
             class="phase-label"
             style:left={`${label.x}px`}
-            style:top={`${label.y}px`}>{PHASE_LABEL[label.phase]}</span
+            style:top={`${label.y}px`}
+            >{label.phase === "bidirectional"
+              ? STAGE.bidirectional.short
+              : phaseLabel(label.phase)}</span
           >
         {/each}
         {#each presentation.phaseStats as stat (stat.lane)}
           <span
             class="stat-label"
-            style:border-color={stat.stroke}
-            style:color={stat.stroke}
+            data-tone={stat.tone}
             style:left={`${stat.x}px`}
             style:top={`${stat.y}px`}
             >{fmtSpeed(store.toUnit(stat.bytesPerSec))} {store.unitLabel}</span
@@ -400,50 +381,17 @@
         ></span>
       {/each}
       <div
-        class="chip"
+        class="inspect-card chip"
         bind:offsetWidth={chipWidth}
         bind:offsetHeight={chipHeight}
         style:transform={`translate(${chipPosition.x}px, ${chipPosition.y}px)`}
       >
         <div class="chip-row">
-          <span>t</span><b>{(hover.t / 1000).toFixed(1)}s</b>
+          <span>Time</span><b>{fmtDuration(hover.t)}</b>
         </div>
-        {#if hover.bytesPerSec != null}
-          <div class="chip-row">
-            <span>rate</span><b
-              >{fmtSpeed(store.toUnit(hover.bytesPerSec))} {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if hover.downBytesPerSec != null}
-          <div class="chip-row">
-            <span>down</span><b
-              >{fmtSpeed(store.toUnit(hover.downBytesPerSec))}
-              {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if hover.upBytesPerSec != null}
-          <div class="chip-row">
-            <span>up</span><b
-              >{fmtSpeed(store.toUnit(hover.upBytesPerSec))}
-              {store.unitLabel}</b
-            >
-          </div>
-        {/if}
-        {#if chartPresentation.latencyEnabled}
-          <div class="chip-row">
-            <span>RTT median</span><b
-              >{hover.rtt == null ? "—" : `${fmtMs(hover.rtt)} ms`}</b
-            >
-          </div>
-        {/if}
-        {#if hover.lossCount > 0}
-          <div class="chip-row">
-            <span>probe timeouts</span><b>{hover.lossCount}/{hover.pingCount}</b
-            >
-          </div>
-        {/if}
+        {#each rows as row (row.label)}
+          <div class="chip-row"><span>{row.label}</span><b>{row.value}</b></div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -462,43 +410,33 @@
     flex-direction: column;
     min-height: 142px;
   }
-  /* Secondary to the gauge hero: a shallow recess in the tile, filling the
-     granted height down to the compact floor. */
+  /* Secondary to the gauge hero: a shallow recess filling the granted height. */
   .plot {
     position: relative;
     flex: 1 1 auto;
     min-height: 140px;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
-    overflow: hidden;
   }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  .plot:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .canvas {
+  .canvas,
+  .chart-labels {
     position: absolute;
     inset: 0;
-    display: block;
     width: 100%;
     height: 100%;
+  }
+  .chart-labels,
+  .inspection-guide,
+  .inspection-dot {
+    pointer-events: none;
   }
   .inspection-guide,
   .inspection-dot {
     position: absolute;
     left: 0;
-    pointer-events: none;
     will-change: transform;
   }
   .inspection-guide {
@@ -513,12 +451,8 @@
     border-radius: var(--r-full);
   }
   .chart-labels {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    font-family: var(--font-mono);
-    font-size: 10px;
     color: var(--text-soft);
+    font: var(--type-2xs) var(--font-mono);
   }
   .axis-label,
   .time-label,
@@ -528,62 +462,51 @@
     white-space: nowrap;
   }
   .axis-label {
-    transform: translateY(-50%);
+    translate: 0 -50%;
   }
   .axis-label-right {
-    transform: translate(-100%, -50%);
+    translate: -100% -50%;
   }
+  /* Moving labels translate rather than lay out again as the time scale eases. */
   .time-label {
-    transform: translate(-50%, -100%);
+    left: 0;
   }
   .phase-label {
-    transform: translateY(-100%);
-    font-size: 9px;
-    font-weight: 700;
+    translate: 0 -100%;
+    font-weight: var(--w-heavy);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
     opacity: 0.62;
   }
   .stat-label {
     max-width: 126px;
     overflow: hidden;
     padding: 2px 5px;
-    border: 1px solid color-mix(in srgb, var(--text-soft) 55%, transparent);
+    border: 1px solid var(--tone);
     border-radius: var(--r-well);
     background: var(--surface-1);
-    color: var(--text-soft);
-    font-size: 9px;
-    font-weight: 700;
+    color: var(--tone);
+    font-weight: var(--w-heavy);
     text-overflow: ellipsis;
   }
-
   .chip {
-    left: 0;
-    will-change: transform;
-    position: absolute;
     top: 0;
+    left: 0;
     width: 224px;
-    max-width: calc(100% - 2 * var(--space-2));
-    box-sizing: border-box;
-    pointer-events: none;
     min-width: 112px;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--shadow-float);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    max-width: calc(100% - 2 * var(--space-2));
+    font: var(--type-xs) / 1.5 var(--font-mono);
+    will-change: transform;
   }
   .chip-row {
     display: flex;
     justify-content: space-between;
     gap: var(--space-3);
-    line-height: 1.5;
   }
   .chip-row span {
     color: var(--text-soft);
   }
   .chip-row b {
-    color: var(--text);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
 </style>

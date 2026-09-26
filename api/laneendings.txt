@@ -1,0 +1,16 @@
+# Graphite Meter — lane ending pin (shared across Go / TS), see wire.md#lane-endings.
+#
+# Format (one ending per non-comment, non-blank line):
+#   <name> | <WebSocket close code> | <WebTransport session error code> | <reason>
+#
+#   name   = the key every implementation uses for the ending; an HTTP upload lane that ends as idle or
+#            revoked names it in X-Graphite-Upload-Refusal
+#   reason = the exact close reason text, also the text of an HTTP refusal for the same ending
+#
+# Read by go/internal/endpoint (the server's endings) and go/internal/goclient (the native client's reading).
+
+finished | 1000 | 0 |
+idle | 4001 | 1 | idle
+lifetime | 4002 | 2 | lifetime
+revoked | 1008 | 3 | authentication required
+shutdown | 1001 | 4 | shutdown

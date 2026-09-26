@@ -3,29 +3,34 @@ package auth_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 )
 
-func TestSessionKeyUsesTheLoginNotTheSubject(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
-	r.RemoteAddr = "192.0.2.7:1234"
-	r = auth.RequestWithLogin(r, "user-1", "login-a")
-
-	if got, want := endpoint.SessionKey(r, nil), "login:login-a"; got != want {
-		t.Fatalf("session key = %q, want %q", got, want)
+// A login is one budget key under its subject's wider one; else the address keys, or none if ambiguous.
+func TestBudgetKeysFollowThePrincipalThenTheAddress(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
+	anonymous := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
+	anonymous.RemoteAddr = "10.0.0.2:1234"
+	anonymous.Header.Set("X-Real-IP", "2001:db8::7")
+	want := []string{"2001:db8::/64", "2001:db8::/56", "2001:db8::/48"}
+	if got, ok := auth.ClientKeys(anonymous, trusted); !ok || !slices.Equal(got, want) {
+		t.Fatalf("anonymous keys = %q, %t, want %q", got, ok, want)
 	}
-	if got := endpoint.SessionKey(r, nil); got == endpoint.ClientKey(r, nil) {
-		t.Fatalf("session key %q collapsed onto the client key: one device's held sessions would starve the same user's others", got)
+	ambiguous := anonymous.Clone(t.Context())
+	ambiguous.Header.Add("X-Real-IP", "2001:db8::8")
+	if keys, ok := auth.ClientKeys(ambiguous, trusted); ok || keys != nil {
+		t.Fatalf("ambiguous evidence keyed as %q", keys)
 	}
-
-	other := auth.RequestWithLogin(httptest.NewRequest(http.MethodGet, "/wt/download", nil), "user-1", "login-b")
-	if endpoint.SessionKey(r, nil) == endpoint.SessionKey(other, nil) {
-		t.Fatal("two logins of one subject share a session budget")
-	}
-	if endpoint.ClientKey(r, nil) != endpoint.ClientKey(other, nil) {
-		t.Fatal("the two logins are not the same subject, so this no longer covers the distinction")
+	r := auth.RequestWithLogin(anonymous, "user-1", "login-a")
+	other := auth.RequestWithLogin(anonymous, "user-1", "login-b")
+	client, _ := auth.ClientKeys(r, trusted)
+	otherKeys, _ := auth.ClientKeys(other, trusted)
+	if !slices.Equal(client, []string{"login:login-a", "principal:user-1"}) || client[0] == otherKeys[0] ||
+		client[1] != otherKeys[1] {
+		t.Fatalf("logins of one subject keyed %q and %q", client, otherKeys)
 	}
 }

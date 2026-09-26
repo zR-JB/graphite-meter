@@ -1,9 +1,13 @@
-// Its slot is shared: validateConnections aborts a probe and starts the next one without awaiting it, so two waits.
+// Its slot is shared: a forced retry aborts a probe and starts the next one without awaiting it, so two waits.
 import { test, expect, afterEach, beforeEach } from "bun:test";
-import { IdleKeepalive, LatencyChannel } from "./latencyChannel";
-import type { CoreHost } from "../core";
+import {
+  IdleKeepalive,
+  LatencyChannel,
+  type IdleEvent,
+} from "./latencyChannel";
+import type { ParticipantHost } from "../transport";
 import type { LatencyTarget } from "../../api/endpoints";
-import { TestWorker } from "./test-helpers.test";
+import { TestWorker } from "./test-helpers.testutil";
 import { ServerAuthenticationRequired } from "../../servers/credentials";
 
 const target: LatencyTarget = {
@@ -12,8 +16,18 @@ const target: LatencyTarget = {
   transport: "websocket",
   protocol: "http1",
   tls: false,
-  routes: { probe: "/probe", ping: "/ws/ping" },
 };
+
+type ChannelHost = ConstructorParameters<typeof LatencyChannel>[0]["host"];
+const host = (overrides: Partial<ParticipantHost>): ChannelHost => ({
+  latency() {},
+  latencyInterrupted() {},
+  latencyIncomplete() {},
+  stallLatency() {},
+  resumeLatency() {},
+  authenticationRequired() {},
+  ...overrides,
+});
 
 const realWorker = globalThis.Worker;
 const realSetTimeout = globalThis.setTimeout;
@@ -63,7 +77,7 @@ test("a superseded readiness wait does not silence the newer one", async () => {
 });
 
 test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   const keepalive = new IdleKeepalive(target);
   keepalive.onEvent = (event) => events.push(event);
   keepalive.start();
@@ -73,12 +87,12 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
   old.emit({ type: "stall", detail: "late close" });
   old.emit({
     type: "samples",
-    samples: [{ rtt: 12, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   expect(events).toEqual([]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
   expect(
     events.some(
@@ -89,18 +103,18 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
 });
 
 test("idle latency buckets use each worker observation time", () => {
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   const keepalive = new IdleKeepalive(target, 10_000);
   keepalive.onEvent = (event) => events.push(event);
 
   keepalive.start();
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 12, lost: false, observedAtEpochMs: 11_250 }],
+    samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 11_250 }],
   });
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 0, lost: true, observedAtEpochMs: 12_500 }],
+    samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 12_500 }],
   });
 
   const samples = events.flatMap((event) =>
@@ -111,7 +125,7 @@ test("idle latency buckets use each worker observation time", () => {
   keepalive.stop();
 });
 
-test("loss-only keepalive batches do not recover offline connectivity", () => {
+test("timeout-only keepalive batches do not recover offline connectivity", () => {
   const states: string[] = [];
   const keepalive = new IdleKeepalive(target);
   keepalive.onEvent = (event) => {
@@ -122,12 +136,12 @@ test("loss-only keepalive batches do not recover offline connectivity", () => {
   TestWorker.last!.emit({ type: "stall", detail: "server stopped answering" });
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 0, lost: true, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 1_000 }],
   });
   expect(states).toEqual(["offline"]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
   expect(states).toEqual(["offline", "connected"]);
   keepalive.stop();
@@ -137,7 +151,7 @@ test("adoption replays a provisional stall but does not infer offline from readi
   const idle = new IdleKeepalive(target);
   idle.start();
   TestWorker.last!.emit({ type: "ready" });
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   idle.onEvent = (event) => events.push(event);
   expect(events).toEqual([]);
   idle.onEvent = () => {};
@@ -152,14 +166,14 @@ test("adopting a verified idle monitor replays its proven connectivity without r
   keepalive.start();
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
-  const events: Parameters<CoreHost["emit"]>[0][] = [];
+  const events: IdleEvent[] = [];
   keepalive.onEvent = (event) => events.push(event);
   expect(events).toEqual([{ type: "connectivity", state: "connected" }]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 9, lost: false, observedAtEpochMs: 2_000 }],
+    samples: [{ rtt: 9, timedOut: false, observedAtEpochMs: 2_000 }],
   });
   expect(events.filter((event) => event.type === "connectivity")).toHaveLength(
     1,
@@ -171,25 +185,18 @@ test("adopting a verified idle monitor replays its proven connectivity without r
 test("stage latency preserves distinct times from one worker batch", () => {
   const observations: number[] = [];
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "reply-driven", loadedPingCadence: "medium" },
-      ingestLatency(observation: { observedAtMs: number }) {
-        observations.push(observation.observedAtMs);
-      },
-    } as unknown as CoreHost,
+    host: host({ latency: (sample) => observations.push(sample.observedAtMs) }),
     target,
-    stall() {},
-    resume() {},
     timeOriginMs: 10_000,
   });
 
-  channel.prime(true);
+  channel.prime("reply-driven", true);
   channel.measure();
   TestWorker.last!.emit({
     type: "samples",
     samples: [
-      { rtt: 8, lost: false, observedAtEpochMs: 10_100 },
-      { rtt: 9, lost: false, observedAtEpochMs: 10_350 },
+      { rtt: 8, timedOut: false, observedAtEpochMs: 10_100 },
+      { rtt: 9, timedOut: false, observedAtEpochMs: 10_350 },
     ],
   });
 
@@ -200,28 +207,58 @@ test("stage latency preserves distinct times from one worker batch", () => {
 test("a stage latency socket reopening does not itself resume recovery", () => {
   let resumes = 0;
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      ingestLatency() {},
-    } as unknown as CoreHost,
+    host: host({ resumeLatency: () => resumes++ }),
     target,
-    stall() {},
-    resume() {
-      resumes++;
-    },
   });
 
-  channel.prime(true);
+  channel.prime("medium", true);
   channel.measure();
   TestWorker.last!.emit({ type: "resume" });
 
   expect(resumes).toBe(0);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   expect(resumes).toBe(1);
   channel.teardown();
+});
+
+test("a stage timeout reaches the population as a timeout and does not resume recovery", () => {
+  const outcomes: boolean[] = [];
+  let resumes = 0;
+  const channel = new LatencyChannel({
+    host: host({
+      latency: (sample) => outcomes.push(sample.timedOut),
+      resumeLatency: () => resumes++,
+    }),
+    target,
+  });
+  channel.prime("medium", true);
+  channel.measure();
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 250, timedOut: true, observedAtEpochMs: 1_000 }],
+  });
+  expect(outcomes).toEqual([true]);
+  expect(resumes).toBe(0);
+  channel.teardown();
+});
+
+test("path preparation collects only replies, never timeouts", async () => {
+  const keepalive = new IdleKeepalive(target, 0);
+  const collecting = keepalive.collectRtts();
+  const reply = (rtt: number, timedOut = false) => ({
+    rtt,
+    timedOut,
+    observedAtEpochMs: 1,
+  });
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [reply(9_999, true), ...[1, 2, 3, 4, 5].map((rtt) => reply(rtt))],
+  });
+  expect(await collecting).toEqual([1, 2, 3, 4, 5]);
+  keepalive.stop();
 });
 
 test("a matched-probe ready event cancels the warmup establishment deadline", () => {
@@ -237,17 +274,11 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
   }) as typeof clearTimeout;
   const failures: string[] = [];
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      failStage: (_stage: string, _reason: string, detail: string) =>
-        failures.push(detail),
-    } as unknown as CoreHost,
+    host: host({ stallLatency: (detail) => failures.push(detail) }),
     target,
-    stall: (detail) => failures.push(detail),
-    resume() {},
   });
 
-  channel.prime(true);
+  channel.prime("medium", true);
   expect(channel.ready).toBe(false);
   TestWorker.last!.emit({ type: "open" });
   expect(channel.ready).toBe(false);
@@ -261,28 +292,21 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
 });
 
 function finalizingChannel() {
-  const observations: Parameters<CoreHost["ingestLatency"]>[0][] = [];
+  const observations: Parameters<ParticipantHost["latency"]>[0][] = [];
   const interruptions: { count: number; reason: string }[] = [];
   const stalls: string[] = [];
   let accountingComplete = true;
   const channel = new LatencyChannel({
-    host: {
-      config: { pingCadence: "medium", loadedPingCadence: "medium" },
-      ingestLatency(observation: Parameters<CoreHost["ingestLatency"]>[0]) {
-        observations.push(observation);
-      },
-      ingestLatencyAccountingIncomplete() {
-        accountingComplete = false;
-      },
-      ingestLatencyInterruption(count: number, reason: string) {
-        interruptions.push({ count, reason });
-      },
-    } as unknown as CoreHost,
+    host: host({
+      latency: (sample) => observations.push(sample),
+      latencyIncomplete: () => (accountingComplete = false),
+      latencyInterrupted: (count, reason) =>
+        interruptions.push({ count, reason }),
+      stallLatency: (detail) => stalls.push(detail),
+    }),
     target,
-    stall: (detail) => stalls.push(detail),
-    resume() {},
   });
-  channel.prime(true);
+  channel.prime("medium", true);
   channel.measure();
   return {
     channel,
@@ -310,21 +334,21 @@ test("stage finalization keeps terminal outcomes until ack and excludes post-loa
     samples: [
       {
         rtt: 10,
-        lost: false,
+        timedOut: false,
         reflectorHandlingMs: 2,
         sentAtEpochMs: stop.cutoffEpochMs - 20,
         observedAtEpochMs: stop.cutoffEpochMs - 10,
       },
       {
         rtt: 30,
-        lost: false,
+        timedOut: false,
         reflectorHandlingMs: 9,
         sentAtEpochMs: stop.cutoffEpochMs - 10,
         observedAtEpochMs: stop.cutoffEpochMs + 20,
       },
       {
         rtt: 10,
-        lost: false,
+        timedOut: false,
         sentAtEpochMs: stop.cutoffEpochMs + 1,
         observedAtEpochMs: stop.cutoffEpochMs + 11,
       },
@@ -371,10 +395,10 @@ test("abort settles an in-flight drain and prevents its late worker messages rea
   const ending = channel.finish();
   channel.teardown();
   await ending;
-  channel.prime(true);
+  channel.prime("medium", true);
   worker.emit({
     type: "samples",
-    samples: [{ rtt: 10, lost: false, observedAtEpochMs: 100 }],
+    samples: [{ rtt: 10, timedOut: false, observedAtEpochMs: 100 }],
   });
   worker.emit({
     type: "interrupted",

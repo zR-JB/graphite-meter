@@ -1,14 +1,13 @@
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type { CompensationTransport, TransportKind } from "./runner/contract";
-import {
-  compensationTransportFromProtocol,
-  normalizeHttpProtocol,
-} from "./runner/protocol";
+import { normalizeHttpProtocol } from "./runner/paths";
 
 type CompensationConfidence = "high" | "medium" | "low";
+type FactorKey =
+  "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
 
 interface CompensationFactor {
-  key: "application-framing" | "tls-records" | "ethernet" | "ip" | "transport";
+  key: FactorKey;
   label: string;
   contributionPct: number;
 }
@@ -35,105 +34,70 @@ export interface CompensationEstimate extends CompensationBreakdown {
   confidence: CompensationConfidence;
 }
 
-/* This keeps bidirectional wire occupancy equal to the sum of its lanes even when their measured rates differ. */
+const CONFIDENCE: CompensationConfidence[] = ["high", "medium", "low"];
+const MIXED_LABELS: Record<FactorKey, string> = {
+  "application-framing": "Application framing",
+  "tls-records": "TLS records",
+  ethernet: "Ethernet",
+  ip: "IP headers",
+  transport: "Transport headers",
+};
+
+/* Bidirectional wire occupancy is the sum of its lanes even when their measured rates differ. */
 export function combineCompensationEstimates(
   estimates: readonly CompensationEstimate[],
 ): CompensationEstimate {
   const active = estimates.filter(
     (estimate) => estimate.measuredBytesPerSec > 0,
   );
-  const representative = active[0] ?? estimates[0];
-  const measuredBytesPerSec = estimates.reduce(
-    (sum, estimate) => sum + estimate.measuredBytesPerSec,
-    0,
-  );
-  const estimatedBytesPerSec = estimates.reduce(
-    (sum, estimate) => sum + estimate.estimatedBytesPerSec,
-    0,
-  );
-  const confidenceRank: Record<CompensationConfidence, number> = {
-    high: 0,
-    medium: 1,
-    low: 2,
-  };
-  const confidence = active.reduce<CompensationConfidence>(
-    (lowest, estimate) =>
-      confidenceRank[estimate.confidence] > confidenceRank[lowest]
-        ? estimate.confidence
-        : lowest,
-    "high",
-  );
-
+  const first = active[0] ?? estimates[0];
+  const sum = (pick: (estimate: CompensationEstimate) => number) =>
+    estimates.reduce((total, estimate) => total + pick(estimate), 0);
+  const measuredBytesPerSec = sum((e) => e.measuredBytesPerSec);
+  const estimatedBytesPerSec = sum((e) => e.estimatedBytesPerSec);
+  const keys = [
+    ...new Set(active.flatMap((e) => e.factors.map((factor) => factor.key))),
+  ];
+  const factors =
+    measuredBytesPerSec > 0
+      ? keys.map((key) => {
+          const matching = active.flatMap((e) =>
+            e.factors.filter((factor) => factor.key === key),
+          );
+          const labels = new Set(matching.map((factor) => factor.label));
+          const weighted = active.reduce((total, e) => {
+            const factor = e.factors.find((candidate) => candidate.key === key);
+            return (
+              total + e.measuredBytesPerSec * (factor?.contributionPct ?? 0)
+            );
+          }, 0);
+          return {
+            key,
+            label: labels.size === 1 ? [...labels][0] : MIXED_LABELS[key],
+            contributionPct: weighted / measuredBytesPerSec,
+          };
+        })
+      : [];
   return {
-    componentCount: estimates.reduce(
-      (sum, estimate) => sum + (estimate.componentCount ?? 1),
-      0,
-    ),
+    componentCount: sum((e) => e.componentCount ?? 1),
     measuredBytesPerSec,
     estimatedBytesPerSec,
-    lowerBytesPerSec: estimates.reduce(
-      (sum, estimate) => sum + estimate.lowerBytesPerSec,
-      0,
-    ),
-    upperBytesPerSec: estimates.reduce(
-      (sum, estimate) => sum + estimate.upperBytesPerSec,
-      0,
-    ),
+    lowerBytesPerSec: sum((e) => e.lowerBytesPerSec),
+    upperBytesPerSec: sum((e) => e.upperBytesPerSec),
     totalMultiplier:
       measuredBytesPerSec > 0 ? estimatedBytesPerSec / measuredBytesPerSec : 1,
-    confidence,
-    factors: combineFactors(active, measuredBytesPerSec),
-    transport: representative?.transport ?? "http1-clear",
-    transportSource: representative?.transportSource ?? "fallback",
-    framing: representative?.framing ?? null,
-    mtuBytes: representative?.mtuBytes ?? 1_500,
-    ipVersion: representative?.ipVersion ?? 4,
-    ipVersionSource: representative?.ipVersionSource ?? "fallback",
+    confidence:
+      CONFIDENCE[
+        Math.max(0, ...active.map((e) => CONFIDENCE.indexOf(e.confidence)))
+      ],
+    factors,
+    transport: first?.transport ?? "http1-clear",
+    transportSource: first?.transportSource ?? "fallback",
+    framing: first?.framing ?? null,
+    mtuBytes: first?.mtuBytes ?? 1_500,
+    ipVersion: first?.ipVersion ?? 4,
+    ipVersionSource: first?.ipVersionSource ?? "fallback",
   };
-}
-
-function combineFactors(
-  estimates: readonly CompensationEstimate[],
-  measuredBytesPerSec: number,
-): CompensationFactor[] {
-  if (!estimates.length || measuredBytesPerSec <= 0) return [];
-  const keys = [
-    ...new Set(
-      estimates.flatMap((estimate) =>
-        estimate.factors.map((factor) => factor.key),
-      ),
-    ),
-  ];
-  const mixedLabels: Record<CompensationFactor["key"], string> = {
-    "application-framing": "Application framing",
-    "tls-records": "TLS records",
-    ethernet: "Ethernet",
-    ip: "IP headers",
-    transport: "Transport headers",
-  };
-  return keys.map((key) => {
-    const labels = new Set(
-      estimates.flatMap((estimate) =>
-        estimate.factors
-          .filter((factor) => factor.key === key)
-          .map((factor) => factor.label),
-      ),
-    );
-    const contributionPct =
-      estimates.reduce((sum, estimate) => {
-        const factor = estimate.factors.find(
-          (candidate) => candidate.key === key,
-        );
-        return (
-          sum + estimate.measuredBytesPerSec * (factor?.contributionPct ?? 0)
-        );
-      }, 0) / measuredBytesPerSec;
-    return {
-      key,
-      label: labels.size === 1 ? [...labels][0] : mixedLabels[key],
-      contributionPct,
-    };
-  });
 }
 
 const WIRE = {
@@ -148,9 +112,21 @@ const WIRE = {
   http2Header: 9,
   http3Payload: 16_384,
   http3Frame: 5, // one-byte type plus four-byte length at a 16 KiB DATA frame
-  quicPacketNumberTypical: 2,
   quicAeadTag: 16,
 } as const;
+const FRAMING_LABEL = {
+  "http3-data": "HTTP/3 DATA frames",
+  "webtransport-stream": "WebTransport QUIC stream frames",
+  "webtransport-datagram": "WebTransport QUIC datagrams",
+} as const;
+/* QUIC short headers as [connection ID, packet number] bytes: least, typical, most. */
+const QUIC_HEADERS = [
+  [0, 1],
+  [8, 2],
+  [20, 4],
+];
+/* TCP option bytes: none, then timestamps as both the typical and the most. */
+const TCP_OPTIONS = [0, 12, 12];
 
 export function estimateCompensation(
   bytesPerSec: number,
@@ -162,166 +138,26 @@ export function estimateCompensation(
   const secure =
     detectedSecure ??
     (typeof location !== "undefined" && location.protocol === "https:");
-  const webTransport =
-    selectedTransport === "webtransport" ||
-    selectedTransport === "webtransport-datagram";
-  const transport = webTransport
+  const detected = normalizeHttpProtocol(detectedProtocol);
+  const framing =
+    selectedTransport === "webtransport-datagram"
+      ? "webtransport-datagram"
+      : selectedTransport === "webtransport"
+        ? "webtransport-stream"
+        : detected === "http3"
+          ? "http3-data"
+          : null;
+  const transport: CompensationTransport = framing
     ? "http3-quic"
-    : compensationTransportFromProtocol(detectedProtocol, secure);
+    : detected === "http2"
+      ? "http2"
+      : secure
+        ? "https-tls"
+        : "http1-clear";
   // Conservative defaults: 1500 B Ethernet, preflight IP family, standard options, no unknown VLAN/tunnel.
   const mtuBytes = 1_500;
   const ipVersion = detectedIPVersion ?? 4;
-  const ip = ipVersion === 6 ? WIRE.ipv6Bytes : WIRE.ipv4Bytes;
-  const ethernet = WIRE.ethernetBytes;
-  const factors: CompensationFactor[] = [];
-  const ipVersionSource = detectedIPVersion ? "detected" : "fallback";
-  const detectedTransport = normalizeHttpProtocol(detectedProtocol);
-  const transportSource =
-    webTransport || (detectedTransport && detectedTransport !== "negotiated")
-      ? "detected"
-      : "fallback";
-  const framing = webTransport
-    ? selectedTransport === "webtransport-datagram"
-      ? "webtransport-datagram"
-      : "webtransport-stream"
-    : transport === "http3-quic"
-      ? "http3-data"
-      : null;
-  if (bytesPerSec <= 0)
-    return identity(
-      bytesPerSec,
-      transport,
-      mtuBytes,
-      ipVersion,
-      ipVersionSource,
-      transportSource,
-      framing,
-    );
-
-  let application = 1;
-  if (transport === "http2") {
-    const ratio = WIRE.http2Header / WIRE.http2Payload;
-    factors.push(
-      factor("application-framing", "HTTP/2 DATA frames", application * ratio),
-    );
-    application *= 1 + ratio;
-  } else if (transport === "http3-quic" && framing === "http3-data") {
-    const ratio = WIRE.http3Frame / WIRE.http3Payload;
-    factors.push(
-      factor("application-framing", "HTTP/3 DATA frames", application * ratio),
-    );
-    application *= 1 + ratio;
-  }
-
-  if (
-    framing === "webtransport-stream" ||
-    framing === "webtransport-datagram"
-  ) {
-    const ratio = WIRE.http3Frame / WIRE.http3Payload;
-    factors.push(
-      factor(
-        "application-framing",
-        framing === "webtransport-stream"
-          ? "WebTransport QUIC stream frames"
-          : "WebTransport QUIC datagrams",
-        application * ratio,
-      ),
-    );
-    application *= 1 + ratio;
-  }
-
-  if (transport === "https-tls" || transport === "http2") {
-    const ratio = WIRE.tlsRecordOverhead / WIRE.tlsRecordPayload;
-    factors.push(factor("tls-records", "TLS 1.3 records", application * ratio));
-    application *= 1 + ratio;
-  }
-
-  let low: number;
-  let central: number;
-  let high: number;
-  let centralPayload: number;
-  let centralTransport: number;
-  if (transport === "http3-quic") {
-    const link = (cid: number, pn: number): number => {
-      const quic = 1 + cid + pn + WIRE.quicAeadTag;
-      const payload = Math.max(1, mtuBytes - ip - WIRE.udpBytes - quic);
-      return (mtuBytes + ethernet) / payload;
-    };
-    const minCid = 0;
-    const maxCid = 20;
-    low = link(minCid, 1);
-    const centralCid = 8;
-    const centralQuic =
-      1 + centralCid + WIRE.quicPacketNumberTypical + WIRE.quicAeadTag;
-    centralPayload = Math.max(1, mtuBytes - ip - WIRE.udpBytes - centralQuic);
-    centralTransport = WIRE.udpBytes + centralQuic;
-    central = link(centralCid, WIRE.quicPacketNumberTypical);
-    high = link(maxCid, 4);
-  } else {
-    const link = (options: number): number => {
-      const payload = Math.max(1, mtuBytes - ip - WIRE.tcpBytes - options);
-      return (mtuBytes + ethernet) / payload;
-    };
-    const minOptions = 0;
-    const maxOptions = 12;
-    centralTransport = WIRE.tcpBytes + maxOptions;
-    centralPayload = Math.max(1, mtuBytes - ip - centralTransport);
-    low = link(minOptions);
-    central = link(maxOptions);
-    high = central;
-  }
-
-  const layer = (
-    key: CompensationFactor["key"],
-    label: string,
-    bytes: number,
-  ) => factors.push(factor(key, label, application * (bytes / centralPayload)));
-  layer("ethernet", "Ethernet", ethernet);
-  layer("ip", ipVersion === 6 ? "IPv6" : "IPv4", ip);
-  layer(
-    "transport",
-    transport === "http3-quic" ? "UDP + QUIC" : "TCP + options",
-    centralTransport,
-  );
-
-  low *= application;
-  central *= application;
-  high *= application;
-  return {
-    measuredBytesPerSec: bytesPerSec,
-    estimatedBytesPerSec: bytesPerSec * central,
-    lowerBytesPerSec: bytesPerSec * Math.min(low, high),
-    upperBytesPerSec: bytesPerSec * Math.max(low, high),
-    totalMultiplier: central,
-    confidence: low === high ? "high" : "medium",
-    factors,
-    transport,
-    transportSource,
-    framing,
-    mtuBytes,
-    ipVersion,
-    ipVersionSource,
-  };
-}
-
-function factor(
-  key: CompensationFactor["key"],
-  label: string,
-  ratio: number,
-): CompensationFactor {
-  return { key, label, contributionPct: ratio * 100 };
-}
-
-function identity(
-  bytesPerSec: number,
-  transport: CompensationTransport,
-  mtuBytes: number,
-  ipVersion: 4 | 6,
-  ipVersionSource: CompensationEstimate["ipVersionSource"],
-  transportSource: CompensationEstimate["transportSource"],
-  framing: CompensationEstimate["framing"],
-): CompensationEstimate {
-  return {
+  const estimate: CompensationEstimate = {
     measuredBytesPerSec: bytesPerSec,
     estimatedBytesPerSec: bytesPerSec,
     lowerBytesPerSec: bytesPerSec,
@@ -330,12 +166,77 @@ function identity(
     confidence: "high",
     factors: [],
     transport,
-    transportSource,
+    transportSource:
+      selectedTransport?.startsWith("webtransport") ||
+      (detected && detected !== "negotiated")
+        ? "detected"
+        : "fallback",
     framing,
     mtuBytes,
     ipVersion,
-    ipVersionSource,
+    ipVersionSource: detectedIPVersion ? "detected" : "fallback",
   };
+  if (bytesPerSec <= 0) return estimate;
+
+  const { factors } = estimate;
+  let application = 1;
+  const wrap = (key: FactorKey, label: string, ratio: number) => {
+    factors.push(factor(key, label, application * ratio));
+    application *= 1 + ratio;
+  };
+  if (transport === "http2")
+    wrap(
+      "application-framing",
+      "HTTP/2 DATA frames",
+      WIRE.http2Header / WIRE.http2Payload,
+    );
+  if (framing)
+    wrap(
+      "application-framing",
+      FRAMING_LABEL[framing],
+      WIRE.http3Frame / WIRE.http3Payload,
+    );
+  if (transport === "https-tls" || transport === "http2")
+    wrap(
+      "tls-records",
+      "TLS 1.3 records",
+      WIRE.tlsRecordOverhead / WIRE.tlsRecordPayload,
+    );
+
+  const ip = ipVersion === 6 ? WIRE.ipv6Bytes : WIRE.ipv4Bytes;
+  const headers = framing
+    ? QUIC_HEADERS.map(
+        ([cid, pn]) => WIRE.udpBytes + 1 + cid + pn + WIRE.quicAeadTag,
+      )
+    : TCP_OPTIONS.map((options) => WIRE.tcpBytes + options);
+  const payload = (header: number) => Math.max(1, mtuBytes - ip - header);
+  const [low, central, high] = headers.map(
+    (header) =>
+      (application * (mtuBytes + WIRE.ethernetBytes)) / payload(header),
+  );
+  const layer = (key: FactorKey, label: string, bytes: number) =>
+    factors.push(
+      factor(key, label, application * (bytes / payload(headers[1]))),
+    );
+  layer("ethernet", "Ethernet", WIRE.ethernetBytes);
+  layer("ip", ipVersion === 6 ? "IPv6" : "IPv4", ip);
+  layer("transport", framing ? "UDP + QUIC" : "TCP + options", headers[1]);
+  return {
+    ...estimate,
+    estimatedBytesPerSec: bytesPerSec * central,
+    lowerBytesPerSec: bytesPerSec * Math.min(low, high),
+    upperBytesPerSec: bytesPerSec * Math.max(low, high),
+    totalMultiplier: central,
+    confidence: low === high ? "high" : "medium",
+  };
+}
+
+function factor(
+  key: FactorKey,
+  label: string,
+  ratio: number,
+): CompensationFactor {
+  return { key, label, contributionPct: ratio * 100 };
 }
 
 export function compensationTooltip(estimate: CompensationBreakdown): string {

@@ -1,344 +1,430 @@
 #!/usr/bin/env python3
-"""Trusted stable-release request validation and post-approval recheck."""
+"""Validate release requests, then authorize stable releases and PR prereleases."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
-import subprocess
+import shutil
+import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import TypeVar
+from urllib.parse import quote
 
+import verify_oci
+import verify_release_assets
 from github_api import (
     APICall,
-    GitHubAPIError,
+    ControlPlaneError,
     JsonObject,
-    JsonShapeError,
     api as default_api,
     append_output,
     append_summary,
-    decode_json,
     expect_array,
     expect_object,
+    fail,
+    file_sha256,
     int_field,
     object_field,
+    runner_path,
     str_field,
 )
 from trust import (
-    TrustError,
-    actor_login,
+    SEMVER_NUMBER,
+    SHA_RE,
+    env,
+    env_int,
+    env_sha,
+    exact_files,
+    read_record,
+    require_check_run,
+    require_checkout,
     require_ci_gate,
-    require_exact_artifact,
+    require_control_plane_matches_main,
+    require_current_main,
+    require_dispatch_run,
     require_exact_current_main,
     require_main_codeql,
-    workflow_id,
+    require_pr,
+    require_protected_environment,
 )
 
-SEMVER_NUMBER = r"(?:0|[1-9][0-9]*)"
-STABLE_SEMVER_RE = re.compile(rf"^v{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}$")
-SEMVER_RE = re.compile(
-    rf"^v{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}"
-    rf"(?:-(?:alpha|beta|rc)\.{SEMVER_NUMBER})?$"
-)
-SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+N = SEMVER_NUMBER
+TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
+OCI = "graphite-meter.oci.tar"
+OCI_LIMIT = 1024 * 1024 * 1024
+ASSETS_LIMIT = 2 * OCI_LIMIT
+# Seconds between reads while GitHub's read path catches up with a write.
+DELAYS = (0.25, 0.5, 1, 2, 4, 8)
+T = TypeVar("T")
 REQUEST_KEYS = {
-    "schemaVersion",
-    "repository",
-    "sourceSha",
-    "version",
-    "mode",
-    "requestRunId",
+    "schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId",
     "requestRunAttempt",
 }
-REQUEST_ARTIFACT_LIMIT = 64 * 1024
 
 
 @dataclass(frozen=True)
-class ReleaseContext:
-    repository: str
-    sha: str
+class Release:
     tag: str
-    ci_run_id: int
-    publish: bool
-    request_run_id: int
+    sha: str
+    pr: int
+
+    @property
+    def stable(self) -> bool:
+        return self.pr == 0
+
+    @property
+    def version(self) -> str:
+        return self.tag[1:]
 
 
-def die(message: str) -> NoReturn:
-    raise SystemExit(f"Release refused: {message}")
+def assets_sha256(directory: Path) -> str:
+    """Hash the sorted name and SHA-256 of every regular file in `directory`."""
+    entries = sorted(directory.iterdir())
+    exact_files(directory, {entry.name for entry in entries})
+    listing = "".join(f"{entry.name}\t{file_sha256(entry)}\n" for entry in entries)
+    return hashlib.sha256(listing.encode()).hexdigest()
 
 
-def env(name: str) -> str:
-    value = os.environ.get(name)
-    if not value:
-        die(f"{name} is required")
-    return value
+def parse_release(tag: str, sha: str, pr: int) -> Release:
+    match = TAG_RE.fullmatch(tag)
+    if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
+        fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
+    if SHA_RE.fullmatch(sha) is None:
+        fail("release source must be a 40-character commit SHA")
+    return Release(tag, sha, pr)
 
 
-def env_int(name: str) -> int:
-    value = env(name)
-    if re.fullmatch(r"[1-9][0-9]*", value) is None:
-        die(f"{name} must be a positive integer")
-    return int(value)
+def request_title(mode: str, release: Release, main: str) -> str:
+    """The run-name that release-request.yml derives from its dispatch inputs."""
+    source = f"PR #{release.pr} @ {release.sha}" if release.pr else "main"
+    return f"Release request · {mode} · {release.tag} · {source} · {main}"
 
 
-def git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode != 0:
-        die(result.stderr.strip() or f"git {' '.join(args)} failed")
-    return result.stdout.strip()
+def main_workflow(repository: str, name: str) -> str:
+    return f"{repository}/.github/workflows/{name}@refs/heads/main"
+
+
+def release_tag_target(repository: str, tag: str, *, api: APICall = default_api) -> str | None:
+    """Return the commit the exact tag names, through an annotated tag, or None without the tag."""
+    refs = expect_array(api(f"repos/{repository}/git/matching-refs/tags/{tag}"), tag)
+    exact = [expect_object(ref, tag) for ref in refs
+             if isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"]
+    if not exact:
+        return None
+    if len(exact) != 1:
+        fail(f"multiple exact refs unexpectedly match {tag}")
+    target = object_field(exact[0], "object", tag)
+    if target.get("type") == "tag":
+        annotated = api(f"repos/{repository}/git/tags/{str_field(target, 'sha', tag)}")
+        target = object_field(expect_object(annotated, tag), "object", tag)
+    if target.get("type") != "commit":
+        fail(f"{tag} does not reference a commit")
+    return str_field(target, "sha", tag)
 
 
 def require_compatible_release_tag(
-    repository: str,
-    tag: str,
-    expected_sha: str,
-    *,
-    api: APICall = default_api,
+    repository: str, tag: str, expected_sha: str, *, api: APICall = default_api,
 ) -> None:
-    """Fail before publication if an exact release tag already points elsewhere."""
-    try:
-        refs = expect_array(
-            api(f"repos/{repository}/git/matching-refs/tags/{tag}"),
-            f"matching refs for {tag}",
-        )
-        exact = [
-            expect_object(value, f"matching ref for {tag}")
-            for value in refs
-            if isinstance(value, dict) and value.get("ref") == f"refs/tags/{tag}"
-        ]
-        if not exact:
-            return
-        if len(exact) != 1:
-            die(f"multiple exact refs unexpectedly match {tag}")
-        obj = object_field(exact[0], "object", f"tag ref {tag}")
-        object_type = str_field(obj, "type", f"tag ref {tag}.object")
-        object_sha = str_field(obj, "sha", f"tag ref {tag}.object")
-        if object_type == "commit":
-            target = object_sha
-        elif object_type == "tag":
-            annotated = expect_object(
-                api(f"repos/{repository}/git/tags/{object_sha}"),
-                f"annotated tag {tag}",
-            )
-            annotated_obj = object_field(annotated, "object", f"annotated tag {tag}")
-            if str_field(annotated_obj, "type", f"annotated tag {tag}.object") != "commit":
-                die(f"{tag} does not ultimately reference a commit")
-            target = str_field(annotated_obj, "sha", f"annotated tag {tag}.object")
-        else:
-            die(f"{tag} has unexpected object type {object_type}")
-    except JsonShapeError as exc:
-        die(str(exc))
-    if target != expected_sha:
-        die(f"{tag} already exists at {target}, expected {expected_sha}")
+    """Refuse before publication if the exact tag already names another commit."""
+    if (sha := release_tag_target(repository, tag, api=api)) not in (None, expected_sha):
+        fail(f"{tag} already exists at {sha}, expected {expected_sha}")
 
 
-def exact_request_file(request_dir: Path) -> Path:
-    if not request_dir.is_dir():
-        die("stable release request directory is missing")
-    entries = list(request_dir.iterdir())
-    if len(entries) != 1 or entries[0].name != "request.json":
-        die(
-            "stable release request files are "
-            f"{sorted(path.name for path in entries)}; expected ['request.json']"
-        )
-    path = entries[0]
-    if not path.is_file() or path.is_symlink():
-        die("stable release request.json is not a regular file")
-    return path
+def converge(what: str, probe: Callable[[], T | None]) -> T:
+    """Return the first value `probe` reads, waiting for GitHub's read path to show a write."""
+    for delay in (0, *DELAYS):
+        if delay:
+            print(f"::notice::waiting {delay}s for {what}", file=sys.stderr)
+            time.sleep(delay)
+        if (value := probe()) is not None:
+            return value
+    fail(f"{what} did not become visible in time")
 
 
-def read_request(path: Path) -> JsonObject:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        die(f"cannot read stable release request: {exc}")
-    try:
-        request = expect_object(decode_json(text, "stable release request"), "stable release request")
-    except JsonShapeError as exc:
-        die(str(exc))
-    if set(request) != REQUEST_KEYS:
-        die(
-            f"stable release request keys are {sorted(request)}; expected {sorted(REQUEST_KEYS)}"
-        )
-    return request
-
-
-def validate_request_context(*, api: APICall = default_api) -> ReleaseContext:
-    repository = env("REPOSITORY")
-    owner = env("REPOSITORY_OWNER")
-    publisher_sha = env("PUBLISHER_SHA")
-    workflow_ref = env("WORKFLOW_REF")
-    request_run_id = env_int("REQUEST_RUN_ID")
-    request_dir = Path(env("REQUEST_DIR"))
-
-    if SHA_RE.fullmatch(publisher_sha) is None:
-        die("trusted publisher SHA is invalid")
-    expected_workflow_ref = f"{repository}/.github/workflows/release.yml@refs/heads/main"
-    if workflow_ref != expected_workflow_ref:
-        die("stable release consumer is not the trusted main workflow")
-
-    # workflow_run executes default-branch tooling. Require that exact tooling SHA
-    # to still be current before trusting any request artifact.
-    require_exact_current_main(repository, publisher_sha, api=api)
-    if git("rev-parse", "HEAD") != publisher_sha:
-        die("checked-out release tooling does not match trusted publisher SHA")
-
-    expected_request_workflow_id = workflow_id(repository, "release-request.yml", api=api)
-    run = expect_object(
-        api(f"repos/{repository}/actions/runs/{request_run_id}"),
-        "stable release request workflow run",
+def require_publishable(
+    repository: str, release: Release, *, api: APICall = default_api,
+) -> tuple[str, int, str]:
+    """Return current main, the CI run and the PR CodeQL check that authorize `release`."""
+    sha = release.sha
+    if release.stable:
+        main = require_exact_current_main(repository, sha, api=api)
+        require_compatible_release_tag(repository, release.tag, sha, api=api)
+        ci_run_id = require_ci_gate(repository, sha, event="push", branch="main", api=api)
+        require_main_codeql(repository, sha, api=api)
+        return main, ci_run_id, ""
+    pr = release.pr
+    branch = require_pr(repository, pr, sha, api=api)
+    main = require_current_main(repository, pr, sha, api=api)
+    require_control_plane_matches_main(repository, sha, main, api=api)
+    ci_run_id = require_ci_gate(
+        repository, sha, event="pull_request", branch=branch, pr_number=pr, api=api,
     )
-    try:
-        if int_field(run, "id", "stable release request workflow run") != request_run_id:
-            die("stable release request run ID changed")
-        if int_field(run, "workflow_id", "stable release request workflow run") != expected_request_workflow_id:
-            die("stable release request did not originate from release-request.yml")
-        event = str_field(run, "event", "stable release request workflow run")
-        head_branch = str_field(run, "head_branch", "stable release request workflow run")
-        head_sha = str_field(run, "head_sha", "stable release request workflow run")
-        status = str_field(run, "status", "stable release request workflow run")
-        conclusion = str_field(run, "conclusion", "stable release request workflow run")
-        run_attempt = int_field(run, "run_attempt", "stable release request workflow run")
-    except JsonShapeError as exc:
-        die(str(exc))
-
-    if event != "workflow_dispatch" or head_branch != "main":
-        die("stable release request was not dispatched from main")
-    if head_sha != publisher_sha:
-        die(
-            "main changed between the manual request and trusted release consumer; "
-            "start a fresh stable release request"
-        )
-    if run_attempt != 1:
-        die("stable release request reruns are not accepted; start a fresh dispatch")
-    if status != "completed" or conclusion != "success":
-        die(f"stable release request is {status}/{conclusion}")
-    if actor_login(run, "actor", "stable release request workflow run") != owner or actor_login(
-        run, "triggering_actor", "stable release request workflow run"
-    ) != owner:
-        die("stable release request was not initiated by the repository owner")
-
-    artifact_name = f"stable-release-request-{request_run_id}"
-    require_exact_artifact(
-        repository,
-        request_run_id,
-        artifact_name,
-        max_size=REQUEST_ARTIFACT_LIMIT,
-        required=True,
-        api=api,
+    codeql_id = require_check_run(
+        repository, sha, name="CodeQL", app_slug="github-advanced-security", pr_number=pr, api=api,
     )
-    request = read_request(exact_request_file(request_dir))
-    try:
-        schema_version = int_field(request, "schemaVersion", "stable release request")
-        request_repository = str_field(request, "repository", "stable release request")
-        request_sha = str_field(request, "sourceSha", "stable release request")
-        tag = str_field(request, "version", "stable release request")
-        mode = str_field(request, "mode", "stable release request")
-        artifact_run_id = int_field(request, "requestRunId", "stable release request")
-        artifact_attempt = int_field(request, "requestRunAttempt", "stable release request")
-    except JsonShapeError as exc:
-        die(str(exc))
-
-    if schema_version != 1:
-        die("unsupported stable release request schema")
-    if request_repository != repository:
-        die("stable release request repository mismatch")
-    if request_sha != publisher_sha:
-        die("stable release request source SHA does not match trusted current main")
-    if artifact_run_id != request_run_id or artifact_attempt != 1:
-        die("stable release request run metadata mismatch")
-    if STABLE_SEMVER_RE.fullmatch(tag) is None:
-        die("stable release version must be vMAJOR.MINOR.PATCH")
-    if mode not in {"validate", "publish"}:
-        die("stable release mode must be validate or publish")
-
-    require_compatible_release_tag(repository, tag, publisher_sha, api=api)
-    ci_run_id = require_ci_gate(repository, publisher_sha, event="push", branch="main", api=api)
-    require_main_codeql(repository, publisher_sha, api=api)
-    return ReleaseContext(
-        repository=repository,
-        sha=publisher_sha,
-        tag=tag,
-        ci_run_id=ci_run_id,
-        publish=mode == "publish",
-        request_run_id=request_run_id,
-    )
+    return main, ci_run_id, str(codeql_id)
 
 
-def command_guard() -> None:
-    context = validate_request_context()
-    version = context.tag[1:]
-    major, minor, _patch = version.split(".")
+def command_prepare() -> None:
+    repository, owner = env("REPOSITORY"), env("REPOSITORY_OWNER")
+    main = env_sha("EVENT_SHA")
+    if env("EVENT_NAME") != "workflow_dispatch" or env("REF") != "refs/heads/main":
+        fail("release requests must be dispatched from main")
+    if env("WORKFLOW_REF") != main_workflow(repository, "release-request.yml"):
+        fail("workflow is not the release request workflow on main")
+    if env("ACTOR") != owner or env("TRIGGERING_ACTOR") != owner:
+        fail("only the repository owner may request a release")
+    if env_int("REQUEST_RUN_ATTEMPT") != 1:
+        fail("workflow reruns are not valid requests; start a fresh dispatch")
+    if (mode := env("MODE")) not in ("validate", "publish"):
+        fail("mode must be validate or publish")
+    pr = env_int("PR") if os.environ.get("PR") else 0
+    if not pr and os.environ.get("SHA"):
+        fail("stable releases build current main; leave sha empty")
+    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
+    out = runner_path("OUT_DIR")
+    out.mkdir(parents=True, exist_ok=True)
+    request = {
+        "schemaVersion": 2, "repository": repository, "tag": release.tag,
+        "sourceSha": release.sha, "pr": pr, "mode": mode,
+        "requestRunId": env_int("REQUEST_RUN_ID"), "requestRunAttempt": 1,
+    }
+    (out / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
     append_output(
-        tag=context.tag,
-        version=version,
-        series=f"{major}.{minor}",
-        publish=str(context.publish).lower(),
+        tag=release.tag, version=release.version, sha=release.sha,
+        stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
+        client_validate="0" if release.stable else "1",
+    )
+
+
+def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Release, bool]:
+    """Bind the untrusted request artifact to its run, current main and the release rules."""
+    repository = env("REPOSITORY")
+    publisher = env_sha("PUBLISHER_SHA")
+    run_id = env_int("REQUEST_RUN_ID")
+    if env("WORKFLOW_REF") != main_workflow(repository, "release.yml"):
+        fail("release consumer is not the trusted main workflow")
+    require_exact_current_main(repository, publisher, api=api)
+    require_checkout(publisher)
+    candidate = request_dir / f"release-request-{run_id}"
+    exact_files(candidate, {"request.json", OCI, f"{OCI}.sha256"})
+    request = read_record(candidate / "request.json", REQUEST_KEYS, {
+        "schemaVersion": 2, "repository": repository, "requestRunId": run_id,
+        "requestRunAttempt": 1,
+    })
+    release = parse_release(str_field(request, "tag", "request"),
+                            str_field(request, "sourceSha", "request"),
+                            int_field(request, "pr", "request"))
+    if request["mode"] not in ("validate", "publish"):
+        fail("request mode must be validate or publish")
+    if release.stable and release.sha != publisher:
+        fail("a stable release must build the trusted main commit")
+    artifacts = {candidate.name: OCI_LIMIT + 1024 * 1024}
+    if release.stable:
+        artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
+    require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
+                         "release-request.yml", request_title(str(request["mode"]), release,
+                                                              publisher), artifacts, api=api)
+    if (downloaded := {path.name for path in request_dir.iterdir()}) != set(artifacts):
+        fail(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
+    return release, request["mode"] == "publish"
+
+
+def command_verify() -> None:
+    request_dir, handoff = runner_path("REQUEST_DIR"), runner_path("HANDOFF_DIR")
+    release, publish = verify_request(request_dir)
+    if publish:
+        require_protected_environment(env("REPOSITORY"))
+    candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
+    if (candidate / OCI).stat().st_size > OCI_LIMIT:
+        fail(f"OCI archive exceeds {OCI_LIMIT} bytes")
+    digest = file_sha256(candidate / OCI)
+    if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
+        fail("OCI archive does not match the request checksum")
+    manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
+    assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
+    if release.stable:
+        verify_release_assets.verify_artifacts(release.version, assets)
+    main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
+    if main != env("PUBLISHER_SHA"):
+        fail("main moved during verification; start a fresh request")
+
+    (handoff / "image").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
+    if release.stable:
+        shutil.copytree(assets, handoff / "assets")
+    append_output(
+        tag=release.tag, version=release.version, stable=str(release.stable).lower(),
+        publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
+        oci_sha256=digest, digest=manifest,
+        assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
     )
     append_summary(
-        f"""### Stable release request accepted
-
-| Property | Value |
-|---|---|
-| Request run | `{context.request_run_id}` |
-| Repository | `{context.repository}` |
-| Source | `{context.sha}` |
-| Version | `{context.tag}` |
-| Mode | `{'publish' if context.publish else 'validate'}` |
-| Main CI run | `{context.ci_run_id}` |
-
-The manual request was bound to **current `main`**, then revalidated by the trusted default-branch `workflow_run` consumer. Main CI Gate + current CodeQL analyses are valid.
-{'Publication still requires approval from the protected `ghcr-release` environment.' if context.publish else 'Validation mode cannot reach any write-permission job.'}
-"""
-    )
-    print(
-        f"::notice::trusted release consumer accepted request {context.request_run_id} "
-        f"for {context.tag} @ {context.sha}"
+        f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
+        f"\n\n`{release.tag}` from `{release.sha}` on main `{main}`: CI run `{ci_run_id}`, "
+        f"CodeQL {codeql_id or 'on main'}, OCI SHA-256 `{digest}`. "
+        + ("Publication still requires `ghcr-release` approval." if publish
+           else "Validation mode cannot reach a write-permission job.")
     )
 
 
 def command_recheck() -> None:
-    repository = env("REPOSITORY")
-    source_sha = env("SOURCE_SHA")
-    tag = env("REQUESTED_VERSION")
-    if SHA_RE.fullmatch(source_sha) is None:
-        die("release source SHA is invalid")
-    if STABLE_SEMVER_RE.fullmatch(tag) is None:
-        die("stable release version must be vMAJOR.MINOR.PATCH")
-    if git("rev-parse", "HEAD") != source_sha:
-        die("checked-out release tooling does not match the authorized source SHA")
-
-    require_exact_current_main(repository, source_sha)
-    require_compatible_release_tag(repository, tag, source_sha)
-    ci_run_id = require_ci_gate(repository, source_sha, event="push", branch="main")
-    require_main_codeql(repository, source_sha)
-    append_output(ci_run_id=ci_run_id)
+    main = env_sha("MAIN_SHA")
+    pr = env_int("PR") if os.environ.get("PR") else 0
+    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
+    require_checkout(main)
+    handoff = runner_path("HANDOFF_DIR")
+    exact_files(handoff / "image", {OCI})
+    if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
+        fail("approved OCI handoff does not match the verified archive")
+    if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
+        fail("approved asset handoff does not match the verified assets")
+    current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
+    if current != main:
+        fail("main moved after verification; start a fresh request")
     append_summary(
-        f"""### Final publication trust recheck passed
-
-`{tag}` is still bound to current `main` `{source_sha}` **after environment approval**.
-Main CI run `{ci_run_id}` and the latest exact-SHA CodeQL analyses remain valid. Publication may proceed.
-"""
+        f"### Final release recheck passed\n\n`{release.tag}` from `{release.sha}` is still "
+        f"authorized on main `{main}` after approval: CI run `{ci_run_id}`, "
+        f"CodeQL {codeql_id or 'on main'}."
     )
-    print(f"::notice::final release trust recheck passed for {tag} @ {source_sha}")
+
+
+def release_assets(repository: str, release_id: int) -> list[JsonObject]:
+    pages = default_api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
+    return [expect_object(item, "asset") for page in expect_array(pages, "assets")
+            for item in expect_array(page, "assets")]
+
+
+def asset_digests(repository: str, release_id: int) -> dict[str, str]:
+    assets = release_assets(repository, release_id)
+    return {str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
+
+
+def source_notice(release: Release, source: str) -> str:
+    return (
+        "## Source availability\n\n"
+        f"Graphite Meter source for this release is the repository snapshot at tag **{release.tag}** "
+        f"(commit **{release.sha}**). GitHub provides that tagged project source below as "
+        "**Source code (zip)** and **Source code (tar.gz)**.\n\n"
+        "Source for third-party components included in the distributed artifacts is attached as "
+        f"**{source}**. Together, the tagged repository source and that archive form the source "
+        "offer for this release."
+    )
+
+
+def command_publish() -> None:
+    """Publish the verified assets as the stable GitHub Release at its exact tag, idempotently."""
+    gh, repository = default_api, env("REPOSITORY")
+    release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
+    tag, base = release.tag, f"repos/{repository}"
+    assets = runner_path("ASSETS_DIR")
+    exact_files(assets, names := {entry.name for entry in assets.iterdir()})
+    local = {name: "sha256:" + file_sha256(assets / name) for name in names}
+    source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
+    if source not in local:
+        fail(f"release handoff is missing the third-party source asset {source}")
+    notice = source_notice(release, source)
+
+    def require_tag() -> None:
+        if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:
+            fail(f"{tag} resolves to {sha}, expected {release.sha}")
+
+    require_compatible_release_tag(repository, tag, release.sha)
+    pages = expect_array(gh(f"{base}/releases?per_page=100", paginate=True), "releases")
+    matches = [expect_object(item, "release") for page in pages
+               for item in expect_array(page, "releases") if isinstance(item, dict)
+               and item.get("tag_name") == tag]
+    if len(matches) > 1:
+        fail(f"multiple releases unexpectedly use tag {tag}")
+    if matches and matches[0].get("prerelease") is not False:
+        fail(f"{tag} already exists as a prerelease")
+    if matches and matches[0].get("draft") is False:
+        if asset_digests(repository, int_field(matches[0], "id", "release")) != local:
+            fail(f"{tag} is published but asset names/digests differ")
+        require_tag()
+        if not str(matches[0].get("body") or "").startswith(notice):
+            fail(f"{tag} is published but its source-availability notice is missing or stale")
+        print(f"::notice::{tag} is already published with the expected source, assets and notice")
+        return
+    if not matches:
+        draft: JsonObject = {"tag_name": tag, "target_commitish": release.sha, "draft": True,
+                             "prerelease": False, "generate_release_notes": True, "body": notice}
+        matches = [expect_object(gh(f"{base}/releases", method="POST", body=draft), "release")]
+    release_id = int_field(matches[0], "id", "release")
+
+    current = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+    if current.get("tag_name") != tag or current.get("draft") is not True:
+        fail(f"release {release_id} must remain the {tag} draft during asset upload")
+    body = str(current.get("body") or "")
+    if not body.startswith(notice):
+        if "## Source availability" in body:
+            fail(f"{tag} draft contains a stale source-availability notice")
+        edit: JsonObject = {"body": f"{notice}\n\n{body}" if body else notice}
+        current = expect_object(gh(f"{base}/releases/{release_id}", method="PATCH", body=edit),
+                                "release")
+    upload = str_field(current, "upload_url", "release").split("{", 1)[0]
+    if not upload.startswith("https://uploads.github.com/"):
+        fail(f"unexpected release upload URL {upload}")
+    # A retry starts from an empty draft so it cannot keep stale files.
+    for asset in release_assets(repository, release_id):
+        gh(f"{base}/releases/assets/{int_field(asset, 'id', 'asset')}", method="DELETE")
+    for name in sorted(local):
+        gh(f"{upload}?name={quote(name)}", method="POST", upload=assets / name)
+    if asset_digests(repository, release_id) != local:
+        fail("draft release asset names/digests do not match verified local files")
+
+    if release_tag_target(repository, tag) is None:
+        try:
+            gh(f"{base}/git/refs", method="POST", body={"ref": f"refs/tags/{tag}", "sha": release.sha})
+        except ControlPlaneError as exc:
+            if "already exists" not in str(exc):
+                fail(f"GitHub rejected creation of {tag} at {release.sha}: {exc}")
+            print(f"::warning::{tag} creation raced with another writer; verifying the winner")
+    require_tag()
+    try:
+        gh(f"{base}/releases/{release_id}", method="PATCH",
+           body={"draft": False, "prerelease": False, "make_latest": "legacy"})
+    except ControlPlaneError as exc:
+        print(f"::warning::publishing {tag} failed ({exc}); reconciling release state")
+
+    def published() -> JsonObject | None:
+        try:
+            item = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+        except ControlPlaneError as exc:
+            if "(HTTP 404)" in str(exc):
+                return None
+            raise
+        if item.get("tag_name") != tag or item.get("prerelease") is not False:
+            fail(f"release {release_id} is no longer the stable {tag} release")
+        return item if item.get("draft") is False else None
+
+    final = converge(f"{tag} publication", published)
+    require_tag()
+    if not str(final.get("body") or "").startswith(notice):
+        fail("published release lost its source-availability notice")
+    print(f"::notice::published {tag} with verified SHA-256 assets and source notice")
+
+
+COMMANDS = {
+    "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
+    "publish": command_publish,
+}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("guard", "recheck"))
-    command = parser.parse_args().command
+    parser.add_argument("command", choices=COMMANDS)
     try:
-        {"guard": command_guard, "recheck": command_recheck}[command]()
-    except (TrustError, GitHubAPIError, JsonShapeError) as exc:
-        die(str(exc))
+        COMMANDS[parser.parse_args().command]()
+    except (ControlPlaneError, OSError) as exc:
+        raise SystemExit(f"Release refused: {exc}") from exc
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,35 +9,9 @@ import (
 	"testing"
 )
 
-var credentialOutcomes = []reason{
-	reasonCSRFOriginMissing,
-	reasonCSRFOriginMismatch,
-	reasonCSRFTokenMismatch,
-	reasonFormMalformed,
-	reasonClientAddress,
-	reasonExchangeRateLimited,
-	reasonCallbackParameters,
-	reasonTransactionReplay,
-	reasonResponseIssuer,
-	reasonTokenExchange,
-	reasonMissingIDToken,
-	reasonIDTokenVerification,
-	reasonIDTokenClaimsOrNonce,
-	reasonAccessTokenHash,
-	reasonUserInfoOrSubject,
-	reasonUserInfoClaimsOrGroup,
-	reasonInvalidSubject,
-}
-
-func TestSafeNoticeSubsetExcludesCredentialOutcomes(t *testing.T) {
-	for _, why := range credentialOutcomes {
-		if got := noticeFor(why); got != noticeGeneric {
-			t.Fatalf("reason %q leaks notice %q", why, got)
-		}
-	}
-}
-
-func TestSafeNoticesDescribeServerOrFormStateOnly(t *testing.T) {
+// Every refusal reason reaches the browser as a notice describing server or
+// form state; a credential outcome is never distinguishable from a generic failure.
+func TestLoginRefusalsCarryOnlyASafeNotice(t *testing.T) {
 	want := map[reason]notice{
 		reasonProviderNotReady:    noticeProvider,
 		reasonVerifierBusy:        noticeBusy,
@@ -48,108 +23,135 @@ func TestSafeNoticesDescribeServerOrFormStateOnly(t *testing.T) {
 		reasonCSRFTokenMissing:    noticeStale,
 		reasonTransactionCookie:   noticeStale,
 	}
-	for why, n := range want {
-		if got := noticeFor(why); got != n {
-			t.Fatalf("reason %q = notice %q, want %q", why, got, n)
-		}
-	}
-}
-
-func TestParseNoticeAcceptsOnlyKnownCodes(t *testing.T) {
-	for _, tc := range []struct {
-		raw  string
-		want notice
-	}{
-		{"", ""},
-		{"provider", noticeProvider},
-		{"busy", noticeBusy},
-		{"stale", noticeStale},
-		{"throttled", noticeThrottled},
-		{"password", noticePassword},
-		{"failed", noticeGeneric},
-		{"1", noticeGeneric},
-		{"<script>alert(1)</script>", noticeGeneric},
+	for _, why := range []reason{
+		reasonCSRFOriginMissing, reasonCSRFOriginMismatch, reasonCSRFTokenMismatch, reasonFormMalformed,
+		reasonClientAddress, reasonExchangeRateLimited, reasonCallbackParameters, reasonTransactionReplay,
+		reasonResponseIssuer, reasonTokenExchange, reasonMissingIDToken, reasonIDTokenVerification,
+		reasonIDTokenClaimsOrNonce, reasonAccessTokenHash, reasonUserInfoOrSubject, reasonUserInfoClaimsOrGroup,
+		reasonInvalidSubject,
 	} {
-		if got := parseNotice(tc.raw); got != tc.want {
-			t.Fatalf("parseNotice(%q) = %q, want %q", tc.raw, got, tc.want)
-		}
+		want[why] = noticeGeneric
 	}
-}
-
-func TestLoginRejectedCarriesOnlyTheSafeNotice(t *testing.T) {
 	s := testService(t)
-	for _, tc := range []struct {
-		why  reason
-		want notice
-	}{
-		{reasonPasswordMismatch, noticePassword},
-		{reasonThrottled, noticeThrottled},
-		{reasonUserInfoClaimsOrGroup, noticeGeneric},
-		{reasonProviderNotReady, noticeProvider},
-		{reasonSessionCapacity, noticeBusy},
-		{reasonCSRFCookieMissing, noticeStale},
-	} {
+	for why, n := range want {
 		r := secureRequest(http.MethodPost, "/auth/password", nil)
 		r.Form = url.Values{}
 		rr := httptest.NewRecorder()
-		s.loginRejected(rr, r, tc.why)
-		location, err := url.Parse(rr.Header().Get("Location"))
-		if err != nil {
-			t.Fatal(err)
+		s.loginRejected(rr, r, why)
+		location := rr.Header().Get("Location")
+		if got := noticeFor(why); got != n || !strings.HasSuffix(location, "?error="+string(n)) {
+			t.Errorf("reason %q = notice %q redirecting to %q, want %q", why, got, location, n)
 		}
-		if got := location.Query().Get("error"); got != string(tc.want) {
-			t.Fatalf("reason %q redirected with error=%q, want %q", tc.why, got, tc.want)
-		}
-		if strings.Contains(rr.Header().Get("Location"), string(tc.why)) && tc.want == noticeGeneric {
-			t.Fatalf("reason %q leaked into the redirect", tc.why)
+	}
+	for raw, n := range map[string]notice{
+		"": "", "provider": noticeProvider, "busy": noticeBusy, "stale": noticeStale, "throttled": noticeThrottled,
+		"password": noticePassword, "failed": noticeGeneric, "1": noticeGeneric,
+		"<script>alert(1)</script>": noticeGeneric,
+	} {
+		if got := parseNotice(raw); got != n {
+			t.Errorf("parseNotice(%q) = %q, want %q", raw, got, n)
 		}
 	}
 }
 
-func loginAlerts(t *testing.T, s *Service, code string) []string {
-	t.Helper()
-	r := secureRequest(http.MethodGet, "/login?error="+url.QueryEscape(code), nil)
-	rr := httptest.NewRecorder()
-	s.loginPage(rr, r)
-	var alerts []string
-	first := true
-	for part := range strings.SplitSeq(rr.Body.String(), `role="alert">`) {
-		if first {
-			first = false
-			continue
+// The sign-in handlers reach those notices through their real refusal paths.
+func TestSignInRefusalPaths(t *testing.T) {
+	post := func(s *Service, path, form string, withCSRF bool) *http.Request {
+		const token = "abcdefghijklmnopqrstuvwxyz0123456789"
+		if withCSRF {
+			form += "&csrf=" + token
 		}
-		alerts = append(alerts, strings.SplitN(part, "</p>", 2)[0])
+		r := httptest.NewRequest(http.MethodPost, s.origin+path, strings.NewReader(form))
+		r.Host, r.TLS = "meter.example", &tls.ConnectionState{}
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", s.origin)
+		if withCSRF {
+			r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+		}
+		return r
 	}
-	return alerts
-}
-
-func TestLoginPageRendersEachNoticeDistinctly(t *testing.T) {
-	s := testService(t)
-	seen := map[string]string{}
-	for _, code := range []string{"", "failed", "provider", "busy", "stale", "throttled", "password"} {
-		alerts := loginAlerts(t, s, code)
-		if code == "" {
-			if len(alerts) != 0 {
-				t.Fatalf("clean login page rendered alerts: %q", alerts)
+	for _, tc := range []struct {
+		name    string
+		service func(*testing.T) *Service
+		prepare func(*Service)
+		request func(*Service) *http.Request
+		handler func(*Service) http.HandlerFunc
+		want    notice
+	}{
+		{"wrong password", testService, nil,
+			func(s *Service) *http.Request { return post(s, "/auth/password", "password=wrong", true) },
+			func(s *Service) http.HandlerFunc { return s.passwordLogin }, noticePassword},
+		{"per-address budget spent", testService, func(s *Service) {
+			for range maxAddressAttempts {
+				s.allowAttempt(post(s, "/auth/password", "", false))
 			}
-			continue
+		}, func(s *Service) *http.Request { return post(s, "/auth/password", "password=secret", true) },
+			func(s *Service) http.HandlerFunc { return s.passwordLogin }, noticeThrottled},
+		{"verifier saturated", testService, func(s *Service) {
+			for range cap(s.argon) {
+				s.argon <- struct{}{}
+			}
+		}, func(s *Service) *http.Request { return post(s, "/auth/password", "password=secret", true) },
+			func(s *Service) http.HandlerFunc { return s.passwordLogin }, noticeBusy},
+		{"OIDC start without a provider", testService, nil,
+			func(s *Service) *http.Request { return post(s, "/auth/oidc/start", "csrf=x", false) },
+			func(s *Service) http.HandlerFunc { return s.oidcStart }, noticeProvider},
+		{"OIDC start with a bad form token", func(t *testing.T) *Service { return newFakeOIDC(t).service(t) }, nil,
+			func(s *Service) *http.Request { return post(s, "/auth/oidc/start", "csrf=nope", false) },
+			func(s *Service) http.HandlerFunc { return s.oidcStart }, noticeStale},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := tc.service(t)
+			if tc.prepare != nil {
+				tc.prepare(s)
+			}
+			rr := httptest.NewRecorder()
+			tc.handler(s)(rr, tc.request(s))
+			location, _ := url.Parse(rr.Header().Get("Location"))
+			if rr.Code != http.StatusSeeOther || location.Query().Get("error") != string(tc.want) {
+				t.Fatalf("status %d redirecting to %q, want 303 with error=%s", rr.Code, location, tc.want)
+			}
+		})
+	}
+	t.Run("password sign-in outside password mode", func(t *testing.T) {
+		s := newFakeOIDC(t).service(t)
+		rr := httptest.NewRecorder()
+		s.passwordLogin(rr, post(s, "/auth/password", "password=secret", true))
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("password login in oidc-only mode code=%d, want 404", rr.Code)
 		}
-		if len(alerts) != 1 {
-			t.Fatalf("error=%q rendered %d alerts, want 1", code, len(alerts))
+	})
+}
+
+// Each known notice renders its own alert; anything else collapses to the generic one.
+func TestLoginPageRendersOnlyKnownNotices(t *testing.T) {
+	s := testService(t)
+	alerts := func(code string) []string {
+		rr := httptest.NewRecorder()
+		s.loginPage(rr, secureRequest(http.MethodGet, "/login?error="+url.QueryEscape(code), nil))
+		parts := strings.Split(rr.Body.String(), `role="alert">`)[1:]
+		for i, part := range parts {
+			parts[i], _, _ = strings.Cut(part, "</p>")
 		}
-		if prior, ok := seen[alerts[0]]; ok {
+		return parts
+	}
+	if got := alerts(""); len(got) != 0 {
+		t.Fatalf("clean login page rendered alerts: %q", got)
+	}
+	seen := map[string]string{}
+	for _, code := range []string{"failed", "provider", "busy", "stale", "throttled", "password"} {
+		got := alerts(code)
+		if len(got) != 1 {
+			t.Fatalf("error=%q rendered %d alerts, want 1", code, len(got))
+		}
+		if prior, ok := seen[got[0]]; ok {
 			t.Fatalf("error=%q renders identically to error=%q", code, prior)
 		}
-		seen[alerts[0]] = code
+		seen[got[0]] = code
 	}
-}
-
-func TestUnknownNoticeCodeCollapsesToGeneric(t *testing.T) {
-	s := testService(t)
-	generic := loginAlerts(t, s, "failed")
+	generic := alerts("failed")
 	for _, code := range []string{"1", "provider ", "PROVIDER", "<img src=x>", "busy;drop"} {
-		got := loginAlerts(t, s, code)
-		if len(got) != len(generic) || got[0] != generic[0] {
+		if got := alerts(code); len(got) != 1 || got[0] != generic[0] {
 			t.Fatalf("error=%q rendered %q, want the generic notice %q", code, got, generic)
 		}
 	}

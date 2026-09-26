@@ -15,6 +15,7 @@ import (
 )
 
 func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Download: true}
@@ -33,8 +34,11 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 	if !selected.FreshFor(cfg) {
 		t.Fatal("fresh selection rejected")
 	}
-	changed := []wire.ServerEntry{{ID: "b", URL: "https://previous.example", Name: "B"}}
-	if _, err = prepareRun(t.Context(), cfg, changed, nil); err == nil || !strings.Contains(err.Error(), "changed origin") {
+	moved := *selected
+	moved.Servers = []PreparedServer{{Server: wire.ServerEntry{ID: "b", URL: "https://previous.example"},
+		Connection: &PreparedConnection{}}}
+	if _, err = prepareRun(t.Context(), cfg, &moved, nil); err == nil ||
+		!strings.Contains(err.Error(), "changed origin") {
 		t.Fatalf("replaced identity accepted: %v", err)
 	}
 	cfg.ServerIDs = []string{"removed"}
@@ -55,6 +59,7 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 }
 
 func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
+	t.Parallel()
 	entered, left := make(chan struct{}), make(chan struct{})
 	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(entered)
@@ -63,7 +68,13 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 	}))
 	defer remote.Close()
 	a := coordinatedFixture(t, "a")
-	a.catalog = wire.ServerCatalog{DefaultSelection: []string{"slow"}, Servers: []wire.ServerEntry{{ID: "self", URL: ".", Name: "A"}, {ID: "slow", URL: remote.URL, Name: "Slow"}}}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"slow"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "slow", URL: remote.URL, Name: "Slow"},
+		},
+	}
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Download: true}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -89,12 +100,40 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 	}))
 	defer redirect.Close()
 	cfg.BaseURL = redirect.URL
-	if _, err := prepareRun(t.Context(), cfg, nil, nil); err == nil {
-		t.Fatal("catalogue redirect changed operator")
+	reads := a.catalogReads.Load()
+	if _, err := prepareRun(t.Context(), cfg, nil, nil); err == nil || a.catalogReads.Load() != reads {
+		t.Fatalf("catalogue redirect reached another operator: %v", err)
+	}
+}
+
+// Each selected server is prepared with its own grant, never the catalogue's or a peer's.
+func TestPreparedServersCarryOnlyTheirOwnGrant(t *testing.T) {
+	t.Parallel()
+	a := coordinatedFixture(t, "a")
+	grants := map[string]string{"https://127.0.0.1:1": "grant-b", "https://127.0.0.1:2": "grant-c"}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"self", "b", "c"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "b", URL: "https://127.0.0.1:1", Name: "B"},
+			{ID: "c", URL: "https://127.0.0.1:2", Name: "C"},
+		},
+	}
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Download: true}
+	prepared, _ := prepareRun(t.Context(), cfg, nil, grants)
+	if prepared == nil || len(prepared.Servers) != 3 {
+		t.Fatalf("prepared %+v, want all three selected servers", prepared)
+	}
+	for _, server := range prepared.Servers {
+		if got := server.credential.token; got != grants[server.Server.URL] {
+			t.Errorf("%s prepared with grant %q, want %q", server.Server.ID, got, grants[server.Server.URL])
+		}
 	}
 }
 
 func TestNativeFourParticipantsAndCancellation(t *testing.T) {
+	t.Parallel()
 	fixtures := []*serverFixture{}
 	for i := range 4 {
 		fixtures = append(fixtures, coordinatedFixture(t, fmt.Sprint(i)))
@@ -120,32 +159,41 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 	defer cancel()
 	var details *RunDetails
 	doneCount := 0
-	err = RunSelection(ctx, cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Phase == StageMeasuring {
-			time.AfterFunc(time.Second, cancel)
+	err = runSelected(ctx, cfg, prepared, func(e Event) {
+		if e.Kind == EventThroughput {
+			cancel()
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 		if e.Kind == EventDone {
 			doneCount++
 		}
 	})
-	if !errors.Is(err, context.Canceled) || doneCount != 1 || details == nil || len(details.Servers) != 4 || details.Outcome != "incomplete" {
+	if !errors.Is(err, context.Canceled) ||
+		doneCount != 1 ||
+		details == nil ||
+		len(details.Servers) != 4 ||
+		details.Outcome != OutcomeStopped {
 		t.Fatalf("cancelled result: %v %+v done=%d", err, details, doneCount)
 	}
-	deadline := time.Now().Add(time.Second)
 	for _, f := range fixtures {
-		for f.active.Load() > 0 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		if f.active.Load() > 0 {
-			t.Fatal("participant request survived cancellation")
+		released := make(chan struct{})
+		go func() {
+			f.handlers.Wait()
+			f.conns.Wait()
+			close(released)
+		}()
+		select {
+		case <-released:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a participant request or connection survived cancellation")
 		}
 	}
 }
 
 func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Latency: true, Upload: true}
@@ -153,18 +201,57 @@ func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var details *RunDetails
 	var upload Result
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == StageFinished {
+	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
+		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == PhaseFinished {
 			a.checkpointFailed.Store(true)
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 		if e.Kind == EventResult && e.ServerID == "" && e.Direction == Up {
 			upload = *e.Result
 		}
 	})
-	if err != nil || upload.Unavailable || upload.MeanBps <= 0 || details == nil || !slices.Equal(details.Participants, []string{"b"}) || len(details.Failures) != 1 {
+	if err != nil ||
+		upload.Unavailable ||
+		upload.MeanBps <= 0 ||
+		details == nil ||
+		!slices.Equal(details.Participants, []string{"b"}) ||
+		len(details.Failures) != 1 {
 		t.Fatalf("later preparation discarded healthy server: %v %+v %+v", err, upload, details)
+	}
+}
+
+func TestAServerThatCannotPrepareIsDroppedWhileAnotherSurvives(t *testing.T) {
+	t.Parallel()
+	for _, before := range []string{"run", "stage"} {
+		t.Run(before, func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Upload: true}
+			cfg.UploadDuration = time.Second
+			if before == "run" {
+				b.server.Close()
+			} else {
+				b.checkpointFailed.Store(true)
+			}
+			a.catalog = wire.ServerCatalog{DefaultSelection: []string{"self", "b"}, Servers: []wire.ServerEntry{
+				{ID: "self", URL: ".", Name: "A"}, {ID: "b", URL: b.server.URL, Name: "B"}}}
+			var details *RunDetails
+			var upload Result
+			err := Run(t.Context(), cfg, func(e Event) {
+				if e.Kind == EventDone {
+					details = e.Servers
+				}
+				if e.Kind == EventResult && e.Direction == Up {
+					upload = *e.Result
+				}
+			})
+			if err != nil || details == nil || details.Outcome != OutcomePartial || upload.Unavailable ||
+				!slices.Equal(details.Participants, []string{"self"}) || len(details.Failures) != 1 {
+				t.Fatalf("a failing server before measurement ended the run: %v %+v %+v", err, details, upload)
+			}
+		})
 	}
 }

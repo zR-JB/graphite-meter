@@ -1,33 +1,31 @@
 import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecord } from "./types";
-import {
-  InvalidHistoryRecordError,
-  StaleHistoryGenerationError,
-} from "./errors";
-import {
-  currentHistoryGeneration,
-  isHistoryGeneration,
-  newRepairHistoryGeneration,
-  nextHistoryGeneration,
-  restoreHistoryGeneration,
-} from "./changes";
 import { HISTORY_DB } from "./dbSchema";
 
-type HistoryListResult = {
-  records: HistoryRecord[];
-  malformedCount: number;
-};
+const CHANNEL = "graphite-meter-history";
 
-type HistoryEntryResult =
-  | { status: "ready"; record: HistoryRecord }
-  | { status: "missing" | "malformed" };
-
-export function retainNewest(
-  records: readonly HistoryRecord[],
-): HistoryRecord[] {
-  return [...records]
-    .sort((a, b) => b.completedAt - a.completedAt || b.id.localeCompare(a.id))
-    .slice(0, HISTORY_LIMIT);
+/** Every view in every tab reloads after a history change, except the view that made it. */
+export function onHistoryChanged(listener: () => void, self = ""): () => void {
+  if (typeof BroadcastChannel === "undefined") return () => {};
+  const channel = new BroadcastChannel(CHANNEL);
+  channel.onmessage = (event) => {
+    if (!self || event.data !== self) listener();
+  };
+  return () => channel.close();
 }
+
+export function announceHistoryChanged(source = ""): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  const channel = new BroadcastChannel(CHANNEL);
+  channel.postMessage(source);
+  channel.close();
+}
+
+const clearCount = (row: unknown): number => {
+  const value = (row as { value?: unknown } | undefined)?.value;
+  return Number.isSafeInteger(value) && (value as number) > 0
+    ? (value as number)
+    : 0;
+};
 
 function request<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -36,16 +34,17 @@ function request<T>(request: IDBRequest<T>): Promise<T> {
       reject(request.error ?? new Error("IndexedDB request failed"));
   });
 }
-function transactionDone(transaction: IDBTransaction): Promise<void> {
+
+function done(transaction: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () =>
+    const fail = () =>
       reject(transaction.error ?? new Error("IndexedDB transaction failed"));
-    transaction.onabort = () =>
-      reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = transaction.onabort = fail;
   });
 }
-function openHistoryDB(): Promise<IDBDatabase> {
+
+function open(): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined")
     return Promise.reject(new Error("IndexedDB unavailable"));
   return new Promise((resolve, reject) => {
@@ -53,22 +52,18 @@ function openHistoryDB(): Promise<IDBDatabase> {
     opening.onupgradeneeded = (event) => {
       if (event.oldVersion !== 0) {
         opening.transaction!.abort();
-        reject(
+        return reject(
           new Error(
             "Unsupported history database version. Saved data has not been changed.",
           ),
         );
-        return;
       }
       const db = opening.result;
-      const store = db.createObjectStore(HISTORY_DB.resultsStore, {
+      db.createObjectStore(HISTORY_DB.resultsStore, {
         keyPath: HISTORY_DB.resultKeyPath,
+      }).createIndex(HISTORY_DB.completedAtIndex, HISTORY_DB.completedAtIndex, {
+        unique: false,
       });
-      store.createIndex(
-        HISTORY_DB.completedAtIndex,
-        HISTORY_DB.completedAtIndex,
-        { unique: false },
-      );
       db.createObjectStore(HISTORY_DB.metadataStore, {
         keyPath: HISTORY_DB.metadataKeyPath,
       });
@@ -82,139 +77,110 @@ function openHistoryDB(): Promise<IDBDatabase> {
     opening.onblocked = () => reject(new Error("IndexedDB open blocked"));
   });
 }
+
 export class HistoryRepository {
-  #db: IDBDatabase | null = null;
-  async db(): Promise<IDBDatabase> {
-    return (this.#db ??= await openHistoryDB());
-  }
-  async put(
-    record: HistoryRecord,
-    generation = currentHistoryGeneration(),
-  ): Promise<void> {
-    if (!isHistoryRecord(record)) throw new InvalidHistoryRecordError();
-    const db = await this.db();
-    const tx = db.transaction(
-      [HISTORY_DB.resultsStore, HISTORY_DB.metadataStore],
-      "readwrite",
-    );
-    const store = tx.objectStore(HISTORY_DB.resultsStore);
-    const metadata = tx.objectStore(HISTORY_DB.metadataStore);
-    const generationRequest = metadata.get(HISTORY_DB.generationKey);
-    let staleGeneration: string | undefined;
-    generationRequest.onsuccess = () => {
-      const durableGeneration = generationRequest.result?.value;
-      if (generationRequest.result && !isHistoryGeneration(durableGeneration)) {
-        staleGeneration = newRepairHistoryGeneration();
-        metadata.put({
-          key: HISTORY_DB.generationKey,
-          value: staleGeneration,
-        });
-        return;
-      }
-      if (generationRequest.result && durableGeneration !== generation) {
-        staleGeneration = durableGeneration;
-        return;
-      }
-      if (!generationRequest.result)
-        metadata.put({ key: HISTORY_DB.generationKey, value: generation });
-      store.put(record);
-      const keysRequest = store.index(HISTORY_DB.completedAtIndex).getAllKeys();
-      keysRequest.onsuccess = () => {
-        const keys = keysRequest.result;
-        if (keys.length > HISTORY_LIMIT)
-          for (const key of keys.slice(0, keys.length - HISTORY_LIMIT))
-            store.delete(key);
-      };
-    };
-    await transactionDone(tx);
-    if (staleGeneration !== undefined) {
-      // Do not replace a newer clear initiated while this transaction settled.
-      if (currentHistoryGeneration() === generation)
-        restoreHistoryGeneration(staleGeneration);
-      throw new StaleHistoryGenerationError(staleGeneration);
-    }
-  }
-  async listWithDiagnostics(): Promise<HistoryListResult> {
-    const db = await this.db();
-    const tx = db.transaction(HISTORY_DB.resultsStore, "readonly");
-    const store = tx.objectStore(HISTORY_DB.resultsStore);
-    const rawCount = request(store.count());
-    let indexedCount = 0;
-    let malformedIndexedCount = 0;
-    const records: HistoryRecord[] = [];
-    const scan = new Promise<void>((resolve, reject) => {
-      const cursorRequest = store
-        .index(HISTORY_DB.completedAtIndex)
-        .openCursor(null, "prev");
-      cursorRequest.onerror = () =>
-        reject(
-          cursorRequest.error ?? new Error("IndexedDB cursor request failed"),
-        );
-      cursorRequest.onsuccess = () => {
-        const cursor = cursorRequest.result;
-        if (!cursor) {
-          resolve();
-          return;
-        }
-        indexedCount += 1;
-        if (isHistoryRecord(cursor.value)) {
-          if (records.length < HISTORY_LIMIT) records.push(cursor.value);
-        } else {
-          malformedIndexedCount += 1;
-        }
-        cursor.continue();
-      };
+  #db: Promise<IDBDatabase> | null = null;
+
+  #transaction(mode: IDBTransactionMode) {
+    // A refused open is retried by the next request.
+    this.#db ??= open().catch((error) => {
+      this.#db = null;
+      throw error;
     });
-    const [totalCount] = await Promise.all([rawCount, scan]);
+    return this.#db.then((db) =>
+      db.transaction([HISTORY_DB.resultsStore, HISTORY_DB.metadataStore], mode),
+    );
+  }
+
+  async clears(): Promise<number> {
+    const tx = await this.#transaction("readonly");
+    const value = await request(
+      tx.objectStore(HISTORY_DB.metadataStore).get(HISTORY_DB.clearsKey),
+    );
+    return clearCount(value);
+  }
+
+  /** Writes a result queued after `clears` clears unless history was cleared since; false when skipped. */
+  async put(record: HistoryRecord, clears: number): Promise<boolean> {
+    const tx = await this.#transaction("readwrite");
+    const results = tx.objectStore(HISTORY_DB.resultsStore);
+    const current = tx
+      .objectStore(HISTORY_DB.metadataStore)
+      .get(HISTORY_DB.clearsKey);
+    let written = false;
+    current.onsuccess = () => {
+      if (clearCount(current.result) > clears) return;
+      written = true;
+      results.put(record);
+      const keys = results.index(HISTORY_DB.completedAtIndex).getAllKeys();
+      keys.onsuccess = () => {
+        for (const key of keys.result.slice(
+          0,
+          Math.max(0, keys.result.length - HISTORY_LIMIT),
+        ))
+          results.delete(key);
+      };
+    };
+    await done(tx);
+    return written;
+  }
+
+  async listWithDiagnostics(): Promise<{
+    records: HistoryRecord[];
+    malformedCount: number;
+  }> {
+    const store = (await this.#transaction("readonly")).objectStore(
+      HISTORY_DB.resultsStore,
+    );
+    const values: unknown[] = await request(
+      store.index(HISTORY_DB.completedAtIndex).getAll(),
+    );
+    const total = await request(store.count());
+    const records = values.filter(isHistoryRecord);
     return {
-      records: retainNewest(records),
-      malformedCount: totalCount - indexedCount + malformedIndexedCount,
+      records: records.reverse().slice(0, HISTORY_LIMIT),
+      malformedCount: total - records.length,
     };
   }
-  async inspect(id: string): Promise<HistoryEntryResult> {
-    const db = await this.db();
+
+  async inspect(
+    id: string,
+  ): Promise<
+    | { status: "ready"; record: HistoryRecord }
+    | { status: "missing" | "malformed" }
+  > {
+    const tx = await this.#transaction("readonly");
     const value = await request(
-      db
-        .transaction(HISTORY_DB.resultsStore, "readonly")
-        .objectStore(HISTORY_DB.resultsStore)
-        .get(id),
+      tx.objectStore(HISTORY_DB.resultsStore).get(id),
     );
     if (value === undefined) return { status: "missing" };
     return isHistoryRecord(value)
       ? { status: "ready", record: value }
       : { status: "malformed" };
   }
+
   async delete(id: string): Promise<void> {
-    const db = await this.db();
-    const tx = db.transaction(HISTORY_DB.resultsStore, "readwrite");
+    const tx = await this.#transaction("readwrite");
     tx.objectStore(HISTORY_DB.resultsStore).delete(id);
-    await transactionDone(tx);
+    await done(tx);
   }
-  /** Clear every raw value, including entries that fail the history schema. */
-  async clear(): Promise<string> {
-    const previousGeneration = currentHistoryGeneration();
-    const generation = nextHistoryGeneration();
-    try {
-      const db = await this.db();
-      const tx = db.transaction(
-        [HISTORY_DB.resultsStore, HISTORY_DB.metadataStore],
-        "readwrite",
-      );
-      tx.objectStore(HISTORY_DB.resultsStore).clear();
-      tx.objectStore(HISTORY_DB.metadataStore).put({
-        key: HISTORY_DB.generationKey,
-        value: generation,
+
+  /** Clears every raw value and counts the clear, independent of the wall clock. */
+  async clear(): Promise<void> {
+    const tx = await this.#transaction("readwrite");
+    const meta = tx.objectStore(HISTORY_DB.metadataStore);
+    tx.objectStore(HISTORY_DB.resultsStore).clear();
+    const current = meta.get(HISTORY_DB.clearsKey);
+    current.onsuccess = () =>
+      meta.put({
+        key: HISTORY_DB.clearsKey,
+        value: clearCount(current.result) + 1,
       });
-      await transactionDone(tx);
-    } catch (error) {
-      restoreHistoryGeneration(previousGeneration);
-      throw error;
-    }
-    return generation;
+    await done(tx);
   }
 
   close(): void {
-    this.#db?.close();
+    void this.#db?.then((db) => db.close()).catch(() => {});
     this.#db = null;
   }
 }

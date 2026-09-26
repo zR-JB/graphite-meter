@@ -1,60 +1,11 @@
-import { test, expect } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { expect, test } from "bun:test";
+import { Glob } from "bun";
 
-// Expressions vetted as build-time SVG markup. An entry asserts the value never carries anything from the network.
-const ALLOWED = new Set([
-  "ICON.bidirectional",
-  "ICON.bolt",
-  "ICON.check",
-  "ICON.close",
-  "ICON.columns",
-  "ICON.contrast",
-  "ICON.download",
-  "ICON.history",
-  "ICON.info",
-  "ICON.more",
-  "ICON.moon",
-  "ICON.ping",
-  "ICON.server",
-  "ICON.settings",
-  "ICON.sun",
-  "ICON.trash",
-  "ICON.upload",
-  "ICON[awayRunIndicator.icon]",
-  "THEME_ICON[store.theme]",
-  // Loop variables below hold ICON.* values from static component tables.
-  "s.icon",
-  "c.icon",
-  "card.icon",
-  "lane.icon",
-  "laneIcons[lane.key]",
-  "columnMeta[column].icon",
-]);
-
-function svelteFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...svelteFiles(full));
-    else if (entry.endsWith(".svelte")) out.push(full);
-  }
-  return out;
-}
-
-test("every {@html} sink renders only a vetted static-icon expression", () => {
-  const offenders: string[] = [];
-  for (const file of svelteFiles(join(import.meta.dir, "components"))) {
-    const source = readFileSync(file, "utf8");
-    for (const match of source.matchAll(/\{@html\s+([^}]+)\}/g)) {
-      const expr = match[1].trim();
-      if (!ALLOWED.has(expr)) offenders.push(`${file}: {@html ${expr}}`);
-    }
-  }
-  expect(
-    offenders,
-    `Unvetted {@html} sink(s). If the expression can only hold trusted ` +
-      `build-time markup, add it to ALLOWED in this file; otherwise it is an ` +
-      `XSS sink: render as text or sanitize.\n${offenders.join("\n")}`,
-  ).toEqual([]);
+test("only Icon.svelte renders raw markup", async () => {
+  const src = `${import.meta.dir}/..`;
+  const sinks: string[] = [];
+  for await (const file of new Glob("**/*.svelte").scan(src))
+    if (/\{@html\s/.test(await Bun.file(`${src}/${file}`).text()))
+      sinks.push(file);
+  expect(sinks).toEqual(["lib/components/Icon.svelte"]);
 });

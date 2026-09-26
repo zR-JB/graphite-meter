@@ -2,7 +2,7 @@
 
 Run through unshare --user --map-root-user --net. No host interface or qdisc is changed.
 The browser control channel stays on unshaped client loopback. Results are written
-outside the checkout; the caller supplies an already built server and pinned Chrome.
+under the temporary directory; the caller supplies an already built server and pinned Chrome.
 """
 
 import json
@@ -11,7 +11,7 @@ from pathlib import Path
 import queue
 import threading
 import subprocess
-import sys
+import tempfile
 import time
 
 
@@ -62,7 +62,7 @@ def browser_processes(parent):
             fields = raw[end + 2:].split()
             processes[int(path.parent.name)] = (int(fields[1]), raw[raw.find("(") + 1:end], int(fields[11]) + int(fields[12]), int(fields[21]) * os.sysconf("SC_PAGE_SIZE"))
         except (OSError, ValueError, IndexError):
-            pass
+            continue  # The process exited while its stat line was read.
     descendants = {parent}
     while True:
         found = {pid for pid, (ppid, *_rest) in processes.items() if ppid in descendants}
@@ -125,11 +125,19 @@ def run_cell(environment, output, profile, count, repeat):
                 process.wait(timeout=5)
 
 
+def output_directory():
+    """GM_MULTI_BENCH_OUTPUT, resolved through links; it must lie inside the temporary directory."""
+    path = os.path.realpath(os.environ["GM_MULTI_BENCH_OUTPUT"])
+    if path.startswith(os.path.join(os.path.realpath(tempfile.gettempdir()), "")):
+        return Path(path)
+    raise RuntimeError("GM_MULTI_BENCH_OUTPUT must be inside the temporary directory")
+
+
 def main():
     mapping = Path("/proc/self/uid_map").read_text().split()
     if os.getuid() != 0 or len(mapping) != 3 or mapping[0] != "0" or mapping[1] == "0" or mapping[2] != "1":
         raise RuntimeError("Run inside a disposable unprivileged user/network namespace")
-    output = Path(os.environ["GM_MULTI_BENCH_OUTPUT"]).resolve()
+    output = output_directory()
     output.mkdir(parents=True, exist_ok=True)
     command("ip", "link", "set", "lo", "up")
     router = namespace()

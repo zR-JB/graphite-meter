@@ -2,8 +2,8 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-The **v0.8.5** browser client, from the completed test to saved results. These captures use a
-simulated deployment and illustrative data throughout; they are not performance benchmarks.
+Browser captures are from v0.8.5 and the terminal capture from v0.8.2, both with simulated data; they predate the
+current UI wording and the Bubble Tea v2 terminal client and are not performance benchmarks.
 
 ## The completed test
 
@@ -21,25 +21,25 @@ visible while you adjust the test; on smaller screens, the same settings open as
 
 ## Make room for both panels
 
-On a wide desktop, keep Settings and Endpoint info open together. Resize each panel to leave the
+On a wide desktop, keep Settings and Details open together. Resize each panel to leave the
 space you want for the meter. Below the docked layout, the most recent panel becomes a flyout. Your saved panel widths
 are kept when you return to a wider window.
 
-<img src="assets/workspace.png" alt="v0.8.5 wide desktop with resizable Settings and Endpoint info docks open together" width="1080">
+<img src="assets/workspace.png" alt="v0.8.5 wide desktop with resizable Settings and Details docks open together" width="1080">
 
 ## Know which path you measured
 
-Endpoint information identifies the server and selected paths. Protocol evidence distinguishes
+Details identify the server and selected paths. Protocol evidence distinguishes
 what the browser observed from what reached the server, which is useful when a proxy sits between them.
 
-<img src="assets/endpoint.png" alt="Endpoint information showing the simulated 40 GbE lab deployment and independent throughput and latency path evidence" width="1080">
+<img src="assets/endpoint.png" alt="Details showing the simulated 40 GbE lab deployment and independent throughput and latency path evidence" width="1080">
 
 ## History on your device
 
 Opt into saving completed summaries, then browse and sort results without replacing the live
 meter. The selected result keeps throughput, latency distributions, and probe evidence together.
-Multi-server runs have separate throughput and latency selectors, while secondary server metadata
-stays under **Servers & run context**.
+Multi-server runs have one **Combined** / per-server selector; secondary evidence sits under
+**Servers & paths**, **Probe accounting**, **Issues** and **Build & environment**.
 
 <img src="assets/history.png" alt="Device-local history with illustrative saved runs and a selected result's measurement details" width="1080">
 
@@ -70,25 +70,16 @@ latency percentiles, and probe timeouts.
 
 <img src="assets/tui.png" alt="v0.8.2 native terminal client with simulated download, upload, and latency results" width="1080">
 
-The retained v0.8.2 capture renders the native view's ANSI output with illustrative results and the
-client version set to `0.8.2`. It uses the shipped layout and colors; the terminal frame is simulated.
+The v0.8.2 capture renders that release's ANSI output with illustrative results in a simulated terminal frame.
 [Download and run the native client](../README.md#native-terminal-client).
 
 ## Capture details
 
-- Production UI built with `VERSION=0.8.5`, `GM_CLIENT_BUILD_PROFILE=prod`, and the explicitly
-  enabled dummy backend. The application footer reads `prod v0.8.5`.
-- Source UI: v0.8.5 responsive workspace and history refinement. Chromium engine: `152.0.7977.82`.
-- Simulated server: **Graphite Meter demo**, **40 GbE lab · simulated**, using a reserved example
-  hostname and documentation IP address.
-- Three stages only: idle latency, download, and upload. Synthetic receiver observations include
-  roughly half of transfer ramp-up remaining after a 600 ms warmup and small correlated changes;
-  seeded randomized latency has distinct,
-  skewed idle and loaded populations with occasional longer replies.
-  The normal runner computes the displayed results. History includes illustrative saved summaries.
-- Desktop viewports are 1600 × 1000; the phone viewport is 430 × 932. Both are captured
-  at double pixel density. The README hero composes
-  these captures with a simulated device frame. The UI itself is not rearranged or retouched.
+| Item | Value |
+| --- | --- |
+| Existing captures | Production UI `VERSION=0.8.5` (footer `prod v0.8.5`), Chromium `152.0.7977.82`, the since-removed simulated backend. |
+| Viewports | Desktop 1600 × 1000, phone 430 × 932, both at 2× pixel density; the README hero adds a device frame only. |
+| Stages | Idle latency, download and upload with a 600 ms warmup; history holds illustrative summaries. |
+| Next captures | Real local servers (for example the `mise run e2e` fleet), same viewports, stages and framing. |
 
-The ordinary production build excludes the dummy backend. To run your own measurements, follow
-[deployment and configuration](DEPLOYMENT.md).
+To run your own measurements, follow [deployment and configuration](DEPLOYMENT.md).

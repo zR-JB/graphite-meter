@@ -1,13 +1,9 @@
-# Upload measurement protocol (0.8)
+# Upload measurement protocol
 
-Every upload belongs to a server-minted, owner-bound measurement session. Clients
-must update alongside the server for 0.7: HTTP uploads without an ID are rejected,
-and counter records always contain explicit `bytes` and `nanos` fields.
-
-Read this when implementing receiver-authoritative upload accounting. The [discovery boundary](discovery.md)
-defines control-response validation; the [wire protocol](wire.md#webtransport-routes) defines
-WebTransport routing. [Measurement definitions](../docs/MEASUREMENTS.md#throughput) distinguish
-receiver windows from presentation.
+Every upload belongs to a server-minted, owner-bound measurement session: uploads without an ID are
+rejected, and counter records always carry explicit `bytes` and `nanos`. See also the
+[discovery boundary](discovery.md), [WebTransport routes](wire.md#webtransport-routes) and
+[throughput definitions](../docs/MEASUREMENTS.md#throughput).
 
 ## Session and data ownership
 
@@ -19,6 +15,12 @@ receiver windows from presentation.
    owner before reading the body. Missing, forged, expired, or foreign IDs are
    refused without counting data. A completed POST replies with that POST's
    byte count; this response does not replace the aggregate progress feed.
+   A POST that sends nothing for the [idle bound](wire.md#lane-endings) is
+   answered `408` with `X-Graphite-Upload-Refusal: idle`; one whose sign-in or
+   grant ends stops reading at once and is answered `403` with
+   `Graphite-Meter-Auth: required` and `X-Graphite-Upload-Refusal: revoked`; one
+   that reaches the operation lifetime is closed without an answer. Its bytes
+   count in every case.
 4. `DELETE /upload/progress?id=...` finalizes the aggregate. The progress feed
    emits `complete` after active data lanes have drained, then closes.
 
@@ -40,7 +42,9 @@ endpoint work.
 Reconnecting retains the same ID and receiver counters. A replacement progress
 reader supersedes its predecessor. Watching a feed does not keep an idle upload
 alive; existing idle expiry, finalization retention, and capacity limits remain
-in force. A refused WebTransport lane can be reported on another control stream.
+in force. A feed whose receiver expires, or is displaced at the capacity limit
+before its first byte, ends with an `invalid` error record, and that ID stays
+refused until its token would have expired. A refused WebTransport lane can be reported on another control stream.
 See [upload refusal codes](uploadrefusals.txt) for the shared classifications.
 
 ## Progress records

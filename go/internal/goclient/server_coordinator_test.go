@@ -5,12 +5,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
@@ -20,7 +22,18 @@ import (
 
 type fixtureHTTP func(http.ResponseWriter, *http.Request) error
 
-func (f fixtureHTTP) HandleHTTP(w http.ResponseWriter, r *http.Request) error { return f(w, r) }
+func (f fixtureHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) { _ = f(w, r) }
+
+// fixtureRoutes mounts each fixture handler on its exact path.
+type fixtureRoutes map[string]http.Handler
+
+func (routes fixtureRoutes) RegisterHTTP(path string, h http.Handler) { routes[path] = h }
+
+func (routes fixtureRoutes) Mount(_ context.Context, mux *http.ServeMux) {
+	for path, h := range routes {
+		mux.Handle(path, h)
+	}
+}
 
 type pacedBody struct {
 	io.ReadCloser
@@ -47,30 +60,40 @@ type serverFixture struct {
 	catalog              wire.ServerCatalog
 	failed               atomic.Bool
 	checkpointFailed     atomic.Bool
+	checkpointRefusals   atomic.Int32
 	checkpointDelayNanos atomic.Int64
-	active               atomic.Int32
+	handlers, conns      sync.WaitGroup
 	catalogReads         atomic.Int32
 }
 
 func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	t.Helper()
 	f := &serverFixture{}
-	store := endpoint.NewUploadStore()
-	registry := endpoint.NewRegistry()
-	registry.RegisterHTTP(route.UploadSession, endpoint.NewUploadSession(store))
-	registry.RegisterHTTP(route.UploadProgress, endpoint.NewUploadProgress(store))
-	registry.RegisterHTTP(route.UploadCheckpoint, endpoint.NewUploadCheckpoint(store, nil))
-	registry.RegisterHTTP(route.Upload, endpoint.NewUpload(nil, store))
+	upload := endpoint.NewUpload(nil, nil)
+	registry := fixtureRoutes{}
+	registry.RegisterHTTP(route.UploadSession, http.HandlerFunc(upload.ServeSession))
+	registry.RegisterHTTP(route.UploadProgress, http.HandlerFunc(upload.ServeProgress))
+	registry.RegisterHTTP(route.UploadCheckpoint, http.HandlerFunc(upload.ServeCheckpoint))
+	registry.RegisterHTTP(route.Upload, upload.Handler(wire.IdleBound))
 	registry.RegisterHTTP(route.Preflight, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: name}, EngineVersion: "test", Generation: name, Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: []wire.ThroughputTarget{{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"}}, LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}}}})
+		return json.MarshalWrite(w, wire.Preflight{
+			Server:        wire.ServerInfo{Name: name},
+			EngineVersion: "test",
+			Generation:    name,
+			Capabilities: wire.Capabilities{
+				UploadCheckpoint: true,
+				ThroughputTargets: []wire.ThroughputTarget{
+					{Origin: ".", Transport: wire.TransportFetchStream, Protocol: "http1"},
+				},
+				LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
+			},
+		})
 	}))
 	registry.RegisterHTTP(route.Servers, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		f.catalogReads.Add(1)
 		return json.MarshalWrite(w, f.catalog)
 	}))
-	registry.RegisterHTTP(route.Probe, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Probe{ClientIP: "127.0.0.1", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "http/1.1"})
-	}))
+	registry.RegisterHTTP(route.Probe, http.HandlerFunc(writeProbe))
 	registry.RegisterHTTP(route.Download, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		block := make([]byte, 8192)
 		timer := time.NewTicker(time.Millisecond)
@@ -94,10 +117,10 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	}))
 	mux := http.NewServeMux()
 	registry.Mount(t.Context(), mux)
-	mux.Handle(route.Ping, echoPingHandler())
-	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.active.Add(1)
-		defer f.active.Add(-1)
+	mux.Handle(route.Ping, pingHandler(answerAll, 0))
+	f.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.handlers.Add(1)
+		defer f.handlers.Done()
 		if r.URL.Path == route.UploadCheckpoint {
 			if delay := time.Duration(f.checkpointDelayNanos.Swap(0)); delay > 0 {
 				timer := time.NewTimer(delay)
@@ -109,7 +132,8 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 				}
 			}
 		}
-		if r.URL.Path == route.UploadCheckpoint && f.checkpointFailed.Load() {
+		refused := func() bool { return f.checkpointFailed.Load() || f.checkpointRefusals.Add(-1) >= 0 }
+		if r.URL.Path == route.UploadCheckpoint && refused() {
 			http.Error(w, "fixture checkpoint unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -122,13 +146,28 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 		}
 		mux.ServeHTTP(w, r)
 	}))
+	f.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			f.conns.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			f.conns.Done()
+		}
+	}
+	f.server.Start()
 	f.catalog = wire.SingletonCatalog()
 	t.Cleanup(f.server.Close)
 	return f
 }
 func prepareFixtureRun(t *testing.T, cfg Config, a, b *serverFixture) *PreparedRun {
 	t.Helper()
-	a.catalog = wire.ServerCatalog{DefaultSelection: []string{"self", "b"}, Servers: []wire.ServerEntry{{ID: "self", URL: ".", Name: "A"}, {ID: "b", URL: b.server.URL, Name: "B"}}}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"self", "b"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "b", URL: b.server.URL, Name: "B"},
+		},
+	}
 	prepared, err := prepareRun(t.Context(), cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -148,21 +187,21 @@ func fixtureConfig(a *serverFixture) Config {
 	cfg.BidirectionalDuration = 1400 * time.Millisecond
 	cfg.TransferStreams = TransferStreamPolicy{Forced: 1}
 	cfg.LoadedLatency = false
-	cfg.UploadBytesPerStream = 128 * 1024
 	return cfg
 }
 func TestNativeCoordinatorRealBidirectional(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Bidirectional: true}
 	cfg.LoadedLatency = true
-	cfg.PingInterval = 25 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var mu sync.Mutex
-	var phases []StagePhase
+	var phases []Phase
 	var results []Result
 	var details *RunDetails
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
+	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch e.Kind {
@@ -179,7 +218,7 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(phases, []StagePhase{StagePreparing, StageWarmup, StageMeasuring, StageFinished}) {
+	if !slices.Equal(phases, []Phase{PhasePreparing, PhaseWarmup, PhaseMeasuring, PhaseFinished}) {
 		t.Fatalf("more than one stage schedule: %v", phases)
 	}
 	if len(results) != 2 || details == nil || len(details.Participants) != 2 {
@@ -191,61 +230,67 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 		}
 	}
 	for _, server := range details.Servers {
-		if !slices.ContainsFunc(server.Results, func(r Result) bool { return r.Direction == "" && r.Latency.Count > 0 }) {
+		measured := func(r Result) bool { return r.Direction == "" && r.Latency.Count > 0 }
+		if !slices.ContainsFunc(server.Results, measured) {
 			t.Fatalf("no independent loaded latency: %+v", server)
+		}
+		for _, own := range server.Results {
+			if own.Direction != "" && (own.PeakBps <= 0 || own.Samples == 0) {
+				t.Fatalf("per-server result lost its peak or samples: %+v", own)
+			}
 		}
 	}
 	window := details.Intervals[len(details.Intervals)-1].Window
 	if len(window.Down) != 2 || len(window.Up) != 2 {
 		t.Fatalf("component windows lost: %+v", window)
 	}
-	for _, component := range window.Up {
-		if component.Clock != "receiver" || component.StartReceiver == nil || component.EndReceiver == nil {
-			t.Fatalf("receiver evidence lost: %+v", component)
-		}
-	}
 }
 
 func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *testing.T) {
+	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 	a.checkpointDelayNanos.Store(int64(900 * time.Millisecond))
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Bidirectional: true}
 	cfg.BidirectionalDuration = time.Second
 	cfg.LoadedLatency = true
-	cfg.PingInterval = 25 * time.Millisecond
+	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var measuredAt, finishedAt time.Time
 	var measureEventLag time.Duration
 	var details *RunDetails
 	var mu sync.Mutex
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
+	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
-		if e.Kind == EventStage && e.Phase == StageMeasuring {
+		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 			measuredAt = time.Now()
 			measureEventLag = measuredAt.Sub(e.At)
 		}
-		if e.Kind == EventStage && e.Phase == StageFinished {
+		if e.Kind == EventStage && e.Phase == PhaseFinished {
 			finishedAt = time.Now()
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if measuredAt.IsZero() || measureEventLag > 500*time.Millisecond || finishedAt.Sub(measuredAt) < 900*time.Millisecond {
-		t.Fatalf("checkpoint wait consumed the client window: event lag=%v measured duration=%v", measureEventLag, finishedAt.Sub(measuredAt))
+	if measuredAt.IsZero() ||
+		measureEventLag > 500*time.Millisecond ||
+		finishedAt.Sub(measuredAt) < 900*time.Millisecond {
+		t.Fatalf(
+			"checkpoint wait consumed the client window: event lag=%v measured duration=%v",
+			measureEventLag,
+			finishedAt.Sub(measuredAt),
+		)
 	}
 	if details == nil || len(details.Intervals) != 1 || details.Intervals[0].Window == nil {
 		t.Fatalf("missing receiver window: %+v", details)
 	}
-	for _, component := range details.Intervals[0].Window.Up {
-		if component.StartReceiver == nil || component.StartReceiver.ReceivedAt > details.Intervals[0].Start {
-			t.Fatalf("initial receiver bracket was retimed: %+v", component)
-		}
+	if len(details.Intervals[0].Window.Up) != 2 {
+		t.Fatalf("receiver windows missing: %+v", details.Intervals[0].Window)
 	}
 	for _, server := range details.Servers {
 		if !slices.ContainsFunc(server.Results, func(r Result) bool {
@@ -256,39 +301,36 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	}
 }
 func TestNativeCoordinatorDropout(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name      string
-		at        time.Duration
+		after     int
 		all       bool
 		available bool
-	}{{"survivor", 300 * time.Millisecond, false, true}, {"late", 950 * time.Millisecond, false, false}, {"all", 300 * time.Millisecond, true, false}} {
+	}{{"survivor", 1, false, true}, {"late", 4, false, true}, {"all", 1, true, false}} {
 		t.Run(scenario.name, func(t *testing.T) {
+			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 			cfg := fixtureConfig(a)
 			cfg.Stages = StageSet{Download: true}
 			prepared := prepareFixtureRun(t, cfg, a, b)
 			var details *RunDetails
 			var result Result
-			var timer *time.Timer
-			err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
-				if e.Kind == EventStage && e.Phase == StageMeasuring {
-					timer = time.AfterFunc(scenario.at, func() {
+			samples := 0
+			err := runSelected(t.Context(), cfg, prepared, func(e Event) {
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable {
+					if samples++; samples == scenario.after {
 						a.failed.Store(true)
-						if scenario.all {
-							b.failed.Store(true)
-						}
-					})
+						b.failed.Store(scenario.all)
+					}
 				}
-				if e.Kind == EventServers {
+				if e.Servers != nil {
 					details = e.Servers
 				}
 				if e.Kind == EventResult && e.ServerID == "" {
 					result = *e.Result
 				}
 			})
-			if timer != nil {
-				timer.Stop()
-			}
 			if scenario.all && !errors.Is(err, errNoSurvivors) || !scenario.all && err != nil {
 				t.Fatalf("outcome=%v", err)
 			}
@@ -298,9 +340,115 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			if details == nil || len(details.Failures) == 0 || slices.Contains(details.Participants, "self") {
 				t.Fatalf("failed participant retained: %+v", details)
 			}
-			if scenario.all && details.Outcome != "incomplete" {
+			if scenario.all && details.Outcome != OutcomeIncomplete {
 				t.Fatalf("all failed outcome=%q", details.Outcome)
 			}
+			left := map[string]error{}
+			for _, f := range details.Failures {
+				left[f.ServerID] = f.Err
+			}
+			for _, server := range details.Servers {
+				own, cause := server.Results[0], left[server.Server.ID]
+				if cause != nil && own.Err != cause || cause == nil && own.Unavailable != result.Unavailable {
+					t.Errorf("%s kept a result its interval does not support: %+v", server.Server.ID, own)
+				}
+			}
 		})
+	}
+}
+
+func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
+	t.Parallel()
+	a := coordinatedFixture(t, "a")
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Download: true, Upload: true}
+	cfg.DownloadDuration, cfg.UploadDuration = time.Second, time.Second
+	samples := 0
+	var details *RunDetails
+	results := map[Stage]Result{}
+	err := Run(t.Context(), cfg, func(e Event) {
+		switch {
+		case e.Kind == EventThroughput && e.Stage == StageDownload:
+			if samples++; samples == 2 {
+				a.failed.Store(true)
+			}
+		case e.Kind == EventStage && e.Stage == StageDownload && e.Phase == PhaseFinished:
+			a.failed.Store(false)
+		case e.Kind == EventResult:
+			results[e.Stage] = *e.Result
+		case e.Kind == EventDone:
+			details = e.Servers
+		}
+	})
+	if err != nil || details == nil || details.Outcome != OutcomeIncomplete || len(details.Failures) != 1 ||
+		!results[StageDownload].Unavailable || results[StageUpload].Unavailable {
+		t.Fatalf("a sole server's failed stage ended the run: %v %+v %+v", err, details, results)
+	}
+}
+
+func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
+	t.Parallel()
+	a := coordinatedFixture(t, "a")
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Upload: true}
+	cfg.UploadDuration = time.Second
+	prepared, err := prepareRun(t.Context(), cfg, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upload Result
+	samples := 0
+	err = runSelected(t.Context(), cfg, prepared, func(e Event) {
+		switch {
+		case e.Kind == EventStage && e.Phase == PhaseWarmup:
+			a.checkpointRefusals.Store(3)
+		case e.Kind == EventThroughput && e.Direction == Up:
+			if samples++; samples == 3 {
+				a.checkpointRefusals.Store(3)
+			}
+		case e.Kind == EventResult && e.Direction == Up:
+			upload = *e.Result
+		}
+	})
+	if err != nil || upload.Err != nil || upload.Unavailable || upload.MeanBps <= 0 {
+		t.Fatalf("transient checkpoint refusal voided the stage: %v %+v", err, upload)
+	}
+}
+
+func TestARemovedServersLatencyKeepsItsCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, pingHandler(answerAll, time.Millisecond))
+		r.cfg.PingInterval = 20 * time.Millisecond
+		ctx, remove := context.WithCancelCause(t.Context())
+		removed := errors.New("server removed")
+		time.AfterFunc(100*time.Millisecond, func() { remove(removed) })
+		stats, err := r.measureNow(ctx, time.Second)
+		s := &stageServer{participant: &participant{transport: r}}
+		result := Result{Stage: StageDownload, Latency: stats, Err: err}
+		(&coordinator{}).retainLatency(resourceOutcome{server: s, role: roleLatency, result: result, err: err}, true)
+		if stats.Count == 0 || len(s.results) != 1 || !errors.Is(s.results[0].Err, removed) {
+			t.Fatalf("a removed server's population was saved clean: %+v", s.results)
+		}
+	})
+}
+
+func TestLoadedLatencyKeepsTheIdleRTT(t *testing.T) {
+	t.Parallel()
+	c := &coordinator{}
+	s := &stageServer{participant: &participant{transport: &runner{idleRTT: 5 * time.Millisecond}}}
+	for _, step := range []struct {
+		stage     Stage
+		p50, want time.Duration
+	}{
+		{StageDownload, 40 * time.Millisecond, 5 * time.Millisecond},
+		{StageLatency, 7 * time.Millisecond, 7 * time.Millisecond},
+		{StageUpload, 40 * time.Millisecond, 7 * time.Millisecond},
+	} {
+		result := Result{Stage: step.stage, Latency: LatencyStats{Count: 1, P50: step.p50}}
+		c.retainLatency(resourceOutcome{server: s, role: roleLatency, result: result}, true)
+		if s.transport.idleRTT != step.want {
+			t.Fatalf("after %s latency the idle RTT is %v, want %v", step.stage, s.transport.idleRTT, step.want)
+		}
 	}
 }

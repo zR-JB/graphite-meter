@@ -1,16 +1,23 @@
 package server
 
 import (
+	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 type testAddr string
@@ -48,18 +55,18 @@ func (l *scriptedListener) Addr() net.Addr { return testAddr("127.0.0.1:0") }
 
 func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	a := newConnectionAdmission(2, 1, nil)
-	releaseA, ok := a.acquire(testAddr("192.0.2.1:1"))
+	releaseA, ok := a.acquire(testAddr("192.0.2.1:1"), false)
 	if !ok {
 		t.Fatal("first connection rejected")
 	}
-	if _, ok := a.acquire(testAddr("192.0.2.1:2")); ok {
+	if _, ok := a.acquire(testAddr("192.0.2.1:2"), false); ok {
 		t.Fatal("per-client overflow admitted")
 	}
-	releaseB, ok := a.acquire(testAddr("192.0.2.2:1"))
+	releaseB, ok := a.acquire(testAddr("192.0.2.2:1"), false)
 	if !ok {
 		t.Fatal("second client rejected")
 	}
-	if _, ok := a.acquire(testAddr("192.0.2.3:1")); ok {
+	if _, ok := a.acquire(testAddr("192.0.2.3:1"), false); ok {
 		t.Fatal("global overflow admitted")
 	}
 	stats := a.stats()
@@ -68,7 +75,7 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	}
 	releaseA()
 	releaseA()
-	if release, ok := a.acquire(testAddr("192.0.2.1:3")); !ok {
+	if release, ok := a.acquire(testAddr("192.0.2.1:3"), false); !ok {
 		t.Fatal("released capacity was not reusable")
 	} else {
 		release()
@@ -76,15 +83,22 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	releaseB()
 }
 
-func TestSocketKeyIPv6AndTrustedProxy(t *testing.T) {
-	a := socketKey(testAddr("[2001:db8:1::1]:1"), nil)
-	b := socketKey(testAddr("[2001:db8:1::ffff]:2"), nil)
-	if a != b {
-		t.Fatalf("same /64 produced %q and %q", a, b)
-	}
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	if got := socketKey(testAddr("10.0.0.2:443"), trusted); got != "" {
-		t.Fatalf("trusted proxy key = %q, want the empty exemption key", got)
+// An IPv6 client is bounded per /64, and its /56 and /48 hold only two and four clients' shares.
+func TestConnectionAdmissionBucketsIPv6Hierarchically(t *testing.T) {
+	a := newConnectionAdmission(100, 2, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	for i, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"[2001:db8:0:100::1]:1", true}, {"[2001:db8:0:100::2]:1", true}, {"[2001:db8:0:100::3]:1", false},
+		{"[2001:db8:0:101::1]:1", true}, {"[2001:db8:0:101::2]:1", true}, {"[2001:db8:0:102::1]:1", false},
+		{"[2001:db8:0:200::1]:1", true}, {"[2001:db8:0:200::2]:1", true},
+		{"[2001:db8:0:201::1]:1", true}, {"[2001:db8:0:201::2]:1", true}, {"[2001:db8:0:300::1]:1", false},
+		{"[2001:db8:1::1]:1", true}, {"10.0.0.2:443", true}, {"10.0.0.2:443", true}, {"10.0.0.2:443", true},
+	} {
+		if _, ok := a.acquire(testAddr(tc.addr), false); ok != tc.want {
+			t.Fatalf("connection %d from %s admitted = %t", i, tc.addr, ok)
+		}
 	}
 }
 
@@ -128,30 +142,176 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 }
 
 func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
-	a := newConnectionAdmission(1, 1, nil)
-	ctx, cancel := context.WithCancel(t.Context())
-	if _, err := a.connContext(ctx, &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.1:1")}); err != nil {
-		t.Fatalf("first connContext: %v", err)
-	}
-	if _, err := a.connContext(t.Context(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
-		t.Fatal("second connContext admitted past the global limit")
-	}
-
-	// Cancelling the first connection's context frees its slot asynchronously.
-	cancel()
-	deadline := time.Now().Add(2 * time.Second)
-	for a.stats().active != 0 {
-		if time.Now().After(deadline) {
+	synctest.Test(t, func(t *testing.T) {
+		a := newConnectionAdmission(1, 1, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		if _, err := a.connContext(ctx, &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.1:1")}); err != nil {
+			t.Fatalf("first connContext: %v", err)
+		}
+		if _, err := a.connContext(t.Context(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
+			t.Fatal("second connContext admitted past the global limit")
+		}
+		cancel()
+		synctest.Wait()
+		if a.stats().active != 0 {
 			t.Fatal("cancelled connection never released its slot")
 		}
-		time.Sleep(time.Millisecond)
+	})
+}
+
+// Under load a QUIC Initial holds a connection slot only once Retry has validated its source address.
+func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
+	_, cm := protocolTestTLS(t)
+	for _, loaded := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle", true: "loaded"}[loaded], func(t *testing.T) {
+			a := newConnectionAdmission(4, 4, nil)
+			if loaded {
+				release, _ := a.acquire(testAddr("192.0.2.1:1"), false)
+				defer release()
+			}
+			pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := a.quicTransport(pc)
+			defer tr.Close()
+			admit, verified := tr.ConnContext, make(chan bool, 1)
+			tr.ConnContext = func(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
+				verified <- info.AddrVerified
+				return admit(ctx, info)
+			}
+			ln, err := tr.Listen(cm.tlsConfig("gm-test"), transport.NewQUICConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			conn, err := quic.DialAddr(ctx, pc.LocalAddr().String(),
+				&tls.Config{InsecureSkipVerify: true, NextProtos: []string{"gm-test"}},
+				transport.NewQUICConfig()) //nolint:gosec // test certificate
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.CloseWithError(0, "")
+			if got := <-verified; got != loaded {
+				t.Fatalf("admitted with a validated source = %v, want %v", got, loaded)
+			}
+		})
 	}
 }
 
-// An idle connection holds an admission slot on every listener.
-func TestBaseServerBoundsIdleConnections(t *testing.T) {
-	s := baseServer(http.NotFoundHandler(), nil)
-	if s.IdleTimeout != 60*time.Second || s.MaxHeaderBytes != 32<<10 {
-		t.Fatalf("server not hardened: idle=%v max=%d", s.IdleTimeout, s.MaxHeaderBytes)
+// Browsers open one QUIC connection per WebTransport session, so the default share fits a client's connections.
+func TestDefaultSessionShareFitsAClientsQUICConnections(t *testing.T) {
+	if sessions := config.Default().MaxSessionsPerClient; sessions > maxClientQUICConnections {
+		t.Fatalf("%d sessions per client exceed its %d QUIC connections", sessions, maxClientQUICConnections)
 	}
+}
+
+// A peer that stalls a control exchange, or idles between exchanges, gives its connection slot back within the
+// control deadline on every native listener.
+func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
+	const timeout = 200 * time.Millisecond
+	send := func(request string) func(*testing.T, net.Conn) {
+		return func(t *testing.T, c net.Conn) {
+			if _, err := io.WriteString(c, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	stalls := map[string]func(*testing.T, net.Conn){
+		"partial headers": send("GET /probe HTTP/1.1\r\nHost: meter\r\n"),
+		"pending body":    send("POST /upload/session HTTP/1.1\r\nHost: meter\r\nContent-Length: 10\r\n\r\n"),
+		"idle keep-alive": func(t *testing.T, c net.Conn) {
+			send("GET /missing HTTP/1.1\r\nHost: meter\r\n\r\n")(t, c)
+			res, err := http.ReadResponse(bufio.NewReader(c), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+		},
+		// Pipelined answers fill the socket buffers until a finished handler's flush blocks.
+		"unread responses": func(_ *testing.T, c net.Conn) {
+			go func() {
+				request := strings.Repeat("GET /missing HTTP/1.1\r\nHost: meter\r\n\r\n", 64)
+				for {
+					if _, err := io.WriteString(c, request); err != nil {
+						return
+					}
+				}
+			}()
+		},
+	}
+	// Unbuffered pipes stall an answer until its deadline, then a TLS close offers close_notify for five seconds.
+	const released = 10 * time.Second
+	slots := func(t *testing.T, build *listenerBuild, want int, after time.Duration) {
+		t.Helper()
+		time.Sleep(after)
+		synctest.Wait()
+		if got := build.connections.stats().active; got != want {
+			t.Fatalf("%d connection slots held after %v, want %d", got, after, want)
+		}
+	}
+	shape := func(e *endpoints) { e.controlTimeout = timeout }
+	for _, alpn := range []string{"", "http/1.1"} {
+		for stall, hold := range stalls {
+			t.Run(alpn+" "+stall, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					cfg := config.Default()
+					cfg.Native.H1TLS = ":7247"
+					build, sockets := pipeServer(t, &cfg, shape)
+					var conn net.Conn
+					if alpn == "" {
+						conn, _ = sockets[cfg.Native.H1].dial(t.Context())
+					} else {
+						conn = sockets[cfg.Native.H1TLS].dialTLS(t, alpn)
+					}
+					hold(t, conn)
+					slots(t, build, 1, 0)
+					slots(t, build, 0, released)
+				})
+			})
+		}
+	}
+	t.Run("h2 idle", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Native.H2 = ":7248"
+			build, sockets := pipeServer(t, &cfg, shape)
+			protocols := &http.Protocols{}
+			protocols.SetHTTP2(true)
+			tr := &http.Transport{Protocols: protocols, DialTLSContext: func(context.Context, string,
+				string) (net.Conn, error) {
+				return sockets[cfg.Native.H2].dialTLS(t, "h2"), nil
+			}}
+			defer tr.CloseIdleConnections()
+			res, err := (&http.Client{Transport: tr}).Get("https://meter/probe")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+			slots(t, build, 1, 0)
+			slots(t, build, 0, released)
+		})
+	})
+	t.Run("h3 idle", func(t *testing.T) {
+		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+		}, shape)
+		tr := &http3.Transport{QUICConfig: transport.NewQUICConfig(),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // test certificate
+		defer tr.Close()
+		res, err := (&http.Client{Transport: tr}).Get("https://" + cfg.Native.H3 + "/probe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
+			if time.Since(start) > released {
+				t.Fatal("an idle HTTP/3 connection held its slot")
+			}
+		}
+	})
 }

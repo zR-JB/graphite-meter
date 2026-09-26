@@ -7,9 +7,7 @@ import (
 	"math"
 )
 
-// UploadProgress describes one owner-bound upload aggregate. Bytes are receiver
-// bytes and Nanos is elapsed receiver time from its first accepted chunk.
-// Both counters are explicit, including zero; ready/error do not measure data.
+// UploadProgress is one receiver record: receiver bytes and nanoseconds since its first chunk.
 type UploadProgress struct {
 	Type    string `json:"type"`
 	Bytes   uint64 `json:"bytes"`
@@ -37,8 +35,7 @@ func (p UploadProgress) MarshalJSONTo(out *jsontext.Encoder) error {
 	}{Type: p.Type, Message: p.Message, Code: p.Code})
 }
 
-// DecodeUploadProgress rejects malformed records without inventing observations.
-// Missing counters differ from an explicit zero-length receiver window.
+// DecodeUploadProgress rejects malformed records; a missing counter differs from zero.
 func DecodeUploadProgress(data []byte) (UploadProgress, error) {
 	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -62,12 +59,14 @@ func DecodeUploadProgress(data []byte) (UploadProgress, error) {
 				}
 			}
 		}
+		event.Message, event.Code = CleanText(event.Message, 256), CleanText(event.Code, 64)
 		return event, nil
 	case "progress", "complete":
 		for name, dst := range map[string]*uint64{"bytes": &event.Bytes, "nanos": &event.Nanos} {
 			value := raw[name]
 			var number float64
-			if value.Kind() != '0' || json.Unmarshal(value, &number) != nil || number < 0 || number > maxUploadCounter || math.Trunc(number) != number {
+			if value.Kind() != '0' || json.Unmarshal(value, &number) != nil || number < 0 ||
+				number > maxUploadCounter || math.Trunc(number) != number {
 				return UploadProgress{}, errors.New("invalid upload progress counter")
 			}
 			*dst = uint64(number) // bounded above by the largest exact JSON integer

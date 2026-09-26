@@ -1,35 +1,45 @@
 <script lang="ts">
-  import { observeWidth } from "../actions/observeWidth";
-  import { onMount, tick } from "svelte";
-  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
+  import Icon from "./Icon.svelte";
+  import type { IconName } from "../presentation/icons";
+  import { onMount, tick, untrack } from "svelte";
+  import { tooltip } from "../actions/tooltip";
+  import { wallNow } from "../presentation/motion.svelte";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
-  import { ICON } from "../constants";
-  import { HistoryRepository } from "../history/repository";
-  import { broadcastHistory, historyChanges } from "../history/changes";
+  import { createUuid } from "../uuid";
+  import {
+    announceHistoryChanged,
+    HistoryRepository,
+    onHistoryChanged,
+  } from "../history/repository";
   import {
     formatHistoryRate,
     formatLatency,
     formatRecentCompletion,
-    stageStatusLabel,
+    historyOutcome,
   } from "../history/format";
+  import { stageStatusLabel } from "../presentation/vocabulary";
   import {
+    historyMetrics,
+    HISTORY_SORT_LABEL,
     naturalDescending,
     prepareHistorySort,
     sortPreparedHistory,
     type HistorySort,
   } from "../history/sort";
-  import {
-    HISTORY_LIMIT,
-    type HistoryRecord,
-    type StageStatus,
-  } from "../history/types";
+  import { HISTORY_LIMIT, type HistoryRecord } from "../history/types";
   import type { HistoryColumn } from "../state/persistence";
   import { store } from "../state/store.svelte";
+  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
+  import {
+    LATENCY_POPULATION,
+    MISSING,
+    OUTCOME,
+    STAGE,
+  } from "../presentation/vocabulary";
+  import { announce } from "../presentation/announcer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
-  import HistoryManagementControl from "./history/HistoryManagementControl.svelte";
-  import HistoryResultDetail, {
-    type ServerView,
-  } from "./history/HistoryResultDetail.svelte";
+  import MoreMenu from "./MoreMenu.svelte";
+  import HistoryResultDetail from "./history/HistoryResultDetail.svelte";
   import HistoryViewControl from "./history/HistoryViewControl.svelte";
 
   interface Props {
@@ -40,87 +50,63 @@
 
   let { selectedId, onNavigate, onClose }: Props = $props();
   const repository = new HistoryRepository();
+  const changeSource = createUuid();
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
-  let visibleCount = $state(50);
-  let renderedAt = $state(Date.now());
-  let workspaceWidth = $state(0);
+  let pages = $state(1);
+  let renderedAt = $state(wallNow());
   let workspace = $state<HTMLElement>();
-  let serverView = $state<ServerView | null>(null);
   let detailRegion = $state<HTMLElement>();
-  let detailCloseButton = $state<HTMLButtonElement>();
-  let requestedDetailFocus = $state<{
-    id: string;
-    target: "region" | "close" | "none";
-  } | null>(null);
-  let focusedDetailId: string | null = null;
   let previousSelectedId: string | null = null;
-  let keyboardActivationId: string | null = null;
   let confirm = $state<
     { kind: "delete"; id: string } | { kind: "clear" } | null
   >(null);
   let confirmInvoker = $state<HTMLElement | null>(null);
   let actionError = $state("");
-  let announcement = $state("");
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
-  const preparedRecords = $derived(prepareHistorySort(records));
   const ordered = $derived(
-    sortPreparedHistory(preparedRecords, sort, descending),
+    sortPreparedHistory(prepareHistorySort(records), sort, descending),
   );
-  const visibleRows = $derived(
-    ordered.slice(0, visibleCount).map((record) => historyRow(record)),
+  const selectedIndex = $derived(
+    selectedId ? ordered.findIndex((record) => record.id === selectedId) : -1,
   );
+  const visibleCount = $derived(
+    Math.max(pages, Math.ceil((selectedIndex + 1) / 50)) * 50,
+  );
+  const visibleRows = $derived(ordered.slice(0, visibleCount).map(historyRow));
   const selectedRecord = $derived(
-    selectedId
-      ? (records.find((record) => record.id === selectedId) ?? null)
-      : null,
+    records.find((record) => record.id === selectedId) ?? null,
   );
-  const sideInspector = $derived(workspaceWidth >= 1040);
-  const oldest = $derived(
-    records.length
-      ? Math.min(...records.map((record) => record.completedAt))
-      : null,
-  );
-  const newest = $derived(
-    records.length
-      ? Math.max(...records.map((record) => record.completedAt))
-      : null,
-  );
+  const span = $derived.by(() => {
+    if (!records.length) return "";
+    const times = records.map((record) => record.completedAt);
+    const [first, last] = [Math.min(...times), Math.max(...times)].map(
+      dateLabel,
+    );
+    return first === last ? first : `${first} – ${last}`;
+  });
 
-  const columnMeta: Record<
+  const COLUMN: Record<
     HistoryColumn,
-    { short: string; icon: string; sort: HistorySort }
+    { short: string; icon: IconName; help?: string }
   > = {
-    download: {
-      short: "Down",
-      icon: ICON.download,
-      sort: "download",
-    },
-    upload: {
-      short: "Up",
-      icon: ICON.upload,
-      sort: "upload",
-    },
-    bidirectional: {
-      short: "Bi-dir",
-      icon: ICON.bidirectional,
-      sort: "bidirectional",
-    },
+    download: STAGE.download,
+    upload: STAGE.upload,
+    bidirectional: STAGE.bidirectional,
     idle: {
-      short: "Idle",
-      icon: ICON.ping,
-      sort: "idle",
+      short: LATENCY_POPULATION.latency.short,
+      icon: STAGE.latency.icon,
     },
     loaded: {
       short: "Loaded",
-      icon: ICON.ping,
-      sort: "loaded",
+      icon: STAGE.latency.icon,
+      help: "Highest loaded median (p50) across download, upload and bidirectional",
     },
   };
 
@@ -155,7 +141,7 @@
       const result = await repository.listWithDiagnostics();
       if (generation !== loadGeneration) return;
       records = result.records;
-      renderedAt = Date.now();
+      renderedAt = wallNow();
       malformedCount = result.malformedCount;
       loadState = "ready";
       await resolveSelection(selectedId, generation);
@@ -164,38 +150,17 @@
     }
   }
 
-  function closeDetail() {
-    onNavigate(null);
-  }
-
-  function activate(record: HistoryRecord, keyboard: boolean) {
-    if (selectedId === record.id) {
-      closeDetail();
-      return;
-    }
-    requestedDetailFocus = {
-      id: record.id,
-      target: keyboard ? "close" : "none",
-    };
-    onNavigate(record.id);
-  }
-
   function setSort(next: HistorySort, nextDescending: boolean) {
     sort = next;
     descending = nextDescending;
-    visibleCount = 50;
-  }
-
-  function sortColumn(next: HistorySort) {
-    setSort(next, sort === next ? !descending : naturalDescending(next));
+    pages = 1;
   }
 
   function loadMore() {
-    visibleCount = Math.min(ordered.length, visibleCount + 50);
+    pages = visibleCount / 50 + 1;
   }
 
   function loadMoreWhenVisible(node: HTMLElement) {
-    if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) loadMore();
@@ -203,7 +168,7 @@
       { rootMargin: "200px 0px" },
     );
     observer.observe(node);
-    return { destroy: () => observer.disconnect() };
+    return () => observer.disconnect();
   }
 
   async function confirmAction() {
@@ -214,146 +179,87 @@
     actionError = "";
     try {
       if (action.kind === "clear") {
-        const generation = await repository.clear();
+        await repository.clear();
         records = [];
         malformedCount = 0;
-        announcement = "History cleared.";
+        announce("History cleared.");
         if (owner?.isConnected && selectedId) onNavigate(null);
-        const change = { type: "clear" as const, generation };
-        broadcastHistory(change);
-        window.dispatchEvent(
-          new CustomEvent("graphite-meter-history-changed", {
-            detail: change,
-          }),
-        );
-      } else {
-        await repository.delete(action.id);
-        records = records.filter((record) => record.id !== action.id);
-        announcement = "Result deleted.";
-        if (owner?.isConnected && selectedId === action.id) onNavigate(null);
-        broadcastHistory({ type: "delete", id: action.id });
-      }
-      if (action.kind !== "clear")
-        window.dispatchEvent(new Event("graphite-meter-history-changed"));
-      if (action.kind === "clear") {
+        announceHistoryChanged(changeSource);
         confirmInvoker = null;
         await tick();
         const target = workspace?.querySelector<HTMLElement>(".close-history");
         if (!hasFocus() && canFocus(target))
           target.focus({ preventScroll: true });
+      } else {
+        await repository.delete(action.id);
+        records = records.filter((record) => record.id !== action.id);
+        announce("Result deleted.");
+        if (owner?.isConnected && selectedId === action.id) onNavigate(null);
+        announceHistoryChanged(changeSource);
       }
     } catch {
-      actionError = "The local archive could not be changed. Try again.";
+      actionError = "History could not be changed. Try again.";
       confirmInvoker = null;
     }
   }
 
-  function requestClear(invoker: HTMLElement) {
+  function requestConfirm(
+    action: NonNullable<typeof confirm>,
+    invoker: HTMLElement,
+  ) {
     confirmInvoker = invoker;
-    confirm = { kind: "clear" };
+    confirm = action;
   }
 
-  function cancelConfirmation() {
-    confirm = null;
-    confirmInvoker = null;
-  }
+  const units = $derived({ base: store.unitBase, kind: store.unitKind });
 
-  function partial(record: HistoryRecord): boolean {
-    return (
-      record.failures.length > 0 ||
-      [
-        record.stages.latency.status,
-        record.stages.download.status,
-        record.stages.upload.status,
-        record.stages.bidirectional.status,
-      ].some((status) => status === "partial" || status === "failed")
+  function metric(record: HistoryRecord, column: HistoryColumn): string {
+    const { stages } = record;
+    const value = historyMetrics(record)[column];
+    if (column === "loaded")
+      return value == null ? MISSING : formatLatency(value);
+    if (column === "idle")
+      return value == null
+        ? stageStatusLabel(stages.latency.status)
+        : formatLatency(value);
+    if (value != null) return formatHistoryRate(value, units);
+    if (column !== "bidirectional")
+      return stageStatusLabel(stages[column].status);
+    const { survivingDirection } = bidirectionalResultPresentation(
+      stages.bidirectional.down?.reportedBytesPerSec,
+      stages.bidirectional.up?.reportedBytesPerSec,
     );
+    return survivingDirection
+      ? `${survivingDirection === "down" ? "Down" : "Up"} only`
+      : stageStatusLabel(stages.bidirectional.status);
   }
 
-  function rate(value: number | null | undefined): string {
-    return formatHistoryRate(value, {
-      base: store.unitBase,
-      kind: store.unitKind,
+  function historyRow(record: HistoryRecord) {
+    const recent = formatRecentCompletion(record.completedAt, renderedAt);
+    const exact = new Date(record.completedAt).toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
     });
-  }
-
-  function resultRate(
-    status: StageStatus,
-    value: number | null | undefined,
-  ): string {
-    return value == null ? stageStatusLabel(status) : rate(value);
-  }
-
-  function bidiRate(record: HistoryRecord): string {
-    const result = record.stages.bidirectional;
-    const model = bidirectionalResultPresentation(
-      result.down?.reportedBytesPerSec,
-      result.up?.reportedBytesPerSec,
-    );
-    if (model.combinedBytesPerSec != null)
-      return rate(model.combinedBytesPerSec);
-    if (model.survivingDirection)
-      return model.survivingDirection === "down" ? "Down only" : "Up only";
-    return stageStatusLabel(result.status);
-  }
-
-  function loadedMetric(record: HistoryRecord): string {
-    if (record.bufferbloat) return formatLatency(record.bufferbloat.loadedMs);
-    const transferStatuses = [
-      record.stages.download.status,
-      record.stages.upload.status,
-      record.stages.bidirectional.status,
-    ];
-    if (
-      record.stages.latency.status === "not-run" ||
-      transferStatuses.every((status) => status === "not-run")
-    )
-      return "Not run";
-    return "Unavailable";
-  }
-
-  interface HistoryRowView {
-    record: HistoryRecord;
-    exactDate: string;
-    primaryDate: string;
-    secondaryDate: string;
-    partial: boolean;
-    metrics: Record<HistoryColumn, string>;
-    ariaLabel: string;
-  }
-
-  function historyRow(record: HistoryRecord): HistoryRowView {
-    const exactDate = fullDate(record.completedAt);
-    const recentDate = formatRecentCompletion(record.completedAt, renderedAt);
-    const metrics: Record<HistoryColumn, string> = {
-      download: resultRate(
-        record.stages.download.status,
-        record.stages.download.result?.reportedBytesPerSec,
-      ),
-      upload: resultRate(
-        record.stages.upload.status,
-        record.stages.upload.result?.reportedBytesPerSec,
-      ),
-      bidirectional: bidiRate(record),
-      idle: record.stages.latency.result
-        ? formatLatency(record.stages.latency.result.reportedMs)
-        : stageStatusLabel(record.stages.latency.status),
-      loaded: loadedMetric(record),
-    };
-    const isPartial = partial(record);
+    const outcome = historyOutcome(record);
+    const metrics = columns.map((column) => metric(record, column));
     return {
       record,
-      exactDate,
-      primaryDate: recentDate ?? dateLabel(record.completedAt),
-      secondaryDate: recentDate
+      exact,
+      primary: recent ?? dateLabel(record.completedAt),
+      secondary: recent
         ? dateLabel(record.completedAt)
         : new Date(record.completedAt).toLocaleTimeString(undefined, {
             hour: "2-digit",
             minute: "2-digit",
           }),
-      partial: isPartial,
+      outcome,
       metrics,
-      ariaLabel: `${exactDate}${isPartial ? ", partial result" : ", complete result"}. Download ${metrics.download}. Upload ${metrics.upload}. Bidirectional ${metrics.bidirectional}. Idle ${metrics.idle}. Loaded ${metrics.loaded}.`,
+      label: [
+        `${exact}, ${OUTCOME[outcome].toLowerCase()} result`,
+        ...columns.map(
+          (column, index) => `${HISTORY_SORT_LABEL[column]} ${metrics[index]}`,
+        ),
+      ].join(". "),
     };
   }
 
@@ -365,83 +271,41 @@
     });
   }
 
-  function fullDate(value: number): string {
-    return new Date(value).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    });
-  }
-
   $effect(() => {
     const id = selectedId;
-    if (loadState !== "ready") return;
-    void resolveSelection(id, loadGeneration);
-    if (!id) {
-      focusedDetailId = null;
-      requestedDetailFocus = null;
-    }
+    untrack(() => {
+      if (loadState === "ready") void resolveSelection(id, loadGeneration);
+    });
   });
 
   $effect(() => {
     const id = selectedId;
     const previous = previousSelectedId;
-    previousSelectedId = id;
-    if (!previous || id) return;
-    const target =
-      workspace?.querySelector<HTMLElement>(
-        `[data-history-id="${previous}"]`,
-      ) ?? workspace?.querySelector<HTMLElement>(".close-history");
-    if (!activeModal() && canFocus(target)) target.focus();
-  });
-
-  $effect(() => {
-    const id = selectedRecord?.id;
     const region = detailRegion;
-    const closeButton = detailCloseButton;
-    if (!id || focusedDetailId === id) return;
-    const request =
-      requestedDetailFocus?.id === id ? requestedDetailFocus.target : "region";
-    if (request === "none") {
-      focusedDetailId = id;
-      requestedDetailFocus = null;
-      return;
+    if (id && region && id !== previous) {
+      previousSelectedId = id;
+      if (!activeModal() && canFocus(region))
+        region.focus({ preventScroll: true });
+    } else if (!id && previous) {
+      previousSelectedId = null;
+      const target =
+        workspace?.querySelector<HTMLElement>(
+          `[data-history-id="${previous}"]`,
+        ) ?? workspace?.querySelector<HTMLElement>(".close-history");
+      if (!activeModal() && canFocus(target)) target.focus();
     }
-    const target = request === "close" ? closeButton : region;
-    if (!target) return;
-    focusedDetailId = id;
-    requestedDetailFocus = null;
-    if (!activeModal() && canFocus(target))
-      target.focus({ preventScroll: request === "region" && sideInspector });
-  });
-
-  $effect(() => {
-    const id = selectedId;
-    void sort;
-    void descending;
-    void records;
-    const index = id ? ordered.findIndex((record) => record.id === id) : -1;
-    if (index >= visibleCount) visibleCount = Math.ceil((index + 1) / 50) * 50;
   });
 
   onMount(() => {
     void load();
+    // Not motion: relative completion times read in minutes.
     const relativeRefresh = window.setInterval(() => {
-      if (document.visibilityState === "visible") renderedAt = Date.now();
+      if (document.visibilityState === "visible") renderedAt = wallNow();
     }, 60_000);
-    const refresh = () => void load(false);
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    const stopChanges = historyChanges(refresh);
-    window.addEventListener("graphite-meter-history-changed", refresh);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const stopChanges = onHistoryChanged(() => void load(false), changeSource);
     return () => {
       loadGeneration++;
       stopChanges();
-      window.removeEventListener("graphite-meter-history-changed", refresh);
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.clearInterval(relativeRefresh);
       repository.close();
     };
@@ -449,277 +313,231 @@
 </script>
 
 <section
-  class="history-workspace"
+  class="history-workspace enter"
   bind:this={workspace}
-  use:observeWidth={(width) => (workspaceWidth = width)}
   aria-labelledby="history-title"
   tabindex="-1"
 >
-  <header class="history-head">
-    <div class="history-title">
-      <div>
-        <h1 id="history-title">History</h1>
-        <p>Saved on this device</p>
-      </div>
-    </div>
-    <button
-      class="close-history"
-      type="button"
-      aria-label="Close History"
-      onclick={onClose}
-    >
-      <span>{@html ICON.close}</span><strong>Close</strong>
-    </button>
-  </header>
-
-  {#if store.historyWarning || actionError || malformedCount}
-    <div class="archive-warning" role="status">
-      <span aria-hidden="true">!</span>
-      <div>
-        {#if store.historyWarning}<p>{store.historyWarning}</p>{/if}
-        {#if actionError}<p>{actionError}</p>{/if}
-        {#if malformedCount}<p>
-            {malformedCount} unsupported or malformed {malformedCount === 1
-              ? "record was"
-              : "records were"} ignored.
-          </p>{/if}
-      </div>
-    </div>
-  {/if}
-
-  {#if records.length > 0 && !store.savingResults}
-    <div class="saving-notice">
+  <header class="surface-head history-head">
+    <h1 id="history-title">History</h1>
+    {#if records.length}
       <p>
-        <strong>Saving is paused.</strong> Retained results remain available.
+        {records.length}
+        {records.length === 1 ? "result" : "results"} · {span}
       </p>
-      <button
-        type="button"
-        onclick={() => (store.resultHistoryPreference = "enabled")}
-      >
-        Enable future saves
-      </button>
-    </div>
-  {/if}
-
-  {#if loadState === "loading"}
-    <div class="archive-state" role="status">
-      <span class="state-icon">{@html ICON.history}</span>
-      <h2>Opening local archive</h2>
-      <p>Reading saved results from this browser.</p>
-    </div>
-  {:else if loadState === "error"}
-    <div class="archive-state error" role="alert">
-      <span class="state-icon">!</span>
-      <h2>History is unavailable</h2>
-      <p>The browser could not open its local result store.</p>
-      <button type="button" onclick={() => load()}>Retry</button>
-    </div>
-  {:else if records.length === 0}
-    <div class="archive-state">
-      <span class="state-icon">{@html ICON.history}</span>
-      <h2>No saved results</h2>
-      {#if store.savingResults}
-        <p>Completed tests will appear here automatically.</p>
-      {:else}
-        <p>
-          Saving is paused. Enable it to keep future completed tests on this
-          device.
-        </p>
-        <button
-          type="button"
-          onclick={() => (store.resultHistoryPreference = "enabled")}
-        >
-          Enable result history
-        </button>
-      {/if}
-      {#if malformedCount > 0}
-        <div class="empty-management">
-          <HistoryManagementControl onClear={requestClear} />
-        </div>
-      {/if}
-    </div>
-  {:else}
-    <div class="archive-overview" aria-label="History overview">
-      <div class="overview-primary">
-        <strong>{records.length}</strong>
-        <span>{records.length === 1 ? "result" : "results"} saved locally</span>
-      </div>
-      <div class="overview-dates">
-        <span>Archive span</span>
-        <strong
-          >{oldest == null ? "—" : dateLabel(oldest)} <i>to</i>
-          {newest == null ? "—" : dateLabel(newest)}</strong
-        >
-      </div>
-    </div>
-
-    <div class="archive-toolbar">
-      <p>
-        <strong>Results</strong>
-      </p>
-      <div class="toolbar-actions">
+    {/if}
+    <div class="head-actions">
+      {#if records.length}
         <HistoryViewControl
           {columns}
           {sort}
           {descending}
-          compact={workspaceWidth <= 820}
-          onColumnsChange={(next) => (store.historyColumns = next)}
+          onColumnsChange={(next) => store.prefer({ historyColumns: next })}
           onSortChange={setSort}
         />
-        <HistoryManagementControl onClear={requestClear} />
-      </div>
-    </div>
-
-    <div
-      class="workspace-body"
-      class:wide-layout={sideInspector}
-      class:with-side={sideInspector && selectedId !== null}
-    >
-      <div class="archive-list" aria-label="Saved results">
-        <div
-          class="column-head"
-          role="row"
-          style={`--metric-columns:${columns.length}`}
-        >
-          <span
-            role="columnheader"
-            aria-sort={sort === "date"
-              ? descending
-                ? "descending"
-                : "ascending"
-              : "none"}
-          >
-            <button type="button" onclick={() => sortColumn("date")}>
-              <span>Date</span><i aria-hidden="true"></i>
-            </button>
-          </span>
-          {#each columns as column}
-            <span
-              role="columnheader"
-              data-tone={column}
-              aria-sort={sort === columnMeta[column].sort
-                ? descending
-                  ? "descending"
-                  : "ascending"
-                : "none"}
+      {/if}
+      {#if records.length || malformedCount}
+        <MoreMenu label="History actions" danger>
+          {#snippet children(select)}
+            <button
+              type="button"
+              role="menuitem"
+              tabindex="-1"
+              onclick={() =>
+                select((invoker) => requestConfirm({ kind: "clear" }, invoker))}
             >
+              <span><Icon name="trash" /></span>
+              <span><strong>Clear all saved results</strong></span>
+            </button>
+          {/snippet}
+        </MoreMenu>
+      {/if}
+      <button
+        class="btn btn-icon close-history"
+        type="button"
+        aria-label="Close History"
+        onclick={onClose}
+      >
+        <Icon name="close" />
+      </button>
+    </div>
+  </header>
+
+  {#if store.historyWarning || actionError || malformedCount || (records.length && !store.savingResults)}
+    <div class="notices">
+      {#if records.length && !store.savingResults}
+        <p class="notice" data-tone="warn">
+          <span><strong>Saving is paused.</strong> Saved results remain.</span>
+          <button
+            class="btn"
+            type="button"
+            onclick={() => store.prefer({ resultHistoryPreference: "enabled" })}
+            >Resume saving</button
+          >
+        </p>
+      {/if}
+      {#each [store.historyWarning, actionError].filter(Boolean) as message (message)}
+        <p class="notice" data-tone="warn" role="status">{message}</p>
+      {/each}
+      {#if malformedCount}
+        <p class="notice" data-tone="warn" role="status">
+          {malformedCount} unsupported or malformed {malformedCount === 1
+            ? "record was"
+            : "records were"} ignored.
+        </p>
+      {/if}
+    </div>
+  {/if}
+
+  {#if loadState === "loading"}
+    <div class="empty-state" role="status">
+      <span class="empty-icon"><Icon name="history" /></span>
+      <h2>Opening History</h2>
+    </div>
+  {:else if loadState === "error"}
+    <div class="empty-state" data-tone="err" role="alert">
+      <span class="empty-icon">!</span>
+      <h2>History is unavailable</h2>
+      <p>The browser could not open its saved results.</p>
+      <button class="btn btn-accent" type="button" onclick={() => load()}
+        >Retry</button
+      >
+    </div>
+  {:else if records.length === 0}
+    <div class="empty-state">
+      <span class="empty-icon"><Icon name="history" /></span>
+      <h2>No saved results</h2>
+      {#if store.savingResults}
+        <p>Completed tests appear here automatically.</p>
+      {:else}
+        <p>
+          Saving is paused. Resume it to keep future results on this device.
+        </p>
+        <button
+          class="btn btn-accent"
+          type="button"
+          onclick={() => store.prefer({ resultHistoryPreference: "enabled" })}
+          >Resume saving</button
+        >
+      {/if}
+    </div>
+  {:else}
+    <div class="workspace-body" class:has-detail={selectedId !== null}>
+      <div class="history-list">
+        <div class="history-table" style:--metric-columns={columns.length}>
+          <div class="column-head" role="group" aria-label="Sort by">
+            {#each ["date" as const, ...columns] as column (column)}
               <button
                 type="button"
-                onclick={() => sortColumn(columnMeta[column].sort)}
+                aria-pressed={sort === column}
+                data-order={sort !== column
+                  ? undefined
+                  : descending
+                    ? "descending"
+                    : "ascending"}
+                {@attach tooltip(
+                  () => (column !== "date" && COLUMN[column].help) || "",
+                )}
+                onclick={() =>
+                  setSort(
+                    column,
+                    sort === column ? !descending : naturalDescending(column),
+                  )}
               >
-                <span class="head-icon">{@html columnMeta[column].icon}</span>
-                <span>{columnMeta[column].short}</span>
+                {#if column !== "date"}<span
+                    class="head-icon"
+                    data-tone={column}><Icon name={COLUMN[column].icon} /></span
+                  >{/if}
+                <span>{column === "date" ? "Date" : COLUMN[column].short}</span>
+                {#if sort === column}<span class="sr-only"
+                    >, {descending ? "descending" : "ascending"}</span
+                  >{/if}
                 <i aria-hidden="true"></i>
               </button>
-            </span>
-          {/each}
-        </div>
-        <ol>
-          {#each visibleRows as row (row.record.id)}
-            {@const record = row.record}
-            <li class:selected={selectedId === record.id}>
-              <a
-                class="result-row"
-                data-history-id={record.id}
-                style={`--metric-columns:${columns.length}`}
-                href={`#/history/${record.id}`}
-                aria-current={selectedId === record.id ? "true" : undefined}
-                aria-expanded={selectedId === record.id}
-                aria-label={row.ariaLabel}
-                onkeydown={(event) => {
-                  if (
-                    event.key === "Enter" &&
-                    !event.metaKey &&
-                    !event.ctrlKey &&
-                    !event.shiftKey &&
-                    !event.altKey
-                  )
-                    keyboardActivationId = record.id;
-                }}
-                onclick={(event) => {
-                  if (
-                    event.button !== 0 ||
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  event.preventDefault();
-                  const keyboard = keyboardActivationId === record.id;
-                  keyboardActivationId = null;
-                  activate(record, keyboard);
-                }}
-              >
-                <span class="date-cell">
-                  <time datetime={new Date(record.completedAt).toISOString()}>
-                    <strong title={row.exactDate}>{row.primaryDate}</strong>
-                    <small>{row.secondaryDate}</small>
-                  </time>
-                  <span class="row-badges">
-                    {#if row.partial}<em class="partial">Partial</em>{/if}
-                    {#if selectedId === record.id}<em class="selected-badge"
-                        >Selected</em
+            {/each}
+          </div>
+          <ol aria-label="Saved results">
+            {#each visibleRows as row (row.record.id)}
+              <li>
+                <a
+                  class="result-row"
+                  data-history-id={row.record.id}
+                  href={`#/history/${row.record.id}`}
+                  aria-current={selectedId === row.record.id
+                    ? "true"
+                    : undefined}
+                  aria-label={row.label}
+                  onclick={(event) => {
+                    if (
+                      event.button !== 0 ||
+                      event.metaKey ||
+                      event.ctrlKey ||
+                      event.shiftKey ||
+                      event.altKey
+                    )
+                      return;
+                    event.preventDefault();
+                    onNavigate(
+                      selectedId === row.record.id ? null : row.record.id,
+                    );
+                  }}
+                >
+                  <span class="date-cell">
+                    <time
+                      datetime={new Date(row.record.completedAt).toISOString()}
+                      title={row.exact}
+                    >
+                      <strong>{row.primary}</strong>
+                      <small>{row.secondary}</small>
+                    </time>
+                    {#if row.outcome !== "complete"}<span
+                        class="badge"
+                        data-tone="warn">{OUTCOME[row.outcome]}</span
                       >{/if}
                   </span>
-                </span>
-                <span class="metrics-row">
-                  {#each columns as column}
+                  {#each columns as column, index (column)}
                     <span class="metric-cell" data-tone={column}>
                       <small
-                        ><span>{@html columnMeta[column].icon}</span
-                        >{columnMeta[column].short}</small
+                        ><span class="head-icon"
+                          ><Icon name={COLUMN[column].icon} /></span
+                        >{COLUMN[column].short}</small
                       >
-                      <strong title={row.metrics[column]}
-                        >{row.metrics[column]}</strong
-                      >
+                      <strong>{row.metrics[index]}</strong>
                     </span>
                   {/each}
-                </span>
-              </a>
-              {#if selectedId === record.id && selectedRecord && !sideInspector}
-                <div class="inline-inspector">
-                  <HistoryResultDetail
-                    record={selectedRecord}
-                    onClose={closeDetail}
-                    onDelete={() =>
-                      (confirm = { kind: "delete", id: record.id })}
-                    bind:serverView
-                    bind:region={detailRegion}
-                    bind:closeButton={detailCloseButton}
-                  />
-                </div>
-              {/if}
-            </li>
-          {/each}
-        </ol>
+                </a>
+              </li>
+            {/each}
+          </ol>
+        </div>
         {#if visibleCount < ordered.length}
-          <div class="load-more" use:loadMoreWhenVisible>
-            <button type="button" onclick={loadMore}>Load 50 more</button>
+          <div class="load-more" {@attach loadMoreWhenVisible}>
+            <button class="btn" type="button" onclick={loadMore}
+              >Load 50 more</button
+            >
             <span>{visibleCount} of {ordered.length}</span>
           </div>
         {/if}
       </div>
 
-      {#if sideInspector && selectedRecord}
-        <aside class="detail-inspector" aria-label="Selected result">
-          <HistoryResultDetail
-            record={selectedRecord}
-            onClose={closeDetail}
-            onDelete={() =>
-              (confirm = { kind: "delete", id: selectedRecord.id })}
-            bind:serverView
-            bind:region={detailRegion}
-            bind:closeButton={detailCloseButton}
-          />
-        </aside>
-      {:else if selectedId && !selectedRecord && selectedState !== "ready"}
-        <aside
-          class="selection-state"
-          class:side-state={sideInspector}
-          role="status"
-        >
-          <span>{selectedState === "malformed" ? "!" : "×"}</span>
+      {#if selectedRecord}
+        {#key selectedRecord.id}
+          <div class="detail-pane enter">
+            <HistoryResultDetail
+              record={selectedRecord}
+              onClose={() => onNavigate(null)}
+              onDelete={(invoker) =>
+                requestConfirm(
+                  { kind: "delete", id: selectedRecord.id },
+                  invoker,
+                )}
+              bind:region={detailRegion}
+            />
+          </div>
+        {/key}
+      {:else if selectedId && selectedState !== "ready"}
+        <div class="detail-pane empty-state" role="status">
+          <span class="empty-icon">!</span>
           <h2>
             {selectedState === "malformed"
               ? "Unreadable saved result"
@@ -730,13 +548,13 @@
               ? "This record uses an unsupported format or failed validation."
               : "It may have been deleted in another tab."}
           </p>
-          <button type="button" onclick={closeDetail}>Back to results</button>
-        </aside>
+          <button class="btn" type="button" onclick={() => onNavigate(null)}
+            >Back to results</button
+          >
+        </div>
       {/if}
     </div>
   {/if}
-
-  <p class="sr-status" aria-live="polite">{announcement}</p>
 </section>
 
 <ConfirmDialog
@@ -747,17 +565,18 @@
     ? "Clear result history?"
     : "Delete this result?"}
   description={confirm?.kind === "clear"
-    ? "Permanently remove all locally stored results from this browser?"
+    ? "Permanently remove all saved results from this browser?"
     : "Permanently remove this saved result from this browser?"}
   confirmLabel={confirm?.kind === "clear" ? "Clear history" : "Delete result"}
-  onCancel={cancelConfirmation}
+  onCancel={() => {
+    confirm = null;
+    confirmInvoker = null;
+  }}
   onConfirm={confirmAction}
 />
 
 <style>
   .history-workspace {
-    container-type: inline-size;
-    position: relative;
     display: flex;
     flex: 1 1 auto;
     flex-direction: column;
@@ -769,286 +588,103 @@
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
+    container: history / inline-size;
   }
   .history-workspace:focus {
     outline: none;
   }
-  h1,
-  h2,
-  p {
-    margin: 0;
-  }
   .history-head {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
+    gap: var(--space-1) var(--space-3);
     padding: 10px var(--space-4);
-    border-bottom: 1px solid var(--border-strong);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1) 72%),
-      var(--surface-1);
-    box-shadow: var(--elev-tile);
-  }
-  .history-title {
-    display: flex;
-    align-items: center;
-    min-width: 0;
   }
   h1 {
-    font-family: var(--font-display);
-    font-size: var(--type-lg);
-    font-weight: 700;
-    letter-spacing: -0.015em;
-    line-height: 1;
+    font: var(--w-heavy) var(--type-lg) / 1.2 var(--font-display);
+    letter-spacing: var(--track-tight);
   }
-  .history-title p {
-    margin-top: 3px;
-    color: var(--text-muted);
-    font-size: 9px;
-    line-height: 1;
-  }
-  .close-history {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    cursor: pointer;
-  }
-  .close-history:hover {
-    border-color: var(--border-strong);
-    color: var(--text);
-  }
-  .close-history span {
-    display: grid;
-  }
-  .close-history :global(svg) {
-    width: 14px;
-    height: 14px;
-  }
-  .archive-warning,
-  .saving-notice {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: 8px var(--space-4);
-    border-bottom: 1px solid var(--border);
-    font-size: var(--type-xs);
-  }
-  .archive-warning {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .archive-warning > span {
-    display: grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-    flex: none;
-    border: 1px solid currentColor;
-    border-radius: var(--r-full);
-    font: 750 10px var(--font-mono);
-  }
-  .archive-warning > div {
-    display: grid;
-    gap: 2px;
-  }
-  .archive-warning p {
-    color: var(--text-muted);
-  }
-  .saving-notice {
-    justify-content: space-between;
-    background: color-mix(in srgb, var(--warn) 6%, var(--surface-1));
-    color: var(--text-muted);
-  }
-  .saving-notice strong {
-    color: var(--warn);
-  }
-  .saving-notice button,
-  .archive-state button,
-  .selection-state button,
-  .load-more button {
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .archive-state {
-    display: grid;
-    justify-items: center;
-    align-content: center;
-    min-height: 360px;
-    padding: var(--space-6);
-    text-align: center;
-  }
-  .state-icon {
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    margin-bottom: var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
-    color: var(--brand);
-    font: 750 var(--type-lg) var(--font-mono);
-  }
-  .state-icon :global(svg) {
-    width: 22px;
-    height: 22px;
-  }
-  .archive-state h2 {
-    font-size: var(--type-lg);
-  }
-  .archive-state p {
-    max-width: 420px;
-    margin-top: 6px;
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    line-height: 1.5;
-  }
-  .archive-state button {
-    margin-top: var(--space-4);
-    border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
-    color: var(--brand-strong);
-  }
-  .empty-management {
-    margin-top: var(--space-4);
-  }
-  .archive-state.error .state-icon {
-    color: var(--err);
-  }
-  .archive-overview {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: 11px var(--space-4);
-    border-bottom: 1px solid var(--border);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1) 82%),
-      var(--surface-1);
-    box-shadow: var(--elev-tile);
-  }
-  .archive-overview > div {
+  .history-head p {
     min-width: 0;
-  }
-  .archive-overview span {
-    display: block;
     color: var(--text-muted);
-    font: 700 9px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font: var(--type-xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
-  .archive-overview strong {
-    display: block;
-    overflow-wrap: anywhere;
-    font: 650 var(--type-xs) var(--font-mono);
-  }
-  .overview-primary {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-2);
-  }
-  .archive-overview .overview-primary strong {
-    color: var(--brand-strong);
-    font-size: var(--type-xl);
-    line-height: 1;
-  }
-  .overview-dates {
-    text-align: right;
-  }
-  .overview-dates strong {
-    margin-top: 3px;
-  }
-  .archive-overview i {
-    color: var(--text-muted);
-    font-style: normal;
-  }
-  .archive-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    padding: 8px var(--space-4);
-    border-bottom: 1px solid var(--border);
-  }
-  .archive-toolbar > p {
-    display: grid;
-    gap: 2px;
-    font-size: var(--type-xs);
-  }
-  .toolbar-actions {
+  .head-actions {
     display: flex;
     align-items: center;
     gap: 6px;
+    margin-left: auto;
+  }
+  .notices {
+    display: grid;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--border);
+  }
+  .notice {
+    align-items: center;
+    justify-content: space-between;
   }
   .workspace-body {
     display: grid;
     flex: 1 1 auto;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    min-height: 0;
+  }
+  .history-list,
+  .detail-pane {
+    grid-area: 1 / 1;
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
   }
-  .workspace-body.wide-layout {
-    overflow: hidden;
-  }
-  .workspace-body.with-side {
-    grid-template-columns: minmax(580px, 1fr) minmax(380px, 0.66fr);
-  }
-  .archive-list {
-    position: relative;
-    min-width: 0;
+  .detail-pane {
     background: var(--surface-1);
-    isolation: isolate;
   }
-  .workspace-body.wide-layout .archive-list {
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
+  .has-detail .history-list {
+    visibility: hidden;
   }
-  .workspace-body.with-side .archive-list {
-    border-right: 1px solid var(--border-strong);
+  @container history (min-width: 821px) {
+    .has-detail {
+      grid-template-columns: minmax(0, 1fr) minmax(380px, 0.8fr);
+    }
+    .has-detail .history-list {
+      visibility: visible;
+    }
+    .detail-pane {
+      grid-area: 1 / 2;
+      border-left: 1px solid var(--border-strong);
+    }
+  }
+  .history-list {
+    container: history-list / inline-size;
+  }
+  .history-table {
+    display: grid;
+    grid-template-columns:
+      minmax(150px, 1.25fr)
+      repeat(var(--metric-columns), minmax(72px, 1fr));
+    padding-inline: var(--space-2);
   }
   .column-head,
+  ol,
+  li,
   .result-row {
     display: grid;
-    grid-template-columns: minmax(150px, 1.25fr) repeat(
-        var(--metric-columns),
-        minmax(82px, 1fr)
-      );
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     min-width: 0;
-  }
-  .metrics-row {
-    display: contents;
   }
   .column-head {
     position: sticky;
     top: 0;
-    z-index: 5;
+    z-index: 1;
+    margin-inline: calc(-1 * var(--space-2));
+    padding-inline: var(--space-2);
     border-bottom: 1px solid var(--border-strong);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1)),
-      var(--surface-1);
-    background-clip: padding-box;
-    box-shadow: var(--elev-tile);
-  }
-  .column-head > span {
-    min-width: 0;
+    background: var(--sheen), var(--surface-1);
   }
   .column-head button {
     display: flex;
@@ -1058,210 +694,107 @@
     width: 100%;
     min-height: 34px;
     padding: 0 10px;
-    border: 0;
-    background: transparent;
     color: var(--text-muted);
-    font: 700 9px var(--font-mono);
-    letter-spacing: 0.05em;
+    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
+    letter-spacing: var(--track-caps);
     text-transform: uppercase;
-    cursor: pointer;
+    transition: var(--transition-control);
   }
-  .column-head > span:first-child button {
+  .column-head > button:first-child {
     justify-content: flex-start;
   }
-  .column-head button:hover {
-    background: var(--brand-soft);
-    color: var(--text);
+  @media (hover: hover) {
+    .column-head button:hover {
+      background: var(--brand-soft);
+      color: var(--text);
+    }
   }
-  .column-head [aria-sort]:not([aria-sort="none"]) button {
+  .column-head [aria-pressed="true"] {
     color: var(--brand-strong);
   }
   .column-head i {
-    position: relative;
-    width: 9px;
-    height: 12px;
     flex: none;
-    color: var(--brand-strong);
-  }
-  .column-head i::after {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 4px;
-    height: 4px;
+    width: 6px;
+    height: 6px;
     border: solid currentColor;
     border-width: 0 1.5px 1.5px 0;
-    content: "";
     opacity: 0;
-    transform: rotate(45deg);
-    transition: opacity var(--dur-hover) var(--ease-out);
+    rotate: 45deg;
+    transition:
+      opacity var(--dur-hover) var(--ease-out),
+      rotate var(--dur-hover) var(--ease-out);
   }
-  .column-head button:hover i::after {
-    opacity: 0.35;
-  }
-  .column-head [aria-sort="descending"] i::after,
-  .column-head [aria-sort="ascending"] i::after {
+  .column-head [data-order] i {
     opacity: 1;
   }
-  .column-head [aria-sort="ascending"] i::after {
-    top: 5px;
-    transform: rotate(225deg);
+  .column-head [data-order="ascending"] i {
+    rotate: 225deg;
   }
   .head-icon {
     display: grid;
     color: var(--tone, var(--text-soft));
   }
   .head-icon :global(svg) {
-    width: 13px;
-    height: 13px;
-  }
-  [data-tone="download"] {
-    --tone: var(--phase-download);
-  }
-  [data-tone="upload"] {
-    --tone: var(--phase-upload);
-  }
-  [data-tone="bidirectional"] {
-    --tone: var(--phase-bidirectional);
-  }
-  [data-tone="idle"],
-  [data-tone="loaded"] {
-    --tone: var(--phase-latency);
-  }
-  ol {
-    margin: 0;
-    padding: 0 var(--space-2) var(--space-2);
-    list-style: none;
+    width: var(--icon-sm);
+    height: var(--icon-sm);
   }
   li {
-    min-width: 0;
     border-bottom: 1px solid var(--border-subtle);
-    content-visibility: auto;
-    contain-intrinsic-size: 58px;
-  }
-  li.selected {
-    content-visibility: visible;
   }
   .result-row {
-    position: relative;
-    min-height: 56px;
-    color: inherit;
-    text-decoration: none;
-    transition: box-shadow var(--dur-hover) var(--ease-out);
+    min-height: 54px;
+    border-radius: var(--r-well);
+    transition: var(--transition-control);
   }
-  .result-row:hover {
-    background: var(--surface-2);
+  @media (hover: hover) {
+    .result-row:hover {
+      background: var(--surface-2);
+    }
   }
   .result-row[aria-current="true"] {
-    background: var(--surface-2);
+    background: var(--brand-soft);
     box-shadow: inset 2px 0 0 var(--brand);
   }
   .date-cell,
   .metric-cell {
     min-width: 0;
-    padding: 10px;
+    padding: 9px 10px;
   }
   .date-cell {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
-  .date-cell time {
-    min-width: 0;
+  time {
     flex: 1;
+    min-width: 0;
   }
-  .date-cell time strong,
-  .date-cell time small {
+  time :is(strong, small) {
     display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .date-cell time strong {
+  time strong {
     font-size: var(--type-xs);
   }
-  .date-cell time small {
+  time small {
     margin-top: 2px;
     color: var(--text-muted);
-    font: 500 9px var(--font-mono);
-  }
-  .row-badges {
-    display: grid;
-    justify-items: end;
-    gap: 3px;
-  }
-  .row-badges em {
-    padding: 2px 5px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-full);
-    font: 700 8px var(--font-mono);
-    font-style: normal;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .row-badges .partial {
-    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .row-badges .selected-badge {
-    border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
-    background: var(--brand-soft);
-    color: var(--brand-strong);
+    font: var(--type-2xs) var(--font-mono);
   }
   .metric-cell {
     display: grid;
     align-content: center;
-    text-align: right;
+    text-align: end;
   }
   .metric-cell small {
     display: none;
   }
   .metric-cell strong {
     overflow-wrap: anywhere;
-    color: var(--text);
-    font: 620 11px var(--font-mono);
-    line-height: 1.35;
-  }
-  .detail-inspector {
-    min-width: 0;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    background: var(--surface-1);
-  }
-  .inline-inspector {
-    border-top: 2px solid color-mix(in srgb, var(--brand) 50%, var(--border));
-    background: var(--surface-1);
-  }
-  .selection-state {
-    display: grid;
-    justify-items: start;
-    align-content: start;
-    gap: 7px;
-    padding: var(--space-5);
-    border-top: 1px solid var(--border-strong);
-    background: var(--surface-1);
-  }
-  .selection-state.side-state {
-    position: sticky;
-    top: 0;
-    border-top: 0;
-  }
-  .selection-state > span {
-    color: var(--warn);
-    font: 750 var(--type-lg) var(--font-mono);
-  }
-  .selection-state h2 {
-    font-size: var(--type-md);
-  }
-  .selection-state p {
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    line-height: 1.45;
-  }
-  .selection-state button {
-    margin-top: var(--space-2);
+    font: var(--w-strong) var(--type-xs) / 1.35 var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
   .load-more {
     display: flex;
@@ -1269,190 +802,66 @@
     justify-content: center;
     gap: var(--space-3);
     padding: var(--space-4);
-  }
-  .load-more span {
     color: var(--text-muted);
-    font: 600 9px var(--font-mono);
+    font: var(--type-2xs) var(--font-mono);
   }
-  .sr-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-  @container (max-width: 820px) {
+  @container history-list (max-width: 560px) {
     .column-head {
       display: none;
     }
-    ol {
-      display: grid;
+    .history-table {
+      grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
       gap: 6px;
-      padding: 8px;
+      padding: var(--space-2);
+    }
+    ol {
+      gap: 6px;
     }
     li {
       border: 1px solid var(--border);
       border-radius: var(--r-chrome);
-      background:
-        linear-gradient(180deg, var(--surface-2), transparent), var(--surface-1);
+      background: var(--sheen), var(--surface-1);
       box-shadow: var(--elev-tile);
-      contain-intrinsic-size: 76px;
-    }
-    li.selected {
-      border-color: var(--border-strong);
-      box-shadow: var(--elev-tile);
-    }
-    .result-row {
-      grid-template-columns: minmax(0, 1fr);
-      min-height: 72px;
     }
     .date-cell {
-      min-height: 31px;
-      padding: 6px 9px 5px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+      grid-column: 1 / -1;
+      padding-block: 6px 5px;
+      border-bottom: 1px solid var(--border-subtle);
     }
-    .date-cell time {
+    time {
       display: flex;
       align-items: baseline;
-      gap: 8px;
+      gap: var(--space-2);
     }
-    .date-cell time strong,
-    .date-cell time small {
-      margin: 0;
+    .metric-cell {
+      gap: 3px;
+      padding: 6px 7px 7px;
+      text-align: start;
     }
-    .date-cell time small {
-      flex: none;
+    .metric-cell + .metric-cell {
+      border-left: 1px solid var(--border-subtle);
     }
-    .row-badges {
+    .metric-cell small {
       display: flex;
       align-items: center;
       gap: 4px;
-    }
-    .metrics-row {
-      display: grid;
-      grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
-      min-width: 0;
-    }
-    .metric-cell {
-      gap: 3px;
-      min-width: 0;
-      padding: 6px 7px 7px;
-      border-left: 1px solid var(--border-subtle);
-      text-align: left;
-    }
-    .metric-cell:first-child {
-      border-left: 0;
-    }
-    .metric-cell small {
-      display: flex;
-      align-items: center;
-      gap: 5px;
       color: var(--text-muted);
-      font: 700 9px var(--font-mono);
-      letter-spacing: 0.05em;
+      font: var(--w-heavy) var(--type-2xs) var(--font-mono);
+      letter-spacing: var(--track-caps);
       text-transform: uppercase;
     }
-    .metric-cell small span {
-      display: grid;
-      color: var(--tone, var(--text-soft));
-    }
-    .metric-cell small :global(svg) {
-      width: 12px;
-      height: 12px;
-    }
     .metric-cell strong {
-      overflow: hidden;
-      font-size: 9px;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      font-size: var(--type-2xs);
     }
   }
-  @container (max-width: 560px) {
-    .history-head {
-      padding: 11px var(--space-3);
-    }
-    .close-history strong {
-      display: none;
-    }
-    .close-history {
-      width: 32px;
-      padding: 0;
-      justify-content: center;
-    }
-    .archive-overview {
-      display: grid;
-      grid-template-columns: minmax(88px, 0.65fr) minmax(0, 1.35fr);
-      gap: var(--space-3);
-    }
-    .archive-toolbar {
-      align-items: flex-start;
+  @container history (max-width: 560px) {
+    .history-head,
+    .notices {
       padding-inline: var(--space-3);
     }
-    .saving-notice {
-      align-items: flex-start;
-    }
-    .saving-notice p {
-      line-height: 1.4;
-    }
-  }
-  @container (max-width: 330px) {
-    .archive-toolbar {
-      display: grid;
-    }
-    .toolbar-actions {
-      justify-content: space-between;
-    }
-    .date-cell time {
-      gap: 5px;
-    }
-    .date-cell time small {
-      font-size: 8px;
-    }
-    .metric-cell {
-      padding-inline: 5px;
-    }
-    .metric-cell small {
-      gap: 3px;
-      font-size: 8px;
-      letter-spacing: 0.02em;
-    }
-    .metric-cell small :global(svg) {
-      width: 10px;
-      height: 10px;
-    }
-    .metric-cell strong {
-      font-size: 9px;
-    }
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .history-workspace {
-      animation: reveal-history var(--dur-slide) var(--ease-out) both;
-    }
-    .inline-inspector,
-    .detail-inspector {
-      animation: reveal-detail var(--dur-slide) var(--ease-out) both;
-    }
-    @keyframes reveal-history {
-      from {
-        transform: translateY(4px) scale(0.997);
-      }
-    }
-    @keyframes reveal-detail {
-      from {
-        transform: translateY(4px);
-      }
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .history-workspace,
-    .result-row {
-      animation: none;
-      transition: none;
-    }
-    .column-head i::after {
-      transition: none;
+    .history-head p {
+      order: 3;
+      flex-basis: 100%;
     }
   }
 </style>

@@ -1,13 +1,17 @@
 version: 2
 updates:
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
   - package-ecosystem: gomod
     directory: /go
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       go-deps:
         patterns: ["*"]
@@ -19,6 +23,8 @@ updates:
       - dependency-name: "@typescript/native"
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       client-deps:
         patterns: ["*"]

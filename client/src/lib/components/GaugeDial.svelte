@@ -13,6 +13,9 @@
 </script>
 
 <script lang="ts">
+  import { inView } from "../actions/inView";
+  import { untrack } from "svelte";
+  import { Smoothed, still } from "../presentation/motion.svelte";
   import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
@@ -21,7 +24,9 @@
   let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
     $props();
   const shadeId = $props.id();
-  let motion = $state(true);
+  // An unseen dial snaps rather than animating.
+  let seen = $state(true);
+  const motion = $derived(seen && !still());
   const completed = $derived(
     input.phase === "complete" && input.resultArcs.length > 0,
   );
@@ -70,74 +75,21 @@
         : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
   );
 
-  // CSS owns interpolation; only suppress motion when this instrument is unseen.
-  function attach(node: HTMLDivElement) {
-    let intersecting = true;
-    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => {
-      motion = intersecting && !document.hidden && !reducedMotion.matches;
-    };
-    const observer = new IntersectionObserver(([entry]) => {
-      intersecting = entry.isIntersecting;
-      update();
-    });
-    observer.observe(node);
-    reducedMotion.addEventListener("change", update);
-    document.addEventListener("visibilitychange", update);
-    update();
-    return () => {
-      observer.disconnect();
-      reducedMotion.removeEventListener("change", update);
-      node
-        .getAnimations({ subtree: true })
-        .forEach((animation) => animation.cancel());
-      document.removeEventListener("visibilitychange", update);
-    };
-  }
-  let surface = $state<HTMLDivElement>();
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  let flight: { from: number; to: number; animation?: Animation } | undefined;
-  const ease = (progress: number) => 1 - (1 - progress) ** 3;
+  const sweep = new Smoothed();
   $effect(() => {
-    const node = surface;
     const next = target * 270;
-    const visible = input.showValue && !completed;
-    const animate = motion && visible;
-    if (!node) return;
-    const current = flight
-      ? flight.from +
-        (flight.to - flight.from) *
-          ease(Math.min(1, Number(flight.animation?.currentTime ?? 600) / 600))
-      : next;
-    flight = { from: animate ? current : next, to: next };
-    const rotors = node.querySelectorAll<HTMLElement>(".rotor, .live-head");
-    const rotation = (angle: number, index: number) =>
-      index === 0
-        ? Math.min(180, angle)
-        : index === 1
-          ? Math.max(0, angle - 180)
-          : angle + 135;
-    // The compositor follows one sampled ease for all three surfaces. Include
-    // the exact half-ring crossing so both clips meet without a gap.
-    const offsets = Array.from({ length: 31 }, (_, i) => i / 30);
-    const crossing = (180 - current) / (next - current);
-    if (crossing > 0 && crossing < 1) offsets.push(1 - Math.cbrt(1 - crossing));
-    offsets.sort((a, b) => a - b);
-    rotors.forEach((rotor, index) => {
-      rotor.getAnimations().forEach((animation) => animation.cancel());
-      rotor.style.transform = `rotate(${rotation(next, index)}deg)`;
-      if (!animate || Math.abs(current - next) < 0.01) return;
-      const animation = rotor.animate(
-        offsets.map((offset) => ({
-          offset,
-          transform: `rotate(${rotation(current + (next - current) * ease(offset), index)}deg)`,
-        })),
-        { duration: 600, easing: "linear" },
-      );
-      if (index === 2) flight!.animation = animation;
-    });
+    const snap = !motion || !input.showValue || completed;
+    untrack(() => sweep.set(next, { snap }));
   });
+  // Each half ring turns through its own 180°, so both clips meet at the crossing.
+  const halfAngle = (half: number) =>
+    half ? Math.max(0, sweep.current - 180) : Math.min(180, sweep.current);
+  const halfRing = (sweep: number) => {
+    const r = layout.radius;
+    return `M ${extent} ${extent - r} A ${r} ${r} 0 0 ${sweep} ${extent} ${extent + r}`;
+  };
   const track = $derived.by(() => {
     const { center, radius, arcStart, arcSweep } = layout;
     const start = {
@@ -195,8 +147,7 @@
 {/snippet}
 
 <div
-  {@attach attach}
-  bind:this={surface}
+  {@attach inView((value) => (seen = value))}
   class="gauge-dial"
   class:motion
   role={completed ? "group" : undefined}
@@ -227,8 +178,14 @@
           offset=".5"
           stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
         />
-        <stop offset=".64" stop-color="rgba(var(--shadow-ink), .03)" />
-        <stop offset="1" stop-color="rgba(var(--shadow-ink), .08)" />
+        <stop
+          offset=".64"
+          stop-color="color-mix(in srgb, var(--shade) 3%, transparent)"
+        />
+        <stop
+          offset="1"
+          stop-color="color-mix(in srgb, var(--shade) 8%, transparent)"
+        />
       </radialGradient>
     </defs>
     <g fill="none" stroke-linecap="round">
@@ -312,7 +269,10 @@
           aria-label={result.description}
           style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
           style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
-          use:tooltip={{ text: result.description, instant: true }}
+          {@attach tooltip(() => ({
+            text: result.description ?? "",
+            instant: true,
+          }))}
         ></span>
       {/if}
     {/each}
@@ -335,6 +295,7 @@
             class="rotor"
             style:width={`${diameter}px`}
             style:height={`${diameter}px`}
+            style:transform={`rotate(${halfAngle(half)}deg)`}
           >
             <svg
               width={diameter}
@@ -342,7 +303,7 @@
               viewBox={`0 0 ${diameter} ${diameter}`}
             >
               <path
-                d={`M ${extent} ${extent - layout.radius} A ${layout.radius} ${layout.radius} 0 0 ${half} ${extent} ${extent + layout.radius}`}
+                d={halfRing(half)}
                 fill="none"
                 stroke={accent}
                 stroke-width={layout.arcWidth}
@@ -369,6 +330,7 @@
       class="live-head"
       style:left={`${layout.center.x}px`}
       style:top={`${layout.center.y}px`}
+      style:transform={`rotate(${sweep.current + 135}deg)`}
     >
       <svg
         style:left={`${layout.radius - headExtent}px`}
@@ -395,22 +357,8 @@
     z-index: 1;
     width: 24px;
     height: 24px;
-    padding: 0;
-    border: 0;
-    background: transparent;
     transform: translate(-50%, -50%);
     cursor: help;
-  }
-  .result-head-target:focus-visible {
-    outline: none;
-  }
-  .result-head-target:focus-visible::after {
-    content: "";
-    position: absolute;
-    inset-inline: 4px;
-    bottom: -2px;
-    height: 2px;
-    background: var(--brand-strong);
   }
 
   .gauge-dial,
@@ -431,13 +379,13 @@
   }
   .motion .live,
   .motion .result-layer {
-    transition: opacity 180ms ease-out;
+    transition: opacity var(--dur-slide) var(--ease-out);
   }
   .motion .live svg path {
-    transition: stroke 180ms linear;
+    transition: stroke var(--dur-slide) linear;
   }
   .motion .live svg circle {
-    transition: fill 180ms linear;
+    transition: fill var(--dur-slide) linear;
   }
   @starting-style {
     .motion .result-layer {

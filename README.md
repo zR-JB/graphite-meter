@@ -46,17 +46,15 @@ result. Choose separate download and upload stages, or add simultaneous transfer
 received throughput on one stage schedule. Each server keeps its own latency population. A server
 dropout leaves an explicit partial result and a new measurement window for the survivors.
 
-**Latency under load.** Compare idle latency with latency during download, upload, and simultaneous
-transfers. Each stage has its own distribution, percentiles, RTT variation, and probe timeout
-counts. Paired server timing shows how much of a reply's RTT was spent in the instrumented server
-handler. Missing or interrupted evidence stays explicit.
+**Latency under load.** Compare idle latency with latency during download, upload, and bidirectional
+transfers. Each stage reports its median, p95, jitter and probe timeouts; added latency is the loaded
+median minus the idle median. Paired server timing shows how much of a reply's RTT was spent in the
+server handler. Missing or interrupted evidence stays explicit.
 
 **Control over the connection path.** Select throughput and latency paths independently. Dedicated
 listeners expose HTTP/1.1, HTTP/2, and HTTP/3; WebSocket and WebTransport provide latency paths.
-Endpoint details distinguish browser-observed and server-observed protocol evidence, including
-when a reverse proxy sits between them. Inspect each selected server separately; after a run,
-the panel retains the paths actually used. Server capabilities and diagnostic evidence are
-available in expandable sections.
+The **Details** panel separates browser-observed and server-observed protocol evidence, including
+behind a reverse proxy, per selected server, and keeps the paths a finished run actually used.
 
 WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
 UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
@@ -67,42 +65,36 @@ for controlled performance testing.
 ## Browser client
 
 Run a test from a phone or desktop without installing a client. The gauge, timeline, and latency
-profiles keep transfer speed and responsiveness visible together. **v0.8.5 refines the workspace**
-with compact phone controls, clearer saved results, and persistent desktop panels.
+profiles keep transfer speed and responsiveness visible together.
 
 - **Flexible tests:** stage toggles, duration presets or custom timings, automatic or fixed stream
   counts, and optional early completion when a stage stabilizes.
-- **Server selection:** compact server bands in Settings, independent sign-in for protected peers,
-  and per-server contributions in result details. Automatic paths resolve separately for each server.
+- **Server selection:** a **Test servers** checklist in Settings, independent sign-in for protected
+  peers, and one **Combined** / per-server selector in results. Automatic paths resolve per server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.
-- **Phone layout:** compact phase cards keep names and status readable above full-width progress bars. The toolbar stays within
-  reach, and the bottom status bar keeps the current phase and remaining time visible while the
-  workspace scrolls.
-- **Wide desktop workspace:** open Settings and Endpoint info side by side with the meter. Resize
+- **Phone layout:** compact stage cards above full-width progress bars; the toolbar stays within reach
+  and the bottom status bar keeps the current stage and remaining time visible while you scroll.
+- **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize
   each panel to suit your monitor; your widths survive resizing and reload. Below the docked
   layout, one panel opens as a flyout and the URL follows the visible panel.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
   inspect past runs while the live test continues, then return to it from the toolbar.
 
-<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Endpoint info open beside the completed meter on a wide desktop" width="1080">
+<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Details open beside the completed meter on a wide desktop" width="1080">
 
 <p align="center"><sub>v0.8.5 · simulated measurements · resizable desktop panels</sub></p>
 
 ### Read a saved result
 
-For multi-server runs, choose **Throughput results** to inspect the combined run or one server's
-contribution. Choose **Latency source** separately to compare that server's idle and loaded responsiveness. The two
-controls preserve their own selection, and a server without latency measurements stays explicitly
-unmeasured.
-
-Latency notes and probe details explain timeouts, interrupted probes, and server timing. Secondary
-server and path metadata sits under **Servers & run context**, so the measurements remain the first thing you see.
-History is stored in the current browser; it is not a server-side archive or a recording of every
-raw sample.
+A saved result opens with the live meter's summary cards. For multi-server runs, one selector
+switches between **Combined** and each server; latency follows the chosen server when it measured
+latency, otherwise the run's latency server stays shown and named. Secondary evidence sits under
+**Servers & paths**, **Probe accounting**, **Issues** and **Build & environment**. History lives in
+the current browser; it is not a server-side archive or a record of raw samples.
 
 See the [gallery](docs/SCREENSHOTS.md) for light and dark themes, mobile controls, saved results,
-and endpoint details.
+and connection details.
 
 ## Native terminal client
 
@@ -125,13 +117,13 @@ then run:
 
 Prebuilt clients are available for **Linux and macOS on amd64/arm64**, and **Windows on amd64**
 (`graphite-meter-client.exe`). On authenticated servers, approve the terminal's short code in your
-browser. The client keeps its measurement grant in memory and does not request your operator password.
-Press **s** in setup for the server chooser, **l** to change the displayed latency server, and
-**d** during or after a run for server contributions, intervals, and failures.
+browser. The client keeps its measurement grant in memory and never asks for the operator password.
+Without a terminal, or with `--report`, it runs once and prints the report; the exit status
+reflects the outcome.
 
-[All terminal flags](docs/DEPLOYMENT.md#native-terminal-client) ·
-[Build the client from source](docs/DEVELOPMENT.md#development-commands) ·
-[Upgrading to 0.8](docs/DEPLOYMENT.md#upgrading-to-08)
+[Flags, keys and exit codes](docs/DEPLOYMENT.md#native-terminal-client) ·
+[Build from source](docs/DEVELOPMENT.md#commands) ·
+[Upgrading](docs/DEPLOYMENT.md#upgrading)
 
 ## Documentation
 

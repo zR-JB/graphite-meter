@@ -2,11 +2,13 @@ package goclient
 
 import (
 	"context"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
+	"errors"
 	"maps"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
@@ -14,16 +16,11 @@ const (
 	runEventCapacity   = 256
 )
 
-// AuthorizationTimeout bounds approval polling and its displayed countdown.
 const AuthorizationTimeout = 2 * time.Minute
 
-// Controller owns preparation, approval polling, and measurement lifetimes for one client.
-// UI sequence guards still decide whether an already queued reply belongs to the current view.
 type Controller struct {
-	catalog     *wire.ServerCatalog
-	selection   []wire.ServerEntry
-	grants      map[string]string
 	mu          sync.Mutex
+	grants      map[string]string
 	ctx         context.Context
 	cancel      context.CancelFunc
 	preparation context.CancelFunc
@@ -41,24 +38,23 @@ func NewController(parent context.Context) *Controller {
 	return &Controller{ctx: ctx, cancel: cancel, grants: map[string]string{}}
 }
 
-// Preparation captures the configuration and cancellation scope of delayed UI commands.
 type Preparation struct {
-	owner *Controller
-	ctx   context.Context
-	cfg   Config
+	owner    *Controller
+	ctx      context.Context
+	cfg      Config
+	previous *PreparedRun
 }
 
-func (c *Controller) NewPreparation(cfg Config) *Preparation {
+func (c *Controller) NewPreparation(cfg Config, previous *PreparedRun) *Preparation {
 	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
-	if c.ctx.Err() != nil {
-		return &Preparation{owner: c, ctx: c.ctx, cfg: cfg}
+	p := &Preparation{owner: c, ctx: c.ctx, cfg: cfg, previous: previous}
+	if c.ctx.Err() == nil {
+		p.ctx, c.preparation = context.WithCancel(c.ctx)
 	}
-	ctx, cancel := context.WithCancel(c.ctx)
-	c.preparation = cancel
-	return &Preparation{owner: c, ctx: ctx, cfg: cfg}
+	return p
 }
 
 func (c *Controller) cancelPreparation() {
@@ -82,20 +78,28 @@ func (p *Preparation) begin(timeout time.Duration) (context.Context, func(), err
 	}, nil
 }
 
-func (p *Preparation) Prepare() (*PreparedConnection, error) {
+func (p *Preparation) PrepareRun() (*PreparedRun, error) {
 	ctx, done, err := p.begin(preparationTimeout)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	return Prepare(ctx, p.cfg)
+	return prepareRun(ctx, p.cfg, p.previous, p.owner.snapshot())
 }
 
-func (p *Preparation) BeginAuthorization(authURL string) (*PendingAuthorization, error) {
+func (c *Controller) snapshot() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return maps.Clone(c.grants)
+}
+
+func (p *Preparation) BeginAuthorization(origin, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
 	}
-	return BeginAuthorization(p.cfg, authURL)
+	cfg := p.cfg
+	cfg.BaseURL = origin
+	return beginAuthorization(cfg, authURL)
 }
 
 func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, error) {
@@ -107,39 +111,25 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 	return pending.Poll(ctx)
 }
 
-// Start abandons a replaced run's delivery, then starts one bounded event stream.
-func (c *Controller) Start(cfg Config, prepared *PreparedConnection) <-chan Event {
-	return c.startEvents(func(ctx context.Context, emit func(Event)) {
-		_ = RunPrepared(ctx, cfg, prepared, func(event Event) {
-			if event.Kind == EventDone {
-				event.Err = ClassifyAuthFailure(ctx, cfg, event.Err)
-			}
-			emit(event)
-		})
-	})
-}
-
-func (c *Controller) StartSelection(cfg Config, prepared *PreparedRun) <-chan Event {
+func (c *Controller) AcceptAuthorization(origin, token string) error {
+	canonical, err := wire.CanonicalOrigin(origin)
+	if err != nil || canonical != origin {
+		return errors.New("invalid authorization origin")
+	}
+	if token == "" || len(token) > 8192 {
+		return errors.New("invalid authorization grant")
+	}
 	c.mu.Lock()
-	grants := maps.Clone(c.grants)
-	previous := slices.Clone(c.selection)
-	c.mu.Unlock()
-	return c.startEvents(func(ctx context.Context, emit func(Event)) {
-		if !prepared.FreshFor(cfg) {
-			preparation, cancel := context.WithTimeout(ctx, preparationTimeout)
-			var err error
-			prepared, err = prepareRun(preparation, cfg, previous, grants)
-			cancel()
-			if err != nil {
-				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
-				return
-			}
-		}
-		_ = RunSelection(ctx, cfg, prepared, emit)
-	})
+	defer c.mu.Unlock()
+	if _, exists := c.grants[origin]; !exists && len(c.grants) >= wire.MaxCatalogServers {
+		return errors.New("too many authorized servers; restart the client to clear unused grants")
+	}
+	c.grants[origin] = token
+	return nil
 }
 
-func (c *Controller) startEvents(run func(context.Context, func(Event))) <-chan Event {
+func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
+	grants := c.snapshot()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -158,12 +148,35 @@ func (c *Controller) startEvents(run func(context.Context, func(Event))) <-chan 
 		defer cancel()
 		defer abandon()
 		defer close(events)
-		run(measurement, func(event Event) { sendRunEvent(measurement, delivery, events, event) })
+		emit := func(event Event) { sendRunEvent(measurement, delivery, events, event) }
+		if !prepared.FreshFor(cfg) {
+			ctx, cancelPreparation := context.WithTimeout(measurement, preparationTimeout)
+			var err error
+			prepared, err = prepareRun(ctx, cfg, prepared, grants)
+			cancelPreparation()
+			if err != nil && !prepared.runnable() {
+				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
+				return
+			}
+		}
+		runSelection(measurement, delivery, cfg, prepared, emit)
 	})
 	return events
 }
 
-// CancelRun stops measurement while retaining its final results and terminal event.
+func Run(ctx context.Context, cfg Config, emit func(Event)) error {
+	controller := NewController(ctx)
+	defer controller.Close()
+	var err error
+	for event := range controller.Start(cfg, nil) {
+		if event.Kind == EventDone {
+			err = event.Err
+		}
+		emit(event)
+	}
+	return err
+}
+
 func (c *Controller) CancelRun() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -172,7 +185,6 @@ func (c *Controller) CancelRun() {
 	}
 }
 
-// Close abandons queued delivery and joins started work, including work from replaced scopes.
 func (c *Controller) Close() {
 	c.mu.Lock()
 	c.cancel()
@@ -181,8 +193,14 @@ func (c *Controller) Close() {
 }
 
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
-	terminalServers := event.Kind == EventServers && event.Servers != nil && event.Servers.Outcome != "running"
-	if event.Kind == EventResult || event.Kind == EventDone || terminalServers {
+	switch event.Kind {
+	case EventThroughput, EventLatency:
+		select {
+		case events <- event:
+		default:
+		}
+		return
+	case EventResult, EventDone:
 		measurement = delivery
 	}
 	select {

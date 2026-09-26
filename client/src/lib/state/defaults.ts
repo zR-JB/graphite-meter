@@ -18,35 +18,25 @@ export const DEFAULT_CONFIG: RunnerConfig = {
     throughputTarget: "auto",
     latencyTarget: "auto",
   },
-  adaptive: {
-    enabled: true,
-    minCoverageRatio: 0.52,
-    stabilityThreshold: 0.86,
-    maxPhaseReductionRatio: 0.5,
-    minLatencySamples: 8,
-    minTransferSamples: 12,
-    confirmationMs: 1100,
-  },
+  adaptive: true,
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
-/** Adaptive thresholds are runner policy; persistence owns only the switch. */
-export function canonicalAdaptiveConfig(
-  value: unknown = DEFAULT_CONFIG.adaptive.enabled,
-): RunnerConfig["adaptive"] {
-  const enabled =
-    value == null
-      ? undefined
-      : typeof value === "object" && "enabled" in value
-        ? value.enabled
-        : value;
-  return {
-    ...DEFAULT_CONFIG.adaptive,
-    enabled:
-      enabled === undefined
-        ? DEFAULT_CONFIG.adaptive.enabled
-        : enabled === true,
-  };
+/** Bounds in ms, as in the native client; a stage leaves room for the 800 ms evidence floor. */
+export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
+  warmupMs: [0, 4_000],
+  latencyMs: [1_000, 300_000],
+  downloadMs: [1_000, 300_000],
+  uploadMs: [1_000, 300_000],
+  bidirectionalMs: [1_000, 300_000],
+};
+type DurationKey = keyof RunnerConfig["duration"];
+
+export function clampDuration(key: DurationKey, value: unknown): number {
+  const [min, max] = DURATION_LIMITS[key];
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return DEFAULT_CONFIG.duration[key];
+  return value <= 0 ? 0 : Math.min(max, Math.max(min, Math.round(value)));
 }
 
 export const DURATION_PRESETS = {

@@ -9,24 +9,27 @@ python = "3.14.7"
 go = "1.27.1"
 "aqua:gitleaks/gitleaks" = "8.30.1"
 "aqua:dominikh/go-tools/staticcheck" = "2026.2.1"
-"aqua:astral-sh/ty" = "0.0.82"
+"aqua:astral-sh/ty" = "0.0.84"
+"aqua:rhysd/actionlint" = "1.7.12"
+"aqua:zizmorcore/zizmor" = "1.30.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.8.0"
 
 [vars]
-mise_version = "2026.9.11"
+mise_version = "2026.9.14"
 
 browser_chrome = "153.0.8010.52"
 
-image_gitleaks = "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
-image_skopeo = "quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4"
+codeql = "2.27.1"
+
+image_skopeo = """
+quay.io/containers/skopeo:v1.22.3-immutable\
+@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"""
+image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
+image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 
 [env]
 CGO_ENABLED = "0"
-
-[tasks.default]
-description = "List developer tasks"
-run = "mise tasks ls"
 
 [tasks.setup]
 description = "Install pinned tools, dependencies, and the commit hook"
@@ -42,22 +45,25 @@ run = [
 description = "Check local, CI, and Docker toolchain drift"
 run = "python3 scripts/ci/toolchains.py doctor"
 
-[tasks.toolchain-check]
-description = "Validate tool literals needed before repository code can run"
-run = "python3 scripts/ci/toolchains.py check"
-
 [tasks.toolchain-sync]
 description = "Update required toolchain literals from mise.toml"
 run = "python3 scripts/ci/toolchains.py sync"
 
 [tasks.workflow-check]
-description = "Validate workflow structure and trust boundaries"
-run = "python3 scripts/ci/workflow_policy.py"
+description = "Lint workflows and validate trust boundaries"
+run = [
+  "actionlint -shellcheck= -pyflakes=",
+  "zizmor --offline --no-progress --config .github/zizmor.yml .github",
+  "python3 scripts/ci/workflow_policy.py",
+]
 
 [tasks.python-check]
 shell = "bash -e -o pipefail -c"
 description = "Type-check Python tools and tests"
-run = 'ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" --extra-search-path scripts/ci --error-on-warning'
+run = '''
+ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" \
+  --extra-search-path scripts/ci --error-on-warning
+'''
 
 [tasks.pipeline-test]
 shell = "bash -e -o pipefail -c"
@@ -69,40 +75,33 @@ run = [
 ]
 
 [tasks.secret-scan-ci]
-description = "Run the pinned CI Gitleaks container"
-env = { GM_GITLEAKS_IMAGE = "{{vars.image_gitleaks}}" }
-run = '''
-#!/usr/bin/env sh
-set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "secret-scan-ci requires Docker or Podman" >&2; exit 2; }
-expected=$(python3 scripts/ci/toolchains.py get tools.gitleaks)
-actual=$("$engine" run --rm "$GM_GITLEAKS_IMAGE" version | tr -d '\r')
-[ "${actual#v}" = "${expected#v}" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
-"$engine" run --rm -v "$PWD:/repo:ro" "$GM_GITLEAKS_IMAGE" detect --source=/repo --no-banner --redact --exit-code 1
-'''
+description = "Scan the checked-out history with the pinned Gitleaks"
+run = "gitleaks git --no-banner --redact --verbose"
 
-# Ordered steps preserve the existing mutation boundaries: generated assets,
-# builds, embedding, and legal scans must not race within a gate invocation.
+# Ordered: generated assets, builds and legal scans must not race.
 [tasks.check]
 description = "Run the deterministic developer gate"
 run = [
-  { task = "doctor" },
   { task = "workflow-check" },
   { task = "pipeline-test" },
-  { task = "check-generated" },
-  { task = "client-ci" },
-  { task = "server-check" },
+  { task = "core-check" },
   { task = "server-test" },
-  { task = "staticcheck" },
   { task = "legal-check" },
 ]
 
-[tasks.client-ci]
-description = "Check generated client types, formatting, types, dependencies, and tests"
+[tasks.core-check]
+description = "Run the component checks owned by the CI core job"
 run = [
-  { task = "client-check-generated" },
-  "cd client && bun run format:check",
+  { task = "doctor" },
+  { task = "client-ci" },
+  { task = "server-check" },
+  { task = "staticcheck" },
+]
+
+[tasks.client-ci]
+description = "Check client formatting, types, dependencies, and tests"
+run = [
+  "cd client && bun run format:check ../go/internal/auth/assets",
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
   "cd client && bun dedupe --dry-run",
@@ -118,7 +117,7 @@ run = "bun run build"
 [tasks.client-build-prod]
 description = "Build the production client"
 dir = "client"
-env = { GM_CLIENT_BUILD_PROFILE = "prod", GM_CLIENT_ALLOW_DUMMY = "{{env.GM_CLIENT_ALLOW_DUMMY | default(value='0')}}" }
+env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = "bun run build"
 
 [tasks._legal-run]
@@ -148,10 +147,6 @@ description = "Print a legal audit or review template"
 usage = 'arg "[mode]" default="audit"'
 run = 'mise run _legal-run "review-${usage_mode?}"'
 
-[tasks._legal-third-party-source-bundle]
-hide = true
-run = [{ task = "_legal-run", args = ["third-party-source-bundle"] }]
-
 [tasks.client-check]
 description = "Type-check the client and Bun tests"
 dir = "client"
@@ -160,22 +155,12 @@ run = "bun run check"
 [tasks.client-test]
 description = "Run all browser-source unit tests"
 dir = "client"
-run = "bun test src --parallel --timings=test-timings.json"
-
-[tasks.client-test-changed]
-description = "Run affected browser-source unit tests"
-dir = "client"
-run = "bun test src --changed --parallel --timings=test-timings.json"
+run = "bun test src --parallel"
 
 [tasks.client-audit]
 description = "Check the live registry advisory database"
 dir = "client"
 run = "bun audit"
-
-[tasks.client-test-timings]
-description = "Refresh Bun's per-file test timing metadata"
-dir = "client"
-run = "bun test src --parallel --timings=test-timings.json --update-timings"
 
 [tasks.client-watch]
 description = "Run the standalone Vite development server"
@@ -194,28 +179,13 @@ arg "[oidc_ready]" default="true"
 '''
 run = 'go run ./internal/auth/cmd/authpreview --mode "${usage_mode?}" --oidc-ready="${usage_oidc_ready?}"'
 
-[tasks.client-gen-types]
-description = "Generate client API types from JSON schemas"
-dir = "client"
-run = [
-  "bunx json-schema-to-typescript ../api/preflight.schema.json -o src/lib/api/preflight.ts",
-  "bunx json-schema-to-typescript ../api/probe.schema.json -o src/lib/api/probe.ts",
-  "bunx json-schema-to-typescript ../api/servers.schema.json -o src/lib/api/servers.ts",
-]
-
-[tasks.client-check-generated]
-shell = "bash -e -o pipefail -c"
-description = "Check schema-derived client type drift"
-run = [
-  { task = "client-gen-types" },
-  'git diff --quiet -- client/src/lib/api/ || { echo "Client API types are stale; run mise run client-gen-types and commit the result" >&2; exit 1; }',
-]
-
 [tasks._embed-client]
 hide = true
-run = '''
-bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true }); fs.writeFileSync('go/internal/static/dist/.gitkeep', '')"
-'''
+run = [
+  "rm -rf go/internal/static/dist",
+  "cp -R client/dist go/internal/static/dist",
+  "touch go/internal/static/dist/.gitkeep",
+]
 
 [tasks.server-build-dev]
 description = "Build the development server with embedded client assets"
@@ -232,9 +202,9 @@ run = [
   { task = "client-build-prod" },
   { task = "_embed-client" },
   '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go build -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" -trimpath -o graphite-meter ./cmd/graphite-meter
+version=$(scripts/build-version.sh)
+cd go && go build -trimpath -o graphite-meter \
+  -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
 ''',
 ]
 
@@ -243,7 +213,7 @@ shell = "bash -e -o pipefail -c"
 description = "Check Go formatting and vet, including the stress harness"
 dir = "go"
 run = [
-  'unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi',
+  'test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }',
   "go vet ./...",
   "go vet -tags stress ./internal/server/",
 ]
@@ -252,14 +222,6 @@ run = [
 description = "Run all Go tests, including loopback integration"
 dir = "go"
 run = "go test ./..."
-
-[tasks.check-generated]
-shell = "bash -e -o pipefail -c"
-description = "Check embedded authentication asset drift"
-run = [
-  "python3 -m scripts.auth_assets",
-  'git diff --quiet -- go/internal/auth/assets_generated.go || { echo "Authentication assets are stale; run go generate ./internal/auth and commit the result" >&2; exit 1; }',
-]
 
 [tasks.staticcheck]
 description = "Run the pinned Go static analyzer"
@@ -281,33 +243,32 @@ set -eu
 go test -race -shuffle=on -coverprofile=cover.out ./...
 total=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | tr -d '%')
 echo "total statement coverage: ${total}%"
-awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' || { echo "coverage ${total}% is below the 75% floor" >&2; exit 1; }
+if ! awk -v total="$total" 'BEGIN { exit !(total >= 75) }'; then
+  echo "coverage ${total}% is below the 75% floor" >&2
+  exit 1
+fi
 '''
 
-[tasks.client-browser]
-description = "Run the stubbed Chromium browser suite"
-dir = "client"
-run = "bun run test:browser"
-
-[tasks.client-e2e]
-description = "Run Chromium against every real server transport"
+[tasks._e2e-build]
+hide = true
+env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = [
-  { task = "client-build-prod" },
+  "cd client && bun run build:bundle && bun run build:e2e-harness",
   { task = "_embed-client" },
-  '''
-#!/usr/bin/env sh
-set -eu
-certs=$(mktemp -d)
-trap 'rm -rf "$certs"' EXIT
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$certs/key.pem" -out "$certs/cert.pem" -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
-GM_E2E_TLS_CERT="$certs/cert.pem"
-GM_E2E_TLS_KEY="$certs/key.pem"
-GM_E2E_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64)
-GM_E2E_SERVER_BIN="$certs/graphite-meter-e2e"
-(cd go && go build -trimpath -o "$GM_E2E_SERVER_BIN" ./cmd/graphite-meter)
-export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI GM_E2E_SERVER_BIN
-cd client && bun run test:e2e
-''',
+  "cd go && go build -trimpath -o ../client/test-results/graphite-meter ./cmd/graphite-meter",
+]
+
+[tasks.e2e]
+description = "Run Chromium against one local server fleet"
+dir = "client"
+run = [{ task = "_e2e-build" }, "bun run scripts/e2e.ts"]
+
+[tasks.bench-ui]
+description = "Measure UI frame delivery against the local server fleet (manual)"
+dir = "client"
+run = [
+  { task = "_e2e-build" },
+  "bun run scripts/e2e.ts bun test ./bench/ui.bench.ts --no-orphans --timeout=600000",
 ]
 
 [tasks.stress]
@@ -330,19 +291,10 @@ dir = "client"
 usage = 'arg "[filter]" default=""'
 run = 'GM_BENCH_FILTER="${usage_filter?}" bun run test:bench'
 
-[tasks.tui-cross-build]
-description = "Build every supported native TUI target"
-run = '''
-#!/usr/bin/env sh
-set -eu
-while IFS= read -r target; do
-  [ -n "$target" ] || continue
-  goos=${target%/*}
-  goarch=${target#*/}
-  echo "building ${goos}/${goarch}"
-  (cd go && CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -o /dev/null ./cmd/graphite-meter-client)
-done < scripts/tui-targets.txt
-'''
+[tasks.codeql]
+description = "Reproduce the CodeQL scan offline with the pinned CLI and count results per rule (manual)"
+env = { GM_CODEQL_VERSION = "{{vars.codeql}}" }
+run = "scripts/codeql.sh"
 
 [tasks.bench-servers]
 description = "Measure one, two, and four real servers in isolated Linux network namespaces (manual)"
@@ -360,62 +312,38 @@ set -eu
 VERSION=$usage_version
 export VERSION
 mise run legal-check
-python3 -m unittest discover -s scripts/legal -t .
-mise run release-build "$VERSION"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 RELEASE_DIST="$tmp/dist" mise run release-artifacts "$VERSION"
 RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "$VERSION"
 '''
 
-[tasks.release-build]
-description = "Build exact production client and server release artifacts"
-usage = 'arg "[version]" default="development"'
-run = [{ task = "server-build-prod", env = { VERSION = "{{usage.version}}" } }]
-
 [tasks.release-artifacts]
 description = "Build distributable native archives and checksums without publishing"
 usage = 'arg "[version]" default="development"'
-run = '''
-#!/usr/bin/env sh
-set -eu
-VERSION=$usage_version
-export VERSION
-dist=${RELEASE_DIST:-go/dist}
-case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
-mkdir -p "$dist"
-find "$dist" -maxdepth 1 -type f -delete
-LEGAL_THIRD_PARTY_SOURCE_OUT="$dist/graphite-meter_${VERSION}_third-party-source.tar.gz" mise run _legal-third-party-source-bundle
-while IFS= read -r target; do
-  [ -n "$target" ] || continue
-  scripts/package-tui.sh "$VERSION" "${target%/*}" "${target#*/}" "$dist"
-done < scripts/tui-targets.txt
-(cd "$dist" && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt)
-'''
+run = 'scripts/release-artifacts.sh "$usage_version"'
 
 [tasks.container-smoke]
 description = "Build and smoke-test the local production image"
-run = '''
-#!/usr/bin/env sh
-set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "container-smoke requires Docker or Podman" >&2; exit 2; }
-bun_version=$(python3 scripts/ci/toolchains.py get runtime.bun)
-"$engine" build -f container/Dockerfile -t graphite-meter:smoke --build-arg BUN_VERSION="$bun_version" --build-arg VERSION=0.0.0-ci --build-arg CLIENT_VERSION=0.0.0-ci --build-arg GM_CLIENT_BUILD_PROFILE=prod --build-arg GM_CLIENT_REVISION=local --build-arg GM_CLIENT_VALIDATE=0 --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
-scripts/verify-container.sh graphite-meter:smoke
-'''
+env = { VERSION = "0.0.0-ci", GM_CLIENT_REVISION = "local", GM_CLIENT_VALIDATE = "0" }
+run = [
+  { task = "container-build", args = ["graphite-meter:smoke"] },
+  "scripts/verify-container.sh graphite-meter:smoke",
+]
 
+# Mirrors CI job by job: server-race replaces check's server-test.
 [tasks.ci]
 description = "Run deterministic, race, advisory, browser, release, and container gates"
 run = [
-  { task = "check" },
+  { task = "workflow-check" },
+  { task = "pipeline-test" },
+  { task = "core-check" },
+  { task = "legal-check" },
   { task = "server-race" },
   { task = "security" },
   { task = "client-audit" },
   { task = "secret-scan-ci" },
-  { task = "client-browser" },
-  { task = "client-e2e" },
-  { task = "tui-cross-build" },
+  { task = "e2e" },
   { task = "release-check" },
   { task = "container-smoke" },
 ]
@@ -424,16 +352,10 @@ run = [
 shell = "bash -e -o pipefail -c"
 description = "Build the stamped native TUI without browser assets"
 run = '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go build -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+version=$(scripts/build-version.sh)
+cd go && go build -trimpath -o graphite-meter-client \
+  -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" ./cmd/graphite-meter-client
 '''
-
-[tasks.goclient-run]
-description = "Run the native TUI against a server"
-dir = "go"
-raw = true
-run = "go run ./cmd/graphite-meter-client"
 
 [tasks.dev]
 description = "Build the development client and run the embedded server"
@@ -452,21 +374,22 @@ run = [
   { task = "client-build-prod" },
   { task = "_embed-client" },
   '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
+version=$(scripts/build-version.sh)
+cd go && go run \
+  -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
 ''',
 ]
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"
+usage = 'arg "[tag]" default="graphite-meter:latest"'
 run = '''
 #!/usr/bin/env sh
 set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "container-build requires Docker or Podman" >&2; exit 2; }
-bun_version=$(python3 scripts/ci/toolchains.py get runtime.bun)
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
-version=${VERSION:-$revision}
-"$engine" build -f container/Dockerfile -t graphite-meter:latest --build-arg BUN_VERSION="$bun_version" --build-arg VERSION="$version" --build-arg CLIENT_VERSION="${VERSION:-}" --build-arg GM_CLIENT_BUILD_PROFILE=prod --build-arg GM_CLIENT_REVISION="$revision" .
+"$engine" build -f container/Dockerfile -t "$usage_tag" --build-arg VERSION="${VERSION:-$revision}" \
+  --build-arg CLIENT_VERSION="${VERSION:-}" \
+  --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
+  --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
 '''

@@ -1,6 +1,3 @@
-import type { Preflight } from "./preflight";
-import type { Probe } from "./probe";
-
 /** Control documents are small; bound decoded bytes even without Content-Length. */
 export const MAX_CONTROL_BYTES = 64 * 1024;
 const MAX_TARGETS = 32;
@@ -48,6 +45,15 @@ function string(value: unknown, max: number, allowEmpty = false): string {
   return value;
 }
 
+// Controls and bidirectional overrides could disguise a server's displayed identity.
+const UNSAFE_TEXT = /[\p{Cc}؜‎‏‪-‮⁦-⁩]/u;
+
+export function displayText(value: unknown, max: number, allowEmpty = false) {
+  const text = string(value, max, allowEmpty);
+  if (UNSAFE_TEXT.test(text)) throw new Error("invalid control response text");
+  return text;
+}
+
 function member<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T))
     throw new Error("unsupported control response value");
@@ -75,18 +81,33 @@ function targets(value: unknown): unknown[] {
   return value;
 }
 
-export function parsePreflight(value: unknown): Preflight {
+/** Discovery with independently selectable throughput and latency endpoints (api/preflight.schema.json). */
+export type Preflight = ReturnType<typeof parsePreflight>;
+export type ThroughputEndpoint =
+  Preflight["capabilities"]["throughput"][number];
+export type LatencyEndpoint = Preflight["capabilities"]["latency"][number];
+/** Connection evidence from GET /probe on a selected target (api/probe.schema.json). */
+export interface Probe {
+  clientIp: string;
+  clientIpVersion: 4 | 6;
+  clientIpSource: "socket" | "forwarded";
+  protocolNegotiated: "http/1.1" | "h2" | "h3";
+  /** Admission-wrapped handlers holding slots, and the configured ceiling. */
+  load?: { active: number; max: number };
+}
+
+export function parsePreflight(value: unknown) {
   const input = record(value);
   const server = record(input.server);
   const capabilities = record(input.capabilities);
   return {
     server: {
-      name: string(server.name, 256, true),
+      name: displayText(server.name, 256, true),
       ...(server.location === undefined
         ? {}
-        : { location: string(server.location, 256, true) }),
+        : { location: displayText(server.location, 256, true) }),
     },
-    engineVersion: string(input.engineVersion, 256, true),
+    engineVersion: displayText(input.engineVersion, 256, true),
     generation: string(input.generation, 256),
     capabilities: {
       ...(capabilities.uploadCheckpoint === undefined
@@ -122,7 +143,8 @@ export function parsePreflight(value: unknown): Preflight {
 
 export function parseProbe(value: unknown): Probe {
   const input = record(value);
-  if (input.clientIpVersion !== 4 && input.clientIpVersion !== 6)
+  const clientIpVersion = input.clientIpVersion;
+  if (clientIpVersion !== 4 && clientIpVersion !== 6)
     throw new Error("invalid probe IP version");
   let load: Probe["load"];
   if (input.load !== undefined) {
@@ -138,7 +160,7 @@ export function parseProbe(value: unknown): Probe {
   }
   return {
     clientIp: string(input.clientIp, 64),
-    clientIpVersion: input.clientIpVersion,
+    clientIpVersion,
     clientIpSource: member(input.clientIpSource, ["socket", "forwarded"]),
     protocolNegotiated: member(input.protocolNegotiated, [
       "http/1.1",

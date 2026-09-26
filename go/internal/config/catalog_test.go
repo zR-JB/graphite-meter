@@ -12,7 +12,8 @@ func TestServerCatalogConfiguration(t *testing.T) {
 		t.Run(map[bool]string{false: "inline", true: "file"}[file], func(t *testing.T) {
 			unsetEnv(t, "GM_SERVER_CATALOG")
 			unsetEnv(t, "GM_SERVER_CATALOG_FILE")
-			raw := `{"defaultSelection":["remote"],"servers":[{"id":"remote","name":"Remote","url":"https://EXAMPLE.net:443","additionalOrigins":["https://transfer.example.net"]}]}`
+			raw := `{"defaultSelection":["remote"],"servers":[{"id":"remote","name":"Remote",` +
+				`"url":"https://EXAMPLE.net:443","additionalOrigins":["https://transfer.example.net"]}]}`
 			if file {
 				path := filepath.Join(t.TempDir(), "servers.json")
 				if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
@@ -26,8 +27,10 @@ func TestServerCatalogConfiguration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(c.ServerCatalog.Servers) != 2 || c.ServerCatalog.Servers[0].ID != "self" || c.ServerCatalog.DefaultSelection[0] != "remote" || c.ServerCatalog.Servers[1].URL != "https://example.net" {
-				t.Fatalf("catalogue = %+v", c.ServerCatalog)
+			got := c.ServerCatalog
+			if len(got.Servers) != 2 || got.Servers[0].ID != "self" || got.DefaultSelection[0] != "remote" ||
+				got.Servers[1].URL != "https://example.net" {
+				t.Fatalf("catalogue = %+v", got)
 			}
 		})
 	}
@@ -46,18 +49,37 @@ func TestServerCatalogRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 		`{"servers":[{"id":"a","url":"https://example.net;evil"}]}`,
 		`{"servers":[],"typo":true}`,
 		strings.Repeat(" ", 64*1024+1),
+		`["https://example.net", "https://EXAMPLE.net:443"]`,
+		`["https://example.net/probe"]`,
+		`["https://user:pass@example.net"]`,
+		`["https://example.net?x=1"]`,
+		`["https://example.net#x"]`,
+		`["https://*.example.net"]`,
+		`[null]`, `[42]`, `[{}]`, `[`,
 	} {
 		t.Run(raw[:min(60, len(raw))], func(t *testing.T) {
 			t.Setenv("GM_SERVER_CATALOG", raw)
-			if _, err := Load(); err == nil {
+			if _, err := loadServerCatalog(); err == nil {
 				t.Fatal("invalid catalogue accepted")
 			}
 		})
 	}
 	t.Setenv("GM_SERVER_CATALOG", `{}`)
 	t.Setenv("GM_SERVER_CATALOG_FILE", "/unused")
-	if _, err := Load(); err == nil {
+	if _, err := loadServerCatalog(); err == nil {
 		t.Fatal("ambiguous sources accepted")
+	}
+	unsetEnv(t, "GM_SERVER_CATALOG")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "servers.json"), []byte(`["https://example.net"]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	for _, path := range []string{"servers.json", dir + "/sub/../servers.json"} {
+		t.Setenv("GM_SERVER_CATALOG_FILE", path)
+		if _, err := loadServerCatalog(); err == nil || !strings.Contains(err.Error(), "absolute path") {
+			t.Fatalf("catalogue file %q: %v, want a path refusal", path, err)
+		}
 	}
 }
 
@@ -68,7 +90,9 @@ func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Servers) != 3 || first.Servers[1].URL != "https://example.net" || first.Servers[1].Name != "example.net" || first.Servers[2].Name != "[::1]:8080" || first.DefaultSelection[0] != "self" {
+	if len(first.Servers) != 3 || first.Servers[1].URL != "https://example.net" ||
+		first.Servers[1].Name != "example.net" || first.Servers[2].Name != "[::1]:8080" ||
+		first.DefaultSelection[0] != "self" {
 		t.Fatalf("catalogue: %+v", first)
 	}
 	t.Setenv("GM_SERVER_CATALOG", `["http://[::1]:8080", "https://example.net/"]`)
@@ -88,19 +112,5 @@ func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
 	file, err := loadServerCatalog()
 	if err != nil || file.Servers[1].ID != first.Servers[1].ID {
 		t.Fatalf("file catalogue: %+v %v", file, err)
-	}
-}
-
-func TestOriginCatalogueRejectsInvalidEntries(t *testing.T) {
-	unsetEnv(t, "GM_SERVER_CATALOG_FILE")
-	for _, raw := range []string{
-		`["https://example.net", "https://EXAMPLE.net:443"]`, `["https://example.net/probe"]`, `["https://user:pass@example.net"]`, `["https://example.net?x=1"]`, `["https://example.net#x"]`, `["https://*.example.net"]`, `[null]`, `[42]`, `[{}]`, `[`,
-	} {
-		t.Run(raw, func(t *testing.T) {
-			t.Setenv("GM_SERVER_CATALOG", raw)
-			if _, err := loadServerCatalog(); err == nil {
-				t.Fatal("invalid origin list accepted")
-			}
-		})
 	}
 }

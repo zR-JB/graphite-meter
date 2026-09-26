@@ -21,10 +21,7 @@ export function hasFocus(): boolean {
   );
 }
 
-/** An existing modal retains focus while its underlying workspace changes. */
 export function activeModal(): HTMLElement | null {
-  const active = document.activeElement;
-  if (!(active instanceof HTMLElement)) return null;
-  const modal = active.closest<HTMLElement>('[aria-modal="true"]');
-  return canFocus(modal) ? modal : null;
+  const modals = document.querySelectorAll<HTMLElement>("dialog:modal");
+  return modals[modals.length - 1] ?? null;
 }

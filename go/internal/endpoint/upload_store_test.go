@@ -2,67 +2,73 @@ package endpoint
 
 import (
 	"encoding/base64"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
-	agg, access := s.getOrCreateFor(id, "")
+func (s *Upload) lanesOf(a *uploadAgg) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return a.lanes
+}
+
+func (s *Upload) live() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.receivers)
+}
+
+func ownedBy(owner string) uploadClient { return uploadClient{owner: owner, keys: []string{owner}} }
+
+func (s *Upload) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
+	return s.accessFor(id, ownedBy(owner), false)
+}
+
+func (s *Upload) getOrCreate(id string) (*uploadAgg, bool) {
+	agg, access := s.accessFor(id, uploadClient{owner: "unbudgeted"}, false)
 	return agg, access == uploadAccessOK
 }
 
-func TestUploadStoreRejectsForgedID(t *testing.T) {
-	s := NewUploadStore()
-	if agg, ok := s.getOrCreate("never-minted"); ok || agg != nil {
-		t.Fatalf("getOrCreate on a forged id = (%v, %v), want (nil, false)", agg, ok)
-	}
-	if s.live.Load() != 0 {
-		t.Errorf("live = %d after a rejected create, want 0", s.live.Load())
-	}
-}
-
-func TestUploadStoreMintAllocatesNoState(t *testing.T) {
-	s := NewUploadStore()
-	for i := range 10_000 {
-		if s.Mint() == "" {
-			t.Fatalf("mint %d failed", i)
+// Only an id this store signed within the token lifetime may create state.
+func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUpload(nil, nil)
+		id := s.Mint()
+		raw, err := base64.RawURLEncoding.DecodeString(id[4:])
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if s.live.Load() != 0 {
-		t.Fatalf("minting allocated %d live aggregates, want 0", s.live.Load())
-	}
-}
-
-func TestUploadStoreRejectsTamperedAndExpiredID(t *testing.T) {
-	s := NewUploadStore()
-	id := s.Mint()
-	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw[len(raw)-1] ^= 1
-	tampered := "gmu_" + base64.RawURLEncoding.EncodeToString(raw)
-	if _, ok := s.getOrCreate(tampered); ok {
-		t.Fatal("tampered id created an aggregate")
-	}
-	var nonce [16]byte
-	key, ok := s.tokenKey()
-	if !ok {
-		t.Fatal("token key generation failed")
-	}
-	expired := s.signID(monoNanos()-int64(uploadTokenTTL)-int64(time.Second), nonce, key)
-	if _, ok := s.getOrCreate(expired); ok {
-		t.Fatal("expired id created an aggregate")
-	}
+		raw[len(raw)-1] ^= 1
+		expiring := s.Mint()
+		time.Sleep(uploadTokenTTL + time.Second)
+		for name, id := range map[string]string{
+			"forged":   "never-minted",
+			"tampered": "gmu_" + base64.RawURLEncoding.EncodeToString(raw),
+			"expired":  expiring,
+			"foreign":  NewUpload(nil, nil).Mint(),
+		} {
+			if agg, ok := s.getOrCreate(id); ok || agg != nil {
+				t.Errorf("%s id created a receiver", name)
+			}
+		}
+		if s.live() != 0 {
+			t.Fatalf("live = %d after rejected creates, want 0", s.live())
+		}
+		if _, ok := s.getOrCreate(s.Mint()); !ok {
+			t.Fatal("a fresh id was refused")
+		}
+	})
 }
 
 func TestUploadStoreCreateIsIdempotent(t *testing.T) {
-	s := NewUploadStore()
+	s := NewUpload(nil, nil)
 	id := s.Mint()
-
 	a, ok := s.getOrCreate(id)
 	if !ok || a == nil {
 		t.Fatalf("first getOrCreate failed: ok=%v", ok)
@@ -71,23 +77,13 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	if !ok || b != a {
 		t.Fatalf("second getOrCreate returned a different aggregate (%p vs %p)", b, a)
 	}
-	if s.live.Load() != 1 {
-		t.Errorf("live = %d, want 1 (one aggregate for two getOrCreate calls)", s.live.Load())
-	}
-
-	a.bytes.Add(1000)
-	a.bytes.Add(500)
-	if got := b.bytes.Load(); got != 1500 {
-		t.Errorf("bytes via the shared aggregate = %d, want 1500", got)
-	}
-
-	if got, ok := s.get(id); !ok || got != a {
-		t.Errorf("get returned (%p, %v), want the same aggregate", got, ok)
+	if got, ok := s.get(id); !ok || got != a || s.live() != 1 {
+		t.Fatalf("get = (%p, %v) with %d live, want the one aggregate", got, ok, s.live())
 	}
 }
 
 func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
-	s := NewUploadStore()
+	s := NewUpload(nil, nil)
 	owner := "192.0.2.1"
 	var first string
 	for i := range maxLiveUploadsPerClient {
@@ -110,320 +106,234 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 	}
 }
 
-func TestUploadStoreSweepReleasesOwnerCapacity(t *testing.T) {
-	s := NewUploadStore()
-	owner := "192.0.2.1"
-	for range maxLiveUploadsPerClient {
-		agg, access := s.getOrCreateFor(s.Mint(), owner)
-		if access != uploadAccessOK {
+// A receiver answers only its own owner, and a client without an identity owns nothing.
+func TestUploadOwnershipFailsClosed(t *testing.T) {
+	s := NewUpload(nil, nil)
+	id := s.Mint()
+	if _, access := s.accessFor(id, uploadClient{}, true); access != uploadAccessOwnerMismatch {
+		t.Fatalf("a client without an identity created a receiver: %v", access)
+	}
+	if _, access := s.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
+		t.Fatal(access)
+	}
+	for _, other := range []uploadClient{{}, ownedBy("198.51.100.9")} {
+		if _, access := s.accessFor(id, other, true); access != uploadAccessOwnerMismatch {
+			t.Fatalf("%q joined another client's receiver with %v", other.owner, access)
+		}
+		if access := s.finishFor(id, other.owner); access != uploadAccessOwnerMismatch {
+			t.Fatalf("%q finished another client's receiver with %v", other.owner, access)
+		}
+	}
+}
+
+// Delegated grants keep distinct access rights while sharing their subject's retention budget.
+func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
+	store := NewUpload(nil, nil)
+	grant := func(i int) uploadClient {
+		return uploadClient{owner: fmt.Sprint("browser-grant:", i), keys: []string{"principal:subject"}}
+	}
+	for i := range maxLiveUploadsPerClient {
+		if _, access := store.accessFor(store.Mint(), grant(i%2), false); access != uploadAccessOK {
 			t.Fatal(access)
 		}
-		agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
 	}
-	s.sweep(uploadIDTTL)
-	s.sweep(uploadIDTTL)
-	if s.live.Load() != 0 {
-		t.Fatalf("live = %d after repeated sweeps, want 0", s.live.Load())
-	}
-	if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessOK {
-		t.Fatalf("owner capacity not released: %v", access)
+	if _, access := store.accessFor(store.Mint(), grant(2), false); access != uploadAccessClientFull {
+		t.Fatal("another grant multiplied retention capacity")
 	}
 }
 
-func TestUploadStoreSweepReapsIdle(t *testing.T) {
-	s := NewUploadStore()
-	idleID := s.Mint()
-	a, _ := s.getOrCreate(idleID)
-	// Backdate the last touch well past the TTL (arithmetic is on the monotonic clock.
-	a.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
-
-	freshID := s.Mint()
-	if _, ok := s.getOrCreate(freshID); !ok {
-		t.Fatal("fresh create failed")
-	}
-
-	s.sweep(uploadIDTTL)
-
-	if _, ok := s.get(idleID); ok {
-		t.Error("idle aggregate survived the sweep")
-	}
-	if _, ok := s.get(freshID); !ok {
-		t.Error("fresh aggregate was wrongly reaped")
-	}
-	if s.live.Load() != 1 {
-		t.Errorf("live = %d after sweeping one of two, want 1", s.live.Load())
-	}
-}
-
-// A WebTransport session that goes quiet is closed at the published idle bound.
-func TestUploadStoreKeepsAggregateAcrossAWebTransportIdleBound(t *testing.T) {
-	s := NewUploadStore()
-	id := s.Mint()
-	agg, ok := s.getOrCreate(id)
-	if !ok {
-		t.Fatal("create failed")
-	}
-	const carried = 1 << 20
-	agg.recordChunk(monoNanos(), carried)
-	agg.lastTouchMono.Store(monoNanos() - int64(wire.WTIdleBound))
-
-	s.sweep(uploadIDTTL)
-
-	got, ok := s.get(id)
-	if !ok {
-		t.Fatal("aggregate reaped within the transport's own idle bound: a re-dial would restart from zero bytes")
-	}
-	if got != agg {
-		t.Fatalf("re-dial resolved to a different aggregate (%p, want %p)", got, agg)
-	}
-	if n := got.bytes.Load(); n != carried {
-		t.Fatalf("bytes = %d, want %d carried across the reconnect", n, carried)
-	}
-}
-
-// The aggregate TTL and the transport's idle bound must never be re-equalised.
-func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
-	if want := 2 * wire.WTIdleBound; uploadIDTTL < want {
-		t.Fatalf("uploadIDTTL = %v, want at least %v: detecting the stall alone takes up to 1.5 idle bounds", uploadIDTTL, want)
-	}
-}
-
-func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
-	s := NewUploadStore()
-	id := s.Mint()
-	agg, _ := s.getOrCreate(id)
-	agg.changePosts(1)
-	agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
-	s.sweep(uploadIDTTL)
-	if _, ok := s.get(id); !ok {
-		t.Fatal("active upload was reaped")
-	}
-	agg.changePosts(-1)
-	s.sweep(uploadIDTTL)
-	if _, ok := s.get(id); ok {
-		t.Fatal("idle upload survived after its final post exited")
-	}
-}
-
-// A superseded feed's deferred release runs after a newer feed already took the claim.
-func TestReleaseProgressLeavesALaterClaimAlone(t *testing.T) {
-	var agg uploadAgg
-	first := agg.claimProgress()
-	second := agg.claimProgress()
-	select {
-	case <-first:
-	default:
-		t.Fatal("the second claim did not supersede the first")
-	}
-
-	agg.releaseProgress(first) // the superseded feed's deferred release
-
-	third := agg.claimProgress()
-	select {
-	case <-second:
-	default:
-		t.Fatal("a stale release dropped the live claim: the third feed could not supersede the second, so both would stream")
-	}
-	if third == second {
-		t.Fatal("the third feed was handed the second's claim")
-	}
-}
-
-func TestUploadStoreMint(t *testing.T) {
-	s := NewUploadStore()
-	seen := make(map[string]bool)
-	for range 100 {
-		id := s.Mint()
-		if id == "" {
-			t.Fatal("Mint returned empty")
+// A receiver outlives a WebTransport reconnect, dies once idle past its TTL,
+// never while a lane is live, and releases its owner's budget when it goes.
+func TestUploadStoreSweepFollowsActivity(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUpload(nil, nil)
+		const owner = "192.0.2.1"
+		carried, _ := s.getOrCreateFor(s.Mint(), owner)
+		carried.recordChunk(s.now(), 1<<20)
+		active, _ := s.accessFor(s.Mint(), ownedBy(owner), true)
+		for range maxLiveUploadsPerClient - 2 {
+			s.getOrCreateFor(s.Mint(), owner)
 		}
-		if len(id) < 8 || id[:4] != "gmu_" {
-			t.Fatalf("minted id %q lacks the gmu_ prefix", id)
+		time.Sleep(wire.IdleBound)
+		s.sweep(uploadIDTTL)
+		if s.live() != maxLiveUploadsPerClient {
+			t.Fatalf("live = %d within the transport's idle bound, want every receiver kept for a re-dial",
+				s.live())
 		}
-		if seen[id] {
-			t.Fatalf("Mint returned a duplicate id %q", id)
+		if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessClientFull {
+			t.Fatalf("owner at its cap created another receiver: %v", access)
 		}
-		seen[id] = true
-		if _, ok := s.getOrCreate(id); !ok {
-			t.Fatalf("getOrCreate rejected the freshly minted id %q", id)
+		time.Sleep(uploadIDTTL)
+		s.sweep(uploadIDTTL)
+		if s.live() != 1 {
+			t.Fatalf("live = %d past the TTL, want only the receiver with a live lane", s.live())
 		}
-	}
+		if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessOK {
+			t.Fatalf("reaped receivers kept their owner's capacity: %v", access)
+		}
+		s.leave(active)
+		time.Sleep(uploadIDTTL + time.Second)
+		s.sweep(uploadIDTTL)
+		if s.live() != 0 {
+			t.Fatalf("live = %d after the last lane ended and the TTL passed, want 0", s.live())
+		}
+	})
 }
 
-func TestUploadAggElapsedTimeIncludesStalls(t *testing.T) {
-	var a uploadAgg
-	const ms = int64(time.Millisecond)
-
-	// First chunk starts the clock.
-	a.recordChunk(1000*ms, 100)
-	if got := a.elapsedNanos(1000 * ms); got != 0 {
-		t.Fatalf("elapsed at the first chunk = %d, want 0", got)
-	}
-
-	if got := a.elapsedNanos(1050 * ms); got != 50*ms {
-		t.Fatalf("elapsed after 50ms = %d, want %d", got, 50*ms)
-	}
-
-	// No recordChunk occurs during this 2s stall, but it remains in TIME.
-	if got := a.elapsedNanos(3050 * ms); got != 2050*ms {
-		t.Fatalf("elapsed after stall = %d, want %d", got, 2050*ms)
-	}
-	a.recordChunk(3060*ms, 100)
-	if got := a.elapsedNanos(3060 * ms); got != 2060*ms {
-		t.Fatalf("elapsed after resume = %d, want %d", got, 2060*ms)
-	}
-	if got := a.bytes.Load(); got != 200 {
-		t.Errorf("bytes = %d, want 200", got)
-	}
+// A finished receiver keeps its completion and owner for as long as its token could recreate state.
+func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := NewUpload(nil, nil)
+		id := store.Mint()
+		agg, _ := store.getOrCreateFor(id, "original")
+		if access := store.finishFor(id, "original"); access != uploadAccessOK {
+			t.Fatal(access)
+		}
+		time.Sleep(uploadTokenTTL - time.Second)
+		store.sweep(uploadIDTTL)
+		if retained, ok := store.get(id); !ok || retained != agg {
+			t.Fatal("finished receiver was swept while its token could still create state")
+		}
+		if _, access := store.accessFor(id, ownedBy("original"), true); access != uploadAccessInvalid {
+			t.Fatalf("finished owner rejoined with access %v", access)
+		}
+		if _, access := store.accessFor(id, ownedBy("other"), true); access != uploadAccessOwnerMismatch {
+			t.Fatalf("ownership was lost with access %v", access)
+		}
+	})
 }
 
-func TestUploadAggElapsedTimeConcurrent(t *testing.T) {
-	var a uploadAgg
-	const lanes, perLane = 8, 500
-
-	var wg sync.WaitGroup
-	for range lanes {
-		wg.Go(func() {
-			for range perLane {
-				a.recordChunk(monoNanos(), 64) // real clock, like discardSink.Write
+// At the global cap a new receiver displaces the oldest one that never received a byte, so clients that only
+// open feeds cannot hold the cap; receivers with bytes or a finish are never displaced.
+func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUpload(nil, nil)
+		fill := func(keep func(*uploadAgg)) []*uploadAgg {
+			var aggs []*uploadAgg
+			for i := range maxLiveUploads - int(s.live()) {
+				id := s.Mint()
+				agg, access := s.getOrCreateFor(id, fmt.Sprint("watcher-", i%50))
+				if access != uploadAccessOK {
+					t.Fatalf("filler %d = %v", i, access)
+				}
+				keep(agg)
+				aggs = append(aggs, agg)
+				time.Sleep(time.Millisecond)
 			}
-		})
-	}
-	wg.Wait()
-	if got := a.elapsedNanos(monoNanos()); got < 0 {
-		t.Fatalf("concurrent elapsed time = %d, want >= 0", got)
-	}
-	if want := int64(lanes * perLane * 64); a.bytes.Load() != want {
-		t.Errorf("bytes = %d, want %d (every chunk counted once, no double count)", a.bytes.Load(), want)
-	}
+			return aggs
+		}
+		watchers := fill(func(*uploadAgg) {})
+		upload := s
+		lane := strings.NewReader("lane")
+		if n, err := upload.Receive(s.Mint(), ownedBy("client"), lane, &idleDeadline{}); err != nil || n != 4 {
+			t.Fatalf("lane at a cap of empty receivers = %d, %v", n, err)
+		}
+		select {
+		case <-watchers[0].expired:
+		default:
+			t.Fatal("the oldest empty receiver was not the one displaced")
+		}
+		for _, agg := range watchers[2:] {
+			agg.recordChunk(s.now(), 1)
+		}
+		s.mu.Lock()
+		close(watchers[1].finished)
+		s.mu.Unlock()
+		lane.Reset("lane")
+		if _, err := upload.Receive(s.Mint(), ownedBy("client"), lane, &idleDeadline{}); err == nil {
+			t.Fatal("a receiver holding bytes or a finish was displaced")
+		}
+		select {
+		case <-watchers[1].expired:
+			t.Fatal("a finished receiver was displaced while its token could still recreate it")
+		default:
+		}
+	})
 }
 
-func TestUploadStoreSweepBoundary(t *testing.T) {
-	s := NewUploadStore()
-	const ttl = 200 * time.Millisecond
-	const margin = 50 * time.Millisecond
-	now := monoNanos()
-
-	survivorID := s.Mint()
-	survivor, _ := s.getOrCreate(survivorID)
-	survivor.lastTouchMono.Store(now - int64(ttl) + int64(margin)) // idle age < ttl
-
-	expiredID := s.Mint()
-	expired, _ := s.getOrCreate(expiredID)
-	expired.lastTouchMono.Store(now - int64(ttl) - int64(margin)) // idle age > ttl
-
-	s.sweep(ttl)
-
-	if _, ok := s.get(survivorID); !ok {
-		t.Error("aggregate just inside the TTL was reaped, want survival")
-	}
-	if _, ok := s.get(expiredID); ok {
-		t.Error("aggregate just past the TTL survived, want reaping")
+// fillStore holds the global cap with receivers that each accepted a byte.
+func fillStore(s *Upload) {
+	for range maxLiveUploads - int(s.live()) {
+		agg, _ := s.getOrCreate(s.Mint())
+		agg.recordChunk(s.now(), 1)
 	}
 }
 
 func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
-	s := NewUploadStore()
-	for i := range maxLiveUploads {
-		id := s.Mint()
-		agg, ok := s.getOrCreate(id)
-		if !ok {
-			t.Fatalf("create %d below the cap was refused", i)
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUpload(nil, nil)
+		agg, _ := s.getOrCreate(s.Mint())
+		agg.recordChunk(s.now(), 1)
+		time.Sleep(uploadIDTTL + time.Second)
+		fillStore(s)
+		blocked := s.Mint()
+		if _, ok := s.getOrCreate(blocked); ok {
+			t.Fatal("create at the cap unexpectedly succeeded")
 		}
-		if i == 0 {
-			agg.lastTouchMono.Store(0)
-		} else {
-			agg.lastTouchMono.Store(monoNanos() + int64(time.Hour))
+		s.sweep(uploadIDTTL)
+		if _, ok := s.getOrCreate(blocked); !ok || s.live() != maxLiveUploads {
+			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted", ok, s.live())
 		}
-	}
-	if s.live.Load() != maxLiveUploads {
-		t.Fatalf("live = %d, want %d", s.live.Load(), maxLiveUploads)
-	}
-	blocked := s.Mint()
-	if _, ok := s.getOrCreate(blocked); ok {
-		t.Fatal("create at the cap unexpectedly succeeded")
-	}
-
-	s.sweep(0)
-	if _, ok := s.getOrCreate(blocked); !ok {
-		t.Error("create after a delete freed a slot was still refused")
-	}
-	if s.live.Load() != maxLiveUploads {
-		t.Errorf("live = %d, want %d after freeing and refilling one slot", s.live.Load(), maxLiveUploads)
-	}
+	})
 }
 
 func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
-	s := NewUploadStore()
-	const n = 200
-	ids := make([]string, n)
-	for i := range ids {
-		id := s.Mint()
-		ids[i] = id
-		agg, _ := s.getOrCreate(id)
-		if i%2 == 0 {
-			// Half start already past the TTL so sweep can reap them immediately while readers are still hammering the store.
-			agg.lastTouchMono.Store(monoNanos() - int64(time.Second))
-		}
-	}
-
-	stop := make(chan struct{})
-	sweeperDone := make(chan struct{})
-	go func() {
-		defer close(sweeperDone)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				s.sweep(500 * time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		s := NewUpload(nil, nil)
+		const n = 200
+		ids := make([]string, n)
+		for i := range ids {
+			// Half are already past the TTL, so sweeping reaps them while readers are still hammering the store.
+			if i == n/2 {
+				time.Sleep(time.Second)
 			}
+			ids[i] = s.Mint()
+			s.getOrCreate(ids[i])
 		}
-	}()
-
-	var wg sync.WaitGroup
-	for range 4 {
+		var wg sync.WaitGroup
+		stop := make(chan struct{})
 		wg.Go(func() {
-			for i := range 500 {
-				id := ids[i%n]
-				if agg, ok := s.get(id); ok {
-					agg.lastTouchMono.Store(monoNanos())
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					s.sweep(500 * time.Millisecond)
 				}
-				s.getOrCreate(id)
 			}
 		})
-	}
-	wg.Wait()
-	close(stop)
-	<-sweeperDone
-
-	if got := s.live.Load(); got < 0 {
-		t.Fatalf("live went negative: %d", got)
-	}
-	var counted int32
-	for i := range s.shards {
-		sh := &s.shards[i]
-		sh.mu.Lock()
-		counted += int32(len(sh.m))
-		sh.mu.Unlock()
-	}
-	if counted != s.live.Load() {
-		t.Errorf("live = %d, but shards contain %d aggregates", s.live.Load(), counted)
-	}
+		var readers sync.WaitGroup
+		for range 4 {
+			readers.Go(func() {
+				for i := range 500 {
+					s.getOrCreate(ids[i%n])
+				}
+			})
+		}
+		readers.Wait()
+		close(stop)
+		wg.Wait()
+		if live := s.live(); live > n {
+			t.Fatalf("live = %d receivers from %d ids", live, n)
+		}
+	})
 }
 
-func TestUploadAggFirstChunkAnchorNeverMoves(t *testing.T) {
+// Elapsed receiver time is anchored at the first chunk, never moves, and includes stalls.
+func TestUploadAggElapsedTimeIsAnchoredAtTheFirstChunk(t *testing.T) {
 	var a uploadAgg
-	a.recordChunk(1000, 100)
-	a.recordChunk(500, 100)
-	a.recordChunk(1100, 100)
-	if got := a.firstChunkMono.Load(); got != 1000 {
-		t.Fatalf("firstChunkMono = %d, want 1000", got)
+	const ms = int64(time.Millisecond)
+	if got := a.elapsedNanos(1000 * ms); got != 0 {
+		t.Fatalf("elapsed before any chunk = %d, want 0", got)
 	}
-	if got := a.elapsedNanos(1200); got != 200 {
-		t.Fatalf("elapsed = %d, want 200", got)
+	a.recordChunk(1000*ms, 100)
+	a.recordChunk(500*ms, 100) // a late-stamped chunk does not move the anchor
+	if got := a.elapsedNanos(1050 * ms); got != 50*ms {
+		t.Fatalf("elapsed after 50ms = %d, want %d", got, 50*ms)
 	}
-	if got := a.bytes.Load(); got != 300 {
-		t.Errorf("bytes = %d, want 300", got)
+	// No chunk arrives during this 2s stall, but it remains in the time.
+	a.recordChunk(3060*ms, 100)
+	if got := a.elapsedNanos(3060 * ms); got != 2060*ms || a.bytes.Load() != 300 {
+		t.Fatalf("elapsed %d with %d bytes after a stall, want %d with 300", got, a.bytes.Load(), 2060*ms)
 	}
 }

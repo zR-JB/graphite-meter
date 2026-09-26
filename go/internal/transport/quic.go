@@ -11,7 +11,6 @@ const (
 	quicMaxConnectionReceiveWindow = 48 << 20
 )
 
-// NewQUICConfig returns the shared MTU-safe defaults for clients and servers.
 func NewQUICConfig() *quic.Config {
 	return &quic.Config{
 		InitialPacketSize:                QUICInitialPacketSize,

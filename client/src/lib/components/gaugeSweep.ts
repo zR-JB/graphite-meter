@@ -1,7 +1,7 @@
 // Pure measurement-to-dial mapping.
 import type { Phase } from "../runner/contract";
 import { throughputGaugeFraction } from "./gaugeScale";
-export function clamp01(v: number): number {
+function clamp01(v: number): number {
   return Math.min(1, Math.max(0, v));
 }
 export interface SweepTargetInput {

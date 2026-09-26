@@ -4,7 +4,7 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 import type { FlowDirection, TransportKind } from "../runner/contract";
-import type { MultiServerResult, TransferStage } from "./measurement";
+import type { MultiServerResult, TransferStage } from "../runner/measure";
 
 /** Estimate each component of the chosen common window using that participant's evidence. */
 export function serverWireEstimate(

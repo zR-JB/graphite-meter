@@ -1,0 +1,194 @@
+[
+  {
+    "name": "download sums client windows across servers",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 1500}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}}
+    ],
+    "headline": {"down": 4000, "up": null},
+    "peak": {"downBytesPerSec": 4000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 4000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a missed checkpoint is skipped and the next one spans the gap",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": null}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 3000000000}}}
+    ],
+    "headline": {"down": null, "up": 1000},
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 1000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1000}}
+    ]
+  },
+  {
+    "name": "a replaced receiver closes the interval and resumes from its first checkpoint",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 2000000000}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r2", "bytes": 500, "nanos": 500000000}}},
+      {"atMs": 3000, "down": {}, "up": {"a": {"id": "r2", "bytes": 1500, "nanos": 1500000000}}}
+    ],
+    "headline": {"down": null, "up": 1000},
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 1000},
+    "intervals": [
+      {"reason": "stage-start", "complete": false,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}},
+      {"reason": "evidence-resumed", "complete": true,
+       "window": {"startMs": 2000, "endMs": 3000, "downBytesPerSec": null, "upBytesPerSec": 1000}}
+    ]
+  },
+  {
+    "name": "a zero-duration boundary adds no window",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {}},
+      {"atMs": 1000, "down": {"a": 2000}, "up": {}},
+      {"atMs": 1000, "down": {"a": 2500}, "up": {}},
+      {"atMs": 2000, "down": {"a": 4000}, "up": {}}
+    ],
+    "headline": {"down": 2000, "up": null},
+    "peak": {"downBytesPerSec": 2000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 2000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a final checkpoint with unchanged receiver time keeps the last window",
+    "stage": "bidirectional",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {"a": 3000}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}},
+      {"atMs": 1100, "down": {"a": 3300}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
+    ],
+    "headline": {"down": 3000, "up": 2000},
+    "peak": {"downBytesPerSec": 3000, "upBytesPerSec": 2000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "bytes that grow while receiver time stays the same are skipped as stale",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 2000000000}}},
+      {"atMs": 1500, "down": {}, "up": {"a": {"id": "r1", "bytes": 3500, "nanos": 2000000000}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 4000, "nanos": 3000000000}}}
+    ],
+    "headline": {"down": null, "up": 1500},
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 1500}}
+    ]
+  },
+  {
+    "name": "a peak needs half a second on every clock, not only the client's",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 500, "down": {}, "up": {"a": {"id": "r1", "bytes": 1200, "nanos": 1120000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
+    ],
+    "headline": {"down": null, "up": 2000},
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "a receiver clock under 800 ms gives no headline",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1500000000}}}
+    ],
+    "headline": null,
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "a window that moved no bytes gives no headline",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {}},
+      {"atMs": 1000, "down": {"a": 0}, "up": {}}
+    ],
+    "headline": null,
+    "peak": {"downBytesPerSec": 0, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 0, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a late dropout keeps the headline of the interval every server finished",
+    "stage": "download",
+    "participants": ["a", "b", "c", "d"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0, "c": 0, "d": 0}, "up": {}},
+      {"atMs": 250, "down": {"a": 250, "b": 250, "c": 250, "d": 250}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 500, "c": 500, "d": 500}, "up": {}},
+      {"atMs": 750, "down": {"a": 750, "b": 750, "c": 750, "d": 750}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 1000, "c": 1000, "d": 1000}, "up": {}},
+      {"atMs": 1250, "down": {"a": 1250, "b": 1250, "c": 1250, "d": 1250}, "up": {}},
+      {"atMs": 1500, "down": {"a": 1500, "b": 1500, "c": 1500, "d": 1500}, "up": {}},
+      {"atMs": 1750, "down": {"a": 1750, "b": 1750, "c": 1750, "d": 1750}, "up": {}},
+      {"atMs": 2000, "down": {"a": 2000, "b": 2000, "c": 2000, "d": 2000}, "up": {}},
+      {"atMs": 2250, "dropout": ["d"], "down": {"a": 2250, "b": 2250, "c": 2250}, "up": {}},
+      {"atMs": 2500, "down": {"a": 2500, "b": 2500, "c": 2500}, "up": {}},
+      {"atMs": 2750, "down": {"a": 2750, "b": 2750, "c": 2750}, "up": {}},
+      {"atMs": 3000, "down": {"a": 3000, "b": 3000, "c": 3000}, "up": {}}
+    ],
+    "headline": {"down": 4000, "up": null},
+    "peak": {"downBytesPerSec": 3000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
+      {"reason": "dropout", "complete": true,
+       "window": {"startMs": 2250, "endMs": 3000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a final boundary where a server did not advance is skipped",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 1000}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 2000}, "up": {}},
+      {"atMs": 1250, "final": true, "down": {"a": 1250, "b": 2000}, "up": {}}
+    ],
+    "headline": {"down": 3000, "up": null},
+    "peak": {"downBytesPerSec": 3000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
+  }
+]

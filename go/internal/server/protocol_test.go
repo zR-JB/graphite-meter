@@ -40,7 +40,9 @@ func testPasswordAuth(t *testing.T, origin string) *auth.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	service, err := auth.New(t.Context(),
+		config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil,
+		false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,8 @@ func nativeAuthHTTP(t *testing.T, protocol string) (*http.Client, string, *atomi
 	origin := "https://" + ln.Addr().String()
 	authn := testPasswordAuth(t, origin)
 	var dispatched atomic.Int32
-	handler := authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})
+	handler := authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }),
+		auth.Listener{})
 	serverProtocols, clientProtocols := &http.Protocols{}, &http.Protocols{}
 	var alpn string
 	switch protocol {
@@ -72,10 +75,11 @@ func nativeAuthHTTP(t *testing.T, protocol string) (*http.Client, string, *atomi
 	default:
 		t.Fatalf("unsupported native protocol %q", protocol)
 	}
-	srv := baseServer(handler, serverProtocols)
+	srv := baseServer(handler, serverProtocols, controlTimeout)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: clientProtocols} //nolint:gosec
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: clientProtocols} //nolint:gosec
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr}, origin, &dispatched
 }
@@ -90,10 +94,13 @@ func nativeAuthHTTP3(t *testing.T) (*http.Client, string, *atomic.Int32) {
 	origin := "https://" + pc.LocalAddr().String()
 	authn := testPasswordAuth(t, origin)
 	var dispatched atomic.Int32
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(),
+		Handler: authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }),
+			auth.Listener{})}
 	go h3.Serve(pc)
 	t.Cleanup(func() { _ = h3.Close(); _ = pc.Close() })
-	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
 	t.Cleanup(func() { _ = tr.Close() })
 	return &http.Client{Transport: tr}, origin, &dispatched
 }
@@ -102,7 +109,8 @@ type zeroReader struct{}
 
 func (*zeroReader) Read([]byte) (int, error) { return 0, io.EOF }
 
-func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, body io.Reader, dispatched *atomic.Int32) {
+func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, body io.Reader,
+	dispatched *atomic.Int32) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, origin+"/upload", body)
 	res, err := client.Do(req)
@@ -116,6 +124,7 @@ func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, b
 }
 
 func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	for _, protocol := range []string{"http1", "http2"} {
 		t.Run(protocol, func(t *testing.T) {
 			client, origin, dispatched := nativeAuthHTTP(t, protocol)
@@ -129,10 +138,12 @@ func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
 }
 
 func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	client, origin, dispatched := nativeAuthHTTP(t, "http1")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, res, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(origin, "https")+"/ws/ping", &websocket.DialOptions{HTTPClient: client})
+	_, res, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(origin, "https")+"/ws/ping",
+		&websocket.DialOptions{HTTPClient: client})
 	if err == nil {
 		t.Fatal("unauthenticated WebSocket handshake succeeded")
 	}
@@ -145,11 +156,7 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Client, string) {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	ctx := t.Context()
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := buildEndpoints(t.Context(), cfg)
 	p := &http.Protocols{}
 	clientProtocols := &http.Protocols{}
 	var alpn string
@@ -169,10 +176,11 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := baseServer(listenerMuxConfigured(ctx, e, topology, static.Handler(), nil), p)
+	srv := baseServer(publicMux(t, e, topology, static.Handler(false, false)), p, controlTimeout)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: clientProtocols} //nolint:gosec
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: clientProtocols} //nolint:gosec
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr}, "https://" + ln.Addr().String()
 }
@@ -180,19 +188,17 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 func nativeHTTP3(t *testing.T) (*http.Client, string) {
 	t.Helper()
 	cfg, cm := protocolTestTLS(t)
-	ctx := t.Context()
-	e, err := buildEndpoints(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	e := buildEndpoints(t.Context(), cfg)
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: listenerMuxConfigured(ctx, e, muxTopology{transfers: true}, static.Handler(), nil)}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(),
+		Handler: publicMux(t, e, muxTopology{transfers: true}, nil)}
 	go h3.Serve(pc)
 	t.Cleanup(func() { _ = h3.Close(); _ = pc.Close() })
-	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
 	t.Cleanup(func() { _ = tr.Close() })
 	return &http.Client{Transport: tr}, "https://" + pc.LocalAddr().String()
 }
@@ -224,7 +230,9 @@ func assertProbeAndDownload(t *testing.T, client *http.Client, base, wantProtoco
 }
 
 func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
-	client, base := nativeHTTP(t, "http1", muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1})
+	t.Parallel()
+	client, base := nativeHTTP(t, "http1",
+		muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1})
 	res, err := client.Get(base + "/preflight")
 	if err != nil {
 		t.Fatal(err)
@@ -237,6 +245,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 }
 
 func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
+	t.Parallel()
 	client, base := nativeHTTP(t, "http2", muxTopology{transfers: true, requiredProto: 2})
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		res, err := client.Get(base + path)
@@ -251,7 +260,52 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	assertProbeAndDownload(t, client, base, "h2")
 }
 
+func TestHTTP2HeldRoutesRefuseARequestBody(t *testing.T) {
+	t.Parallel()
+	client, base := nativeHTTP(t, "http2", muxTopology{transfers: true, requiredProto: 2})
+	res, err := client.Post(base+"/upload/session", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		UploadID string `json:"uploadId"`
+	}
+	err = json.UnmarshalRead(res.Body, &session)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/upload/progress?id=" + session.UploadID, "/download?bytes=1000000000"} {
+		body, unread := io.Pipe()
+		t.Cleanup(func() { _ = unread.Close() })
+		go func() { _, _ = unread.Write(make([]byte, 1<<20)) }()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+target, body)
+		res, err := client.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		cancel()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("GET %s with a body = %d, want the stream refused", target, res.StatusCode)
+		}
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodDelete, base+"/upload/progress?id="+session.UploadID,
+		nil)
+	res, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.Header.Get("X-Graphite-Upload-Refusal") != "invalid" {
+		t.Fatalf("bodiless DELETE did not reach the receiver store: %d", res.StatusCode)
+	}
+}
+
 func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
+	t.Parallel()
 	client, base := nativeHTTP3(t)
 	assertProbeAndDownload(t, client, base, "h3")
 }

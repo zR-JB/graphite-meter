@@ -2,12 +2,14 @@ package auth
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"net/netip"
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -17,152 +19,116 @@ func requestFrom(method, path, remote string) *http.Request {
 	return r
 }
 
-func TestBudgetKeyCollapsesIPv6ToTheAllocation(t *testing.T) {
+func addressFrom(i int) string {
+	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()
+}
+
+func TestAddressBudgets(t *testing.T) {
 	for _, tc := range []struct {
-		addr, want string
+		name  string
+		limit int
+		allow func(*Service, *http.Request) bool
 	}{
-		{"203.0.113.7", "203.0.113.7"},
-		{"::ffff:203.0.113.7", "203.0.113.7"},
-		{"2001:db8:1:2::1", "2001:db8:1:2::/64"},
-		{"2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:db8:1:2::/64"},
-		{"2001:db8:1:3::1", "2001:db8:1:3::/64"},
+		{"password", maxAddressAttempts, (*Service).allowAttempt},
+		{"exchange", maxAddressExchanges, (*Service).allowExchange},
+		{"approval", maxAddressApprovals, (*Service).allowBrowserApproval},
 	} {
-		if got := budgetKey(netip.MustParseAddr(tc.addr)); got != tc.want {
-			t.Fatalf("budgetKey(%s) = %s, want %s", tc.addr, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := testService(t)
+				allow := func(remote string) bool { return tc.allow(s, requestFrom(http.MethodPost, "/", remote)) }
+				for i := range tc.limit {
+					if !allow("[2001:db8:1:2::1]:40000") {
+						t.Fatalf("attempt %d was refused", i)
+					}
+					time.Sleep(time.Second)
+				}
+				if allow("[2001:db8:1:2::dead:beef]:40000") {
+					t.Fatal("a /64 sibling was granted its own budget")
+				}
+				if !allow("[2001:db8:1:3::1]:40000") || !allow("198.51.100.9:40000") {
+					t.Fatal("an unrelated address was refused")
+				}
+				time.Sleep(attemptWindow - time.Duration(tc.limit)*time.Second)
+				if !allow("[2001:db8:1:2::2]:40000") || allow("[2001:db8:1:2::2]:40000") {
+					t.Fatal("the rolling window did not release exactly the oldest attempt")
+				}
+			})
+		})
 	}
 }
 
-func TestIPv6SiblingsShareOnePasswordBudget(t *testing.T) {
+// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across, so it
+// alone cannot engage the global ceiling that would lock the operator out.
+func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
 	s := testService(t)
-	for i := range maxAddressAttempts {
-		if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1:2::1]:40000")) {
-			t.Fatalf("attempt %d from the first address was refused", i)
+	allowed := 0
+	for i := range 64 {
+		remote := fmt.Sprintf("[2001:db8:0:%x::1]:40000", i<<4)
+		if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", remote)) {
+			allowed++
 		}
 	}
-	if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1:2::dead:beef]:40000")) {
-		t.Fatal("a /64 sibling was granted its own password budget")
+	if allowed != 4*maxAddressAttempts {
+		t.Fatalf("one /48 made %d attempts, want %d", allowed, 4*maxAddressAttempts)
 	}
-	if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1:3::1]:40000")) {
-		t.Fatal("a different /64 was refused")
+	if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1::1]:40000")) {
+		t.Fatal("another allocation was refused")
 	}
 }
 
-func TestIPv6SiblingsShareOneExchangeBudget(t *testing.T) {
-	s := testService(t)
-	for i := range maxAddressExchanges {
-		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", "[2001:db8:1:2::1]:40000")) {
-			t.Fatalf("exchange %d from the first address was refused", i)
+func TestPasswordCeilingIsGlobalAndLogsOncePerWindow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		for i := range 61 {
+			if got := s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "192.0.2.1:1234")); got != (i < 5) {
+				t.Fatalf("attempt %d allowed=%v", i+1, got)
+			}
 		}
-	}
-	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", "[2001:db8:1:2::99]:40000")) {
-		t.Fatal("a /64 sibling was granted its own exchange budget")
-	}
-	if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", "[2001:db8:9::1]:40000")) {
-		t.Fatal("a different /64 was refused")
-	}
+		if len(s.globalAttempts) != maxAddressAttempts {
+			t.Fatalf("per-address refusals spent the global budget: %d", len(s.globalAttempts))
+		}
+		var out bytes.Buffer
+		log.SetOutput(&out)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		spend := func() {
+			for i := range maxGlobalAttempts + 20 {
+				s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(i%200)))
+			}
+		}
+		for _, want := range []int{1, 1} {
+			spend()
+			if got := strings.Count(out.String(), "ceiling engaged"); got != want {
+				t.Fatalf("logged %d ceiling notices in one window, want %d", got, want)
+			}
+		}
+		if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "198.51.100.1:1234")) {
+			t.Fatal("global password-attempt ceiling was bypassed with a new address")
+		}
+		time.Sleep(ceilingLogInterval + time.Second)
+		spend()
+		if got := strings.Count(out.String(), "ceiling engaged"); got != 2 {
+			t.Fatalf("logged %d ceiling notices across two windows, want 2", got)
+		}
+	})
 }
 
-func TestTokenExchangeIsThrottledPerAddress(t *testing.T) {
-	s := testService(t)
-	address := "203.0.113.7:40000"
-	for i := range maxAddressExchanges {
-		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-			t.Fatalf("exchange %d was refused", i)
+func TestAddressStoreStaysBoundedAndExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		for i := range maxBudgetKeys + 100 {
+			if allowed := s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser",
+				addressFrom(i))); allowed != (i < maxBudgetKeys) {
+				t.Fatalf("address %d admitted=%t", i, allowed)
+			}
 		}
-	}
-	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-		t.Fatal("exchange budget is not enforced")
-	}
-	if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", "198.51.100.9:40000")) {
-		t.Fatal("an unrelated address was refused")
-	}
-}
-
-func TestExchangeBudgetDrainsWithTheWindow(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	address := "203.0.113.7:40000"
-	for range maxAddressExchanges {
-		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address))
-	}
-	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-		t.Fatal("exchange budget is not enforced")
-	}
-	now = now.Add(attemptWindow + time.Second)
-	if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-		t.Fatal("exchange budget did not drain")
-	}
-}
-
-func TestGlobalCeilingLogsOncePerWindow(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	var out bytes.Buffer
-	log.SetOutput(&out)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
-
-	spend := func() {
-		for i := range maxGlobalAttempts + 20 {
-			s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, 113, byte(i % 200)}), 40000).String()))
+		if len(s.approvalAttempts) != maxBudgetKeys {
+			t.Fatalf("store has %d keys, want %d", len(s.approvalAttempts), maxBudgetKeys)
 		}
-	}
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
-		t.Fatalf("logged %d ceiling notices in one window, want 1", got)
-	}
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
-		t.Fatalf("logged %d ceiling notices while still inside the window, want 1", got)
-	}
-	now = now.Add(ceilingLogInterval + time.Second)
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 2 {
-		t.Fatalf("logged %d ceiling notices across two windows, want 2", got)
-	}
-}
-
-func TestAttemptStoreStaysBounded(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	for i := range maxBudgetKeys + 100 {
-		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()))
-	}
-	s.mu.Lock()
-	size := len(s.exchanges)
-	s.mu.Unlock()
-	if size > maxBudgetKeys {
-		t.Fatalf("exchange store grew to %d keys, want at most %d", size, maxBudgetKeys)
-	}
-}
-
-func TestBrowserApprovalBudgetStaysBoundedAndExpires(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	for i := range maxBudgetKeys + 100 {
-		remote := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()
-		allowed := s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", remote))
-		if allowed != (i < maxBudgetKeys) {
-			t.Fatalf("approval address %d admitted=%t", i, allowed)
+		time.Sleep(attemptWindow + time.Second)
+		if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) ||
+			len(s.approvalAttempts) != 1 {
+			t.Fatal("expired addresses still occupied the bounded store")
 		}
-	}
-	if len(s.approvalAttempts) != maxBudgetKeys {
-		t.Fatalf("approval store has %d keys, want %d", len(s.approvalAttempts), maxBudgetKeys)
-	}
-	now = now.Add(attemptWindow + time.Second)
-	if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) || len(s.approvalAttempts) != 1 {
-		t.Fatal("expired approval addresses still occupied the bounded store")
-	}
-	for range maxAddressApprovals - 1 {
-		if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) {
-			t.Fatal("approval address refused before its limit")
-		}
-	}
-	if s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) {
-		t.Fatal("approval address exceeded its limit")
-	}
+	})
 }

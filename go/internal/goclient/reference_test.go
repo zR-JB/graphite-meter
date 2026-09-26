@@ -38,9 +38,8 @@ func TestNativeReference(t *testing.T) {
 				defer cancel()
 				var mean, peak float64
 				if err := goclient.Run(ctx, cfg, func(e goclient.Event) {
-					if e.Result != nil {
-						mean = e.Result.MeanBps * 8 / 1e9
-						peak = e.Result.PeakBps * 8 / 1e9
+					if e.Kind == goclient.EventResult {
+						mean, peak = e.Result.MeanBps*8/1e9, e.Result.PeakBps*8/1e9
 					}
 				}); err != nil {
 					t.Fatalf("run: %v", err)

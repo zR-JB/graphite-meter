@@ -1,13 +1,13 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+  // Every item renders; Console's container queries reveal the overflowed ones.
   import { tick } from "svelte";
-  import { ICON } from "../constants";
+  import { THEME } from "../presentation/vocabulary";
   import type { ThemePref } from "../state/persistence";
   import MoreMenu from "./MoreMenu.svelte";
 
   interface Props {
     showHistory: boolean;
-    showEndpoint: boolean;
-    showTheme: boolean;
     historyActive: boolean;
     endpointActive: boolean;
     theme: ThemePref;
@@ -18,8 +18,6 @@
 
   let {
     showHistory,
-    showEndpoint,
-    showTheme,
     historyActive,
     endpointActive,
     theme,
@@ -47,45 +45,41 @@
         type="button"
         role="menuitem"
         tabindex="-1"
+        data-more="history"
         aria-current={historyActive ? "page" : undefined}
         onclick={() => select(chooseHistory)}
       >
-        <span class="history-icon">{@html ICON.history}</span>
+        <span><Icon name="history" /></span>
         <span
           ><strong>{historyActive ? "Close History" : "Open History"}</strong
-          ><small>Local saved results</small></span
+          ><small>Saved results</small></span
         >
       </button>
     {/if}
-    {#if showEndpoint}
-      <button
-        type="button"
-        role="menuitem"
-        tabindex="-1"
-        aria-current={endpointActive ? "true" : undefined}
-        onclick={() => select(onEndpoint)}
+    <button
+      type="button"
+      role="menuitem"
+      tabindex="-1"
+      data-more="endpoint"
+      aria-current={endpointActive ? "true" : undefined}
+      onclick={() => select(onEndpoint)}
+    >
+      <span><Icon name="info" /></span>
+      <span><strong>Details</strong><small>Server and connection</small></span>
+    </button>
+    <button
+      type="button"
+      role="menuitem"
+      tabindex="-1"
+      data-more="theme"
+      onclick={() => select(chooseTheme)}
+    >
+      <span><Icon name={THEME[theme].icon} /></span>
+      <span
+        ><strong>Theme: {THEME[theme].label}</strong><small
+          >Cycle appearance</small
+        ></span
       >
-        <span>{@html ICON.info}</span>
-        <span
-          ><strong>{endpointActive ? "Close endpoint" : "Endpoint info"}</strong
-          ><small>Server and connection</small></span
-        >
-      </button>
-    {/if}
-    {#if showTheme}
-      <button
-        type="button"
-        role="menuitem"
-        tabindex="-1"
-        onclick={() => select(chooseTheme)}
-      >
-        <span>
-          {#if theme === "light"}{@html ICON.sun}{:else if theme === "dark"}{@html ICON.moon}{:else}{@html ICON.contrast}{/if}
-        </span>
-        <span
-          ><strong>Theme: {theme}</strong><small>Cycle appearance</small></span
-        >
-      </button>
-    {/if}
+    </button>
   {/snippet}
 </MoreMenu>

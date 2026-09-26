@@ -103,6 +103,28 @@ export async function mintWtToken(
   }
 }
 
+/** The server closes a session with this code when sign-out or a revoked grant ends it (api/laneendings.txt). */
+export const SESSION_REVOKED = 3;
+/** The WebSocket close for the same ending. */
+export const SOCKET_REVOKED = { code: 1008, reason: "authentication required" };
+
+/* A black-holed handshake can leave `ready` and `closed` pending, so the budget itself ends the dial. */
+export async function sessionReady(session: WebTransport): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      reject,
+      ESTABLISH_BUDGET_MS,
+      new Error("webtransport session did not establish"),
+    );
+  });
+  try {
+    await Promise.race([session.ready, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Append the token to a session URL; a blank token leaves the URL alone. */
 export function withWtToken(url: string, token: string): string {
   if (token === "") return url;

@@ -2,30 +2,42 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"github.com/zR-JB/graphite-meter/go/internal/static"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+func routeSpec(path string) route.Spec {
+	spec, _ := route.Lookup(path)
+	return spec
+}
+
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
+	synctest.Test(t, requestAdmissionPerClientAndRelease)
+}
+
+func requestAdmissionPerClientAndRelease(t *testing.T) {
 	a := newRequestAdmission(3, 2, 3, 4, time.Minute, time.Hour)
-	entered := make(chan struct{}, 2)
+	entered := make(chan struct{}, 3)
 	release := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		entered <- struct{}{}
 		<-release
-	}), nil, "")
+	}), routeSpec(route.Download), nil, publicAuth(t))
 
 	var wg sync.WaitGroup
 	for range 2 {
@@ -35,13 +47,16 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 			h.ServeHTTP(httptest.NewRecorder(), r)
 		})
 	}
-	<-entered
-	<-entered
+	synctest.Wait()
+	if len(entered) != 2 {
+		t.Fatalf("%d of 2 requests within the per-client budget entered", len(entered))
+	}
 	r := httptest.NewRequest(http.MethodGet, "/download", nil)
 	r.RemoteAddr = "192.0.2.10:5678"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" || w.Header().Get("Access-Control-Allow-Origin") != "*" {
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" ||
+		w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("rejection = %d headers %v, want 429 with Retry-After 1 and a wildcard origin", w.Code, w.Header())
 	}
 	close(release)
@@ -54,25 +69,24 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 }
 
 func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
+	t.Parallel()
 	for _, http2 := range []bool{false, true} {
 		name := "http1"
 		if http2 {
 			name = "http2"
 		}
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
-			store := endpoint.NewUploadStore()
-			upload := endpoint.NewUpload(nil, store)
-			id := store.Mint()
+			upload := endpoint.NewUpload(nil, nil)
+			id := upload.Mint()
 			finished := make(chan struct{})
 			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if (r.ProtoMajor == 2) != http2 {
 					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
 				}
-				if err := upload.HandleHTTP(w, r); err != nil {
-					t.Errorf("upload: %v", err)
-				}
-			}), nil, "")
+				upload.Handler(wire.IdleBound).ServeHTTP(w, r)
+			}), routeSpec(route.Upload), nil, publicAuth(t))
 			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				h.ServeHTTP(w, r)
 				close(finished)
@@ -104,8 +118,8 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 			}()
 			select {
 			case <-finished:
-				if got := a.stats().active; got != 0 {
-					t.Fatalf("active uploads = %d after timeout, want 0", got)
+				if requests, _ := a.stats(); requests.active != 0 {
+					t.Fatalf("active uploads = %d after timeout, want 0", requests.active)
 				}
 			case <-ctx.Done():
 				t.Fatal("stalled upload retained its admission slot beyond the request lifetime")
@@ -114,246 +128,76 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 	}
 }
 
-func TestRequestAdmissionGlobalLimit(t *testing.T) {
-	a := newRequestAdmission(1, 1, 1, 4, time.Minute, time.Hour)
-	release, status := a.acquire("192.0.2.1", "")
-	if status != 0 {
-		t.Fatal("first request rejected")
+// Requests spend the pool and a per-client share; sessions spend the pool and a per-login share of a session budget
+// that caps them without reserving anything.
+func TestRequestAdmissionBudgets(t *testing.T) {
+	type step struct {
+		key, login string
+		want       int
 	}
-	defer release()
-	if _, status := a.acquire("192.0.2.2", ""); status != http.StatusServiceUnavailable {
-		t.Fatalf("global rejection = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	stats := a.stats()
-	if stats.active != 1 || stats.peak != 1 || stats.rejectedGlobal != 1 {
-		t.Fatalf("stats = %+v, want 1 active, 1 peak, 1 global rejection", stats)
-	}
-}
-
-func TestClientKeyGroupsIPv6ByPrefix(t *testing.T) {
-	a := httptest.NewRequest(http.MethodGet, "/", nil)
-	b := httptest.NewRequest(http.MethodGet, "/", nil)
-	a.RemoteAddr = "[2001:db8:1::1]:1"
-	b.RemoteAddr = "[2001:db8:1::ffff]:2"
-	if endpoint.ClientKey(a, nil) != endpoint.ClientKey(b, nil) {
-		t.Fatalf("same /64 produced %q and %q", endpoint.ClientKey(a, nil), endpoint.ClientKey(b, nil))
-	}
-}
-
-func TestClientKeyUsesTrustedForwardedAddress(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.RemoteAddr = "10.0.0.2:1234"
-	r.Header.Set("X-Forwarded-For", "198.51.100.9")
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	if got := endpoint.ClientKey(r, trusted); got != "198.51.100.9" {
-		t.Fatalf("client key = %q, want %q", got, "198.51.100.9")
-	}
-}
-
-func assertAdmissionLifetime(t *testing.T, path string, requestLifetime, sessionLifetime time.Duration) {
-	t.Helper()
-	a := newRequestAdmission(1, 1, 1, 4, requestLifetime, sessionLifetime)
-	done := make(chan struct{})
-	h := a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-		close(done)
-	}), nil, "")
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil))
-	select {
-	case <-done:
-	default:
-		t.Fatalf("handler did not observe %s lifetime deadline", path)
+	for _, tc := range []struct {
+		name                          string
+		pool, client, sessions, login int
+		steps                         []step
+		poolRefusals, sessionRefusals uint64
+	}{
+		{"pool", 1, 1, 1, 4, []step{{"a", "", 0}, {"b", "", 503}}, 1, 0},
+		{"sessions per login", 100, 100, 100, 2,
+			[]step{{"c", "s", 0}, {"c", "s", 0}, {"c", "s", 429}, {"c", "", 0}}, 0, 0},
+		{"logins of one client", 100, 1, 100, 1,
+			[]step{{"c", "phone", 0}, {"c", "desktop", 0}, {"c", "phone", 429}, {"c", "", 0}}, 0, 0},
+		{"session budget", 10, 10, 2, 10,
+			[]step{{"a", "la", 0}, {"b", "lb", 0}, {"c", "lc", 503}, {"c", "", 0}, {"d", "", 0}}, 0, 1},
+		{"ceiling, not reservation", 4, 2, 4, 2,
+			[]step{{"a", "", 0}, {"a", "", 0}, {"b", "", 0}, {"b", "", 0}, {"c", "lc", 503}}, 1, 0},
+		{"separate refusal counters", 4, 4, 1, 4, []step{{"a", "la", 0}, {"b", "lb", 503},
+			{"c", "", 0}, {"c", "", 0}, {"c", "", 0}, {"d", "", 503}}, 1, 1},
+		{"IPv6 aggregates double", 100, 1, 100, 1, []step{{"a b x", "", 0}, {"c b x", "", 0}, {"d b x", "", 429},
+			{"e f x", "", 0}, {"g f x", "", 0}, {"h i x", "", 429}}, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newRequestAdmission(tc.pool, tc.client, tc.sessions, tc.login, time.Minute, time.Hour)
+			for i, step := range tc.steps {
+				keys := strings.Fields(step.key)
+				if step.login != "" {
+					keys = []string{step.login}
+				}
+				if release, status := a.acquire(step.login != "", keys...); status != step.want {
+					t.Fatalf("step %d %+v = %d", i, step, status)
+				} else if status == 0 {
+					defer release()
+				}
+			}
+			if requests, sessions := a.stats(); requests.rejectedGlobal != tc.poolRefusals ||
+				sessions.rejectedGlobal != tc.sessionRefusals {
+				t.Fatalf("refusals = %d pool / %d session", requests.rejectedGlobal, sessions.rejectedGlobal)
+			}
+		})
 	}
 }
 
-func TestRequestAdmissionLifetime(t *testing.T) {
-	assertAdmissionLifetime(t, "/", 10*time.Millisecond, time.Hour)
-}
-
-func TestRequestAdmissionSessionRouteUsesSessionLifetime(t *testing.T) {
-	assertAdmissionLifetime(t, "/wt/download", time.Minute, 10*time.Millisecond)
-}
-
-// Session routes carry their own per-client budget, since one holds a slot for a whole test rather than a request.
-func TestRequestAdmissionBoundsSessionsPerClient(t *testing.T) {
-	a := newRequestAdmission(100, 100, 100, 2, time.Minute, time.Hour)
-	first, status := a.acquire("client", "session")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	second, status := a.acquire("client", "session")
-	if status != 0 {
-		t.Fatalf("second session rejected with %d", status)
-	}
-	if _, status := a.acquire("client", "session"); status != http.StatusTooManyRequests {
-		t.Fatalf("third session = %d, want %d", status, http.StatusTooManyRequests)
-	}
-	// The budget is the session routes' own: ordinary requests still pass.
-	if _, status := a.acquire("client", ""); status != 0 {
-		t.Fatalf("request rejected while sessions were full: %d", status)
-	}
-	first()
-	if release, status := a.acquire("client", "session"); status != 0 {
-		t.Fatalf("session rejected after release: %d", status)
-	} else {
-		release()
-	}
-	second()
-}
-
-// Session routes carry their own share of the global pool as well as their own per-client bucket.
-func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
-	// Room for ten measurements and ten sessions per client, but only two sessions overall.
-	a := newRequestAdmission(10, 10, 2, 10, time.Minute, time.Hour)
-	first, status := a.acquire("client-a", "login-a")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	second, status := a.acquire("client-b", "login-b")
-	if status != 0 {
-		t.Fatalf("second session rejected with %d", status)
-	}
-	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session past the session budget = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	// The property the single global counter lost: the pool still admits the request-shaped routes while every session.
-	for _, key := range []string{"client-c", "client-d"} {
-		release, status := a.acquire(key, "")
-		if status != 0 {
-			t.Fatalf("request from %s rejected while the session budget was full: %d", key, status)
+// A request-shaped route and both ping buses take the request bound and budget; only the transfer sessions hold a test.
+func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
+	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
+	for path, session := range map[string]bool{
+		route.Download: false, route.Ping: false, route.WTPing: false, route.WTDownload: true, route.WTUpload: true,
+	} {
+		var lifetime time.Duration
+		var heldSession bool
+		a.wrap(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			deadline, _ := r.Context().Deadline()
+			lifetime = time.Until(deadline)
+			_, sessions := a.stats()
+			heldSession = sessions.active == 1
+		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, path, nil))
+		want := time.Minute
+		if session {
+			want = time.Hour
 		}
-		release()
-	}
-	first()
-	release, status := a.acquire("client-c", "login-c")
-	if status != 0 {
-		t.Fatalf("session rejected after a session slot was released: %d", status)
-	}
-	release()
-	second()
-	// The refusal came from the session budget with the pool half empty, so it is counted there.
-	if stats := a.stats(); stats.active != 0 || stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
-		t.Fatalf("stats = %+v, want no active measurements and 1 session-budget rejection", stats)
-	}
-}
-
-// The session budget caps what sessions may occupy and reserves nothing for them.
-func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
-	sessionKeyFor := func(path, login string) string {
-		if isSessionRoute(path) {
-			return login
-		}
-		return ""
-	}
-	// Room for four measurements and four sessions, two per client either way.
-	a := newRequestAdmission(4, 2, 4, 2, time.Minute, time.Hour)
-	for i, key := range []string{"client-a", "client-a", "client-b", "client-b"} {
-		release, status := a.acquire(key, sessionKeyFor(route.WTPing, "login-"+key))
-		if status != 0 {
-			t.Fatalf("ping bus %d from %s rejected with %d", i, key, status)
-		}
-		defer release()
-	}
-	if _, status := a.acquire("client-c", sessionKeyFor(route.WTDownload, "login-c")); status != http.StatusServiceUnavailable {
-		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	a.mu.Lock()
-	active := a.activeSessions
-	a.mu.Unlock()
-	if active != 0 {
-		t.Fatalf("activeSessions = %d, want 0: the refusal came from the pool, not from the session budget", active)
-	}
-}
-
-// A full pool and a full session budget both answer 503 and are raised with different knobs.
-func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
-	// Room for four measurements but only one session.
-	a := newRequestAdmission(4, 4, 1, 4, time.Minute, time.Hour)
-	session, status := a.acquire("client-a", "login-a")
-	if status != 0 {
-		t.Fatalf("first session rejected with %d", status)
-	}
-	defer session()
-	if _, status := a.acquire("client-b", "login-b"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session past the budget = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	stats := a.stats()
-	if stats.rejectedSessionBudget != 1 || stats.rejectedGlobal != 0 {
-		t.Errorf("stats = %+v, want the refusal counted against the session budget and not the pool", stats)
-	}
-	if stats.activeSessions != 1 || stats.sessionMax != 1 {
-		t.Errorf("stats = %+v, want the session budget reported as 1 of 1 occupied", stats)
-	}
-
-	// Fill the rest of the pool with request-shaped routes and prove the other counter is the one that moves.
-	for i := range 3 {
-		release, status := a.acquire("client-c", "")
-		if status != 0 {
-			t.Fatalf("request %d rejected with %d while the pool had room", i, status)
-		}
-		defer release()
-	}
-	if _, status := a.acquire("client-d", ""); status != http.StatusServiceUnavailable {
-		t.Fatalf("request against a full pool = %d, want %d", status, http.StatusServiceUnavailable)
-	}
-	if stats := a.stats(); stats.rejectedGlobal != 1 || stats.rejectedSessionBudget != 1 {
-		t.Errorf("stats = %+v, want one refusal on each counter", stats)
-	}
-	if stats := a.stats(); stats.active != 4 {
-		t.Errorf("stats = %+v, want the pool reported full", stats)
-	}
-}
-
-// The session budget is per login, not per person.
-func TestSessionBudgetIsPerLogin(t *testing.T) {
-	// Equal request and session limits are valid.
-	a := newRequestAdmission(100, 1, 100, 1, time.Minute, time.Hour)
-	first, status := a.acquire("client", "login:phone")
-	if status != 0 {
-		t.Fatalf("first login rejected with %d", status)
-	}
-	defer first()
-	second, status := a.acquire("client", "login:desktop")
-	if status != 0 {
-		t.Fatalf("second login rejected with %d while the first held its slot", status)
-	}
-	defer second()
-	if _, status := a.acquire("client", "login:phone"); status != http.StatusTooManyRequests {
-		t.Fatalf("same login past its budget = %d, want %d", status, http.StatusTooManyRequests)
-	}
-	request, status := a.acquire("client", "")
-	if status != 0 {
-		t.Fatalf("ordinary request rejected while session buckets were full: %d", status)
-	}
-	request()
-}
-
-// A principal with no login falls back to the address, so public mode keeps the per-client budget it had before logins.
-func TestSessionKeyFallsBackToTheClientKey(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/wt/download", nil)
-	r.RemoteAddr = "192.0.2.7:1234"
-	if got, want := endpoint.SessionKey(r, nil), endpoint.ClientKey(r, nil); got != want {
-		t.Fatalf("session key = %q, want the client key %q", got, want)
-	}
-}
-
-// The two ping buses are one thing under two mechanisms: neither holds a test.
-func TestPingBusesShareTheRequestBound(t *testing.T) {
-	a := newRequestAdmission(100, 100, 100, 1, time.Minute, time.Hour)
-	for _, path := range []string{route.Ping, route.WTPing} {
-		if got := a.lifetimeFor(path); got != a.requestLifetime {
-			t.Errorf("%s lifetime = %v, want the request bound %v", path, got, a.requestLifetime)
-		}
-		if isSessionRoute(path) {
-			t.Errorf("%s counts against the session budget", path)
-		}
-	}
-	for _, path := range []string{route.WTDownload, route.WTUpload} {
-		if got := a.lifetimeFor(path); got != a.sessionLifetime {
-			t.Errorf("%s lifetime = %v, want the session bound %v", path, got, a.sessionLifetime)
-		}
-		if !isSessionRoute(path) {
-			t.Errorf("%s does not count against the session budget", path)
+		if lifetime <= want-time.Second || lifetime > want || heldSession != session {
+			t.Errorf("%s lifetime = %v holding a session = %v, want %v and %v", path, lifetime, heldSession, want,
+				session)
 		}
 	}
 }
@@ -361,44 +205,40 @@ func TestPingBusesShareTheRequestBound(t *testing.T) {
 // deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
 type deadlineRecordingWriter struct {
 	*httptest.ResponseRecorder
-	armed int
+	read, write time.Time
 }
 
-func (w *deadlineRecordingWriter) SetReadDeadline(time.Time) error  { w.armed++; return nil }
-func (w *deadlineRecordingWriter) SetWriteDeadline(time.Time) error { w.armed++; return nil }
+func (w *deadlineRecordingWriter) SetReadDeadline(t time.Time) error  { w.read = t; return nil }
+func (w *deadlineRecordingWriter) SetWriteDeadline(t time.Time) error { w.write = t; return nil }
 
-// A socket deadline bounds a request; it tears a channel down mid-stream.
-func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
+// A socket deadline bounds a request; it would tear a held channel down mid-stream, so a channel clears the control
+// deadline every request starts with.
+func TestAdmissionSetsSocketDeadlinesByRouteKind(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
-	armedFor := func(path string) int {
-		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
-		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), nil, "").
+	for path, bounded := range map[string]bool{
+		route.Ping: false, route.WTPing: false, route.WTDownload: false, route.WTUpload: false,
+		route.Download: true, route.Upload: true,
+	} {
+		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder(), read: time.Now(), write: time.Now()}
+		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), routeSpec(path), nil, publicAuth(t)).
 			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		return w.armed
-	}
-	for _, path := range []string{route.Ping, route.WTPing, route.WTDownload, route.WTUpload} {
-		if got := armedFor(path); got != 0 {
-			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request", path, got)
-		}
-	}
-	// The control: a request-shaped route still gets its deadlines.
-	for _, path := range []string{route.Download, route.Upload} {
-		if got := armedFor(path); got == 0 {
-			t.Errorf("%s armed no socket deadline, want one: an unbounded transfer that stops reading its context has nothing else to stop it", path)
+		if w.read.IsZero() == bounded || w.write.IsZero() == bounded {
+			t.Errorf("%s socket deadlines = %v / %v, want bounded = %t", path, w.read, w.write, bounded)
 		}
 	}
 }
 
 func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	a := newRequestAdmission(1, 1, 1, 4, time.Minute, time.Hour)
-	release, status := a.acquire("occupied", "")
+	release, status := a.acquire(false, "occupied")
 	if status != 0 {
 		t.Fatal("failed to occupy admission slot")
 	}
 	defer release()
+	var reached atomic.Bool
 	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("rejected WebSocket reached handler")
-	}), nil, ""))
+		reached.Store(true)
+	}), routeSpec(route.Ping), nil, publicAuth(t)))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -409,30 +249,61 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
 		t.Fatalf("upgrade response = %#v, want 503 with Retry-After 1", res)
 	}
-}
-
-type deadlineEndpoint struct{}
-
-func (deadlineEndpoint) HandleMessages(ctx context.Context, _ transport.MessageBus) error {
-	<-ctx.Done()
-	return nil
-}
-
-func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
-	e := &endpoints{
-		ping:      deadlineEndpoint{},
-		admission: newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour),
+	if reached.Load() {
+		t.Fatal("rejected WebSocket reached handler")
 	}
-	srv := httptest.NewServer(listenerMuxConfigured(t.Context(), e, muxTopology{latency: true}, static.Handler(), nil))
+}
+
+// A panic unwinds through wrap, so the slot returns before net/http recovers the panic.
+func TestAdmissionReleasesTheSlotOfAPanickingHandler(t *testing.T) {
+	a := newRequestAdmission(1, 1, 1, 1, time.Minute, time.Hour)
+	for _, path := range []string{route.Download, route.WTDownload} {
+		h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }),
+			routeSpec(path), nil, publicAuth(t))
+		func() {
+			defer func() { _ = recover() }()
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		}()
+		if requests, sessions := a.stats(); requests.active != 0 || sessions.active != 0 {
+			t.Fatalf("%s panic left %d requests and %d sessions admitted", path, requests.active, sessions.active)
+		}
+	}
+}
+
+// Behind a trusted proxy an IPv6 client spends its /64, /56 and /48 shares; ambiguous evidence is refused.
+func TestIPv6ClientsShareTheirAllocationsBudgets(t *testing.T) {
+	cfg := config.Default()
+	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	e := buildEndpoints(t.Context(), &cfg)
+	srv := httptest.NewServer(newMux(t.Context(), e, muxTopology{transfers: true}, nil, publicAuth(t)))
 	defer srv.Close()
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/ws/ping", nil)
-	if err != nil {
-		t.Fatal(err)
+	upload := func(realIP ...string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/upload?id="+e.upload.Mint(), strings.NewReader("x"))
+		for _, ip := range realIP {
+			req.Header.Add("X-Real-IP", ip)
+		}
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		return res
 	}
-	defer conn.CloseNow()
-	if _, _, err := conn.Read(ctx); websocket.CloseStatus(err) != websocket.StatusNormalClosure {
-		t.Fatalf("WebSocket lifetime close = %v", err)
+	for i := range 128 {
+		subnet := i / 32
+		if res := upload(fmt.Sprintf("2001:db8:0:%x::1", subnet/2<<8|subnet%2)); res.StatusCode != http.StatusOK {
+			t.Fatalf("upload %d = %d", i, res.StatusCode)
+		}
+	}
+	if res := upload("2001:db8:0:200::1"); res.StatusCode != http.StatusTooManyRequests ||
+		res.Header.Get("X-Graphite-Upload-Refusal") != "clientFull" {
+		t.Fatalf("a fresh /56 of a full /48 = %d %v", res.StatusCode, res.Header)
+	}
+	if res := upload("2001:db8:1::1"); res.StatusCode != http.StatusOK {
+		t.Fatalf("another /48 = %d", res.StatusCode)
+	}
+	if res := upload("2001:db8:1::1", "2001:db8:2::1"); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ambiguous evidence = %d, want 400", res.StatusCode)
 	}
 }

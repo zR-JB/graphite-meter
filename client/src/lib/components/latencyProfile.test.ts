@@ -1,22 +1,15 @@
 import { test, expect } from "bun:test";
 import {
-  pos,
   probeAccountingDetails,
   probeAccountingSummary,
   hasProbeAccountingNotice,
-  rangeWidth,
-  tickLabel,
-  timeoutLabel,
   entries,
   nearestMetric,
   hoverContext,
   metricLabel,
   profileDomain,
-  savedLatencyHasProbeEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
-
-const DOMAIN = { min: 0, max: 100, span: 100 };
 
 function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   return {
@@ -25,8 +18,8 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
     max: 90,
     p10: 20,
     p90: 80,
+    p95: null,
     center: 50,
-    centerKind: "average",
     current: 55,
     jitter: 5,
     timeoutRatio: 0,
@@ -40,47 +33,12 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   };
 }
 
-test("pos: linear inside the domain, clamped at both ends, null at zero", () => {
-  expect(pos(50, DOMAIN)).toBe(50);
-  expect(pos(0, DOMAIN)).toBe(0);
-  expect(pos(200, DOMAIN)).toBe(100); // above the domain clamps to full
-  expect(pos(-10, DOMAIN)).toBe(0); // below the domain clamps to zero
-  expect(pos(null, DOMAIN)).toBe(0);
-});
-
-test("rangeWidth: exact span as a percentage, including flat and missing ranges", () => {
-  expect(rangeWidth(10, 30, DOMAIN)).toBe(20);
-  expect(rangeWidth(40, 40, DOMAIN)).toBe(0); // fixed caps represent a flat range
-  expect(rangeWidth(null, 30, DOMAIN)).toBe(0);
-  expect(rangeWidth(10, null, DOMAIN)).toBe(0);
-});
-
 test("profileDomain is shared by live and finalized lane profiles", () => {
   expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
     min: 0,
     max: 200,
     span: 200,
   });
-});
-
-test("tickLabel: non-positive collapses to a bare zero", () => {
-  expect(tickLabel(0)).toBe("0");
-  expect(tickLabel(-5)).toBe("0");
-  expect(tickLabel(12)).not.toBe("0");
-});
-
-test("timeoutLabel: hidden at zero, extra precision under one percent", () => {
-  expect(timeoutLabel(0)).toBe("");
-  expect(timeoutLabel(-1)).toBe("");
-  expect(timeoutLabel(0.005)).toBe("0.50% timeouts");
-  expect(timeoutLabel(0.05)).toBe("5.0% timeouts");
-});
-
-test("saved probe timeouts require a supported latency transport", () => {
-  expect(savedLatencyHasProbeEvidence("webtransport")).toBe(true);
-  expect(savedLatencyHasProbeEvidence("websocket")).toBe(true);
-  expect(savedLatencyHasProbeEvidence(null)).toBe(false);
-  expect(savedLatencyHasProbeEvidence("unknown")).toBe(false);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {
@@ -110,11 +68,9 @@ test("nearestMetric: no measured metrics yields null", () => {
 test("center labels and hover context follow the lane's semantics", () => {
   const l = lane();
   expect(hoverContext(l, "p10")).toContain("P10–P90");
-  expect(metricLabel(l, "center")).toBe("Mean");
+  expect(metricLabel("center")).toBe("Median");
   expect(hoverContext(l, "center")).toContain("Range");
-  expect(hoverContext(l, "current")).toContain("Mean");
-  const result = lane({ center: 70, centerKind: "result" });
-  expect(metricLabel(result, "center")).toBe("Median");
+  const result = lane({ center: 70 });
   expect(hoverContext(result, "current")).toBe("Median 70.0");
   expect(hoverContext(result, "center")).toContain("Range");
   expect(hoverContext(lane({ p10: null }), "p90")).toBe("");

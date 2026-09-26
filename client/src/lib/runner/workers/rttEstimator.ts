@@ -1,4 +1,4 @@
-/* Adaptive RTT/loss-timeout estimator for the ping worker (RFC 6298-style). */
+/* Adaptive RTT and probe-deadline estimator for the ping worker (RFC 6298-style). */
 
 export interface RttEstimate {
   srtt: number;
@@ -22,14 +22,17 @@ export function observeRtt(prev: RttEstimate, rttMs: number): RttEstimate {
   };
 }
 
-/* Adaptive loss timeout: RTO = SRTT + K·RTTVAR, clamped to [lossFloorMs, lossCeilMs]. */
-export function lossTimeout(
+/** The latency channel's probe deadline; its ceiling is the ping timeout ceiling. */
+export const PROBE_DEADLINE = { k: 4, floorMs: 250 } as const;
+
+/* Adaptive probe deadline: RTO = SRTT + K·RTTVAR, clamped to [deadlineFloorMs, deadlineCeilMs]. */
+export function probeDeadline(
   est: RttEstimate,
-  lossK: number,
-  lossFloorMs: number,
-  lossCeilMs: number,
+  deadlineK: number,
+  deadlineFloorMs: number,
+  deadlineCeilMs: number,
 ): number {
-  if (!est.haveRtt) return lossFloorMs;
-  const rto = est.srtt + lossK * Math.max(1, est.rttvar);
-  return Math.min(Math.max(rto, lossFloorMs), lossCeilMs);
+  if (!est.haveRtt) return deadlineFloorMs;
+  const rto = est.srtt + deadlineK * Math.max(1, est.rttvar);
+  return Math.min(Math.max(rto, deadlineFloorMs), deadlineCeilMs);
 }

@@ -1,9 +1,9 @@
 package goclient
 
 import (
+	"context"
+	"errors"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type Direction string
@@ -13,102 +13,137 @@ const (
 	Up   Direction = "up"
 )
 
+type byDirection[T any] struct{ down, up T }
+
+func (b byDirection[T]) of(dir Direction) T {
+	if dir == Up {
+		return b.up
+	}
+	return b.down
+}
+
+func (b *byDirection[T]) set(dir Direction, v T) {
+	if dir == Up {
+		b.up = v
+	} else {
+		b.down = v
+	}
+}
+
+type Stage string
+
+const (
+	StageLatency       Stage = "latency"
+	StageDownload      Stage = "download"
+	StageUpload        Stage = "upload"
+	StageBidirectional Stage = "bidirectional"
+)
+
+type Phase int
+
+const (
+	PhasePreparing Phase = iota
+	PhaseWarmup
+	PhaseMeasuring
+	PhaseFinished
+)
+
+type Outcome string
+
+const (
+	OutcomeRunning    Outcome = "running"
+	OutcomeComplete   Outcome = "complete"
+	OutcomePartial    Outcome = "partial"
+	OutcomeIncomplete Outcome = "incomplete"
+	OutcomeStopped    Outcome = "stopped"
+	OutcomeFailed     Outcome = "failed"
+)
+
+// EventKind orders a run's stream: EventServers first, then any others, and EventDone exactly once, last.
 type EventKind int
 
 const (
-	EventPreflight EventKind = iota
-	EventStage
+	EventStage EventKind = iota
 	EventThroughput
 	EventLatency
 	EventResult
-	EventDone
 	EventServers
 	EventServerFailure
-)
-
-type StagePhase string
-
-const (
-	StagePreparing StagePhase = "prepare"
-	StageWarmup    StagePhase = "warmup"
-	StageMeasuring StagePhase = "measure"
-	StageFinished  StagePhase = "finished"
+	EventDone
 )
 
 type Event struct {
-	ServerID                              string
-	Servers                               *RunDetails
-	Failure                               *ServerFailure
-	Kind                                  EventKind
-	At                                    time.Time
-	Stage                                 string
-	Phase                                 StagePhase
-	Direction                             Direction
-	Message                               string
-	ThroughputTarget, LatencyTarget       string
-	ThroughputProtocol, LatencyProtocol   string
-	ThroughputTransport, LatencyTransport string
+	Kind       EventKind
+	At         time.Time
+	Stage      Stage
+	Phase      Phase
+	Direction  Direction
+	ServerID   string
+	Throughput ThroughputSample
+	Latency    LatencySample
+	Result     *Result
+	Servers    *RunDetails
+	Failure    *ServerFailure
+	Err        error
+}
 
-	Preflight    *wire.Preflight
-	Probe        *wire.Probe
-	LatencyProbe *wire.Probe
-	Throughput   ThroughputSample
-	Latency      LatencySample
-	Result       *Result
-	Err          error
+func (e Event) Outcome() Outcome {
+	switch {
+	case e.Servers != nil:
+		return e.Servers.Outcome
+	case errors.Is(e.Err, context.Canceled):
+		return OutcomeStopped
+	case e.Err != nil:
+		return OutcomeFailed
+	}
+	return OutcomeComplete
 }
 
 type ThroughputSample struct {
 	Unavailable bool
-	Stage       string
-	Direction   Direction
 	BytesPerSec float64
 	TotalBytes  uint64
-	StreamCount int
-	ServerAuth  bool
 }
 
 type LatencySample struct {
-	ReflectorHandling *time.Duration // Validated server interval from this reply; nil for an invalid clock pair.
-	Stage             string
-	RTT               time.Duration
-	UnderLoad         bool
-	TimedOut          bool
+	RTT      time.Duration
+	TimedOut bool
 }
 
 type Result struct {
-	Unavailable bool
-	Stage       string
+	Stage       Stage
 	Direction   Direction
+	Unavailable bool
 	MeanBps     float64
 	PeakBps     float64
 	TotalBytes  uint64
 	Samples     int
-	ServerAuth  bool
 	Latency     LatencyStats
 	Elapsed     time.Duration
-	Err         error // Non-nil marks an incomplete stage summary and preserves its failure.
+	Err         error
 }
 
-// LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
+func (r Result) ReceiverTimed() bool { return r.Direction == Up }
+
+func (r Result) HasMedian() bool {
+	return r.Latency.Count > 0 && (r.Err == nil || r.Latency.Count+r.Latency.Timeouts >= minimumFailedLatencyOutcomes)
+}
+
 type LatencyStats struct {
-	ReflectorTiming                    *ReflectorTimingStats // Nil when no valid timing pairs were observed.
-	Min, Max, P10, P50, P90, P95, Mean time.Duration
-	Jitter                             time.Duration
-	Count                              int // Successful replies within the measured stage and probe deadline.
-	JitterPairs                        int // Zero means variation is unavailable, not zero.
-	Timeouts                           int
-	Unresolved                         int
-	SendFailures                       int
-	TimeoutAfter                       time.Duration
-	Elapsed                            time.Duration
+	ReflectorTiming *ReflectorTimingStats // Nil when no valid timing pairs were observed.
+	P50, P95        time.Duration
+	Jitter          time.Duration
+	Count           int // Successful replies within the measured stage and probe deadline.
+	JitterPairs     int // Zero means variation is unavailable, not zero.
+	Timeouts        int
+	Unresolved      int
+	SendFailures    int
+	Elapsed         time.Duration
 }
 
-// ReflectorTimingStats contains means over one paired population of successful in-window replies.
-// Adjusted RTT removes only the instrumented server application handling interval.
 type ReflectorTimingStats struct {
-	Count                                     int
-	MeanRawRTT, MeanHandling, MeanAdjustedRTT time.Duration
+	Count                    int
+	MeanRawRTT, MeanHandling time.Duration
 }
 
 // TimeoutRatio excludes interrupted/unresolved probes and local send failures; an empty population is unavailable.
@@ -118,9 +153,4 @@ func (s LatencyStats) TimeoutRatio() (float64, bool) {
 		return 0, false
 	}
 	return float64(s.Timeouts) / float64(resolved), true
-}
-
-// HasObservations distinguishes a measured partial population from a failure before any probes were measured.
-func (s LatencyStats) HasObservations() bool {
-	return s.Count+s.Timeouts+s.Unresolved+s.SendFailures > 0
 }

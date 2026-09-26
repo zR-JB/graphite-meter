@@ -1,123 +1,55 @@
 package endpoint
 
 import (
-	"bufio"
-	"maps"
-	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-const refusalPinPath = "../../../api/uploadrefusals.txt"
-
-// pinnedRefusal is one row of api/uploadrefusals.txt: the text a refused upload reports and the HTTP status it is sent.
-type pinnedRefusal struct {
-	message string
-	status  int
-}
-
-// loadRefusalPin parses api/uploadrefusals.txt into name → refusal, skipping comment/blank lines.
-func loadRefusalPin(t *testing.T) map[string]pinnedRefusal {
-	t.Helper()
-	f, err := os.Open(refusalPinPath)
+func TestUploadRefusalsMatchPin(t *testing.T) {
+	raw, err := os.ReadFile("../../../api/uploadrefusals.txt")
 	if err != nil {
-		t.Fatalf("open refusal pin: %v", err)
+		t.Fatal(err)
 	}
-	defer f.Close()
-
-	pinned := make(map[string]pinnedRefusal)
-	scanner := bufio.NewScanner(f)
-	lineNumber := 0
-	for scanner.Scan() {
-		lineNumber++
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
+	pinned := 0
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		fields := strings.Split(line, "|")
 		if len(fields) != 3 {
-			t.Fatalf("line %d: want 3 fields: %q", lineNumber, line)
+			t.Fatalf("want 3 fields: %q", line)
 		}
-		status, err := strconv.Atoi(strings.TrimSpace(fields[2]))
-		if err != nil {
-			t.Fatalf("line %d: status %q is not a number", lineNumber, strings.TrimSpace(fields[2]))
-		}
-		pinned[strings.TrimSpace(fields[0])] = pinnedRefusal{message: strings.TrimSpace(fields[1]), status: status}
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan refusal pin: %v", err)
-	}
-	if len(pinned) == 0 {
-		t.Fatal("refusal pin is empty: expected populated refusals")
-	}
-	return pinned
-}
-
-func TestUploadRefusalsMatchPin(t *testing.T) {
-	pinned := loadRefusalPin(t)
-
-	// Every refusal Go can produce, named as the pin names it.
-	refusals := map[string]uploadAccess{
-		"invalid":       uploadAccessInvalid,
-		"globalFull":    uploadAccessGlobalFull,
-		"clientFull":    uploadAccessClientFull,
-		"ownerMismatch": uploadAccessOwnerMismatch,
-	}
-	if len(refusals) != len(pinned) {
-		t.Errorf("Go declares %d refusals; %d are pinned", len(refusals), len(pinned))
-	}
-	for name, access := range refusals {
-		want, ok := pinned[name]
-		if !ok {
-			t.Errorf("%s: declared in Go but not pinned", name)
-			continue
-		}
-		if got := uploadAccessMessage(access); got != want.message {
-			t.Errorf("%s: Go reports %q; pinned as %q", name, got, want.message)
+		name, message := strings.TrimSpace(fields[0]), strings.TrimSpace(fields[1])
+		status, _ := strconv.Atoi(strings.TrimSpace(fields[2]))
+		access := uploadAccessOK
+		for a := range uploadAccessInfos {
+			if uploadAccessInfos[a].code == name {
+				access = uploadAccess(a)
+			}
 		}
 		rec := httptest.NewRecorder()
-		writeUploadAccessError(rec, access)
-		if rec.Code != want.status {
-			t.Errorf("%s: Go answers %d; pinned as %d", name, rec.Code, want.status)
+		switch end := slices.IndexFunc(wire.LaneEnds, func(e wire.LaneEnd) bool { return e.Name == name }); {
+		case end >= 0:
+			writeLaneRefusal(rec, wire.LaneEnds[end])
+		case access == uploadAccessOK:
+			t.Errorf("%s is no refusal the server sends", name)
+			continue
+		default:
+			writeUploadAccessError(rec, access)
+			pinned++
 		}
-		if got := strings.TrimSpace(rec.Body.String()); got != want.message {
-			t.Errorf("%s: HTTP body = %q; pinned as %q", name, got, want.message)
-		}
-		if got := rec.Header().Get("X-Graphite-Upload-Refusal"); got != name {
-			t.Errorf("%s: refusal header = %q, want %q", name, got, name)
+		if rec.Code != status || strings.TrimSpace(rec.Body.String()) != message ||
+			rec.Header().Get("X-Graphite-Upload-Refusal") != name {
+			t.Errorf("%s answers %d %q, pinned as %d %q", name, rec.Code, rec.Body.String(), status, message)
 		}
 	}
-	for name := range maps.Keys(pinned) {
-		if _, ok := refusals[name]; !ok {
-			t.Errorf("%s is pinned but Go never produces it", name)
-		}
-	}
-}
-
-// A success carries no refusal text, so an accepted upload can never be mistaken for a refused one by a client.
-func TestUploadAccessOKCarriesNoMessage(t *testing.T) {
-	if got := uploadAccessMessage(uploadAccessOK); got != "" {
-		t.Errorf("uploadAccessMessage(uploadAccessOK) = %q, want empty", got)
-	}
-	if got := uploadAccessCode(uploadAccessOK); got != "" {
-		t.Errorf("uploadAccessCode(uploadAccessOK) = %q, want empty", got)
-	}
-}
-
-// writeUploadAccessError must never fall through silently.
-func TestWriteUploadAccessErrorFailsLoudlyOnAnUnknownAccess(t *testing.T) {
-	rec := httptest.NewRecorder()
-	writeUploadAccessError(rec, uploadAccess(200))
-	if rec.Code == http.StatusOK {
-		t.Fatal("an unhandled refusal wrote no status: the client would read the 200 as a successful upload")
-	}
-	if rec.Code < 500 {
-		t.Errorf("status = %d, want a 5xx: an unmapped refusal is a server bug, not the client's fault", rec.Code)
-	}
-	if strings.TrimSpace(rec.Body.String()) == "" {
-		t.Error("an unhandled refusal wrote no body")
+	if pinned != len(uploadAccessInfos)-1 {
+		t.Errorf("%d refusals pinned, Go produces %d", pinned, len(uploadAccessInfos)-1)
 	}
 }

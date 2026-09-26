@@ -52,3 +52,30 @@ export async function abortableDelay(
     clearTimeout(timer!);
   }
 }
+
+/** The error and its causes, outermost first; a cycle ends the walk. */
+export function* causes(error: unknown): Generator<Error> {
+  for (
+    const seen = new Set<unknown>();
+    error instanceof Error && !seen.has(error);
+    error = error.cause
+  ) {
+    seen.add(error);
+    yield error;
+  }
+}
+
+const NETWORK_FAILURE =
+  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
+export const isNetworkFailure = (error: unknown): boolean =>
+  [...causes(error)].some(
+    ({ name, message }) =>
+      name === "NetworkError" || NETWORK_FAILURE.test(message),
+  );
+
+export function findCause<T extends Error>(
+  error: unknown,
+  type: abstract new (...args: never[]) => T,
+): T | undefined {
+  for (const cause of causes(error)) if (cause instanceof type) return cause;
+}

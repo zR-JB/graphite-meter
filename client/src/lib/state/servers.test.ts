@@ -1,13 +1,16 @@
-import "./runes.test";
+import "./runes.testutil";
 import { expect, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-} from "../runner/test-helpers.test";
-import { singleLatencyBucket } from "../runner/latencyBuckets";
-import { LatencyAccumulator } from "../runner/latencySummary";
+  testRunResult,
+} from "../runner/test-helpers.testutil";
+import type { RunResult } from "../runner/contract";
+import { singleLatencyBucket } from "../runner/series";
+import { LatencyPopulation } from "../runner/measure";
 import { parseCatalog } from "../servers/catalog";
+import { emptyConnectionValidation, type ServerView } from "../runner/paths";
 
 const ids = ["constructor", "toString", "__proto__"];
 
@@ -37,12 +40,16 @@ test("valid prototype-named servers retain isolated latency populations through 
     store.selectedServers = ids;
     const summaries = new Map<
       string,
-      ReturnType<LatencyAccumulator["snapshot"]>
+      ReturnType<LatencyPopulation["summary"]>
     >();
     for (const [index, id] of ids.entries()) {
-      const stats = new LatencyAccumulator();
-      stats.observe((index + 1) * 10, false, 0);
-      const summary = stats.snapshot();
+      const stats = new LatencyPopulation();
+      stats.observe({
+        rttMs: (index + 1) * 10,
+        timedOut: false,
+        observedAtMs: 0,
+      });
+      const summary = stats.summary();
       summaries.set(id, summary);
       store.ingest({
         type: "serverLatency",
@@ -111,42 +118,56 @@ test("valid prototype-named servers retain isolated latency populations through 
   }
 });
 
-test("readiness and discovery updates keep prototype-named server identities separate", async () => {
+test("selection readiness follows each prototype-named server's view", async () => {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousSelection = [...store.selectedServers];
+  const view = (
+    id: string,
+    readiness: ServerView["readiness"],
+  ): ServerView => ({
+    server: { id, name: id, url: "https://meter.test" },
+    discovery: testPreparedPaths().discovery,
+    validation: emptyConnectionValidation(),
+    readiness,
+    paths: null,
+    metadataChecking: false,
+  });
   try {
     store.selectedServers = ids;
-    store.serverReadiness.clear();
-    store.serverDiscoveries.clear();
+    store.servers.clear();
     expect(store.selectionValidation).toBe("stale");
-    for (const [index, id] of ids.entries()) {
-      store.serverReadiness.set(id, { state: "ready" });
-      store.serverDiscoveries.set(id, {
-        ...testPreparedPaths().discovery,
-        server: { name: `Server ${index}` },
-      });
-    }
+    for (const id of ids) store.servers.set(id, view(id, "verified"));
     expect(store.selectionValidation).toBe("verified");
-    store.serverReadiness.set("__proto__", { state: "checking" });
+    store.servers.set("__proto__", view("__proto__", "checking"));
     expect(store.selectionValidation).toBe("checking");
-    store.serverReadiness.set("__proto__", { state: "failed" });
+    store.servers.set("__proto__", view("__proto__", "failed"));
     expect(store.selectionValidation).toBe("failed");
-    expect(store.serverReadiness.get("constructor")?.state).toBe("ready");
-    expect(store.serverDiscoveries.get("__proto__")?.server.name).toBe(
-      "Server 2",
-    );
-    store.serverDiscoveries.delete("toString");
-    expect(store.serverDiscoveries.has("toString")).toBe(false);
-    expect(store.serverDiscoveries.get("constructor")?.server.name).toBe(
-      "Server 0",
-    );
-    store.serverReadiness.clear();
-    expect(store.selectionValidation).toBe("stale");
+    expect(store.servers.get("constructor")?.readiness).toBe("verified");
   } finally {
-    store.serverReadiness.clear();
-    store.serverDiscoveries.clear();
+    store.servers.clear();
     store.selectedServers = previousSelection;
+    restore();
+  }
+});
+
+test("focusing another server leaves the headline latency result alone", async () => {
+  const restore = stubGlobals(TEST_BUILD_TOKENS);
+  const { store } = await import("./store.svelte");
+  const latency = (reportedMs: number) =>
+    ({ reportedMs }) as NonNullable<RunResult["latency"]>;
+  const result = testRunResult({ latency: latency(10) });
+  result.multiServer.servers = [
+    { server: { id: "b", name: "b" }, latency: latency(40) },
+  ] as unknown as typeof result.multiServer.servers;
+  try {
+    store.reset();
+    store.ingest({ type: "complete", result });
+    store.focusLatencyServer("b");
+    expect(store.stageResults.latency).toBe(result.latency);
+  } finally {
+    store.reset();
+    store.latencyFocus = "self";
     restore();
   }
 });

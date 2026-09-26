@@ -1,27 +1,27 @@
-/** Width-driven DOM changes must happen outside ResizeObserver delivery. */
+import type { Attachment } from "svelte/attachments";
+import { nextFrame } from "../presentation/motion.svelte";
+
+/** Width-driven state changes happen outside ResizeObserver delivery. */
 export function observeWidth(
-  node: HTMLElement,
   onWidth: (width: number) => void,
-) {
-  let width = node.clientWidth;
-  let frame = 0;
-  onWidth(width);
-  const observer = new ResizeObserver(() => {
-    if (frame || node.clientWidth === width) return;
-    frame = requestAnimationFrame(() => {
-      frame = 0;
-      const next = node.clientWidth;
-      if (next !== width) {
-        width = next;
+): Attachment<HTMLElement> {
+  return (node) => {
+    let width = node.clientWidth;
+    let stop: (() => void) | null = null;
+    onWidth(width);
+    const observer = new ResizeObserver(() => {
+      if (stop || node.clientWidth === width) return;
+      stop = nextFrame(() => {
+        stop = null;
+        if (node.clientWidth === width) return;
+        width = node.clientWidth;
         onWidth(width);
-      }
+      });
     });
-  });
-  observer.observe(node);
-  return {
-    destroy() {
+    observer.observe(node);
+    return () => {
       observer.disconnect();
-      if (frame) cancelAnimationFrame(frame);
-    },
+      stop?.();
+    };
   };
 }

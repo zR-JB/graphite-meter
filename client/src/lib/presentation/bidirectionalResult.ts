@@ -1,5 +1,4 @@
-// Receiver-reported bytes per second; both lanes are required for a combined value.
-// A surviving lane remains directional evidence, including a measured zero.
+// A combined value needs both lanes; a surviving lane stays directional evidence, even a zero.
 export function bidirectionalResultPresentation(
   down: number | null | undefined,
   up: number | null | undefined,

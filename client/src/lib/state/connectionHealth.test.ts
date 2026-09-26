@@ -7,7 +7,7 @@ function buckets(values: (number | null)[], cadence = 1000) {
     endT: (i + 1) * cadence,
     medianRttMs: rtt,
     pingCount: 1,
-    lossCount: rtt === null ? 1 : 0,
+    timeoutCount: rtt === null ? 1 : 0,
   }));
 }
 test("missing evidence and an isolated timeout or RTT spike do not imply unstable connectivity", () => {
@@ -35,7 +35,7 @@ test("persistent low-rate loss uses the observed counts rather than bucket avera
   const evidence = buckets([10, 10, 10]);
   evidence.forEach((bucket) => {
     bucket.pingCount = 20;
-    bucket.lossCount = 1;
+    bucket.timeoutCount = 1;
   });
   expect(connectionQuality(evidence)).toBe("degraded");
 });

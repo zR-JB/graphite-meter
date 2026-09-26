@@ -1,7 +1,11 @@
 <script lang="ts">
-  import { tooltip, JARGON } from "../actions/tooltip";
-  import { ICON } from "../constants";
-  import { fmtMs } from "../format";
+  import { untrack } from "svelte";
+  import { inView } from "../actions/inView";
+  import { Smoothed } from "../presentation/motion.svelte";
+  import Icon from "./Icon.svelte";
+  import { tooltip } from "../actions/tooltip";
+  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { fmtMs, fmtMsTick } from "../format";
   import {
     entries,
     PARTIAL_ACCOUNTING_HELP,
@@ -15,61 +19,31 @@
     nearestMetric,
     pos,
     profileDomain,
-    rangeWidth,
-    tickLabel,
-    type LatencyProfileDomain,
     type LatencyProfileViewLane,
     type MetricKey,
   } from "./latencyProfile";
 
   interface Props {
     lanes: LatencyProfileViewLane[];
-    domain?: LatencyProfileDomain;
     variant?: "bare" | "compact";
-    showCurrent?: boolean;
-    showTimeouts?: boolean;
     label?: string;
   }
 
   let {
     lanes,
-    domain,
     variant = "bare",
-    showCurrent = false,
-    showTimeouts = false,
     label = "Latency, jitter and probe timeouts by phase",
   }: Props = $props();
 
   let motion = $state(false);
-  function attachMotion(node: HTMLElement) {
-    let intersecting = false;
-    const update = () => {
-      motion = intersecting && !document.hidden;
-    };
-    const observer = new IntersectionObserver(([entry]) => {
-      intersecting = entry.isIntersecting;
-      update();
-    });
-    observer.observe(node);
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", update);
-    };
-  }
 
-  const scale = $derived(domain ?? profileDomain(lanes));
+  const scale = $derived(profileDomain(lanes));
+  const live = $derived(variant === "bare");
   const ticks = $derived([
     scale.min,
     scale.min + scale.span / 2,
     scale.min + scale.span,
   ]);
-  const laneIcons = {
-    latency: ICON.ping,
-    download: ICON.download,
-    upload: ICON.upload,
-    bidirectional: ICON.bidirectional,
-  } as const;
 
   let hover = $state<{
     key: LatencyProfileViewLane["key"];
@@ -161,15 +135,16 @@
     const values = [
       lane.center == null
         ? null
-        : `${metricLabel(lane, "center")} ${fmtMs(lane.center)} milliseconds`,
+        : `${metricLabel("center")} ${fmtMs(lane.center)} milliseconds`,
       lane.min == null || lane.max == null
         ? null
         : `range ${fmtMs(lane.min)} to ${fmtMs(lane.max)} milliseconds`,
       lane.p10 == null || lane.p90 == null
         ? null
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
+      lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
-      showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
+      live && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
         : null,
       lane.accountingComplete === false ? "Partial accounting" : null,
@@ -177,42 +152,81 @@
     ].filter((value): value is string => value !== null);
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
   }
+
+  const accountingText = (lane: LatencyProfileViewLane) =>
+    (lane.accountingComplete === false
+      ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} `
+      : "") + probeAccountingDetails(lane);
+  // Markers glide between summaries on the shared frame clock; saved and unseen lanes snap.
+  const GLIDED = ["min", "max", "p10", "p90", "center", "current"] as const;
+  const glides = new Map<string, Smoothed>();
+  $effect(() => {
+    const snap = !motion;
+    const targets = lanes.flatMap((lane) =>
+      GLIDED.flatMap((metric) =>
+        lane[metric] == null
+          ? []
+          : [
+              [
+                `${lane.key}:${metric}`,
+                pos(lane[metric] ?? null, scale),
+              ] as const,
+            ],
+      ),
+    );
+    untrack(() => {
+      for (const [key, target] of targets) {
+        const glide = glides.get(key) ?? new Smoothed();
+        if (!glides.has(key)) glides.set(key, glide);
+        if (glide.target !== target) glide.set(target, { snap });
+      }
+    });
+  });
+  const at = (lane: LatencyProfileViewLane, metric: (typeof GLIDED)[number]) =>
+    glides.get(`${lane.key}:${metric}`)?.current ??
+    pos(lane[metric] ?? null, scale);
+  const spanTransform = (from: number, to: number) =>
+    `translateX(${from}%) scaleX(${Math.max(0, to - from) / 100})`;
 </script>
 
 <div
   class="lanes"
   data-latency-profile
-  data-motion={motion && variant === "bare"}
-  {@attach variant === "bare" && attachMotion}
+  {@attach live && inView((seen) => (motion = seen))}
   data-variant={variant}
   role="group"
   aria-label={label}
 >
   {#each lanes as lane (lane.key)}
-    {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
-    <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
+    {@const accounting = hasProbeAccountingNotice(lane)
+      ? accountingText(lane)
+      : ""}
+    {@const metrics = entries(lane)}
+    {@const selected =
+      hover?.key === lane.key
+        ? metrics.findIndex((entry) => entry.metric === hover!.metric)
+        : -1}
+    <div class="lane" data-tone={lane.key} data-active={lane.active === true}>
       <div class="lane-meta">
-        <span class="lane-icon" aria-hidden="true"
-          >{@html laneIcons[lane.key]}</span
+        <span class="tone-icon lane-icon" aria-hidden="true"
+          ><Icon name={STAGE[lane.key].icon} /></span
         >
-        <span class="lane-label">{lane.label}</span>
+        <span class="caps lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
             ? lane.accountingComplete === false || lane.count > 0
               ? "unavailable"
               : "waiting"
-            : lane.centerKind === "average"
-              ? `mean ${fmtMs(lane.center)} ms`
-              : `median ${fmtMs(lane.center)} ms`}</strong
+            : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        {#if lane.jitter != null}
-          <em class="jit" use:tooltip={JARGON.jitter}
-            >{fmtMs(lane.jitter)} ms jitter</em
-          >
-        {/if}
+        <em class="term jit" {@attach tooltip(() => JARGON.jitter)}
+          >{lane.jitter == null
+            ? `jitter ${MISSING}`
+            : `${fmtMs(lane.jitter)} ms jitter`}</em
+        >
         <em class="range-label">
           {lane.min == null || lane.max == null
-            ? "range —"
+            ? `range ${MISSING}`
             : `${fmtMs(lane.min)} – ${fmtMs(lane.max)}`}
         </em>
         <span class="accounting-slot">
@@ -221,160 +235,140 @@
               class="timing-info"
               class:accounting-warning={hasProbeAccountingNotice(lane)}
               role="note"
-              aria-label={`${lane.label}: measurement details${hasProbeAccountingNotice(lane) ? `. ${accounting}` : ""}`}
-              use:tooltip={[
-                lane.reflectorTiming
-                  ? reflectorTimingDescription(lane.reflectorTiming)
-                  : "",
-                hasProbeAccountingNotice(lane) ? accounting : "",
-              ]
+              aria-label={[`${lane.label}: measurement details`, accounting]
                 .filter(Boolean)
-                .join("\n\n")}>{@html ICON.info}</span
+                .join(". ")}
+              {@attach tooltip(() =>
+                [
+                  lane.reflectorTiming
+                    ? reflectorTimingDescription(lane.reflectorTiming)
+                    : "",
+                  accounting,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              )}><Icon name="info" /></span
             >
           {/if}
         </span>
       </div>
 
-      <div class="strip">
-        <div class="ticks" aria-hidden="true">
-          {#each ticks as tick, index (index)}
-            <span style={`left:${pos(tick, scale)}%`}
-              >{tickLabel(tick)}{index === 2 ? " ms" : ""}</span
-            >
-          {/each}
-        </div>
-        <button
-          type="button"
-          class="track"
-          aria-label={accessibleLane(lane)}
-          disabled={entries(lane).length === 0}
-          onpointermove={(event) => onTrackMove(event, lane)}
-          onpointerleave={() => {
-            if (keyboardLane !== lane.key) hover = null;
-          }}
-          onfocus={(event) => onTrackFocus(event, lane)}
-          onblur={() => {
-            keyboardLane = null;
-            hover = null;
-          }}
-          onkeydown={(event) => onTrackKey(event, lane)}
-        >
-          <span class="profile-artwork" aria-hidden="true">
-            {#if lane.min != null && lane.max != null}
-              <span
-                class="range"
-                style:transform={`translateX(${pos(lane.min, scale)}%) scaleX(${rangeWidth(lane.min, lane.max, scale) / 100})`}
-              ></span>
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.min, scale)}%)`}
-                ><i class="range-cap"></i></span
-              >
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.max, scale)}%)`}
-                ><i class="range-cap"></i></span
-              >
-            {/if}
-            {#if lane.p10 != null && lane.p90 != null}
-              <span
-                class="band"
-                style:transform={`translateX(${pos(lane.p10, scale)}%) scaleX(${rangeWidth(lane.p10, lane.p90, scale) / 100})`}
-              ></span>
-            {/if}
-            {#if lane.center != null}
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.center, scale)}%)`}
-                ><i class="center-marker"></i></span
-              >
-            {/if}
-            {#if showCurrent && lane.current != null}
-              <span
-                class="position"
-                style:transform={`translateX(${pos(lane.current, scale)}%)`}
-                ><i class="current-marker"></i></span
-              >
-            {/if}
-            {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-              <i
-                class="timeout-marker"
-                style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
-              ></i>
-            {/if}
-          </span>
-          {#if hover?.key === lane.key && hoverValue != null}
-            <span class="guide" style={`left:${pos(hoverValue, scale)}%`}
+      <div
+        class="track"
+        role="slider"
+        tabindex={metrics.length ? 0 : -1}
+        aria-label={accessibleLane(lane)}
+        aria-disabled={!metrics.length}
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, metrics.length - 1)}
+        aria-valuenow={Math.max(0, selected)}
+        aria-valuetext={selected >= 0 && hover && hoverValue != null
+          ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds`
+          : undefined}
+        onpointermove={(event) => onTrackMove(event, lane)}
+        onpointerleave={() => {
+          if (keyboardLane !== lane.key) hover = null;
+        }}
+        onfocus={(event) => onTrackFocus(event, lane)}
+        onblur={() => {
+          keyboardLane = null;
+          hover = null;
+        }}
+        onkeydown={(event) => onTrackKey(event, lane)}
+      >
+        <span class="profile-artwork" aria-hidden="true">
+          {#if lane.min != null && lane.max != null}
+            <span
+              class="range"
+              style:transform={spanTransform(at(lane, "min"), at(lane, "max"))}
             ></span>
             <span
-              class="hover-card"
-              bind:clientWidth={cardWidth}
-              style={`left:${cardLeft}px`}
+              class="position"
+              style:transform={`translateX(${at(lane, "min")}%)`}
+              ><i class="range-cap"></i></span
             >
-              <span class="hover-head">
-                <span>{lane.label}</span>
-                <strong
-                  >{metricLabel(lane, hover.metric)}
-                  {fmtMs(hoverValue)}</strong
-                >
-              </span>
-              {#if hoverContext(lane, hover.metric)}
-                <span class="hover-context"
-                  >{hoverContext(lane, hover.metric)}</span
-                >
-              {/if}
-              {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-                <em>{timeoutLabel(lane.timeoutRatio)}</em>
-              {/if}
-            </span>
+            <span
+              class="position"
+              style:transform={`translateX(${at(lane, "max")}%)`}
+              ><i class="range-cap"></i></span
+            >
           {/if}
-        </button>
+          {#if lane.p10 != null && lane.p90 != null}
+            <span
+              class="band"
+              style:transform={spanTransform(at(lane, "p10"), at(lane, "p90"))}
+            ></span>
+          {/if}
+          {#if lane.center != null}
+            <span
+              class="position"
+              style:transform={`translateX(${at(lane, "center")}%)`}
+              ><i class="center-marker"></i></span
+            >
+          {/if}
+          {#if live && lane.current != null}
+            <span
+              class="position"
+              style:transform={`translateX(${at(lane, "current")}%)`}
+              ><i class="current-marker"></i></span
+            >
+          {/if}
+          {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+            <i
+              class="timeout-marker"
+              style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
+            ></i>
+          {/if}
+        </span>
+        {#if hover?.key === lane.key && hoverValue != null}
+          <span class="guide" style={`left:${pos(hoverValue, scale)}%`}></span>
+          <span
+            class="inspect-card hover-card"
+            bind:clientWidth={cardWidth}
+            style={`left:${cardLeft}px`}
+          >
+            <span class="hover-head">
+              <span>{lane.label}</span>
+              <strong
+                >{metricLabel(hover.metric)}
+                {fmtMs(hoverValue)}</strong
+              >
+            </span>
+            {#if hoverContext(lane, hover.metric)}
+              <span class="hover-context"
+                >{hoverContext(lane, hover.metric)}</span
+              >
+            {/if}
+            {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+              <em>{timeoutLabel(lane.timeoutRatio)}</em>
+            {/if}
+          </span>
+        {/if}
       </div>
     </div>
   {/each}
+  <div class="ticks" aria-hidden="true">
+    {#each ticks as tick, index (index)}
+      <span style={`left:${pos(tick, scale)}%`}
+        >{fmtMsTick(tick)}{index === 2 ? " ms" : ""}</span
+      >
+    {/each}
+  </div>
 </div>
 
 <style>
-  .timing-info {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    color: var(--text-muted);
-    cursor: help;
-  }
-  .timing-info :global(svg) {
-    width: 12px;
-    height: 12px;
-  }
-  .timing-info:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .accounting-slot {
-    display: inline-flex;
-    flex: 0 0 20px;
-    align-self: center;
-  }
-  .accounting-warning {
-    color: var(--warn);
-    font-weight: 600;
-  }
   .lanes {
-    container: latency-lanes / inline-size;
+    --lane-pad: var(--space-3);
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
-    padding: 0;
+    container: latency-lanes / inline-size;
   }
   .lane {
-    --tone: var(--phase-latency);
     display: grid;
-    gap: var(--space-1);
+    gap: 6px;
     min-width: 0;
-    padding: 6px var(--space-3);
+    padding: 6px var(--lane-pad);
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-well);
     background: var(--surface-1);
@@ -388,17 +382,8 @@
       padding-block: var(--space-1);
     }
   }
-  .lane[data-tone="download"] {
-    --tone: var(--phase-download);
-  }
-  .lane[data-tone="upload"] {
-    --tone: var(--phase-upload);
-  }
-  .lane[data-tone="bidirectional"] {
-    --tone: var(--phase-bidirectional);
-  }
   .lane[data-active="true"] {
-    border-color: color-mix(in srgb, var(--tone) 44%, var(--border));
+    border-color: var(--tone-line);
     background: color-mix(
       in srgb,
       var(--signal-soft) 70%,
@@ -408,21 +393,13 @@
   .lane-meta {
     display: flex;
     align-items: baseline;
-    flex-wrap: nowrap;
     gap: var(--space-1) var(--space-2);
     min-width: 0;
   }
   .lane-icon {
-    display: grid;
-    place-items: center;
+    align-self: center;
     width: 18px;
     height: 18px;
-    flex: none;
-    align-self: center;
-    border: 1px solid color-mix(in srgb, var(--tone) 32%, var(--border));
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    color: var(--tone);
   }
   .lane-icon :global(svg) {
     width: 11px;
@@ -431,66 +408,69 @@
   .lane-label {
     flex: 1 0 auto;
     color: var(--text-muted);
-    font: 800 10px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .lane-meta strong {
     flex: none;
-    white-space: nowrap;
-    color: var(--text);
-    font: 700 13px var(--font-mono);
+    min-width: 15ch;
+    font: var(--w-heavy) var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
-    line-height: 1;
+    white-space: nowrap;
   }
+  /* Fixed bases keep changing numbers from moving the median. */
   .lane-meta em {
+    flex: 0 1 14ch;
     min-width: 0;
     overflow: hidden;
+    color: var(--text-muted);
+    font: 400 var(--type-2xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .accounting-slot {
+    display: inline-flex;
+    flex: 0 0 20px;
+    align-self: center;
+  }
+  .timing-info {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
     color: var(--text-muted);
-    font: 400 10px var(--font-mono);
-    font-style: normal;
-    font-variant-numeric: tabular-nums;
-  }
-  .lane-meta .jit {
     cursor: help;
-    text-decoration: underline dotted
-      color-mix(in srgb, var(--text-soft) 70%, transparent);
-    text-underline-offset: 2px;
   }
-  .strip {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
+  .timing-info :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  .accounting-warning {
+    color: var(--warn);
   }
   .ticks {
     position: relative;
     height: 13px;
-    margin: 0 1px;
+    margin-inline: calc(var(--lane-pad) + 2px);
   }
   .ticks span {
     position: absolute;
-    top: 0;
+    translate: -50%;
     color: var(--text-muted);
-    font: 400 9px var(--font-mono);
+    font: var(--type-2xs) / 1.2 var(--font-mono);
     font-variant-numeric: tabular-nums;
-    transform: translateX(-50%);
     white-space: nowrap;
   }
   .ticks span:first-child {
-    transform: none;
+    translate: none;
   }
   .ticks span:last-child {
-    transform: translateX(-100%);
+    translate: -100%;
   }
   .track {
     position: relative;
-    height: var(--profile-track-height, 30px);
     width: 100%;
-    padding: 0;
-    overflow: visible;
+    height: var(--profile-track-height, 30px);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background:
@@ -498,16 +478,10 @@
         25% 100%,
       var(--surface-2);
     cursor: crosshair;
-    color: inherit;
-    font: inherit;
     isolation: isolate;
   }
-  .track:disabled {
+  .track[aria-disabled="true"] {
     cursor: default;
-  }
-  .track:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
   }
   .profile-artwork {
     position: absolute;
@@ -538,13 +512,6 @@
   .position {
     inset-block: 0;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .lanes[data-motion="true"] .range,
-    .lanes[data-motion="true"] .band,
-    .lanes[data-motion="true"] .position {
-      transition: transform 220ms var(--ease-out);
-    }
-  }
   .range {
     top: calc(50% - 2px);
     height: 5px;
@@ -556,7 +523,7 @@
     top: 18%;
     bottom: 18%;
     width: 1px;
-    transform: translateX(-50%);
+    translate: -50%;
     background: color-mix(in srgb, var(--text-soft) 64%, transparent);
   }
   .band {
@@ -569,7 +536,7 @@
   .center-marker,
   .current-marker {
     left: 0;
-    transform: translateX(-50%);
+    translate: -50%;
   }
   .center-marker {
     top: 5px;
@@ -580,8 +547,8 @@
   }
   .current-marker {
     top: calc(50% - 5px);
-    height: 10px;
     width: 10px;
+    height: 10px;
     border: 2px solid var(--surface-1);
     border-radius: var(--r-full);
     background: var(--tone);
@@ -606,26 +573,18 @@
     top: -4px;
     bottom: -4px;
     width: 1px;
-    border-radius: var(--r-full);
+    translate: -50%;
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
-    transform: translateX(-50%);
   }
   .hover-card {
-    position: absolute;
     z-index: 10;
     top: calc(50% - 12px);
     display: grid;
     gap: var(--space-1);
     min-width: 156px;
     max-width: min(238px, 76vw);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
-    pointer-events: none;
-    transform: translateY(-50%);
+    translate: 0 -50%;
   }
   .hover-head {
     display: flex;
@@ -638,32 +597,29 @@
   .hover-context,
   .hover-card > em {
     overflow: hidden;
-    margin: 0;
     color: var(--text-muted);
-    font: 800 10px var(--font-mono);
+    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
     font-style: normal;
-    letter-spacing: 0.04em;
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
+  }
+  .hover-head span {
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
   }
   .hover-head strong {
-    color: var(--text);
-    font: 700 var(--type-sm) var(--font-mono);
+    font: var(--w-heavy) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-  }
-  .hover-context,
-  .hover-card > em {
-    display: block;
-    letter-spacing: 0;
-    text-transform: none;
   }
   .hover-card > em {
     color: var(--err);
   }
+  .lanes[data-variant="compact"] {
+    --lane-pad: 10px;
+  }
   .lanes[data-variant="compact"] .lane {
-    padding: 9px 10px 10px;
+    padding-block: 9px 10px;
   }
   .lanes[data-variant="compact"] .lane-meta strong {
     font-size: var(--type-sm);
@@ -690,7 +646,7 @@
   }
   @container latency-lanes (max-width: 300px) {
     .lanes[data-variant] .lane-meta strong {
-      font-size: 11px;
+      font-size: var(--type-xs);
     }
   }
 </style>

@@ -1,9 +1,11 @@
 import { test, expect, afterEach } from "bun:test";
 import {
+  decodeUploadProgress,
   readProgressFeed,
   type ProgressEvent,
   type ProgressFeedState,
 } from "./progressFeed";
+import type { LaneFailure } from "../contract";
 
 const realParse = JSON.parse;
 const realDecode = TextDecoder.prototype.decode;
@@ -51,7 +53,7 @@ function parseRefusalPin(text: string): Record<string, string> {
 
 const refusals = parseRefusalPin(await Bun.file(refusalPinPath).text());
 
-// The error record the server sends a refused lane, which is all a WebTransport lane gets: no status line, so the.
+// A refused WebTransport lane gets only this error record: no status line, so the message is the whole signal.
 function refusalRecord(name: string, message: string): string {
   return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
 }
@@ -116,7 +118,7 @@ test("blank heartbeats and truncated lines are not measurements", async () => {
   expect(end).toBe("eof");
 });
 
-// The parse attempt can: heartbeats arrive at the server's keep-warm cadence for the whole stage, and only the.
+// Heartbeats and truncated records emit alike; only the truncated line is one the parser has to reject.
 test("a blank heartbeat never reaches the parser", async () => {
   const parsed: string[] = [];
   JSON.parse = ((text: string) => {
@@ -135,6 +137,15 @@ test("a complete record ends the feed with receiver totals", async () => {
   expect(complete.events.at(-1)).toEqual({ type: "complete", n: 42, t: 9 });
 });
 
+const DISPOSITION: Record<string, LaneFailure> = {
+  invalid: { reason: "connection-lost", retry: false, rotate: true },
+  globalFull: { reason: "server-busy", retry: false },
+  clientFull: { reason: "server-busy", retry: false },
+  ownerMismatch: { reason: "protocol-error", retry: false },
+  idle: { reason: "connection-lost", retry: true },
+  revoked: { reason: "sign-in-required", retry: false },
+};
+
 // Every refusal the server can send must reach the caller as a fatal carrying that exact text, not just the owner.
 test("every pinned upload refusal surfaces as a fatal", async () => {
   for (const [name, message] of Object.entries(refusals)) {
@@ -143,16 +154,7 @@ test("every pinned upload refusal surfaces as a fatal", async () => {
     );
     expect(end, name).toBe("fatal");
     expect(events, name).toEqual([
-      {
-        type: "fatal",
-        detail: message,
-        cause:
-          name === "invalid"
-            ? "unknown-upload-id"
-            : name === "ownerMismatch"
-              ? "owner-mismatch"
-              : "capacity-refusal",
-      },
+      { type: "fatal", detail: message, ...DISPOSITION[name] },
     ]);
   }
 });
@@ -279,3 +281,23 @@ test("an explicit zero receiver window is a terminal observation", async () => {
   expect(end).toBe("complete");
   expect(events).toEqual([{ type: "complete", n: 0, t: 0 }]);
 });
+
+const fixtures: { name: string; record: unknown; valid: boolean }[] =
+  await Bun.file(
+    new URL(
+      "../../../../../api/upload-progress.testvectors.json",
+      import.meta.url,
+    ),
+  ).json();
+
+for (const { name, record, valid } of fixtures) {
+  test(`upload progress conformance: ${name}`, () => {
+    const decoded = decodeUploadProgress(record);
+    expect(decoded !== null).toBe(valid);
+    if (decoded !== null) {
+      expect(decodeUploadProgress(JSON.parse(JSON.stringify(decoded)))).toEqual(
+        decoded,
+      );
+    }
+  });
+}

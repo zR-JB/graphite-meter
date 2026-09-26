@@ -4,22 +4,22 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"crypto/x509"
 	"errors"
 	"io"
 	"log"
 	"maps"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
-	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"golang.org/x/oauth2"
 )
 
@@ -33,27 +33,19 @@ type oidcTransaction struct {
 	state, nonce, verifier string
 	browser                [32]byte
 	expires                time.Time
-	client                 string
+	clients                []string
 	cliChallenge           string
-	provider               *oidc.Provider
-	idVerifier             *oidc.IDTokenVerifier
-	oauth                  oauth2.Config
-	responseIssuer         bool
+	discovery              *oidcDiscovery // the provider as discovered when the transaction started
 	prior                  [32]byte
-	hasPrior               bool
 }
 
 type oidcState struct {
-	cfg            config.AuthConfig
-	secret         string
-	mu             sync.RWMutex
-	provider       *oidc.Provider
-	verifier       *oidc.IDTokenVerifier
-	oauth          oauth2.Config
-	responseIssuer bool
-	retrying       bool
-	verbose        bool
-	tx             map[[32]byte]oidcTransaction
+	cfg        config.AuthConfig
+	secret     string
+	verbose    bool
+	discovered atomic.Pointer[oidcDiscovery] // nil until discovery succeeds
+	mu         sync.Mutex
+	tx         map[[32]byte]oidcTransaction
 }
 
 type oidcDiscovery struct {
@@ -66,15 +58,15 @@ type oidcDiscovery struct {
 func newOIDCState(cfg config.AuthConfig, secret string, verbose bool) *oidcState {
 	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: verbose}
 }
-func (o *oidcState) ready() bool { o.mu.RLock(); defer o.mu.RUnlock(); return o.provider != nil }
+
+func (o *oidcState) ready() bool { return o.discovered.Load() != nil }
+
 func (o *oidcState) authorizationOrigin() string {
-	o.mu.RLock()
-	raw := o.oauth.Endpoint.AuthURL
-	o.mu.RUnlock()
-	u, err := url.Parse(raw)
-	if err != nil || !validProviderURL(raw) {
+	d := o.discovered.Load()
+	if d == nil || !validProviderURL(d.oauth.Endpoint.AuthURL) {
 		return ""
 	}
+	u, _ := url.Parse(d.oauth.Endpoint.AuthURL)
 	return u.Scheme + "://" + u.Host
 }
 
@@ -92,19 +84,19 @@ func (t limitTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func providerHTTPClient() *http.Client {
-	return &http.Client{Timeout: 10 * time.Second, Transport: limitTransport{base: http.DefaultTransport}, CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
+	return &http.Client{
+		Timeout:       10 * time.Second,
+		Transport:     limitTransport{base: http.DefaultTransport},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscovery, error) {
-	client := providerHTTPClient()
-	ctx = oidc.ClientContext(ctx, client)
+	ctx = oidc.ClientContext(ctx, providerHTTPClient())
 	p, err := oidc.NewProvider(ctx, o.cfg.OIDCIssuer)
 	if err != nil {
-		failure := classifyDiscoveryFailure(err)
-		o.debugln("OIDC discovery failed reason=" + failure.reason)
-		return nil, failure
+		debugln(o.verbose, "OIDC discovery failed: "+err.Error())
+		return nil, err
 	}
 	var meta struct {
 		ResponseIssuer bool   `json:"authorization_response_iss_parameter_supported"`
@@ -113,104 +105,48 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	}
 	_ = p.Claims(&meta)
 	ep := p.Endpoint()
-	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) || !validProviderURL(meta.JWKS) {
-		o.debugln("OIDC discovery failed reason=invalid_endpoint_metadata")
-		return nil, &discoveryFailure{reason: "invalid_endpoint_metadata"}
+	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) ||
+		!validProviderURL(meta.JWKS) {
+		return nil, errors.New("provider metadata names a non-HTTPS endpoint")
 	}
 	ep.AuthStyle = oauth2.AuthStyleInHeader
 	return &oidcDiscovery{
-		provider: p, verifier: p.Verifier(&oidc.Config{ClientID: o.cfg.OIDCClientID}),
-		oauth:          oauth2.Config{ClientID: o.cfg.OIDCClientID, ClientSecret: o.secret, Endpoint: ep, RedirectURL: public.String() + "/auth/oidc/callback", Scopes: []string{oidc.ScopeOpenID, "profile", "groups"}},
+		provider: p,
+		verifier: p.Verifier(&oidc.Config{ClientID: o.cfg.OIDCClientID}),
+		oauth: oauth2.Config{
+			ClientID: o.cfg.OIDCClientID, ClientSecret: o.secret, Endpoint: ep,
+			RedirectURL: public.String() + "/auth/oidc/callback",
+			Scopes:      []string{oidc.ScopeOpenID, "profile", "groups"},
+		},
 		responseIssuer: meta.ResponseIssuer,
 	}, nil
 }
 
-type discoveryFailure struct{ reason string }
-
-func (e *discoveryFailure) Error() string { return "provider unavailable" }
-
-func classifyDiscoveryFailure(err error) *discoveryFailure {
-	reason := "discovery_response"
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		reason = "timeout"
-	case errors.Is(err, context.Canceled):
-		reason = "cancelled"
-	default:
-		if _, ok := errors.AsType[*oidc.IssuerMismatchError](err); ok {
-			reason = "issuer_mismatch"
-		} else if _, ok := errors.AsType[*net.DNSError](err); ok {
-			reason = "dns"
-		} else if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-			reason = "tls_verification"
-		} else if _, ok := errors.AsType[x509.HostnameError](err); ok {
-			reason = "tls_verification"
-		} else if _, ok := errors.AsType[*net.OpError](err); ok {
-			reason = "connection"
-		}
-	}
-	return &discoveryFailure{reason: reason}
-}
-
-func (o *oidcState) debugln(message string) {
-	if o.verbose {
-		log.Printf("[gm:auth:debug] %s", message)
-	}
-}
-
-func (o *oidcState) install(discovery *oidcDiscovery) {
-	o.mu.Lock()
-	o.provider = discovery.provider
-	o.verifier = discovery.verifier
-	o.oauth = discovery.oauth
-	o.responseIssuer = discovery.responseIssuer
-	o.mu.Unlock()
-}
 func validProviderURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil
 }
-func (o *oidcState) startRetry(ctx context.Context, public *url.URL) {
-	o.mu.Lock()
-	if o.retrying {
-		o.mu.Unlock()
-		return
-	}
-	o.retrying = true
-	o.mu.Unlock()
-	go o.retryDiscovery(ctx, public)
-}
 
 func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 	delay := time.Second
-	unavailableLogged := false
-	for {
+	for attempt := 0; ; attempt++ {
 		discovery, err := o.discover(ctx, public)
 		if err == nil {
-			o.install(discovery)
-			o.mu.Lock()
-			o.retrying = false
-			o.mu.Unlock()
+			o.discovered.Store(discovery)
 			log.Printf("[gm:auth] OIDC provider ready")
 			return
 		}
-		if !unavailableLogged {
+		if attempt == 0 {
 			log.Printf("[gm:auth] OIDC provider unavailable; local password remains available")
-			unavailableLogged = true
 		} else {
 			log.Printf("[gm:auth] OIDC provider retrying")
 		}
 		select {
 		case <-ctx.Done():
-			o.mu.Lock()
-			o.retrying = false
-			o.mu.Unlock()
 			return
 		case <-time.After(delay):
 		}
-		if delay < time.Minute {
-			delay = min(delay*2, time.Minute)
-		}
+		delay = min(delay*2, time.Minute)
 	}
 }
 
@@ -229,36 +165,37 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	state, nonce := randomToken(32), randomToken(32)
-	verifier := oauth2.GenerateVerifier()
-	browser := randomToken(32)
-	key := sha256.Sum256([]byte(state))
-	browserHash := sha256.Sum256([]byte(browser))
-	addr, ok := s.authClientAddress(r)
+	clients, ok := ClientKeys(r, s.trusted)
 	if !ok {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
 	}
-	client := budgetKey(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	browser := randomToken(32)
+	tx := oidcTransaction{
+		state: randomToken(32), nonce: randomToken(32), verifier: oauth2.GenerateVerifier(),
+		browser: sha256.Sum256([]byte(browser)), expires: time.Now().Add(oidcTransactionLifetime),
+		clients: clients, cliChallenge: challengeOrEmpty(r.FormValue("challenge")),
+	}
+	if c := uniqueCookie(r, sessionCookie); c != nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
-		tx.hasPrior = true
 	}
 	o := s.oidc
 	o.mu.Lock()
-	now := s.now()
+	now := time.Now()
 	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
-	perClient := 0
-	for v := range maps.Values(o.tx) {
-		if v.client == client {
-			perClient++
+	clientFull := transport.ShareFull(clients, maxClientOIDCTransactions, func(key string) int {
+		n := 0
+		for v := range maps.Values(o.tx) {
+			if slices.Contains(v.clients, key) {
+				n++
+			}
 		}
-	}
+		return n
+	})
 	global := len(o.tx) >= maxOIDCTransactions
-	if global || perClient >= maxClientOIDCTransactions {
+	if global || clientFull {
 		o.mu.Unlock()
-		s.counters.capacity.Add(1)
+		s.count(countCapacity)
 		if global {
 			s.mu.Lock()
 			s.noteCeilingLocked("oidc-transaction", now)
@@ -267,20 +204,12 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, reasonTransactionCapacity)
 		return
 	}
-	if o.provider == nil || o.verifier == nil {
-		o.mu.Unlock()
-		s.oidcLoginFailure(w, r, reasonProviderNotReady)
-		return
-	}
-	oauthCfg := o.oauth
-	tx.oauth = oauthCfg
-	tx.provider = o.provider
-	tx.idVerifier = o.verifier
-	tx.responseIssuer = o.responseIssuer
-	o.tx[key] = tx
+	tx.discovery = o.discovered.Load()
+	o.tx[sha256.Sum256([]byte(tx.state))] = tx
 	o.mu.Unlock()
-	setHTTPOnlyCookie(w, transactionCookie, browser, tx.expires, http.SameSiteLaxMode)
-	location := oauthCfg.AuthCodeURL(state, oauth2.S256ChallengeOption(verifier), oauth2.SetAuthURLParam("nonce", nonce))
+	setCookie(w, transactionCookie, browser, tx.expires, http.SameSiteLaxMode)
+	location := tx.discovery.oauth.AuthCodeURL(tx.state,
+		oauth2.S256ChallengeOption(tx.verifier), oauth2.SetAuthURLParam("nonce", tx.nonce))
 	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
@@ -296,186 +225,125 @@ func validAuthCode(v string) bool {
 	return v != "" && !strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r > 0x7e })
 }
 
-type oidcIDClaims struct {
-	Nonce    string `json:"nonce"`
-	Name     string `json:"name"`
-	Username string `json:"preferred_username"`
-	AtHash   string `json:"at_hash"`
-}
-
 func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
-	tx, code, ok := s.resolveOIDCTransaction(w, r)
-	if !ok {
+	tx, code, why := s.resolveOIDCTransaction(w, r)
+	if why != "" {
+		s.oidcLoginFailure(w, r, why)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	ctx = oidc.ClientContext(ctx, providerHTTPClient())
-	token, idToken, idClaims, why := s.exchangeAndVerifyToken(ctx, tx, code)
+	subject, name, why := s.verifyOIDCUser(oidc.ClientContext(ctx, providerHTTPClient()), tx, code)
 	if why != "" {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	name, why := s.authorizeOIDCUser(ctx, tx, token, idToken, idClaims)
-	if why != "" {
-		s.oidcLoginFailure(w, r, why)
+	raw, sess, err := s.createSession("oidc:"+subject, name, s.cfg.OIDCProviderName)
+	if err != nil {
+		s.oidcLoginFailure(w, r, reasonSessionCapacity)
 		return
 	}
-	s.completeOIDCSignIn(w, r, tx, idToken, name)
+	s.revokeSessionHash(tx.prior, sess)
+	issueSessionCookies(w, raw, sess)
+	s.count(countOIDC)
+	render(w, continueTemplate, map[string]any{"Styles": authStyles, "Challenge": challengeOrEmpty(tx.cliChallenge)})
 }
 
-func carryCLIChallenge(r *http.Request, challenge string) {
-	if !validChallenge(challenge) {
-		return
-	}
-	values := r.URL.Query()
-	values.Set("challenge", challenge)
-	r.URL.RawQuery = values.Encode()
-}
-
-func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, bool) {
+func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request) (oidcTransaction, string, reason) {
 	q := r.URL.Query()
 	code, cok := exactlyOne(q, "code")
 	state, sok := exactlyOne(q, "state")
 	if !cok || !sok || !validAuthCode(code) || len(q["error"]) > 0 || len(q["iss"]) > 1 {
-		s.oidcLoginFailure(w, r, reasonCallbackParameters)
-		return oidcTransaction{}, "", false
+		return oidcTransaction{}, "", reasonCallbackParameters
 	}
-	cookie, err := r.Cookie(transactionCookie)
-	if err != nil {
-		s.oidcLoginFailure(w, r, reasonTransactionCookie)
-		return oidcTransaction{}, "", false
+	cookie := uniqueCookie(r, transactionCookie)
+	if cookie == nil {
+		return oidcTransaction{}, "", reasonTransactionCookie
 	}
-	browserHash := sha256.Sum256([]byte(cookie.Value))
 	key := sha256.Sum256([]byte(state))
 	o := s.oidc
 	o.mu.Lock()
 	tx, ok := o.tx[key]
-	if ok {
-		delete(o.tx, key)
-	}
+	delete(o.tx, key)
 	o.mu.Unlock()
-	clearTransactionCookie(w)
-	if ok {
-		carryCLIChallenge(r, tx.cliChallenge)
+	clearCookie(w, transactionCookie, http.SameSiteLaxMode)
+	if ok && validChallenge(tx.cliChallenge) {
+		q.Set("challenge", tx.cliChallenge)
+		r.URL.RawQuery = q.Encode()
 	}
-	if !ok || !s.now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.provider == nil || tx.idVerifier == nil {
-		s.counters.replayExpiry.Add(1)
-		s.oidcLoginFailure(w, r, reasonTransactionReplay)
-		return oidcTransaction{}, "", false
+	if !ok || !time.Now().Before(tx.expires) || tx.browser != sha256.Sum256([]byte(cookie.Value)) ||
+		tx.state != state || tx.discovery == nil {
+		s.count(countReplayExpiry)
+		return oidcTransaction{}, "", reasonTransactionReplay
 	}
-	iss, _ := exactlyOne(q, "iss")
-	if (tx.responseIssuer && iss != s.cfg.OIDCIssuer) || (!tx.responseIssuer && iss != "" && iss != s.cfg.OIDCIssuer) {
-		s.oidcLoginFailure(w, r, reasonResponseIssuer)
-		return oidcTransaction{}, "", false
+	if iss, _ := exactlyOne(q, "iss"); iss != s.cfg.OIDCIssuer && (tx.discovery.responseIssuer || iss != "") {
+		return oidcTransaction{}, "", reasonResponseIssuer
 	}
 	if !s.allowExchange(r) {
-		s.oidcLoginFailure(w, r, reasonExchangeRateLimited)
-		return oidcTransaction{}, "", false
+		return oidcTransaction{}, "", reasonExchangeRateLimited
 	}
-	return tx, code, true
+	return tx, code, ""
 }
 
-func (s *Service) exchangeAndVerifyToken(ctx context.Context, tx oidcTransaction, code string) (*oauth2.Token, *oidc.IDToken, oidcIDClaims, reason) {
-	token, err := tx.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
+func (s *Service) verifyOIDCUser(ctx context.Context, tx oidcTransaction, code string) (string, string, reason) {
+	token, err := tx.discovery.oauth.Exchange(ctx, code, oauth2.VerifierOption(tx.verifier))
 	if err != nil {
-		return nil, nil, oidcIDClaims{}, reasonTokenExchange
+		return "", "", reasonTokenExchange
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		return nil, nil, oidcIDClaims{}, reasonMissingIDToken
+		return "", "", reasonMissingIDToken
 	}
-	idToken, err := tx.idVerifier.Verify(ctx, rawID)
+	idToken, err := tx.discovery.verifier.Verify(ctx, rawID)
 	if err != nil {
-		return nil, nil, oidcIDClaims{}, reasonIDTokenVerification
+		return "", "", reasonIDTokenVerification
 	}
-	var idClaims oidcIDClaims
+	var idClaims struct {
+		Nonce    string `json:"nonce"`
+		Name     string `json:"name"`
+		Username string `json:"preferred_username"`
+		AtHash   string `json:"at_hash"`
+	}
 	if err := idToken.Claims(&idClaims); err != nil || idClaims.Nonce != tx.nonce {
-		return nil, nil, oidcIDClaims{}, reasonIDTokenClaimsOrNonce
+		return "", "", reasonIDTokenClaimsOrNonce
 	}
-	if idClaims.AtHash != "" {
-		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			return nil, nil, oidcIDClaims{}, reasonAccessTokenHash
-		}
+	if idClaims.AtHash != "" && idToken.VerifyAccessToken(token.AccessToken) != nil {
+		return "", "", reasonAccessTokenHash
 	}
-	return token, idToken, idClaims, ""
-}
-
-func (s *Service) authorizeOIDCUser(ctx context.Context, tx oidcTransaction, token *oauth2.Token, idToken *oidc.IDToken, idClaims oidcIDClaims) (string, reason) {
-	userInfo, err := tx.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+	userInfo, err := tx.discovery.provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
 	if err != nil || userInfo.Subject != idToken.Subject {
-		return "", reasonUserInfoOrSubject
+		return "", "", reasonUserInfoOrSubject
 	}
 	var claims struct {
 		Name     string   `json:"name"`
 		Username string   `json:"preferred_username"`
 		Groups   []string `json:"groups"`
 	}
-	if err := userInfo.Claims(&claims); err != nil || !allowedGroup(claims.Groups, s.cfg.OIDCAllowedGroups) {
-		if err == nil {
-			s.counters.groupDenial.Add(1)
-		}
-		return "", reasonUserInfoClaimsOrGroup
+	if err := userInfo.Claims(&claims); err != nil {
+		return "", "", reasonUserInfoClaimsOrGroup
+	}
+	if !slices.ContainsFunc(claims.Groups, func(g string) bool { return slices.Contains(s.cfg.OIDCAllowedGroups, g) }) {
+		s.count(countGroupDenial)
+		return "", "", reasonUserInfoClaimsOrGroup
 	}
 	if !validSubject(idToken.Subject) {
-		return "", reasonInvalidSubject
+		return "", "", reasonInvalidSubject
 	}
 	name := cmp.Or(claims.Name, claims.Username, idClaims.Name, idClaims.Username, idToken.Subject)
-	return safeDisplayName(name), ""
-}
-
-func (s *Service) completeOIDCSignIn(w http.ResponseWriter, r *http.Request, tx oidcTransaction, idToken *oidc.IDToken, name string) {
-	raw, sess, err := s.createSession("oidc:"+idToken.Subject, name, s.cfg.OIDCProviderName)
-	if err != nil {
-		s.oidcLoginFailure(w, r, reasonSessionCapacity)
-		return
-	}
-	if tx.hasPrior {
-		s.revokeSessionHash(tx.prior, sess)
-	}
-	setHTTPOnlyCookie(w, sessionCookie, raw, sess.expires, http.SameSiteStrictMode)
-	setCSRFCookie(w, sess.csrf, sess.expires)
-	s.counters.oidc.Add(1)
-	clearCookie(w, loginCookie)
-	s.writeSignedInInterstitial(w, tx.cliChallenge)
-}
-
-func (s *Service) writeSignedInInterstitial(w http.ResponseWriter, challenge string) {
-	if !validChallenge(challenge) {
-		challenge = ""
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = continueTemplate.Execute(w, map[string]any{"Styles": authStyles, "Challenge": challenge})
+	return idToken.Subject, safeDisplayName(name), ""
 }
 
 func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, why reason) {
-	s.counters.oidcFailure.Add(1)
+	s.count(countOIDCFailure)
 	s.loginRejected(w, r, why)
 }
 
 func validSubject(v string) bool {
-	return len(v) > 0 && len(v) <= 256 && !strings.ContainsFunc(v, func(r rune) bool { return r < ' ' || r == 0x7f })
-}
-func safeDisplayName(v string) string {
-	v = strings.Map(func(r rune) rune {
-		if r < ' ' || r == 0x7f {
-			return -1
-		}
-		return r
-	}, v)
-	if len(v) > 256 {
-		v = v[:256]
-		for !utf8.ValidString(v) {
-			v = v[:len(v)-1]
-		}
-	}
-	if v == "" {
-		return "OIDC user"
-	}
-	return v
+	return len(v) > 0 && len(v) <= 256 && wire.SafeText(v)
 }
 
-func allowedGroup(actual, allowed []string) bool {
-	return slices.ContainsFunc(actual, func(a string) bool { return slices.Contains(allowed, a) })
+// safeDisplayName keeps at most 64 runes, so at most 256 bytes.
+func safeDisplayName(v string) string {
+	return cmp.Or(strings.TrimSpace(wire.CleanText(v, 64)), "OIDC user")
 }

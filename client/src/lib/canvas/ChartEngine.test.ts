@@ -1,12 +1,11 @@
-import { stubGlobals } from "../test-helpers.test";
+import "../state/runes.testutil";
+import { stubGlobals } from "../test-helpers.testutil";
 import { expect, test } from "bun:test";
-import {
-  ChartEngine,
-  type ChartData,
-  type ChartPresentation,
-} from "./ChartEngine";
+import type { ChartData, ChartPresentation } from "./ChartEngine";
 import type { LatencyBucket, ThroughputSample } from "../runner/contract";
-import { appendThroughputSample } from "../runner/presentationHistory";
+import { appendThroughputSample } from "../runner/series";
+
+const { ChartEngine } = await import("./ChartEngine");
 
 function data(overrides: Partial<ChartData> = {}): ChartData {
   return {
@@ -17,7 +16,7 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
     latencyEnabled: false,
     phase: "latency",
     phaseStartedAtMs: 0,
-    timelineT: 0,
+    timelineAt: () => 0,
     runSeq: 1,
     scaleBytesPerSec: 125_000,
     latencyScaleMs: 50,
@@ -26,61 +25,49 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
   };
 }
 
-test("camera keeps a run-wide origin and eases a large live time advance", () => {
-  let current = data();
+test("the live axis follows the run timeline every frame; a finished run glides to its span", () => {
+  let current = data({ phase: "download", timelineAt: (now) => now });
   let published!: ChartPresentation;
+  let timeScale = 0;
   const engine = new ChartEngine(
-    () => current,
+    current,
     (next) => (published = next),
+    (tMax) => (timeScale = tMax),
   );
+  expect(engine.render(1_000)).toBe(true);
+  expect(published.layout.viewport).toMatchObject({ tMin: 0, tMax: 4_000 });
+  engine.render(5_000);
+  expect(timeScale).toBe(7_000);
+  engine.render(5_016);
+  expect(timeScale).toBe(7_016);
 
-  expect(engine.render(100)).toBe(false);
-  expect(published.layout.viewport.tMin).toBe(0);
-
-  current = { ...current, phase: "download", timelineT: 5_000 };
-  engine.wake();
-  expect(engine.render(116)).toBe(true);
-  expect(published.layout.viewport.tMin).toBe(0);
-  expect(published.layout.viewport.tMax).toBeGreaterThan(4_000);
-  expect(published.layout.viewport.tMax).toBeLessThan(7_000);
-
-  current = { ...current, phase: "upload", timelineT: 8_000 };
-  engine.wake();
-  expect(engine.render(132)).toBe(true);
-  expect(published.layout.viewport.tMin).toBe(0);
-
-  let now = 148;
-  let active = true;
-  for (let i = 0; i < 200 && active; i++) {
-    active = engine.render(now);
-    now += 16;
-  }
-  expect(active).toBe(false);
-  expect(published.layout.viewport.tMax).toBe(10_000);
-
-  const throughput = current.throughput;
-  const latency = current.latency;
-  current = {
-    ...current,
-    phase: "complete",
-    timelineT: 8_000,
-    throughput,
-    latency,
-  };
-  engine.wake();
-  active = engine.render(now);
-  for (let i = 0; i < 400 && active; i++) {
+  const throughput = [0, 5_000].map((t) => ({
+    t,
+    bytesPerSec: 100_000,
+    bytesCumulative: t,
+    dir: "down" as const,
+    phase: "download" as const,
+    continuityId: 1,
+  }));
+  current = { ...current, phase: "complete", throughput };
+  engine.update(current);
+  let now = 5_032;
+  let active = engine.render(now);
+  expect(timeScale).toBe(7_016);
+  const glide: number[] = [];
+  for (let i = 0; i < 100 && active; i++) {
     now += 16;
     active = engine.render(now);
+    glide.push(timeScale);
   }
   expect(active).toBe(false);
-  expect(published.layout.viewport.tMin).toBe(0);
-  expect(throughput).toEqual([]);
-  expect(latency).toEqual([]);
+  expect(glide.every((t, i) => i === 0 || t <= glide[i - 1])).toBe(true);
+  expect(timeScale).toBe(5_100);
+  expect(published.layout.viewport.tMax).toBe(5_100);
   engine.destroy();
 });
 
-function canvasEnvironment(reducedMotion: boolean) {
+function canvasEnvironment() {
   const counts = { paths: 0, curves: [] as number[][] };
   const context = new Proxy({} as CanvasRenderingContext2D, {
     get: (_target, property) => {
@@ -108,11 +95,6 @@ function canvasEnvironment(reducedMotion: boolean) {
   const restore = stubGlobals({
     window: {
       devicePixelRatio: 1,
-      matchMedia: () => ({
-        matches: reducedMotion,
-        addEventListener() {},
-        removeEventListener() {},
-      }),
     },
     document: {
       documentElement: {},
@@ -126,7 +108,7 @@ function canvasEnvironment(reducedMotion: boolean) {
 }
 
 test("saved duplicate terminal points render and hover at the last value without a vertical segment", () => {
-  const { canvas, counts, restore } = canvasEnvironment(true);
+  const { canvas, counts, restore } = canvasEnvironment();
   const throughput: ThroughputSample[] = [
     [0, 1000],
     [500, 2000],
@@ -141,7 +123,7 @@ test("saved duplicate terminal points render and hover at the last value without
   }));
   let published!: ChartPresentation;
   const engine = new ChartEngine(
-    () => data({ throughput, phase: "complete", timelineT: 500 }),
+    data({ throughput, phase: "complete", timelineAt: () => 500 }),
     (next) => (published = next),
   );
   try {
@@ -165,7 +147,7 @@ test("saved duplicate terminal points render and hover at the last value without
 });
 
 test("interleaved equal-time replacement invalidates the lane cache even when another lane subsequently appends", () => {
-  const { canvas, restore } = canvasEnvironment(true);
+  const { canvas, restore } = canvasEnvironment();
   const sample = (
     t: number,
     dir: "down" | "up",
@@ -188,10 +170,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
     ],
   });
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => current,
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(current, (next) => (published = next));
   try {
     engine.attach(canvas);
     engine.render(0);
@@ -203,7 +182,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
     ).toBe(true);
     current.throughputRevision++;
     appendThroughputSample(current.throughput, sample(2000, "up", 700));
-    engine.wake();
+    engine.update(current);
     engine.render(16);
     expect(engine.inspect(published.layout.x(1000))).toMatchObject({
       downBytesPerSec: 500,
@@ -219,56 +198,8 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
   }
 });
 
-test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
-  const { canvas, restore } = canvasEnvironment(true);
-
-  try {
-    let current = data();
-    let published!: ChartPresentation;
-    const engine = new ChartEngine(
-      () => current,
-      (next) => (published = next),
-    );
-    engine.attach(canvas);
-    expect(engine.render(100)).toBe(false);
-    current = { ...current, phase: "download", timelineT: 5_000 };
-    engine.wake();
-    expect(engine.render(116)).toBe(true);
-    expect(published.layout.viewport.tMax).toBe(7_000);
-    expect(engine.render(132)).toBe(false);
-    current = {
-      ...current,
-      latencyEnabled: true,
-      latency: [
-        {
-          t: 100,
-          startT: 0,
-          endT: 200,
-          medianRttMs: 20,
-          p95RttMs: 20,
-          maxRttMs: 20,
-          firstRttMs: 20,
-          lastRttMs: 20,
-          rttDeltaSumMs: 0,
-          rttDeltaCount: 0,
-          pingCount: 1,
-          lossCount: 0,
-          underLoad: true,
-          phase: "download",
-          continuityId: 1,
-        },
-      ],
-    };
-    engine.wake();
-    expect(engine.render(148)).toBe(false);
-    engine.destroy();
-  } finally {
-    restore();
-  }
-});
-
 test("long history is cached across camera, hover, and glyph frames", () => {
-  const { canvas, counts, restore } = canvasEnvironment(false);
+  const { canvas, counts, restore } = canvasEnvironment();
 
   const throughput: ThroughputSample[] = Array.from(
     { length: 2_000 },
@@ -290,12 +221,8 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       medianRttMs: 20,
       p95RttMs: 22,
       maxRttMs: 24,
-      firstRttMs: 20,
-      lastRttMs: 20,
-      rttDeltaSumMs: 0,
-      rttDeltaCount: 0,
       pingCount: 1,
-      lossCount: 0,
+      timeoutCount: 0,
       underLoad: false,
       phase: "latency",
       continuityId: 1,
@@ -306,9 +233,9 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       throughput,
       latency,
       latencyEnabled: true,
-      timelineT: 4_000,
+      timelineAt: () => 4_000,
     });
-    const engine = new ChartEngine(() => current);
+    const engine = new ChartEngine(current);
     engine.attach(canvas);
     engine.render(0);
 
@@ -324,13 +251,14 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     }
     expect(counts.paths).toBe(beforeHover);
 
-    // A camera change rebuilds once; subsequent easing frames only compose it.
-    current = { ...current, timelineT: 12_000 };
-    engine.wake();
-    engine.render(100);
-    const beforeCameraFrames = counts.paths;
-    for (let now = 116; now <= 420; now += 16) engine.render(now);
-    expect(counts.paths - beforeCameraFrames).toBeLessThan(1_000);
+    const beforeClock = counts.paths;
+    engine.update({ ...current, timelineAt: (now) => 4_000 + now * 20 });
+    for (let now = 216; now <= 520; now += 16) engine.render(now);
+    const clockPaths = counts.paths - beforeClock;
+    const beforeData = counts.paths;
+    engine.update({ ...current, latencyRevision: 1 });
+    engine.render(540);
+    expect(clockPaths).toBeLessThan((counts.paths - beforeData) / 10);
     engine.destroy();
   } finally {
     restore();
@@ -340,7 +268,7 @@ test("long history is cached across camera, hover, and glyph frames", () => {
 test("equal simultaneous result labels retain distinct lane identities", () => {
   let current = data({
     phase: "complete",
-    timelineT: 2_000,
+    timelineAt: () => 2_000,
     throughput: (["down", "up"] as const).flatMap((dir) =>
       [500, 1_500].map((t) => ({
         t,
@@ -354,10 +282,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     resultRates: { bidiDown: 100_000, bidiUp: 100_000 },
   });
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => current,
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(current, (next) => (published = next));
   engine.render(100);
   expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
     "bidiDown",
@@ -372,7 +297,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     ...current,
     resultRates: { bidiDown: 200_000, bidiUp: 100_000 },
   };
-  engine.wake();
+  engine.update(current);
   engine.render(116);
   expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
     "bidiDown",
@@ -382,14 +307,11 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
 });
 
 test("inspection retains a time position through gaps without inventing latency", () => {
-  const { canvas, counts, restore } = canvasEnvironment(true);
+  const { canvas, counts, restore } = canvasEnvironment();
   try {
     let current = data({ latencyEnabled: true });
     let published!: ChartPresentation;
-    const engine = new ChartEngine(
-      () => current,
-      (next) => (published = next),
-    );
+    const engine = new ChartEngine(current, (next) => (published = next));
     engine.attach(canvas);
     engine.render(0);
     expect(engine.inspect(100)).toBeNull();
@@ -406,27 +328,23 @@ test("inspection retains a time position through gaps without inventing latency"
           medianRttMs: null,
           p95RttMs: null,
           maxRttMs: null,
-          firstRttMs: null,
-          lastRttMs: null,
           pingCount: 1,
-          lossCount: 1,
-          rttDeltaSumMs: 0,
-          rttDeltaCount: 0,
+          timeoutCount: 1,
         },
       ],
     };
-    engine.wake();
+    engine.update(current);
     engine.render(16);
     const before = counts.paths;
     expect(engine.inspect(published.layout.x(400))).toMatchObject({
       rtt: null,
-      lossCount: 1,
+      timeoutCount: 1,
       pingCount: 1,
     });
     expect(engine.inspect(published.layout.x(2_000))).toMatchObject({
       t: 2_000,
       rtt: null,
-      lossCount: 0,
+      timeoutCount: 0,
       pingCount: 0,
     });
     expect(counts.paths).toBe(before);
@@ -437,12 +355,9 @@ test("inspection retains a time position through gaps without inventing latency"
 });
 
 test("canvas sizing ignores entry transforms and recovers after a layout resize", () => {
-  const { canvas, restore } = canvasEnvironment(true);
+  const { canvas, restore } = canvasEnvironment();
   let published!: ChartPresentation;
-  const engine = new ChartEngine(
-    () => data(),
-    (next) => (published = next),
-  );
+  const engine = new ChartEngine(data(), (next) => (published = next));
   canvas.getBoundingClientRect = () =>
     ({ width: 591, height: 236.4 }) as DOMRect;
   try {

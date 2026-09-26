@@ -1,690 +1,240 @@
 #!/usr/bin/env python3
-"""Dependency-free repository policy checks for the GitHub Actions control plane.
-
-GitHub repository settings are the authority for *which* external action
-repositories may execute. This local checker deliberately does not mirror that
-allowlist or maintain a second SHA database; it only enforces invariants that
-are useful before GitHub schedules a workflow, including immutable 40-SHA refs.
-"""
+"""Enforce GitHub Actions trust boundaries and keep key material out of Git."""
 
 from __future__ import annotations
 
-import json
-import pathlib
 import re
-import shlex
 import subprocess
-import sys
 import tomllib
-from typing import NoReturn
+from pathlib import Path
 
-from toolchains import check as check_toolchain_literals, pin, skopeo_version
+from github_api import PEM, TLS_NAME, ControlPlaneError, fail
+from toolchains import check as check_toolchain_literals, pin
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[2]
+USES = re.compile(r"(?m)^\s*(?:-\s*)?uses:\s*(\S+)")
+WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
+STEP = re.compile(r"(?m)^(?=\s*- )")
+JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
+RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 
-USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(\S+)\s*(?:#.*)?$")
-LOCAL_ACTION = re.compile(r"^\./[A-Za-z0-9_./-]+$")
-PINNED_ACTION = re.compile(
-    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*@[0-9a-f]{40}$"
-)
-CERT_NAME = re.compile(
-    r"(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|"
-    r"\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$",
-    re.IGNORECASE,
-)
-PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
-
-
-class PolicyError(RuntimeError):
-    pass
-
-
-def fail(message: str) -> NoReturn:
-    raise PolicyError(message)
-
-
-def workflow_files(root: pathlib.Path = ROOT) -> list[pathlib.Path]:
-    files = list((root / ".github" / "workflows").glob("*.yml"))
-    files += list((root / ".github" / "workflows").glob("*.yaml"))
-    files += list((root / ".github" / "actions").glob("**/action.yml"))
-    files += list((root / ".github" / "actions").glob("**/action.yaml"))
-    return sorted({path for path in files if path.is_file()})
-
-
-def check_external_action_shas(root: pathlib.Path = ROOT) -> None:
-    violations: list[str] = []
-    for path in workflow_files(root):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            match = USES.match(line)
-            if match is None:
-                continue
-            ref = match.group(1)
-            if LOCAL_ACTION.fullmatch(ref) is not None:
-                continue
-            if PINNED_ACTION.fullmatch(ref) is None:
-                violations.append(
-                    f"{path.relative_to(root)}:{lineno}: external action must use a full 40-character commit SHA: {ref}"
-                )
-    if violations:
-        fail("external action SHA policy failed:\n  " + "\n  ".join(violations))
-
-
-def check_privileged_workflows(root: pathlib.Path = ROOT) -> None:
-    workflows = root / ".github" / "workflows"
-
-    for name in ("_publish-oci.yml", "_promote-oci.yml"):
-        path = workflows / name
-        if not path.is_file():
-            fail(f"missing privileged reusable workflow {name}")
-        text = path.read_text(encoding="utf-8")
-        for label, needle in {
-            "repository checkout": "actions/checkout@",
-            "local action execution": "uses: ./",
-            "task execution": "mise ",
-            "repository script execution": "scripts/",
-            "environment wait after final recheck": "environment:",
-        }.items():
-            if needle in text:
-                fail(f"{name} contains forbidden {label}: {needle}")
-        if "packages: write" not in text:
-            fail(f"{name} must declare packages: write")
-        if '-e IMAGE="$image"' not in text:
-            fail(f"{name} must pass IMAGE explicitly to the Skopeo container")
-        if text.count('"$SKOPEO_IMAGE" -ec') != 1:
-            fail(f"{name} must execute Skopeo through the exact \"$SKOPEO_IMAGE\" runtime")
-        if not re.search(
-            r"(?m)^    env:\n"
-            r"      SKOPEO_IMAGE: " + re.escape(pin("images.skopeo", root)) + r"$",
-            text,
-        ):
-            fail(
-                f"{name} must declare its digest-pinned SKOPEO_IMAGE "
-                "in the job env mapping"
-            )
-        if "SKOPEO_VERSION" in text or "skopeo --version" in text:
-            fail(f"{name} must not declare or parse SKOPEO_VERSION")
-
-    oci = (workflows / "_publish-oci.yml").read_text(encoding="utf-8")
-    if "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}" not in oci:
-        fail("_publish-oci.yml must serialize publication by exact destination tag")
-    for required in (
-        "source_sha:",
-        "trusted_main_sha:",
-        "pr_number:",
-        "expected_ci_run_id:",
-        "expected_codeql_check_id:",
-        "contents: read",
-        "pull-requests: read",
-        "checks: read",
-        "security-events: read",
-        'gh api "repos/$REPOSITORY/commits/main"',
-        'gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID"',
-        'gh api "repos/$REPOSITORY/pulls/$PR_NUMBER"',
-        'gh api "repos/$REPOSITORY/compare/$TRUSTED_MAIN_SHA...$SOURCE_SHA"',
-        'code-scanning/analyses?ref=refs/heads/main&tool_name=CodeQL',
-        'commits/$SOURCE_SHA/check-runs?per_page=100',
-        "live source, CI, and CodeQL freshness checks passed immediately before registry authentication",
-    ):
-        if required not in oci:
-            fail(f"_publish-oci.yml missing last-mile source freshness invariant: {required}")
-
-    release_pub = workflows / "_publish-release.yml"
-    text = release_pub.read_text(encoding="utf-8")
-    for label, needle in {
-        "repository checkout": "actions/checkout@",
-        "local action execution": "uses: ./",
-        "task execution": "mise ",
-        "repository script execution": "scripts/",
-        "package publication permission": "packages: write",
-        "third-party release action": "softprops/",
-        "environment wait after final recheck": "environment:",
-    }.items():
-        if needle in text:
-            fail(f"_publish-release.yml contains forbidden {label}: {needle}")
-    for required in (
-        "contents: write",
-        '"draft":false',
-        '"make_latest":"legacy"',
-        ".digest",
-        "target_sha",
-        "releases?per_page=100",
-        ".upload_url",
-        "https://uploads.github.com/",
-        "auth_header",
-        "release handoff contains a non-regular entry",
-        "release handoff contains an unsafe asset name",
-        'source_asset="graphite-meter_${version}_third-party-source.tar.gz"',
-        "source_notice=$(printf '%s\\n\\n%s\\n\\n%s'",
-        "Source code (zip)",
-        "Source code (tar.gz)",
-        "generate_release_notes:true,body:$body",
-        "source-availability notice is missing or stale",
-        "published release lost its source-availability notice",
-    ):
-        if required not in text:
-            fail(f"_publish-release.yml missing invariant: {required}")
-    for forbidden in (
-        "releases/tags/$TAG",
-        "gh release upload",
-        "--show-error -L",
-        "--location",
-        "--location-trusted",
-    ):
-        if forbidden in text:
-            fail(
-                f"_publish-release.yml uses non-deterministic draft lookup/upload path: {forbidden}"
-            )
-
-    promote = (workflows / "_promote-oci.yml").read_text(encoding="utf-8")
-    if "sort -V" not in promote or "highest_global" not in promote or "highest_series" not in promote:
-        fail("_promote-oci.yml must prevent stable alias rollback using published SemVer ordering")
-    if "group: promote-stable-oci-${{ github.repository }}" not in promote:
-        fail("_promote-oci.yml must serialize stable alias movement")
-
-
-def check_skopeo_contract_consistency(root: pathlib.Path = ROOT) -> None:
-    """Require every Skopeo consumer to use the exact immutable image contract."""
-    consumers = (
-        "ci.yml",
-        "release.yml",
-        "prerelease-publish.yml",
-        "_publish-oci.yml",
-        "_promote-oci.yml",
-    )
-    workflows = root / ".github" / "workflows"
-    for name in consumers:
-        path = workflows / name
-        text = path.read_text(encoding="utf-8")
-        images = [
-            line.split(":", 1)[1].strip()
-            for line in text.splitlines()
-            if line.lstrip().startswith("SKOPEO_IMAGE:")
-        ]
-        verifier = name in ("ci.yml", "release.yml", "prerelease-publish.yml")
-        expected_images = [pin("images.skopeo", root)]
-        if verifier:
-            expected_images.append("${{ env.SKOPEO_IMAGE }}")
-        if images != expected_images:
-            fail(f"{name} has a non-exact SKOPEO_IMAGE assignment")
-        if verifier and ("SKOPEO_VERSION: " + skopeo_version(root)) not in text:
-            fail(f"{name} is missing the exact SKOPEO_VERSION declaration")
-        if not verifier and "SKOPEO_VERSION" in text:
-            fail(f"{name} must not declare SKOPEO_VERSION")
-    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    if "python3 scripts/ci/verify_oci.py --check-skopeo" not in ci:
-        fail("CI release checks must execute the pinned Skopeo runtime contract")
-
-
-def check_ci_path_map(root: pathlib.Path = ROOT) -> None:
-    path = root / ".github" / "ci-paths.yml"
-    text = path.read_text(encoding="utf-8")
-    for section in ("smoke", "release"):
-        match = re.search(
-            rf"(?ms)^{section}:\n(?P<body>.*?)(?=^[A-Za-z0-9_-]+:|\Z)",
-            text,
-        )
-        if match is None or ".dockerignore" not in match.group("body"):
-            fail(f"CI path map must run {section} checks when .dockerignore changes")
-    security = re.search(
-        r"(?ms)^security:\n(?P<body>.*?)(?=^[A-Za-z0-9_-]+:|\Z)", text
-    )
-    security_paths = ("client/package.json", "client/bun.lock", "client/bunfig.toml")
-    if security is None or any(path not in security.group("body") for path in security_paths):
-        fail("CI security paths must include the client manifest, lockfile, and Bun config")
-
-    ci = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    if "mise run client-audit" not in ci:
-        fail("CI security job must run the networked Bun audit")
-    config = tomllib.loads((root / "mise.toml").read_text(encoding="utf-8"))
-    steps = config["tasks"]["ci"]["run"]
-    if not all({"task": name} in steps for name in ("security", "client-audit")):
-        fail("local CI-equivalent gate must run both Go and Bun vulnerability scans")
-
-
-def check_runner_labels(root: pathlib.Path = ROOT) -> None:
-    violations: list[str] = []
-    for path in sorted((root / ".github" / "workflows").glob("*.yml")):
-        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if "runs-on: ubuntu-latest" in line:
-                violations.append(f"{path.relative_to(root)}:{lineno}")
-    if violations:
-        fail(
-            "workflows must pin the Ubuntu major image (ubuntu-24.04), not ubuntu-latest:\n  "
-            + "\n  ".join(violations)
-        )
-
-
-def check_oci_build_action(root: pathlib.Path = ROOT) -> None:
-    path = root / ".github" / "actions" / "build-oci" / "action.yml"
-    if not path.is_file():
-        fail("missing .github/actions/build-oci/action.yml")
-    text = path.read_text(encoding="utf-8")
-    for required in (
-        "platforms: linux/amd64,linux/arm64",
-        "outputs: type=oci,dest=${{ inputs.output }}",
-        "provenance: mode=max",
-        "cache-image: 'false'",
-        "cache-binary: 'false'",
-        "buildkitd-flags: --log-level=info",
-        "no-cache: true",
-        "source-sha:",
-        "default: ''",
-        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]',
-        'context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"',
-        "context: ${{ steps.source.outputs.context }}",
-        "file: container/Dockerfile",
-        "CLIENT_VERSION=${{ inputs.version }}",
-        "GM_CLIENT_BUILD_PROFILE=prod",
-        "GM_CLIENT_REVISION=${{ inputs.revision }}",
-        "github-token: ''",
-        "DOCKER_BUILD_RECORD_UPLOAD: 'false'",
-        "bun=$(python3 scripts/ci/toolchains.py get runtime.bun)",
-    ):
-        if required not in text:
-            fail(f"build-oci action missing explicit OCI provenance invariant: {required}")
-    if re.search(
-        r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*$",
-        text,
-    ) is None:
-        fail("build-oci action must pin the privileged binfmt/QEMU image by digest")
-    if re.search(r"(?m)^\s*buildkitd-flags:.*allow-insecure-entitlement", text) is not None:
-        fail("build-oci action must not enable BuildKit insecure entitlements")
-
-    for forbidden in (
-        "source-dir:",
-        "inputs.source-dir",
-        "GIT_AUTH_TOKEN",
-        "cache-from:",
-        "cache-to:",
-    ):
-        if forbidden in text:
-            fail(f"build-oci action contains forbidden mutable/cache/token path: {forbidden}")
-    if "secrets." in text or "secrets[" in text:
-        fail("build-oci action must not pass GitHub secrets into max-level provenance builds")
-
-
-def check_setup_project_cache_boundary(root: pathlib.Path = ROOT) -> None:
-    setup = (root / ".github" / "actions" / "setup-project" / "action.yml").read_text(
-        encoding="utf-8"
-    )
-    for required in (
-        "cache: ${{ inputs.cache }}",
-        "inputs.go-cache == 'true'",
-        "inputs.bun-cache == 'true'",
-        "MISE_AUTO_INSTALL: '0'",
-        "install_args: --locked ${{ steps.tools.outputs.install-args }}",
-    ):
-        if required not in setup:
-            fail(f"setup-project must preserve explicit tool installs and cache controls: {required}")
-
-
-def check_candidate_boundary(root: pathlib.Path = ROOT) -> None:
-    """Keep the manual prerelease producer low-authority and PR-source-free on the runner."""
-    workflows = root / ".github" / "workflows"
-    if (workflows / "prerelease-candidate.yml").exists():
-        fail("standalone label-triggered prerelease candidate workflow must remain removed")
-    request = (workflows / "prerelease-request.yml").read_text(encoding="utf-8")
-    if "workflow_dispatch:" not in request or "pull_request_target:" in request:
-        fail("prerelease request/candidate producer must remain workflow_dispatch-only")
-    if re.search(r"(?m)^permissions:\s*$\n\s{2}contents:\s*read\s*$", request) is None:
-        fail("prerelease request/candidate producer must declare only top-level contents: read")
-    if re.search(r"(?m)^\s+[A-Za-z0-9_-]+:\s*write\s*$", request) is not None:
-        fail("prerelease request/candidate producer must not grant write permissions")
-    if "secrets." in request or "secrets[" in request:
-        fail("prerelease request/candidate producer must not reference secrets")
-
-    for required in (
+TRIGGERS = {
+    "ci.yml": {"pull_request", "push"},
+    "release-request.yml": {"workflow_dispatch"},
+    "release.yml": {"workflow_run"},
+}
+ALLOWED_USES = {
+    "release-request.yml": {
+        "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
+        "./.github/actions/build-oci", "actions/upload-artifact",
+    },
+    "release.yml": {
+        "actions/checkout", "jdx/mise-action", "actions/download-artifact",
+        "actions/upload-artifact", "actions/create-github-app-token",
+    },
+}
+ORDERED = {
+    "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "ref: ${{ github.sha }}",
-        "mise.toml",
-        "mise.lock",
+        "run: python3 scripts/ci/release.py prepare",
+        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
         "uses: ./.github/actions/build-oci",
-        "source-sha: ${{ steps.request.outputs.sha }}",
-        "client-validate: '1'",
-        "REQUESTED_SHA: ${{ inputs.sha }}",
-        "run: python3 scripts/ci/prerelease.py request-prepare",
-        "run: python3 scripts/ci/prerelease.py request-finalize",
-        "prerelease-candidate-${{ github.run_id }}",
-    ):
-        if required not in request:
-            fail(f"prerelease request/candidate producer missing isolation invariant: {required}")
-
-    if request.count("uses: actions/checkout@") != 1:
-        fail("prerelease request/candidate producer must checkout trusted tooling exactly once")
-    if request.count("${{ inputs.sha }}") != 1:
-        fail("raw prerelease SHA input must reach only trusted request validation")
-    validation_pos = request.find("run: python3 scripts/ci/prerelease.py request-prepare")
-    build_pos = request.find("uses: ./.github/actions/build-oci")
-    if validation_pos < 0 or build_pos < 0 or validation_pos > build_pos:
-        fail("prerelease request SHA must be validated before the remote BuildKit build")
-
-    for forbidden in (
-        "ref: ${{ inputs.sha }}",
-        "path: source",
-        "source-dir:",
-        "uses: ./.github/actions/setup-project",
-        "uses: ./source/",
-        "run: source/",
-        "run: ./source/",
-        "run: mise ",
-        "actions: read",
-        "checks: read",
-        "pull-requests: read",
-        "security-events: read",
-        "issues: write",
-        "gm-prerelease-",
-    ):
-        if forbidden in request:
-            fail(f"prerelease request/candidate producer contains forbidden path: {forbidden}")
-
-    allowed_runs = {
-        "run: python3 scripts/ci/prerelease.py request-prepare",
-        "run: python3 scripts/ci/prerelease.py request-finalize",
-    }
-    actual_runs = {
-        line.strip() for line in request.splitlines() if line.strip().startswith("run:")
-    }
-    if actual_runs != allowed_runs:
-        fail(
-            "prerelease request/candidate host run steps must be limited to request shape/finalize helpers; "
-            f"got {sorted(actual_runs)}"
-        )
+        "source-sha: ${{ steps.request.outputs.remote_sha }}",
+    ),
+    "workflows/release.yml": (
+        "github.event.workflow_run.conclusion == 'success'\n",
+        "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
+        "&& github.event.workflow_run.head_branch == 'main'\n",
+        "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
+        "run: python3 scripts/ci/release.py verify",
+        "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
+        "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
+        "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
+    ),
+    "actions/build-oci/action.yml": (
+        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "no-cache: true", "provenance: mode=max",
+        "github-token: ''", "GM_CLIENT_REVISION=${{ inputs.revision }}\n",
+    ),
+}
+# Identity that release.py trusts comes from the run context, never from dispatch inputs.
+CONTEXT = {
+    "run: python3 scripts/ci/release.py prepare": {
+        "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
+        "ACTOR": "github.actor", "TRIGGERING_ACTOR": "github.triggering_actor",
+        "EVENT_NAME": "github.event_name", "EVENT_SHA": "github.sha", "REF": "github.ref",
+        "WORKFLOW_REF": "github.workflow_ref", "REQUEST_RUN_ID": "github.run_id",
+        "REQUEST_RUN_ATTEMPT": "github.run_attempt",
+    },
+    "run: python3 scripts/ci/release.py verify": {
+        "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
+        "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
+        "REQUEST_RUN_ID": "github.event.workflow_run.id",
+    },
+    "run: python3 scripts/ci/release.py publish": {
+        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+    },
+}
+FORBIDDEN = {
+    "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
+    "actions/build-oci/action.yml": (
+        "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
+    ),
+}
 
 
-def check_trusted_checkout_refs(root: pathlib.Path = ROOT) -> None:
-    publisher = (root / ".github" / "workflows" / "prerelease-publish.yml").read_text(
-        encoding="utf-8"
-    )
-    if "workflow_run:" not in publisher or 'workflows: ["Request PR prerelease"]' not in publisher:
-        fail("prerelease-publish.yml must remain a workflow_run consumer of the low-authority request")
-    for line in publisher.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("ref:") and stripped != "ref: ${{ github.sha }}":
-            fail(f"prerelease publisher has non-trusted checkout ref: {stripped}")
-    for forbidden in (
-        "path: source",
-        "github.event.pull_request.head.sha",
-        "uses: ./source/",
-        "prerelease-candidate.yml",
-        "LABEL_",
-        "issues: write",
-    ):
-        if forbidden in publisher:
-            fail(f"prerelease publisher must never checkout/execute PR source or manage request labels: {forbidden}")
-
-    for required in (
-        "PUBLISHER_SHA: ${{ github.sha }}",
-        "REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}",
-        "source_sha: ${{ needs.validate.outputs.sha }}",
-        "trusted_main_sha: ${{ needs.validate.outputs.main_sha }}",
-        "pr_number: ${{ needs.validate.outputs.pr }}",
-        "expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}",
-        "expected_codeql_check_id: ${{ needs.recheck.outputs.codeql_check_id }}",
-    ):
-        if required not in publisher:
-            fail(f"prerelease publisher missing trusted-consumer/freshness input: {required}")
-
-    handoff_start = publisher.find("- name: Upload trusted publication handoff")
-    if handoff_start < 0:
-        fail("prerelease publisher is missing the trusted publication handoff")
-    handoff_end = publisher.find("\n      - ", handoff_start + 1)
-    handoff = publisher[handoff_start:] if handoff_end < 0 else publisher[handoff_start:handoff_end]
-    if "retention-days: 35" not in handoff:
-        fail("trusted prerelease handoff must survive the maximum environment approval window")
-
-    approval_pos = publisher.find("approval:")
-    recheck_pos = publisher.find("recheck:")
-    publish_pos = publisher.find("publish:")
-    if min(approval_pos, recheck_pos, publish_pos) < 0 or not (
-        approval_pos < recheck_pos < publish_pos
-    ):
-        fail("prerelease publication must approve, then recheck, then publish")
+def read(root: Path, name: str) -> str:
+    return (root / name).read_text(encoding="utf-8")
 
 
-def check_release_request_workflow(root: pathlib.Path = ROOT) -> None:
-    path = root / ".github" / "workflows" / "release-request.yml"
-    if not path.is_file():
-        fail("missing low-authority stable release request workflow")
-    request = path.read_text(encoding="utf-8")
-    for label, needle in {
-        "repository checkout": "actions/checkout@",
-        "local action execution": "uses: ./",
-        "repository script execution": "scripts/",
-        "task execution": "mise ",
-        "write permission": ": write",
-        "environment approval": "environment:",
-        "secret reference": "secrets.",
-    }.items():
-        if needle in request:
-            fail(f"release-request.yml contains forbidden {label}: {needle}")
-    for required in (
-        "workflow_dispatch:",
-        "permissions: {}",
-        "REF: ${{ github.ref }}",
-        "SOURCE_SHA: ${{ github.sha }}",
-        "RUN_ATTEMPT: ${{ github.run_attempt }}",
-        "[[ \"$REF\" == refs/heads/main ]]",
-        "stable-release-request-${{ github.run_id }}",
-        "retention-days: 1",
-    ):
-        if required not in request:
-            fail(f"release-request.yml missing low-authority request invariant: {required}")
+def run_scripts(text: str) -> list[str]:
+    lines = text.splitlines()
+    scripts: list[str] = []
+    for number, line in enumerate(lines):
+        if (match := re.match(r"( *)(- )?run:(.*)", line)) is None:
+            continue
+        indent = len(match.group(1)) + len(match.group(2) or "")
+        body = [match.group(3)]
+        for following in lines[number + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            body.append(following)
+        scripts.append("\n".join(body))
+    return scripts
 
 
-def check_release_workflow(root: pathlib.Path = ROOT) -> None:
-    release = (root / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    if re.search(r"(?m)^\s{2}push:\s*$", release) is not None or "tags:" in release:
-        fail("stable release consumer must not be triggered by tag pushes")
-    if "workflow_dispatch:" in release:
-        fail("write-capable stable release consumer must not be directly workflow_dispatch-triggered")
-    if "needs.guard.outputs.sha" in release:
-        fail("stable release source identity must use immutable workflow_run github.sha directly, not a guard output")
-
-    for required in (
-        "workflow_run:",
-        'workflows: ["Request stable release"]',
-        "types: [completed]",
-        "group: stable-release-${{ github.repository }}",
-        "environment: ghcr-release",
-        "python3 scripts/ci/release.py recheck",
-        "target_sha: ${{ github.sha }}",
-        "PUBLISHER_SHA: ${{ github.sha }}",
-        "WORKFLOW_REF: ${{ github.workflow_ref }}",
-        "REQUEST_RUN_ID: ${{ github.event.workflow_run.id }}",
-        "stable-release-request-${{ github.event.workflow_run.id }}",
-        "run-id: ${{ github.event.workflow_run.id }}",
-        "source_sha: ${{ github.sha }}",
-        "trusted_main_sha: ${{ github.sha }}",
-        "expected_ci_run_id: ${{ needs.recheck.outputs.ci_run_id }}",
-    ):
-        if required not in release:
-            fail(f"release.yml missing trusted-consumer invariant: {required}")
-
-    if "mise run release-check" in release:
-        fail(
-            "stable release build must verify the exact built payload, not rebuild a second "
-            "representative release-check payload"
-        )
-    native_verify = release.find("python3 scripts/ci/verify_release_assets.py")
-    oci_build = release.find("uses: ./.github/actions/build-oci")
-    if native_verify < 0 or oci_build < 0 or native_verify > oci_build:
-        fail("stable release must fail-fast on exact native artifact verification before OCI build")
-
-    for step_name in (
-        "Upload verified release image handoff",
-        "Upload verified release asset handoff",
-    ):
-        start = release.find(f"- name: {step_name}")
-        if start < 0:
-            fail(f"release.yml missing handoff step: {step_name}")
-        end = release.find("\n      - ", start + 1)
-        step = release[start:] if end < 0 else release[start:end]
-        if "if: needs.guard.outputs.publish == 'true'" not in step:
-            fail(f"stable validate mode must not upload publication handoff: {step_name}")
-        if "retention-days: 35" not in step:
-            fail(f"publication handoff must survive delayed environment approval: {step_name}")
-
-    for line in release.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("ref: ${{") and stripped != "ref: ${{ github.sha }}":
-            fail(f"release workflow has unexpected dynamic checkout ref: {stripped}")
-
-    order = [
-        release.find("approval:"),
-        release.find("recheck:"),
-        release.find("publish-image:"),
-        release.find("publish-release:"),
-        release.find("promote:"),
-    ]
-    if any(value < 0 for value in order) or order != sorted(order):
-        fail("stable release order must be approval -> recheck -> exact image -> release -> aliases")
-
-
-def check_prerelease_request_workflow(root: pathlib.Path = ROOT) -> None:
-    request = (root / ".github" / "workflows" / "prerelease-request.yml").read_text(
-        encoding="utf-8"
-    )
-    for required in (
-        "workflow_dispatch:",
-        "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "ref: ${{ github.sha }}",
-        "EVENT_SHA: ${{ github.sha }}",
-        "REF: ${{ github.ref }}",
-        "WORKFLOW_REF: ${{ github.workflow_ref }}",
-        "REQUESTED_SHA: ${{ inputs.sha }}",
-        "source-sha: ${{ steps.request.outputs.sha }}",
-        "python3 scripts/ci/prerelease.py request-prepare",
-        "python3 scripts/ci/prerelease.py request-finalize",
-    ):
-        if required not in request:
-            fail(f"prerelease-request.yml missing low-authority request invariant: {required}")
-    for forbidden in ("issues: write", "request-label", "pull_request:", "pull_request_target:"):
-        if forbidden in request:
-            fail(f"prerelease-request.yml contains obsolete/privileged trigger path: {forbidden}")
-
-
-def check_precommit_boundary(root: pathlib.Path = ROOT) -> None:
-    hook = root / ".githooks" / "pre-commit"
-    if not hook.is_file():
-        fail("missing .githooks/pre-commit")
-    hook_text = hook.read_text(encoding="utf-8")
-    for required in (
-        "git show :scripts/ci/precommit.py",
-        "git show :mise.toml",
-        "git show :mise.lock",
-        '"$python" -I "$bootstrap/precommit.py"',
-    ):
-        if required not in hook_text:
-            fail(
-                "pre-commit hook must execute the typed implementation from the staged index: "
-                + required
-            )
-    if "python3 scripts/ci/precommit.py" in hook_text:
-        fail("pre-commit hook must not execute a possibly-unstaged working-tree implementation")
-    if hook.stat().st_mode & 0o111 == 0:
-        fail(".githooks/pre-commit must remain executable")
-
-
-def check_toolchain_consumers(root: pathlib.Path = ROOT) -> None:
-    """Mise is the sole executable owner; direct bootstraps retain validated pins."""
-    for path in workflow_files(root):
+def check_actions(root: Path) -> None:
+    github = root / ".github"
+    files = sorted([*github.glob("workflows/*.y*ml"), *github.glob("actions/**/action.y*ml")])
+    mise = f"version: {pin('tools.mise', root)}"
+    for path in files:
+        name = str(path.relative_to(github))
         text = path.read_text(encoding="utf-8")
-        if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun|extractions/setup-just)@", text):
-            fail(f"{path.relative_to(root)} must provision project tools through mise")
-        if "uses: jdx/mise-action@" in text:
-            blocks = re.findall(r"(?ms)^( +)- (?:name:[^\n]*\n\1  )?uses: jdx/mise-action@[^\n]+\n(.*?)(?=^\1- |\Z)", text)
-            if not blocks:
-                fail(f"{path.relative_to(root)} has an unrecognized mise bootstrap")
-            for _, block in blocks:
-                for required in (f"version: {pin('tools.mise', root)}", "install_args: --locked ", "cache:", "MISE_AUTO_INSTALL: '0'"):
-                    if required not in block:
-                        fail(f"{path.relative_to(root)} mise setup must declare {required}")
-                if path.parent.name == "workflows" and ("install_args: --locked python" not in block or "cache: false" not in block):
-                    fail(f"{path.relative_to(root)} trusted Python bootstrap must disable shared caches and install only Python")
+        needles = ["ubuntu-latest"]
+        if name != "workflows/release.yml":
+            needles += ["secrets.", "secrets[", "environment:"]
+        for needle in needles:
+            if needle in text:
+                fail(f"{name} must not use {needle}")
+        if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun)@", text):
+            fail(f"{name} must provision project tools through mise")
+        if any("${{" in script for script in run_scripts(text)):
+            fail(f"{name}: run scripts must read expressions through env, not interpolate them")
+        for step in STEP.split(text):
+            if "uses: actions/checkout@" in step:
+                if re.search(r"\bref: (?!\$\{\{ github\.sha \}\}$)", step, re.M):
+                    fail(f"{name}: checkout may only select the triggering github.sha")
+            if "uses: jdx/mise-action@" in step:
+                required = [mise, "install_args: --locked ", "cache:", "MISE_AUTO_INSTALL: '0'"]
+                if name.startswith("workflows/"):
+                    required += ["install_args: --locked python\n", "cache: false"]
+                if missing := [item for item in required if item not in step]:
+                    fail(f"{name}: mise setup must declare {missing[0].strip()}")
+            for marker, bindings in CONTEXT.items():
+                env = re.findall(r"(?m)^ +([A-Z_]+): (.*)$", step) if marker in step else []
+                for variable, value in bindings.items() if env else ():
+                    if [found for key, found in env if key == variable] != [f"${{{{ {value} }}}}"]:
+                        fail(f"{name}: {variable} must be exactly ${{{{ {value} }}}}")
+        for needle in FORBIDDEN.get(name, ()):
+            if needle in text:
+                fail(f"{name} must not contain {needle}")
+        last = -1
+        for needle in ORDERED.get(name, ()):
+            if (position := text.find(needle)) <= last:
+                fail(f"{name} is missing or misorders invariant: {needle}")
+            last = position
 
 
-def check_browser_ci(root: pathlib.Path = ROOT) -> None:
-    """Keep browser identity and process cleanup explicit; suites verify the harness itself."""
-    ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    expected = "${{ steps.toolchain.outputs.chrome-version }}"
-    versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (.+)$", ci)
-    setup = (root / ".github/actions/setup-project/action.yml").read_text(encoding="utf-8")
-    if (
-        versions != [expected] * 4
-        or ci.count("      - id: toolchain\n") != 2
-        or "chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)" not in setup
-        or "value: ${{ steps.versions.outputs.chrome }}" not in setup
-    ):
-        fail("both browser jobs must install and verify the manifest-pinned Chromium version")
-    if ci.count("run: cd client && bun run check:webview") != 2:
-        fail("each browser job must perform the runtime launch preflight")
-    scripts = json.loads((root / "client/package.json").read_text(encoding="utf-8"))["scripts"]
-    for name in ("test:browser", "test:e2e", "test:bench"):
-        if "--no-orphans" not in shlex.split(scripts[name]):
-            fail(f"{name} must clean up child processes with --no-orphans")
+def check_workflows(root: Path) -> None:
+    workflows = root / ".github" / "workflows"
+    names = {path.name for path in workflows.glob("*.y*ml")}
+    if names != TRIGGERS.keys():
+        fail(f"unreviewed workflow set: {sorted(names ^ TRIGGERS.keys())}")
+    for name, expected in TRIGGERS.items():
+        text = (workflows / name).read_text(encoding="utf-8")
+        block = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", text)
+        triggers = set(re.findall(r"(?m)^  ([a-z_]+):", block.group(1) if block else ""))
+        if triggers != expected:
+            fail(f"{name} must be triggered only by {sorted(expected)}")
+        if not re.search(r"(?m)^permissions:", text):
+            fail(f"{name} must declare top-level permissions")
+        if writes := WRITE.findall(text):
+            fail(f"{name} must not grant write permission: {sorted(set(writes))}")
+        if name in ALLOWED_USES:
+            actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
+            if extra := actions - ALLOWED_USES[name]:
+                fail(f"{name} must not run repository code or actions: {sorted(extra)}")
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    publish = "needs.verify.outputs.publish == 'true'"
+    for job in JOB.split(release.split("\njobs:\n", 1)[1]):
+        secrets = set(re.findall(r"secrets\.(\w+)", job))
+        if (secrets or "environment:" in job) and (
+            publish not in job or "environment: ghcr-release\n" not in job
+            or secrets - RELEASE_SECRETS
+        ):
+            fail("release.yml: only the publish-mode ghcr-release job may read release secrets")
+    for step in STEP.split(release):
+        if ("uses: actions/upload-artifact@" in step
+                and "if: steps.verify.outputs.publish == 'true'" not in step):
+            fail("release.yml: only publish mode may hand off verified artifacts")
+    request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
+    if scopes != ["permissions:\n  contents: read"]:
+        fail("release-request.yml: the untrusted build may only read contents")
+    for step in STEP.split(request.split("\njobs:", 1)[1]):
+        if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
+            fail("release-request.yml: dispatch inputs may reach only the request validator")
+        if "setup-project" in step and step.count("cache: 'false'") != 3:
+            fail("release-request.yml: the untrusted build must disable every cache")
+    if "VERSION= mise run legal-check\n" not in request:
+        fail("release-request.yml: stable builds must check committed legal outputs first")
 
 
-def tracked_files(root: pathlib.Path = ROOT) -> list[str]:
-    result = subprocess.run(
-        ["git", "ls-files", "-z"],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    if result.returncode == 0:
-        return [entry.decode("utf-8") for entry in result.stdout.split(b"\0") if entry]
-    # Bundle/staged-archive validation may run without a .git directory.
-    return [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]
+def check_ci(root: Path) -> None:
+    ci = read(root, ".github/workflows/ci.yml")
+    tasks = tomllib.loads(read(root, "mise.toml"))["tasks"]
+
+    def steps(task: str) -> list[str]:
+        return [step["task"] for step in tasks[task]["run"] if isinstance(step, dict)]
+
+    for task in steps("ci"):
+        if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
+            fail(f"CI must run the local gate step {task}")
 
 
-def check_certificates(root: pathlib.Path = ROOT) -> None:
-    names = tracked_files(root)
-    bad_names = [name for name in names if CERT_NAME.search(name)]
-    if bad_names:
-        fail("tracked TLS certificate/key paths found:\n  " + "\n  ".join(bad_names))
-    bad_content: list[str] = []
-    for name in names:
-        path = root / name
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            fail(f"cannot read tracked file {name!r} during certificate scan: {exc}")
-        if PEM.search(data):
-            bad_content.append(name)
-    if bad_content:
-        fail("tracked PEM certificate/private-key material found:\n  " + "\n  ".join(bad_content))
+def check_certificates(root: Path) -> None:
+    listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
+    if listed.returncode == 0:
+        names = [entry.decode() for entry in listed.stdout.split(b"\0") if entry]
+    else:
+        names = [str(path.relative_to(root)) for path in root.rglob("*") if path.is_file()]
+    if bad := [name for name in names if TLS_NAME.search(name)]:
+        fail("tracked TLS certificate/key paths found:\n  " + "\n  ".join(bad))
+    if bad := [name for name in names if PEM.search((root / name).read_bytes())]:
+        fail("tracked PEM certificate/private-key material found:\n  " + "\n  ".join(bad))
 
 
-def check_repository(root: pathlib.Path = ROOT) -> None:
+def check_repository(root: Path = ROOT) -> None:
     try:
         check_toolchain_literals(root)
     except (ValueError, OSError) as exc:
         fail(str(exc))
-    check_toolchain_consumers(root)
-    check_external_action_shas(root)
-    check_privileged_workflows(root)
-    check_skopeo_contract_consistency(root)
-    check_ci_path_map(root)
-    check_runner_labels(root)
-    check_oci_build_action(root)
-    check_setup_project_cache_boundary(root)
-    check_candidate_boundary(root)
-    check_trusted_checkout_refs(root)
-    check_release_request_workflow(root)
-    check_release_workflow(root)
-    check_prerelease_request_workflow(root)
-    check_precommit_boundary(root)
-    check_browser_ci(root)
+    dockerfile = read(root, "container/Dockerfile")
+    if unpinned := [image for image in re.findall(r"(?m)^FROM (\S+)", dockerfile)
+                    if image != "scratch" and "@sha256:" not in image]:
+        fail(f"container/Dockerfile base images must be digest-pinned: {unpinned}")
+    if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
+        fail("container/Dockerfile must not select a BuildKit frontend with # syntax=")
+    check_actions(root)
+    check_workflows(root)
+    check_ci(root)
     check_certificates(root)
 
 
 def main() -> None:
     try:
         check_repository()
-    except PolicyError as exc:
-        print(f"workflow policy: {exc}", file=sys.stderr)
-        raise SystemExit(1) from exc
+    except ControlPlaneError as exc:
+        raise SystemExit(f"workflow policy: {exc}") from exc
     print("workflow policy: ok")
 
 

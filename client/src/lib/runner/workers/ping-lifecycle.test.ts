@@ -1,6 +1,7 @@
-import { stubGlobals } from "../../test-helpers.test";
+import { stubGlobals } from "../../test-helpers.testutil";
+import { testClock } from "./test-helpers.testutil";
 import { expect, test } from "bun:test";
-import { LatencyAccumulator } from "../latencySummary";
+import { LatencyPopulation } from "../measure";
 import type { PingSample } from "./pingSample";
 
 type Output =
@@ -26,20 +27,10 @@ async function withWorker(
   }) => void | Promise<void>,
   completeWarmup = true,
 ) {
-  let now = 0;
-  let nextTimer = 0;
-  const timers = new Map<
-    number,
-    { at: number; interval?: number; callback: () => void }
-  >();
+  const clock = testClock();
   const posted: Output[] = [];
   let socket!: FakeSocket;
   const sockets: FakeSocket[] = [];
-  const timeout = (callback: () => void, delay = 0, interval?: number) => {
-    const id = ++nextTimer;
-    timers.set(id, { at: now + delay, interval, callback });
-    return id;
-  };
   const overrides = {
     self: globalThis,
     WebSocket: class extends FakeSocket {
@@ -49,29 +40,29 @@ async function withWorker(
         sockets.push(this);
       }
     },
-    performance: { now: () => now, timeOrigin: 10_000 },
+    performance: { now: clock.now, timeOrigin: 10_000 },
     postMessage: (message: Output) => posted.push(message),
-    setTimeout: timeout,
-    clearTimeout: (id: number) => timers.delete(id),
-    setInterval: (callback: () => void, delay: number) =>
-      timeout(callback, delay, delay),
-    clearInterval: (id: number) => timers.delete(id),
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
     onmessage: null,
   };
   const restore = stubGlobals(overrides);
   try {
     await import(`./ping-worker.ts?lifecycle=${realm++}`);
     const handler = globalThis.onmessage as (event: MessageEvent) => void;
-    const send = (data: unknown) => handler({ data } as MessageEvent);
+    const send = (data: unknown) =>
+      handler({ data, origin: "" } as MessageEvent);
     send({
       type: "start",
-      url: "ws://meter.test/ping",
+      url: "ws://meter.test/ws/ping",
       transport: "websocket",
       intervalMs: 250,
       replyDriven: true,
       maxInFlight: 4,
-      lossK: 4,
-      lossFloorMs: 250,
+      deadlineK: 4,
+      deadlineFloorMs: 250,
     });
     socket.onopen();
     send({ type: "measure" });
@@ -82,30 +73,14 @@ async function withWorker(
       socket,
       sockets,
       send,
-      now: () => now,
-      jump: (ms) => {
-        now += ms;
-      },
-      advance(ms) {
-        const end = now + ms;
-        for (;;) {
-          const next = [...timers.entries()]
-            .filter(([, timer]) => timer.at <= end)
-            .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
-          if (!next) break;
-          const [id, timer] = next;
-          now = Math.max(now, timer.at);
-          if (timer.interval) timer.at = now + timer.interval;
-          else timers.delete(id);
-          timer.callback();
-        }
-        now = end;
-      },
+      now: clock.now,
+      jump: clock.jump,
+      advance: clock.advance,
       reply: (id, handling) =>
         socket.onmessage({
           data: `PONG,${id},${handling ?? "0"}`,
         }),
-      stop: (cutoff = now) =>
+      stop: (cutoff = clock.now()) =>
         send({ type: "stop", cutoffEpochMs: 10_000 + cutoff }),
       samples: () =>
         posted.flatMap((message) =>
@@ -162,7 +137,7 @@ test("stop flushes an unbatched reply, drains a pending reply, then acknowledges
     expect(socket.closed).toBe(1);
     advance(20_000);
     expect(socket.pings).toHaveLength(sent);
-    expect(samples().every((sample) => !sample.lost)).toBe(true);
+    expect(samples().every((sample) => !sample.timedOut)).toBe(true);
   });
 });
 
@@ -176,7 +151,7 @@ test("drain retains original probe deadlines and emits timeout before its acknow
     expect(samples()).toEqual([
       {
         rtt: 250,
-        lost: true,
+        timedOut: true,
         observedAtEpochMs: 10_250,
         sentAtEpochMs: 10_000,
       },
@@ -193,7 +168,7 @@ test("a reply past its original deadline is a timeout even before the sweeper ru
     expect(samples()).toEqual([
       {
         rtt: 250,
-        lost: true,
+        timedOut: true,
         observedAtEpochMs: 10_250,
         sentAtEpochMs: 10_000,
       },
@@ -224,7 +199,7 @@ test("a local send failure is excluded from the probe timeout denominator", asyn
     stop();
     advance(20_000);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(false);
+    expect(samples()[0].timedOut).toBe(false);
     expect(posted).toContainEqual({
       type: "interrupted",
       sentAtEpochMs: [10_000],
@@ -270,7 +245,7 @@ test("an unconfirmed write remains unresolved when its bounded drain ends", asyn
     stop();
     advance(250);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(false);
+    expect(samples()[0].timedOut).toBe(false);
     expect(posted).toContainEqual({
       type: "interrupted",
       sentAtEpochMs: [10_000],
@@ -286,7 +261,7 @@ test("disconnect preserves a deadline outcome that preceded the connection gap",
     socket.disconnect();
     stop();
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(true);
+    expect(samples()[0].timedOut).toBe(true);
   });
 });
 
@@ -308,17 +283,21 @@ for (const failure of ["failSends", "rejectSends"] as const) {
         "samples",
         "interrupted",
       ]);
-      const accumulator = new LatencyAccumulator();
+      const population = new LatencyPopulation();
       for (const outcome of outcomes) {
         if (outcome.type === "samples") {
           for (const sample of outcome.samples)
-            accumulator.observe(sample.rtt, sample.lost, 0);
+            population.observe({
+              rttMs: sample.rtt,
+              timedOut: sample.timedOut,
+              observedAtMs: 0,
+            });
         } else if (outcome.type === "interrupted")
-          accumulator.interrupt(outcome.sentAtEpochMs.length, "send-failed");
+          population.interrupt(outcome.sentAtEpochMs.length, "send-failed");
       }
       // A later reply must not form an RTT variation pair across the failed send.
-      accumulator.observe(99, false, 0);
-      expect(accumulator.snapshot()).toMatchObject({
+      population.observe({ rttMs: 99, timedOut: false, observedAtMs: 0 });
+      expect(population.summary()).toMatchObject({
         probeCount: 3,
         sendFailureCount: 1,
         jitterPairs: 1,
@@ -346,7 +325,7 @@ test("application readiness requires one matched valid reply and excludes warmup
     stop(10);
     expect(readiness()).toBe(1);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0]).toMatchObject({ rtt: 5, lost: false });
+    expect(samples()[0]).toMatchObject({ rtt: 5, timedOut: false });
   }, false);
 });
 
@@ -364,7 +343,7 @@ test("incomplete or malformed PONGs cannot resolve a probe or invent zero handli
     expect(samples()).toHaveLength(1);
     expect(samples()[0]).toMatchObject({
       rtt: 5,
-      lost: false,
+      timedOut: false,
       reflectorHandlingMs: 1,
     });
   });
@@ -379,9 +358,9 @@ test("impossible and imprecise handling never change a raw reply", async () => {
     }
     stop(15);
     expect(samples()).toHaveLength(durations.length);
-    expect(samples().every((sample) => sample.rtt === 5 && !sample.lost)).toBe(
-      true,
-    );
+    expect(
+      samples().every((sample) => sample.rtt === 5 && !sample.timedOut),
+    ).toBe(true);
     expect(samples().map((sample) => sample.reflectorHandlingMs)).toEqual([
       undefined,
       undefined,
@@ -453,11 +432,11 @@ test("late replies retain only their timeout while drain replies retain paired t
     reply(2, "2000000");
     const outcomes = samples();
     expect(outcomes).toHaveLength(2);
-    expect(outcomes[0]).toMatchObject({ rtt: 250, lost: true });
+    expect(outcomes[0]).toMatchObject({ rtt: 250, timedOut: true });
     expect(outcomes[0].reflectorHandlingMs).toBeUndefined();
     expect(outcomes[1]).toMatchObject({
       rtt: 5,
-      lost: false,
+      timedOut: false,
       reflectorHandlingMs: 2,
     });
     // The channel/core owns the cutoff; retaining metadata does not make a post-cutoff RTT eligible.

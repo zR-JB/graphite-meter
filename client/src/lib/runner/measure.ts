@@ -1,0 +1,1016 @@
+import type {
+  BufferbloatGrade,
+  FailureReason,
+  FlowDirection,
+  LatencyObservation,
+  LatencyResult,
+  PingCadence,
+  PreparedPaths,
+  ReceiverCheckpoint,
+  StageLatencySummary,
+  ThroughputResult,
+  TransportRole,
+} from "./contract";
+import type { ServerIdentity } from "../servers/catalog";
+import { fixedPingIntervalMs } from "./pingCadence";
+
+export const MIN_EVIDENCE_MS = 800;
+const MIN_PARTIAL_LATENCY_OUTCOMES = 3;
+export const BUCKET_MS = 250;
+const WINDOW_MS = 4_000;
+const WINDOW_BUCKETS = WINDOW_MS / BUCKET_MS;
+const INTERVAL_LIMIT = 128;
+const PEAK_WINDOW_MS = 500;
+const COMBINED = "";
+export const STAGES = [
+  "latency",
+  "download",
+  "upload",
+  "bidirectional",
+] as const;
+export type TransferStage = Exclude<TransportRole, "latency">;
+
+export function sortedMedian(sorted: ArrayLike<number>): number {
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export function nearestRank(sorted: ArrayLike<number>, p: number): number {
+  const n = sorted.length;
+  return sorted[Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))];
+}
+
+export function median(xs: readonly number[]): number {
+  return xs.length ? sortedMedian(xs.toSorted((a, b) => a - b)) : 0;
+}
+
+const mean = (xs: readonly number[]) =>
+  xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+/** Exact byte/time evidence split into fixed-duration rate buckets. */
+export class RateBuckets {
+  #bytes = 0;
+  #ms = 0;
+  readonly rates: number[] = [];
+  constructor(readonly limit = Infinity) {}
+
+  observe(bytes: number, ms: number): void {
+    if (!(ms > 0) || !Number.isFinite(ms)) return;
+    bytes = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+    while (ms > 0) {
+      const take = Math.min(BUCKET_MS - this.#ms, ms);
+      const part = (bytes * take) / ms;
+      this.#bytes += part;
+      this.#ms += take;
+      bytes -= part;
+      ms -= take;
+      if (this.#ms < BUCKET_MS - 1e-9) continue;
+      this.rates.push((this.#bytes * 1000) / BUCKET_MS);
+      if (this.rates.length > this.limit) this.rates.shift();
+      this.#bytes = this.#ms = 0;
+    }
+  }
+}
+
+export interface ConfidenceScore {
+  score: number;
+  sampleCount: number;
+  varianceRatio?: number;
+  slopeRatio?: number;
+  jitterRatio?: number;
+  timeoutRatio?: number;
+}
+
+/** score = 1 − 2.2·CV − 1.4·|first third − last third| / mean over the trailing window. */
+export function transferConfidence(rates: readonly number[]): ConfidenceScore {
+  const values = rates.slice(-WINDOW_BUCKETS);
+  const avg = mean(values);
+  if (values.length < 2 || avg <= 0)
+    return {
+      score: 0,
+      varianceRatio: 1,
+      slopeRatio: 1,
+      sampleCount: values.length,
+    };
+  const varianceRatio =
+    Math.sqrt(mean(values.map((v) => (v - avg) ** 2))) / avg;
+  const segment = Math.max(2, Math.ceil(values.length / 3));
+  const slopeRatio =
+    Math.abs(mean(values.slice(-segment)) - mean(values.slice(0, segment))) /
+    avg;
+  const score = clamp01(1 - varianceRatio * 2.2 - slopeRatio * 1.4);
+  return { score, varianceRatio, slopeRatio, sampleCount: values.length };
+}
+
+/** Descriptive 0..100 steadiness of fixed-time rate buckets. */
+export function stabilityPct(rates: readonly number[]): number {
+  const { sampleCount, varianceRatio = 1 } = transferConfidence(rates);
+  return sampleCount >= 2 ? Math.max(0, 1 - varianceRatio) * 100 : 0;
+}
+
+/** The k-th smallest of the first n values by selection; leaves smaller values before it. */
+function select(values: Float64Array, n: number, k: number): number {
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const pivot = values[(lo + hi) >> 1];
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (values[i] < pivot) i++;
+      while (values[j] > pivot) j--;
+      if (i > j) break;
+      const swap = values[i];
+      values[i++] = values[j];
+      values[j--] = swap;
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else break;
+  }
+  return values[k];
+}
+
+function selectMedian(values: Float64Array, n: number): number {
+  const upper = select(values, n, n >> 1);
+  if (n % 2) return upper;
+  let lower = -Infinity;
+  for (let i = 0; i < n >> 1; i++) lower = Math.max(lower, values[i]);
+  return (lower + upper) / 2;
+}
+
+let scratch = new Float64Array(1024);
+
+/** Early finish: coverage fraction, stability gate, sample floors and how long eligibility must hold. */
+export const EARLY_FINISH = {
+  minCoverage: 0.52,
+  stability: 0.86,
+  latencySamples: 8,
+  transferSamples: 12,
+  confirmationMs: 1100,
+} as const;
+
+/** Schmitt trigger: enter at the threshold, leave 0.08 below it. */
+const isStillStable = (wasStable: boolean, score: number): boolean =>
+  score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
+
+/** The evidence floor a phase can feasibly reach within its budget; never below the statistical minimum. */
+export function confidenceSampleFloor(
+  kind: "latency" | "transfer",
+  durationMs: number,
+  cadence?: PingCadence,
+): number {
+  const requested =
+    kind === "latency"
+      ? EARLY_FINISH.latencySamples
+      : EARLY_FINISH.transferSamples;
+  const budgetMs = Math.max(
+    0,
+    (Number.isFinite(durationMs) ? durationMs : 0) -
+      EARLY_FINISH.confirmationMs,
+  );
+  const intervalMs =
+    kind === "latency" ? cadence && fixedPingIntervalMs(cadence) : BUCKET_MS;
+  if (!intervalMs) return requested;
+  const capacity =
+    kind === "latency"
+      ? Math.min(
+          Math.ceil(WINDOW_MS / intervalMs),
+          1 + Math.floor(budgetMs / intervalMs),
+        )
+      : Math.min(WINDOW_BUCKETS, Math.floor(budgetMs / intervalMs));
+  const minimum = Math.min(requested, kind === "latency" ? 3 : 4);
+  return Math.max(minimum, Math.min(requested, capacity));
+}
+
+/** An early exit needs coverage, a stable score and enough evidence. */
+export function shouldExitPhase(input: {
+  kind: "latency" | "transfer";
+  cadence?: PingCadence;
+  elapsedMs: number;
+  durationMs: number;
+  confidence: ConfidenceScore;
+}): boolean {
+  const { durationMs, confidence } = input;
+  return (
+    durationMs > 0 &&
+    input.elapsedMs / durationMs >= EARLY_FINISH.minCoverage &&
+    confidence.score >= EARLY_FINISH.stability &&
+    confidence.sampleCount >=
+      confidenceSampleFloor(input.kind, durationMs, input.cadence)
+  );
+}
+
+/** Raw outcomes of one stage; presentation buckets never feed it. */
+export class LatencyPopulation {
+  /** Ascending replies over a buffer with spare capacity; later replies wait in `#fresh`. */
+  #sorted = new Float64Array(0);
+  #fresh: number[] = [];
+  #sum = 0;
+  #final: StageLatencySummary | null | undefined;
+  #timeouts = 0;
+  #replies = 0;
+  #unresolved = 0;
+  #sendFailures = 0;
+  #timing = { count: 0, raw: 0, handling: 0 };
+  #deltaSum = 0;
+  #deltaCount = 0;
+  #previous: number | null = null;
+  #continuity = 0;
+  #complete = true;
+
+  get count(): number {
+    return this.#replies + this.#timeouts;
+  }
+  /** Timeouts over resolved probes; interrupted probes and send failures stay out. */
+  get timeoutRatio(): number | null {
+    return this.count ? this.#timeouts / this.count : null;
+  }
+
+  observe(sample: LatencyObservation, continuity = 0): void {
+    if (continuity !== this.#continuity) this.#previous = null;
+    this.#continuity = continuity;
+    const { rttMs, reflectorHandlingMs: handling } = sample;
+    const valid = !sample.timedOut && Number.isFinite(rttMs) && rttMs >= 0;
+    if (sample.timedOut) this.#timeouts++;
+    else if (valid) this.#replies++;
+    if (!valid || sample.rttEligible === false) return;
+    this.#fresh.push(rttMs);
+    this.#sum += rttMs;
+    if (
+      handling !== undefined &&
+      Number.isFinite(handling) &&
+      handling >= 0 &&
+      handling <= rttMs
+    ) {
+      this.#timing.count++;
+      this.#timing.raw += rttMs;
+      this.#timing.handling += handling;
+    }
+    if (this.#previous !== null) {
+      this.#deltaSum += Math.abs(rttMs - this.#previous);
+      this.#deltaCount++;
+    }
+    this.#previous = rttMs;
+  }
+
+  interrupt(count: number, reason: "unresolved" | "send-failed"): void {
+    if (!Number.isSafeInteger(count) || count <= 0) return;
+    if (reason === "unresolved") this.#unresolved += count;
+    else this.#sendFailures += count;
+    this.#previous = null;
+  }
+
+  markIncomplete(): void {
+    this.#complete = false;
+    this.#previous = null;
+  }
+
+  close(): void {
+    this.#final = this.summary();
+    this.#sorted = new Float64Array(0);
+  }
+
+  summary(): StageLatencySummary | null {
+    if (this.#final !== undefined) return this.#final;
+    if (
+      !this.count &&
+      !this.#unresolved &&
+      !this.#sendFailures &&
+      this.#complete
+    )
+      return null;
+    const sorted = this.#merge();
+    const n = sorted.length;
+    const rank = (p: number) => (n ? nearestRank(sorted, p) : null);
+    const { count, raw, handling } = this.#timing;
+    return {
+      ...(count
+        ? {
+            reflectorTiming: {
+              sampleCount: count,
+              meanRawRttMs: raw / count,
+              meanHandlingMs: handling / count,
+            },
+          }
+        : {}),
+      accountingComplete: this.#complete,
+      probeCount: this.count,
+      timeoutCount: this.#timeouts,
+      unresolvedCount: this.#unresolved,
+      sendFailureCount: this.#sendFailures,
+      jitterPairs: this.#deltaCount,
+      minMs: sorted[0] ?? null,
+      maxMs: sorted.at(-1) ?? null,
+      meanMs: n ? this.#sum / n : null,
+      p10Ms: rank(0.1),
+      p50Ms: n ? sortedMedian(sorted) : null,
+      p90Ms: rank(0.9),
+      p95Ms: rank(0.95),
+      jitterMs: this.#deltaCount ? this.#deltaSum / this.#deltaCount : null,
+    };
+  }
+
+  #merge(): Float64Array {
+    const n = this.#sorted.length;
+    const k = this.#fresh.length;
+    let buffer = new Float64Array(this.#sorted.buffer);
+    if (buffer.length < n + k) {
+      buffer = new Float64Array(2 * (n + k));
+      buffer.set(this.#sorted);
+    }
+    const fresh = Float64Array.from(this.#fresh).sort();
+    for (let i = n - 1, j = k - 1, w = n + k - 1; j >= 0; w--)
+      buffer[w] = i >= 0 && buffer[i] > fresh[j] ? buffer[i--] : fresh[j--];
+    this.#fresh = [];
+    return (this.#sorted = buffer.subarray(0, n + k));
+  }
+}
+
+/** One server's latency populations and the idle stage's adaptive window. */
+export class ServerLatency {
+  readonly stages = {
+    latency: new LatencyPopulation(),
+    download: new LatencyPopulation(),
+    upload: new LatencyPopulation(),
+    bidirectional: new LatencyPopulation(),
+  };
+  readonly failed = new Set<TransportRole>();
+  /** Idle outcome times and RTTs (NaN for a timeout) since `#head`. */
+  #times: number[] = [];
+  #rtts: number[] = [];
+  #head = 0;
+
+  observe(
+    stage: TransportRole,
+    sample: LatencyObservation,
+    t: number,
+    continuity: number,
+  ): void {
+    this.stages[stage].observe(sample, continuity);
+    if (stage !== "latency" || sample.rttEligible === false) return;
+    this.#times.push(t);
+    this.#rtts.push(sample.timedOut ? NaN : sample.rttMs);
+    while (this.#times[this.#head] <= t - WINDOW_MS) this.#head++;
+    // Amortized trimming keeps dense reply-driven windows linear.
+    if (this.#head < 4096) return;
+    this.#times.splice(0, this.#head);
+    this.#rtts.splice(0, this.#head);
+    this.#head = 0;
+  }
+
+  /** score = 1 − 1.2·(median deviation / max(median, 20 ms)) − 3.6·timeout ratio over the last 4 s. */
+  confidence(): ConfidenceScore {
+    const latest = this.#times.at(-1) ?? 0;
+    if (scratch.length < this.#times.length)
+      scratch = new Float64Array(this.#times.length * 2);
+    let outcomes = 0;
+    let replies = 0;
+    for (let i = this.#head; i < this.#times.length; i++) {
+      if (this.#times[i] <= latest - WINDOW_MS) continue;
+      outcomes++;
+      if (!Number.isNaN(this.#rtts[i])) scratch[replies++] = this.#rtts[i];
+    }
+    if (replies < 2)
+      return {
+        score: 0,
+        jitterRatio: 1,
+        timeoutRatio: 1,
+        sampleCount: outcomes,
+      };
+    const center = selectMedian(scratch, replies);
+    for (let i = 0; i < replies; i++)
+      scratch[i] = Math.abs(scratch[i] - center);
+    const jitterRatio = selectMedian(scratch, replies) / Math.max(center, 20);
+    const timeoutRatio = (outcomes - replies) / outcomes;
+    const score = clamp01(1 - jitterRatio * 1.2 - timeoutRatio * 3.6);
+    return { score, jitterRatio, timeoutRatio, sampleCount: outcomes };
+  }
+
+  close(): void {
+    for (const stage of STAGES) this.stages[stage].close();
+    this.#times = [];
+    this.#rtts = [];
+    this.#head = 0;
+  }
+
+  resetStability(): void {
+    this.#times = [];
+    this.#rtts = [];
+    this.#head = 0;
+  }
+
+  /** The idle headline is the full stage median, as in the native client; a failed population needs three outcomes. */
+  result(): LatencyResult | null {
+    const idle = this.stages.latency;
+    const summary = idle.summary();
+    if (
+      summary?.p50Ms == null ||
+      (this.failed.has("latency") && idle.count < MIN_PARTIAL_LATENCY_OUTCOMES)
+    )
+      return null;
+    return {
+      reportedMs: summary.p50Ms,
+      jitterMs: summary.jitterMs,
+    };
+  }
+
+  summaries(): Record<TransportRole, StageLatencySummary | null> {
+    const s = this.stages;
+    return {
+      latency: s.latency.summary(),
+      download: s.download.summary(),
+      upload: s.upload.summary(),
+      bidirectional: s.bidirectional.summary(),
+    };
+  }
+
+  /** Each loaded median against the full idle median; a negative difference stays negative. */
+  bufferbloat(): BufferbloatGrade | null {
+    const loaded = (["download", "upload", "bidirectional"] as const).map(
+      (stage) => [stage, this.stages[stage].summary()?.p50Ms ?? null] as const,
+    );
+    const medians = loaded.flatMap(([, p50]) => (p50 == null ? [] : [p50]));
+    const idleMs = this.stages.latency.summary()?.p50Ms;
+    if (idleMs == null || !medians.length) return null;
+    const addedMs = Object.fromEntries(
+      loaded.map(([stage, p50]) => [stage, p50 == null ? null : p50 - idleMs]),
+    ) as BufferbloatGrade["addedMs"];
+    const loadedMs = Math.max(...medians);
+    const increaseMs = loadedMs - idleMs;
+    const grade =
+      increaseMs <= 5
+        ? "A"
+        : increaseMs <= 30
+          ? "B"
+          : increaseMs <= 60
+            ? "C"
+            : increaseMs <= 200
+              ? "D"
+              : "F";
+    return { addedMs, idleMs, loadedMs, increaseMs, grade };
+  }
+}
+
+/** One presentation of a stage population, shared by live results and history. */
+export interface LatencyLaneSnapshot {
+  reflectorTiming?: StageLatencySummary["reflectorTiming"];
+  min: number | null;
+  max: number | null;
+  p10: number | null;
+  p90: number | null;
+  p95?: number | null;
+  center: number | null;
+  jitter: number | null;
+  timeoutRatio: number | null;
+  accountingComplete: boolean;
+  timeoutCount: number;
+  unresolvedCount: number;
+  sendFailureCount: number;
+  count: number;
+}
+
+export function latencyLanes(
+  summaries: Partial<Record<TransportRole, StageLatencySummary | null>>,
+): Record<TransportRole, LatencyLaneSnapshot | null> {
+  const lane = (stage: TransportRole): LatencyLaneSnapshot | null => {
+    const s = summaries[stage];
+    if (!s) return null;
+    return {
+      ...(s.reflectorTiming
+        ? { reflectorTiming: { ...s.reflectorTiming } }
+        : {}),
+      min: s.minMs,
+      max: s.maxMs,
+      p10: s.p10Ms,
+      p90: s.p90Ms,
+      p95: s.p95Ms,
+      center: s.p50Ms,
+      jitter: s.jitterMs,
+      timeoutRatio: s.probeCount ? s.timeoutCount / s.probeCount : null,
+      accountingComplete: s.accountingComplete,
+      timeoutCount: s.timeoutCount,
+      unresolvedCount: s.unresolvedCount,
+      sendFailureCount: s.sendFailureCount,
+      count: s.probeCount,
+    };
+  };
+  return {
+    latency: lane("latency"),
+    download: lane("download"),
+    upload: lane("upload"),
+    bidirectional: lane("bidirectional"),
+  };
+}
+
+export interface ComponentWindow {
+  serverId: string;
+  bytes: number;
+  durationMs: number;
+  bytesPerSec: number;
+  clock: "client-monotonic" | "receiver";
+  startBytes: number;
+  endBytes: number;
+  startNanos?: number;
+  endNanos?: number;
+  startRequestMs?: number;
+  startResponseMs?: number;
+  endRequestMs?: number;
+  endResponseMs?: number;
+}
+export interface AggregateWindow {
+  startMs: number;
+  endMs: number;
+  down: ComponentWindow[] | null;
+  up: ComponentWindow[] | null;
+  downBytesPerSec: number | null;
+  upBytesPerSec: number | null;
+}
+export interface AggregationInterval {
+  id: number;
+  stage: TransferStage;
+  participants: string[];
+  startMs: number;
+  endMs: number;
+  complete: boolean;
+  reason: "stage-start" | "dropout" | "evidence-resumed";
+  full: AggregateWindow | null;
+  headline: AggregateWindow | null;
+}
+export interface ServerFailure {
+  serverId: string;
+  stage: TransportRole;
+  atMs: number;
+  scope: "throughput" | "latency";
+  reason: FailureReason;
+  message: string;
+}
+export interface ServerMeasurementSummary {
+  server: ServerIdentity;
+  throughput: {
+    origin: string;
+    transport: string;
+    protocol: string;
+    browserProtocol?: string;
+    clientIpVersion?: 4 | 6;
+  };
+  latencyTarget: { origin: string; transport: string } | null;
+  latency: LatencyResult | null;
+  latencyByStage: Record<TransportRole, StageLatencySummary | null>;
+  bufferbloat: BufferbloatGrade | null;
+  download: ThroughputResult | null;
+  upload: ThroughputResult | null;
+  bidirectional: {
+    down: ThroughputResult | null;
+    up: ThroughputResult | null;
+  } | null;
+  totalBytes: Record<FlowDirection, number>;
+}
+export interface MultiServerResult {
+  selection: ServerIdentity[];
+  participants: string[];
+  latencyFocus: string;
+  servers: ServerMeasurementSummary[];
+  intervals: AggregationInterval[];
+  omittedIntervals: number;
+  failures: ServerFailure[];
+}
+/** The verified paths a server's results were measured on. */
+export function pathEvidence(
+  paths: PreparedPaths,
+): Pick<ServerMeasurementSummary, "throughput" | "latencyTarget"> {
+  const { throughput, latency } = paths;
+  return {
+    throughput: {
+      origin: throughput.target.origin,
+      transport: throughput.target.transport,
+      protocol: throughput.fetch.protocol,
+      ...(throughput.browserProtocol
+        ? { browserProtocol: throughput.browserProtocol }
+        : {}),
+      clientIpVersion: throughput.probe.clientIpVersion,
+    },
+    latencyTarget: latency
+      ? { origin: latency.target.origin, transport: latency.target.transport }
+      : null,
+  };
+}
+
+export interface Boundary {
+  atMs: number;
+  down: Record<string, number>;
+  up: Record<string, ReceiverCheckpoint | null>;
+}
+type Series = Record<FlowDirection, RateBuckets>;
+interface OpenInterval {
+  record: AggregationInterval;
+  first: Boundary | null;
+  last: Boundary | null;
+  stable: Boundary | null;
+  wasStable: boolean;
+  combined: RateBuckets;
+  total: Series;
+  servers: Map<string, Series>;
+  peakFrom: Boundary | null;
+  peaks: Map<string, Partial<Record<FlowDirection, number>>>;
+}
+type Totals = Record<FlowDirection, number>;
+
+const series = (): Series => ({
+  down: new RateBuckets(),
+  up: new RateBuckets(),
+});
+const directions = (stage: TransferStage): FlowDirection[] =>
+  stage === "bidirectional"
+    ? ["down", "up"]
+    : [stage === "download" ? "down" : "up"];
+const rateOf = (window: AggregateWindow, dir: FlowDirection) =>
+  dir === "down" ? window.downBytesPerSec : window.upBytesPerSec;
+
+/** Fixed-membership intervals over common boundaries; each receiver keeps its own clock. */
+export class ThroughputAggregate {
+  intervals: AggregationInterval[] = [];
+  omittedIntervals = 0;
+  #open: OpenInterval | null = null;
+  #closed = new Map<number, OpenInterval>();
+  #stageTotals = new Map<TransferStage, Map<string, Totals>>();
+  #ledgers = new Map<string, Map<string, number>>();
+
+  get current(): AggregationInterval | null {
+    return this.#open?.record ?? null;
+  }
+
+  get sufficient(): boolean {
+    return !!this.#open?.record.complete && sufficient(this.#open.record.full);
+  }
+
+  begin(
+    stage: TransferStage,
+    participants: string[],
+    atMs: number,
+    reason: AggregationInterval["reason"] = "stage-start",
+  ): void {
+    this.close();
+    if (reason === "stage-start") this.#ledgers.clear();
+    if (this.intervals.length >= INTERVAL_LIMIT) {
+      this.#closed.delete(this.intervals.shift()!.id);
+      this.omittedIntervals++;
+    }
+    const record: AggregationInterval = {
+      id: this.omittedIntervals + this.intervals.length,
+      stage,
+      participants: [...participants],
+      startMs: atMs,
+      endMs: atMs,
+      complete: true,
+      reason,
+      full: null,
+      headline: null,
+    };
+    this.intervals.push(record);
+    this.#open = {
+      record,
+      first: null,
+      last: null,
+      stable: null,
+      wasStable: false,
+      combined: new RateBuckets(WINDOW_BUCKETS),
+      total: series(),
+      servers: new Map(participants.map((id) => [id, series()])),
+      peakFrom: null,
+      peaks: new Map(),
+    };
+  }
+
+  close(): void {
+    if (this.#open) this.#closed.set(this.#open.record.id, this.#open);
+    this.#open = null;
+  }
+
+  /** Unique measured bytes per server; overlapping evidence is never counted twice. */
+  totals(id: string): Totals {
+    const sum = { down: 0, up: 0 };
+    for (const stage of this.#stageTotals.values())
+      for (const dir of ["down", "up"] as const)
+        sum[dir] += stage.get(id)?.[dir] ?? 0;
+    return sum;
+  }
+
+  #credit(
+    stage: TransferStage,
+    id: string,
+    dir: FlowDirection,
+    bytes: number,
+  ): void {
+    if (!(bytes > 0)) return;
+    const totals = this.#stageTotals.get(stage) ?? new Map<string, Totals>();
+    this.#stageTotals.set(stage, totals);
+    const total = totals.get(id) ?? { down: 0, up: 0 };
+    total[dir] += bytes;
+    totals.set(id, total);
+  }
+
+  /** Download bytes are credited as they are consumed; upload bytes from receiver maxima. */
+  addDownload(stage: TransferStage, id: string, bytes: number): void {
+    this.#credit(stage, id, "down", bytes);
+  }
+
+  #observeUpload(
+    stage: TransferStage,
+    id: string,
+    checkpoint: ReceiverCheckpoint,
+  ): void {
+    const ledgers = this.#ledgers.get(id) ?? new Map<string, number>();
+    this.#ledgers.set(id, ledgers);
+    // A receiver first seen during a stage starts at its current count; a replacement starts at zero.
+    const maximum =
+      ledgers.get(checkpoint.id) ?? (ledgers.size ? 0 : checkpoint.bytes);
+    if (checkpoint.bytes > maximum)
+      this.#credit(stage, id, "up", checkpoint.bytes - maximum);
+    ledgers.set(checkpoint.id, Math.max(maximum, checkpoint.bytes));
+  }
+
+  /** A boundary missing any component is skipped; the next valid one spans the gap. */
+  observe(boundary: Boundary, final = false): AggregateWindow | null {
+    const open = this.#open;
+    if (!open) return null;
+    const { record } = open;
+    const dirs = directions(record.stage);
+    for (const id of record.participants) {
+      const up = boundary.up[id];
+      if (up && Number.isSafeInteger(up.bytes) && up.bytes >= 0)
+        this.#observeUpload(record.stage, id, up);
+    }
+    const valid =
+      record.participants.length > 0 &&
+      record.participants.every((id) =>
+        dirs.every((dir) =>
+          dir === "down"
+            ? Number.isFinite(boundary.down[id])
+            : !!boundary.up[id],
+        ),
+      );
+    if (!valid) return null;
+    if (!open.first || !open.last) {
+      open.first = open.last = open.peakFrom = boundary;
+      record.startMs = record.endMs = boundary.atMs;
+      return null;
+    }
+    const last = open.last;
+    // A final boundary where any direction stood still ends the result at the last one, as natively.
+    const stood = (id: string, dir: FlowDirection) =>
+      dir === "down"
+        ? boundary.down[id] === last.down[id]
+        : boundary.up[id]!.id === last.up[id]!.id &&
+          boundary.up[id]!.bytes === last.up[id]!.bytes;
+    if (
+      final &&
+      record.participants.some((id) => dirs.some((dir) => stood(id, dir)))
+    )
+      return null;
+    const continuous = record.participants.every((id) =>
+      dirs.every((dir) => {
+        if (dir === "down") return boundary.down[id] >= last.down[id];
+        const [a, b] = [last.up[id]!, boundary.up[id]!];
+        return a.id === b.id && b.bytes >= a.bytes && b.nanos >= a.nanos;
+      }),
+    );
+    // A final flush in the same tick, or an unchanged receiver clock, is stale: the receiver clock is authoritative.
+    const unchanged =
+      boundary.atMs <= last.atMs ||
+      (dirs.includes("up") &&
+        record.participants.some(
+          (id) => boundary.up[id]!.nanos === last.up[id]!.nanos,
+        ));
+    if (continuous && unchanged) return null;
+    const sample = window(last, boundary, record);
+    const full = window(open.first, boundary, record);
+    if (!sample || !full) {
+      // A replaced receiver or regressed counter cannot be spanned.
+      record.complete = false;
+      record.endMs = boundary.atMs;
+      this.begin(
+        record.stage,
+        record.participants,
+        boundary.atMs,
+        "evidence-resumed",
+      );
+      return this.observe(boundary);
+    }
+    const ms = boundary.atMs - last.atMs;
+    for (const dir of dirs) {
+      const rate = rateOf(sample, dir)!;
+      open.total[dir].observe((rate * ms) / 1000, ms);
+      for (const component of sample[dir]!)
+        open.servers
+          .get(component.serverId)!
+          [dir].observe(component.bytes, component.durationMs);
+    }
+    open.combined.observe(
+      (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) /
+        1000,
+      ms,
+    );
+    open.last = boundary;
+    const span = window(open.peakFrom!, boundary, record);
+    if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
+      open.peakFrom = boundary;
+      for (const dir of dirs) {
+        raise(open.peaks, COMBINED, dir, rateOf(span, dir)!);
+        for (const c of span[dir]!)
+          raise(open.peaks, c.serverId, dir, c.bytesPerSec);
+      }
+    }
+    record.full = full;
+    record.endMs = boundary.atMs;
+    record.headline = open.stable
+      ? window(open.stable, boundary, record)
+      : full;
+    return sample;
+  }
+
+  confidence(): ConfidenceScore {
+    return transferConfidence(this.#open?.combined.rates ?? []);
+  }
+
+  resetStability(): void {
+    const open = this.#open;
+    if (!open) return;
+    open.combined = new RateBuckets(WINDOW_BUCKETS);
+    open.wasStable = false;
+    open.stable = null;
+  }
+
+  trackStable(score: number): boolean {
+    const open = this.#open;
+    if (!open || !open.record.complete) return false;
+    const stable = isStillStable(open.wasStable, score);
+    open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
+    open.wasStable = stable;
+    return stable;
+  }
+
+  #interval(record: AggregationInterval): OpenInterval | undefined {
+    return this.#open?.record === record
+      ? this.#open
+      : this.#closed.get(record.id);
+  }
+
+  #stageTotal(stage: TransferStage, dir: FlowDirection, id?: string): number {
+    let sum = 0;
+    for (const [server, totals] of this.#stageTotals.get(stage) ?? [])
+      if (!id || server === id) sum += totals[dir];
+    return sum;
+  }
+
+  /** The stage headline from its latest interval; saved evidence names the reported window. */
+  result(
+    stage: TransferStage,
+    stable: boolean,
+  ): Record<FlowDirection, ThroughputResult | null> {
+    const record = this.intervals.findLast(
+      (interval) => interval.stage === stage,
+    );
+    const open = record && this.#interval(record);
+    const none = { down: null, up: null };
+    if (!record?.complete || !record.full || !open) return none;
+    const window =
+      stable && sufficient(record.headline) ? record.headline! : record.full;
+    record.headline = window;
+    const reduce = (dir: FlowDirection): ThroughputResult | null => {
+      const rate = rateOf(window, dir);
+      if (!rate || !sufficient(window)) return null;
+      return {
+        reportedBytesPerSec: rate,
+        totalBytes: this.#stageTotal(stage, dir),
+        peakBytesPerSec: this.peak(stage, dir),
+        stabilityPct: stabilityPct(open.total[dir].rates),
+      };
+    };
+    return { down: reduce("down"), up: reduce("up") };
+  }
+
+  peak(stage: TransferStage, dir: FlowDirection): number | null {
+    const record = this.intervals.findLast((i) => i.stage === stage);
+    return (
+      (record && this.#interval(record)?.peaks.get(COMBINED)?.[dir]) ?? null
+    );
+  }
+
+  /** One server's share from the latest interval it took part in, including before a dropout. */
+  serverResult(
+    stage: TransferStage,
+    dir: FlowDirection,
+    id: string,
+  ): ThroughputResult | null {
+    const record = this.intervals.findLast(
+      (interval) =>
+        interval.stage === stage &&
+        interval.full &&
+        interval.participants.includes(id),
+    );
+    const component = record?.full?.[dir]?.find((c) => c.serverId === id);
+    const open = record && this.#interval(record);
+    if (!component?.bytes || !open || component.durationMs < MIN_EVIDENCE_MS)
+      return null;
+    const { rates } = open.servers.get(id)![dir];
+    return {
+      reportedBytesPerSec: component.bytesPerSec,
+      totalBytes: this.#stageTotal(stage, dir, id),
+      peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
+      stabilityPct: stabilityPct(rates),
+    };
+  }
+}
+
+const shortestMs = (window: AggregateWindow) =>
+  Math.min(
+    window.endMs - window.startMs,
+    ...(window.up ?? []).map((c) => c.durationMs),
+  );
+
+function raise(
+  peaks: OpenInterval["peaks"],
+  id: string,
+  dir: FlowDirection,
+  rate: number,
+): void {
+  const peak = peaks.get(id) ?? {};
+  peak[dir] = Math.max(peak[dir] ?? 0, rate);
+  peaks.set(id, peak);
+}
+
+/** A reportable window spans the evidence floor in the client clock and in every receiver clock. */
+function sufficient(window: AggregateWindow | null): boolean {
+  return (
+    !!window &&
+    window.endMs - window.startMs >= MIN_EVIDENCE_MS &&
+    [...(window.down ?? []), ...(window.up ?? [])].every(
+      (c) => c.durationMs >= MIN_EVIDENCE_MS,
+    )
+  );
+}
+
+function window(
+  first: Boundary,
+  last: Boundary,
+  interval: AggregationInterval,
+): AggregateWindow | null {
+  if (last.atMs <= first.atMs) return null;
+  const result: AggregateWindow = {
+    startMs: first.atMs,
+    endMs: last.atMs,
+    down: null,
+    up: null,
+    downBytesPerSec: null,
+    upBytesPerSec: null,
+  };
+  for (const dir of directions(interval.stage)) {
+    const components: ComponentWindow[] = [];
+    for (const serverId of interval.participants) {
+      if (dir === "down") {
+        const startBytes = first.down[serverId];
+        const endBytes = last.down[serverId];
+        const durationMs = last.atMs - first.atMs;
+        if (!(endBytes >= startBytes)) return null;
+        const bytes = endBytes - startBytes;
+        components.push({
+          serverId,
+          startBytes,
+          endBytes,
+          bytes,
+          durationMs,
+          bytesPerSec: (bytes * 1000) / durationMs,
+          clock: "client-monotonic",
+        });
+        continue;
+      }
+      const a = first.up[serverId];
+      const b = last.up[serverId];
+      if (!a || !b || a.id !== b.id || b.bytes < a.bytes || b.nanos <= a.nanos)
+        return null;
+      const durationMs = (b.nanos - a.nanos) / 1e6;
+      components.push({
+        serverId,
+        startBytes: a.bytes,
+        endBytes: b.bytes,
+        bytes: b.bytes - a.bytes,
+        durationMs,
+        bytesPerSec: ((b.bytes - a.bytes) * 1000) / durationMs,
+        clock: "receiver",
+        startNanos: a.nanos,
+        endNanos: b.nanos,
+        startRequestMs: a.requestedAtMs,
+        startResponseMs: a.receivedAtMs,
+        endRequestMs: b.requestedAtMs,
+        endResponseMs: b.receivedAtMs,
+      });
+    }
+    const sum = components.reduce((total, c) => total + c.bytesPerSec, 0);
+    if (dir === "down")
+      [result.down, result.downBytesPerSec] = [components, sum];
+    else [result.up, result.upBytesPerSec] = [components, sum];
+  }
+  return result;
+}

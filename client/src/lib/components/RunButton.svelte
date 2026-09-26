@@ -1,27 +1,24 @@
 <script lang="ts">
-  // Primary start/abort action.
+  import Icon from "./Icon.svelte";
+  // The visible text is the accessible name (WCAG 2.5.3); capitals are styling.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
-  import { ICON } from "../constants";
+  import { fmtDuration } from "../format";
+  import {
+    BLOCKED,
+    resolvedPhase,
+    runActionLabel,
+  } from "../presentation/vocabulary";
 
-  // A resolved run relabels the button "Run again", pairing with the R key
-  // and the ShortcutHints strip.
   const pending = $derived(store.preparing);
-  const resolved = $derived(
-    store.phase === "complete" ||
-      store.phase === "aborted" ||
-      store.phase === "error",
-  );
-  const label = $derived(
-    pending
-      ? "Cancel"
-      : store.isRunning
-        ? "Abort test"
-        : resolved
-          ? "Run the test again"
-          : "Start the speed test",
+  const idle = $derived(!store.isRunning && !pending);
+  const resolved = $derived(resolvedPhase(store.phase));
+  const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
+  const eta = $derived(fmtDuration(store.totalEtaMs, 0));
+  const blocker = $derived(
+    idle && !store.catalogLoading ? store.startBlocker : "",
   );
 </script>
 
@@ -29,57 +26,43 @@
   class="run-button"
   class:running={store.isRunning}
   class:pending
-  aria-label={label}
   aria-busy={pending}
-  aria-describedby={!store.isRunning && !pending ? "run-duration" : undefined}
+  aria-disabled={!!blocker}
+  aria-describedby={idle ? "run-duration" : undefined}
   onclick={controller.toggleRun}
-  use:tooltip={pending
-    ? "Cancel starting the test (Space / Esc)"
-    : store.isRunning
-      ? "Stop the test (Space / Esc)"
-      : resolved
-        ? "Run the test again (Space / R)"
-        : "Start the test (Space)"}
+  {@attach tooltip(
+    () =>
+      blocker ||
+      (pending
+        ? "Cancel starting the test (Space / Esc)"
+        : store.isRunning
+          ? "Stop the test (Space / Esc)"
+          : resolved
+            ? "Run the test again (Space / R)"
+            : "Start the test (Space)"),
+  )}
 >
   {#key label}
-    <span class="run-button-content">
-      {#if pending}
-        CANCEL
-      {:else if store.isRunning}
-        <span class="stop-sq"></span> ABORT
-      {:else if resolved}
-        <span class="ico">{@html ICON.bolt}</span> RUN AGAIN
-      {:else}
-        <span class="ico">{@html ICON.bolt}</span> START TEST
+    <span class="run-button-content enter">
+      {#if store.isRunning}
+        <span class="stop-sq" aria-hidden="true"></span>
+      {:else if !pending}
+        <span class="ico" aria-hidden="true"><Icon name="bolt" /></span>
       {/if}
+      {label}
     </span>
   {/key}
-  {#if !store.isRunning && !pending}
-    <span class="duration" aria-hidden="true"
-      >~{Math.round(store.totalEtaMs / 1000)}s</span
-    >
+  {#if idle}
+    <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
 </button>
-{#if !store.isRunning && !pending}
+{#if idle}
   <span id="run-duration" class="sr-only"
-    >Estimated duration {Math.round(store.totalEtaMs / 1000)} seconds</span
+    >{blocker ? `${BLOCKED}: ${blocker}` : `Estimated duration ${eta}`}</span
   >
 {/if}
 
 <style>
-  .duration {
-    position: absolute;
-    inset-inline-end: var(--space-3);
-    top: 50%;
-    transform: translateY(-50%);
-    padding: var(--space-1) 6px;
-    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, currentColor 8%, transparent);
-    font: 500 10px/1 var(--font-mono);
-    letter-spacing: 0;
-    white-space: nowrap;
-  }
   .run-button {
     position: relative;
     isolation: isolate;
@@ -87,90 +70,72 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-2);
-    /* The one pill: the faceplate's single bold element, centered under the
-       gauge. Its lit top edge keeps the primary action distinct. */
     width: 100%;
     max-width: 320px;
-    align-self: center;
-    height: 46px;
     min-height: 46px;
-    box-sizing: border-box;
+    align-self: center;
+    border: 1px solid var(--brand-line);
     border-radius: var(--r-pill);
-    font-family: var(--font-display);
-    font-weight: 600;
-    letter-spacing: var(--track-wide);
     background: linear-gradient(180deg, var(--brand-strong), var(--brand));
-    color: var(--text-inverse);
-    border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
     box-shadow:
       inset 0 1px 0 var(--edge-highlight),
       0 2px 8px color-mix(in srgb, var(--brand) 10%, transparent);
-    cursor: pointer;
+    color: var(--text-inverse);
+    font-family: var(--font-display);
+    font-weight: var(--w-strong);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
     transition:
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  .run-button:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.04);
+  @media (hover: hover) {
+    .run-button:hover:not(.pending, [aria-disabled="true"]) {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
   }
   .run-button:active {
-    transform: translateY(0) scale(0.985);
-  }
-  .run-button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
+    transform: scale(0.985);
   }
   .run-button.running {
+    border-color: var(--err-line);
     background: var(--err-soft);
-    color: var(--err);
-    border-color: color-mix(in srgb, var(--err) 40%, var(--border));
     box-shadow: none;
+    color: var(--err);
   }
-  .run-button.pending {
-    cursor: pointer;
+  .run-button.pending,
+  .run-button[aria-disabled="true"] {
     filter: saturate(0.7);
   }
-  .run-button.pending:hover {
-    transform: none;
-    filter: saturate(0.7);
-  }
-  .stop-sq {
-    width: 12px;
-    height: 12px;
-    background: currentColor;
-    border-radius: var(--r-well);
-  }
-  .ico {
-    display: inline-grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-  }
-  .ico :global(svg) {
-    width: 18px;
-    height: 18px;
+  .run-button[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .run-button-content {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: var(--space-2);
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .run-button-content {
-      animation: control-content-enter var(--dur-hover) var(--ease-out) both;
-    }
+  .run-button-content :global(svg) {
+    width: 18px;
+    height: 18px;
   }
-  @keyframes control-content-enter {
-    from {
-      opacity: 0.7;
-      transform: translateY(1px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .stop-sq {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--r-well);
+    background: currentColor;
+  }
+  .duration {
+    position: absolute;
+    inset-inline-end: var(--space-3);
+    padding: var(--space-1) 6px;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font: var(--w-normal) var(--type-2xs) / 1 var(--font-mono);
+    letter-spacing: 0;
+    text-transform: none;
   }
 </style>

@@ -1,10 +1,15 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
   import { fmtMs } from "../format";
-  import ServerSelector from "./ServerSelector.svelte";
-  import { serverAccent, serverLabel } from "../presentation/serverAppearance";
+  import ServerScope from "./ServerScope.svelte";
+  import {
+    serverAccent,
+    serverLabel,
+    catalogSelection,
+  } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
+  import { JARGON, READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
   let retrying = $state<string[]>([]);
@@ -13,10 +18,10 @@
     if (locked || retrying.includes(serverId)) return;
     retrying = [...retrying, serverId];
     try {
-      await controller.retryServer(serverId);
+      await controller.retry({ id: serverId });
     } finally {
       if (
-        store.serverReadiness.get(serverId)?.state === "ready" &&
+        store.servers.get(serverId)?.readiness === "verified" &&
         document.activeElement === button
       ) {
         const choice = choices.get(serverId);
@@ -29,9 +34,7 @@
     }
   }
   const selected = $derived(
-    store.serverCatalog?.servers.filter((server) =>
-      store.selectedServers.includes(server.id),
-    ) ?? [],
+    catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const locked = $derived(store.isRunning || store.preparing);
   const problems = $derived(
@@ -39,10 +42,10 @@
       (server) =>
         store.selectedServers.includes(server.id) &&
         ((store.serverCatalog?.servers.length ?? 0) > 1 ||
-          store.serverReadiness.get(server.id)?.state === "sign-in") &&
+          store.servers.get(server.id)?.readiness === "sign-in") &&
         (retrying.includes(server.id) ||
           ["failed", "sign-in"].includes(
-            store.serverReadiness.get(server.id)?.state ?? "unchecked",
+            store.servers.get(server.id)?.readiness ?? "unchecked",
           )),
     ),
   );
@@ -62,20 +65,15 @@
     >
       {#each store.serverCatalog!.servers as server (server.id)}
         {@const checked = store.selectedServers.includes(server.id)}
-        {@const readiness = store.serverReadiness.get(server.id)?.state}
+        {@const readiness = store.servers.get(server.id)?.readiness}
         {@const status =
-          readiness === "checking"
-            ? "Checking…"
-            : readiness === "failed"
-              ? "Unavailable"
-              : readiness === "sign-in"
-                ? "Sign in"
-                : readiness === "ready" && checked
-                  ? "Ready"
-                  : ""}
-        {@const preflightMs = store.serverDiscoveries.get(
-          server.id,
-        )?.preflightMs}
+          !readiness ||
+          readiness === "unchecked" ||
+          (readiness === "verified" && !checked)
+            ? ""
+            : READINESS[readiness].label}
+        {@const preflightMs = store.servers.get(server.id)?.discovery
+          ?.preflightMs}
         {@const unavailable =
           locked || (checked ? selected.length === 1 : selected.length >= 4)}
         <label
@@ -86,16 +84,12 @@
               choices.delete(server.id);
             };
           }}
-          use:tooltip={[server.name, server.location, new URL(server.url).host]
-            .concat(
-              preflightMs == null
-                ? []
-                : [
-                    "Preflight request time includes connection setup and the response. It is not steady-state ping.",
-                  ],
-            )
-            .filter(Boolean)
-            .join("\n")}
+          {@attach tooltip(() =>
+            [server.name, server.location, new URL(server.url).host]
+              .concat(preflightMs == null ? [] : [JARGON.preflight])
+              .filter(Boolean)
+              .join("\n"),
+          )}
           class:checked
           style:--server-accent={serverAccent(
             server,
@@ -125,8 +119,9 @@
           </span>
           {#if preflightMs != null && !["failed", "sign-in", "checking"].includes(readiness ?? "")}<small
               class="server-preflight"
-              aria-label={`Preflight request ${fmtMs(preflightMs)} milliseconds`}
-              >{fmtMs(preflightMs)}<span>ms</span></small
+              ><span class="sr-only">Preflight request </span>{fmtMs(
+                preflightMs,
+              )}<span>ms</span></small
             >{/if}
         </label>
       {/each}
@@ -134,19 +129,19 @@
     <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
     <span class="sr-only" id={descriptionId}
       >Preflight request times include connection setup and the response. They
-      are not steady-state ping.</span
+      are not latency measurements.</span
     >
     {#if selected.length > 1 && store.latencyEnabled}
       <div class="latency-policy">
-        <strong>Measure ping to</strong>
-        <ServerSelector
+        <strong>Latency server</strong>
+        <ServerScope
           servers={selected}
           value={store.latencySelection.mode === "all"
             ? ""
             : store.primaryLatencyServer}
           label="Latency measurement servers"
-          aggregate
-          aggregateDescription="Ping each server"
+          aggregate="Combined"
+          hint="Measure latency to every server"
           disabled={locked}
           onchange={(id) =>
             controller.configureLatency(
@@ -162,6 +157,7 @@
   <div class="selection-notice" role="status">
     <p>The saved selection has changed.</p>
     <button
+      class="btn"
       type="button"
       disabled={locked}
       onclick={() =>
@@ -177,9 +173,10 @@
       {store.catalogLoading ? "Loading servers…" : "Could not load servers."}
     </p>
     <button
+      class="btn"
       type="button"
       disabled={locked || store.catalogLoading}
-      onclick={() => void controller.retryCatalogue()}>Retry servers</button
+      onclick={() => void controller.retryCatalog()}>Retry servers</button
     >
   </div>
 {/if}
@@ -192,14 +189,15 @@
         >{/if}
     </div>
     <p class="feedback-message">
-      {#key pending}<span
+      {#key pending}<span class="enter"
           >{pending
             ? `Checking ${server.name}…`
-            : store.serverReadiness.get(server.id)?.message}</span
+            : store.servers.get(server.id)?.message}</span
         >{/key}
     </p>
-    {#if store.serverReadiness.get(server.id)?.state === "sign-in"}
+    {#if store.servers.get(server.id)?.readiness === "sign-in"}
       <button
+        class="btn"
         type="button"
         disabled={locked ||
           (store.serverApproval?.id === server.id &&
@@ -213,12 +211,13 @@
       >
     {:else}
       <button
+        class="btn"
         type="button"
         disabled={locked}
         aria-disabled={pending}
         aria-busy={pending}
         onclick={(event) => void retry(server.id, event.currentTarget)}
-        >{pending ? "Checking…" : `Retry ${server.name}`}</button
+        >{pending ? READINESS.checking.label : `Retry ${server.name}`}</button
       >
     {/if}
     {#if store.serverApproval?.id === server.id}
@@ -240,8 +239,10 @@
           Approve only if both codes match.
         </p>
       {/if}
-      <button type="button" onclick={controller.cancelServerApproval}
-        >Cancel sign-in</button
+      <button
+        class="btn"
+        type="button"
+        onclick={controller.cancelServerApproval}>Cancel sign-in</button
       >
       {#if !store.serverApproval.renewUrl}
         <p>
@@ -261,43 +262,33 @@
 {/each}
 
 <style>
-  .approval-code strong {
-    display: block;
-    padding-block: 4px;
-    font: 600 var(--type-lg)/1.4 var(--font-mono);
-    letter-spacing: 0.12em;
-  }
   .server-setting {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
     min-width: 0;
-    gap: 8px;
-    font: var(--type-sm)/1.4 var(--font-sans);
+    font: var(--type-sm) / 1.4 var(--font-sans);
   }
-  .server-heading,
-  .latency-policy {
+  .server-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
   strong {
     font-size: var(--type-sm);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
   small {
     color: var(--text-muted);
     font-size: var(--type-xs);
   }
   .latency-policy {
-    --selector-width: 100%;
+    --scope-width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    min-width: 0;
-    width: 100%;
     justify-items: start;
     gap: 6px;
-    padding-top: 4px;
+    min-width: 0;
+    padding-top: var(--space-1);
   }
   .server-choices {
     display: grid;
@@ -307,34 +298,30 @@
     overflow-y: auto;
     padding: 3px;
     border: 1px solid var(--border);
-    border-radius: calc(var(--r-well) + 4px);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
   .server-choices label {
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
-    min-height: 32px;
-    padding: 6px 8px;
+    min-height: var(--control-h);
+    padding: 6px var(--space-2);
     border: 1px solid transparent;
     border-radius: var(--r-well);
-    background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
-    transition:
-      background 160ms ease,
-      border-color 160ms ease;
+    transition: var(--transition-control);
   }
   .server-choices label.checked {
-    color: var(--text);
     border-color: color-mix(
       in srgb,
       var(--server-accent) 28%,
       var(--border-strong)
     );
     background: var(--surface-1);
+    color: var(--text);
   }
   .server-choices input {
     appearance: none;
@@ -342,10 +329,8 @@
     place-content: center;
     width: 14px;
     height: 14px;
-    margin: 0;
     border: 1px solid var(--border-strong);
     border-radius: 3px;
-    background: transparent;
     color: var(--brand-strong);
     cursor: inherit;
   }
@@ -371,48 +356,42 @@
   .server-choices label:not(.checked):has(input:disabled) {
     opacity: 0.55;
   }
-  .server-choices .server-name {
-    text-align: left;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--type-xs);
-    font-weight: 600;
-  }
   .server-identity {
     display: grid;
-    min-width: 0;
     gap: 2px;
-    text-align: left;
+    min-width: 0;
+  }
+  .server-name {
+    overflow: hidden;
+    font-size: var(--type-xs);
+    font-weight: var(--w-strong);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .server-status {
-    font-size: 10px;
+    font-size: var(--type-2xs);
     line-height: 1.3;
   }
   .server-status[data-state="failed"],
   .server-status[data-state="sign-in"] {
     color: var(--warn);
   }
-  .server-status[data-state="ready"] {
+  .server-status[data-state="verified"] {
     color: var(--brand-strong);
   }
   .server-preflight {
     display: flex;
     align-items: baseline;
-    justify-content: flex-end;
     gap: 2px;
-    color: var(--text-muted);
-    font: var(--type-xs)/1.3 var(--font-mono);
+    font: var(--type-xs) / 1.3 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
   .server-preflight span {
     color: var(--text-soft);
-    font-size: 9px;
+    font-size: var(--type-2xs);
   }
   .selection-help {
-    margin: 0;
     font-size: var(--type-xs);
   }
   .feedback-message {
@@ -421,45 +400,14 @@
   .feedback-message span {
     display: inline-block;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .feedback-message span {
-      animation: feedback-enter var(--dur-hover) var(--ease-out) both;
-    }
-    .server-choices input:checked::after {
-      animation: check-enter var(--dur-hover) var(--ease-out) both;
-    }
-  }
-  @keyframes feedback-enter {
-    from {
-      opacity: 0.6;
-      transform: translateY(1px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @keyframes check-enter {
-    from {
-      opacity: 0;
-      transform: translateY(-1px) rotate(-45deg) scale(0.8);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(-1px) rotate(-45deg) scale(1);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .server-choices label {
-      transition: none;
-    }
-  }
-
   .server-feedback,
   .selection-notice {
-    padding: 10px 0;
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+    padding-block: 10px;
     border-top: 1px solid var(--border);
-    font: var(--type-xs)/1.5 var(--font-sans);
+    font: var(--type-xs) / 1.5 var(--font-sans);
   }
   .server-feedback > div {
     display: flex;
@@ -468,30 +416,18 @@
     gap: 6px;
   }
   p {
-    margin: 4px 0;
     color: var(--text-muted);
     overflow-wrap: anywhere;
   }
-  button,
   a {
     color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
-  button {
-    border: 0;
-    border-radius: 999px;
-    background: var(--brand-soft);
-    min-height: 32px;
-    padding: 5px 12px;
-    font: 600 var(--type-xs)/1.3 var(--font-sans);
-    cursor: pointer;
-  }
-  button:disabled,
-  button[aria-disabled="true"] {
-    opacity: 0.5;
-    cursor: default;
-  }
-  button:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
+  .approval-code strong {
+    display: block;
+    padding-block: var(--space-1);
+    font: var(--w-strong) var(--type-lg) / 1.4 var(--font-mono);
+    letter-spacing: var(--track-wide);
   }
 </style>

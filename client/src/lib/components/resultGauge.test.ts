@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import type { RunResult, ThroughputResult } from "../runner/contract";
+import type { ThroughputResult } from "../runner/contract";
+import { testRunResult } from "../runner/test-helpers.testutil";
 import {
   primaryResultGaugeArc,
   resultGaugeArcs,
@@ -12,37 +13,16 @@ const throughput = (reportedBytesPerSec: number): ThroughputResult => ({
   stabilityPct: 100,
   totalBytes: reportedBytesPerSec,
   reportedBytesPerSec,
-  fullAverageBytesPerSec: reportedBytesPerSec,
-  method: "full-average",
-  stabilityScore: 1,
-  band: "high",
-  probeTimeoutPct: 0,
 });
 
-const result = (overrides: Partial<RunResult>): RunResult => ({
-  download: null,
-  upload: null,
-  bidirectional: null,
-  latency: null,
-  latencyByStage: {
-    latency: null,
-    download: null,
-    upload: null,
-    bidirectional: null,
-  },
-  bufferbloat: null,
-  stageFailures: {},
-  startedAt: 0,
-  durationMs: 0,
-  ...overrides,
-});
+const result = testRunResult;
 
 const arc = (
   phase: "download" | "upload" | "bidirectional",
   label: string,
   bytesPerSec: number,
-  dashed = false,
-) => ({ phase, label, bytesPerSec, dashed });
+  direction: "download" | "upload" | "bidirectional" = phase,
+) => ({ phase, direction, label, bytesPerSec, dashed: direction !== phase });
 
 test("terminal gauge enumerates every complete throughput phase", () => {
   expect(
@@ -65,7 +45,7 @@ test("one-sided bidirectional evidence stays partial", () => {
     resultGaugeArcs(
       result({ bidirectional: { down: throughput(30), up: null } }),
     ),
-  ).toEqual([arc("bidirectional", "Bidirectional download", 30, true)]);
+  ).toEqual([arc("bidirectional", "Bidirectional download", 30, "download")]);
 });
 
 test("terminal gauge skips unavailable stages in every combination", () => {
@@ -74,16 +54,8 @@ test("terminal gauge skips unavailable stages in every combination", () => {
     resultGaugeArcs(
       result({
         latency: {
-          idleMs: 10,
-          minMs: 9,
-          p50Ms: 10,
-          p95Ms: 12,
           jitterMs: 1,
-          probeTimeoutPct: 0,
           reportedMs: 10,
-          method: "full-average",
-          stabilityScore: 1,
-          band: "high",
         },
       }),
     ),
@@ -103,14 +75,14 @@ test("terminal gauge skips unavailable stages in every combination", () => {
     resultGaugeArcs(
       result({ bidirectional: { down: null, up: throughput(40) } }),
     ),
-  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, true)]);
+  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, "upload")]);
 });
 
 test("layer ordering paints highest throughput first and preserves ties", () => {
   const layers = sortResultGaugeArcs([
     arc("download", "Download", 20),
     arc("upload", "Upload", 80),
-    arc("bidirectional", "Bidirectional upload", 80, true),
+    arc("bidirectional", "Bidirectional upload", 80, "upload"),
   ]);
   expect(layers.map((arc) => arc.phase)).toEqual([
     "upload",
@@ -198,6 +170,6 @@ test("headline prefers download then upload then bidirectional regardless of spe
   expect(primaryResultGaugeArc([bidi, upload])).toBe(upload);
   expect(primaryResultGaugeArc([bidi])).toBe(bidi);
   expect(primaryResultGaugeArc([])).toBeNull();
-  const partial = arc("bidirectional", "Bidirectional upload", 5, true);
+  const partial = arc("bidirectional", "Bidirectional upload", 5, "upload");
   expect(primaryResultGaugeArc([partial])).toBe(partial);
 });

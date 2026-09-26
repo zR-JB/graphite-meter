@@ -5,22 +5,27 @@ import {
   authenticationRequired,
 } from "./request-auth";
 
-let pendingClassification: Promise<boolean> | null = null;
+/* Held in a record so the owner that clears it compares records, never the in-flight promise itself. */
+let pendingClassification: { required: Promise<boolean> } | null = null;
 
-export const authEnabled =
-  typeof document !== "undefined" &&
-  document
-    .querySelector('meta[name="graphite-meter-auth"]')
-    ?.getAttribute("content") === "enabled";
+/** The server marks authenticated pages; the document stays the only owner of that fact. */
+export function authEnabled(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document
+      .querySelector('meta[name="graphite-meter-auth"]')
+      ?.getAttribute("content") === "enabled"
+  );
+}
 
 export const AUTHENTICATION_REQUIRED_EVENT = "graphite-meter-auth-required";
-export type AuthenticationReason = "expired" | "renew";
+type AuthenticationReason = "expired" | "renew";
 
 /** Transport code reports evidence; the active application owns navigation. */
 export function reportAuthenticationRequired(
   reason: AuthenticationReason = "expired",
 ): void {
-  if (!authEnabled) return;
+  if (!authEnabled()) return;
   window.dispatchEvent(
     new CustomEvent(AUTHENTICATION_REQUIRED_EVENT, { detail: reason }),
   );
@@ -79,7 +84,7 @@ export async function requireSessionCoverage(
   localSignal?: AbortSignal,
 ): Promise<SessionBudget | null> {
   if (localSignal?.aborted) throw new DOMException("Aborted", "AbortError");
-  if (!authEnabled) return null;
+  if (!authEnabled()) return null;
   const controller = new AbortController();
   const relayAbort = () => controller.abort();
   localSignal?.addEventListener("abort", relayAbort, { once: true });
@@ -130,7 +135,7 @@ export async function requireSessionCoverage(
 }
 
 export function csrfHeader(): Record<string, string> {
-  if (!authEnabled || typeof document === "undefined") return {};
+  if (!authEnabled()) return {};
   const prefix = "__Host-gm_csrf=";
   const value = document.cookie
     .split("; ")
@@ -142,13 +147,13 @@ export function csrfHeader(): Record<string, string> {
 export async function classifyAuthenticationFailure(
   localSignal?: AbortSignal,
 ): Promise<boolean> {
-  if (!authEnabled || localSignal?.aborted) return false;
+  if (!authEnabled() || localSignal?.aborted) return false;
   // Parallel transfer workers share one probe: a single expiry must not fan out into a burst of /auth/session requests.
-  const pending = (pendingClassification ??= sessionAuthenticationRequired(
-    location.origin,
-  ));
+  const pending = (pendingClassification ??= {
+    required: sessionAuthenticationRequired(location.origin),
+  });
   try {
-    const required = await pending;
+    const required = await pending.required;
     if (required && !localSignal?.aborted) reportAuthenticationRequired();
     return required;
   } finally {
@@ -167,7 +172,7 @@ export async function authenticatedFetch(
       headers.set(name, value);
   }
 
-  const credentials = authEnabled ? "include" : init?.credentials;
+  const credentials = authEnabled() ? "include" : init?.credentials;
   const response = await fetch(input, {
     ...init,
     headers,

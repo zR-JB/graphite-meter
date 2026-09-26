@@ -1,95 +1,73 @@
 <script lang="ts">
-  // Bottom status strip: phase label, elapsed/remaining time, transferred bytes,
-  // build identity, and compact connection hints.
   import { tooltip } from "../actions/tooltip";
-  import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
-  import { fmtBytes } from "../format";
-  import { BUILD_IDENTITY } from "../constants";
-  import type { Phase } from "../runner/contract";
-  import { completionLabel } from "./phasePresentation";
-
-  const PHASE_LABEL: Record<Phase, string> = {
-    idle: "Idle",
-    connecting: "Verifying target",
-    warmup: "Warming up",
-    latency: "Measuring latency",
-    download: "Downloading",
-    upload: "Uploading",
-    bidirectional: "Bidirectional",
-    complete: "Complete",
-    aborted: "Aborted",
-    error: "Error",
-  };
-
-  let now = $state(Date.now());
-  let visible = $state(true);
-
-  onMount(() => {
-    const update = () => (visible = !document.hidden);
-    update();
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
-  });
-
-  $effect(() => {
-    if (!store.isRunning || !visible) return;
-    now = Date.now();
-    const id = setInterval(() => (now = Date.now()), 200);
-    return () => clearInterval(id);
-  });
+  import { fmtBytes, fmtDuration } from "../format";
+  import { BUILD } from "../buildenv";
+  import { statusLabel } from "../presentation/vocabulary";
 
   const elapsedMs = $derived(
-    store.isRunning && store.startEpoch
-      ? now - store.startEpoch
-      : (store.result?.durationMs ??
-          (store.phase === "aborted" && store.startEpoch
-            ? now - store.startEpoch
-            : 0)),
+    store.result?.durationMs ?? store.runClock.current,
+  );
+  const remainingMs = $derived(
+    Math.max(0, store.phaseBudgetMs - store.phaseClock.current),
   );
 
-  function fmtElapsed(ms: number): string {
-    const s = ms / 1000;
-    return `${s.toFixed(1)}s`;
-  }
-
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
+  const { status } = $derived(store.preparation);
+  const refused = $derived(status === "blocked" || status === "failed");
+  const label = $derived(
+    statusLabel(status, store.phase, store.result?.outcome),
+  );
 </script>
 
-<span class="label" role="status" aria-live="polite"
-  >{store.phase === "complete"
-    ? completionLabel(store.result?.outcome)
-    : PHASE_LABEL[store.phase]}</span
->
+{#if refused}
+  <span
+    class="label term"
+    {@attach tooltip(() => store.startError || store.startBlocker)}
+    >{label}</span
+  >
+{:else}
+  <span class="label">{label}</span>
+{/if}
 <span
   class="elapsed"
   class:secondary={showRemaining}
-  use:tooltip={`Elapsed ${fmtElapsed(elapsedMs)}`}
-  ><span class="caption">elapsed&nbsp;</span>{fmtElapsed(elapsedMs)}</span
+  {@attach tooltip(() => `Elapsed ${fmtDuration(elapsedMs)}`)}
+  ><span class="caption">elapsed&nbsp;</span><span class="readout"
+    >{fmtDuration(elapsedMs)}</span
+  ></span
+>
+<span class="transferred"
+  ><span class="readout"
+    >{fmtBytes(store.bytesTransferred, store.unitBase)}</span
+  ><span class="caption">&nbsp;transferred</span></span
 >
 {#if showRemaining}
   <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}{fmtElapsed(store.phaseRemainingMs)} left{:else}Paused<span
+    {#if store.measuring}<span class="readout">{fmtDuration(remainingMs)}</span> left{:else}Paused<span
         class="caption"
       >
-        · {fmtElapsed(store.phaseRemainingMs)} left</span
+        · {fmtDuration(remainingMs)} left</span
       >{/if}
   </span>
 {/if}
-<span class="transferred"
-  >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption"
-    >&nbsp;xfer</span
-  ></span
->
-<span class="build">{BUILD_IDENTITY}</span>
+<span class="build">{BUILD.identity}</span>
 
 <style>
   span {
     white-space: nowrap;
   }
+  /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
   .label {
+    min-width: 16ch;
     color: var(--text);
-    font-weight: 600;
+    font-weight: var(--w-strong);
+  }
+  .readout {
+    display: inline-block;
+    min-width: 9ch;
+    font-variant-numeric: tabular-nums;
+    text-align: end;
   }
   .build {
     margin-left: auto;
@@ -97,7 +75,7 @@
   }
   .paused {
     color: var(--err);
-    font-weight: 600;
+    font-weight: var(--w-strong);
   }
   @container status (max-width: 800px) {
     .build {

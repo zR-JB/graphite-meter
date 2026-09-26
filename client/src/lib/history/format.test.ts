@@ -1,42 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import {
-  formatDuration,
-  formatHistoryBytes,
-  formatHistoryRate,
-  formatRecentCompletion,
-} from "./format";
+import { formatHistoryRate, formatRecentCompletion } from "./format";
 
 describe("history formatting", () => {
-  test("duration changes scale without implying excessive precision", () => {
-    expect(formatDuration(0)).toBe("0 ms");
-    expect(formatDuration(999)).toBe("999 ms");
-    expect(formatDuration(1_000)).toBe("1.0 s");
-    expect(formatDuration(9_949)).toBe("9.9 s");
-    expect(formatDuration(9_950)).toBe("9.9 s");
-    expect(formatDuration(10_000)).toBe("10 s");
-    expect(formatDuration(59_600)).toBe("60 s");
-    expect(formatDuration(60_000)).toBe("1 min");
-    expect(formatDuration(65_000)).toBe("1 min 5 s");
-    expect(formatDuration(3_599_000)).toBe("59 min 59 s");
-    expect(formatDuration(3_600_000)).toBe("1 h");
-    expect(formatDuration(3_690_000)).toBe("1 h 2 min");
-  });
-
-  test("rates honor current bit/byte and decimal/binary preferences", () => {
+  test("rates honor current unit preferences and promote a prefix like the live view", () => {
     expect(
       formatHistoryRate(125_000_000, { base: "base10", kind: "bits" }),
-    ).toBe("1.00 Gbit/s");
+    ).toBe("1000 Mbit/s");
     expect(formatHistoryRate(1_048_576, { base: "base2", kind: "bytes" })).toBe(
-      "1.00 MiB/s",
+      "1024 KiB/s",
     );
-    expect(formatHistoryRate(null, { base: "base10", kind: "bits" })).toBe(
-      "Unavailable",
-    );
-  });
-
-  test("transferred bytes use the user's scaling base", () => {
-    expect(formatHistoryBytes(1_000_000, "base10")).toBe("1.0 MB");
-    expect(formatHistoryBytes(1_048_576, "base2")).toBe("1.0 MiB");
+    expect(formatHistoryRate(null, { base: "base10", kind: "bits" })).toBe("—");
   });
 
   test("recent completions switch to absolute rendering at sixty minutes", () => {

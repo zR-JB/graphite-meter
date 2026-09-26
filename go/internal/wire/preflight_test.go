@@ -55,14 +55,20 @@ func TestGoldenDocumentsMatchTheirSchemas(t *testing.T) {
 }
 
 func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
-	throughput := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream", Protocol: "http1", Routes: DefaultThroughputRoutes()}
-	latency := LatencyTarget{ID: "ws-http1-clear", Origin: throughput.Origin, Transport: "websocket", Protocol: "http1", Routes: DefaultLatencyRoutes()}
+	throughput := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream",
+		Protocol: "http1"}
+	latency := LatencyTarget{ID: "ws-http1-clear", Origin: throughput.Origin, Transport: "websocket", Protocol: "http1"}
 	values := []struct {
 		name  string
 		value any
 	}{
-		{"preflight", Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{throughput}, LatencyTargets: []LatencyTarget{latency}}}},
-		{"probe", Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2", Load: &ProbeLoad{Active: 1, Max: 256}}},
+		{"preflight",
+			Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation",
+				Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{throughput},
+					LatencyTargets: []LatencyTarget{latency}}}},
+		{"probe",
+			Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2",
+				Load: &ProbeLoad{Active: 1, Max: 256}}},
 	}
 	for _, tc := range values {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,9 +149,6 @@ func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &pf); err != nil {
 		t.Fatalf("unmarshal preflight golden: %v", err)
 	}
-	if got, want := pf.Capabilities.LatencyTargets[0].Routes.Ping, "/ws/ping"; got != want {
-		t.Fatalf("LatencyTargets[0].Routes.Ping = %q, want %q", got, want)
-	}
 	data, err = json.Marshal(pf)
 	if err != nil {
 		t.Fatalf("marshal preflight: %v", err)
@@ -154,8 +157,11 @@ func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 }
 
 func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
-	for _, origin := range []string{"https://u:p@example.com", "https://example.com/", "https://example.com/path", "https://example.com?", "https://example.com#", "//example.com", "ftp://example.com", "https://example.com:99999"} {
-		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1", "transport": TransportFetchStream})
+	for _, origin := range []string{"https://u:p@example.com", "https://example.com/", "https://example.com/path",
+		"https://example.com?", "https://example.com#", "//example.com", "ftp://example.com",
+		"https://example.com:99999"} {
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1",
+			"transport": TransportFetchStream})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -164,14 +170,16 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 			t.Errorf("accepted origin %q", origin)
 		}
 	}
-	for _, document := range []string{`{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`, `{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
+	for _, document := range []string{`{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`,
+		`{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
 		var target ThroughputTarget
 		if err := json.Unmarshal([]byte(document), &target); err == nil {
 			t.Errorf("accepted target %s", document)
 		}
 	}
 	for _, origin := range []string{".", "https://[::1]:7247", "http://other.example:7246"} {
-		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1", "transport": TransportFetchStream})
+		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1",
+			"transport": TransportFetchStream})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,11 +191,15 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 }
 
 func TestDiscoveryMetadataAndProbeEvidenceBounds(t *testing.T) {
-	valid := Preflight{Generation: "a", Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{}, LatencyTargets: []LatencyTarget{}}}
+	valid := Preflight{Generation: "a",
+		Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{}, LatencyTargets: []LatencyTarget{}}}
 	if err := valid.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range []Preflight{{}, {Generation: "a"}, {Generation: "a", Capabilities: Capabilities{ThroughputTargets: make([]ThroughputTarget, 33), LatencyTargets: []LatencyTarget{}}}} {
+	for _, invalid := range []Preflight{{}, {Generation: "a"},
+		{Generation: "a",
+			Capabilities: Capabilities{ThroughputTargets: make([]ThroughputTarget, 33),
+				LatencyTargets: []LatencyTarget{}}}} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatal("accepted invalid discovery")
 		}
