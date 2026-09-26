@@ -300,18 +300,10 @@
     const relativeRefresh = window.setInterval(() => {
       if (document.visibilityState === "visible") renderedAt = Date.now();
     }, 60_000);
-    const refresh = () => void load(false);
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") refresh();
-    };
-    const stopChanges = onHistoryChanged(refresh, changeSource);
-    window.addEventListener("focus", refresh);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const stopChanges = onHistoryChanged(() => void load(false), changeSource);
     return () => {
       loadGeneration++;
       stopChanges();
-      window.removeEventListener("focus", refresh);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.clearInterval(relativeRefresh);
       repository.close();
     };
