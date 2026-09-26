@@ -37,6 +37,7 @@ jobs:
       pr: ${{ steps.verify.outputs.pr }}
       oci_sha256: ${{ steps.verify.outputs.oci_sha256 }}
       digest: ${{ steps.verify.outputs.digest }}
+      assets_sha256: ${{ steps.verify.outputs.assets_sha256 }}
     steps:
       - name: Checkout trusted release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,6 +152,7 @@ jobs:
           MAIN_SHA: ${{ needs.verify.outputs.main_sha }}
           PR: ${{ needs.verify.outputs.pr }}
           OCI_SHA256: ${{ needs.verify.outputs.oci_sha256 }}
+          ASSETS_SHA256: ${{ needs.verify.outputs.assets_sha256 }}
           HANDOFF_DIR: ${{ runner.temp }}/handoff
         run: python3 scripts/ci/release.py recheck
 

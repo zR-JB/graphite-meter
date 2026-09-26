@@ -77,6 +77,14 @@ def file_sha256(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def assets_sha256(directory: Path) -> str:
+    """Hash the sorted name and SHA-256 of every regular file in `directory`."""
+    entries = sorted(directory.iterdir())
+    exact_files(directory, {entry.name for entry in entries})
+    listing = "".join(f"{entry.name}\t{file_sha256(entry)}\n" for entry in entries)
+    return hashlib.sha256(listing.encode()).hexdigest()
+
+
 def parse_release(tag: str, sha: str, pr: int) -> Release:
     match = TAG_RE.fullmatch(tag)
     if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
@@ -224,6 +232,7 @@ def command_verify() -> None:
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
         oci_sha256=digest, digest=manifest,
+        assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
     )
     append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
@@ -243,6 +252,8 @@ def command_recheck() -> None:
     exact_files(handoff / "image", {OCI})
     if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
         refuse("approved OCI handoff does not match the verified archive")
+    if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
+        refuse("approved asset handoff does not match the verified assets")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
         refuse("main moved after verification; start a fresh request")

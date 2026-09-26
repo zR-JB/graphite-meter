@@ -12,6 +12,7 @@ from unittest.mock import patch
 from github_api import APICall, JsonValue
 from release import (
     Release,
+    assets_sha256,
     command_prepare,
     command_recheck,
     parse_release,
@@ -349,17 +350,23 @@ class RequestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "image").mkdir()
             (Path(directory) / "image/graphite-meter.oci.tar").write_bytes(b"verified")
+            (Path(directory) / "assets").mkdir()
+            (Path(directory) / "assets/checksums.txt").write_text("sums")
             env = {"MAIN_SHA": MAIN, "PR": "", "TAG": "v1.2.3", "SOURCE_SHA": MAIN,
                    "REPOSITORY": REPO, "HANDOFF_DIR": directory,
+                   "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(),
+                   "ASSETS_SHA256": assets_sha256(Path(directory) / "assets"),
                    "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}
-            for digest, ok in ((hashlib.sha256(b"verified").hexdigest(), True), ("0" * 64, False)):
-                with (self.subTest(ok=ok), patch.dict(os.environ, env | {"OCI_SHA256": digest}),
+            for change, error in ((None, None), ("OCI_SHA256", "OCI handoff"),
+                                  ("ASSETS_SHA256", "asset handoff")):
+                changed = {change: "0" * 64} if change else {}
+                with (self.subTest(change=change), patch.dict(os.environ, env | changed),
                       patch("release.require_checkout"),
                       patch("release.require_publishable", return_value=(MAIN, 1, ""))):
-                    if ok:
+                    if error is None:
                         command_recheck()
                     else:
-                        with self.assertRaisesRegex(TrustError, "does not match"):
+                        with self.assertRaisesRegex(TrustError, error):
                             command_recheck()
 
 if __name__ == "__main__":
