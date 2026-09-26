@@ -1,10 +1,6 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import {
-  isHistoryGeneration,
-  isRepairHistoryGeneration,
-} from "../src/lib/history/changes";
 import type { HistoryRecord } from "../src/lib/history/types";
-import { home, open, ready, run } from "./fleet";
+import { home, open, ready, run, runButton } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) =>
@@ -86,14 +82,14 @@ function record(index: number, completedAt = base - index * 60_000) {
 
 interface Archive {
   records: unknown[];
-  generation?: unknown;
+  clearedAt?: unknown;
   version?: number;
 }
 
 // Writes raw rows as another tab or an older build would have left them.
 function seed(page: Page, archive: Archive) {
   return page.evaluate(
-    ({ db, records, generation, version }) =>
+    ({ db, records, clearedAt, version }) =>
       new Promise<void>((resolve, reject) => {
         const opening = indexedDB.open(db.name, version ?? db.version);
         opening.onupgradeneeded = () => {
@@ -113,10 +109,10 @@ function seed(page: Page, archive: Archive) {
           const tx = database.transaction(stores, "readwrite");
           for (const value of records)
             tx.objectStore(db.resultsStore).put(value);
-          if (generation !== undefined)
+          if (clearedAt !== undefined)
             tx.objectStore(db.metadataStore).put({
-              key: db.generationKey,
-              value: generation,
+              key: db.clearedAtKey,
+              value: clearedAt,
             });
           tx.oncomplete = () => {
             database.close();
@@ -141,13 +137,13 @@ function stored(page: Page) {
           const tx = database.transaction(stores);
           const rows = tx.objectStore(db.resultsStore).getAll();
           const meta = stores.includes(db.metadataStore)
-            ? tx.objectStore(db.metadataStore).get(db.generationKey)
+            ? tx.objectStore(db.metadataStore).get(db.clearedAtKey)
             : null;
           tx.oncomplete = () => {
             database.close();
             resolve({
               records: rows.result,
-              generation: meta?.result?.value,
+              clearedAt: meta?.result?.value,
               version: database.version,
             });
           };
@@ -237,28 +233,37 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
   expect((await stored(page)).records).toEqual([]);
 });
 
-test("the next save repairs corrupt generation metadata and keeps raw rows", async (page) => {
+test("a save ignores corrupt clear metadata, keeps raw rows, and a later clear refuses older results", async (page) => {
   await fixturePage(page);
   const malformed = { id: id(9), completedAt: base, unexpected: "raw row" };
   await seed(page, {
     records: [record(1), malformed],
-    generation: { corrupt: true },
+    clearedAt: { corrupt: true },
   });
   await page.goto(home.url);
   await page.evaluate(() => {
     (window as any).saves = 0;
-    addEventListener("graphite-meter-history-changed", () => {
+    new BroadcastChannel("graphite-meter-history").onmessage = () => {
       (window as any).saves++;
-    });
+    };
   });
   await ready(page);
   await run(page);
-  const repaired = await stored(page);
-  expect(repaired.records).toHaveLength(3);
-  expect(repaired.records).toContainEqual(malformed);
-  expect(isHistoryGeneration(repaired.generation)).toBe(true);
-  expect(isRepairHistoryGeneration(repaired.generation as string)).toBe(true);
+  const saved = await stored(page);
+  expect(saved.records).toHaveLength(3);
+  expect(saved.records).toContainEqual(malformed);
   expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  // Another tab cleared history after this run completed: the result is not written back.
+  await seed(page, { records: [], clearedAt: Date.now() + 3_600_000 });
+  await page.reload();
+  await ready(page);
+  await runButton(page, /^(Start test|Run again)$/).click();
+  await expect(page.locator('#console[data-phase="complete"]')).toHaveCount(1, {
+    timeout: 20_000,
+  });
+  await Bun.sleep(300);
+  expect((await stored(page)).records).toHaveLength(3);
+  await seed(page, { records: [], clearedAt: 0 });
   await history(page);
   await expect(page.locator(".result-row")).toHaveCount(2);
   await expect(page.locator(".history-workspace")).toContainText(

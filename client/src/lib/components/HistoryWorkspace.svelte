@@ -3,8 +3,12 @@
   import { tooltip } from "../actions/tooltip";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { ICON } from "../constants";
-  import { HistoryRepository } from "../history/repository";
-  import { broadcastHistory, historyChanges } from "../history/changes";
+  import { createUuid } from "../uuid";
+  import {
+    announceHistoryChanged,
+    HistoryRepository,
+    onHistoryChanged,
+  } from "../history/repository";
   import {
     formatHistoryRate,
     formatLatency,
@@ -42,6 +46,7 @@
 
   let { selectedId, onNavigate, onClose }: Props = $props();
   const repository = new HistoryRepository();
+  const changeSource = createUuid();
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
@@ -171,18 +176,12 @@
     actionError = "";
     try {
       if (action.kind === "clear") {
-        const generation = await repository.clear();
+        await repository.clear();
         records = [];
         malformedCount = 0;
         announcement = "History cleared.";
         if (owner?.isConnected && selectedId) onNavigate(null);
-        const change = { type: "clear" as const, generation };
-        broadcastHistory(change);
-        window.dispatchEvent(
-          new CustomEvent("graphite-meter-history-changed", {
-            detail: change,
-          }),
-        );
+        announceHistoryChanged(changeSource);
         confirmInvoker = null;
         await tick();
         const target = workspace?.querySelector<HTMLElement>(".close-history");
@@ -193,7 +192,7 @@
         records = records.filter((record) => record.id !== action.id);
         announcement = "Result deleted.";
         if (owner?.isConnected && selectedId === action.id) onNavigate(null);
-        broadcastHistory({ type: "delete", id: action.id });
+        announceHistoryChanged(changeSource);
       }
     } catch {
       actionError = "History could not be changed. Try again.";
@@ -307,23 +306,12 @@
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
-    const refreshUnlessOwnClear = (event: Event) => {
-      if ((event as CustomEvent).detail?.type !== "clear") refresh();
-    };
-    const stopChanges = historyChanges(refresh);
-    window.addEventListener(
-      "graphite-meter-history-changed",
-      refreshUnlessOwnClear,
-    );
+    const stopChanges = onHistoryChanged(refresh, changeSource);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       loadGeneration++;
       stopChanges();
-      window.removeEventListener(
-        "graphite-meter-history-changed",
-        refreshUnlessOwnClear,
-      );
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.clearInterval(relativeRefresh);

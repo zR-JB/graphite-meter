@@ -1,82 +1,73 @@
 import type { store as applicationStore } from "../state/store.svelte";
-import { HistoryWriteQueue } from "./writeQueue";
-import { broadcastHistory, historyChanges, isHistoryChange } from "./changes";
-import { HistoryRepository } from "./repository";
+import type { HistoryRecord } from "./types";
+import { announceHistoryChanged, HistoryRepository } from "./repository";
 
-/** Owns optional result persistence for one mounted application. */
+/** Owns optional result persistence for one mounted application: saves in order, retrying transient failures. */
 export function mountHistoryPersistence(
   store: typeof applicationStore,
 ): () => void {
   let disposed = false;
-  let historyRepository: HistoryRepository | null = null;
-  let permanentHistoryWarning = false;
-  const historyQueue = new HistoryWriteQueue(
-    async (candidate, isCurrent, generation) => {
-      if (disposed || !isCurrent()) return;
-      historyRepository ??= new HistoryRepository();
-      await historyRepository.put(candidate, generation);
-    },
-    async (id) => {
-      await historyRepository?.delete(id);
-    },
-    (candidate) => {
-      if (store.historyCandidate?.id === candidate.id)
-        store.historyCandidate = null;
-      if (!permanentHistoryWarning) store.historyWarning = "";
-      broadcastHistory({ type: "put", id: candidate.id });
-      window.dispatchEvent(new Event("graphite-meter-history-changed"));
-    },
-    (candidate) => {
-      if (store.historyCandidate?.id === candidate.id)
-        store.historyCandidate = null;
-      permanentHistoryWarning = true;
-      store.historyWarning =
-        "This result could not be saved in browser storage.";
-    },
-    () => {
-      store.historyWarning =
-        "Unable to save this result locally. Future writes will be retried.";
-    },
-  );
+  let draining = false;
+  let permanent = false;
+  const repository = new HistoryRepository();
+  const pending: HistoryRecord[] = [];
+  const settle = (record: HistoryRecord) => {
+    pending.shift();
+    if (store.historyCandidate?.id === record.id) store.historyCandidate = null;
+  };
+  const drain = async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      while (!disposed && pending.length) {
+        const record = pending[0];
+        try {
+          const written = await repository.put(record);
+          if (disposed) return;
+          settle(record);
+          if (!permanent) store.historyWarning = "";
+          if (written) announceHistoryChanged();
+        } catch (error) {
+          if (disposed) return;
+          // A value storage cannot clone never succeeds on retry.
+          if (!(
+            error instanceof DOMException && error.name === "DataCloneError"
+          )) {
+            store.historyWarning =
+              "Unable to save this result locally. Future writes will be retried.";
+            return;
+          }
+          settle(record);
+          permanent = true;
+          store.historyWarning =
+            "This result could not be saved in browser storage.";
+        }
+      }
+    } finally {
+      draining = false;
+    }
+  };
   const disposeEffects = $effect.root(() => {
     $effect(() => {
       const candidate = store.historyCandidate;
-      if (!candidate) return;
-      historyQueue.enqueue(candidate);
+      if (!candidate || pending.some((record) => record.id === candidate.id))
+        return;
+      pending.push(candidate);
+      void drain();
     });
   });
-  const retry = () => void historyQueue.flush();
+  const retry = () => void drain();
   const timer = window.setInterval(retry, 15_000);
   window.addEventListener("focus", retry);
   window.addEventListener("online", retry);
   document.addEventListener("visibilitychange", retry);
-  const clearHistoryQueue = (generation: string) => {
-    historyQueue.clear(generation);
-    if (store.historyCandidate) store.historyCandidate = null;
-    permanentHistoryWarning = false;
-  };
-  const onHistoryChange = (event: Event) => {
-    const change = (event as CustomEvent).detail;
-    if (isHistoryChange(change) && change.type === "clear")
-      clearHistoryQueue(change.generation);
-  };
-  const stopHistoryChanges = historyChanges((change) => {
-    if (change.type === "clear") clearHistoryQueue(change.generation);
-  });
-  window.addEventListener("graphite-meter-history-changed", onHistoryChange);
   return () => {
     disposed = true;
     disposeEffects();
-    historyQueue.dispose();
     window.clearInterval(timer);
     window.removeEventListener("focus", retry);
     window.removeEventListener("online", retry);
     document.removeEventListener("visibilitychange", retry);
-    window.removeEventListener(
-      "graphite-meter-history-changed",
-      onHistoryChange,
-    );
-    stopHistoryChanges();
-    historyRepository?.close();
+    repository.close();
   };
 }
