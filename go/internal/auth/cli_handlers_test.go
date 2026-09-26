@@ -1,11 +1,11 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/base64"
+	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,241 +14,202 @@ import (
 	"time"
 )
 
-// challengeFor returns the base64url challenge a terminal client derives from a verifier, matching goclient/auth.go.
+// challengeFor returns the base64url challenge a terminal client derives from a verifier.
 func challengeFor(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func withSessionCookie(r *http.Request, raw string) *http.Request {
-	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: raw})
+func cliPageRequest(challenge, cookie string) *http.Request {
+	r := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
+	if cookie != "" {
+		withSessionCookie(r, cookie)
+	}
 	return r
 }
 
-// --- cliPage ---
-
-func TestCliPageRejectsInvalidChallenge(t *testing.T) {
-	s := testService(t)
-	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
-	r := withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge=not-a-challenge", nil), raw)
+func cliExchange(s *Service, body string) *httptest.ResponseRecorder {
 	rr := httptest.NewRecorder()
-	s.cliPage(rr, r)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("invalid challenge code=%d, want 403", rr.Code)
+	s.cliToken(rr, secureRequest("POST", "/auth/cli/token", strings.NewReader(body)))
+	return rr
+}
+
+func approveCLI(s *Service, sess *session, verifier string) {
+	s.approvals[challengeFor(verifier)] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute),
+		approved: true}
+}
+
+func TestCliPageRefusals(t *testing.T) {
+	s := testService(t)
+	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
+	grant := grantFor(t, s, sess)
+	bearer := cliPageRequest(challengeFor("verifier-bearer"), "")
+	bearer.Header.Set("Authorization", "Bearer "+grant)
+	for name, tc := range map[string]struct {
+		r    *http.Request
+		want int
+	}{
+		"invalid challenge": {cliPageRequest("not-a-challenge", raw), http.StatusForbidden},
+		"no session":        {cliPageRequest(challengeFor("verifier-abc"), ""), http.StatusSeeOther},
+		"bearer principal":  {bearer, http.StatusSeeOther},
+	} {
+		rr := httptest.NewRecorder()
+		s.cliPage(rr, tc.r)
+		if rr.Code != tc.want || tc.want == http.StatusSeeOther &&
+			!strings.HasPrefix(rr.Header().Get("Location"), "/login?challenge=") {
+			t.Errorf("%s: code=%d location=%q, want %d", name, rr.Code, rr.Header().Get("Location"), tc.want)
+		}
 	}
 }
 
-func TestCliPageRedirectsToLoginWithoutSession(t *testing.T) {
-	s := testService(t)
-	challenge := challengeFor("verifier-abc")
-	r := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
-	rr := httptest.NewRecorder()
-	s.cliPage(rr, r)
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("no session code=%d, want 303 redirect", rr.Code)
-	}
-	if loc := rr.Header().Get("Location"); !strings.HasPrefix(loc, "/login?challenge=") {
-		t.Fatalf("redirect Location=%q, want /login carrying the challenge", loc)
-	}
-}
-
-func TestCliPageRejectsBearerPrincipal(t *testing.T) {
-	s := testService(t)
-	_, sess, _ := s.createSession("local-operator", "Local operator", "local")
-	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	addGrant(s, sess, token)
-	challenge := challengeFor("verifier-bearer")
-	r := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
-	r.Header.Set("Authorization", "Bearer "+token)
-	rr := httptest.NewRecorder()
-	s.cliPage(rr, r)
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("bearer on cliPage code=%d, want a /login redirect (never the approval page)", rr.Code)
-	}
-	if !strings.Contains(rr.Header().Get("Location"), "/login") {
-		t.Fatalf("bearer principal not redirected to login: %q", rr.Header().Get("Location"))
-	}
-}
-
-func TestCliPageRendersApprovalAndReusesIt(t *testing.T) {
+func TestCliPageRendersApprovalReusesAndCapsIt(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-render")
-	render := func() *httptest.ResponseRecorder {
+	for range 2 {
 		rr := httptest.NewRecorder()
-		s.cliPage(rr, withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
-		return rr
+		s.cliPage(rr, cliPageRequest(challenge, raw))
+		body := rr.Body.String()
+		if rr.Code != http.StatusOK || !strings.Contains(body, verificationCode(challenge)) ||
+			!strings.Contains(body, sess.csrf) {
+			t.Fatalf("approval page code=%d lacks the verification code or CSRF token", rr.Code)
+		}
 	}
-	rr := render()
-	if rr.Code != http.StatusOK {
-		t.Fatalf("valid session code=%d, want 200", rr.Code)
+	if a := s.approvals[challenge]; len(s.approvals) != 1 || a.session != sess || a.approved {
+		t.Fatalf("renders left %d approvals, want one pending approval bound to the session", len(s.approvals))
 	}
-	body := rr.Body.String()
-	if !strings.Contains(body, verificationCode(challenge)) {
-		t.Error("approval page does not show the verification code")
-	}
-	if !strings.Contains(body, sess.csrf) {
-		t.Error("approval page does not carry the session CSRF token")
-	}
-	s.mu.Lock()
-	a, ok := s.approvals[challenge]
-	created := a
-	s.mu.Unlock()
-	if !ok || a.session != sess || a.approved {
-		t.Fatal("first render did not create a pending approval bound to the session")
-	}
-	render() // second render for the same challenge must reuse, not duplicate
-	s.mu.Lock()
-	reused := s.approvals[challenge]
-	n := len(s.approvals)
-	s.mu.Unlock()
-	if reused != created || n != 1 {
-		t.Fatalf("second render created a new approval (%d total)", n)
-	}
-}
-
-func TestCliPageCapsApprovalsPerSession(t *testing.T) {
-	s := testService(t)
-	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
-	for i := range 8 {
+	for i := 1; i < maxSessionApprovals; i++ {
 		rr := httptest.NewRecorder()
-		ch := challengeFor("verifier-cap-" + string(rune('a'+i)))
-		s.cliPage(rr, withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+ch, nil), raw))
+		s.cliPage(rr, cliPageRequest(challengeFor(fmt.Sprint("verifier-cap-", i)), raw))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("approval %d code=%d, want 200", i, rr.Code)
 		}
 	}
 	rr := httptest.NewRecorder()
-	s.cliPage(rr, withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challengeFor("verifier-cap-over"), nil), raw))
+	s.cliPage(rr, cliPageRequest(challengeFor("verifier-cap-over"), raw))
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("ninth approval code=%d, want 403 (per-session cap)", rr.Code)
+		t.Fatalf("approval over the per-session cap code=%d, want 403", rr.Code)
 	}
 }
 
-// --- cliApprove ---
-
 func approveRequest(s *Service, sess *session, challenge, csrf, origin string) *http.Request {
 	form := url.Values{"csrf": {csrf}, "challenge": {challenge}}.Encode()
-	r := httptest.NewRequest(http.MethodPost, s.origin+"/auth/cli/approve", strings.NewReader(form))
-	r.Host = "meter.example"
-	r.TLS = &tls.ConnectionState{}
+	r := secureRequest(http.MethodPost, "/auth/cli/approve", strings.NewReader(form))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if origin != "" {
 		r.Header.Set("Origin", origin)
 	}
-	return r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
+	return r.WithContext(context.WithValue(r.Context(), principalKey{},
+		Principal{Subject: sess.subject, session: sess}))
 }
 
-func TestCliApproveMarksApprovalApproved(t *testing.T) {
-	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
-	challenge := challengeFor("verifier-approve")
-	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
-
-	rr := httptest.NewRecorder()
-	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("approve code=%d, want 200", rr.Code)
-	}
-	s.mu.Lock()
-	approved := s.approvals[challenge].approved
-	s.mu.Unlock()
-	if !approved {
-		t.Fatal("approval was not marked approved")
-	}
-}
-
-func TestCliApproveRejectsWrongCSRFOriginAndForeignSession(t *testing.T) {
+func TestCliApprove(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	_, other, _ := s.createSession("local-operator", "Local operator", "local")
-	challenge := challengeFor("verifier-reject")
-	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
-
-	cases := map[string]*http.Request{
+	challenge, expired := challengeFor("verifier-approve"), challengeFor("verifier-expired")
+	s.cliPage(httptest.NewRecorder(), cliPageRequest(challenge, raw))
+	s.cliPage(httptest.NewRecorder(), cliPageRequest(expired, raw))
+	s.approvals[expired].expires = time.Now().Add(-time.Second)
+	for name, r := range map[string]*http.Request{
 		"wrong csrf":        approveRequest(s, sess, challenge, "not-the-token", s.origin),
 		"wrong origin":      approveRequest(s, sess, challenge, sess.csrf, "https://evil.example"),
 		"foreign session":   approveRequest(s, other, challenge, other.csrf, s.origin),
 		"unknown challenge": approveRequest(s, sess, challengeFor("nope"), sess.csrf, s.origin),
-	}
-	for name, r := range cases {
+		"expired approval":  approveRequest(s, sess, expired, sess.csrf, s.origin),
+	} {
 		rr := httptest.NewRecorder()
 		s.cliApprove(rr, r)
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("%s: code=%d, want 403", name, rr.Code)
 		}
 	}
-	s.mu.Lock()
-	approved := s.approvals[challenge].approved
-	s.mu.Unlock()
-	if approved {
-		t.Fatal("a rejected request still marked the approval approved")
+	if s.approvals[challenge].approved || s.approvals[expired].approved {
+		t.Fatal("a rejected request still marked an approval approved")
 	}
-}
-
-func TestCliApproveRejectsExpiredApproval(t *testing.T) {
-	s := testService(t)
-	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
-	challenge := challengeFor("verifier-expired")
-	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
-	s.mu.Lock()
-	s.approvals[challenge].expires = time.Now().Add(-time.Second)
-	s.mu.Unlock()
-
 	rr := httptest.NewRecorder()
 	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expired approval code=%d, want 403", rr.Code)
+	if rr.Code != http.StatusOK || !s.approvals[challenge].approved {
+		t.Fatalf("approve code=%d, want 200 and an approved approval", rr.Code)
 	}
 }
 
-// --- corsPreflight ---
-
-func TestCorsPreflight(t *testing.T) {
+func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	s := testService(t)
-	preflight := func(path, origin, method, headers string, secure bool) *httptest.ResponseRecorder {
-		r := secureRequest(http.MethodOptions, path, nil)
-		if !secure {
-			r.TLS = nil
-		}
-		if origin != "" {
-			r.Header.Set("Origin", origin)
-		}
-		if method != "" {
-			r.Header.Set("Access-Control-Request-Method", method)
-		}
-		if headers != "" {
-			r.Header.Set("Access-Control-Request-Headers", headers)
-		}
-		rr := httptest.NewRecorder()
-		s.corsPreflight(rr, r, secure)
-		return rr
+	_, sess, _ := s.createSession("subject", "Name", "local")
+	if rr := cliExchange(s, `{"verifier":"not-known"}`); rr.Code != http.StatusAccepted || len(s.approvals) != 0 {
+		t.Fatalf("unknown verifier code=%d approvals=%d, want 202 and no state", rr.Code, len(s.approvals))
 	}
+	approveCLI(s, sess, "strict-json-verifier")
+	dup := cliExchange(s, `{"verifier":"unknown","verifier":"strict-json-verifier"}`)
+	if dup.Code != http.StatusAccepted || len(sess.grants) != 0 {
+		t.Fatalf("duplicate-name request code=%d grants=%d, want 202 and no grant", dup.Code, len(sess.grants))
+	}
+	approveCLI(s, sess, "terminal-verifier")
+	first := cliExchange(s, `{"verifier":"terminal-verifier"}`)
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &out); first.Code != 200 || err != nil || out.Token == "" {
+		t.Fatalf("first exchange code=%d body=%s", first.Code, first.Body.String())
+	}
+	if _, ok := s.authenticateGrant(out.Token); !ok {
+		t.Fatal("grant not accepted")
+	}
+	if replay := cliExchange(s, `{"verifier":"terminal-verifier"}`); replay.Code != http.StatusAccepted {
+		t.Fatalf("replay code=%d, want 202", replay.Code)
+	}
+	s.mu.Lock()
+	s.deleteSessionLocked(sess)
+	s.mu.Unlock()
+	if _, ok := s.authenticateGrant(out.Token); ok {
+		t.Fatal("grant survived parent logout")
+	}
+}
 
-	// Happy path: a same-origin GET preflight on a measurement route.
-	rr := preflight("/download", s.origin, http.MethodGet, "authorization,x-csrf-token", true)
-	if rr.Code != http.StatusNoContent {
-		t.Fatalf("valid preflight code=%d, want 204", rr.Code)
+// A CLI login at the grant cap replaces the oldest CLI grant and never a browser grant whose run may be live.
+func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
+	s := testService(t)
+	_, sess, _ := s.createSession("subject", "Name", "local")
+	var browser []*browserGrant
+	addBrowserGrant := func() {
+		ctx, cancel := context.WithCancel(sess.ctx)
+		g := &browserGrant{sess: sess, origin: requestingUI, ctx: ctx, cancel: cancel}
+		h := sha256.Sum256([]byte(randomToken(32)))
+		s.grantSeq++
+		s.browserGrants[h], sess.grants[h] = g, s.grantSeq
+		browser = append(browser, g)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Origin"); got != s.origin {
-		t.Errorf("Allow-Origin=%q, want the public origin", got)
+	exchange := func(i int) int {
+		verifier := fmt.Sprintf("verifier-%d", i)
+		approveCLI(s, sess, verifier)
+		return cliExchange(s, `{"verifier":"`+verifier+`"}`).Code
 	}
-	if rr.Header().Get("Access-Control-Allow-Credentials") != "true" {
-		t.Error("preflight did not allow credentials")
-	}
-
-	for name, rr := range map[string]*httptest.ResponseRecorder{
-		"insecure":          preflight("/download", s.origin, http.MethodGet, "", false),
-		"wrong origin":      preflight("/download", "https://evil.example", http.MethodGet, "", true),
-		"disallowed method": preflight("/download", s.origin, http.MethodDelete, "", true),
-		"unlisted path":     preflight("/secret", s.origin, http.MethodGet, "", true),
-		"disallowed header": preflight("/download", s.origin, http.MethodGet, "x-evil", true),
-	} {
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s: code=%d, want 403", name, rr.Code)
+	addBrowserGrant()
+	for i := range 20 {
+		if code := exchange(i); code != http.StatusOK {
+			t.Fatalf("exchange %d code=%d, want 200", i, code)
 		}
-		if got := rr.Header().Get("Access-Control-Allow-Origin"); got != "" {
-			t.Errorf("%s: refused preflight exposes origin %q", name, got)
+	}
+	if len(sess.grants) != maxSessionGrants || browser[0].ctx.Err() != nil {
+		t.Fatalf("grants=%d browser grant cancelled=%v, want %d grants with the browser grant live",
+			len(sess.grants), browser[0].ctx.Err() != nil, maxSessionGrants)
+	}
+	for grant := range sess.grants {
+		if s.browserGrants[grant] == nil {
+			delete(sess.grants, grant)
+			s.deleteGrantLocked(grant)
+		}
+	}
+	for len(browser) < maxSessionGrants {
+		addBrowserGrant()
+	}
+	if code := exchange(99); code != http.StatusTooManyRequests {
+		t.Fatalf("CLI exchange against %d browser grants = %d, want 429", maxSessionGrants, code)
+	}
+	for i, g := range browser {
+		if g.ctx.Err() != nil {
+			t.Fatalf("browser grant %d was cancelled by a CLI login", i)
 		}
 	}
 }

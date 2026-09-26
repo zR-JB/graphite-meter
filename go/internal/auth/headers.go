@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
@@ -23,7 +24,7 @@ func hardeningHeaders(h http.Header) {
 }
 
 func authPageCSP(authorizationOrigin string) string {
-	// form-action widens only to the discovered authorization origin, so the OIDC sign-in form can post to the provider.
+	// The OIDC sign-in form posts to the discovered authorization origin.
 	formAction := "'self'"
 	if authorizationOrigin != "" {
 		formAction += " " + authorizationOrigin
@@ -69,18 +70,12 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 }
 
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
-	if clientOrigin, valid := secureBrowserOrigin(r.Header.Get("Origin")); secure && valid && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
-		allowed := false
-		for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
-			h := strings.ToLower(strings.TrimSpace(raw))
-			if h == "authorization" {
-				allowed = true
-			} else if h != "" && h != "content-type" {
-				forbidden(w)
-				return
-			}
-		}
-		if !allowed || !allowedCORSMethod(r.URL.Path, r.Header.Get("Access-Control-Request-Method")) {
+	origin := r.Header.Get("Origin")
+	method := r.Header.Get("Access-Control-Request-Method")
+	clientOrigin, valid := secureBrowserOrigin(origin)
+	if secure && valid && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
+		headers, allowed := requestedHeaders(r, "authorization", "content-type")
+		if !allowed || !slices.Contains(headers, "authorization") || !allowedCORSMethod(r.URL.Path, method) {
 			forbidden(w)
 			return
 		}
@@ -90,24 +85,28 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure b
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if !secure || r.Header.Get("Origin") != s.origin {
+	_, allowed := requestedHeaders(r, "authorization", "content-type", "x-csrf-token")
+	if !secure || origin != s.origin || !allowedCORSMethod(r.URL.Path, method) || !allowed {
 		forbidden(w)
 		return
-	}
-	method := r.Header.Get("Access-Control-Request-Method")
-	if !allowedCORSMethod(r.URL.Path, method) {
-		forbidden(w)
-		return
-	}
-	for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
-		h := strings.ToLower(strings.TrimSpace(raw))
-		if h != "" && h != "authorization" && h != "content-type" && h != "x-csrf-token" {
-			forbidden(w)
-			return
-		}
 	}
 	s.MeasurementCORS(w.Header(), r)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func requestedHeaders(r *http.Request, allowed ...string) ([]string, bool) {
+	var names []string
+	for raw := range strings.SplitSeq(r.Header.Get("Access-Control-Request-Headers"), ",") {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		if !slices.Contains(allowed, name) {
+			return nil, false
+		}
+		names = append(names, name)
+	}
+	return names, true
 }
 
 func allowedCORSMethod(path, method string) bool {

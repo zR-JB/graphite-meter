@@ -35,15 +35,7 @@ const (
 	WTMintInvalidTarget
 )
 
-func (s *Service) MintWebTransportSessionToken(r *http.Request) (string, time.Time, WTMint) {
-	return s.mintSocketToken(r, route.WebTransport)
-}
-
-func (s *Service) MintWebSocketSessionToken(r *http.Request) (string, time.Time, WTMint) {
-	return s.mintSocketToken(r, route.WebSocket)
-}
-
-func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, WTMint) {
+func (s *Service) MintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, WTMint) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.session == nil || p.Bearer && p.browserGrant == nil {
 		return "", time.Time{}, WTMintNoSession
@@ -54,13 +46,17 @@ func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, tim
 	}
 	spec, known := route.Lookup(target.Path)
 	origin, err := wire.CanonicalOrigin(target.Scheme + "://" + target.Host)
-	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), s.public.Hostname()) || !known || spec.Kind != kind {
+	if err != nil || target.Scheme != "https" || !strings.EqualFold(target.Hostname(), s.public.Hostname()) ||
+		!known || spec.Kind != kind {
 		return "", time.Time{}, WTMintInvalidTarget
 	}
 	token := wtTokenPrefix + randomToken(32)
 	h := sha256.Sum256([]byte(token))
 	now := time.Now()
-	expires := minTime(now.Add(wtTokenLifetime), p.session.expires)
+	expires := now.Add(wtTokenLifetime)
+	if p.session.expires.Before(expires) {
+		expires = p.session.expires
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if p.measurementContext().Err() != nil {
@@ -72,15 +68,9 @@ func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, tim
 	}
 	p.Bearer = true
 	p.session.wtTokens[h] = struct{}{}
-	s.wtTokens[h] = wtToken{sess: p.session, principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"), expires: expires}
+	s.wtTokens[h] = wtToken{sess: p.session, principal: p, target: origin + target.Path,
+		origin: r.Header.Get("Origin"), expires: expires}
 	return token, expires, WTMintOK
-}
-
-func minTime(a, b time.Time) time.Time {
-	if a.Before(b) {
-		return a
-	}
-	return b
 }
 
 func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Principal, bool) {
@@ -98,7 +88,8 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 	delete(s.wtTokens, h)
 	delete(t.sess.wtTokens, h)
 	origin, err := wire.CanonicalOrigin("https://" + r.Host)
-	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) || t.principal.measurementContext().Err() != nil {
+	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) ||
+		t.principal.measurementContext().Err() != nil {
 		return Principal{}, false
 	}
 	return t.principal, true
@@ -119,7 +110,8 @@ func isWebTransportRoute(path string) bool {
 	return ok && spec.Kind == route.WebTransport
 }
 
-func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
+func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener,
+	t trust) {
 	if !t.Secure {
 		s.writeAuthRequired(w, r, listener)
 		return

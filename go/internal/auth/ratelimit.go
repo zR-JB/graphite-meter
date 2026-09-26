@@ -19,33 +19,8 @@ const (
 	ceilingLogInterval  = time.Minute
 )
 
-type loginAttempt struct {
-	times []time.Time
-}
-
-func (s *Service) attemptRoomLocked(store map[string]loginAttempt, name, key string, limit int, now time.Time) ([]time.Time, bool) {
-	if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
-		maps.DeleteFunc(store, func(k string, v loginAttempt) bool {
-			v.times = recentAttempts(v.times, now)
-			if len(v.times) == 0 {
-				return true
-			}
-			store[k] = v
-			return false
-		})
-		if len(store) >= maxBudgetKeys {
-			s.noteCeilingLocked(name+"-address", now)
-			return nil, false
-		}
-	}
-	times := recentAttempts(store[key].times, now)
-	if len(times) >= limit {
-		return nil, false
-	}
-	return times, true
-}
-
-func (s *Service) allowAddress(r *http.Request, store map[string]loginAttempt, name string, limit int, commit func(string, []time.Time, time.Time) bool) bool {
+func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
+	global *[]time.Time) bool {
 	addr, ok := s.authClientAddress(r)
 	if !ok {
 		return false
@@ -54,39 +29,43 @@ func (s *Service) allowAddress(r *http.Request, store map[string]loginAttempt, n
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	times, ok := s.attemptRoomLocked(store, name, key, limit, now)
-	if !ok {
+	if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
+		maps.DeleteFunc(store, func(k string, times []time.Time) bool {
+			store[k] = recentAttempts(times, now)
+			return len(store[k]) == 0
+		})
+		if len(store) >= maxBudgetKeys {
+			s.noteCeilingLocked(name+"-address", now)
+			return false
+		}
+	}
+	times := recentAttempts(store[key], now)
+	if len(times) >= limit {
 		return false
 	}
-	return commit(key, times, now)
+	if global != nil {
+		*global = recentAttempts(*global, now)
+		if len(*global) >= maxGlobalAttempts {
+			s.noteCeilingLocked(name, now)
+			return false
+		}
+		*global = append(*global, now)
+	}
+	store[key] = append(times, now)
+	return true
 }
 
 func (s *Service) allowAttempt(r *http.Request) bool {
-	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, func(key string, times []time.Time, now time.Time) bool {
-		s.globalAttempts = recentAttempts(s.globalAttempts, now)
-		if len(s.globalAttempts) >= maxGlobalAttempts {
-			s.noteCeilingLocked("password-attempt", now)
-			return false
-		}
-		s.attempts[key] = loginAttempt{times: append(times, now)}
-		s.globalAttempts = append(s.globalAttempts, now)
-		return true
-	})
+	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, &s.globalAttempts)
 }
 
 func (s *Service) allowExchange(r *http.Request) bool {
-	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, func(key string, times []time.Time, now time.Time) bool {
-		s.exchanges[key] = loginAttempt{times: append(times, now)}
-		return true
-	})
+	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, nil)
 }
 
 // Approval pages are public; their callers cannot spend validated OIDC callbacks' budget.
 func (s *Service) allowBrowserApproval(r *http.Request) bool {
-	return s.allowAddress(r, s.approvalAttempts, "browser-approval", maxAddressApprovals, func(key string, times []time.Time, now time.Time) bool {
-		s.approvalAttempts[key] = loginAttempt{times: append(times, now)}
-		return true
-	})
+	return s.allowAddress(r, s.approvalAttempts, "browser-approval", maxAddressApprovals, nil)
 }
 
 func (s *Service) noteCeilingLocked(what string, now time.Time) {

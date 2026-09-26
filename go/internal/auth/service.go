@@ -20,7 +20,24 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-type authCounters struct{ local, oidc, invalidPassword, oidcFailure, groupDenial, replayExpiry, throttled, logout, cliApproval, capacity atomic.Uint64 }
+type counter int
+
+const (
+	countLocal counter = iota
+	countOIDC
+	countInvalidPassword
+	countOIDCFailure
+	countGroupDenial
+	countReplayExpiry
+	countThrottled
+	countLogout
+	countCLIApproval
+	countCapacity
+	counters
+)
+
+var counterNames = [counters]string{"local", "oidc", "invalid-password", "oidc-failure", "group-denial",
+	"replay-expiry", "throttled", "logout", "cli-approval", "capacity"}
 
 type Service struct {
 	cfg              config.AuthConfig
@@ -35,15 +52,15 @@ type Service struct {
 	grantSeq         uint64
 	browserGrants    map[[32]byte]*browserGrant
 	wtTokens         map[[32]byte]wtToken
-	attempts         map[string]loginAttempt
-	exchanges        map[string]loginAttempt
-	approvalAttempts map[string]loginAttempt
+	attempts         map[string][]time.Time
+	exchanges        map[string][]time.Time
+	approvalAttempts map[string][]time.Time
 	globalAttempts   []time.Time
 	ceilingLogged    map[string]time.Time
 	approvals        map[string]*cliApproval
 	oidc             *oidcState
 	verbose          bool
-	counters         authCounters
+	counters         [counters]atomic.Uint64
 	connectSrc       string
 }
 
@@ -69,9 +86,9 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		grants:           map[[32]byte]*session{},
 		browserGrants:    map[[32]byte]*browserGrant{},
 		wtTokens:         map[[32]byte]wtToken{},
-		attempts:         map[string]loginAttempt{},
-		exchanges:        map[string]loginAttempt{},
-		approvalAttempts: map[string]loginAttempt{},
+		attempts:         map[string][]time.Time{},
+		exchanges:        map[string][]time.Time{},
+		approvalAttempts: map[string][]time.Time{},
 		ceilingLogged:    map[string]time.Time{},
 		approvals:        map[string]*cliApproval{},
 		argon:            make(chan struct{}, 2),
@@ -114,17 +131,22 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 			s.oidc.startRetry(ctx, s.public)
 		}
 	}
-	log.Printf("[gm:auth] mode=%s origin=%s provider=%s issuer=%s allowed-groups=%d session-lifetime=%s", cfg.Mode, cfg.PublicURL, cfg.OIDCProviderName, cfg.OIDCIssuer, len(cfg.OIDCAllowedGroups), sessionLifetime)
+	log.Printf("[gm:auth] mode=%s origin=%s provider=%s issuer=%s allowed-groups=%d session-lifetime=%s",
+		cfg.Mode, cfg.PublicURL, cfg.OIDCProviderName, cfg.OIDCIssuer, len(cfg.OIDCAllowedGroups), sessionLifetime)
 	go s.sweep(ctx)
 	go s.runSecurityLog(ctx)
 	return s, nil
 }
 
-func (s *Service) debugln(message string) {
-	if s.verbose {
+func (s *Service) debugln(message string) { debugln(s.verbose, message) }
+
+func debugln(verbose bool, message string) {
+	if verbose {
 		log.Printf("[gm:auth:debug] %s", message)
 	}
 }
+
+func (s *Service) count(c counter) { s.counters[c].Add(1) }
 
 func readSecret(inline, file string, limit int64) (string, error) {
 	if inline != "" {
@@ -192,22 +214,23 @@ func (s *Service) Mount(mux *http.ServeMux) {
 
 func (s *Service) runSecurityLog(ctx context.Context) {
 	t := time.Tick(time.Minute)
-	var last [10]uint64
+	var last [counters]uint64
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t:
-			values := [10]uint64{s.counters.local.Load(), s.counters.oidc.Load(), s.counters.invalidPassword.Load(), s.counters.oidcFailure.Load(), s.counters.groupDenial.Load(), s.counters.replayExpiry.Load(), s.counters.throttled.Load(), s.counters.logout.Load(), s.counters.cliApproval.Load(), s.counters.capacity.Load()}
-			if values == last {
-				continue
+			var line strings.Builder
+			changed := false
+			for i := range s.counters {
+				value := s.counters[i].Load()
+				changed = changed || value != last[i]
+				fmt.Fprintf(&line, " %s=%d", counterNames[i], value-last[i])
+				last[i] = value
 			}
-			var delta [10]uint64
-			for i := range values {
-				delta[i] = values[i] - last[i]
+			if changed {
+				log.Printf("[gm:auth] 1m%s", line.String())
 			}
-			last = values
-			log.Printf("[gm:auth] 1m local=%d oidc=%d invalid-password=%d oidc-failure=%d group-denial=%d replay-expiry=%d throttled=%d logout=%d cli-approval=%d capacity=%d", delta[0], delta[1], delta[2], delta[3], delta[4], delta[5], delta[6], delta[7], delta[8], delta[9])
 		}
 	}
 }

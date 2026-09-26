@@ -45,7 +45,8 @@ func TestLoginRefusalsCarryOnlyASafeNotice(t *testing.T) {
 	}
 	for raw, n := range map[string]notice{
 		"": "", "provider": noticeProvider, "busy": noticeBusy, "stale": noticeStale, "throttled": noticeThrottled,
-		"password": noticePassword, "failed": noticeGeneric, "1": noticeGeneric, "<script>alert(1)</script>": noticeGeneric,
+		"password": noticePassword, "failed": noticeGeneric, "1": noticeGeneric,
+		"<script>alert(1)</script>": noticeGeneric,
 	} {
 		if got := parseNotice(raw); got != n {
 			t.Errorf("parseNotice(%q) = %q, want %q", raw, got, n)

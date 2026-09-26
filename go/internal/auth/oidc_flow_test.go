@@ -6,7 +6,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +48,8 @@ func newFakeOIDC(t *testing.T) *fakeOIDC {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeOIDC{key: key, audience: "client", subject: "subject", userinfoSub: "subject", groups: []string{"allowed"}, expires: time.Now().Add(time.Hour), accessToken: "access-token"}
+	f := &fakeOIDC{key: key, audience: "client", subject: "subject", userinfoSub: "subject",
+		groups: []string{"allowed"}, expires: time.Now().Add(time.Hour), accessToken: "access-token"}
 	f.server = httptest.NewTLSServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(f.server.Close)
 	return f
@@ -67,8 +67,12 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			responseIssuer = "yes"
 		}
 		writeJSON(w, map[string]any{
-			"issuer": f.server.URL, "authorization_endpoint": f.server.URL + "/authorize", "token_endpoint": f.server.URL + "/token",
-			"jwks_uri": f.server.URL + "/jwks", "userinfo_endpoint": f.server.URL + "/userinfo", "authorization_response_iss_parameter_supported": responseIssuer,
+			"issuer":                 f.server.URL,
+			"authorization_endpoint": f.server.URL + "/authorize",
+			"token_endpoint":         f.server.URL + "/token",
+			"jwks_uri":               f.server.URL + "/jwks",
+			"userinfo_endpoint":      f.server.URL + "/userinfo",
+			"authorization_response_iss_parameter_supported": responseIssuer,
 		})
 	case "/jwks":
 		f.mu.Lock()
@@ -78,7 +82,8 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "temporarily unavailable", status)
 			return
 		}
-		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &f.key.PublicKey, KeyID: "test", Algorithm: string(jose.RS256), Use: "sig"}}})
+		key := jose.JSONWebKey{Key: &f.key.PublicKey, KeyID: "test", Algorithm: string(jose.RS256), Use: "sig"}
+		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{key}})
 	case "/token":
 		f.mu.Lock()
 		status := f.tokenStatus
@@ -96,7 +101,8 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.mu.Lock()
-		nonce, challenge, audience, subject, expires, accessToken, badHash, badSignature := f.nonce, f.challenge, f.audience, f.subject, f.expires, f.accessToken, f.badAccessHash, f.badSignature
+		nonce, challenge, audience, subject, expires, accessToken, badHash, badSignature := f.nonce, f.challenge,
+			f.audience, f.subject, f.expires, f.accessToken, f.badAccessHash, f.badSignature
 		f.mu.Unlock()
 		verifierHash := sha256.Sum256([]byte(r.Form.Get("code_verifier")))
 		if base64.RawURLEncoding.EncodeToString(verifierHash[:]) != challenge {
@@ -112,9 +118,13 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		if badSignature {
 			signingKey, _ = rsa.GenerateKey(rand.Reader, 2048)
 		}
-		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: signingKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test"))
-		raw, _ := jwt.Signed(signer).Claims(map[string]any{"iss": f.server.URL, "aud": audience, "sub": subject, "iat": time.Now().Unix(), "exp": expires.Unix(), "nonce": nonce, "at_hash": atHash}).Serialize()
-		writeJSON(w, map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600, "id_token": raw})
+		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: signingKey},
+			(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test"))
+		raw, _ := jwt.Signed(signer).Claims(map[string]any{"iss": f.server.URL, "aud": audience, "sub": subject,
+			"iat": time.Now().Unix(), "exp": expires.Unix(), "nonce": nonce, "at_hash": atHash}).Serialize()
+		writeJSON(w, map[string]any{
+			"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600, "id_token": raw,
+		})
 	case "/userinfo":
 		f.mu.Lock()
 		subject, groups, status := f.userinfoSub, slices.Clone(f.groups), f.userinfoStatus
@@ -129,11 +139,6 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func writeJSON(w http.ResponseWriter, value any) {
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.MarshalWrite(w, value)
-}
-
 func (f *fakeOIDC) service(t *testing.T) *Service {
 	t.Helper()
 	previous := http.DefaultTransport
@@ -141,7 +146,10 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 	t.Cleanup(func() { http.DefaultTransport = previous })
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
-	s, err := New(ctx, config.AuthConfig{Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client", OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider"}, nil, false)
+	s, err := New(ctx, config.AuthConfig{
+		Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client",
+		OIDCClientSecret: "secret", OIDCAllowedGroups: []string{"allowed"}, OIDCProviderName: "Provider",
+	}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +192,8 @@ func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...strin
 }
 
 func finishOIDC(s *Service, state string, cookie *http.Cookie, query string) *httptest.ResponseRecorder {
-	r := secureRequest(http.MethodGet, "/auth/oidc/callback?state="+url.QueryEscape(state)+"&code=valid-code&iss="+url.QueryEscape(s.cfg.OIDCIssuer)+query, nil)
+	query = "?state=" + url.QueryEscape(state) + "&code=valid-code&iss=" + url.QueryEscape(s.cfg.OIDCIssuer) + query
+	r := secureRequest(http.MethodGet, "/auth/oidc/callback"+query, nil)
 	r.AddCookie(cookie)
 	rr := httptest.NewRecorder()
 	s.oidcCallback(rr, r)
@@ -235,7 +244,7 @@ func TestOIDCCallbackRejectsWrongNonceAndMissingIssuer(t *testing.T) {
 	f.mu.Lock()
 	f.nonce = "wrong"
 	f.mu.Unlock()
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=failed") {
 		t.Fatal("wrong nonce accepted")
 	}
 
@@ -256,7 +265,7 @@ func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
 	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
 		t.Fatalf("first status=%d, want 200", rr.Code)
 	}
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
+	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=failed") {
 		t.Fatal("transaction replay accepted")
 	}
 
@@ -389,23 +398,5 @@ func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
 	}
 	if got := start("not-a-challenge"); got != "" {
 		t.Fatalf("invalid challenge stored as %q", got)
-	}
-}
-
-func TestOIDCInterstitialCarriesOnlyValidCLIChallenge(t *testing.T) {
-	s := testService(t)
-	sum := sha256.Sum256([]byte("terminal-verifier"))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-
-	rr := httptest.NewRecorder()
-	s.writeSignedInInterstitial(rr, challenge)
-	if !strings.Contains(rr.Body.String(), "/auth/cli?challenge="+challenge) {
-		t.Fatalf("valid challenge was dropped: %s", rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	s.writeSignedInInterstitial(rr, "not-a-challenge")
-	if body := rr.Body.String(); strings.Contains(body, "not-a-challenge") || !strings.Contains(body, `url=/"`) {
-		t.Fatalf("invalid challenge was reflected: %s", body)
 	}
 }

@@ -108,23 +108,26 @@ func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 		return true
 	}
 	site := r.Header.Get("Sec-Fetch-Site")
-	if site != "" && (site != "same-origin" && site != "same-site" && site != "none" || site == "same-site" && origin != s.origin) {
+	switch site {
+	case "", "same-origin", "none":
+	case "same-site":
+		if origin != s.origin {
+			return false
+		}
+	default:
 		return false
 	}
-	if p.session != nil && isMeasurementRoute(r.URL.Path) && (r.Method == http.MethodGet || r.Method == http.MethodHead) && origin != s.origin && site != "same-origin" {
+	measurement := isMeasurementRoute(r.URL.Path)
+	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	if p.session != nil && measurement && read && origin != s.origin && site != "same-origin" ||
+		r.URL.Path == route.Ping && origin != s.origin {
 		return false
 	}
-	if !s.wsPingOriginAllowed(r) {
-		return false
-	}
-	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+	if read || r.Method == http.MethodOptions {
 		return true
 	}
-	return origin == s.origin && (!isMeasurementRoute(r.URL.Path) || p.session != nil && constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token")))
-}
-
-func (s *Service) wsPingOriginAllowed(r *http.Request) bool {
-	return r.URL.Path != route.Ping || r.Header.Get("Origin") == s.origin
+	return origin == s.origin &&
+		(!measurement || p.session != nil && constantEqual(p.session.csrf, r.Header.Get("X-CSRF-Token")))
 }
 
 func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {

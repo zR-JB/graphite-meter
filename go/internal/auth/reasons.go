@@ -62,7 +62,8 @@ func noticeFor(why reason) notice {
 
 func parseNotice(raw string) notice {
 	n := notice(raw)
-	if n == "" || n == noticeProvider || n == noticeBusy || n == noticeStale || n == noticeThrottled || n == noticePassword {
+	switch n {
+	case "", noticeProvider, noticeBusy, noticeStale, noticeThrottled, noticePassword:
 		return n
 	}
 	return noticeGeneric
@@ -71,8 +72,8 @@ func parseNotice(raw string) notice {
 func (s *Service) countReason(why reason) {
 	switch why {
 	case reasonThrottled:
-		s.counters.throttled.Add(1)
+		s.count(countThrottled)
 	case reasonPasswordMismatch:
-		s.counters.invalidPassword.Add(1)
+		s.count(countInvalidPassword)
 	}
 }

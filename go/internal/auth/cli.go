@@ -4,7 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
-	jsonv2 "encoding/json/v2"
+	"encoding/json/v2"
+	"html/template"
 	"maps"
 	"net/http"
 	"net/url"
@@ -37,12 +38,38 @@ func challengeOrEmpty(v string) string {
 	}
 	return ""
 }
+
 func verificationCode(challenge string) string {
 	value, err := base64.RawURLEncoding.DecodeString(challenge)
 	if err != nil || len(value) < 5 {
 		return ""
 	}
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(value[:5])
+}
+
+func render(w http.ResponseWriter, tmpl *template.Template, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = tmpl.Execute(w, data)
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.MarshalWrite(w, value)
+}
+
+func loginRedirect(w http.ResponseWriter, r *http.Request, challenge string) {
+	http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
+}
+
+func (s *Service) pruneApprovalsLocked(sess *session, now time.Time) int {
+	maps.DeleteFunc(s.approvals, func(_ string, a *cliApproval) bool { return !now.Before(a.expires) })
+	count := 0
+	for a := range maps.Values(s.approvals) {
+		if a.session == sess {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
@@ -58,33 +85,28 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 	}
 	p, ok := s.authenticate(r)
 	if !ok || p.session == nil || p.Bearer {
-		http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
+		loginRedirect(w, r, challenge)
 		return
 	}
 	now := time.Now()
 	s.mu.Lock()
-	maps.DeleteFunc(s.approvals, func(_ string, pending *cliApproval) bool { return !now.Before(pending.expires) })
+	count := s.pruneApprovalsLocked(p.session, now)
 	approval := s.approvals[challenge]
 	if approval == nil {
-		count := 0
-		for pending := range maps.Values(s.approvals) {
-			if pending.session == p.session {
-				count++
-			}
-		}
 		if len(s.approvals) >= maxApprovals || count >= maxSessionApprovals {
 			s.mu.Unlock()
-			s.counters.capacity.Add(1)
+			s.count(countCapacity)
 			forbidden(w)
 			return
 		}
-		approval = &cliApproval{code: verificationCode(challenge), session: p.session, expires: now.Add(approvalLifetime)}
+		approval = &cliApproval{code: verificationCode(challenge), session: p.session,
+			expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = approval
 	}
 	s.mu.Unlock()
-	csrf := p.session.csrf
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = cliTemplate.Execute(w, map[string]any{"Styles": authStyles, "Code": approval.code, "Challenge": challenge, "CSRF": csrf})
+	render(w, cliTemplate, map[string]any{
+		"Styles": authStyles, "Code": approval.code, "Challenge": challenge, "CSRF": p.session.csrf,
+	})
 }
 
 func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
@@ -99,50 +121,71 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	challenge := r.FormValue("challenge")
+	browser := r.URL.Path == "/auth/browser/approve"
 	s.mu.Lock()
-	approval := s.approvals[challenge]
-	if approval == nil || approval.session != p.session || (approval.browserOrigin != "") != (r.URL.Path == "/auth/browser/approve") || !time.Now().Before(approval.expires) {
+	approval := s.approvals[r.FormValue("challenge")]
+	if approval == nil || approval.session != p.session || (approval.browserOrigin != "") != browser ||
+		!time.Now().Before(approval.expires) {
 		s.mu.Unlock()
 		forbidden(w)
 		return
 	}
-	if approval.browserOrigin != "" && len(p.session.grants) >= maxSessionGrants {
-		clientOrigin := approval.browserOrigin
+	if browser && len(p.session.grants) >= maxSessionGrants {
 		s.mu.Unlock()
-		writeBrowserGrantCapacity(w, clientOrigin)
+		writeBrowserGrantCapacity(w, approval.browserOrigin)
 		return
 	}
 	approval.approved = true
-	s.counters.cliApproval.Add(1)
 	s.mu.Unlock()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = cliDoneTemplate.Execute(w, map[string]any{"Styles": authStyles, "Browser": r.URL.Path == "/auth/browser/approve"})
+	s.count(countCLIApproval)
+	render(w, cliDoneTemplate, map[string]any{"Styles": authStyles, "Browser": browser})
 }
 
-func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
+func (s *Service) approvalLocked(verifier string, now time.Time) (string, *cliApproval) {
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	a := s.approvals[challenge]
+	if a == nil || a.session == nil || !now.Before(a.expires) || !now.Before(a.session.expires) ||
+		a.session.ctx.Err() != nil {
+		return challenge, nil
+	}
+	return challenge, a
+}
+
+func (s *Service) issueGrantLocked(challenge string, sess *session) (string, [32]byte) {
+	delete(s.approvals, challenge)
+	raw := randomToken(32)
+	key := sha256.Sum256([]byte(raw))
+	s.grantSeq++
+	sess.grants[key] = s.grantSeq
+	return raw, key
+}
+
+func readVerifier(w http.ResponseWriter, r *http.Request) (string, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req struct {
 		Verifier string `json:"verifier"`
 	}
-	if err := jsonv2.UnmarshalRead(r.Body, &req); err != nil || len(req.Verifier) > 128 {
-		s.writeGrantPending(w)
+	err := json.UnmarshalRead(r.Body, &req)
+	return req.Verifier, err == nil && len(req.Verifier) <= 128
+}
+
+func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
+	securityHeaders(w.Header())
+	verifier, ok := readVerifier(w, r)
+	if !ok {
+		writeGrantPending(w)
 		return
 	}
-	sum := sha256.Sum256([]byte(req.Verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	now := time.Now()
 	s.mu.Lock()
-	approval := s.approvals[challenge]
-	if approval == nil || approval.browserOrigin != "" || !approval.approved || !now.Before(approval.expires) || !now.Before(approval.session.expires) || approval.session.ctx.Err() != nil {
+	challenge, approval := s.approvalLocked(verifier, time.Now())
+	if approval == nil || approval.browserOrigin != "" || !approval.approved {
 		s.mu.Unlock()
-		s.writeGrantPending(w)
+		writeGrantPending(w)
 		return
 	}
 	sess := approval.session
 	if len(sess.grants) >= maxSessionGrants {
-		// Evict the oldest CLI grant, never a browser grant.
 		oldest, found := s.oldestCLIGrantLocked(sess)
 		if !found {
 			s.mu.Unlock()
@@ -152,16 +195,10 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		delete(sess.grants, oldest)
 		s.deleteGrantLocked(oldest)
 	}
-	grant := randomToken(32)
-	delete(s.approvals, challenge)
-	h := sha256.Sum256([]byte(grant))
-	s.grantSeq++
-	sess.grants[h] = s.grantSeq
-	s.grants[h] = sess
-	expires := sess.expires
+	grant, key := s.issueGrantLocked(challenge, sess)
+	s.grants[key] = sess
 	s.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	_ = jsonv2.MarshalWrite(w, map[string]any{"token": grant, "expires": expires})
+	writeJSON(w, map[string]any{"token": grant, "expires": sess.expires})
 }
 
 func (s *Service) oldestCLIGrantLocked(sess *session) (oldest [32]byte, found bool) {
@@ -174,7 +211,7 @@ func (s *Service) oldestCLIGrantLocked(sess *session) (oldest [32]byte, found bo
 	return oldest, found
 }
 
-func (s *Service) writeGrantPending(w http.ResponseWriter) {
+func writeGrantPending(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = w.Write([]byte(`{"status":"pending"}`))

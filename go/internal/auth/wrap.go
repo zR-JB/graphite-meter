@@ -28,7 +28,8 @@ type Principal struct {
 }
 
 func sessionPrincipal(sess *session, provider string, bearer bool) Principal {
-	return Principal{Subject: sess.subject, Name: sess.name, Provider: provider, Expires: sess.expires, session: sess, Bearer: bearer}
+	return Principal{Subject: sess.subject, Name: sess.name, Provider: provider, Expires: sess.expires,
+		session: sess, Bearer: bearer}
 }
 
 func (p Principal) LoginID() string {
@@ -87,7 +88,8 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	})
 }
 
-func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener, t trust) {
+func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener,
+	t trust) {
 	if !t.Secure {
 		s.writeAuthRequired(w, r, listener)
 		return
@@ -97,28 +99,27 @@ func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, nex
 		s.writeAuthRequired(w, r, listener)
 		return
 	}
-	if p.Bearer && (!isMeasurementRoute(r.URL.Path) || p.BrowserOrigin != "" && !browserGrantRoute(r.URL.Path)) {
+	if p.Bearer && (!isMeasurementRoute(r.URL.Path) || p.BrowserOrigin != "" && !browserGrantRoute(r.URL.Path)) ||
+		!s.validRequestOrigin(r, p) {
 		forbidden(w)
 		return
 	}
 	r, end := withPrincipal(r, p)
 	defer end()
-	if !s.validRequestOrigin(r, p) {
-		forbidden(w)
-		return
-	}
 	next.ServeHTTP(w, r)
 }
 
 func (s *Service) isPublicAuthRoute(method, path string) bool {
-	if method == http.MethodGet && (path == "/login" || path == "/auth/cli" || path == "/auth/browser") || method == http.MethodPost && (path == "/auth/cli/token" || path == "/auth/browser/token") {
-		return true
-	}
 	password, oidc := authModes(s.cfg.Mode)
-	if password && method == http.MethodPost && path == "/auth/password" {
+	switch method + " " + path {
+	case "GET /login", "GET /auth/cli", "GET /auth/browser", "POST /auth/cli/token", "POST /auth/browser/token":
 		return true
+	case "POST /auth/password":
+		return password
+	case "POST /auth/oidc/start", "GET /auth/oidc/callback":
+		return oidc
 	}
-	return oidc && (method == http.MethodPost && path == "/auth/oidc/start" || method == http.MethodGet && path == "/auth/oidc/callback")
+	return false
 }
 
 func isMeasurementRoute(path string) bool {

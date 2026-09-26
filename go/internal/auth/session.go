@@ -48,7 +48,9 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	h := sha256.Sum256([]byte(raw))
 	csrf, id := randomToken(32), randomToken(16)
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
-	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]uint64{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
+	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires,
+		created: now, ctx: ctx, cancel: cancel, csrf: csrf,
+		grants: map[[32]byte]uint64{}, wtTokens: map[[32]byte]struct{}{}}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
@@ -67,7 +69,7 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	}
 	if len(s.sessions) >= maxSessions {
 		cancel()
-		s.counters.capacity.Add(1)
+		s.count(countCapacity)
 		return "", nil, errors.New("session capacity reached")
 	}
 	s.sessions[h] = sess
@@ -137,18 +139,17 @@ func randomToken(n int) string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func setHTTPOnlyCookie(w http.ResponseWriter, name, value string, expires time.Time, sameSite http.SameSite) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: true, SameSite: sameSite})
+func setCookie(w http.ResponseWriter, name, value string, expires time.Time, sameSite http.SameSite) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", Expires: expires,
+		MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: name != csrfCookie, SameSite: sameSite})
 }
 
-func setCSRFCookie(w http.ResponseWriter, value string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: value, Path: "/", Expires: expires, MaxAge: int(time.Until(expires).Seconds()), Secure: true, HttpOnly: false, SameSite: http.SameSiteStrictMode})
+func clearCookie(w http.ResponseWriter, name string, sameSite http.SameSite) {
+	setCookie(w, name, "", time.Unix(1, 0), sameSite)
 }
 
-func clearTransactionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: transactionCookie, Path: "/", MaxAge: -1, Expires: time.Unix(1, 0), Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
-}
-
-func clearCookie(w http.ResponseWriter, name string) {
-	http.SetCookie(w, &http.Cookie{Name: name, Path: "/", MaxAge: -1, Expires: time.Unix(1, 0), Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+func issueSessionCookies(w http.ResponseWriter, raw string, sess *session) {
+	setCookie(w, sessionCookie, raw, sess.expires, http.SameSiteStrictMode)
+	setCookie(w, csrfCookie, sess.csrf, sess.expires, http.SameSiteStrictMode)
+	clearCookie(w, loginCookie, http.SameSiteStrictMode)
 }

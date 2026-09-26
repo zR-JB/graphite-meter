@@ -3,13 +3,13 @@ package auth
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 func mintForSession(t *testing.T, s *Service, sess *session) string {
@@ -17,7 +17,7 @@ func mintForSession(t *testing.T, s *Service, sess *session) string {
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	p := Principal{Subject: sess.subject, session: sess}
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-	token, expires, mint := s.MintWebTransportSessionToken(r)
+	token, expires, mint := s.MintSocketToken(r, route.WebTransport)
 	if mint != WTMintOK || token == "" || !expires.After(time.Now()) {
 		t.Fatalf("mint = (%q, %v, %d), want a live token", token, expires, mint)
 	}
@@ -106,10 +106,10 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 }
 
 func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
-	synctest.Test(t, webTransportTokensExpireAndCapPerSession)
+	synctest.Test(t, tokensExpireAndCapPerSession)
 }
 
-func webTransportTokensExpireAndCapPerSession(t *testing.T) {
+func tokensExpireAndCapPerSession(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
@@ -131,10 +131,11 @@ func webTransportTokensExpireAndCapPerSession(t *testing.T) {
 	}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
-	if _, _, mint := s.MintWebTransportSessionToken(r); mint != WTMintAtCapacity {
+	if _, _, mint := s.MintSocketToken(r, route.WebTransport); mint != WTMintAtCapacity {
 		t.Fatalf("mint at the cap = %d, want WTMintAtCapacity", mint)
 	}
-	if _, _, mint := s.MintWebTransportSessionToken(secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)); mint != WTMintNoSession {
+	anonymous := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
+	if _, _, mint := s.MintSocketToken(anonymous, route.WebTransport); mint != WTMintNoSession {
 		t.Fatalf("mint without a principal = %d, want WTMintNoSession", mint)
 	}
 	// Every token the cap protected is still spendable.
@@ -148,22 +149,11 @@ func webTransportTokensExpireAndCapPerSession(t *testing.T) {
 	mintForSession(t, s, sess)
 }
 
-func grantFor(t *testing.T, s *Service, sess *session) string {
-	t.Helper()
-	grant := randomToken(32)
-	h := sha256.Sum256([]byte(grant))
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess.grants[h] = 0
-	s.grants[h] = sess
-	return grant
-}
-
 func mintWithGrant(t *testing.T, s *Service, grant string) bool {
 	t.Helper()
 	minted := false
 	next := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, _, mint := s.MintWebTransportSessionToken(r)
+		_, _, mint := s.MintSocketToken(r, route.WebTransport)
 		minted = mint == WTMintOK
 	})
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
@@ -199,10 +189,10 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 }
 
 func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
-	synctest.Test(t, webTransportTokensDieWithAnExpiredSession)
+	synctest.Test(t, tokensDieWithAnExpiredSession)
 }
 
-func webTransportTokensDieWithAnExpiredSession(t *testing.T) {
+func tokensDieWithAnExpiredSession(t *testing.T) {
 	s := testService(t)
 	// Off the sweeper's 30 s grid, so the deadline passes between two sweeps.
 	time.Sleep(time.Second)
@@ -252,24 +242,3 @@ func TestWebTransportConnectRefusesCleartext(t *testing.T) {
 		t.Fatal("a cleartext CONNECT spent the token it was refused for")
 	}
 }
-
-func TestWebTransportTokenCarries256Bits(t *testing.T) {
-	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	raw, ok := strings.CutPrefix(mintForSession(t, s, sess), wtTokenPrefix)
-	if !ok {
-		t.Fatalf("minted token lacks the %q prefix", wtTokenPrefix)
-	}
-	decoded, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		t.Fatalf("minted token is not base64url: %v", err)
-	}
-	if len(decoded) != 32 {
-		t.Fatalf("token carries %d bytes, want the 32 every other credential here carries", len(decoded))
-	}
-}
-
-// Stated, not derived: the expiry tests offset from this constant, so a change to it would validate itself.
