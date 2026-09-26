@@ -216,13 +216,20 @@
         ],
   );
   const issues = $derived([
-    ...record.failures.map(
-      (failure) =>
-        `${STAGE[failure.stage].label}${failure.direction ? ` ${failure.direction}` : ""} · ${reasonLabel(failure.reason)}`,
+    ...record.failures.map((failure) =>
+      [
+        STAGE[failure.stage].label +
+          (failure.direction ? ` ${failure.direction}` : ""),
+        reasonLabel(failure.reason),
+      ].join(" · "),
     ),
-    ...(record.multiServer?.failures ?? []).map(
-      (failure) =>
-        `${serverName(record.multiServer!.selection, failure.serverId)} · ${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${failure.message}`,
+    ...(record.multiServer?.failures ?? []).map((failure) =>
+      [
+        serverName(record.multiServer!.selection, failure.serverId),
+        STAGE[failure.stage].label +
+          (failure.scope === "latency" ? " latency" : ""),
+        failure.message,
+      ].join(" · "),
     ),
   ]);
   const environment = $derived(

@@ -112,6 +112,11 @@ function resolveSteps(steps: Step[]): Element[] {
   return nodes;
 }
 
+function firstElement(elements: Element[]) {
+  if (!elements[0]) throw new Error("no element");
+  return elements[0];
+}
+
 async function retry<T>(check: () => Promise<T>, timeout = 5000) {
   const end = Date.now() + timeout;
   while (true) {
@@ -147,9 +152,9 @@ export class Locator {
     );
   }
   evaluate<T>(fn: (element: any, arg?: any) => T, arg?: unknown): Promise<T> {
-    return this.all<T>(
-      `(els, arg) => { if (!els[0]) throw new Error("no element"); return (${fn})(els[0], arg); }`,
-      arg,
+    const elements = `(${resolveSteps})(${encode(this.steps)})`;
+    return this.page.evaluate<T>(
+      `(${fn})((${firstElement})(${elements}), ${encode(arg)})`,
     );
   }
   state(): Promise<ElementState[]> {

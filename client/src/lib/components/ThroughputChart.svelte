@@ -133,8 +133,7 @@
     void store.stageResults.download;
     void store.stageResults.upload;
     void store.result?.bidirectional;
-    // Tick format only, but the loop parks after a run: tracking these re-arms
-    // it. unitLabel also moves with the raw peak's k/M/G/T prefix on its own.
+    // Units only change tick text, but the loop parks after a run.
     void store.unitBase;
     void store.unitKind;
     void store.unitLabel;

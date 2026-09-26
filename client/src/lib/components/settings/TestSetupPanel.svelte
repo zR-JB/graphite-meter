@@ -59,13 +59,10 @@
         .label,
     };
   }
-  // The caution belongs to the selection, not the toggle: turning the toggle
-  // off keeps a selected datagram card, so it must keep its warning too.
+  // The caution follows the selected datagram card, not the toggle.
   const datagramSelected = $derived(
     store.connections.throughput.target?.transport === "webtransport-datagram",
   );
-  // One card per mechanism an origin advertises. The datagram path is the one
-  // gated on its setting, and stays visible while it is the current selection.
   const simultaneous = $derived(store.selectedServers.length > 1);
   const selectedServers = $derived(
     catalogSelection(store.serverCatalog, store.selectedServers),
@@ -496,10 +493,7 @@
   <section class="surface-inset panel">
     <h3 class="caps">Datagram throughput</h3>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <!-- Above the toggle: this panel ends a long scroll, and a note past the
-           control that summoned it is a note nobody reads. Announced as a
-           status rather than an alert — nothing has gone wrong — and its point
-           is carried by the leading sentence, not only by the warn colour. -->
+      <!-- Above the toggle, where a long scroll ends; a status, not an alert. -->
       <p class="notice" data-tone="warn" role="status">
         <strong>Measures application datagram delivery.</strong> Datagrams are not
         retransmitted. Missing deliveries can come from network or endpoint queues;
@@ -584,8 +578,7 @@
 <style>
   .setup-grid {
     display: grid;
-    /* Connection choice cards inherit this exact breakpoint so the Settings
-       surface reflows as one system when its dock is manually widened. */
+    /* Connection cards share this breakpoint so a widened dock reflows as one. */
     --settings-card-min: 180px;
     grid-template-columns: repeat(
       auto-fit,

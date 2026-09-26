@@ -21,15 +21,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let touchOpen = false;
   let autoDismissTimer = 0;
   let hoverTimer = 0;
-  // CSS anchor positioning places the bubble; its top-layer popover paints above any open popover.
   const anchorNames = node.style.getPropertyValue("anchor-name");
   node.style.setProperty(
     "anchor-name",
     anchorNames ? `${anchorNames}, --${id}` : `--${id}`,
   );
-  // Definitions (.term) and notes stay reachable by keyboard; other inert
-  // anchors already carry their text in an accessible name, so they do not
-  // add a tab stop per value.
+  // Definitions and notes need a tab stop; other anchors already name their text.
   if (
     !node.hasAttribute("tabindex") &&
     node.tabIndex < 0 &&

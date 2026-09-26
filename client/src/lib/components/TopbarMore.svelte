@@ -1,6 +1,5 @@
 <script lang="ts">
-  // Overflow for the topbar actions. Every item renders; Console's topbar
-  // container queries reveal the ones its direct buttons no longer show.
+  // Every item renders; Console's container queries reveal the overflowed ones.
   import { tick } from "svelte";
   import { ICON } from "../constants";
   import { THEME } from "../presentation/vocabulary";

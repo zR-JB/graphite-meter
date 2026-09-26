@@ -1,6 +1,5 @@
 <script lang="ts">
-  // Primary start/stop action. The visible text is its accessible name
-  // (WCAG 2.5.3); capitals are presentation only.
+  // The visible text is the accessible name (WCAG 2.5.3); capitals are styling.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
@@ -49,8 +48,6 @@
 {/if}
 
 <style>
-  /* The one pill: the faceplate's single bold element, centred under the
-     gauge. Its lit top edge keeps the primary action distinct. */
   .run-button {
     position: relative;
     isolation: isolate;

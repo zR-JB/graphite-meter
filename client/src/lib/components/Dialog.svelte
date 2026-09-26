@@ -1,7 +1,5 @@
 <script lang="ts">
-  // Modal shell over native <dialog>: showModal() supplies the top layer,
-  // background inertness, the focus trap and Escape. The owner keeps the
-  // open state; every native close is reported through onCancel.
+  // Native modal <dialog>; the owner keeps open state and hears every close.
   import { tick, untrack, type Snippet } from "svelte";
   import { canFocus, hasFocus } from "../actions/focus";
 
@@ -31,8 +29,7 @@
     children,
   }: Props = $props();
   let dialog: HTMLDialogElement;
-  // A native close can follow a cancel the owner is still applying (for
-  // example an asynchronous history.back()), so report once per opening.
+  // A close can follow a cancel the owner is still applying: report once.
   let reported = false;
   function cancel() {
     if (reported) return;

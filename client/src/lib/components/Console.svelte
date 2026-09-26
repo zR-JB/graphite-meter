@@ -1,7 +1,5 @@
 <script lang="ts">
   import { observeWidth } from "../actions/observeWidth";
-  // Main console shell: owns top-level panels, shortcuts,
-  // theme toggle, and docked/flyout layout state.
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -186,8 +184,7 @@
     store.theme = next;
   }
 
-  // Preferences survive viewport changes; the grid and resize controls share
-  // the resolved widths, preserving room for the measurement instruments.
+  // The grid and resize controls share one resolution of the saved widths.
   const docks = $derived(
     resolveDockWidths(
       consoleWidth,
@@ -213,8 +210,7 @@
   function setDockWidth(side: "left" | "right", px: number) {
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
-    // Freeze the visible sibling during an intentional resize so the handle
-    // follows the pointer even when saved preferences were constrained.
+    // Freeze the visible sibling so the handle tracks the pointer.
     store.dockWidth = {
       ...store.dockWidth,
       ...(docks[other] ? { [other]: docks[other] } : {}),
@@ -524,8 +520,7 @@
     }
   }
 
-  // Preserve an intentional dock resize even if reload beats the normal
-  // debounced preference save. Leave other persisted preferences untouched.
+  // Save a deliberate resize even if the page unloads before the debounced save.
   function saveDockWidths() {
     if (resizedDock)
       savePersisted({
@@ -550,8 +545,7 @@
       void import("./AccountControl.svelte")
         .then((m) => (AccountControl = m.default))
         .catch(() => {
-          // The optional account control may be unavailable with an offline
-          // lazy chunk; the measurement UI remains usable without it.
+          // Offline lazy chunk: the meter works without the account control.
           AccountControl = null;
         });
   });
@@ -571,8 +565,7 @@
   data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
-  <!-- Topbar: a size container. Its queries move the direct actions into the
-       More menu as the bar narrows, without measuring any children. -->
+  <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
     <button
       type="button"
@@ -672,8 +665,6 @@
     </div>
   </header>
 
-  <!-- Centre stage: a height-bounded column. The gauge hero takes most of it
-       and the chart stays compact, so the default fits without scrolling. -->
   {#if currentRoute.kind === "not-found"}
     <section class="stage history-stage">
       <div class="empty-state">
@@ -723,9 +714,7 @@
     <ShortcutHints />
   </footer>
 
-  <!-- Auxiliary panels: one shared base, opposite sides. They dock on wide
-       screens (pushing the stage) and overlay as flyouts below that. Docked
-       panels resize from their inner edge, persisted via store.dockWidth. -->
+  <!-- Panels dock on wide screens and overlay below; docked widths persist. -->
   <SidePanel
     open={settingsOpen}
     docked={dockQuery.current}
@@ -775,9 +764,7 @@
 </main>
 
 <style>
-  /* Console grid: the stage owns the middle; the dock columns are 0-width
-     until a panel docks on a wide screen. A docked <SidePanel> reaches
-     leftdock/rightdock through display:contents and pushes the stage. */
+  /* Dock columns stay 0 until a docked panel fills them via display: contents. */
   #console {
     display: grid;
     grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
@@ -812,8 +799,6 @@
     flex: 1;
     min-width: 0;
   }
-  /* The logo doubles as the home action: the wordmark with a hover and
-     focus affordance. */
   .brand-btn {
     display: inline-flex;
     align-items: center;
@@ -868,8 +853,7 @@
     color: var(--tone);
     font-weight: var(--w-heavy);
   }
-  /* Overflow: 44px coarse targets leave three direct actions room down to a
-     ~320px bar, one down to ~260px, then everything moves into More. */
+  /* 44px coarse targets fit three direct actions to ~320px, one to ~260px. */
   .topbar-more,
   .topbar :global([data-more]) {
     display: none;
@@ -916,8 +900,7 @@
   .measurement-stage:focus {
     outline: none;
   }
-  /* The gauge owns its mode-stable intrinsic height; a viewport too short for
-     the complete stage scrolls this column beneath the anchored chrome. */
+  /* A viewport too short for the instruments scrolls this column. */
   .stage > :global(:is(.gauge-panel, .chart)) {
     width: 100%;
     max-width: 1920px;

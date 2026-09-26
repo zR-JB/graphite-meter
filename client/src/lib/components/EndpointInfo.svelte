@@ -45,8 +45,7 @@
   const captured = $derived(
     store.activeServers.find((entry) => entry.server.id === selectedServer?.id),
   );
-  // Inspection never changes run selection or the latency chart's focus.
-  // Completed runs retain every server's prepared paths, even after settings change.
+  // Inspection never changes selection; completed runs keep their prepared paths.
   const activePaths = $derived(
     captured?.paths ?? (store.activeServers.length ? null : store.activePaths),
   );
@@ -109,15 +108,12 @@
     }`;
   }
 
-  // The feed rides the session that carries the bytes, or its own fetch when
-  // the lanes are fetches.
+  // The feed rides the session carrying the bytes, or its own fetch.
   const uploadProgressPath = $derived.by(() => {
     const target = connections.throughput.target;
     if (!target) return "Pending";
     const carrier =
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
-    // The summary opens with its own mechanism, so naming the carrier again
-    // would stutter: what is left is the path it runs over.
     const over = connections.throughput.summary
       .split(" · ")
       .slice(1)
@@ -132,15 +128,11 @@
   const httpPaths = $derived(advertisedServerHttpPaths(discovery));
   let copyError = $state(false);
 
-  // Every row here reads the same presentation the path cards do. verified path evidence
-  // is the last probe's evidence, which outlives the selection that produced it
-  // and is never cleared: reading it directly makes the drawer contradict the
-  // card four lines above whenever a role is failed, checking, or moved.
+  // Rows read the path cards' presentation, never stale verified evidence.
   const throughputTransport = $derived(
     connections.throughput.target?.transport,
   );
-  // The lanes a stage opens depend on what it carries, so the run's own
-  // timeline supplies the stages the count is resolved from.
+  // The run's own timeline decides which stages resolve the stream count.
   const transferStreams = $derived(
     describeTransferStreams(
       store.runConfig.transferStreams,

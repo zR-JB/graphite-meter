@@ -1,6 +1,5 @@
 <script lang="ts">
-  // Shared side panel primitive for Settings and telemetry: docked column on
-  // wide layouts, focus-trapped flyout/sheet elsewhere.
+  // Docked column on wide layouts, focus-trapped flyout or sheet elsewhere.
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
@@ -298,8 +297,7 @@
     border-radius: var(--r-full);
     background: var(--border-strong);
   }
-  /* Only portrait phones use a bottom sheet. A short landscape phone remains
-     a side flyout with its own scrollport, the same model as a tablet. */
+  /* Only portrait phones use a bottom sheet; landscape stays a side flyout. */
   @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) .panel {
       inset: auto 0 0;
@@ -348,8 +346,7 @@
     overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    /* Overlay scrollbars sit over the scrollport in several engines; reserve
-       an inset so the thumb cannot cover cards or form controls. */
+    /* Reserve room so overlay scrollbars cannot cover cards or controls. */
     padding-right: calc(var(--space-2) + 12px);
     scrollbar-gutter: stable;
     scrollbar-width: thin;

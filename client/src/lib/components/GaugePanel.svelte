@@ -50,8 +50,7 @@
   );
   const terminalArcs = $derived(resultGaugeArcs(store.result));
   const headlineArc = $derived(primaryResultGaugeArc(terminalArcs));
-  // A one-sided bidirectional partial retains its lane result for diagnostics,
-  // but has no truthful combined gauge value.
+  // A one-sided bidirectional partial has no truthful combined gauge value.
   const unusableStage = $derived(
     activeStagePresentation?.status === "failed" ||
       (store.phase === "complete" &&
@@ -179,9 +178,7 @@
     }),
   );
 
-  // The live region mirrors a per-frame value. Mid-phase announcements wait a
-  // second apart, the time a screen reader needs to finish a sentence. Phase
-  // changes and idle updates jump the queue.
+  // Mid-phase announcements wait a second apart; phase changes jump the queue.
   const ANNOUNCE_INTERVAL_MS = 1000;
   let announcement = $state("");
   let pendingAnnouncement = "";
@@ -264,8 +261,6 @@
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
-  <!-- One container-query grid switches the complete instrument layout and
-       keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
     <div class="well stage">
       {#if indicatedServers.length > 1}
@@ -392,20 +387,16 @@
 </section>
 
 <style>
-  /* Faceplate: the panel is flat and transparent. The gauge and latency
-     panels are wells milled into it; the controls sit on the faceplate. */
   .gauge-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    /* Query context for .instrument, so a docked panel shrinking this column
-       restyles it. It sits here: a container query only styles descendants. */
+    /* Here, not on .instrument: a container query only styles descendants. */
     container: viz / inline-size;
   }
   /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
-    /* One readable gauge size across live and completed states. The profile
-       contributes its intrinsic height instead of a nested scroller. */
+    /* One gauge size for live and completed states. */
     --gauge-well-height: clamp(280px, 35svh, 360px);
     display: grid;
     gap: var(--space-3) var(--space-2);
@@ -492,8 +483,7 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
-    /* Size container so the hero number scales with cqmin, the dimension
-       that sizes the ring. cqw overflows a wide, short well. */
+    /* The hero number scales with cqmin, the dimension that sizes the ring. */
     container-type: size;
   }
   .instrument-controls {
@@ -509,8 +499,6 @@
   .instrument-controls:has(:global(.quad)) {
     --stage-controls-width: 700px;
   }
-  /* Short wide windows share a control row; taller screens keep the action
-     above its stages. */
   @media (max-height: 800px) {
     .instrument-controls {
       padding-block: var(--space-1);
@@ -571,13 +559,11 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* Keeps the number clear of the ring's sides; the inline padding also
-       bounds how wide the value grows until cqmin sizing reins it in. */
+    /* Keeps the number clear of the ring's sides. */
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }
-  /* The hero number: tabular figures so a live value never shifts layout,
-     sized in cqmin so large numbers shrink to fit a narrow gauge. */
+  /* Tabular figures keep a live value from shifting layout. */
   .gauge-value,
   .terminal-number {
     max-width: 100%;
@@ -657,8 +643,7 @@
     font-weight: var(--w-strong);
     line-height: 1.35;
   }
-  /* Aborted / error headline above the softer action line. A user abort
-     stays neutral at full text strength so the state is unmissable. */
+  /* A user abort stays neutral at full text strength. */
   .gauge-status {
     color: var(--text);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);

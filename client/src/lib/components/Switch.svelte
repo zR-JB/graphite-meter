@@ -1,15 +1,11 @@
 <script lang="ts">
-  /* Toggle control: track and knob, brand accent when on. A native checkbox
-     sits behind it for accessibility, visually hidden and focusable. */
   import { tooltip } from "../actions/tooltip";
 
   interface Props {
     checked?: boolean;
     label?: string;
     disabled?: boolean;
-    /** Optional controlled handler. When provided, the parent owns state:
-     *  the toggle is vetoable (e.g. live-toggle constraints) and `checked`
-     *  is treated as a one-way input rather than a bound value. */
+    /** When given, the parent owns state and may veto the toggle. */
     onToggle?: (next: boolean) => void;
     /** Optional jargon-tooltip text for the label, e.g. JARGON.wireRate. */
     tooltip?: string;
@@ -45,8 +41,7 @@
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if label}
     {#if tooltipText}
-      <!-- The tooltip action is wired only when there is text: it makes its
-           node focusable, and a plain switch needs no extra tab stop. -->
+      <!-- The tooltip adds a tab stop, so only a label with text gets one. -->
       <span class="label term" use:tooltip={tooltipText}>{label}</span>
     {:else}
       <span class="label">{label}</span>
@@ -55,8 +50,7 @@
 </label>
 
 <style>
-  /* Containing block for the hidden checkbox, so focusing it cannot scroll
-     the panel away. */
+  /* Contains the hidden checkbox so focusing it cannot scroll the panel. */
   .switch {
     position: relative;
     display: inline-flex;

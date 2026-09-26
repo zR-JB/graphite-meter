@@ -1,6 +1,5 @@
 <script lang="ts">
-  /* Transient, visual-only phase notice; GaugePanel announces phases and
-     values, so only issues reach the status region below. */
+  // Visual only: GaugePanel announces phases, so only issues reach the status.
   import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -114,9 +113,15 @@
         store.phase === "aborted"))}
   aria-hidden="true"
 >
-  <span class="notice-icon"
-    >{#if stalled || skipMessage || store.phase === "error"}{@html ICON.info}{:else if store.phase === "complete"}{@html ICON.check}{:else}{@html ICON.ping}{/if}</span
-  >
+  <span class="notice-icon">
+    {#if stalled || skipMessage || store.phase === "error"}
+      {@html ICON.info}
+    {:else if store.phase === "complete"}
+      {@html ICON.check}
+    {:else}
+      {@html ICON.ping}
+    {/if}
+  </span>
   <span class="kicker"
     >{stalled ? "Connection" : skipMessage ? "Issue" : notice.kicker}</span
   >
@@ -181,9 +186,7 @@
       inset-inline: 12px;
       min-width: 0;
     }
-    /* Routine phase toasts duplicate the status bar and fire several times
-       per run, which on a phone reads as an obstruction. The alert toast
-       (stall, error, aborted) is the one state nothing else surfaces. */
+    /* On phones only the alert toast shows; routine phases duplicate the status bar. */
     .phase-toast:not(.alert) {
       display: none;
     }
