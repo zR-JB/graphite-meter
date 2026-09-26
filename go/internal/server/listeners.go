@@ -203,68 +203,71 @@ type listenerBuild struct {
 	sockets     listenerSockets
 }
 
-func (b *listenerBuild) closeOpened() {
-	for _, c := range b.opened {
-		_ = c.Close()
-	}
+// tcpListener is one native TCP listener: its mux topology and, under TLS, its one ALPN protocol.
+type tcpListener struct {
+	name, addr, alpn string
+	listener         auth.Listener
+	topo             muxTopology
 }
 
-func (b *listenerBuild) addTCP(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology,
-	handler http.Handler, alpn string) error {
-	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, topo, handler, b.authn), l), proto)
-	ln, err := b.sockets.listenTCP(addr)
-	if err != nil {
-		b.closeOpened()
-		return err
-	}
-	b.opened = append(b.opened, ln)
-	var served net.Listener = admittedListener{Listener: ln, admission: b.connections}
-	if alpn != "" {
-		served = tls.NewListener(served, b.cm.tlsConfig(alpn))
-	}
-	b.services = append(b.services, service{
-		name: name, addr: addr, network: "tcp",
-		run: func() error { return serve(served, s) }, stop: s.Shutdown,
-	})
-	return nil
-}
-
-func h1Protocols() *http.Protocols {
-	p := &http.Protocols{}
-	p.SetHTTP1(true)
-	return p
-}
-
-func (b *listenerBuild) assemble() error {
-	spa := b.spa
+func (b *listenerBuild) assemble() (err error) {
+	defer func() {
+		if err != nil {
+			for _, c := range b.opened {
+				_ = c.Close()
+			}
+		}
+	}()
+	cfg := b.cfg
+	ui := muxTopology{spa: true, discovery: true, latency: true, transfers: true}
+	uiTLS := ui
+	uiTLS.requiredProto = 1
 	h1Name := "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets"
 	if b.authn.Enabled() {
 		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
-	if err := b.addTCP(h1Name, b.cfg.Native.H1, h1Protocols(), auth.Listener{UI: true},
-		muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, ""); err != nil {
+	for _, l := range []tcpListener{
+		{h1Name, cfg.Native.H1, "", auth.Listener{UI: true}, ui},
+		{"HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", cfg.Native.H1TLS, "http/1.1",
+			auth.Listener{UI: true}, uiTLS},
+		{"HTTPS HTTP/2: measurement probe, transfers, progress only", cfg.Native.H2, "h2",
+			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}},
+		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", cfg.Native.H3, "http/1.1",
+			auth.Listener{}, muxTopology{bootstrap: true}},
+	} {
+		if l.addr == "" {
+			continue
+		}
+		if err := b.addTCP(l); err != nil {
+			return err
+		}
+	}
+	if cfg.Native.H3 == "" {
+		return nil
+	}
+	return b.addH3()
+}
+
+func (b *listenerBuild) addTCP(l tcpListener) error {
+	protocols := &http.Protocols{}
+	protocols.SetHTTP1(l.alpn != "h2")
+	protocols.SetHTTP2(l.alpn == "h2")
+	var spa http.Handler
+	if l.topo.spa {
+		spa = b.spa
+	}
+	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener), protocols)
+	ln, err := b.sockets.listenTCP(l.addr)
+	if err != nil {
 		return err
 	}
-
-	if b.cfg.Native.H1TLS != "" {
-		if err := b.addTCP("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS,
-			h1Protocols(), auth.Listener{UI: true},
-			muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa,
-			"http/1.1"); err != nil {
-			return err
-		}
+	b.opened = append(b.opened, ln)
+	var served net.Listener = admittedListener{Listener: ln, admission: b.connections}
+	if l.alpn != "" {
+		served = tls.NewListener(served, b.cm.tlsConfig(l.alpn))
 	}
-	if b.cfg.Native.H2 != "" {
-		p := &http.Protocols{}
-		p.SetHTTP2(true)
-		if err := b.addTCP("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p,
-			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, nil, "h2"); err != nil {
-			return err
-		}
-	}
-	if b.cfg.Native.H3 != "" {
-		return b.assembleH3()
-	}
+	b.services = append(b.services, service{name: l.name, addr: l.addr, network: "tcp",
+		run: func() error { return serve(served, s) }, stop: s.Shutdown})
 	return nil
 }
 
@@ -292,11 +295,7 @@ func h3QUICConfig() *quic.Config {
 	return cfg
 }
 
-func (b *listenerBuild) assembleH3() error {
-	if err := b.addTCP("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(),
-		auth.Listener{}, muxTopology{bootstrap: true}, nil, "http/1.1"); err != nil {
-		return err
-	}
+func (b *listenerBuild) addH3() error {
 	quicConfig := h3QUICConfig()
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
 	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
@@ -306,14 +305,12 @@ func (b *listenerBuild) assembleH3() error {
 	h3.MaxHeaderBytes = 32 << 10
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
-		b.closeOpened()
 		return err
 	}
 	b.opened = append(b.opened, pc)
 	quicTransport := b.connections.quicTransport(pc)
 	quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
 	if err != nil {
-		b.closeOpened()
 		return err
 	}
 	b.services = append(b.services,
@@ -370,7 +367,9 @@ func runAdmissionLog(ctx context.Context, requests *requestAdmission, connection
 		case <-ticker:
 			r, s := requests.stats()
 			c := connections.stats()
-			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; sessions %d active / %d max, %d per client, rejected %d budget + %d client; connections %d active / %d peak, rejected %d global + %d client",
+			log.Printf("[gm:admission] handlers %d active / %d peak, rejected %d pool + %d client; "+
+				"sessions %d active / %d max, %d per client, rejected %d budget + %d client; "+
+				"connections %d active / %d peak, rejected %d global + %d client",
 				r.active, r.peak, r.rejectedGlobal, r.rejectedClient,
 				s.active, s.limit, s.clientLimit, s.rejectedGlobal, s.rejectedClient,
 				c.active, c.peak, c.rejectedGlobal, c.rejectedClient)

@@ -67,10 +67,10 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
 	t.Cleanup(func() { _ = h2.Close() })
 
-	// assembleH3 builds the HTTP/3 listener, rather than a copy of it here.
+	// addH3 builds the HTTP/3 listener, rather than a copy of it here.
 	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, sockets: sockets,
 		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
-	if err := build.assembleH3(); err != nil {
+	if err := build.addH3(); err != nil {
 		t.Fatal(err)
 	}
 	for _, svc := range build.services {
