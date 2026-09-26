@@ -222,14 +222,14 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client := transport.AddressBucket(addr)
-	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: s.now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
+	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: time.Now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
 	}
 	o := s.oidc
 	o.mu.Lock()
-	now := s.now()
+	now := time.Now()
 	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
 	perClient := 0
 	for v := range maps.Values(o.tx) {
@@ -337,7 +337,7 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 	if ok {
 		carryCLIChallenge(r, tx.cliChallenge)
 	}
-	if !ok || !s.now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.discovery == nil {
+	if !ok || !time.Now().Before(tx.expires) || tx.browser != browserHash || tx.state != state || tx.discovery == nil {
 		s.counters.replayExpiry.Add(1)
 		s.oidcLoginFailure(w, r, reasonTransactionReplay)
 		return oidcTransaction{}, "", false

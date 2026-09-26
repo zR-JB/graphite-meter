@@ -68,6 +68,26 @@ func TestDatagramSinkLatchesASendFailure(t *testing.T) {
 	}
 }
 
+// A session ends after two quiet half-bounds, never while its peer keeps it active.
+func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, live := watchSession(t.Context(), time.Second)
+		for range 10 {
+			time.Sleep(400 * time.Millisecond)
+			live.bump()
+		}
+		synctest.Wait()
+		if ctx.Err() != nil {
+			t.Fatal("an active session was ended")
+		}
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if ctx.Err() == nil {
+			t.Fatal("a session quiet for two bounds is still open")
+		}
+	})
+}
+
 // SendDatagram ignores cancellation, so an ended session must stop the sink between datagrams.
 func TestDatagramSinkStopsWhenTheSessionEnds(t *testing.T) {
 	conn := &recordingConn{}
@@ -232,11 +252,11 @@ func TestStreamProgressReportsTheCounter(t *testing.T) {
 	if access != uploadAccessOK {
 		t.Fatalf("getOrCreateFor = %v, want ok", access)
 	}
-	agg.recordChunk(monoNanos(), 4096)
+	agg.recordChunk(store.now(), 4096)
 
 	r, w := io.Pipe()
 	go func() {
-		streamProgress(t.Context(), agg, w)
+		streamProgress(t.Context(), agg, store.now, w)
 		_ = w.Close()
 	}()
 

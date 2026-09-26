@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"net/url"
 	"os"
 	"reflect"
@@ -20,6 +19,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -153,16 +153,23 @@ func TestOrdinaryDeadlineIsNotSessionEnd(t *testing.T) {
 	}
 }
 func TestSessionExpiryCancelsAtDeadline(t *testing.T) {
-	s := testService(t)
-	_, sess, err := s.createSessionUntil("expiring", "Name", "local", time.Now().Add(40*time.Millisecond))
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-sess.ctx.Done():
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("session survived its deadline")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		_, sess, err := s.createSession("expiring", "Name", "local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(sessionLifetime - time.Second)
+		synctest.Wait()
+		if sess.ctx.Err() != nil {
+			t.Fatal("session ended before its deadline")
+		}
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if sess.ctx.Err() == nil {
+			t.Fatal("session survived its deadline")
+		}
+	})
 }
 
 func TestSessionUsesAbsolutePolicy(t *testing.T) {
@@ -592,21 +599,6 @@ func TestOIDCTransactionCookieAllowsTopLevelCallback(t *testing.T) {
 		t.Fatalf("cookies=%+v, want exactly one with SameSite=Lax", cookies)
 	}
 }
-func TestAttemptLimiterStaysBounded(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	for i := range 2048 {
-		s.attempts[fmt.Sprintf("2001:db8::%x", i)] = loginAttempt{times: []time.Time{now}}
-	}
-	r := secureRequest("POST", "/auth/password", nil)
-	r.RemoteAddr = "192.0.2.1:1234"
-	if s.allowAttempt(r) {
-		t.Fatal("new entry admitted at capacity")
-	}
-	if len(s.attempts) != 2048 {
-		t.Fatalf("attempts=%d, want 2048", len(s.attempts))
-	}
-}
 func TestPerAddressRejectionsDoNotConsumeGlobalPasswordLimit(t *testing.T) {
 	s := testService(t)
 	for i := range 61 {
@@ -628,67 +620,25 @@ func TestPerAddressRejectionsDoNotConsumeGlobalPasswordLimit(t *testing.T) {
 }
 
 func TestPasswordLimiterUsesRollingWindow(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	r := secureRequest(http.MethodPost, "/auth/password", nil)
-	r.RemoteAddr = "192.0.2.1:1234"
-	for i := range 5 {
-		if !s.allowAttempt(r) {
-			t.Fatalf("attempt %d rejected", i+1)
-		}
-	}
-	now = now.Add(59 * time.Second)
-	if s.allowAttempt(r) {
-		t.Fatal("fixed-window boundary admitted a sixth attempt")
-	}
-	now = now.Add(2 * time.Second)
-	if !s.allowAttempt(r) {
-		t.Fatal("expired rolling-window attempts were retained")
-	}
-}
-func TestPasswordLimiterHasGlobalCeiling(t *testing.T) {
-	s := testService(t)
-	for i := range 60 {
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
 		r := secureRequest(http.MethodPost, "/auth/password", nil)
-		r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
-		if !s.allowAttempt(r) {
-			t.Fatalf("attempt %d rejected early", i+1)
-		}
-	}
-	r := secureRequest(http.MethodPost, "/auth/password", nil)
-	r.RemoteAddr = "198.51.100.1:1234"
-	if s.allowAttempt(r) {
-		t.Fatal("global password-attempt ceiling was bypassed with a new address")
-	}
-}
-
-func TestAuthClientAddressUsesOnlyAuthoritativeProxyHeader(t *testing.T) {
-	s := testService(t)
-	s.trusted = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-	for _, tc := range []struct {
-		name, real, forwarded, xff, want string
-		ok                               bool
-	}{
-		{"authoritative", "198.51.100.8", "", "", "198.51.100.8", true},
-		{"forwarded competes", "198.51.100.8", "for=203.0.113.1", "", "", false},
-		{"xff competes", "198.51.100.8", "", "203.0.113.1", "", false},
-		{"missing authoritative", "", "", "", "", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := secureRequest(http.MethodPost, "/auth/password", nil)
-			r.RemoteAddr = "192.0.2.10:443"
-			r.Header.Set("X-Real-IP", tc.real)
-			r.Header.Set("Forwarded", tc.forwarded)
-			r.Header.Set("X-Forwarded-For", tc.xff)
-			addr, ok := s.authClientAddress(r)
-			if ok != tc.ok || ok && addr.String() != tc.want {
-				t.Fatalf("authClientAddress = (%v, %v), want (%q, %v)", addr, ok, tc.want, tc.ok)
+		r.RemoteAddr = "192.0.2.1:1234"
+		for i := range 5 {
+			if !s.allowAttempt(r) {
+				t.Fatalf("attempt %d rejected", i+1)
 			}
-		})
-	}
+		}
+		time.Sleep(59 * time.Second)
+		if s.allowAttempt(r) {
+			t.Fatal("fixed-window boundary admitted a sixth attempt")
+		}
+		time.Sleep(2 * time.Second)
+		if !s.allowAttempt(r) {
+			t.Fatal("expired rolling-window attempts were retained")
+		}
+	})
 }
-
 func TestMountRegistersOnlyEnabledLoginMethods(t *testing.T) {
 	for _, tc := range []struct {
 		mode           string
@@ -725,7 +675,7 @@ func TestLoginRendersOnlyConfiguredMethods(t *testing.T) {
 		{"hybrid", true, true, true},
 	} {
 		t.Run(fmt.Sprintf("%s-ready-%v", tc.mode, tc.ready), func(t *testing.T) {
-			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}, public: public, now: time.Now}
+			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}, public: public}
 			if tc.provider {
 				s.oidc = newOIDCState(s.cfg, "secret", false)
 				if tc.ready {
@@ -793,26 +743,23 @@ func TestPasswordLoginPreservesFormEncodedPunctuation(t *testing.T) {
 	}
 }
 func TestPerSubjectSessionLimitRevokesOldest(t *testing.T) {
-	s := testService(t)
-	var oldest *session
-	for i := range maxSubjectSessions + 1 {
-		_, sess, err := s.createSession("same", "Name", "local")
-		if err != nil {
-			t.Fatal(err)
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		var oldest *session
+		for i := range maxSubjectSessions + 1 {
+			_, sess, err := s.createSession("same", "Name", "local")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if i == 0 {
+				oldest = sess
+			}
+			time.Sleep(time.Millisecond)
 		}
-		if i == 0 {
-			oldest = sess
+		if oldest.ctx.Err() == nil || len(s.sessions) != maxSubjectSessions {
+			t.Fatalf("oldest revoked = %v with %d sessions, want it revoked and %d kept", oldest.ctx.Err() != nil, len(s.sessions), maxSubjectSessions)
 		}
-		s.now = func() time.Time { return time.Now().Add(time.Duration(i+1) * time.Millisecond) }
-	}
-	select {
-	case <-oldest.ctx.Done():
-	default:
-		t.Fatal("oldest session was not revoked")
-	}
-	if len(s.sessions) != maxSubjectSessions {
-		t.Fatalf("sessions=%d, want %d", len(s.sessions), maxSubjectSessions)
-	}
+	})
 }
 func TestUnknownCLIChallengeAllocatesNothing(t *testing.T) {
 	s := testService(t)
@@ -849,14 +796,6 @@ func TestCLITokenRejectsDuplicateJSONNames(t *testing.T) {
 	}
 	if len(sess.grants) != 0 {
 		t.Fatal("duplicate-name request issued a grant")
-	}
-}
-func TestVerificationCodeIsAlwaysEightCharacters(t *testing.T) {
-	for range 100 {
-		challenge := randomToken(32)
-		if code := verificationCode(challenge); len(code) != 8 {
-			t.Fatalf("code=%q length=%d", code, len(code))
-		}
 	}
 }
 

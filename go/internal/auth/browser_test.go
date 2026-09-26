@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -255,28 +256,26 @@ func TestOIDCLoginReturnsToTheExactBrowserApproval(t *testing.T) {
 }
 
 func TestBrowserGrantCannotOutliveItsParentLogin(t *testing.T) {
-	s := testService(t)
-	raw, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatal(err)
-	}
-	grant, _ := approveBrowser(t, s, raw, sess)
-	p, ok := s.authenticateGrant(grant)
-	if !ok {
-		t.Fatal("live browser grant was refused")
-	}
-	s.now = func() time.Time { return sess.expires.Add(time.Second) }
-	if _, ok := s.authenticateGrant(grant); ok {
-		t.Fatal("expired parent left a browser grant usable")
-	}
-	// Advancing the test clock does not fire the real context deadline; exercise
-	// the same expiry cleanup used by the session sweeper.
-	s.mu.Lock()
-	s.expireLocked(s.now())
-	s.mu.Unlock()
-	if p.measurementContext().Err() == nil {
-		t.Fatal("expiry did not cancel work admitted by the grant")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		raw, sess, err := s.createSession("subject", "Name", "local")
+		if err != nil {
+			t.Fatal(err)
+		}
+		grant, _ := approveBrowser(t, s, raw, sess)
+		p, ok := s.authenticateGrant(grant)
+		if !ok {
+			t.Fatal("live browser grant was refused")
+		}
+		time.Sleep(time.Until(sess.expires) + time.Second)
+		synctest.Wait()
+		if _, ok := s.authenticateGrant(grant); ok {
+			t.Fatal("expired parent left a browser grant usable")
+		}
+		if p.measurementContext().Err() == nil {
+			t.Fatal("expiry did not cancel work admitted by the grant")
+		}
+	})
 }
 
 func TestBrowserGrantCapacityOffersExplicitLoginRenewal(t *testing.T) {

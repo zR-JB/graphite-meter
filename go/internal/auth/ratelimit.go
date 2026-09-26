@@ -51,7 +51,7 @@ func (s *Service) allowAddress(r *http.Request, store map[string]loginAttempt, n
 		return false
 	}
 	key := transport.AddressBucket(addr)
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	times, ok := s.attemptRoomLocked(store, name, key, limit, now)

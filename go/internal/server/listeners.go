@@ -45,7 +45,7 @@ type endpoints struct {
 	probe, bootstrapProbe *endpoint.Probe
 	download              *endpoint.Download
 	upload                *endpoint.Upload
-	// The WebTransport session handlers drive these operations; tests wrap them to observe lanes.
+	// WebTransport lanes run through these; tests wrap them.
 	stream      endpoint.StreamFunc
 	receive     endpoint.ReceiveFunc
 	admission   *requestAdmission
@@ -114,8 +114,7 @@ func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
 		// Bound upload DATA frames so control requests can share a saturated connection.
 		MaxReadFrameSize: 16 << 10,
-		// The 1 MiB defaults cap a multiplexed upload at 1 MiB per round trip.
-		// Buffers fill only as data arrives, and connection admission bounds the worst case.
+		// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
 		MaxReceiveBufferPerConnection: h2ReceiveWindowPerConnection,
 		MaxReceiveBufferPerStream:     h2ReceiveWindowPerStream,
 	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
@@ -277,8 +276,7 @@ func h3QUICConfig() *quic.Config {
 	cfg.HandshakeIdleTimeout = 5 * time.Second
 	cfg.MaxIdleTimeout = 30 * time.Second
 	cfg.MaxIncomingStreams = h3MaxIncomingStreams
-	// api/wire.md promises the lane past wire.WTMaxStreams is reset rather than
-	// served, so stream credit must outrun the lanes a browser can open after its own HTTP/3 streams.
+	// Credit past the lane cap, so an excess lane is reset rather than parked (api/wire.md).
 	cfg.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
 	return cfg
 }

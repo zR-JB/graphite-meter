@@ -16,8 +16,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// budget counts one kind of concurrent occupancy against a global and a
-// per-client ceiling. Its owner serializes access.
+// budget counts concurrent occupancy against a global and a per-client ceiling; its owner locks it.
 type budget struct {
 	active, peak, limit, clientLimit int
 	clients                          map[string]int
@@ -28,7 +27,7 @@ func newBudget(limit, clientLimit int) budget {
 	return budget{limit: limit, clientLimit: clientLimit, clients: make(map[string]int)}
 }
 
-// clientFull reports, and counts, a refusal of key's next occupancy. The empty key is exempt.
+// clientFull reports and counts a per-client refusal; the empty key is exempt.
 func (b *budget) clientFull(key string) bool {
 	if key != "" && b.clients[key] >= b.clientLimit {
 		b.rejectedClient++
@@ -37,7 +36,7 @@ func (b *budget) clientFull(key string) bool {
 	return false
 }
 
-// full reports, and counts, a refusal at the global ceiling.
+// full reports and counts a global refusal.
 func (b *budget) full() bool {
 	if b.active >= b.limit {
 		b.rejectedGlobal++
@@ -70,8 +69,7 @@ func (b *budget) snapshot() budget {
 	return c
 }
 
-// requestAdmission bounds concurrent measurement handlers. Session routes also
-// spend a session budget: a share of the same pool with its own per-login ceiling.
+// requestAdmission bounds measurement handlers; sessions also spend a per-login share of the pool.
 type requestAdmission struct {
 	mu                               sync.Mutex
 	requests, sessions               budget
@@ -85,8 +83,7 @@ func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int,
 	}
 }
 
-// acquire admits a request-shaped operation for key, or a session for sessionKey when it is set.
-// A session occupies the global pool but is bounded per login, not per request key.
+// acquire admits a request for key, or a session for sessionKey when set.
 func (a *requestAdmission) acquire(key, sessionKey string) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -123,15 +120,14 @@ func (a *requestAdmission) stats() (requests, sessions budget) {
 	return a.requests.snapshot(), a.sessions.snapshot()
 }
 
-// wrap admits each request to next under spec's budget and lifetime. A
-// refusal carries the same CORS answer as the route, so a browser can read it.
+// wrap admits requests under spec's budget and lifetime; refusals carry the route's CORS answer.
 func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []netip.Prefix, authn *auth.Service) http.Handler {
 	session := spec.Admission == route.Session
 	lifetime := a.requestLifetime
 	if session {
 		lifetime = a.sessionLifetime
 	}
-	// A socket deadline bounds a request; it would tear a held channel down mid-stream.
+	// Held channels take no socket deadline.
 	request := spec.Kind == route.HTTP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key, sessionKey := endpoint.ClientKey(r, trusted), ""
@@ -166,8 +162,7 @@ func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
 	}
 }
 
-// connectionAdmission bounds concurrent TCP and QUIC connections, per direct
-// client; a trusted proxy's connections are exempt from the per-client ceiling.
+// connectionAdmission bounds TCP and QUIC connections per direct client; trusted proxies are exempt.
 type connectionAdmission struct {
 	mu          sync.Mutex
 	connections budget
@@ -223,16 +218,14 @@ func (a *connectionAdmission) stats() budget {
 	return a.connections.snapshot()
 }
 
-// verifySourceAddress makes a loaded server spend a Retry round trip before an
-// Initial may hold a slot: a spoofed source never completes Retry, so it cannot
-// pin a slot for the handshake timeout.
+// verifySourceAddress requires Retry under load, so spoofed Initials cannot hold slots.
 func (a *connectionAdmission) verifySourceAddress(net.Addr) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.connections.active >= a.connections.limit/4
 }
 
-// connContext runs for every Initial that passed source-address policy, before its handshake.
+// connContext admits an Initial that passed source-address policy.
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
 	release, ok := a.acquire(info.RemoteAddr)
 	if !ok {
@@ -242,7 +235,6 @@ func (a *connectionAdmission) connContext(ctx context.Context, info *quic.Client
 	return ctx, nil
 }
 
-// quicTransport admits QUIC connections from pc against the shared connection budget.
 func (a *connectionAdmission) quicTransport(pc net.PacketConn) *quic.Transport {
 	return &quic.Transport{Conn: pc, ConnContext: a.connContext, VerifySourceAddress: a.verifySourceAddress}
 }

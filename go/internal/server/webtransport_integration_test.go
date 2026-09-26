@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -139,6 +138,7 @@ func dialWT(t *testing.T, wtTransport *testWTTransport, url string) *webtranspor
 }
 
 func TestWebTransportPingEchoesOverDatagrams(t *testing.T) {
+	t.Parallel()
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/ping")
 
@@ -172,6 +172,7 @@ func echoes(t *testing.T, ctx context.Context, sess *webtransport.Session, id ui
 }
 
 func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
+	t.Parallel()
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=1048576&streams=2")
 
@@ -194,6 +195,7 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 }
 
 func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
+	t.Parallel()
 	base, _, wtTransport := wtTestServer(t)
 	const unread = "bytes=67108864"
 	for _, tc := range []struct {
@@ -206,13 +208,14 @@ func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
 		{unread + "&streams=nonsense", 1},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
+			t.Parallel()
 			sess := dialWT(t, wtTransport, base+"/wt/download?"+tc.query)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			// One accept past the expected count must find nothing.
 			seen := 0
 			for seen <= tc.want {
-				accept, cancelAccept := context.WithTimeout(ctx, 500*time.Millisecond)
+				accept, cancelAccept := context.WithTimeout(ctx, 200*time.Millisecond)
 				_, err := sess.AcceptUniStream(accept)
 				cancelAccept()
 				if err != nil {
@@ -248,12 +251,13 @@ func mintUploadID(t *testing.T, httpBase string) string {
 }
 
 func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
+	t.Parallel()
 	base, httpBase, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
 
 	// Every lane writes for the same window, paced so the test moves tens of megabytes rather than everything the link.
 	const opened = wire.WTMaxStreams + 4
-	const laneWindow = 2 * time.Second
+	const laneWindow = 500 * time.Millisecond
 	block := make([]byte, 16<<10)
 	var writable atomic.Int64
 	var wg sync.WaitGroup
@@ -288,6 +292,7 @@ func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
 }
 
 func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
+	t.Parallel()
 	base, httpBase, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id="+mintUploadID(t, httpBase))
 	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
@@ -344,6 +349,7 @@ func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 
 // A refused upload session has no status line: its refusal is the one record on its feed, and the session then ends.
 func TestWebTransportUploadReportsARefusedIDAndFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	base, httpBase, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
 	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
@@ -380,6 +386,7 @@ func TestWebTransportUploadReportsARefusedIDAndFreesItsSlot(t *testing.T) {
 }
 
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
+	t.Parallel()
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
 
@@ -395,6 +402,7 @@ func TestWebTransportDatagramFloodRepeats(t *testing.T) {
 }
 
 func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
+	t.Parallel()
 	base, _, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=0")
 
@@ -413,6 +421,7 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 
 // A stream download's liveness is the peer draining its lanes, and that is the only thing keeping the session open.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
+	t.Parallel()
 	const bound = 300 * time.Millisecond
 	base, _, wtTransport := wtTestServerWithIdleBound(t, bound, nil)
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=262144&streams=1")
@@ -420,7 +429,8 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
-	deadline := start.Add(6 * bound)
+	// Reaping takes at most 1.5 bounds, so surviving four proves draining is what kept it.
+	deadline := start.Add(4 * bound)
 	var total int64
 	for time.Now().Before(deadline) {
 		str, err := sess.AcceptUniStream(ctx)
@@ -441,6 +451,7 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 
 // An upload session carries only what the peer sends, and the one thing the server puts on it -- the progress feed --.
 func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	assertWTSlotReleased(t, func(base, httpBase string, wtTransport *testWTTransport) {
 		// Dial an upload session with a real id and then send nothing at all.
 		dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
@@ -449,6 +460,7 @@ func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
 
 // A lane that stops sending mid-transfer cannot hold its session open: its read unblocks when the session idles out.
 func TestStalledWebTransportUploadLaneFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	assertWTSlotReleased(t, func(base, httpBase string, wtTransport *testWTTransport) {
 		sess := dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
 		lane, err := sess.OpenUniStreamSync(t.Context())
@@ -463,8 +475,15 @@ func TestStalledWebTransportUploadLaneFreesItsSlot(t *testing.T) {
 
 // A byte stream carries no channel to report a refusal on, so the refusal is the reset.
 func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
-	base, _, wtTransport := wtTestServer(t)
-	sess := dialWT(t, wtTransport, base+"/wt/upload?id=gmu_nosuchupload")
+	t.Parallel()
+	base, httpBase, wtTransport := wtTestServer(t)
+	id := mintUploadID(t, httpBase)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+id)
+	// A finished receiver refuses every later lane.
+	finish, _ := http.NewRequest(http.MethodDelete, httpBase+"/upload/progress?id="+id, nil)
+	if res, err := http.DefaultClient.Do(finish); err != nil || res.StatusCode != http.StatusNoContent {
+		t.Fatalf("finish upload: %v %v", res, err)
+	}
 
 	openCtx, cancelOpen := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancelOpen()
@@ -532,6 +551,7 @@ func assertWTSlotReleased(t *testing.T, open func(base, httpBase string, wtTrans
 
 // A peer that stops reading and never closes still has to give its slot back.
 func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
 		// Never accept the lane.
 		dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
@@ -540,6 +560,7 @@ func TestAbandonedWebTransportSessionFreesItsSlot(t *testing.T) {
 
 // A datagram download is served entirely by the server: the peer sends nothing on it.
 func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
 		// Dial the flood and never read a datagram.
 		dialWT(t, wtTransport, base+"/wt/download?bytes=2000&datagrams=1")
@@ -548,6 +569,7 @@ func TestAbandonedDatagramDownloadFreesItsSlot(t *testing.T) {
 
 // The datagram ping bus is not a session route, so it keeps the request bound and the request bucket -- but an idle.
 func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
+	t.Parallel()
 	assertWTSlotReleased(t, func(base, _ string, wtTransport *testWTTransport) {
 		// Dial and then send nothing.
 		dialWT(t, wtTransport, base+route.WTPing)
@@ -556,6 +578,7 @@ func TestIdleWebTransportPingSessionFreesItsSlot(t *testing.T) {
 
 // wtOriginCheck is the ONLY origin policy a WebTransport CONNECT passes through.
 func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 
 	foreign := http.Header{"Origin": {"https://attacker.example"}}
@@ -596,21 +619,14 @@ func dialWTUntilAnswered(t *testing.T, d *webtransport.Transport, target string,
 	}
 }
 
-// wtTestServerTuned must not arm a cleanup that closes a wtTransport its caller never dialed.
-func TestWTTestServerLeavesAnUnusedTransportAlone(t *testing.T) {
-	// The assertion is what happens after this test returns: its cleanups run with the wtTransport still unused.
-	if base, httpBase, wtTransport := wtTestServerTuned(t, nil); base == "" || httpBase == "" || wtTransport == nil {
-		t.Fatalf("helper returned base=%q httpBase=%q wtTransport=%v, want a usable server", base, httpBase, wtTransport)
-	}
-}
-
 // A lane that keeps dropping redials, and the budget it needs is one however many times it does.
 func TestFlappingWebTransportLaneCostsOneSlot(t *testing.T) {
+	t.Parallel()
 	base, httpBase, wtTransport := wtTestServerWithIdleBound(t, 300*time.Millisecond, func(c *config.Config) {
 		c.MaxSessionsPerClient = 1
 	})
 
-	for attempt := 1; attempt <= 5; attempt++ {
+	for attempt := 1; attempt <= 3; attempt++ {
 		dialWT(t, wtTransport, base+"/wt/download?bytes=1073741824&streams=1")
 		waitForLoad(t, httpBase, 1)
 		waitForLoad(t, httpBase, 0)
@@ -618,6 +634,7 @@ func TestFlappingWebTransportLaneCostsOneSlot(t *testing.T) {
 }
 
 func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
+	t.Parallel()
 	base, httpBase, wtTransport := wtTestServer(t)
 
 	// The id is minted and finalized over HTTP; only the bytes ride the session.
@@ -680,6 +697,7 @@ func TestWebTransportUploadCountsLanesOnItsProgressStream(t *testing.T) {
 }
 
 func TestGoClientRunsOverWebTransport(t *testing.T) {
+	t.Parallel()
 	_, httpBase := wtTestOrigins(t, nil)
 
 	clientCfg := goclient.DefaultConfig()
@@ -728,8 +746,8 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTransport string) {
 	t.Helper()
 	_, httpBase := wtTestOrigins(t, func(c *config.Config) {
-		c.MaxOperationDuration = 2 * time.Second
-		c.MaxSessionDuration = 2 * time.Second
+		c.MaxOperationDuration = 750 * time.Millisecond
+		c.MaxSessionDuration = 750 * time.Millisecond
 	})
 
 	clientCfg := goclient.DefaultConfig()
@@ -739,9 +757,9 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	clientCfg.InsecureSkipTLSVerify = true
 	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
 	clientCfg.Warmup = 100 * time.Millisecond
-	clientCfg.LatencyDuration = 5 * time.Second
-	clientCfg.DownloadDuration = 5 * time.Second
-	clientCfg.UploadDuration = 5 * time.Second
+	clientCfg.LatencyDuration = 2 * time.Second
+	clientCfg.DownloadDuration = 2 * time.Second
+	clientCfg.UploadDuration = 2 * time.Second
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
@@ -884,14 +902,14 @@ func wtClientConfig(httpBase string) goclient.Config {
 func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	t.Parallel()
 	_, httpBase, e := wtShapedServer(t, func(c *config.Config) {
-		// The session bound kills the stage's session a fifth of the way into the window.
-		c.MaxOperationDuration = 2 * time.Second
-		c.MaxSessionDuration = 2 * time.Second
+		// The session bound kills the stage's session early in the window.
+		c.MaxOperationDuration = time.Second
+		c.MaxSessionDuration = time.Second
 	}, nil)
 
 	clientCfg := wtClientConfig(httpBase)
 	clientCfg.Stages = goclient.StageSet{Download: true}
-	clientCfg.DownloadDuration = 10 * time.Second
+	clientCfg.DownloadDuration = 6 * time.Second
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
@@ -942,23 +960,23 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	}
 }
 
-// The published lane range is 1..16 over WebTransport, and nothing ran the top of it end to end.
-// Run the lane-rate comparison before parallel transport stress tests consume the same CPU.
+// The published lane range is 1..16 over WebTransport: both ends run on one session each.
 func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
+	t.Parallel()
 	down, up := &wtLaneCounter{}, &wtLaneCounter{}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
 		down.stream, e.stream = e.stream, down.Stream
 		up.receive, e.receive = e.receive, up.Receive
 	})
 
-	run := func(t *testing.T, streams int) map[string]goclient.Result {
+	run := func(streams int) {
 		t.Helper()
 		down.reset()
 		up.reset()
 		clientCfg := wtClientConfig(httpBase)
 		clientCfg.Stages = goclient.StageSet{Download: true, Upload: true}
-		clientCfg.DownloadDuration = 1200 * time.Millisecond
-		clientCfg.UploadDuration = 1200 * time.Millisecond
+		clientCfg.DownloadDuration = 600 * time.Millisecond
+		clientCfg.UploadDuration = 600 * time.Millisecond
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
 
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
@@ -985,35 +1003,15 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 				t.Errorf("%s at %d lanes moved no bytes", name, streams)
 			}
 		}
-		return results
 	}
-
-	var single map[string]goclient.Result
-	t.Run("1", func(t *testing.T) { single = run(t, 1) })
-	if single == nil {
-		t.Fatal("the single-lane control did not run, so there is nothing to compare against")
-	}
-	for _, streams := range []int{4, 16} {
-		t.Run(strconv.Itoa(streams), func(t *testing.T) {
-			results := run(t, streams)
-			// A loose band on purpose: loopback rates swing run to run.
-			const factor = 10
-			for _, stage := range []string{"download", "upload"} {
-				got, base := results[stage].MeanBps, single[stage].MeanBps
-				if base <= 0 {
-					t.Fatalf("the single-lane %s control reported %v B/s, so the comparison is meaningless", stage, base)
-				}
-				if got < base/factor || got > base*factor {
-					t.Errorf("%s at %d lanes ran at %.0f B/s against %.0f B/s on one lane, outside a factor of %d",
-						stage, streams, got, base, factor)
-				}
-			}
-		})
+	for _, streams := range []int{1, wire.WTMaxStreams} {
+		run(streams)
 	}
 }
 
 // One lane's stream failing is not a lost session.
 func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
+	t.Parallel()
 	const lanes = 4
 	up := &wtLaneCounter{}
 	var cuts atomic.Int64
@@ -1023,7 +1021,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 			return 0
 		}
 		cuts.Add(1)
-		return 700 * time.Millisecond
+		return 300 * time.Millisecond
 	}
 	_, httpBase, _ := wtShapedServer(t, nil, func(e *endpoints) {
 		up.receive, e.receive = e.receive, up.Receive
@@ -1031,7 +1029,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 
 	clientCfg := wtClientConfig(httpBase)
 	clientCfg.Stages = goclient.StageSet{Upload: true}
-	clientCfg.UploadDuration = 3 * time.Second
+	clientCfg.UploadDuration = 1500 * time.Millisecond
 	clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: lanes}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)

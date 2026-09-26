@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -64,54 +65,55 @@ func TestTokenExchangeIsThrottledPerAddress(t *testing.T) {
 }
 
 func TestExchangeBudgetDrainsWithTheWindow(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	address := "203.0.113.7:40000"
-	for range maxAddressExchanges {
-		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address))
-	}
-	if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-		t.Fatal("exchange budget is not enforced")
-	}
-	now = now.Add(attemptWindow + time.Second)
-	if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
-		t.Fatal("exchange budget did not drain")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		address := "203.0.113.7:40000"
+		for range maxAddressExchanges {
+			s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address))
+		}
+		if s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
+			t.Fatal("exchange budget is not enforced")
+		}
+		time.Sleep(attemptWindow + time.Second)
+		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", address)) {
+			t.Fatal("exchange budget did not drain")
+		}
+	})
 }
 
-func TestGlobalCeilingLogsOncePerWindow(t *testing.T) {
-	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
-	var out bytes.Buffer
-	log.SetOutput(&out)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
-
-	spend := func() {
-		for i := range maxGlobalAttempts + 20 {
-			s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, 113, byte(i % 200)}), 40000).String()))
+// A new address cannot bypass the global password ceiling, and engaging it logs once per window.
+func TestGlobalPasswordCeilingHoldsAndLogsOncePerWindow(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := testService(t)
+		var out bytes.Buffer
+		log.SetOutput(&out)
+		t.Cleanup(func() { log.SetOutput(os.Stderr) })
+		spend := func() {
+			for i := range maxGlobalAttempts + 20 {
+				s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", netip.AddrPortFrom(netip.AddrFrom4([4]byte{203, 0, 113, byte(i % 200)}), 40000).String()))
+			}
 		}
-	}
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
-		t.Fatalf("logged %d ceiling notices in one window, want 1", got)
-	}
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
-		t.Fatalf("logged %d ceiling notices while still inside the window, want 1", got)
-	}
-	now = now.Add(ceilingLogInterval + time.Second)
-	spend()
-	if got := strings.Count(out.String(), "ceiling engaged"); got != 2 {
-		t.Fatalf("logged %d ceiling notices across two windows, want 2", got)
-	}
+		spend()
+		if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "198.51.100.1:1234")) {
+			t.Fatal("global password-attempt ceiling was bypassed with a new address")
+		}
+		if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
+			t.Fatalf("logged %d ceiling notices in one window, want 1", got)
+		}
+		spend()
+		if got := strings.Count(out.String(), "ceiling engaged"); got != 1 {
+			t.Fatalf("logged %d ceiling notices while still inside the window, want 1", got)
+		}
+		time.Sleep(ceilingLogInterval + time.Second)
+		spend()
+		if got := strings.Count(out.String(), "ceiling engaged"); got != 2 {
+			t.Fatalf("logged %d ceiling notices across two windows, want 2", got)
+		}
+	})
 }
 
 func TestAttemptStoreStaysBounded(t *testing.T) {
 	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
 	for i := range maxBudgetKeys + 100 {
 		s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()))
 	}
@@ -124,9 +126,11 @@ func TestAttemptStoreStaysBounded(t *testing.T) {
 }
 
 func TestBrowserApprovalBudgetStaysBoundedAndExpires(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) { browserApprovalBudgetStaysBoundedAndExpires(t) })
+}
+
+func browserApprovalBudgetStaysBoundedAndExpires(t *testing.T) {
 	s := testService(t)
-	now := time.Now()
-	s.now = func() time.Time { return now }
 	for i := range maxBudgetKeys + 100 {
 		remote := netip.AddrPortFrom(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 40000).String()
 		allowed := s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", remote))
@@ -137,7 +141,7 @@ func TestBrowserApprovalBudgetStaysBoundedAndExpires(t *testing.T) {
 	if len(s.approvalAttempts) != maxBudgetKeys {
 		t.Fatalf("approval store has %d keys, want %d", len(s.approvalAttempts), maxBudgetKeys)
 	}
-	now = now.Add(attemptWindow + time.Second)
+	time.Sleep(attemptWindow + time.Second)
 	if !s.allowBrowserApproval(requestFrom(http.MethodGet, "/auth/browser", "203.0.113.5:40000")) || len(s.approvalAttempts) != 1 {
 		t.Fatal("expired approval addresses still occupied the bounded store")
 	}

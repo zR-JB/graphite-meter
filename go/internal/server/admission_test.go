@@ -57,6 +57,7 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 }
 
 func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
+	t.Parallel()
 	for _, http2 := range []bool{false, true} {
 		name := "http1"
 		if http2 {

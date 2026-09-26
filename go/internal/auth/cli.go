@@ -61,7 +61,7 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
 		return
 	}
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	maps.DeleteFunc(s.approvals, func(_ string, pending *cliApproval) bool { return !now.Before(pending.expires) })
 	approval := s.approvals[challenge]
@@ -102,7 +102,7 @@ func (s *Service) cliApprove(w http.ResponseWriter, r *http.Request) {
 	challenge := r.FormValue("challenge")
 	s.mu.Lock()
 	approval := s.approvals[challenge]
-	if approval == nil || approval.session != p.session || (approval.browserOrigin != "") != (r.URL.Path == "/auth/browser/approve") || !s.now().Before(approval.expires) {
+	if approval == nil || approval.session != p.session || (approval.browserOrigin != "") != (r.URL.Path == "/auth/browser/approve") || !time.Now().Before(approval.expires) {
 		s.mu.Unlock()
 		forbidden(w)
 		return
@@ -132,7 +132,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	}
 	sum := sha256.Sum256([]byte(req.Verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	approval := s.approvals[challenge]
 	if approval == nil || approval.browserOrigin != "" || !approval.approved || !now.Before(approval.expires) || !now.Before(approval.session.expires) || approval.session.ctx.Err() != nil {
@@ -142,7 +142,7 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := approval.session
 	if len(sess.grants) >= maxSessionGrants {
-		// A new CLI login replaces the oldest CLI grant, never a browser grant whose run may be live.
+		// Evict the oldest CLI grant, never a browser grant.
 		oldest, found := s.oldestCLIGrantLocked(sess)
 		if !found {
 			s.mu.Unlock()

@@ -192,7 +192,7 @@ func TestCliApproveRejectsExpiredApproval(t *testing.T) {
 	challenge := challengeFor("verifier-expired")
 	s.cliPage(httptest.NewRecorder(), withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw))
 	s.mu.Lock()
-	s.approvals[challenge].expires = s.now().Add(-time.Second)
+	s.approvals[challenge].expires = time.Now().Add(-time.Second)
 	s.mu.Unlock()
 
 	rr := httptest.NewRecorder()

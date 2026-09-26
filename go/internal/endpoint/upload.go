@@ -12,9 +12,7 @@ import (
 	"time"
 )
 
-// Upload counts the client's streamed bytes into owner-bound receivers and
-// serves the routes that mint, observe and finish them. The receiver, not the
-// sender, is the authority on how many bytes arrived and when.
+// Upload counts client bytes into owner-bound receivers, the authority on bytes and timing, and serves their routes.
 type Upload struct {
 	meter   *Meter // optional verbose per-second logger; nil unless -verbose
 	store   *UploadStore
@@ -29,8 +27,7 @@ func NewUpload(meter *Meter, store *UploadStore, trusted []netip.Prefix) *Upload
 	return &Upload{meter: meter, store: store, trusted: trusted}
 }
 
-// A read rarely returns more than a socket or stream buffer holds, so a larger
-// scratch buffer only costs memory per lane (BenchmarkUploadBufferSize).
+// Reads rarely exceed a socket or stream buffer; a larger one only costs memory (BenchmarkUploadBufferSize).
 const uploadBufSize = 64 * 1024
 
 var scratchPool = sync.Pool{
@@ -39,20 +36,20 @@ var scratchPool = sync.Pool{
 	},
 }
 
-// discardSink records every chunk on the receiver. It deliberately has no
-// ReadFrom, so io.CopyBuffer reads through the pooled scratch buffer.
+// discardSink records chunks on the receiver; it has no ReadFrom, so io.CopyBuffer uses the pooled buffer.
 type discardSink struct {
 	meter *Meter
 	agg   *uploadAgg
+	store *UploadStore
 }
 
 func (s discardSink) Write(p []byte) (int, error) {
 	s.meter.Add(len(p))
-	s.agg.recordChunk(monoNanos(), len(p))
+	s.agg.recordChunk(s.store.now(), len(p))
 	return len(p), nil
 }
 
-// ServeHTTP drains one POST /upload lane, owning its read deadline, refusal status and final byte response.
+// ServeHTTP drains one POST /upload lane.
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(uploadReadTimeout)
 	if requestDeadline, ok := r.Context().Deadline(); ok && requestDeadline.Before(deadline) {
@@ -72,7 +69,7 @@ func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)
 }
 
-// Receive joins the owner's receiver before reading and records receiver-side chunks and timing.
+// Receive joins the owner's receiver before reading and records each chunk.
 func (u *Upload) Receive(_ context.Context, id, owner string, src io.Reader) (int64, error) {
 	agg, access := u.store.joinPostFor(id, owner)
 	if access != uploadAccessOK {
@@ -83,10 +80,10 @@ func (u *Upload) Receive(_ context.Context, id, owner string, src io.Reader) (in
 	defer scratchPool.Put(bufp)
 	u.meter.Open()
 	defer u.meter.Close()
-	return io.CopyBuffer(discardSink{meter: u.meter, agg: agg}, src, *bufp)
+	return io.CopyBuffer(discardSink{meter: u.meter, agg: agg, store: u.store}, src, *bufp)
 }
 
-// ServeSession mints the short-lived upload correlation token without storing per-token state.
+// ServeSession mints an upload id without storing state.
 func (u *Upload) ServeSession(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -111,5 +108,5 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 	_ = json.MarshalWrite(w, struct {
 		Bytes int64 `json:"bytes"`
 		Nanos int64 `json:"nanos"`
-	}{agg.bytes.Load(), agg.elapsedNanos(monoNanos())})
+	}{agg.bytes.Load(), agg.elapsedNanos(u.store.now())})
 }

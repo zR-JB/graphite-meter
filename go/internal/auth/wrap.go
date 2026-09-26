@@ -53,7 +53,7 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 		}
 		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/auth/") {
 			controller := http.NewResponseController(w)
-			_ = controller.SetReadDeadline(s.now().Add(15 * time.Second))
+			_ = controller.SetReadDeadline(time.Now().Add(15 * time.Second))
 			defer controller.SetReadDeadline(time.Time{})
 		}
 		if r.Method == http.MethodOptions && t.Secure && t.Canonical && s.browserPreflight(w, r) {
@@ -142,7 +142,7 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 		return Principal{}, false
 	}
 	h := sha256.Sum256([]byte(c.Value))
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[h]
@@ -170,7 +170,7 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 		return Principal{}, false
 	}
 	h := sha256.Sum256([]byte(raw))
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if g := s.browserGrants[h]; g != nil && now.Before(g.sess.expires) && g.ctx.Err() == nil {
@@ -208,8 +208,7 @@ func forbidden(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusForbidden)
 }
 
-// withPrincipal carries p on r's context, which also ends, with
-// errSessionEnded as its cause, when p's login or browser grant does.
+// withPrincipal carries p on r's context, ending it with errSessionEnded when p's login or grant does.
 func withPrincipal(r *http.Request, p Principal) (*http.Request, func()) {
 	if p.session == nil {
 		return r.WithContext(context.WithValue(r.Context(), principalKey{}, p)), func() {}

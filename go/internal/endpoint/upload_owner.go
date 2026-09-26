@@ -26,8 +26,7 @@ func UploadOwner(r *http.Request, trusted []netip.Prefix) string {
 	return ClientKey(r, trusted)
 }
 
-// SessionKey buckets the per-client session budget: by login when there is
-// one, otherwise by the request's client key.
+// SessionKey buckets the session budget by login, else by client key.
 func SessionKey(r *http.Request, clientKey string) string {
 	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {
 		return "login:" + p.LoginID()

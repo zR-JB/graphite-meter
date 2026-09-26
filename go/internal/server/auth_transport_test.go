@@ -253,6 +253,7 @@ func assertUnauthenticatedDownload(t *testing.T, client *http.Client, base strin
 
 // The positive path over the real transports.
 func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
 
@@ -276,6 +277,7 @@ func TestAuthenticatedMeasurementSucceedsOverEveryTransport(t *testing.T) {
 }
 
 func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
 	wsURL := "wss" + strings.TrimPrefix(s.origin, "https") + "/ws/ping"
@@ -306,6 +308,7 @@ func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
 
 // A bearer grant authorizes measurement and nothing else: it must not reach the session surface or the approval routes.
 func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	bearer := s.grant(t)
 	for _, path := range []string{"/auth/session", "/auth/cli", "/"} {
@@ -324,6 +327,7 @@ func TestBearerGrantIsConfinedToMeasurementRoutes(t *testing.T) {
 }
 
 func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	for _, tc := range []struct {
 		name   string
@@ -342,6 +346,7 @@ func TestUnauthenticatedRequestsStillFailOnEveryTransport(t *testing.T) {
 
 // CORS stays restricted when authenticated admission refuses a request before endpoint dispatch.
 func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	a := newRequestAdmission(1, 0, 1, 1, time.Minute, time.Hour)
 	download, _ := route.Lookup(route.Download)

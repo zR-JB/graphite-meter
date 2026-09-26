@@ -32,8 +32,7 @@ const (
 
 var nativeNames = []string{NativeH1Clear, NativeH1TLS, NativeH2, NativeH3}
 
-// NativeEndpoints holds one value per native endpoint: a listen address, where
-// empty disables the endpoint, or the externally reachable origin it advertises.
+// NativeEndpoints holds one value per native endpoint: a listen address (empty disables it) or an advertised origin.
 type NativeEndpoints struct {
 	H1, H1TLS, H2, H3 string
 }
@@ -64,7 +63,7 @@ type Config struct {
 	ServerCatalog wire.ServerCatalog
 	Native        NativeEndpoints // listen addresses
 	NativePublic  NativeEndpoints // advertised origins
-	// AdvertisedNative selects the enabled native endpoints preflight advertises; nil advertises all of them.
+	// AdvertisedNative selects the native endpoints preflight advertises; nil selects all.
 	AdvertisedNative                          map[string]bool
 	Public                                    PublicOrigins
 	TLSCert, TLSKey                           string
@@ -98,8 +97,7 @@ func Default() Config {
 	}
 }
 
-// setting is one operator setting: its environment variable, its command-line
-// flag when it has one, and how a value applies. Secrets have no flag.
+// setting is one operator setting: its environment variable and, except for secrets, its flag.
 type setting struct {
 	env, flag, usage string
 	boolean          bool
@@ -107,8 +105,7 @@ type setting struct {
 	show             func(*Config) string
 }
 
-// field binds a setting to one Config field. Values are trimmed; unless
-// empty is meaningful, an empty value leaves the field at its default.
+// field binds a setting to a Config field; an empty value keeps the default unless emptyMeaningful.
 func field[T any](env, flag, usage string, at func(*Config) *T, parse func(string) (T, error), emptyMeaningful bool) setting {
 	return setting{env: env, flag: flag, usage: usage,
 		apply: func(c *Config, raw string) error {
@@ -210,8 +207,7 @@ var settings = []setting{
 	text("GM_AUTH_OIDC_PROVIDER_NAME", "auth-oidc-provider-name", "OIDC provider `label`", func(c *Config) *string { return &c.Auth.OIDCProviderName }),
 }
 
-// set applies a value from either source. Any authentication setting but the
-// mode marks authentication explicit, even when it restates a default.
+// set applies a value from either source; any GM_AUTH_* setting but the mode marks auth explicit.
 func (s *setting) set(c *Config, value string) error {
 	if strings.HasPrefix(s.env, "GM_AUTH_") && s.env != "GM_AUTH_MODE" {
 		c.Auth.Explicit = true
@@ -290,7 +286,7 @@ func splitList(raw string) []string {
 	return out
 }
 
-// ParseAdvertisedNative resolves "all" to nil (every enabled endpoint) and "none" or "" to an empty selection.
+// ParseAdvertisedNative maps "all" to nil (every endpoint) and "none" or "" to an empty set.
 func ParseAdvertisedNative(raw string) (map[string]bool, error) {
 	switch strings.TrimSpace(raw) {
 	case "all":
@@ -327,7 +323,7 @@ func (c Config) NativeAdvertised(name string) bool {
 	return c.nativeEnabled(name) && (c.AdvertisedNative == nil || c.AdvertisedNative[name])
 }
 
-// validOrigin accepts exactly what clients accept as an origin, optionally of one scheme.
+// validOrigin accepts what clients accept as an origin, optionally of one scheme.
 func validOrigin(value, scheme string) bool {
 	canonical, err := wire.CanonicalOrigin(value)
 	return err == nil && (scheme == "" || strings.HasPrefix(canonical, scheme+"://"))

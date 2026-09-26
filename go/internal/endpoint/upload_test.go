@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -34,6 +35,44 @@ func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
 	if store.live.Load() != 0 {
 		t.Fatalf("minting allocated %d live aggregates, want 0", store.live.Load())
 	}
+}
+
+// A checkpoint observes an existing, owned receiver without allocating state or extending its lifetime.
+func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		store := NewUploadStore()
+		id := store.Mint()
+		checkpoint := func(owner string) *httptest.ResponseRecorder {
+			r := httptest.NewRequest(http.MethodPost, "/upload/checkpoint?id="+id, nil)
+			r.RemoteAddr = owner + ":1234"
+			w := httptest.NewRecorder()
+			NewUpload(nil, store, nil).ServeCheckpoint(w, r)
+			return w
+		}
+		if w := checkpoint("192.0.2.1"); w.Code != http.StatusBadRequest || store.live.Load() != 0 {
+			t.Fatal("checkpoint allocated state for an unused id")
+		}
+		agg, _ := store.getOrCreateFor(id, "192.0.2.1")
+		agg.recordChunk(store.now(), 8192)
+		touch := agg.lastTouchMono.Load()
+		if w := checkpoint("192.0.2.2"); w.Code != http.StatusForbidden {
+			t.Fatal("checkpoint exposed another owner's bytes")
+		}
+		for step := range int64(2) {
+			time.Sleep(time.Second)
+			var snapshot struct {
+				Bytes int64 `json:"bytes"`
+				Nanos int64 `json:"nanos"`
+			}
+			w := checkpoint("192.0.2.1")
+			if err := json.Unmarshal(w.Body.Bytes(), &snapshot); err != nil || w.Code != http.StatusOK || snapshot.Bytes != 8192 || snapshot.Nanos != (step+1)*int64(time.Second) {
+				t.Fatalf("checkpoint %d = %d %+v, want 8192 bytes over %ds of receiver time", step, w.Code, snapshot, step+1)
+			}
+		}
+		if agg.lastTouchMono.Load() != touch {
+			t.Fatal("checkpoint extended the receiver's lifetime")
+		}
+	})
 }
 
 func TestUploadCountsAndEchoes(t *testing.T) {
@@ -90,9 +129,6 @@ func TestUploadAggregatesByID(t *testing.T) {
 	}
 	if got := agg.bytes.Load(); got != n {
 		t.Errorf("aggregate bytes = %d, want %d", got, n)
-	}
-	if got := agg.elapsedNanos(monoNanos()); got < 0 {
-		t.Errorf("elapsedNanos = %d, want >= 0", got)
 	}
 	if got := agg.posts.Load(); got != 0 {
 		t.Errorf("posts = %d after the lane finished, want 0", got)
@@ -286,7 +322,7 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				reader.Reset(source)
-				if _, err := io.CopyBuffer(discardSink{agg: new(uploadAgg)}, io.LimitReader(reader, size), buffer); err != nil {
+				if _, err := io.CopyBuffer(discardSink{agg: new(uploadAgg), store: NewUploadStore()}, io.LimitReader(reader, size), buffer); err != nil {
 					b.Fatal(err)
 				}
 			}

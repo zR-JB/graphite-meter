@@ -23,8 +23,7 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-// ServeHTTP sets the response framing before streaming bytes. HEAD stops at
-// the framing, so it generates and counts nothing.
+// ServeHTTP streams the requested bytes; HEAD stops at the framing and generates nothing.
 func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n := parseBytes(r.URL.Query().Get("bytes"))
 	h := w.Header()
@@ -36,8 +35,7 @@ func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Stream repeats the shared random block into sink. A cancelled context or a
-// failed write is the client going away, not an error.
+// Stream repeats the shared block into sink; cancellation or a failed write is the client leaving.
 func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) error {
 	d.meter.Open()
 	defer d.meter.Close()

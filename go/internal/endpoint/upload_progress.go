@@ -33,8 +33,7 @@ func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	}
 }
 
-// ServeProgress streams the receiver's authoritative counter as NDJSON on GET
-// and marks the upload finished on DELETE.
+// ServeProgress streams the receiver's counter as NDJSON on GET and finishes it on DELETE.
 func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	// This request-shaped route derives its owner from the HTTP request key.
@@ -48,7 +47,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case http.MethodHead:
-		// GET's route also carries HEAD, which must neither create a receiver nor supersede its feed.
+		// GET's route also carries HEAD, which must not claim a feed.
 		w.Header().Set("Allow", "GET, DELETE")
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -69,7 +68,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	// NDJSON requires a stateful encoder and one newline-delimited record per event.
 	enc := jsontext.NewEncoder(w)
-	serveProgress(r.Context().Done(), agg, func(event wire.UploadProgress) bool {
+	serveProgress(r.Context().Done(), agg, u.store.now, func(event wire.UploadProgress) bool {
 		if err := json.MarshalEncode(enc, event); err != nil {
 			return false
 		}
@@ -84,11 +83,11 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// streamProgress serves a resolved receiver's feed over a server-opened WebTransport stream.
-func streamProgress(ctx context.Context, agg *uploadAgg, w io.Writer) {
+// streamProgress serves a receiver's feed on a WebTransport stream.
+func streamProgress(ctx context.Context, agg *uploadAgg, now func() int64, w io.Writer) {
 	// This WebTransport feed is also NDJSON; retain Encoder framing per record.
 	enc := jsontext.NewEncoder(w)
-	serveProgress(ctx.Done(), agg, func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }, func() bool {
+	serveProgress(ctx.Done(), agg, now, func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }, func() bool {
 		_, err := w.Write([]byte("\n"))
 		return err == nil
 	})
@@ -99,17 +98,17 @@ func writeRefusalRecord(w io.Writer, access uploadAccess) {
 	_ = json.MarshalEncode(jsontext.NewEncoder(w), wire.UploadProgress{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
 }
 
-// serveProgress owns the receiver's progress claim and lifecycle for both feed transports.
-func serveProgress(done <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
+// serveProgress owns the feed's claim and lifecycle for both transports.
+func serveProgress(done <-chan struct{}, agg *uploadAgg, now func() int64, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
 	claim := agg.claimProgress()
 	defer agg.releaseProgress(claim)
 	if !emit(wire.UploadProgress{Type: "ready"}) {
 		return
 	}
-	runProgress(done, claim, agg, emit, heartbeat)
+	runProgress(done, claim, agg, now, emit, heartbeat)
 }
 
-func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
+func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, now func() int64, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
 	tick := time.Tick(uploadProgressTick)
 	beat := time.Tick(uploadProgressHeartbeat)
 	for {
@@ -124,8 +123,8 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wir
 			if !waitForUploadPosts(done, superseded, agg) {
 				return
 			}
-			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
-			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
+			n := uint64(agg.bytes.Load())              //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(now())) //nosec G115 -- elapsed nanos is non-negative
 			emit(wire.UploadProgress{Type: "complete", Bytes: n, Nanos: elapsed})
 			return
 		case <-beat:
@@ -133,8 +132,8 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wir
 				return
 			}
 		case <-tick:
-			n := uint64(agg.bytes.Load())                    //nosec G115 -- byte count is non-negative
-			elapsed := uint64(agg.elapsedNanos(monoNanos())) //nosec G115 -- elapsed nanos is non-negative
+			n := uint64(agg.bytes.Load())              //nosec G115 -- byte count is non-negative
+			elapsed := uint64(agg.elapsedNanos(now())) //nosec G115 -- elapsed nanos is non-negative
 			if elapsed > 0 {
 				if !emit(wire.UploadProgress{Type: "progress", Bytes: n, Nanos: elapsed}) {
 					return

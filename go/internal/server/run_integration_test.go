@@ -127,6 +127,7 @@ func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) f
 }
 
 func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
+	t.Parallel()
 	sockets := newTestListenerSockets(t)
 	addr := sockets.reserveTCP()
 	cfg := config.Default()
@@ -149,6 +150,7 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 }
 
 func TestRunServesTLSH1(t *testing.T) {
+	t.Parallel()
 	cert, key := runTestTLS(t)
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()

@@ -34,7 +34,7 @@ type session struct {
 }
 
 func (s *Service) createSession(subject, name, provider string) (string, *session, error) {
-	now := s.now()
+	now := time.Now()
 	expires := now.Add(sessionLifetime)
 	raw := randomToken(32)
 	h := sha256.Sum256([]byte(raw))
@@ -114,9 +114,10 @@ func (s *Service) sweep(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t:
+			now := time.Now()
 			s.mu.Lock()
-			s.expireLocked(s.now())
-			s.expireWTTokensLocked(s.now())
+			s.expireLocked(now)
+			s.expireWTTokensLocked(now)
 			s.mu.Unlock()
 		}
 	}

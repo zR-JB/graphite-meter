@@ -8,11 +8,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 )
 
-// SocketTokenMinter mints a single-use socket CONNECT token for an authenticated request and classifies refusal.
+// SocketTokenMinter mints a single-use socket token or classifies the refusal.
 type SocketTokenMinter func(r *http.Request) (token string, expires time.Time, mint auth.WTMint)
 
-// SocketToken serves /wt/session or /ws/session. A nil mint is public mode,
-// which answers an empty token with a zero expiry.
+// SocketToken serves /wt/session or /ws/session; a nil mint (public mode) answers an empty token.
 func SocketToken(mint SocketTokenMinter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var response struct {

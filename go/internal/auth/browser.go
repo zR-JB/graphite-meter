@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -34,7 +35,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	maps.DeleteFunc(s.approvals, func(_ string, a *cliApproval) bool { return !now.Before(a.expires) })
 	a := s.approvals[challenge]
@@ -116,7 +117,7 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 	}
 	hash := sha256.Sum256([]byte(req.Verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(hash[:])
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	a := s.approvals[challenge]
 	if a == nil || a.browserOrigin != clientOrigin || a.session == nil || !now.Before(a.expires) || !now.Before(a.session.expires) || a.session.ctx.Err() != nil {
@@ -150,7 +151,7 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 func (s *Service) browserApprovalRedirect(challenge string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if a := s.approvals[challenge]; a != nil && a.browserOrigin != "" && s.now().Before(a.expires) {
+	if a := s.approvals[challenge]; a != nil && a.browserOrigin != "" && time.Now().Before(a.expires) {
 		return "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {a.browserOrigin}}.Encode()
 	}
 	return ""

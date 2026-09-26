@@ -17,9 +17,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Discovery publishes this server's measurement targets: /preflight, /servers,
-// and the connect sources the page may use. Every document depends only on the
-// hostname a request arrived at, so each is built once per hostname.
+// Discovery serves /preflight, /servers and the page's connect policy, built once per request hostname.
 type Discovery struct {
 	cfg        *config.Config
 	generation string // a per-process random tag
@@ -36,7 +34,7 @@ type hostDiscovery struct {
 	csp        string   // the public page's connect-src policy
 }
 
-// The hostname comes from the request, so the cache is bounded and starts over when full.
+// Request hostnames are untrusted, so the cache is bounded and cleared when full.
 const maxDiscoveryHosts = 64
 
 func NewDiscovery(cfg *config.Config) *Discovery {
@@ -80,8 +78,7 @@ func (d *Discovery) ServeServers(w http.ResponseWriter, r *http.Request) {
 // ConnectOrigins lists distinct cross-origin measurement targets for host.
 func (d *Discovery) ConnectOrigins(host string) []string { return d.forHost(host).connect }
 
-// ConnectPolicy is the public page's Content-Security-Policy for host: the
-// configured servers plus this server's own targets browsers can name.
+// ConnectPolicy is the public page's connect-src policy for host.
 func (d *Discovery) ConnectPolicy(host string) string { return d.forHost(host).csp }
 
 func (d *Discovery) build(host string) *hostDiscovery {
@@ -102,7 +99,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 		add(t.Origin)
 		add(websocketOrigin(t.Origin))
 	}
-	// Callers share this slice, so an append must copy rather than write into the cache.
+	// Callers share the slice; clipping makes their appends copy.
 	h.connect = slices.Clip(h.connect)
 	if h.servers, h.serversErr = d.serversFor(h.connect); h.serversErr != nil {
 		log.Printf("[gm:discovery] server catalogue for host %q: %v", host, h.serversErr)

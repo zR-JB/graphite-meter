@@ -1,5 +1,4 @@
-// Package transport holds what server and client share about the network:
-// client attribution, QUIC defaults and WebTransport stream unblocking.
+// Package transport holds client attribution, QUIC defaults and WebTransport stream unblocking.
 package transport
 
 import (
@@ -45,8 +44,7 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress
 	return clientAddress(firstUntrustedHop(peer, chain, trusted), ClientIPForwarded)
 }
 
-// AddressBucket keys a per-client budget: an IPv4 address, or the IPv6 /64
-// that is the smallest allocation one client controls.
+// AddressBucket keys a per-client budget: an IPv4 address or an IPv6 /64.
 func AddressBucket(addr netip.Addr) string {
 	addr = addr.Unmap()
 	switch {

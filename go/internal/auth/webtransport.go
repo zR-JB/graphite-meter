@@ -59,7 +59,7 @@ func (s *Service) mintSocketToken(r *http.Request, kind route.Kind) (string, tim
 	}
 	token := wtTokenPrefix + randomToken(32)
 	h := sha256.Sum256([]byte(token))
-	now := s.now()
+	now := time.Now()
 	expires := minTime(now.Add(wtTokenLifetime), p.session.expires)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -88,7 +88,7 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 		return Principal{}, false
 	}
 	h := sha256.Sum256([]byte(raw))
-	now := s.now()
+	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.wtTokens[h]

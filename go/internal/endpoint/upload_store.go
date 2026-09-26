@@ -22,6 +22,7 @@ import (
 type UploadStore struct {
 	shards   [uploadShardCount]uploadShard
 	seed     maphash.Seed
+	epoch    time.Time // origin of the store's monotonic readings
 	tokenKey [sha256.Size]byte
 	live     atomic.Int32 // live aggregates retained through completion replay
 	ownersMu sync.Mutex
@@ -75,7 +76,6 @@ func (a *uploadAgg) releaseProgress(claim chan struct{}) {
 }
 
 func (a *uploadAgg) recordChunk(now int64, n int) {
-	// Every chunk after the first reads instead of contending on a write.
 	if a.firstChunkMono.Load() == 0 {
 		a.firstChunkMono.CompareAndSwap(0, now)
 	}
@@ -149,7 +149,7 @@ const (
 
 // NewUploadStore builds an empty store with its shard maps initialised.
 func NewUploadStore() *UploadStore {
-	s := &UploadStore{byOwner: make(map[string]int), seed: maphash.MakeSeed()}
+	s := &UploadStore{byOwner: make(map[string]int), seed: maphash.MakeSeed(), epoch: time.Now()}
 	_, _ = rand.Read(s.tokenKey[:]) // crypto/rand.Read never fails
 	for i := range s.shards {
 		s.shards[i].m = make(map[string]*uploadAgg)
@@ -157,9 +157,8 @@ func NewUploadStore() *UploadStore {
 	return s
 }
 
-var uploadMonoOrigin = time.Now()
-
-func monoNanos() int64 { return int64(time.Since(uploadMonoOrigin)) }
+// now is the store's monotonic clock in ns; it starts at 1 so zero marks an unset anchor.
+func (s *UploadStore) now() int64 { return int64(time.Since(s.epoch)) + 1 }
 
 func (s *UploadStore) shard(id string) *uploadShard {
 	return &s.shards[maphash.String(s.seed, id)%uploadShardCount]
@@ -169,7 +168,7 @@ func (s *UploadStore) shard(id string) *uploadShard {
 func (s *UploadStore) Mint() string {
 	var nonce [16]byte
 	_, _ = rand.Read(nonce[:])
-	return s.signID(monoNanos(), nonce)
+	return s.signID(s.now(), nonce)
 }
 
 func (s *UploadStore) signID(issued int64, nonce [16]byte) string {
@@ -197,7 +196,7 @@ func (s *UploadStore) validID(id string) bool {
 		return false
 	}
 	issued := int64(binary.BigEndian.Uint64(payload[:8])) //nosec G115 -- round-trips the value signID wrote
-	now := monoNanos()
+	now := s.now()
 	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
 
@@ -211,8 +210,7 @@ const (
 	uploadAccessOwnerMismatch
 )
 
-// watchFor resolves the receiver a progress feed observes. Watching is not
-// upload activity, so it never refreshes the idle clock.
+// watchFor resolves a feed's receiver; watching does not refresh its idle clock.
 func (s *UploadStore) watchFor(id, owner string) (*uploadAgg, uploadAccess) {
 	return s.accessFor(id, owner, false, false)
 }
@@ -238,7 +236,7 @@ func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg,
 			return nil, uploadAccessInvalid
 		}
 		if touch {
-			agg.lastTouchMono.Store(monoNanos())
+			agg.lastTouchMono.Store(s.now())
 		}
 		return agg, uploadAccessOK
 	}
@@ -266,7 +264,7 @@ func (s *UploadStore) accessFor(id, owner string, touch, join bool) (*uploadAgg,
 		s.ownersMu.Unlock()
 	}
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
-	agg.lastTouchMono.Store(monoNanos())
+	agg.lastTouchMono.Store(s.now())
 	sh.m[id] = agg
 	if join {
 		agg.beginPost() // a new aggregate cannot already be finished
@@ -324,8 +322,7 @@ func (s *UploadStore) expire(agg *uploadAgg) {
 }
 
 func (s *UploadStore) sweep(ttl time.Duration) {
-	now := monoNanos()
-	aggCutoff := now - int64(ttl)
+	aggCutoff := s.now() - int64(ttl)
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()

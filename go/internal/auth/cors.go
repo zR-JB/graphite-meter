@@ -7,15 +7,9 @@ const (
 	authExposed        = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL"
 )
 
-// MeasurementCORS exposes a measurement response to the one browser origin
-// allowed to read it. Measurement handlers, admission refusals and
-// authentication refusals all answer through it:
-//   - public mode exposes every response to every origin, since it holds no session state;
-//   - an approved browser grant's origin reads its own responses, without ambient cookies;
-//   - the canonical UI origin reads with credentials;
-//   - an unauthenticated secure origin may read a measurement refusal, to start its browser grant.
-//
-// A preflight also names the measurement methods and headers.
+// MeasurementCORS exposes a measurement response or refusal to the origin allowed to read it:
+// any origin in public mode, a grant's own origin, the UI origin with credentials, or an
+// unauthenticated secure origin reading the refusal that starts its grant.
 func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 	if !s.Enabled() {
 		h.Set("Access-Control-Allow-Origin", "*")
@@ -44,7 +38,7 @@ func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 	}
 }
 
-// credentialedCORS exposes a response, cookies included, to the canonical UI origin.
+// credentialedCORS exposes a response, cookies included, to the UI origin.
 func credentialedCORS(h http.Header, origin string) {
 	h.Set("Access-Control-Allow-Origin", origin)
 	h.Set("Access-Control-Allow-Credentials", "true")
@@ -53,7 +47,7 @@ func credentialedCORS(h http.Header, origin string) {
 	h.Add("Vary", "Origin")
 }
 
-// bearerCORS exposes an explicitly authorized browser request without ambient cookies.
+// bearerCORS exposes a grant-authorized response without ambient cookies.
 func bearerCORS(h http.Header, origin string) {
 	h.Set("Access-Control-Allow-Origin", origin)
 	h.Del("Access-Control-Allow-Credentials")

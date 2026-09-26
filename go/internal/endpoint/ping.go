@@ -6,11 +6,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// ServePing echoes each probe with its application handling duration until
-// recv or send fails; the adapter owns the channel's lifetime. The measured
-// interval starts once recv has returned a message and ends before the reply
-// is encoded, so it excludes transport receive work and every queue before it.
-// recv's buffer may be reused on the next call; send must not retain its argument.
+// ServePing echoes each probe with its handling time, measured from recv's return to before
+// encoding, until recv or send fails. recv may reuse its buffer; send must not retain its argument.
 func ServePing(recv func() ([]byte, error), send func([]byte) error) {
 	var reply [wire.MaxPongLen]byte
 	for {

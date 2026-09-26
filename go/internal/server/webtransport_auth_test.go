@@ -99,6 +99,7 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 }
 
 func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	d := s.wtTransport(t)
 	token := s.mintWTToken(t)
@@ -117,6 +118,7 @@ func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {
 }
 
 func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	if _, status := s.connectPing(t, s.wtTransport(t), "", nil); status != http.StatusForbidden {
 		t.Errorf("uncredentialed CONNECT status=%d, want %d", status, http.StatusForbidden)
@@ -127,6 +129,7 @@ func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
 }
 
 func TestWebTransportConnectAcceptsANativeGrant(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	hdr := http.Header{"Authorization": {"Bearer " + s.grant(t)}}
 	sess, status := s.connectPing(t, s.wtTransport(t), "", hdr)
@@ -137,6 +140,7 @@ func TestWebTransportConnectAcceptsANativeGrant(t *testing.T) {
 }
 
 func TestEndingTheAuthSessionUnwindsALiveWebTransportSession(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
 	sess, status := s.connectPing(t, s.wtTransport(t), "?token="+url.QueryEscape(s.mintWTToken(t)), nil)
 	if status != http.StatusOK {

@@ -22,9 +22,7 @@ type muxTopology struct {
 	wt            *webtransport.Server
 }
 
-// mounter composes every measurement route the same way: authentication has
-// already run around the whole mux; then come admission, the transport adapter
-// the route's kind selects, and the listener's protocol check.
+// mounter composes each route as admission, then the adapter for its kind, then the protocol check.
 type mounter struct {
 	ctx   context.Context // the server's lifetime; upgraded connections outlive their requests
 	mux   *http.ServeMux
@@ -68,8 +66,7 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	return rejectDotSegments(m.mux)
 }
 
-// handle mounts h at path under one ServeMux pattern per method the route
-// publishes, so any other method is a 405 that reaches no handler.
+// handle mounts h for each method the route publishes; other methods get a 405.
 func (m *mounter) handle(path string, h http.Handler) {
 	spec, ok := route.Lookup(path)
 	if !ok {
@@ -83,8 +80,7 @@ func (m *mounter) handle(path string, h http.Handler) {
 	}
 }
 
-// http mounts a request-shaped measurement route behind its CORS answer and,
-// when proto is set, the listener's protocol.
+// http mounts an HTTP route behind its CORS answer and, when proto is set, a protocol check.
 func (m *mounter) http(path string, h http.Handler, proto int) {
 	m.handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.authn.MeasurementCORS(w.Header(), r)
@@ -94,14 +90,14 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 		}
 		h.ServeHTTP(w, r)
 	}))
-	// Authentication answers every measurement preflight itself; public mode answers here, unmetered.
+	// Public-mode preflight; authentication answers its own.
 	m.mux.HandleFunc(http.MethodOptions+" "+path, func(w http.ResponseWriter, r *http.Request) {
 		m.authn.MeasurementCORS(w.Header(), r)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
 
-// minter is the socket-token mint under authentication and nil in public mode, whose tokens are empty.
+// minter is mint under authentication and nil in public mode.
 func (m *mounter) minter(mint endpoint.SocketTokenMinter) endpoint.SocketTokenMinter {
 	if m.authn.Enabled() {
 		return mint
@@ -112,7 +108,7 @@ func (m *mounter) minter(mint endpoint.SocketTokenMinter) endpoint.SocketTokenMi
 // wsPingReadLimit bounds a probe frame; a valid PING is at most 15 bytes.
 const wsPingReadLimit = 2048
 
-// webSocketPing upgrades to the WebSocket latency bus and serves one probe per text frame.
+// webSocketPing serves the WebSocket latency bus, one probe per text frame.
 func (m *mounter) webSocketPing() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := m.authn.PublicOrigin()
@@ -125,7 +121,6 @@ func (m *mounter) webSocketPing() http.Handler {
 				http.Error(w, "forbidden", http.StatusForbidden)
 				return
 			}
-			// allowed is a canonical origin the auth service parsed at startup or on grant approval.
 			u, _ := url.Parse(allowed)
 			patterns = []string{u.Host}
 		}
@@ -140,9 +135,7 @@ func (m *mounter) webSocketPing() http.Handler {
 		}
 		defer conn.CloseNow()
 		conn.SetReadLimit(wsPingReadLimit)
-		// The bus ends with its lifetime, the server or the login by a close
-		// handshake, which also unblocks the probe loop. Its reads and writes
-		// then need no context of their own.
+		// Ending the bus is a close handshake, which also unblocks its reads and writes.
 		ctx, cancel := linkedContext(m.ctx, r.Context())
 		defer cancel()
 		end := func() {
@@ -153,7 +146,7 @@ func (m *mounter) webSocketPing() http.Handler {
 			conn.Close(websocket.StatusNormalClosure, "")
 		}
 		ended := context.AfterFunc(ctx, end)
-		// The library reads one byte past its limit, so an oversized message fails before it can fill buf.
+		// The read limit admits one extra byte, so an oversized message fails before filling buf.
 		var buf [wsPingReadLimit + 2]byte
 		endpoint.ServePing(func() ([]byte, error) {
 			_, message, err := conn.Reader(context.Background())
@@ -175,7 +168,7 @@ func (m *mounter) webSocketPing() http.Handler {
 	})
 }
 
-// webTransport upgrades a CONNECT to a session and serves it until either side ends it.
+// webTransport upgrades a CONNECT and serves the session until either side ends it.
 func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.SessionHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, err := server.Upgrade(w, r)
@@ -190,9 +183,7 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 	})
 }
 
-// linkedContext ends when parent or any of ends does. An upgraded request's
-// own context no longer tracks its connection, and server shutdown does not
-// reach it, so upgraded channels are bounded by both.
+// linkedContext ends with parent or any of ends; upgraded channels outlive their request's tracking.
 func linkedContext(parent context.Context, ends ...context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(parent)
 	stops := make([]func() bool, len(ends))
@@ -207,7 +198,7 @@ func linkedContext(parent context.Context, ends ...context.Context) (context.Con
 	}
 }
 
-// rejectDotSegments refuses dot segments and backslashes before ServeMux canonicalization can redirect them anywhere.
+// rejectDotSegments refuses dot segments and backslashes before ServeMux can redirect them.
 func rejectDotSegments(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, `\`) {
@@ -224,9 +215,8 @@ func rejectDotSegments(next http.Handler) http.Handler {
 	})
 }
 
-// wtOriginCheck is the only origin policy a WebTransport CONNECT passes: under
-// authentication a browser CONNECT must come from the canonical origin, or from
-// the origin its browser grant approved. A CONNECT without Origin is a native client.
+// wtOriginCheck admits, under authentication, the canonical origin, a grant's own origin,
+// or no Origin (a native client). It is the only origin policy a CONNECT passes.
 func wtOriginCheck(authn *auth.Service) func(*http.Request) bool {
 	return func(r *http.Request) bool {
 		if !authn.Enabled() {

@@ -94,6 +94,7 @@ func dialPing(t *testing.T, srv *httptest.Server) *websocket.Conn {
 }
 
 func TestWebSocketPingEchoesProbes(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(publicMux(t, testEndpoints(t), muxTopology{latency: true}, nil))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -146,6 +147,7 @@ func TestWebSocketPingEchoesProbes(t *testing.T) {
 
 // An oversized frame is a peer forcing the server to buffer.
 func TestWebSocketPingRefusesAnOversizedFrame(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(publicMux(t, testEndpoints(t), muxTopology{latency: true}, nil))
 	defer srv.Close()
 	conn := dialPing(t, srv)
@@ -161,6 +163,7 @@ func TestWebSocketPingRefusesAnOversizedFrame(t *testing.T) {
 
 // A hijacked connection is invisible to http.Server.Shutdown, so the server's context must end the bus.
 func TestWebSocketPingEndsWithTheServer(t *testing.T) {
+	t.Parallel()
 	ctx, stop := context.WithCancel(t.Context())
 	srv := httptest.NewServer(newMux(ctx, testEndpoints(t), muxTopology{latency: true}, nil, publicAuth(t)))
 	defer srv.Close()
@@ -175,6 +178,7 @@ func TestWebSocketPingEndsWithTheServer(t *testing.T) {
 
 // The request lifetime bounds a WebSocket bus even though its connection has been hijacked.
 func TestRequestAdmissionBoundsWebSocketLifetime(t *testing.T) {
+	t.Parallel()
 	e := testEndpoints(t)
 	e.admission = newRequestAdmission(1, 1, 1, 4, 20*time.Millisecond, time.Hour)
 	srv := httptest.NewServer(publicMux(t, e, muxTopology{latency: true}, nil))

@@ -41,15 +41,14 @@ const (
 	Session
 )
 
-// Spec is a route's fixed policy: how it is reached, which budget it
-// spends, and the methods it dispatches. A GET route also serves HEAD.
+// Spec is a route's fixed policy: its transport, budget and methods (GET also serves HEAD).
 type Spec struct {
 	Kind      Kind
 	Admission Admission
 	methods   []string
 }
 
-// Methods lists the methods the route dispatches, excluding the HEAD a GET implies and CORS preflight.
+// Methods lists the dispatched methods, excluding HEAD and OPTIONS.
 func (s Spec) Methods() iter.Seq[string] { return slices.Values(s.methods) }
 
 // AllowsCORSMethod checks preflight permission for a requested method; HEAD and OPTIONS remain excluded.

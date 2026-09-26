@@ -10,7 +10,7 @@ import (
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	csrf := randomToken(32)
-	setHTTPOnlyCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute), http.SameSiteStrictMode)
+	setHTTPOnlyCookie(w, loginCookie, csrf, time.Now().Add(10*time.Minute), http.SameSiteStrictMode)
 	password, oidc := authModes(s.cfg.Mode)
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,
@@ -88,8 +88,7 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	remaining := p.Expires.Sub(s.now())
-	remaining = max(remaining, 0)
+	remaining := max(time.Until(p.Expires), 0)
 	_ = json.MarshalWrite(w, map[string]any{
 		"name": p.Name, "provider": p.Provider, "expires": p.Expires,
 		"csrf": p.session.csrf, "remainingMs": remaining.Milliseconds(),

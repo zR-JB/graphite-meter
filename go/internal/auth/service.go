@@ -42,7 +42,6 @@ type Service struct {
 	ceilingLogged    map[string]time.Time
 	approvals        map[string]*cliApproval
 	oidc             *oidcState
-	now              func() time.Time
 	verbose          bool
 	counters         authCounters
 	connectSrc       string
@@ -76,7 +75,6 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		ceilingLogged:    map[string]time.Time{},
 		approvals:        map[string]*cliApproval{},
 		argon:            make(chan struct{}, 2),
-		now:              time.Now,
 		verbose:          verbose,
 	}
 	if cfg.Mode == "off" {

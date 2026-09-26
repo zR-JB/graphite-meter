@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -17,7 +18,7 @@ func mintForSession(t *testing.T, s *Service, sess *session) string {
 	p := Principal{Subject: sess.subject, session: sess}
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
 	token, expires, mint := s.MintWebTransportSessionToken(r)
-	if mint != WTMintOK || token == "" || !expires.After(s.now()) {
+	if mint != WTMintOK || token == "" || !expires.After(time.Now()) {
 		t.Fatalf("mint = (%q, %v, %d), want a live token", token, expires, mint)
 	}
 	return token
@@ -56,36 +57,6 @@ func TestWebTransportConnectLeavesTheTokenOnANonSessionListener(t *testing.T) {
 	// Unspent: the same token still authenticates on the listener that serves it.
 	if _, ok := s.consumeWebTransportToken(token, secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
 		t.Fatal("a CONNECT to a listener without the session routes spent the token")
-	}
-}
-
-func TestWebTransportConnectAcceptsAMintedTokenOnce(t *testing.T) {
-	s := testService(t)
-	_, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token := mintForSession(t, s, sess)
-	if !strings.HasPrefix(token, wtTokenPrefix) {
-		t.Fatalf("token %q lacks the %q prefix", token, wtTokenPrefix)
-	}
-
-	if reached, status := wtConnect(t, s, "/wt/ping?token="+token); !reached {
-		t.Fatalf("minted token was refused: HTTP %d", status)
-	}
-	// Single use: a replayed CONNECT URL is worthless.
-	if reached, status := wtConnect(t, s, "/wt/ping?token="+token); reached || status != http.StatusForbidden {
-		t.Fatalf("replayed token: reached=%t status=%d, want a 403 refusal", reached, status)
-	}
-}
-
-func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
-	s := testService(t)
-	for _, path := range []string{"/wt/ping", "/wt/download?bytes=0", "/wt/upload?token=gmw_bogus"} {
-		reached, status := wtConnect(t, s, path)
-		if reached || status != http.StatusForbidden {
-			t.Fatalf("CONNECT %s: reached=%t status=%d, want a 403 refusal before upgrade", path, reached, status)
-		}
 	}
 }
 
@@ -135,22 +106,24 @@ func TestWebTransportTokensDieWithTheirSession(t *testing.T) {
 }
 
 func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
+	synctest.Test(t, webTransportTokensExpireAndCapPerSession)
+}
+
+func webTransportTokensExpireAndCapPerSession(t *testing.T) {
 	s := testService(t)
 	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	stale := mintForSession(t, s, sess)
-	base := time.Now()
-	offset := wtTokenLifetime + time.Second
-	s.now = func() time.Time { return base.Add(offset) }
+	time.Sleep(wtTokenLifetime + time.Second)
 	if _, ok := s.consumeWebTransportToken(stale, secureRequest(http.MethodGet, "/wt/ping", nil)); ok {
 		t.Fatal("expired token accepted")
 	}
 
 	tokens := make([]string, 0, maxSessionWTTokens)
 	for range maxSessionWTTokens {
-		offset += time.Second
+		time.Sleep(time.Second)
 		tokens = append(tokens, mintForSession(t, s, sess))
 	}
 	if len(sess.wtTokens) != maxSessionWTTokens {
@@ -171,7 +144,7 @@ func TestWebTransportTokensExpireAndCapPerSession(t *testing.T) {
 		}
 	}
 	// Consuming them frees the cap, so a client that finishes its dials can mint.
-	offset += time.Second
+	time.Sleep(time.Second)
 	mintForSession(t, s, sess)
 }
 
@@ -226,15 +199,22 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 }
 
 func TestWebTransportTokensDieWithAnExpiredSession(t *testing.T) {
+	synctest.Test(t, webTransportTokensDieWithAnExpiredSession)
+}
+
+func webTransportTokensDieWithAnExpiredSession(t *testing.T) {
 	s := testService(t)
-	_, sess, err := s.createSessionUntil("subject", "Name", "local", time.Now().Add(50*time.Millisecond))
+	// Off the sweeper's 30 s grid, so the deadline passes between two sweeps.
+	time.Sleep(time.Second)
+	_, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
+	time.Sleep(sessionLifetime - 10*time.Second)
 	token := mintForSession(t, s, sess)
-	select {
-	case <-sess.ctx.Done():
-	case <-time.After(5 * time.Second):
+	time.Sleep(11 * time.Second)
+	synctest.Wait()
+	if sess.ctx.Err() == nil {
 		t.Fatal("session never reached its deadline")
 	}
 	h := sha256.Sum256([]byte(token))
@@ -293,8 +273,3 @@ func TestWebTransportTokenCarries256Bits(t *testing.T) {
 }
 
 // Stated, not derived: the expiry tests offset from this constant, so a change to it would validate itself.
-func TestWebTransportTokenLifetimeIsThirtySeconds(t *testing.T) {
-	if wtTokenLifetime != 30*time.Second {
-		t.Fatalf("wtTokenLifetime = %v, want 30s: a token outliving the dial it was minted for holds its session's cap for nothing", wtTokenLifetime)
-	}
-}

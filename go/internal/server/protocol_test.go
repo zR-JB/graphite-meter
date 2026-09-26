@@ -116,6 +116,7 @@ func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, b
 }
 
 func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	for _, protocol := range []string{"http1", "http2"} {
 		t.Run(protocol, func(t *testing.T) {
 			client, origin, dispatched := nativeAuthHTTP(t, protocol)
@@ -129,6 +130,7 @@ func TestRealProtocolsRejectBeforeDispatch(t *testing.T) {
 }
 
 func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
+	t.Parallel()
 	client, origin, dispatched := nativeAuthHTTP(t, "http1")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -216,6 +218,7 @@ func assertProbeAndDownload(t *testing.T, client *http.Client, base, wantProtoco
 }
 
 func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
+	t.Parallel()
 	client, base := nativeHTTP(t, "http1", muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1})
 	res, err := client.Get(base + "/preflight")
 	if err != nil {
@@ -229,6 +232,7 @@ func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 }
 
 func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
+	t.Parallel()
 	client, base := nativeHTTP(t, "http2", muxTopology{transfers: true, requiredProto: 2})
 	for _, path := range []string{"/", "/assets/app.js", "/preflight", "/ws/ping"} {
 		res, err := client.Get(base + path)
@@ -244,6 +248,7 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 }
 
 func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
+	t.Parallel()
 	client, base := nativeHTTP3(t)
 	assertProbeAndDownload(t, client, base, "h3")
 }
