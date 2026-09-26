@@ -144,7 +144,8 @@ jobs:
         run: |
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
-      - name: Cache Cargo downloads, audit tool and build output
+      - id: cargo-cache
+        name: Cache Cargo downloads, audit tool and build output
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -165,6 +166,10 @@ jobs:
         run: |
           cargo install cargo-audit --version 0.22.2 --locked
           cargo audit --deny warnings
+      - name: Keep only dependency builds in a new cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        working-directory: rust
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core
 
   rust-interop:
     name: Experimental Rust interoperability
@@ -186,7 +191,8 @@ jobs:
         run: |
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
-      - name: Cache Cargo downloads and build output
+      - id: cargo-cache
+        name: Cache Cargo downloads and build output
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -201,6 +207,10 @@ jobs:
         run: python3 rust/tests/client_interop.py
       - name: Unchanged and current-only Go reliable-reset interoperability
         run: python3 rust/tests/interop.py
+      - name: Keep only dependency builds in a new cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        working-directory: rust
+        run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core
 
   browser:
     name: Browser (Chromium WebView)
