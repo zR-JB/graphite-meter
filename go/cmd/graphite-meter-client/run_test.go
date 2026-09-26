@@ -523,7 +523,7 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
 	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageUpload, Phase: goclient.PhaseFinished})
 	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "Download      ! Incomplete", "Upload        ! Partial"} {
+	for _, want := range []string{"✓ 4 s", "Download      ✗ Failed", "Upload        ! Partial"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
@@ -763,12 +763,12 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 	done := goclient.Event{Kind: goclient.EventDone, Err: errors.New("refused")}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{done}}))
 	screen, report := view(m), m.finalReport()
-	for _, stale := range []string{"Checking paths", "○", "Skipped", "Median"} {
+	for _, stale := range []string{"Checking paths", "○", "Median"} {
 		if strings.Contains(screen+report, stale) {
 			t.Errorf("failed run still shows %q:\n%s\n%s", stale, screen, report)
 		}
 	}
-	if !strings.Contains(screen, "not run") || !strings.HasSuffix(report, "refused") {
+	if !strings.Contains(screen, "— Skipped") || !strings.HasSuffix(report, "refused") {
 		t.Errorf("failed run hides its unrun stages or error:\n%s\n%s", screen, report)
 	}
 }

@@ -62,8 +62,8 @@ func main() {
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
 		fmt.Sprintf("force exact streams per server and direction (0 = automatic; at most %d)", goclient.MaxStreams))
 	cadence := "reply-driven, fast, medium, slow, or a duration up to " + goclient.MaxPingInterval.String()
-	flag.StringVar(&ping, "ping", "", "idle ping cadence (default reply-driven): "+cadence)
-	flag.StringVar(&loadedPing, "loaded-ping", "", "loaded ping cadence (default medium): "+cadence)
+	flag.StringVar(&ping, "ping", "", "Idle latency cadence (default reply-driven): "+cadence)
+	flag.StringVar(&loadedPing, "loaded-ping", "", "Loaded latency cadence (default medium): "+cadence)
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,
 		"measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")

@@ -77,6 +77,13 @@ var outcomeLabels = map[goclient.Outcome]string{
 	goclient.OutcomeFailed:     "Failed",
 }
 
+var stageStatusLabels = map[stageState]string{
+	stagePending: "Skipped",
+	stagePartial: "Partial",
+	stageFailed:  "Failed",
+	stageStopped: "Stopped",
+}
+
 var failureLabels = map[goclient.FailureReason]string{
 	goclient.FailurePreparation:          "Couldn't prepare the connection",
 	goclient.FailureConnectionLost:       "Connection lost",

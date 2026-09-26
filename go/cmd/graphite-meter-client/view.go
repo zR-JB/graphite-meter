@@ -456,17 +456,13 @@ func (m model) stageTrack(w int) []string {
 			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
 			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
-		case stagePartial, stageIncomplete:
-			label := outcomeLabels[goclient.OutcomePartial]
-			if s.state == stageIncomplete {
-				label = outcomeLabels[goclient.OutcomeIncomplete]
-			}
-			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render(label))
-		case stageStopped:
-			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
+		case stagePartial:
+			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render(stageStatusLabels[s.state]))
+		case stageFailed, stageStopped:
+			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render(stageStatusLabels[s.state]))
 		case stagePending:
 			if !m.run.live() {
-				lines = append(lines, name+m.st.muted.Render(missing+" not run"))
+				lines = append(lines, name+m.st.muted.Render(missing+" "+stageStatusLabels[s.state]))
 				continue
 			}
 			fallthrough

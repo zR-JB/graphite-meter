@@ -180,7 +180,7 @@ const (
 	stageMeasuring
 	stageDone
 	stagePartial
-	stageIncomplete
+	stageFailed
 	stageStopped
 )
 
@@ -341,7 +341,7 @@ func (m *model) apply(e goclient.Event) {
 		switch {
 		case state != stageDone:
 		case slices.ContainsFunc(r.results, unavailable):
-			state = stageIncomplete
+			state = stageFailed
 		case r.details != nil && slices.ContainsFunc(r.details.Failures, left):
 			state = stagePartial
 		}
