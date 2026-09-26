@@ -7,9 +7,7 @@ import (
 	"math"
 )
 
-// UploadProgress describes one owner-bound upload aggregate. Bytes are receiver
-// bytes and Nanos is elapsed receiver time from its first accepted chunk.
-// Both counters are explicit, including zero; ready/error do not measure data.
+// UploadProgress is one receiver record: receiver bytes and nanoseconds since its first chunk.
 type UploadProgress struct {
 	Type    string `json:"type"`
 	Bytes   uint64 `json:"bytes"`
@@ -37,8 +35,7 @@ func (p UploadProgress) MarshalJSONTo(out *jsontext.Encoder) error {
 	}{Type: p.Type, Message: p.Message, Code: p.Code})
 }
 
-// DecodeUploadProgress rejects malformed records without inventing observations.
-// Missing counters differ from an explicit zero-length receiver window.
+// DecodeUploadProgress rejects malformed records; a missing counter differs from zero.
 func DecodeUploadProgress(data []byte) (UploadProgress, error) {
 	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(data, &raw); err != nil {

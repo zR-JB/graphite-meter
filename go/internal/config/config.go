@@ -18,7 +18,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// EngineVersion is the server build version, stamped at link time.
 var EngineVersion = "0.0.0-dev"
 
 // Native endpoint names, as accepted by GM_ADVERTISED_NATIVE_ENDPOINTS and reported in preflight.
@@ -29,7 +28,6 @@ const (
 	NativeH3      = "http3"
 )
 
-// NativeEndpoints holds one value per native endpoint: a listen address (empty disables it) or an advertised origin.
 type NativeEndpoints struct {
 	H1, H1TLS, H2, H3 string
 }
@@ -92,7 +90,6 @@ func Default() Config {
 	}
 }
 
-// Native is one native endpoint's listen address, advertised origin and fixed protocol.
 type Native struct {
 	Name, Env, Addr, Public, Scheme, Protocol string
 }
@@ -111,7 +108,6 @@ func (c Config) TLSEnabled() bool {
 	return c.Native.H1TLS != "" || c.Native.H2 != "" || c.Native.H3 != ""
 }
 
-// NativeAdvertised reports whether the named native endpoint is both enabled and selected for advertisement.
 func (c Config) NativeAdvertised(name string) bool {
 	return c.nativeEnabled(name) && (c.AdvertisedNative == nil || c.AdvertisedNative[name])
 }

@@ -22,8 +22,7 @@ type ClientAddress struct {
 	Source  ClientIPSource
 }
 
-// ResolveClientAddress attributes a request to its socket peer or, behind a trusted proxy, to the one X-Real-IP the
-// proxy set. ok is false when a trusted peer's evidence is missing or ambiguous; the address is then the peer's own.
+// ResolveClientAddress uses the peer, or a trusted proxy's single X-Real-IP; ok reports usable evidence.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddress, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -57,8 +56,7 @@ func Trusted(addr netip.Addr, trusted []netip.Prefix) bool {
 // AddressBucket keys a per-client budget: an IPv4 address or an IPv6 /64.
 func AddressBucket(addr netip.Addr) string { return AddressBuckets(addr)[0] }
 
-// AddressBuckets is the address's bucket followed, for IPv6, by the /56 and /48 that hold it; a budget gives each
-// of them twice the share of the one before, so one allocation cannot claim a budget through many /64s.
+// AddressBuckets adds, for IPv6, the /56 and /48 that hold the /64; budgets double at each level.
 func AddressBuckets(addr netip.Addr) []string {
 	addr = addr.Unmap()
 	switch {

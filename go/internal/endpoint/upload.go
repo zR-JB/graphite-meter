@@ -17,8 +17,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Upload is the receiver store and its routes: owner-bound receivers are the authority on uploaded
-// bytes and time.
+// Upload is the receiver store and its routes; receivers own the uploaded bytes and time.
 type Upload struct {
 	meter     *Meter // optional verbose per-second logger; nil unless -verbose
 	trusted   []netip.Prefix
@@ -217,8 +216,7 @@ func (u *Upload) runProgress(done, superseded <-chan struct{}, agg *uploadAgg, e
 	}
 }
 
-// waitDrained waits for a finished receiver's last lane, registering before each read of the count so a lane
-// leaving in between still wakes it.
+// waitDrained waits for a finished receiver's last lane, re-registering before each count read.
 func (u *Upload) waitDrained(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	for {
 		u.mu.Lock()

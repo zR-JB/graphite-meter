@@ -30,7 +30,6 @@ const wtDatagramPayload = 1000
 // A verify session's answer is its handshake; clients close it at once.
 const wtVerifyLinger = 5 * time.Second
 
-// wtRefusalLinger lets a peer read a refusal before the session closes.
 const wtRefusalLinger = 2 * time.Second
 
 // sessionActivity ends a session idle for about its bound.
@@ -206,7 +205,6 @@ func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 		}
 		// The feed's heartbeat is not peer activity.
 		ctx, live := watchSession(ctx, idleBound)
-		// The session closes only after its goroutines end.
 		var wg sync.WaitGroup
 		defer wg.Wait()
 		defer live.cancel()
@@ -268,7 +266,6 @@ func drainDatagrams(ctx context.Context, upload *Upload, conn datagramConn, agg 
 		case <-ctx.Done():
 		}
 	}()
-	// The session watcher bounds a silent drain.
 	_, _ = upload.Receive(ctx, id, owner, datagramSource{conn: conn, ctx: ctx, live: live})
 }
 

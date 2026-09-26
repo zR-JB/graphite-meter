@@ -28,8 +28,7 @@ func newBudget(limit, clientLimit int) budget {
 	return budget{limit: limit, clientLimit: clientLimit, clients: make(map[string]int)}
 }
 
-// clientFull reports and counts a refusal by any of keys; each later key is an aggregate that holds twice the
-// share of the one before it.
+// clientFull counts a refusal by any of keys; each later key is an aggregate with twice the share.
 func (b *budget) clientFull(keys ...string) bool {
 	for i, key := range keys {
 		if b.clients[key] >= b.clientLimit<<i {
@@ -158,9 +157,7 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 	})
 }
 
-// boundedRequest refuses a body on any method but POST and gives every request a control deadline, which
-// measurement admission replaces; after the handler, the connection has half of it to drain an unread body and all
-// of it to flush the response.
+// boundedRequest refuses non-POST bodies and bounds each exchange; admission extends measurements.
 func boundedRequest(next http.Handler, timeout time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && (r.ContentLength > 0 || r.ContentLength < 0 && r.ProtoMajor < 3) {

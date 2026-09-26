@@ -150,8 +150,7 @@ func (c ServerCatalog) ConnectSources() []string {
 	return out
 }
 
-// BrowserConnectSourceSupported excludes IPv6 literals, which browsers cannot
-// represent as CSP host sources. The page's own IPv6 origin is covered by 'self'.
+// BrowserConnectSourceSupported excludes IPv6 literals, which CSP host sources cannot express.
 func BrowserConnectSourceSupported(raw string) bool {
 	return !strings.Contains(raw, "://[")
 }

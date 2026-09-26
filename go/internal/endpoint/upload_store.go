@@ -91,8 +91,7 @@ const (
 	maxLiveUploadsPerClient = 32
 	uploadReconnectGrace    = 30 * time.Second
 	uploadTokenTTL          = 2 * time.Minute
-	// A retained ID must outlive its signed token. Otherwise sweeping can
-	// forget completion and ownership while the same token can still mint state.
+	// A retained ID outlives its signed token, so sweeping cannot forget a live token's state.
 	uploadIDTTL         = max(2*wire.WTIdleBound+uploadReconnectGrace, uploadTokenTTL)
 	uploadSweepInterval = 5 * time.Second
 )
@@ -167,8 +166,7 @@ func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
 	http.Error(w, info.message, info.status)
 }
 
-// accessFor resolves or creates id's receiver for owner. A lane joins under the store lock, so sweeping
-// cannot remove the receiver first; a watcher neither joins nor refreshes its idle clock.
+// accessFor resolves or creates id's receiver; lanes join under the lock, watchers stay passive.
 func (u *Upload) accessFor(id, owner string, join bool) (*uploadAgg, uploadAccess) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -207,8 +205,7 @@ func (u *Upload) accessFor(id, owner string, join bool) (*uploadAgg, uploadAcces
 	return agg, uploadAccessOK
 }
 
-// evictEmptyLocked expires the least recently touched receiver that has no bytes, lanes or finish,
-// so watchers alone cannot hold the global cap.
+// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish, so watchers hold no cap.
 func (u *Upload) evictEmptyLocked() bool {
 	victim := ""
 	var oldest int64

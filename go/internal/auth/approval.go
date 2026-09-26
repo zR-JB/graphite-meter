@@ -180,8 +180,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	if !authenticated || p.Bearer || p.session == nil {
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" && r.Header.Get("Sec-Fetch-Mode") == "navigate" &&
 			r.Header.Get("Sec-Fetch-Dest") == "document" {
-			// A document navigation makes the Strict session cookie available on
-			// reentry. An HTTP redirect would retain the cross-site cookie context.
+			// A document navigation, unlike a redirect, reenters with the Strict session cookie.
 			render(w, continueTemplate, map[string]any{"Styles": authStyles, "Challenge": challenge, "Opening": true})
 			return
 		}
@@ -246,8 +245,7 @@ func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
 	render(w, cliDoneTemplate, map[string]any{"Styles": authStyles, "Browser": browser})
 }
 
-// token exchanges an approval's verifier for a grant. A browser exchange answers only its approved origin,
-// cookie-free; a native exchange at capacity replaces the oldest native grant, never a browser one.
+// token exchanges a verifier for a grant; at capacity a native grant evicts only the oldest native one.
 func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
 	origin, browser := "", r.URL.Path == "/auth/browser/token"

@@ -104,8 +104,7 @@ const wsPingReadLimit = 2048
 
 func (m *mounter) webSocketPing() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Under authentication Enforce has already bound the origin to the principal; public mode holds no
-		// session state a forged origin could abuse.
+		// Enforce binds the origin under authentication; public mode has no session state to abuse.
 		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 			InsecureSkipVerify: true,
 			CompressionMode:    websocket.CompressionDisabled,

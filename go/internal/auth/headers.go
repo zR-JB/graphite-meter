@@ -132,9 +132,7 @@ func allowedCORSMethod(path, method string) bool {
 	return ok && spec.AllowsCORSMethod(method)
 }
 
-// MeasurementCORS exposes a measurement response or refusal to the origin allowed to read it:
-// any origin in public mode, a grant's own origin, the UI origin with credentials, or an
-// unauthenticated secure origin reading the refusal that starts its grant.
+// MeasurementCORS exposes a response to its reader: any origin in public mode, else a grant, UI or refused one.
 func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 	if !s.Enabled() {
 		h.Set("Access-Control-Allow-Origin", "*")
