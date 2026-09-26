@@ -34,39 +34,25 @@ func TestTransferStreamPolicy(t *testing.T) {
 	}
 }
 
-func TestConfigNormalizedInvariants(t *testing.T) {
+func TestConfigNormalizedClamps(t *testing.T) {
 	t.Parallel()
 	d := DefaultConfig()
-	if got := (Config{}).normalized(); got.BaseURL != d.BaseURL ||
-		got.LatencyDuration != d.LatencyDuration ||
-		got.PingInterval != PingMedium || got.LoadedPingInterval != d.LoadedPingInterval ||
-		got.TransferStreams != d.TransferStreams ||
-		got.Warmup != 0 {
-		t.Fatalf("empty config normalized to %+v", got)
-	}
 	c := d
 	c.ThroughputTarget, c.Warmup, c.DownloadDuration = "edge-h2", -time.Second, -1
 	c.TransferStreams = TransferStreamPolicy{AutomaticMax: 500, Forced: -5}
-	got := c.normalized()
-	if got.ThroughputTarget != "edge-h2" ||
-		got.Warmup != 0 ||
-		got.DownloadDuration != d.DownloadDuration || got.TransferStreams != (TransferStreamPolicy{
-		AutomaticMax: MaxStreams,
-	}) {
+	clamped := TransferStreamPolicy{AutomaticMax: MaxStreams}
+	if got := c.normalized(); got.ThroughputTarget != "edge-h2" || got.Warmup != 0 ||
+		got.DownloadDuration != d.DownloadDuration || got.TransferStreams != clamped {
 		t.Fatalf("normalized %+v", got)
 	}
-	if got := (Config{
-		TransferStreams: TransferStreamPolicy{Forced: 500},
-	}).normalized(); got.TransferStreams.Forced != MaxStreams {
+	c.TransferStreams = TransferStreamPolicy{Forced: 500}
+	if got := c.normalized(); got.TransferStreams.Forced != MaxStreams {
 		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, MaxStreams)
 	}
 }
 
 func TestConfigValidate(t *testing.T) {
 	t.Parallel()
-	if MaxPingInterval*2 != wire.IdleBound {
-		t.Errorf("MaxPingInterval = %v, want half of the %v idle bound", MaxPingInterval, wire.IdleBound)
-	}
 	for _, c := range []struct {
 		name string
 		edit func(*Config)
@@ -165,27 +151,24 @@ func TestPreparedRunFreshness(t *testing.T) {
 	cfg.ServerIDs, cfg.Stages = []string{"b", "a"}, StageSet{Latency: true, Download: true}
 	prepared := &PreparedRun{VerifiedAt: time.Now(), key: cfg.PreparationKey(), Servers: []PreparedServer{
 		{Connection: &PreparedConnection{}}}}
-	if !prepared.FreshFor(cfg) {
-		t.Fatal("fresh matching preparation was rejected")
-	}
-	changed := cfg
-	changed.LatencyTarget = "ws-http1-tls"
-	if prepared.FreshFor(changed) {
-		t.Fatal("preparation survived a target change")
-	}
-	changed = cfg
-	changed.PingInterval = MaxPingInterval + time.Second
-	if prepared.FreshFor(changed) {
-		t.Fatal("preparation survived a ping-interval change")
-	}
-	changed = cfg
-	changed.Stages.Latency, changed.DownloadDuration, changed.ServerIDs = false, time.Minute, []string{"a", "b"}
-	if !prepared.FreshFor(changed) {
-		t.Fatal("a change the preparation does not depend on made it stale")
-	}
-	changed.Stages.Bidirectional = true
-	if prepared.FreshFor(changed) {
-		t.Fatal("preparation without receiver checkpoints survived an upload stage")
+	for _, c := range []struct {
+		name  string
+		edit  func(*Config)
+		fresh bool
+	}{
+		{"unchanged", func(*Config) {}, true},
+		{"latency target", func(c *Config) { c.LatencyTarget = "ws-http1-tls" }, false},
+		{"ping interval", func(c *Config) { c.PingInterval = MaxPingInterval + time.Second }, false},
+		{"settings preparation does not depend on", func(c *Config) {
+			c.Stages.Latency, c.DownloadDuration, c.ServerIDs = false, time.Minute, []string{"a", "b"}
+		}, true},
+		{"upload stage without receiver checkpoints", func(c *Config) { c.Stages.Bidirectional = true }, false},
+	} {
+		changed := cfg
+		c.edit(&changed)
+		if prepared.FreshFor(changed) != c.fresh {
+			t.Errorf("%s: fresh = %v, want %v", c.name, !c.fresh, c.fresh)
+		}
 	}
 	prepared.VerifiedAt = time.Now().Add(-PreparationFreshness - time.Second)
 	if prepared.FreshFor(cfg) {

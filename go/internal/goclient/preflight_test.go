@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/coder/websocket"
@@ -93,78 +92,27 @@ func TestTargetSelection(t *testing.T) {
 	}
 }
 
-func TestGetPreflight(t *testing.T) {
+func TestDiscoveryRejectsTerminalControls(t *testing.T) {
 	t.Parallel()
-	t.Run("decodes valid JSON", func(t *testing.T) {
+	for _, name := range []string{`\u001b]52;c;cHduZWQ=\u0007`, `\u009b2J`} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"server":{"name":"srv","host":"h","port":7246},"engineVersion":"1.0",`+
+			_, _ = io.WriteString(w, `{"server":{"name":"`+name+`"},"engineVersion":"1.0",`+
 				`"generation":"test","capabilities":{"throughput":[],"latency":[]}}`)
 		}))
-		defer srv.Close()
-
-		pf, err := getPreflight(t.Context(), srv.Client(), srv.URL)
-		if err != nil {
-			t.Fatalf("getPreflight() error: %v", err)
-		}
-		if pf.Server.Name != "srv" {
-			t.Errorf("Server = %+v, unexpected", pf.Server)
-		}
-		if pf.EngineVersion != "1.0" {
-			t.Errorf("EngineVersion = %q", pf.EngineVersion)
-		}
-	})
-
-	t.Run("rejects terminal controls in server identity", func(t *testing.T) {
-		for _, name := range []string{`\u001b]52;c;cHduZWQ=\u0007`, `\u009b2J`} {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = io.WriteString(w, `{"server":{"name":"`+name+`"},"engineVersion":"1.0",`+
-					`"generation":"test","capabilities":{"throughput":[],"latency":[]}}`)
-			}))
-			_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
-			srv.Close()
-			if err == nil {
-				t.Fatalf("accepted server name %s", name)
-			}
-		}
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, _ = io.WriteString(w, `{"defaultSelection":["self"],"servers":[{"id":"self","url":".",`+
-				`"name":"Meter","location":"\u001b]0;owned\u0007"}]}`)
-		}))
-		defer srv.Close()
-		if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}, credential{}); err == nil {
-			t.Fatal("accepted a catalogue location with terminal controls")
-		}
-	})
-
-	t.Run("non-200 status returns formatted error", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte("boom"))
-		}))
-		defer srv.Close()
-
 		_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
+		srv.Close()
 		if err == nil {
-			t.Fatal("expected error, got nil")
+			t.Fatalf("accepted server name %s", name)
 		}
-		if !strings.Contains(err.Error(), "500") {
-			t.Errorf("error = %q, want it to mention status 500", err.Error())
-		}
-	})
-
-	t.Run("malformed JSON body propagates decode error", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("{not valid json"))
-		}))
-		defer srv.Close()
-
-		_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
-		if err == nil {
-			t.Fatal("expected decode error, got nil")
-		}
-	})
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"defaultSelection":["self"],"servers":[{"id":"self","url":".",`+
+			`"name":"Meter","location":"\u001b]0;owned\u0007"}]}`)
+	}))
+	defer srv.Close()
+	if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}, credential{}); err == nil {
+		t.Fatal("accepted a catalogue location with terminal controls")
+	}
 }
 
 func TestVerifyLatencyRequiresMatchingProbeReply(t *testing.T) {

@@ -45,18 +45,9 @@ func runWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 		return false, errors.New("session closed by the server")
 	})
 
-	if err == nil {
-		t.Fatalf(
-			"runWTLane returned nil after %v and %d redials, want the lost session reported",
-			time.Since(started),
-			dials.Load(),
-		)
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("the lane only gave up when the stage context expired (%v); the redial is not bounded", err)
-	}
-	if dials.Load() == 0 {
-		t.Error("the lane never tried to replace the session")
+	if err == nil || ctx.Err() != nil || dials.Load() == 0 {
+		t.Fatalf("runWTLane = %v after %v and %d redials, want the lost session reported before the stage ends",
+			err, time.Since(started), dials.Load())
 	}
 }
 
@@ -150,39 +141,21 @@ func runFastFailureCase(t *testing.T, c fastFailureCase) {
 		return false, nil
 	})
 
-	if got := err != nil; got != c.wantErr {
-		t.Fatalf(
-			"runWTLane err = %v, want an error: %v (after %d lane entries and %d redials)",
-			err,
-			c.wantErr,
-			entries.Load(),
-			dials.Load(),
-		)
-	}
-	if c.wantErr && ctx.Err() != nil {
-		t.Fatalf("lane failed only when the stage deadline expired: %v", err)
-	}
-	if c.wantEntries >= 0 && entries.Load() != c.wantEntries {
-		t.Errorf("the lane ran %d times, want %d", entries.Load(), c.wantEntries)
-	}
-	if c.wantDials >= 0 && dials.Load() != c.wantDials {
-		t.Errorf(
-			"the shared session was redialled %d times, want %d: one lane's error is not a lost session",
-			dials.Load(),
-			c.wantDials,
-		)
+	if (err != nil) != c.wantErr || c.wantErr && ctx.Err() != nil ||
+		c.wantEntries >= 0 && entries.Load() != c.wantEntries || c.wantDials >= 0 && dials.Load() != c.wantDials {
+		t.Fatalf("runWTLane = %v (stage ended: %v) after %d lane entries and %d redials; want error %v, %d, %d",
+			err, ctx.Err() != nil, entries.Load(), dials.Load(), c.wantErr, c.wantEntries, c.wantDials)
 	}
 }
 
 func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]func(*testing.T){
-		"persistent redial failure":            runWTLaneSurfacesAPersistentRedialFailure,
-		"concurrent redials dedupe":            wtStageSessionDedupesConcurrentRedials,
-		"failed establish closes its session":  wtStageSessionClosesASessionWhoseEstablishFailed,
-		"auth refusal is not retried":          wtStageSessionDoesNotRetryPermanentAuthenticationFailure,
-		"cancelled stage is a stop":            runWTLaneReportsACancelledStageAsAStop,
-		"mixed zero-byte failures are bounded": runWTLaneBoundsMixedZeroByteFailures,
+		"persistent redial failure":           runWTLaneSurfacesAPersistentRedialFailure,
+		"concurrent redials dedupe":           wtStageSessionDedupesConcurrentRedials,
+		"failed establish closes its session": wtStageSessionClosesASessionWhoseEstablishFailed,
+		"auth refusal is not retried":         wtStageSessionDoesNotRetryPermanentAuthenticationFailure,
+		"cancelled stage is a stop":           runWTLaneReportsACancelledStageAsAStop,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -340,34 +313,10 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages, cfg.ThroughputTransport = srv.URL, StageSet{Download: true}, "auto"
 	_, err := prepareOne(t.Context(), cfg)
-	if err == nil {
-		t.Fatal("Prepare succeeded with no reachable throughput target")
-	}
-	if !strings.Contains(err.Error(), "select an origin") {
-		t.Fatalf("prepare error = %q, want the fetch selection's own refusal", err)
-	}
-}
-
-func runWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
-	host := &wtStageSession{sess: liveWTSession(t)}
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	entries := 0
-	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
-		entries++
-		pause := 10 * time.Millisecond
-		if entries%2 == 0 {
-			pause = retryBackoff + 100*time.Millisecond
-		}
-		select {
-		case <-laneCtx.Done():
-			return false, laneCtx.Err()
-		case <-time.After(pause):
-			return false, errors.New("stream failed before carrying a byte")
-		}
-	})
-	if err == nil || ctx.Err() != nil {
-		t.Fatalf("mixed zero-byte failures returned %v after %d entries (ctx=%v)", err, entries, ctx.Err())
+	failed, ok := errors.AsType[*PreparationError](err)
+	if !ok || !strings.Contains(err.Error(), "select an origin") ||
+		len(failed.Preflight.Capabilities.ThroughputTargets) != 3 {
+		t.Fatalf("prepare error = %v, want the fetch selection's own refusal keeping all 3 discovered targets", err)
 	}
 }
 

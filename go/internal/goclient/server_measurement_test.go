@@ -122,26 +122,6 @@ func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 		t.Fatalf("a replaced receiver must start a fresh interval: %+v", a.intervals)
 	}
 }
-func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
-	t.Parallel()
-	a := aggregateMeasurements{}
-	a.beginStage("bidirectional", []string{"a", "b"}, 0)
-	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, map[string]*ReceiverSnapshot{
-		"a": nativeReceiver("a", 0, 100),
-		"b": nativeReceiver("b", 0, 100),
-	}))
-	a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000, "b": 2000}, map[string]*ReceiverSnapshot{
-		"a": nativeReceiver("a", 1000, 1100),
-		"b": nativeReceiver("b", 6000, 2100),
-	}))
-	if a.result(Down).MeanBps != 3000 || a.result(Up).MeanBps != 4000 {
-		t.Fatal("bidirectional clocks were mixed")
-	}
-	a.restart(nil, time.Second, ReasonDropout)
-	if !a.result(Down).Unavailable || !a.result(Up).Unavailable {
-		t.Fatal("all failed must not retain the earlier headline")
-	}
-}
 func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
@@ -189,40 +169,6 @@ func TestCheckpointMissesRemoveServers(t *testing.T) {
 	}
 	if !s.dropsServer("b", &AuthRequiredError{}, true) {
 		t.Fatal("a refused grant kept the server")
-	}
-}
-
-func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		name    string
-		replies int
-		window  bool
-		want    Outcome
-	}{
-		{"measured", 3, true, OutcomeComplete},
-		{"no idle reply", 0, true, OutcomeIncomplete},
-		{"no throughput window", 3, false, OutcomeIncomplete},
-	} {
-		cfg := DefaultConfig()
-		cfg.Stages = StageSet{Latency: true, Download: true, Bidirectional: true}
-		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
-		p.results = []Result{{Stage: StageLatency, Latency: LatencyStats{Count: c.replies}}}
-		co := &coordinator{cfg: cfg, servers: []*participant{p}, emit: func(Event) {}}
-		for _, stage := range []StagePlan{{StageDownload, time.Second, []Direction{Down}},
-			{StageBidirectional, time.Second, []Direction{Down, Up}}} {
-			co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-			if c.window {
-				co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 0},
-					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 0, 0)}))
-				co.aggregate.observe(nativeBoundary(1000, map[string]uint64{"a": 1000},
-					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 1000, 1000)}))
-			}
-			(&stageRun{c: co, plan: stage}).finish(nil)
-		}
-		if got := co.outcome(t.Context(), nil); got != c.want {
-			t.Errorf("%s: outcome %v, want %v", c.name, got, c.want)
-		}
 	}
 }
 

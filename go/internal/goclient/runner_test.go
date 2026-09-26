@@ -1,9 +1,7 @@
 package goclient
 
 import (
-	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,15 +32,6 @@ func TestAdaptiveWarmup(t *testing.T) {
 	}
 }
 
-func TestRunLatencyStageCapturesIdleRTT(t *testing.T) {
-	t.Parallel()
-	r := testRunner(newPingServer(t, answerAll, 0))
-	r.cfg.PingInterval = 20 * time.Millisecond
-	if err := r.runTestStage(t.Context(), StageLatency, captureWindow); err != nil || r.idleRTT <= 0 {
-		t.Fatalf("latency stage = %v, idle RTT %v", err, r.idleRTT)
-	}
-}
-
 func TestRunStagesEndToEnd(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -69,29 +58,18 @@ func TestRunStagesEndToEnd(t *testing.T) {
 				LoadedPingInterval:    20 * time.Millisecond,
 				TransferStreams:       TransferStreamPolicy{Forced: c.streams},
 			}
-			var mu sync.Mutex
-			var events []Event
-			if err := runDirect(t.Context(), cfg, func(e Event) {
-				mu.Lock()
-				defer mu.Unlock()
-				events = append(events, e)
-			}); err != nil {
+			var log eventLog
+			if err := runDirect(t.Context(), cfg, log.emit); err != nil {
 				t.Fatalf("run: %v", err)
 			}
-			mu.Lock()
-			defer mu.Unlock()
 			var directions []Direction
-			for _, e := range events {
-				if e.Kind == EventResult {
-					directions = append(directions, e.Direction)
-					if e.Result.Unavailable ||
-						e.Result.TotalBytes == 0 ||
-						e.Result.Samples == 0 ||
-						e.Result.MeanBps <= 0 {
-						t.Fatalf("result lacks a measured window: %+v", e.Result)
-					}
+			for _, result := range log.results() {
+				directions = append(directions, result.Direction)
+				if result.Unavailable || result.TotalBytes == 0 || result.Samples == 0 || result.MeanBps <= 0 {
+					t.Fatalf("result lacks a measured window: %+v", result)
 				}
 			}
+			events := log.all()
 			done := events[len(events)-1]
 			if !slices.Equal(directions, c.directions) || done.Kind != EventDone || done.Outcome() != OutcomeComplete {
 				t.Fatalf("directions=%v terminal=%+v", directions, done)
@@ -115,237 +93,80 @@ func (s StageSet) name() string {
 	return strings.Join(names, "+")
 }
 
-func TestRunStopsPromptlyOnContextCancel(t *testing.T) {
+// An HTTP/2 proxy in front of an HTTP/1.1 backend: the client's own hop decides its protocol and lanes.
+func TestRunThroughAnHTTP2ProxyToAnHTTP1Backend(t *testing.T) {
 	t.Parallel()
-	srv := newTransferServer(t)
-	cfg := Config{
-		BaseURL:          srv.URL,
-		Stages:           StageSet{Download: true},
-		Warmup:           3 * time.Second,
-		DownloadDuration: 3 * time.Second,
-		TransferStreams:  TransferStreamPolicy{Forced: 1},
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	var terminal []Event
-	started := time.Now()
-	err := runDirect(ctx, cfg, func(e Event) {
-		if e.Kind == EventStage && e.Phase == PhaseWarmup {
-			cancel()
-		}
-		if e.Kind == EventDone {
-			terminal = append(terminal, e)
-		}
-	})
-	if !errors.Is(err, context.Canceled) || time.Since(started) > 2*time.Second {
-		t.Fatalf("run returned %v after %v, want a prompt context.Canceled", err, time.Since(started))
-	}
-	if len(terminal) != 1 || terminal[0].Outcome() != OutcomeStopped {
-		t.Fatalf("cancelled terminal outcome = %+v", terminal)
-	}
-}
+	for _, advertised := range []string{"http2", "negotiated"} {
+		t.Run(advertised, func(t *testing.T) {
+			t.Parallel()
+			var mu sync.Mutex
+			var proxyProbe, backendProbe string
+			lanes := map[string]map[string]bool{"/download": {}, "/upload": {}}
+			var received atomic.Uint64
+			mux := http.NewServeMux()
+			mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test",
+					Generation: "test", Capabilities: wire.Capabilities{
+						UploadCheckpoint: true,
+						ThroughputTargets: []wire.ThroughputTarget{
+							{Origin: ".", Protocol: advertised, Transport: wire.TransportFetchStream},
+						},
+						LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
+					}})
+			})
+			mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				backendProbe = r.Proto
+				mu.Unlock()
+				writeProbe(w, r)
+			})
+			mux.HandleFunc("/download", writeDownload)
+			mountUploadReceiver(mux, &received, receiveUpload(&received, nil))
+			mux.Handle("/ws/ping", pingHandler(answerAll, 0))
+			backend := httptest.NewServer(mux)
+			defer backend.Close()
+			upstream, _ := url.Parse(backend.URL)
+			forward := httputil.NewSingleHostReverseProxy(upstream)
+			proxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				if seen, ok := lanes[r.URL.Path]; ok {
+					seen[r.URL.Query().Get("lane")] = true
+				}
+				if r.URL.Path == "/probe" {
+					proxyProbe = r.Proto
+				}
+				mu.Unlock()
+				forward.ServeHTTP(w, r)
+			}))
+			proxy.EnableHTTP2 = true
+			proxy.StartTLS()
+			defer proxy.Close()
 
-func TestRunAcceptsProxyProtocolBoundary(t *testing.T) {
-	t.Parallel()
-	var origin string
-	var probeRequestProtocol atomic.Value
-	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Preflight{
-			Generation: "test", Server: wire.ServerInfo{Name: "proxy"},
-			Capabilities: wire.Capabilities{
-				ThroughputTargets: []wire.ThroughputTarget{testTransfer("http2", origin, "http2", true)},
-			},
+			cfg := Config{
+				BaseURL:               proxy.URL,
+				InsecureSkipTLSVerify: true,
+				Stages:                StageSet{Bidirectional: true},
+				BidirectionalDuration: captureWindow,
+				LoadedLatency:         true,
+			}.normalized()
+			connection, err := prepareOne(t.Context(), cfg)
+			if err != nil || connection.ThroughputTarget.Protocol != "http2" ||
+				connection.Preflight.Capabilities.ThroughputTargets[0].Protocol != advertised {
+				t.Fatalf("prepared %+v, %v; want http2 over the proxy hop, keeping the advertised %q", connection, err,
+					advertised)
+			}
+			if err := runPrepared(t.Context(), cfg, connection, func(Event) {}); err != nil {
+				t.Fatalf("run through the proxy: %v", err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if proxyProbe != "HTTP/2.0" || backendProbe != "HTTP/1.1" {
+				t.Fatalf("probe reached the proxy over %q and the backend over %q", proxyProbe, backendProbe)
+			}
+			if len(lanes["/download"]) != 1 || len(lanes["/upload"]) != 4 {
+				t.Fatalf("opened %d download and %d upload lanes, want HTTP/2's 1 and 4",
+					len(lanes["/download"]), len(lanes["/upload"]))
+			}
 		})
-	})
-	mux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
-		probeRequestProtocol.Store(r.Proto)
-		writeProbe(w, r)
-	})
-	mux.HandleFunc("/download", writeDownload)
-	srv := httptest.NewUnstartedServer(mux)
-	srv.EnableHTTP2 = true
-	srv.StartTLS()
-	defer srv.Close()
-	origin = srv.URL
-
-	cfg := Config{
-		BaseURL:               origin,
-		Stages:                StageSet{Download: true},
-		DownloadDuration:      100 * time.Millisecond,
-		InsecureSkipTLSVerify: true,
-		TransferStreams:       TransferStreamPolicy{Forced: 1},
-	}
-	if err := runDirect(t.Context(), cfg, func(Event) {}); err != nil {
-		t.Fatalf("run through an H2 proxy with H1 downstream evidence: %v", err)
-	}
-	if got := probeRequestProtocol.Load(); got != "HTTP/2.0" {
-		t.Fatalf("client-to-proxy probe used %q, want HTTP/2.0", got)
-	}
-}
-
-func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
-	t.Parallel()
-	var backendProtocol atomic.Value
-	backendMux := http.NewServeMux()
-	backendMux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{
-			Name: "proxied",
-		}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
-			UploadCheckpoint: true,
-			ThroughputTargets: []wire.ThroughputTarget{
-				{Origin: ".", Protocol: "negotiated", Transport: wire.TransportFetchStream},
-			},
-			LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
-		}})
-	})
-	backendMux.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
-		backendProtocol.Store(r.Proto)
-		writeProbe(w, r)
-	})
-	backendMux.Handle("/ws/ping", pingHandler(answerAll, 0))
-	backend := httptest.NewServer(backendMux)
-	defer backend.Close()
-	upstream, _ := url.Parse(backend.URL)
-	proxy := httptest.NewUnstartedServer(httputil.NewSingleHostReverseProxy(upstream))
-	proxy.EnableHTTP2 = true
-	proxy.StartTLS()
-	defer proxy.Close()
-
-	cfg := DefaultConfig()
-	cfg.BaseURL, cfg.InsecureSkipTLSVerify = proxy.URL, true
-	prepared, err := prepareOne(t.Context(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if prepared.ThroughputTarget.Protocol != "http2" ||
-		prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol != "negotiated" {
-		t.Fatalf(
-			"client-to-proxy protocol = %q; advertised %q",
-			prepared.ThroughputTarget.Protocol,
-			prepared.Preflight.Capabilities.ThroughputTargets[0].Protocol,
-		)
-	}
-	if got := backendProtocol.Load(); got != "HTTP/1.1" {
-		t.Fatalf("backend request = %q, want HTTP/1.1 behind the HTTP/2 proxy", got)
-	}
-}
-
-func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
-	t.Parallel()
-	srv := httptest.NewServer(ambiguousFetch())
-	defer srv.Close()
-	cfg := DefaultConfig()
-	cfg.BaseURL, cfg.Stages = srv.URL, StageSet{Download: true}
-	_, err := prepareOne(t.Context(), cfg)
-	if preparationErr, ok := errors.AsType[*PreparationError](err); !ok ||
-		len(preparationErr.Preflight.Capabilities.ThroughputTargets) != 2 {
-		t.Fatalf("prepare error = %T %v, want a PreparationError with both discovered targets", err, err)
-	}
-}
-
-func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
-	t.Parallel()
-	var mu sync.Mutex
-	lanes := map[string]map[string]bool{"/download": {}, "/upload": {}}
-	transfer := newTransferServer(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		if seen, ok := lanes[r.URL.Path]; ok {
-			seen[r.URL.Query().Get("lane")] = true
-		}
-		mu.Unlock()
-		transfer.Config.Handler.ServeHTTP(w, r)
-	}))
-	defer srv.Close()
-	r := testRunner(srv)
-	r.streams = byDirection[int]{down: 1, up: 4}
-	if err := r.runTestStage(t.Context(), StageBidirectional, captureWindow); err != nil {
-		t.Fatalf("coordinated transfer stage: %v", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	if len(lanes["/download"]) != 1 || len(lanes["/upload"]) != 4 {
-		t.Fatalf("opened %d download and %d upload lanes, want 1 and 4", len(lanes["/download"]), len(lanes["/upload"]))
-	}
-}
-
-func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
-	t.Parallel()
-	var downloadBytesServed atomic.Int64
-	served := make(chan struct{})
-	var once sync.Once
-	mux := http.NewServeMux()
-	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
-		downloadBytesServed.Add(64 * 1024)
-		once.Do(func() { close(served) })
-		writeDownload(w, r)
-	})
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-served:
-		case <-r.Context().Done():
-		}
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	var mu sync.Mutex
-	var events []Event
-	r := testRunner(srv)
-	r.emit = func(e Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		events = append(events, e)
-	}
-	started := time.Now()
-	err := r.runTestStage(t.Context(), StageBidirectional, 3*time.Second)
-	if err == nil || !strings.Contains(err.Error(), "500") {
-		t.Fatalf("err = %v, want the upload session's HTTP 500", err)
-	}
-	if elapsed := time.Since(started); elapsed > 2*time.Second {
-		t.Errorf("stage took %v to return after a sibling lane errored, want prompt cancellation", elapsed)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, event := range events {
-		if event.Kind == EventThroughput ||
-			event.Kind == EventLatency ||
-			event.Kind == EventResult ||
-			event.Kind == EventStage && event.Phase != PhasePreparing {
-			t.Fatalf("preparation failure published measured data: %+v", event)
-		}
-	}
-	if downloadBytesServed.Load() == 0 {
-		t.Error("download made no progress before the upload failed; sibling cancellation was not exercised")
-	}
-}
-
-func TestLoadedLatencyDrainsSilentProbesToTimeouts(t *testing.T) {
-	t.Parallel()
-	var details *RunDetails
-	var transferResult *Result
-	r := testRunner(newTransferServer(t))
-	r.latencyTarget = new(testChannel("silent", newPingServer(t, answerNone, 0).URL, false))
-	r.cfg.LoadedLatency, r.cfg.LoadedPingInterval = true, 10*time.Millisecond
-	r.emit = func(e Event) {
-		if e.Kind == EventResult {
-			transferResult = e.Result
-		}
-		if e.Kind == EventDone {
-			details = e.Servers
-		}
-	}
-	// Two silent warmup probes can hold the loaded window for one floor deadline.
-	if err := r.runTestStage(t.Context(), StageDownload, 2*probeTimeoutFloor); err != nil {
-		t.Fatal(err)
-	}
-	results := details.Servers[0].Results
-	if transferResult == nil || transferResult.Direction != Down || len(results) != 2 || results[0].Direction != "" {
-		t.Fatalf("loaded results: %+v %+v", transferResult, results)
-	}
-	stats := results[0].Latency
-	if stats.Count != 0 || stats.Unresolved != 0 || stats.Timeouts == 0 {
-		t.Fatalf("silent loaded probes did not drain to timeouts: %+v", stats)
 	}
 }

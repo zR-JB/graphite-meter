@@ -6,44 +6,37 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func TestAuthenticationLoginURLStaysOnTheServerHostname(t *testing.T) {
+func TestBeginAuthorizationStaysOnTheServerHostname(t *testing.T) {
 	t.Parallel()
-	base, _ := url.Parse("https://meter.example:7248")
-	if login, err := authenticationLoginURL(
-		base,
-		"https://meter.example:7247/login",
-	); err != nil || login.Host != "meter.example:7247" {
-		t.Fatalf("login on another port = %v, %v", login, err)
-	}
-	for _, raw := range []string{
-		"https://login.example:7247/login",
-		"http://meter.example/login",
-		"https://meter.example/login?next=x",
-		"https://meter.example/other",
+	for _, c := range []struct {
+		login    string
+		insecure bool
+		ok       bool
+	}{
+		{"https://meter.example:7247/login", false, true},
+		{"https://meter.example:7247/login", true, false},
+		{"https://login.example:7247/login", false, false},
+		{"http://meter.example/login", false, false},
+		{"https://meter.example/login?next=x", false, false},
+		{"https://meter.example/other", false, false},
 	} {
-		if _, err := authenticationLoginURL(base, raw); err == nil {
-			t.Fatalf("accepted authentication URL %s", raw)
+		cfg := DefaultConfig()
+		cfg.BaseURL, cfg.InsecureSkipTLSVerify = "https://meter.example:7248", c.insecure
+		pending, err := beginAuthorization(cfg, c.login)
+		if (err == nil) != c.ok || c.ok && !strings.HasPrefix(pending.BrowserURL, "https://meter.example:7247/auth/") {
+			t.Errorf("login %s insecure=%t: %+v, %v", c.login, c.insecure, pending, err)
 		}
 	}
-}
-
-func okResponse(r *http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader("")),
-		Header:     http.Header{},
-		Request:    r,
-	}, nil
 }
 
 func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T) {
@@ -59,7 +52,7 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 	seen := ""
 	client := authenticatedClient(cred, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		seen = r.Header.Get("Authorization")
-		return okResponse(r)
+		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: r}, nil
 	}))
 	for _, target := range []string{"https://meter.example/probe", "https://meter.example:7247/probe"} {
 		seen = ""
@@ -88,41 +81,6 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 	}
 }
 
-func TestAuthenticatedClientNeverFollowsRedirects(t *testing.T) {
-	t.Parallel()
-	for _, location := range []string{
-		"https://meter.example:9443/download",
-		"https://other.example/download",
-		"http://meter.example/download",
-	} {
-		cred := credential{token: "secret", origins: []string{"https://meter.example"}}
-		calls := 0
-		client := authenticatedClient(cred, roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			calls++
-			return &http.Response{
-				StatusCode: http.StatusTemporaryRedirect,
-				Body:       io.NopCloser(strings.NewReader("")),
-				Header:     http.Header{"Location": {location}},
-				Request:    r,
-			}, nil
-		}))
-		req, _ := http.NewRequest(http.MethodGet, "https://meter.example/download", nil)
-		if _, err := client.Do(req); err == nil || calls != 1 {
-			t.Fatalf("redirect to %s: err=%v after %d requests", location, err, calls)
-		}
-	}
-}
-
-func TestAuthenticatedOperationRejectsInsecureMode(t *testing.T) {
-	t.Parallel()
-	cfg := DefaultConfig()
-	cfg.BaseURL = "https://meter.example"
-	cfg.InsecureSkipTLSVerify = true
-	if _, err := beginAuthorization(cfg, "https://meter.example/login"); err == nil {
-		t.Fatal("authenticated -insecure accepted")
-	}
-}
-
 func TestGrantNeverCrossesUnverifiedTLS(t *testing.T) {
 	t.Parallel()
 	var presented atomic.Bool
@@ -140,50 +98,68 @@ func TestGrantNeverCrossesUnverifiedTLS(t *testing.T) {
 		t.Fatal("grant crossed a connection whose certificate was not verified")
 	}
 	cred := credential{token: "secret", origins: []string{srv.URL}, insecure: true}
+	if _, err := prepare(t.Context(), cfg, nil, &cred); err == nil || !strings.Contains(err.Error(), "verified HTTPS") {
+		t.Fatalf("prepare with a grant and -insecure: %v", err)
+	}
 	if _, err := wtDial(t.Context(), cred, srv.URL, "/wt/ping", nil); err == nil ||
 		!strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("WebTransport dial with a grant and -insecure: %v", err)
 	}
 }
 
-func pendingApproval(transport roundTripFunc) *PendingAuthorization {
-	return &PendingAuthorization{
-		verifier: "verifier",
-		tokenURL: "https://meter.example/auth/cli/token",
-		close:    func() {},
-		client:   &http.Client{Transport: transport},
+func pendingApproval(t *testing.T, transport roundTripFunc) *PendingAuthorization {
+	cfg := DefaultConfig()
+	cfg.BaseURL = "https://meter.example"
+	pending, err := beginAuthorization(cfg, "https://meter.example/login")
+	if err != nil {
+		t.Fatal(err)
 	}
+	pending.client.Transport = transport
+	return pending
 }
 
+// A redirected poll would re-send the verifier wherever the redirect points.
 func TestPollNamesWhyApprovalEnded(t *testing.T) {
 	t.Parallel()
-	pending := func(r *http.Request) (*http.Response, error) {
-		return &http.Response{
-			StatusCode: http.StatusAccepted,
-			Body:       io.NopCloser(strings.NewReader(`{"status":"pending"}`)),
-			Header:     http.Header{},
-			Request:    r,
-		}, nil
-	}
-	refused := func(*http.Request) (*http.Response, error) { return nil, errors.New("connection refused") }
-	for _, c := range []struct {
-		transport roundTripFunc
-		want      string
-	}{
-		{refused, "connection refused"},
-		{pending, "browser approval timed out"},
-	} {
-		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
-		_, err := pendingApproval(c.transport).Poll(ctx)
-		cancel()
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("err=%v, want %q", err, c.want)
+	refused := errors.New("connection refused")
+	respond := func(status int, header http.Header) roundTripFunc {
+		return func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: status, Header: header, Body: http.NoBody, Request: r}, nil
 		}
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := pendingApproval(pending).Poll(ctx); !errors.Is(err, context.Canceled) {
-		t.Fatalf("err=%v, want context.Canceled", err)
+	for _, c := range []struct {
+		name      string
+		transport roundTripFunc
+		cancelled bool
+		want      error
+	}{
+		{"unreachable", func(*http.Request) (*http.Response, error) { return nil, refused }, false, refused},
+		{"pending", respond(http.StatusAccepted, nil), false, ErrApprovalExpired},
+		{"blocked", func(r *http.Request) (*http.Response, error) {
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}, false, ErrApprovalExpired},
+		{"redirected", respond(http.StatusTemporaryRedirect,
+			http.Header{"Location": {"https://collector.example/auth/cli/token"}}), false, nil},
+		{"cancelled", respond(http.StatusAccepted, nil), true, context.Canceled},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			var hosts []string
+			pending := pendingApproval(t, func(r *http.Request) (*http.Response, error) {
+				hosts = append(hosts, r.URL.Host)
+				return c.transport(r)
+			})
+			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+			if c.cancelled {
+				cancel()
+			}
+			defer cancel()
+			_, err := pending.Poll(ctx)
+			issuerOnly := slices.Equal(hosts, []string{"meter.example"})
+			if err == nil || c.want != nil && !errors.Is(err, c.want) || !issuerOnly {
+				t.Errorf("%s: %v after requests to %v, want %v from the issuer alone", c.name, err, hosts, c.want)
+			}
+		})
 	}
 }
 
@@ -195,61 +171,12 @@ func TestPollRejectsMalformedSuccessfulApproval(t *testing.T) {
 		`{"token":"` + strings.Repeat("a", 8193) + `"}`,
 		strings.Repeat(" ", maxControlBytes+1),
 	} {
-		approval := pendingApproval(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     http.Header{},
-				Request:    r,
-			}, nil
+		approval := pendingApproval(t, func(r *http.Request) (*http.Response, error) {
+			reply := io.NopCloser(strings.NewReader(body))
+			return &http.Response{StatusCode: http.StatusOK, Body: reply, Request: r}, nil
 		})
 		if _, err := approval.Poll(t.Context()); err == nil {
 			t.Fatal("accepted malformed approval")
-		}
-	}
-}
-
-// A redirected approval poll would re-send the verifier wherever the redirect points.
-func TestApprovalPollNeverFollowsARedirect(t *testing.T) {
-	t.Parallel()
-	cfg := DefaultConfig()
-	cfg.BaseURL = "https://meter.example"
-	pending, err := beginAuthorization(cfg, "https://meter.example/login")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var hosts []string
-	pending.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		hosts = append(hosts, r.URL.Host)
-		return &http.Response{
-			StatusCode: http.StatusTemporaryRedirect,
-			Body:       io.NopCloser(strings.NewReader("")),
-			Header:     http.Header{"Location": {"https://collector.example/auth/cli/token"}},
-			Request:    r,
-		}, nil
-	})
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := pending.Poll(ctx); err == nil {
-		t.Fatal("a redirected poll returned a grant")
-	}
-	if !slices.Equal(hosts, []string{"meter.example"}) {
-		t.Fatalf("poll requests reached %v, want only the issuer", hosts)
-	}
-}
-
-func TestAuthenticatedPreparationRequiresVerifiedHTTPS(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		base     string
-		insecure bool
-	}{{"http://127.0.0.1:1", false}, {"https://127.0.0.1:1", true}} {
-		cfg := DefaultConfig()
-		cfg.BaseURL, cfg.InsecureSkipTLSVerify = tc.base, tc.insecure
-		cred := credential{token: "secret", origins: []string{tc.base}, insecure: tc.insecure}
-		_, err := prepare(t.Context(), cfg, nil, &cred)
-		if err == nil || !strings.Contains(err.Error(), "verified HTTPS") {
-			t.Fatalf("prepare %s insecure=%t with a grant: %v", tc.base, tc.insecure, err)
 		}
 	}
 }

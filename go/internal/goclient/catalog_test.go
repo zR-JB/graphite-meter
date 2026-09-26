@@ -192,64 +192,34 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
-	t.Parallel()
-	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
-	cfg := fixtureConfig(a)
-	cfg.Stages = StageSet{Latency: true, Upload: true}
-	cfg.LatencyDuration = 150 * time.Millisecond
-	prepared := prepareFixtureRun(t, cfg, a, b)
-	var details *RunDetails
-	var upload Result
-	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == PhaseFinished {
-			a.checkpointFailed.Store(true)
-		}
-		if e.Servers != nil {
-			details = e.Servers
-		}
-		if e.Kind == EventResult && e.ServerID == "" && e.Direction == Up {
-			upload = *e.Result
-		}
-	})
-	if err != nil ||
-		upload.Unavailable ||
-		upload.MeanBps <= 0 ||
-		details == nil ||
-		!slices.Equal(details.Participants, []string{"b"}) ||
-		len(details.Failures) != 1 {
-		t.Fatalf("later preparation discarded healthy server: %v %+v %+v", err, upload, details)
-	}
-}
-
 func TestAServerThatCannotPrepareIsDroppedWhileAnotherSurvives(t *testing.T) {
 	t.Parallel()
-	for _, before := range []string{"run", "stage"} {
-		t.Run(before, func(t *testing.T) {
+	for _, c := range []struct{ fails, survivor string }{{"run", "self"}, {"stage", "self"}, {"later", "b"}} {
+		t.Run(c.fails, func(t *testing.T) {
 			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
 			cfg := fixtureConfig(a)
-			cfg.Stages = StageSet{Upload: true}
-			cfg.UploadDuration = time.Second
-			if before == "run" {
+			cfg.Stages = StageSet{Latency: c.fails == "later", Upload: true}
+			cfg.LatencyDuration, cfg.UploadDuration = 150*time.Millisecond, time.Second
+			switch c.fails {
+			case "run":
 				b.server.Close()
-			} else {
+			case "stage":
 				b.checkpointFailed.Store(true)
 			}
 			a.catalog = wire.ServerCatalog{DefaultSelection: []string{"self", "b"}, Servers: []wire.ServerEntry{
 				{ID: "self", URL: ".", Name: "A"}, {ID: "b", URL: b.server.URL, Name: "B"}}}
-			var details *RunDetails
-			var upload Result
+			var log eventLog
 			err := Run(t.Context(), cfg, func(e Event) {
-				if e.Kind == EventDone {
-					details = e.Servers
+				if c.fails == "later" && e.Kind == EventStage && e.Stage == StageLatency && e.Phase == PhaseFinished {
+					a.checkpointFailed.Store(true)
 				}
-				if e.Kind == EventResult && e.Direction == Up {
-					upload = *e.Result
-				}
+				log.emit(e)
 			})
+			upload, details := log.results()[0], log.details()
 			if err != nil || details == nil || details.Outcome != OutcomePartial || upload.Unavailable ||
-				!slices.Equal(details.Participants, []string{"self"}) || len(details.Failures) != 1 {
+				upload.MeanBps <= 0 || !slices.Equal(details.Participants, []string{c.survivor}) ||
+				len(details.Failures) != 1 {
 				t.Fatalf("a failing server before measurement ended the run: %v %+v %+v", err, details, upload)
 			}
 		})

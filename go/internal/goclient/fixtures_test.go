@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,12 +30,15 @@ func prepareOne(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 }
 
 func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
-	cfg = cfg.normalized()
-	connection, err := prepareOne(ctx, cfg)
+	connection, err := prepareOne(ctx, cfg.normalized())
 	if err != nil {
-		emit(Event{Kind: EventDone, At: time.Now(), Err: err})
 		return err
 	}
+	return runPrepared(ctx, cfg, connection, emit)
+}
+
+func runPrepared(ctx context.Context, cfg Config, connection *PreparedConnection, emit func(Event)) error {
+	cfg = cfg.normalized()
 	server := PreparedServer{
 		Server:     wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: "fixture"},
 		Connection: connection,
@@ -115,10 +119,14 @@ func testStageGate(start chan struct{}) *stageGate {
 	return &stageGate{start: start, reportReady: func() {}, cancel: func(error) {}}
 }
 
-func (r *runner) measureNow(ctx context.Context, window time.Duration) (LatencyStats, error) {
+func (r *runner) measureNow(ctx context.Context, underLoad bool, window time.Duration) (LatencyStats, error) {
 	start := make(chan struct{})
 	close(start)
-	return r.measureLatency(ctx, StageLatency, false, window, testStageGate(start))
+	stage := StageLatency
+	if underLoad {
+		stage = StageDownload
+	}
+	return r.measureLatency(ctx, stage, underLoad, window, testStageGate(start))
 }
 
 func fetchTarget(origin string) *wire.ThroughputTarget {
@@ -185,6 +193,7 @@ func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerF
 		}
 		buf := make([]byte, 32*1024)
 		for {
+			time.Sleep(time.Millisecond)
 			n, err := r.Body.Read(buf)
 			received.Add(uint64(n))
 			if err != nil {
@@ -286,7 +295,15 @@ func pingHandler(answer func(id uint32) bool, delay time.Duration) http.Handler 
 func pipedRunner(t *testing.T, handler http.Handler) *runner {
 	t.Helper()
 	ln := &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
-	srv := &http.Server{Handler: handler}
+	var conns sync.WaitGroup
+	srv := &http.Server{Handler: handler, ConnState: func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			conns.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			conns.Done()
+		}
+	}}
 	go func() { _ = srv.Serve(ln) }()
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		client, server := net.Pipe()
@@ -300,12 +317,17 @@ func pipedRunner(t *testing.T, handler http.Handler) *runner {
 	t.Cleanup(func() {
 		tr.CloseIdleConnections()
 		_ = srv.Close()
+		conns.Wait() // Time stops when the bubble's test returns, so a sleeping connection must finish first.
 	})
 	origin := "http://fixture.invalid"
+	client := &http.Client{Transport: tr}
 	return &runner{
 		cfg:           Config{BaseURL: origin}.normalized(),
-		websocketHTTP: &http.Client{Transport: tr},
+		http:          client,
+		websocketHTTP: client,
+		target:        fetchTarget(origin),
 		latencyTarget: new(testChannel("test-ws", origin, false)),
+		streams:       byDirection[int]{down: 1, up: 1},
 		emit:          func(Event) {},
 	}
 }
@@ -332,11 +354,47 @@ func (l *pipeListener) Close() error {
 
 func (l *pipeListener) Addr() net.Addr { return &net.UnixAddr{Name: "pipe", Net: "pipe"} }
 
-func newPingServer(t *testing.T, answer func(id uint32) bool, delay time.Duration) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.Handle("/ws/ping", pingHandler(answer, delay))
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
+type eventLog struct {
+	mu     sync.Mutex
+	events []Event
+}
+
+func (l *eventLog) emit(e Event) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.events = append(l.events, e)
+}
+
+func (l *eventLog) all() []Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.events)
+}
+
+func (l *eventLog) phases() (phases []Phase) {
+	for _, e := range l.all() {
+		if e.Kind == EventStage {
+			phases = append(phases, e.Phase)
+		}
+	}
+	return phases
+}
+
+// results are the aggregate results, without any server's own.
+func (l *eventLog) results() (results []Result) {
+	for _, e := range l.all() {
+		if e.Kind == EventResult && e.ServerID == "" {
+			results = append(results, *e.Result)
+		}
+	}
+	return results
+}
+
+func (l *eventLog) details() (details *RunDetails) {
+	for _, e := range l.all() {
+		if e.Servers != nil {
+			details = e.Servers
+		}
+	}
+	return details
 }

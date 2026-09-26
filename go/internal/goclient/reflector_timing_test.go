@@ -1,15 +1,13 @@
 package goclient
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
-	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -57,24 +55,16 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 func TestReflectorTimingDurationBounds(t *testing.T) {
 	t.Parallel()
 	for _, nanos := range []uint64{0, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
-		t.Run(fmt.Sprint(nanos), func(t *testing.T) {
-			t.Parallel()
-			var stats latencyStats
-			stats.add(time.Duration(math.MaxInt64), false, nanos)
-			got := stats.snapshot()
-			if got.Count != 1 || got.P50 != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
-				t.Fatalf("optional duration changed raw reply: %+v", got)
-			}
-			if nanos > math.MaxInt64 {
-				if got.ReflectorTiming != nil {
-					t.Fatalf("unrepresentable duration produced a diagnostic: %+v", got.ReflectorTiming)
-				}
-				return
-			}
-			if got.ReflectorTiming == nil || uint64(got.ReflectorTiming.MeanHandling) != nanos {
-				t.Fatalf("representable duration was not retained: %+v", got.ReflectorTiming)
-			}
-		})
+		var stats latencyStats
+		stats.add(time.Duration(math.MaxInt64), false, nanos)
+		got := stats.snapshot()
+		if got.Count != 1 || got.P50 != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
+			t.Fatalf("handling %d changed the raw reply: %+v", nanos, got)
+		}
+		representable := got.ReflectorTiming != nil && uint64(got.ReflectorTiming.MeanHandling) == nanos
+		if representable != (nanos <= math.MaxInt64) {
+			t.Fatalf("handling %d produced the diagnostic %+v", nanos, got.ReflectorTiming)
+		}
 	}
 }
 
@@ -83,94 +73,66 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 	for _, scenario := range []string{"zero", "impossible", "reconnect"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
-			var connections atomic.Int32
-			var mu sync.Mutex
-			var samples []LatencySample
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{
-					CompressionMode: websocket.CompressionDisabled,
-				})
-				if err != nil {
-					return
-				}
-				defer conn.CloseNow()
-				generation := connections.Add(1)
-				count := 0
-				for {
-					_, message, err := conn.Read(request.Context())
+			synctest.Test(t, func(t *testing.T) {
+				var connections atomic.Int32
+				r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+					conn, err := websocket.Accept(w, request, &websocket.AcceptOptions{
+						CompressionMode: websocket.CompressionDisabled,
+					})
 					if err != nil {
 						return
 					}
-					frame, err := wire.DecodePing(string(message))
-					if err != nil {
-						continue
+					defer conn.CloseNow()
+					generation := connections.Add(1)
+					for count := 1; ; count++ {
+						_, message, err := conn.Read(request.Context())
+						if err != nil {
+							return
+						}
+						frame, err := wire.DecodePing(string(message))
+						if err != nil {
+							continue
+						}
+						if scenario == "reconnect" && generation == 1 && count == 5 {
+							return
+						}
+						value := "0"
+						if scenario == "impossible" {
+							value = "18446744073709551615"
+						}
+						pong := []byte(fmt.Sprintf("PONG,%d,%s", frame, value))
+						time.Sleep(time.Millisecond)
+						// A duplicate echo cannot add another raw or paired observation.
+						for range 2 {
+							if err := conn.Write(request.Context(), websocket.MessageText, pong); err != nil {
+								return
+							}
+						}
 					}
-					count++
-					if scenario == "reconnect" && generation == 1 && count == 5 {
-						return
-					}
-					value := "0"
-					if scenario == "impossible" {
-						value = "18446744073709551615"
-					}
-					pong := fmt.Sprintf("PONG,%d,%s", frame, value)
-					if err := conn.Write(request.Context(), websocket.MessageText, []byte(pong)); err != nil {
-						return
-					}
-					// A duplicate echo cannot add another raw or paired observation.
-					if err := conn.Write(request.Context(), websocket.MessageText, []byte(pong)); err != nil {
-						return
+				}))
+				r.cfg.PingInterval, r.cfg.LoadedPingInterval = 10*time.Millisecond, 10*time.Millisecond
+				samples := 0
+				r.emit = func(event Event) {
+					if event.Kind == EventLatency && !event.Latency.TimedOut {
+						samples++
 					}
 				}
-			}))
-			defer srv.Close()
-			r := &runner{cfg: Config{
-				BaseURL:            srv.URL,
-				PingInterval:       10 * time.Millisecond,
-				LoadedPingInterval: 10 * time.Millisecond,
-			}.normalized(), http: srv.Client(), emit: func(event Event) {
-				if event.Kind != EventLatency || event.Latency.TimedOut {
-					return
+				stats, err := r.measureNow(t.Context(), false, 180*time.Millisecond)
+				if err != nil || stats.Count == 0 || samples != stats.Count {
+					t.Fatalf("raw/connection observations: stats=%+v events=%d, %v", stats, samples, err)
 				}
-				mu.Lock()
-				defer mu.Unlock()
-				samples = append(samples, event.Latency)
-			}}
-			r.latencyTarget = new(testChannel("test-ws", srv.URL, false))
-			start := make(chan struct{})
-			close(start)
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-			defer cancel()
-			stats, err := r.measureLatency(ctx, "latency", false, 180*time.Millisecond, testStageGate(start))
-			if err != nil {
-				t.Fatal(err)
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			if stats.Count == 0 || len(samples) != stats.Count {
-				t.Fatalf("raw/connection observations: stats=%+v events=%d", stats, len(samples))
-			}
-			if scenario == "impossible" {
-				if stats.ReflectorTiming != nil {
-					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", stats.ReflectorTiming)
+				timing := stats.ReflectorTiming
+				if scenario == "impossible" && timing != nil {
+					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", timing)
 				}
-			} else {
-				paired := stats.Count
-				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired {
-					t.Fatalf("paired summary=%+v replies=%d", stats.ReflectorTiming, paired)
+				if scenario != "impossible" &&
+					(timing == nil || timing.Count != stats.Count || timing.MeanHandling != 0) {
+					t.Fatalf("paired summary=%+v replies=%d", timing, stats.Count)
 				}
-				if stats.ReflectorTiming.MeanHandling != 0 {
-					t.Fatalf("zero handling altered RTT: %+v", stats.ReflectorTiming)
+				if want := map[bool]int32{false: 1, true: 2}[scenario == "reconnect"]; connections.Load() != want {
+					t.Fatalf("%d connections, want %d", connections.Load(), want)
 				}
-				if scenario == "reconnect" && (connections.Load() != 2 || paired != stats.Count) {
-					t.Fatalf(
-						"reconnect failed to retain timing: connections=%d paired=%d replies=%d",
-						connections.Load(),
-						paired,
-						stats.Count,
-					)
-				}
-			}
+			})
 		})
 	}
 }

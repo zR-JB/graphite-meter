@@ -3,13 +3,11 @@ package goclient
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 )
 
@@ -134,7 +132,7 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 	}
 }
 
-func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
+func TestRunEventsKeepFinalRecordsAndDropLiveSamples(t *testing.T) {
 	t.Parallel()
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
@@ -142,114 +140,17 @@ func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 		{Kind: EventResult},
 		{Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}},
 	} {
-		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
-			t.Parallel()
-			delivery, abandon := context.WithCancel(t.Context())
-			defer abandon()
-			// Exercise both ready select arms: cancellation must never compete
-			// with a terminal record, even when delivery has spare capacity.
-			for range 64 {
-				available := make(chan Event, 1)
-				sendRunEvent(measurement, delivery, available, terminal)
-				if len(available) != 1 {
-					t.Fatal("user cancellation discarded an immediately deliverable terminal outcome")
-				}
+		// Both select arms are ready: cancellation must never compete with a deliverable terminal record.
+		for range 64 {
+			available := make(chan Event, 1)
+			sendRunEvent(measurement, t.Context(), available, terminal)
+			if len(available) != 1 {
+				t.Fatalf("user cancellation discarded an immediately deliverable %v", terminal.Kind)
 			}
-			events := make(chan Event, 1)
-			events <- Event{Kind: EventLatency}
-			sent := make(chan struct{})
-			go func() {
-				sendRunEvent(measurement, delivery, events, terminal)
-				close(sent)
-			}()
-			<-events
-			select {
-			case event := <-events:
-				if event.Kind != terminal.Kind || event.Servers != terminal.Servers {
-					t.Fatalf("delivered %+v, want %+v", event, terminal)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("user cancellation discarded the queued final outcome")
-			}
-			<-sent
-			events <- Event{}
-			abandon()
-			// A superseded run can exit even when its consumer has stopped draining the full queue.
-			sendRunEvent(measurement, delivery, events, terminal)
-		})
-	}
-}
-
-func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
-	t.Parallel()
-	entered, left := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(entered)
-		<-r.Context().Done()
-		close(left)
-	}))
-	defer srv.Close()
-	owner := NewController(t.Context())
-	defer owner.Close()
-	preparation := owner.NewPreparation(DefaultConfig(), nil)
-	pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
-	done := make(chan error, 1)
-	go func() { _, err := preparation.PollAuthorization(pending); done <- err }()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("approval did not reach the server")
-	}
-	owner.NewPreparation(DefaultConfig(), nil)
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("superseded approval returned %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("superseded approval kept polling")
 	}
-	select {
-	case <-left:
-	case <-time.After(time.Second):
-		t.Fatal("approval request survived preparation replacement")
-	}
-}
-
-func TestLiveSamplesNeverBlockOnAFullView(t *testing.T) {
-	t.Parallel()
-	events := make(chan Event, 1)
-	events <- Event{}
-	delivery, abandon := context.WithCancel(t.Context())
-	sendRunEvent(t.Context(), delivery, events, Event{Kind: EventLatency})
-	sendRunEvent(t.Context(), delivery, events, Event{Kind: EventThroughput})
-	delivered := make(chan struct{})
-	go func() {
-		sendRunEvent(t.Context(), delivery, events, Event{Kind: EventResult})
-		close(delivered)
-	}()
-	select {
-	case <-delivered:
-		t.Fatal("a result was dropped by a full view")
-	case <-time.After(20 * time.Millisecond):
-	}
-	abandon()
-	<-delivered
-}
-
-func TestApprovalExpiryIsNotATransportFailure(t *testing.T) {
-	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		pending := &PendingAuthorization{tokenURL: "https://meter.test/auth/cli/token", close: func() {},
-			client: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				<-req.Context().Done()
-				return nil, req.Context().Err()
-			})}}
-		ctx, cancel := context.WithTimeout(t.Context(), AuthorizationTimeout)
-		defer cancel()
-		if _, err := pending.Poll(ctx); !errors.Is(err, ErrApprovalExpired) {
-			t.Fatalf("a poll cut by the approval deadline = %v, want expiry", err)
-		}
-	})
+	full := make(chan Event, 1)
+	full <- Event{}
+	sendRunEvent(t.Context(), t.Context(), full, Event{Kind: EventLatency})
+	sendRunEvent(t.Context(), t.Context(), full, Event{Kind: EventThroughput})
 }

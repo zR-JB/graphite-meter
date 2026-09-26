@@ -192,36 +192,38 @@ func fixtureConfig(a *serverFixture) Config {
 func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	t.Parallel()
 	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+	a.checkpointDelayNanos.Store(int64(900 * time.Millisecond))
 	cfg := fixtureConfig(a)
 	cfg.Stages = StageSet{Bidirectional: true}
 	cfg.LoadedLatency = true
 	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
-	var mu sync.Mutex
-	var phases []Phase
-	var results []Result
-	var details *RunDetails
+	var log eventLog
+	var measuredAt, finishedAt time.Time
+	var measureEventLag time.Duration
 	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		switch e.Kind {
-		case EventStage:
-			phases = append(phases, e.Phase)
-		case EventResult:
-			if e.ServerID == "" {
-				results = append(results, *e.Result)
-			}
-		case EventServers:
-			details = e.Servers
+		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
+			measuredAt = time.Now()
+			measureEventLag = measuredAt.Sub(e.At)
 		}
+		if e.Kind == EventStage && e.Phase == PhaseFinished {
+			finishedAt = time.Now()
+		}
+		log.emit(e)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(phases, []Phase{PhasePreparing, PhaseWarmup, PhaseMeasuring, PhaseFinished}) {
+	schedule := []Phase{PhasePreparing, PhaseWarmup, PhaseMeasuring, PhaseFinished}
+	if phases := log.phases(); !slices.Equal(phases, schedule) {
 		t.Fatalf("more than one stage schedule: %v", phases)
 	}
-	if len(results) != 2 || details == nil || len(details.Participants) != 2 {
+	if measureEventLag > 500*time.Millisecond || finishedAt.Sub(measuredAt) < 900*time.Millisecond {
+		t.Fatalf("the receiver checkpoint wait consumed the client window: event lag=%v measured duration=%v",
+			measureEventLag, finishedAt.Sub(measuredAt))
+	}
+	results, details := log.results(), log.details()
+	if len(results) != 2 || details == nil || len(details.Participants) != 2 || len(details.Intervals) != 1 {
 		t.Fatalf("results=%+v details=%+v", results, details)
 	}
 	for _, result := range results {
@@ -230,9 +232,11 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 		}
 	}
 	for _, server := range details.Servers {
-		measured := func(r Result) bool { return r.Direction == "" && r.Latency.Count > 0 }
+		measured := func(r Result) bool {
+			return r.Direction == "" && r.Latency.Count > 0 && r.Latency.Elapsed >= 900*time.Millisecond
+		}
 		if !slices.ContainsFunc(server.Results, measured) {
-			t.Fatalf("no independent loaded latency: %+v", server)
+			t.Fatalf("no independent loaded latency over the client window: %+v", server)
 		}
 		for _, own := range server.Results {
 			if own.Direction != "" && (own.PeakBps <= 0 || own.Samples == 0) {
@@ -240,66 +244,11 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 			}
 		}
 	}
-	window := details.Intervals[len(details.Intervals)-1].Window
-	if len(window.Down) != 2 || len(window.Up) != 2 {
+	if window := details.Intervals[0].Window; window == nil || len(window.Down) != 2 || len(window.Up) != 2 {
 		t.Fatalf("component windows lost: %+v", window)
 	}
 }
 
-func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *testing.T) {
-	t.Parallel()
-	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
-	a.checkpointDelayNanos.Store(int64(900 * time.Millisecond))
-	cfg := fixtureConfig(a)
-	cfg.Stages = StageSet{Bidirectional: true}
-	cfg.BidirectionalDuration = time.Second
-	cfg.LoadedLatency = true
-	cfg.PingInterval, cfg.LoadedPingInterval = 25*time.Millisecond, 25*time.Millisecond
-	prepared := prepareFixtureRun(t, cfg, a, b)
-	var measuredAt, finishedAt time.Time
-	var measureEventLag time.Duration
-	var details *RunDetails
-	var mu sync.Mutex
-	err := runSelected(t.Context(), cfg, prepared, func(e Event) {
-		mu.Lock()
-		defer mu.Unlock()
-		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
-			measuredAt = time.Now()
-			measureEventLag = measuredAt.Sub(e.At)
-		}
-		if e.Kind == EventStage && e.Phase == PhaseFinished {
-			finishedAt = time.Now()
-		}
-		if e.Servers != nil {
-			details = e.Servers
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if measuredAt.IsZero() ||
-		measureEventLag > 500*time.Millisecond ||
-		finishedAt.Sub(measuredAt) < 900*time.Millisecond {
-		t.Fatalf(
-			"checkpoint wait consumed the client window: event lag=%v measured duration=%v",
-			measureEventLag,
-			finishedAt.Sub(measuredAt),
-		)
-	}
-	if details == nil || len(details.Intervals) != 1 || details.Intervals[0].Window == nil {
-		t.Fatalf("missing receiver window: %+v", details)
-	}
-	if len(details.Intervals[0].Window.Up) != 2 {
-		t.Fatalf("receiver windows missing: %+v", details.Intervals[0].Window)
-	}
-	for _, server := range details.Servers {
-		if !slices.ContainsFunc(server.Results, func(r Result) bool {
-			return r.Direction == "" && r.Latency.Count > 0 && r.Latency.Elapsed >= 900*time.Millisecond
-		}) {
-			t.Fatalf("missing loaded latency population: %+v", server.Results)
-		}
-	}
-}
 func TestNativeCoordinatorDropout(t *testing.T) {
 	t.Parallel()
 	for _, scenario := range []struct {
@@ -314,8 +263,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			cfg := fixtureConfig(a)
 			cfg.Stages = StageSet{Download: true}
 			prepared := prepareFixtureRun(t, cfg, a, b)
-			var details *RunDetails
-			var result Result
+			var log eventLog
 			samples := 0
 			err := runSelected(t.Context(), cfg, prepared, func(e Event) {
 				if e.Kind == EventThroughput && !e.Throughput.Unavailable {
@@ -324,13 +272,9 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 						b.failed.Store(scenario.all)
 					}
 				}
-				if e.Servers != nil {
-					details = e.Servers
-				}
-				if e.Kind == EventResult && e.ServerID == "" {
-					result = *e.Result
-				}
+				log.emit(e)
 			})
+			result, details := log.results()[0], log.details()
 			if scenario.all && !errors.Is(err, errNoSurvivors) || !scenario.all && err != nil {
 				t.Fatalf("outcome=%v", err)
 			}
@@ -364,8 +308,7 @@ func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
 	cfg.Stages = StageSet{Download: true, Upload: true}
 	cfg.DownloadDuration, cfg.UploadDuration = time.Second, time.Second
 	samples := 0
-	var details *RunDetails
-	results := map[Stage]Result{}
+	var log eventLog
 	err := Run(t.Context(), cfg, func(e Event) {
 		switch {
 		case e.Kind == EventThroughput && e.Stage == StageDownload:
@@ -374,14 +317,12 @@ func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
 			}
 		case e.Kind == EventStage && e.Stage == StageDownload && e.Phase == PhaseFinished:
 			a.failed.Store(false)
-		case e.Kind == EventResult:
-			results[e.Stage] = *e.Result
-		case e.Kind == EventDone:
-			details = e.Servers
 		}
+		log.emit(e)
 	})
+	results, details := log.results(), log.details()
 	if err != nil || details == nil || details.Outcome != OutcomeIncomplete || len(details.Failures) != 1 ||
-		!results[StageDownload].Unavailable || results[StageUpload].Unavailable {
+		len(results) != 2 || !results[0].Unavailable || results[1].Unavailable {
 		t.Fatalf("a sole server's failed stage ended the run: %v %+v %+v", err, details, results)
 	}
 }
@@ -396,7 +337,7 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var upload Result
+	var log eventLog
 	samples := 0
 	err = runSelected(t.Context(), cfg, prepared, func(e Event) {
 		switch {
@@ -406,11 +347,10 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 			if samples++; samples == 3 {
 				a.checkpointRefusals.Store(3)
 			}
-		case e.Kind == EventResult && e.Direction == Up:
-			upload = *e.Result
 		}
+		log.emit(e)
 	})
-	if err != nil || upload.Err != nil || upload.Unavailable || upload.MeanBps <= 0 {
+	if upload := log.results()[0]; err != nil || upload.Err != nil || upload.Unavailable || upload.MeanBps <= 0 {
 		t.Fatalf("transient checkpoint refusal voided the stage: %v %+v", err, upload)
 	}
 }
@@ -423,7 +363,7 @@ func TestARemovedServersLatencyKeepsItsCause(t *testing.T) {
 		ctx, remove := context.WithCancelCause(t.Context())
 		removed := errors.New("server removed")
 		time.AfterFunc(100*time.Millisecond, func() { remove(removed) })
-		stats, err := r.measureNow(ctx, time.Second)
+		stats, err := r.measureNow(ctx, false, time.Second)
 		s := &stageServer{participant: &participant{transport: r}}
 		result := Result{Stage: StageDownload, Latency: stats, Err: err}
 		(&coordinator{}).retainLatency(resourceOutcome{server: s, role: roleLatency, result: result, err: err}, true)

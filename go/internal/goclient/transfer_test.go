@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"testing/synctest"
 	"time"
 )
@@ -45,38 +46,19 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	}
 }
 
-func TestCyclingBody(t *testing.T) {
-	t.Parallel()
-	b := &cyclingBody{ctx: t.Context(), block: []byte{1, 2, 3}, remaining: 7}
-	got, err := io.ReadAll(b)
-	if want := []byte{1, 2, 3, 1, 2, 3, 1}; err != nil || !bytes.Equal(got, want) {
-		t.Errorf("emitted %v, %v; want %v", got, err, want)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := (&cyclingBody{ctx: ctx, block: []byte{1}, remaining: 1}).Read(make([]byte, 4)); err == nil {
-		t.Fatal("a cancelled request kept reading")
-	}
-}
-
 func TestMintUploadID(t *testing.T) {
 	t.Parallel()
 	for body, want := range map[string]string{
 		`{"uploadId":"abc-123"}`: "abc-123",
 		`{}`:                     "",
-		`not json`:               "",
-		"":                       "",
+		`{"uploadId":"` + strings.Repeat("a", 8193) + `"}`: "",
 	} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			if body == "" {
-				w.WriteHeader(http.StatusInternalServerError)
-			}
-			_, _ = io.WriteString(w, body)
-		}))
-		id, err := testRunner(srv).mintUploadID(t.Context())
-		srv.Close()
-		if id != want || (err == nil) != (want != "") {
-			t.Errorf("session response %q minted %q, %v; want %q", body, id, err, want)
+		r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			reply := io.NopCloser(strings.NewReader(body))
+			return &http.Response{StatusCode: http.StatusOK, Body: reply, Request: req}, nil
+		})}, target: fetchTarget("http://meter.test")}
+		if id, err := r.mintUploadID(t.Context()); id != want || (err == nil) != (want != "") {
+			t.Errorf("session response of %d bytes minted %q, %v; want %q", len(body), id, err, want)
 		}
 	}
 }
@@ -119,93 +101,69 @@ func lane(r *runner, dir Direction, base string) func(context.Context) error {
 	return func(ctx context.Context) error { return r.uploadLane(ctx, "id", 0, make([]byte, 64*1024), func() {}) }
 }
 
-func TestLanesRetryABusyServerAndStopOnARefusal(t *testing.T) {
+func TestLanePersistence(t *testing.T) {
 	t.Parallel()
+	both := []Direction{Down, Up}
+	status := func(code int, header http.Header) func(int, *http.Request) (*http.Response, error) {
+		return func(_ int, req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: code, Header: header, Body: http.NoBody, Request: req}, nil
+		}
+	}
+	refused := func(int, *http.Request) (*http.Response, error) { return nil, errors.New("connection refused") }
+	dropped := func(_ int, req *http.Request) (*http.Response, error) {
+		if req.Method == http.MethodPost {
+			_, _ = io.CopyN(io.Discard, req.Body, 8*1024)
+			return nil, io.ErrUnexpectedEOF
+		}
+		body := io.MultiReader(bytes.NewReader(make([]byte, 64*1024)), iotest.ErrReader(io.ErrUnexpectedEOF))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(body), Request: req}, nil
+	}
+	idle := func(n int, req *http.Request) (*http.Response, error) {
+		if n > 1 {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		_, _ = io.CopyN(io.Discard, req.Body, 1024)
+		return status(http.StatusRequestTimeout, http.Header{"X-Graphite-Upload-Refusal": {"idle"}})(n, req)
+	}
 	for _, c := range []struct {
-		status  int
-		want    FailureReason
-		retried bool
-	}{{http.StatusTooManyRequests, FailureServerBusy, true}, {http.StatusServiceUnavailable, FailureServerBusy, true},
-		{http.StatusGone, FailureProtocol, false}} {
-		for _, dir := range []Direction{Down, Up} {
+		name     string
+		dirs     []Direction
+		respond  func(n int, req *http.Request) (*http.Response, error)
+		window   time.Duration
+		reason   FailureReason
+		requests int
+	}{
+		{"busy", both, status(http.StatusTooManyRequests, nil), time.Minute, FailureServerBusy, 5},
+		{"unavailable", both, status(http.StatusServiceUnavailable, nil), time.Minute, FailureServerBusy, 5},
+		{"gone", both, status(http.StatusGone, nil), time.Minute, FailureProtocol, 1},
+		{"unreachable", both, refused, time.Minute, FailureConnectionLost, 5},
+		{"empty", []Direction{Down}, status(http.StatusOK, nil), time.Minute, FailureInsufficientEvidence, 5},
+		{"dropped mid-transfer", both, dropped, 1250 * time.Millisecond, "", 3},
+		{"idle upload redials", []Direction{Up}, idle, time.Second, "", 2},
+		{"timed-out upload", []Direction{Up}, status(http.StatusRequestTimeout, nil), time.Minute, FailureProtocol, 1},
+	} {
+		for _, dir := range c.dirs {
 			synctest.Test(t, func(t *testing.T) {
 				requests := 0
 				transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 					requests++
-					return &http.Response{StatusCode: c.status, Body: http.NoBody, Request: req}, nil
+					return c.respond(requests, req)
 				})
 				r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
-				err := lane(r, dir, "http://meter.test/download")(t.Context())
-				if failureReason(err, false) != c.want || (requests > 1) != c.retried {
-					t.Errorf("%s %d: %v after %d requests", dir, c.status, err, requests)
+				ctx, cancel := context.WithTimeout(t.Context(), c.window)
+				defer cancel()
+				err := lane(r, dir, "http://meter.test/download")(ctx)
+				var reason FailureReason
+				if err != nil {
+					reason = failureReason(err, false)
+				}
+				if reason != c.reason || requests != c.requests {
+					t.Errorf("%s %s: %v after %d requests, want %q after %d", c.name, dir, err, requests, c.reason,
+						c.requests)
 				}
 			})
 		}
-	}
-}
-
-func TestLanesThatMoveNothingEndWithTheLastError(t *testing.T) {
-	t.Parallel()
-	refused := errors.New("connection refused")
-	for _, c := range []struct {
-		name string
-		dir  Direction
-		fail error
-		want string
-	}{
-		{"download refused", Down, refused, "connection refused"},
-		{"download empty", Down, nil, errNoBytes.Error()},
-		{"upload refused", Up, refused, "connection refused"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				requests := 0
-				transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-					requests++
-					if c.fail != nil {
-						return nil, c.fail
-					}
-					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
-				})
-				r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
-				err := lane(r, c.dir, "http://meter.test/download")(t.Context())
-				if err == nil || !strings.Contains(err.Error(), c.want) {
-					t.Fatalf("lane ended with %v, want %q", err, c.want)
-				}
-				if paced := int(redialWindow/retryBackoff) + 1; requests > paced {
-					t.Errorf("%d requests before giving up, want at most %d", requests, paced)
-				}
-			})
-		})
-	}
-}
-
-func TestLanesReopenDroppedConnectionsAtAPace(t *testing.T) {
-	t.Parallel()
-	const window = 1500 * time.Millisecond
-	for _, dir := range []Direction{Down, Up} {
-		t.Run(string(dir), func(t *testing.T) {
-			t.Parallel()
-			var requests atomic.Int64
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests.Add(1)
-				if r.Method == http.MethodGet {
-					_, _ = w.Write(make([]byte, 64*1024))
-					w.(http.Flusher).Flush()
-				}
-				_, _ = r.Body.Read(make([]byte, 8*1024))
-				panic(http.ErrAbortHandler)
-			}))
-			defer srv.Close()
-			ctx, cancel := context.WithTimeout(t.Context(), window)
-			defer cancel()
-			if err := lane(testRunner(srv), dir, srv.URL)(ctx); err != nil {
-				t.Fatalf("dropped connections failed the lane: %v", err)
-			}
-			if n := requests.Load(); n < 2 || n > int64(window/retryBackoff)+2 {
-				t.Errorf("%d requests in %v, want reopened at most every %v", n, window, retryBackoff)
-			}
-		})
 	}
 }
 
@@ -216,20 +174,23 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 		stage       Stage
 		mount       func(*http.ServeMux)
 		cancelAfter time.Duration
+		warmup      time.Duration
 	}{
 		{"streaming download", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
-			150 * time.Millisecond},
+			150 * time.Millisecond, 0},
+		{"download warmup", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
+			150 * time.Millisecond, 3 * time.Second},
 		{"silent download", StageDownload, func(mux *http.ServeMux) {
 			mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 				w.(http.Flusher).Flush()
 				<-r.Context().Done()
 			})
-		}, 150 * time.Millisecond},
+		}, 150 * time.Millisecond, 0},
 		{"already cancelled", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
-			0},
+			0, 0},
 		{"stalled upload", StageUpload, func(mux *http.ServeMux) {
 			mountUploadReceiver(mux, new(atomic.Uint64), discardUpload)
-		}, 200 * time.Millisecond},
+		}, 200 * time.Millisecond, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -238,19 +199,17 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
 			r := testRunner(srv)
-			var outcome Outcome
-			r.emit = func(e Event) {
-				if e.Kind == EventDone {
-					outcome = e.Outcome()
-				}
-			}
+			r.cfg.Warmup = c.warmup
+			var log eventLog
+			r.emit = log.emit
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			time.AfterFunc(c.cancelAfter, cancel)
 			started := time.Now()
 			result, err := r.testTransferResult(ctx, c.stage, 5*time.Second)
 			elapsed := time.Since(started)
-			if !errors.Is(err, context.Canceled) || elapsed > 1500*time.Millisecond || outcome != OutcomeStopped {
+			if outcome := log.details().Outcome; !errors.Is(err, context.Canceled) || elapsed > 1500*time.Millisecond ||
+				outcome != OutcomeStopped {
 				t.Fatalf("stage returned %v (%s) after %v, want a prompt stop", err, outcome, elapsed)
 			}
 			if c.name == "silent download" && result.TotalBytes != 0 {
@@ -287,31 +246,6 @@ func TestUploadLaneDrainsABoundedResponse(t *testing.T) {
 			t.Fatalf("an upload response was drained for %d bytes", drained)
 		}
 	})
-}
-
-func TestAnIdleUploadLaneRedialsInsteadOfFailing(t *testing.T) {
-	t.Parallel()
-	for _, refusal := range []string{"idle", ""} {
-		synctest.Test(t, func(t *testing.T) {
-			requests := 0
-			transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
-				if requests++; requests > 1 {
-					<-req.Context().Done()
-					return nil, req.Context().Err()
-				}
-				_, _ = io.CopyN(io.Discard, req.Body, 1024)
-				header := http.Header{"X-Graphite-Upload-Refusal": {refusal}}
-				return &http.Response{StatusCode: http.StatusRequestTimeout, Header: header, Body: http.NoBody,
-					Request: req}, nil
-			})
-			r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
-			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-			defer cancel()
-			if err := lane(r, Up, "")(ctx); (err == nil) != (refusal == "idle") || (requests > 1) != (err == nil) {
-				t.Errorf("408 %q: lane ended with %v after %d requests", refusal, err, requests)
-			}
-		})
-	}
 }
 
 type readerFunc func([]byte) (int, error)

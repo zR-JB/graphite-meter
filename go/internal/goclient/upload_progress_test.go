@@ -2,20 +2,15 @@ package goclient
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadProgressKeepsAForwardPair(t *testing.T) {
@@ -59,37 +54,31 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 
 func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	t.Parallel()
-	const recordsPerFeed = 3
-	const window = 1200 * time.Millisecond
-	var gets, served atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		gets.Add(1)
-		enc := jsontext.NewEncoder(w)
-		_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "ready"})
-		w.(http.Flusher).Flush()
-		for range recordsPerFeed {
-			n := uint64(served.Add(1))
-			_ = jsonv2.MarshalEncode(enc, wire.UploadProgress{Type: "progress", Bytes: n, Nanos: n})
-			w.(http.Flusher).Flush()
+	synctest.Test(t, func(t *testing.T) {
+		gets, served := 0, uint64(0)
+		r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			gets++
+			feed := `{"type":"ready"}` + "\n"
+			for range 3 {
+				served++
+				feed += fmt.Sprintf(`{"type":"progress","bytes":%d,"nanos":%d}`+"\n", served, served)
+			}
+			body := io.NopCloser(strings.NewReader(feed))
+			return &http.Response{StatusCode: http.StatusOK, Body: body, Request: req}, nil
+		})}}
+		ctx, cancel := context.WithTimeout(t.Context(), 1200*time.Millisecond)
+		defer cancel()
+		p := newUploadProgress(ctx, "id")
+		defer p.close()
+		if err := r.followUploadFeed(ctx, p, "http://fixture.invalid/upload/progress"); err != nil {
+			t.Fatal(err)
 		}
-	}))
-	defer srv.Close()
-	r := &runner{http: srv.Client()}
-	ctx, cancel := context.WithTimeout(t.Context(), window)
-	defer cancel()
-	p := newUploadProgress(ctx, "id")
-	defer p.close()
-	if err := r.followUploadFeed(ctx, p, srv.URL+"/upload/progress"); err != nil {
-		t.Fatal(err)
-	}
-	<-ctx.Done()
-	if carried, _ := p.counters(); carried <= recordsPerFeed {
-		t.Errorf("the counter stopped at %d, want it past %d: the reattach resumes the same aggregate",
-			carried, recordsPerFeed)
-	}
-	if paced := int64(window/retryBackoff) + 2; gets.Load() > paced {
-		t.Errorf("issued %d progress GETs in %v, want at most %d: the reopen is not paced", gets.Load(), window, paced)
-	}
+		<-ctx.Done()
+		if carried, _ := p.counters(); gets != 3 || carried != 9 {
+			t.Errorf("%d progress GETs carried the counter to %d in 1.2 s, want 3 paced GETs carrying it to 9",
+				gets, carried)
+		}
+	})
 }
 
 func TestUploadProgressPermanentLossFails(t *testing.T) {
@@ -226,21 +215,18 @@ func TestHandoverWaitsForTheReceiverToSettle(t *testing.T) {
 
 func TestUploadFeedOpenEndsWithItsRecoveryWindow(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
-	defer srv.Close()
-	recovery, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer cancel()
-	opened := make(chan error, 1)
-	go func() {
-		_, err := testRunner(srv).openUploadFeed(t.Context(), recovery, srv.URL+"/upload/progress?id=x")
-		opened <- err
-	}()
-	select {
-	case err := <-opened:
-		if err == nil {
-			t.Fatal("a silent feed opened")
+	synctest.Test(t, func(t *testing.T) {
+		r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		})}}
+		recovery, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		_, err := r.openUploadFeed(t.Context(), recovery, "http://fixture.invalid/upload/progress?id=x")
+		if err == nil || time.Since(start) != 100*time.Millisecond {
+			t.Fatalf("a silent feed returned %v after %v, want an error at its 100ms recovery window",
+				err, time.Since(start))
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("opening a silent feed outlived its recovery window")
-	}
+	})
 }
