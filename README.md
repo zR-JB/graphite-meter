@@ -13,7 +13,7 @@ One Go server, a responsive web interface, and a native terminal client.
 
 <img src="docs/assets/hero.png" alt="Graphite Meter completed results on desktop with an overlapping phone companion" width="1080">
 
-<sub>v0.8.5 · simulated measurements · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
+<sub>Real runs against local servers · <a href="docs/SCREENSHOTS.md">screenshot gallery</a></sub>
 
 </div>
 
@@ -38,23 +38,14 @@ both the interface and measurement routes on public deployments.
 
 ## What you can measure
 
-**Throughput measured at the receiver.** Downloads count bytes consumed by the client. Upload
-bytes and timing come from the server, so data waiting in a sender queue does not inflate the
-result. Choose separate download and upload stages, or add simultaneous transfers.
-
-**One to four selected servers.** Choose from the operator's catalogue and measure their combined
-received throughput on one stage schedule. Each server keeps its own latency population. A server
-dropout leaves an explicit partial result and a new measurement window for the survivors.
-
-**Latency under load.** Compare idle latency with latency during download, upload, and bidirectional
-transfers. Each stage reports its median, p95, jitter and probe timeouts; added latency is the loaded
-median minus the idle median. Paired server timing shows how much of a reply's RTT was spent in the
-server handler. Missing or interrupted evidence stays explicit.
-
-**Control over the connection path.** Select throughput and latency paths independently. Dedicated
-listeners expose HTTP/1.1, HTTP/2, and HTTP/3; WebSocket and WebTransport provide latency paths.
-The **Details** panel separates browser-observed and server-observed protocol evidence, including
-behind a reverse proxy, per selected server, and keeps the paths a finished run actually used.
+- **Throughput measured at the receiver:** downloads count bytes the client consumed; upload bytes and timing come
+  from the server, so a sender queue cannot inflate the result. Download, upload and bidirectional stages.
+- **One to four servers** from the operator's catalogue on one stage schedule, shown **Combined** or per server. A
+  server that drops out leaves an explicit Partial result with its reason.
+- **Latency under load:** idle and loaded latency per stage with median, p95, jitter and probe timeouts; added
+  latency is the loaded median minus the idle median. Missing evidence stays explicit.
+- **Control over the connection path:** throughput and latency paths chosen independently over HTTP/1.1, HTTP/2,
+  HTTP/3, WebSocket and WebTransport. **Details** separates browser- and server-observed protocol evidence.
 
 WebTransport needs a compatible browser, HTTPS, a trusted certificate, and reachable HTTP/3 over
 UDP. Probe timeouts are application observations, not TCP/IP packet loss. The optional wire-rate
@@ -73,28 +64,17 @@ profiles keep transfer speed and responsiveness visible together.
   peers, and one **Combined** / per-server selector in results. Automatic paths resolve per server.
 - **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
   keyboard or touch chart inspection with reduced-motion support.
-- **Phone layout:** compact stage cards above full-width progress bars; the toolbar stays within reach
-  and the bottom status bar keeps the current stage and remaining time visible while you scroll.
+- **Phone layout:** one vertical reading order; the bottom status bar keeps the current stage and remaining
+  time visible while you scroll.
 - **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize
   each panel to suit your monitor; your widths survive resizing and reload. Below the docked
   layout, one panel opens as a flyout and the URL follows the visible panel.
-- **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
-  inspect past runs while the live test continues, then return to it from the toolbar.
+- **Local history:** optionally save up to 2,000 results on your device, grouped by day. Inspect past runs
+  while the live test continues, then return to it from the toolbar. History is not a server-side archive.
 
-<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Details open beside the completed meter on a wide desktop" width="1080">
+<img src="docs/assets/workspace.png" alt="Graphite Meter with Settings and Details open beside the completed meter on a wide desktop" width="1080">
 
-<p align="center"><sub>v0.8.5 · simulated measurements · resizable desktop panels</sub></p>
-
-### Read a saved result
-
-A saved result opens with the live meter's summary cards. For multi-server runs, one selector
-switches between **Combined** and each server; latency follows the chosen server when it measured
-latency, otherwise the run's latency server stays shown and named. Secondary evidence sits under
-**Servers & paths**, **Probe accounting**, **Issues** and **Build & environment**. History lives in
-the current browser; it is not a server-side archive or a record of raw samples.
-
-See the [gallery](docs/SCREENSHOTS.md) for light and dark themes, mobile controls, saved results,
-and connection details.
+<p align="center"><sub>Resizable desktop panels · more in the <a href="docs/SCREENSHOTS.md">gallery</a></sub></p>
 
 ## Native terminal client
 
@@ -102,9 +82,7 @@ and connection details.
 with server selection, stage and timing controls, independent connection paths, stream settings,
 and live throughput and latency results. It lets you test without browser runtime constraints.
 
-<img src="docs/assets/tui.png" alt="Graphite Meter v0.8.2 native terminal client showing completed download, upload, and latency results from a simulated deployment" width="1080">
-
-<p align="center"><sub>v0.8.2 · simulated measurements</sub></p>
+<img src="docs/assets/tui.png" alt="Graphite Meter native terminal client after a complete latency, download and upload run" width="1080">
 
 Download and extract the matching client archive from [Releases](https://github.com/zR-JB/graphite-meter/releases),
 then run:
@@ -136,17 +114,8 @@ reflects the outcome.
 
 ## Contributing
 
-With [mise installed](docs/DEVELOPMENT.md#prerequisites):
-
-```sh
-git clone https://github.com/zR-JB/graphite-meter.git
-cd graphite-meter
-mise run setup
-mise run dev
-```
-
-Run `mise run check` before submitting a change. The [development guide](docs/DEVELOPMENT.md)
-explains the focused checks and full CI gate.
+Set up a checkout as in the [development guide](docs/DEVELOPMENT.md#prerequisites) (`mise run setup`, then
+`mise run dev`) and run `mise run check` before submitting a change.
 
 ## License
 
